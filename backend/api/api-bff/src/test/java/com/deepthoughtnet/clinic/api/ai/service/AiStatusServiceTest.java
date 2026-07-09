@@ -119,6 +119,39 @@ class AiStatusServiceTest {
     }
 
     @Test
+    void prefersRealProvidersOverMockEvenWhenChainStartsWithMock() {
+        TenantModuleEntitlementService moduleService = mock(TenantModuleEntitlementService.class);
+        PermissionChecker permissionChecker = mock(PermissionChecker.class);
+        UUID tenantId = UUID.randomUUID();
+
+        when(moduleService.isModuleEnabled(tenantId, ModuleKeys.AI_COPILOT)).thenReturn(true);
+        when(permissionChecker.hasAnyPermission("ai_copilot.run", "ai_copilot.clinic.run")).thenReturn(true);
+        Environment environment = mock(Environment.class);
+        when(environment.getActiveProfiles()).thenReturn(new String[] {"test"});
+
+        AiStatusService service = new AiStatusService(
+                moduleService,
+                permissionChecker,
+                List.of(
+                        new StubProvider("MOCK", AiProviderStatus.AVAILABLE),
+                        new StubProvider("GEMINI", AiProviderStatus.AVAILABLE)
+                ),
+                true,
+                "MOCK",
+                "MOCK,GEMINI,GROQ",
+                true,
+                "test-key",
+                true,
+                "TESSERACT",
+                environment
+        );
+
+        var status = service.status(tenantId);
+        assertThat(status.effectiveStatus()).isEqualTo("READY");
+        assertThat(status.provider()).isEqualTo("GEMINI");
+    }
+
+    @Test
     void requireProviderReadyThrowsFriendlyMessageWhenProviderMissing() {
         TenantModuleEntitlementService moduleService = mock(TenantModuleEntitlementService.class);
         PermissionChecker permissionChecker = mock(PermissionChecker.class);

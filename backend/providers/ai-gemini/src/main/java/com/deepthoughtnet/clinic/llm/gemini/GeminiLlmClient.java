@@ -4,6 +4,8 @@ import com.deepthoughtnet.clinic.llm.spi.AiProviderException;
 import com.deepthoughtnet.clinic.llm.spi.LlmClient;
 import com.deepthoughtnet.clinic.llm.spi.LlmRequest;
 import com.deepthoughtnet.clinic.llm.spi.LlmResponse;
+import com.deepthoughtnet.clinic.platform.contracts.ai.AiFinishReasonNormalizer;
+import com.deepthoughtnet.clinic.platform.contracts.ai.AiTaskType;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiTokenUsage;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -89,16 +91,24 @@ public class GeminiLlmClient implements LlmClient {
         }
 
         Map<String, Object> payload = buildPayload(request);
+        String effectiveModel = request.modelOverride() != null && !request.modelOverride().isBlank() ? request.modelOverride() : model;
+        log.info("[AI-REQUEST] taskType={} provider=GEMINI model={} maxOutputTokens={} thinkingBudget={} strictJsonMode={} chars={}",
+                request.taskType(),
+                effectiveModel,
+                request.maxOutputTokens() != null ? request.maxOutputTokens() : defaultMaxOutputTokens,
+                request.thinkingBudget(),
+                request.strictJsonMode(),
+                request.userPrompt().length());
         log.info("Calling Gemini provider. requestId={}, model={}, chars={}, hasAttachment={}, timeoutSeconds={}",
                 requestId,
-                model,
+                effectiveModel,
                 request.userPrompt().length(),
                 request.bytes() != null && request.bytes().length > 0,
                 timeoutSeconds);
 
         try {
             String responseBody = restClient.post()
-                    .uri(baseUrl + "/models/" + model + ":generateContent")
+                    .uri(baseUrl + "/models/" + effectiveModel + ":generateContent")
                     .header("x-goog-api-key", apiKey)
                     .contentType(MediaType.APPLICATION_JSON)
                     .accept(MediaType.APPLICATION_JSON)
@@ -108,6 +118,14 @@ public class GeminiLlmClient implements LlmClient {
 
             ParsedGeminiResponse parsed = extractResponse(responseBody);
             long latencyMs = System.currentTimeMillis() - startedAt;
+            log.info("[LLM-RAW] provider=GEMINI rawChars={} first300Chars=\"{}\" last300Chars=\"{}\" finishReason={} candidateCount={} thoughtsTokenCount={} safetyBlocked={}",
+                    responseBody == null ? 0 : responseBody.length(),
+                    previewStart(responseBody),
+                    previewEnd(responseBody),
+                    parsed.finishReason(),
+                    parsed.candidateCount(),
+                    parsed.thoughtsTokenCount(),
+                    parsed.safetyBlocked());
             log.info(
                     "Gemini response received. requestId={}, status=200, latencyMs={}, responseChars={}, candidates={}, finishReason={}, safetyBlocked={}, tokenUsage={}",
                     requestId,
@@ -122,6 +140,13 @@ public class GeminiLlmClient implements LlmClient {
             if (log.isDebugEnabled()) {
                 log.debug("Gemini preview. requestId={}, text=\"{}\"", requestId, safePreview(parsed.text()));
             }
+            log.info("[NORMALIZED] provider=GEMINI normalizedChars={} first300Chars=\"{}\" last300Chars=\"{}\" finishReason={} thoughtsTokenCount={} tokenUsage={}",
+                    parsed.text() == null ? 0 : parsed.text().length(),
+                    previewStart(parsed.text()),
+                    previewEnd(parsed.text()),
+                    parsed.finishReason(),
+                    parsed.thoughtsTokenCount(),
+                    formatTokenUsage(parsed.tokenUsage()));
             if ("MAX_TOKENS".equalsIgnoreCase(parsed.finishReason())) {
                 log.warn("Gemini response truncated by max output tokens. requestId={}, maxOutputTokens={}",
                         requestId,
@@ -139,7 +164,17 @@ public class GeminiLlmClient implements LlmClient {
                         null
                 );
             }
-            return new LlmResponse(providerName(), model, parsed.text().trim(), parsed.tokenUsage());
+            String text = parsed.text().trim();
+            return new LlmResponse(
+                    providerName(),
+                    effectiveModel,
+                    text,
+                    parsed.tokenUsage(),
+                    parsed.finishReason(),
+                    AiFinishReasonNormalizer.normalize(parsed.finishReason()),
+                    text.length(),
+                    text,
+                    "UNKNOWN");
         } catch (RestClientResponseException ex) {
             int status = ex.getRawStatusCode();
             String bodyPreview = sanitizePreview(ex.getResponseBodyAsString(), 300);
@@ -281,7 +316,12 @@ public class GeminiLlmClient implements LlmClient {
                 "maxOutputTokens",
                 request.maxOutputTokens() != null ? request.maxOutputTokens() : defaultMaxOutputTokens
         );
-        generationConfig.put("responseMimeType", "application/json");
+        if (request.strictJsonMode()) {
+            generationConfig.put("responseMimeType", "application/json");
+        }
+        if (request.thinkingBudget() != null) {
+            generationConfig.put("thinkingConfig", Map.of("thinkingBudget", Math.max(0, request.thinkingBudget())));
+        }
         payload.put("generationConfig", generationConfig);
 
         return payload;
@@ -290,7 +330,7 @@ public class GeminiLlmClient implements LlmClient {
     private ParsedGeminiResponse extractResponse(String responseBody) {
         if (responseBody == null || responseBody.isBlank()) {
             log.warn("Gemini returned empty response body.");
-            return new ParsedGeminiResponse(null, 0, 0, null, false, null);
+            return new ParsedGeminiResponse(null, 0, 0, null, false, null, null);
         }
         try {
             JsonNode root = objectMapper.readTree(responseBody);
@@ -298,7 +338,7 @@ public class GeminiLlmClient implements LlmClient {
             JsonNode candidates = root.path("candidates");
             if (!candidates.isArray() || candidates.isEmpty()) {
                 log.warn("Gemini returned empty candidate list.");
-                return new ParsedGeminiResponse(null, responseBody.length(), 0, null, safetyBlocked, tokenUsage(root));
+                return new ParsedGeminiResponse(null, responseBody.length(), 0, null, safetyBlocked, tokenUsage(root), thoughtsTokenCount(root));
             }
 
             StringBuilder builder = new StringBuilder();
@@ -322,7 +362,7 @@ public class GeminiLlmClient implements LlmClient {
             if (extracted.isBlank()) {
                 log.warn("Gemini candidate content had no text.");
             }
-            return new ParsedGeminiResponse(extracted, responseBody.length(), candidates.size(), finishReason(candidates), safetyBlocked, tokenUsage(root));
+            return new ParsedGeminiResponse(extracted, responseBody.length(), candidates.size(), finishReason(candidates), safetyBlocked, tokenUsage(root), thoughtsTokenCount(root));
         } catch (Exception ex) {
             String preview = sanitizePreview(responseBody, 300);
             log.error("Gemini parsing failure. message={}, responsePreview=\"{}\"", sanitize(ex.getMessage()), preview);
@@ -349,6 +389,15 @@ public class GeminiLlmClient implements LlmClient {
             return null;
         }
         return new AiTokenUsage(prompt, completion, total, null);
+    }
+
+    private Long thoughtsTokenCount(JsonNode root) {
+        JsonNode usage = root.path("usageMetadata");
+        if (!usage.isObject()) {
+            return null;
+        }
+        JsonNode thoughts = usage.path("thoughtsTokenCount");
+        return thoughts.canConvertToLong() ? thoughts.asLong() : null;
     }
 
     private String formatTokenUsage(AiTokenUsage usage) {
@@ -396,6 +445,22 @@ public class GeminiLlmClient implements LlmClient {
         return sanitizePreview(text, 400);
     }
 
+    private String previewStart(String value) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+        String normalized = value.replaceAll("[\\r\\n\\t]+", " ").trim();
+        return normalized.length() <= 300 ? normalized : normalized.substring(0, 300);
+    }
+
+    private String previewEnd(String value) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+        String normalized = value.replaceAll("[\\r\\n\\t]+", " ").trim();
+        return normalized.length() <= 300 ? normalized : normalized.substring(normalized.length() - 300);
+    }
+
     private String correlationOrGenerated() {
         String correlationId = MDC.get("correlationId");
         if (correlationId == null || correlationId.isBlank()) {
@@ -410,7 +475,8 @@ public class GeminiLlmClient implements LlmClient {
             int candidateCount,
             String finishReason,
             boolean safetyBlocked,
-            AiTokenUsage tokenUsage
+            AiTokenUsage tokenUsage,
+            Long thoughtsTokenCount
     ) {
     }
 

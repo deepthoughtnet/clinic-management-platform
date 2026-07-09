@@ -25,7 +25,7 @@ class GroqAiProviderAdapterTest {
         when(provider.getIfAvailable()).thenReturn(client);
         when(client.generate(org.mockito.ArgumentMatchers.any(LlmRequest.class))).thenReturn(
                 new LlmResponse("GROQ", "llama", "Structured response",
-                        new AiTokenUsage(11L, 7L, 18L, BigDecimal.valueOf(0.09)))
+                        new AiTokenUsage(11L, 7L, 18L, BigDecimal.valueOf(0.09)), null)
         );
 
         GroqAiProviderAdapter adapter = new GroqAiProviderAdapter(provider);
@@ -40,6 +40,8 @@ class GroqAiProviderAdapterTest {
         assertEquals(7L, response.tokenUsage().completionTokens());
         assertEquals(18L, response.tokenUsage().totalTokens());
         assertEquals(BigDecimal.valueOf(0.09), response.tokenUsage().estimatedCost());
+        assertEquals("UNKNOWN", response.normalizedFinishReason());
+        assertEquals("Structured response".length(), response.responseChars());
     }
 
     @Test
@@ -60,5 +62,6 @@ class GroqAiProviderAdapterTest {
         assertEquals(true, adapter.supports(AiTaskType.SUMMARY));
         assertEquals(true, adapter.supports(AiTaskType.GENERIC_EXTRACTION));
         assertEquals(false, adapter.supports(AiTaskType.CLINIC_EXTRACTION));
+        assertEquals(true, adapter.supports(AiTaskType.CLINICAL_REASONING));
     }
 }

@@ -9,6 +9,7 @@ import com.deepthoughtnet.clinic.api.clinicaldocument.db.ClinicalDocumentType;
 import com.deepthoughtnet.clinic.api.clinicaldocument.service.ClinicalDocumentRecord;
 import com.deepthoughtnet.clinic.api.clinicaldocument.service.ClinicalDocumentService;
 import com.deepthoughtnet.clinic.api.clinicaldocument.ai.service.ClinicalDocumentAiExtractionService;
+import com.deepthoughtnet.clinic.api.security.ClinicalDocumentAiAuthorizationService;
 import com.deepthoughtnet.clinic.api.security.DoctorAssignmentSecurityService;
 import com.deepthoughtnet.clinic.consultation.service.ConsultationService;
 import com.deepthoughtnet.clinic.consultation.service.model.ConsultationRecord;
@@ -68,6 +69,9 @@ class ClinicalDocumentControllerTimelineTest {
     @Mock
     private DoctorAssignmentSecurityService doctorAssignmentSecurityService;
 
+    @Mock
+    private ClinicalDocumentAiAuthorizationService clinicalDocumentAiAuthorizationService;
+
     private ClinicalDocumentController controller;
 
     @BeforeEach
@@ -79,7 +83,8 @@ class ClinicalDocumentControllerTimelineTest {
                 consultationService,
                 prescriptionService,
                 vaccinationService,
-                doctorAssignmentSecurityService
+                doctorAssignmentSecurityService,
+                clinicalDocumentAiAuthorizationService
         );
         RequestContextHolder.set(new RequestContext(TenantId.of(TENANT_ID), ACTOR_ID, null, null, null, "timeline-test"));
         doNothing().when(doctorAssignmentSecurityService).requirePatientAccess(any(), any());
@@ -229,6 +234,8 @@ class ClinicalDocumentControllerTimelineTest {
                 "summary",
                 "{}",
                 "review notes",
+                null,
+                null,
                 null,
                 null,
                 null,

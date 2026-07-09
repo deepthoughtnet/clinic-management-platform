@@ -47,7 +47,23 @@ class PatientLongitudinalMemoryServiceTest {
 
         service.ingestPendingConcepts(
                 document,
-                "{\"conditions\":[\"Diabetes Mellitus\",\"Diabetes Mellitus\"],\"labs\":{\"hba1c\":\"8.4\",\"bloodSugar\":\"198\",\"lipid\":[\"High Cholesterol\",\"High LDL\",\"High Triglycerides\",\"Low HDL\"]}}",
+                """
+                        {"factualFindings":{
+                          "conditions":[{"canonicalKey":"diabetes_mellitus","label":"Diabetes Mellitus","evidenceText":"Known diabetic"}],
+                          "labResults":[
+                            {"canonicalKey":"hba1c","testName":"HbA1c","value":"8.4","unit":"%","evidenceText":"HbA1c 8.4 % < 5.7 normal; > 6.5 diabetic High"},
+                            {"canonicalKey":"blood_sugar","testName":"Random Blood Sugar","value":"198","unit":"mg/dL","evidenceText":"Random Blood Sugar 198 mg/dL 70 - 140 High"},
+                            {"canonicalKey":"cholesterol","testName":"Total Cholesterol","value":"228","unit":"mg/dL","evidenceText":"Total Cholesterol 228 mg/dL < 200 High"},
+                            {"canonicalKey":"ldl","testName":"LDL Cholesterol","value":"152","unit":"mg/dL","evidenceText":"LDL Cholesterol 152 mg/dL < 100 High"},
+                            {"canonicalKey":"hdl","testName":"HDL Cholesterol","value":"39","unit":"mg/dL","evidenceText":"HDL Cholesterol 39 mg/dL > 40 Low"},
+                            {"canonicalKey":"triglycerides","testName":"Triglycerides","value":"238","unit":"mg/dL","evidenceText":"Triglycerides 238 mg/dL < 150 High"}
+                          ],
+                          "riskFlags":[
+                            {"canonicalKey":"diabetes_risk","label":"Diabetes","evidenceText":"HbA1c 8.4 % < 5.7 normal; > 6.5 diabetic High"},
+                            {"canonicalKey":"lipid_risk","label":"Dyslipidemia","evidenceText":"Total Cholesterol 228 mg/dL < 200 High"}
+                          ]
+                        }}
+                        """,
                 "Known diabetic\nHbA1c 8.4\nRandom Blood Sugar 198\nLipid profile high cholesterol high LDL high triglycerides low HDL",
                 new BigDecimal("0.96"),
                 "Clinical extraction"
@@ -61,7 +77,7 @@ class PatientLongitudinalMemoryServiceTest {
         assertThat(saved.get().stream()
                 .filter(concept -> "ldl".equals(concept.getConceptKey()))
                 .map(PatientLongitudinalConceptEntity::getValueText))
-                .contains("High LDL");
+                .contains("152");
         verify(repository).deleteByDocumentAndStatus(eq(document.getTenantId()), eq(document.getPatientId()), eq(document.getId()), eq("PENDING_REVIEW"));
     }
 
@@ -94,7 +110,7 @@ class PatientLongitudinalMemoryServiceTest {
         assertThat(persisted).extracting(PatientLongitudinalConceptEntity::getVerificationStatus).containsOnly("PENDING_REVIEW");
         assertThat(persisted.stream().map(PatientLongitudinalConceptEntity::getConceptKey).toList())
                 .contains("diabetes_mellitus", "hba1c", "blood_sugar", "diabetes_risk");
-        assertThat(persisted).hasSize(5);
+        assertThat(persisted).hasSize(4);
     }
 
     @Test
@@ -112,22 +128,89 @@ class PatientLongitudinalMemoryServiceTest {
         PatientLongitudinalMemoryService service = new PatientLongitudinalMemoryService(repository, new ClinicalConceptMapper(), new ObjectMapper());
         String longTitle = "Diabetes Follow-up Laboratory Report " + "A".repeat(280);
         ClinicalDocumentEntity document = document(longTitle, LocalDate.of(2026, 1, 8));
-        String longCondition = "diabetes " + "B".repeat(300);
         String longSourceSummary = "Clinical extraction " + "C".repeat(300);
 
         service.ingestPendingConcepts(
                 document,
-                "{\"conditions\":[\"" + longCondition + "\"],\"labs\":{\"hba1c\":\"8.4\"}}",
+                "{\"conditions\":[\"Diabetes Mellitus\"],\"labs\":{\"hba1c\":\"8.4\"}}",
                 "Known diabetic\nHbA1c 8.4",
                 new BigDecimal("0.96"),
                 longSourceSummary
         );
 
         assertThat(saved.get()).isNotEmpty();
+        assertThat(saved.get().getFirst().getSourceDocumentTitle()).startsWith("Diabetes Follow-up Laboratory Report");
         assertThat(saved.get().getFirst().getSourceDocumentTitle()).hasSizeGreaterThan(256);
-        assertThat(saved.get().stream().map(PatientLongitudinalConceptEntity::getConceptLabel).anyMatch(label -> label != null && label.length() > 256)).isTrue();
-        assertThat(saved.get().stream().map(PatientLongitudinalConceptEntity::getEvidenceText).anyMatch(text -> text != null && text.length() > 256)).isTrue();
         assertThat(saved.get().stream().map(PatientLongitudinalConceptEntity::getSourceSummary).anyMatch(text -> text != null && text.length() > 256)).isTrue();
+        assertThat(saved.get().stream().map(PatientLongitudinalConceptEntity::getConceptLabel).allMatch(label -> label != null && label.length() <= 256)).isTrue();
+    }
+
+    @Test
+    void repairPendingConceptsRebuildsStructuredLabFactsAndIgnoresRecommendationText() {
+        PatientLongitudinalConceptRepository repository = mock(PatientLongitudinalConceptRepository.class);
+        AtomicReference<List<PatientLongitudinalConceptEntity>> saved = new AtomicReference<>(List.of());
+        doAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            List<PatientLongitudinalConceptEntity> value = (List<PatientLongitudinalConceptEntity>) invocation.getArgument(0);
+            saved.set(value);
+            return value;
+        }).when(repository).saveAllAndFlush(anyList());
+
+        UUID tenantId = UUID.randomUUID();
+        UUID patientId = UUID.randomUUID();
+        ClinicalDocumentEntity document = document(tenantId, patientId, "Diabetes Follow-up Lab Report Retest 4", LocalDate.of(2026, 1, 8));
+        setField(document, "aiExtractionStructuredJson", """
+                {
+                  "factualFindings":{
+                    "conditions":[{"canonicalKey":"diabetes_mellitus","label":"Diabetes Mellitus","evidenceText":"Known diabetic"}],
+                    "labResults":[
+                      {"canonicalKey":"hba1c","testName":"HbA1c","value":"8.4","unit":"%","evidenceText":"HbA1c 8.4 % < 5.7 normal; > 6.5 diabetic High"},
+                      {"canonicalKey":"blood_sugar","testName":"Random Blood Sugar","value":"198","unit":"mg/dL","evidenceText":"Random Blood Sugar 198 mg/dL 70 - 140 High"},
+                      {"canonicalKey":"cholesterol","testName":"Total Cholesterol","value":"228","unit":"mg/dL","evidenceText":"Total Cholesterol 228 mg/dL < 200 High"},
+                      {"canonicalKey":"ldl","testName":"LDL Cholesterol","value":"152","unit":"mg/dL","evidenceText":"LDL Cholesterol 152 mg/dL < 100 High"},
+                      {"canonicalKey":"hdl","testName":"HDL Cholesterol","value":"39","unit":"mg/dL","evidenceText":"HDL Cholesterol 39 mg/dL > 40 Low"},
+                      {"canonicalKey":"triglycerides","testName":"Triglycerides","value":"238","unit":"mg/dL","evidenceText":"Triglycerides 238 mg/dL < 150 High"}
+                    ],
+                    "riskFlags":[
+                      {"canonicalKey":"diabetes_risk","label":"Diabetes","evidenceText":"HbA1c 8.4 % < 5.7 normal; > 6.5 diabetic High"},
+                      {"canonicalKey":"lipid_risk","label":"Dyslipidemia","evidenceText":"Total Cholesterol 228 mg/dL < 200 High"}
+                    ]
+                  },
+                  "answer":"Review the elevated HbA1c and discuss abnormal lipid profile.",
+                  "suggestedActions":["Discuss abnormal lipid profile","Recommend lifestyle modifications"]
+                }
+                """);
+        setField(document, "aiExtractionSummary", "AI draft generated.");
+        setField(document, "aiExtractionConfidence", new BigDecimal("0.91"));
+
+        when(repository.findByTenantIdAndPatientIdAndSourceDocumentIdOrderByCreatedAtAsc(eq(tenantId), eq(patientId), eq(document.getId())))
+                .thenReturn(List.of(
+                        pendingConcept(tenantId, patientId, document, "LAB_RESULT", "hba1c", "HbA1c", "14.1", "%", "Hemoglobin 14.1 g/dL", "AI draft generated."),
+                        pendingConcept(tenantId, patientId, document, "LAB_RESULT", "blood_sugar", "Blood Sugar", "1", "mg/dL", "Review the elevated HbA1c and recommend lifestyle modifications.", "AI draft generated."),
+                        pendingConcept(tenantId, patientId, document, "CONDITION", "diabetes_mellitus", "Diabetes Mellitus", "Review the lab report with Rohan Sharma and adjust diabetes management plan.", null, "Review the lab report with Rohan Sharma and adjust diabetes management plan.", "AI draft generated.")
+                ));
+        when(repository.deleteByDocumentAndStatus(any(), any(), any(), any())).thenReturn(3);
+
+        PatientLongitudinalMemoryService service = new PatientLongitudinalMemoryService(repository, new ClinicalConceptMapper(), new ObjectMapper());
+        var result = service.repairPendingConcepts(document, document.getAiExtractionStructuredJson(), null, new BigDecimal("0.91"), "AI draft generated.", UUID.randomUUID());
+
+        assertThat(result.status()).isEqualTo("SUCCESS");
+        assertThat(result.correctedValues()).extracting("conceptKey", "oldValue", "newValue")
+                .contains(
+                        org.assertj.core.groups.Tuple.tuple("hba1c", "14.1", "8.4"),
+                        org.assertj.core.groups.Tuple.tuple("blood_sugar", "1", "198")
+                );
+        assertThat(result.message()).contains("Memory repaired");
+        assertThat(saved.get()).extracting(PatientLongitudinalConceptEntity::getConceptKey)
+                .contains("diabetes_mellitus", "hba1c", "blood_sugar", "cholesterol", "ldl", "hdl", "triglycerides", "diabetes_risk", "lipid_risk");
+        assertThat(saved.get()).noneMatch(concept -> concept.getEvidenceText() != null && concept.getEvidenceText().toLowerCase().startsWith("review"));
+        assertThat(saved.get()).filteredOn(concept -> "LAB_RESULT".equals(concept.getConceptFamily()) && "hba1c".equals(concept.getConceptKey()))
+                .extracting(PatientLongitudinalConceptEntity::getValueText)
+                .containsExactly("8.4");
+        assertThat(saved.get()).filteredOn(concept -> "LAB_RESULT".equals(concept.getConceptFamily()) && "blood_sugar".equals(concept.getConceptKey()))
+                .extracting(PatientLongitudinalConceptEntity::getValueText)
+                .containsExactly("198");
+        verify(repository).deleteByDocumentAndStatus(eq(tenantId), eq(patientId), eq(document.getId()), eq("PENDING_REVIEW"));
     }
 
     @Test
@@ -517,6 +600,132 @@ class PatientLongitudinalMemoryServiceTest {
         assertThat(profile.history()).hasSize(5);
     }
 
+    @Test
+    void buildProfileFiltersNarrativeConditionLabelsAndPrefersAcceptedConcepts() {
+        PatientLongitudinalConceptRepository repository = mock(PatientLongitudinalConceptRepository.class);
+        PatientLongitudinalMemoryService service = new PatientLongitudinalMemoryService(repository, new ClinicalConceptMapper(), new ObjectMapper());
+
+        UUID tenantId = UUID.randomUUID();
+        UUID patientId = UUID.randomUUID();
+        ClinicalDocumentEntity document = document(tenantId, patientId, "Diabetes Follow-up Lab Report", LocalDate.of(2026, 1, 8));
+
+        PatientLongitudinalConceptEntity pollutedRecommendation = PatientLongitudinalConceptEntity.create(
+                tenantId,
+                patientId,
+                document.getId(),
+                document.getDocumentType().name(),
+                document.getTitle(),
+                document.getReportDate(),
+                "CONDITION",
+                "diabetes_mellitus",
+                "Review the lab report with Rohan Sharma",
+                "Review the lab report with Rohan Sharma",
+                null,
+                "Review the lab report with Rohan Sharma",
+                "Clinical extraction",
+                "PENDING_REVIEW",
+                new BigDecimal("0.96"),
+                document.getReportDate().atStartOfDay().atOffset(ZoneOffset.UTC)
+        );
+        PatientLongitudinalConceptEntity pendingHba1c = PatientLongitudinalConceptEntity.create(
+                tenantId,
+                patientId,
+                document.getId(),
+                document.getDocumentType().name(),
+                document.getTitle(),
+                document.getReportDate(),
+                "LAB_RESULT",
+                "hba1c",
+                "HbA1c",
+                "8.4",
+                "%",
+                "HbA1c 8.4",
+                "Clinical extraction",
+                "PENDING_REVIEW",
+                new BigDecimal("0.91"),
+                document.getReportDate().atStartOfDay().atOffset(ZoneOffset.UTC)
+        );
+        PatientLongitudinalConceptEntity acceptedHba1c = PatientLongitudinalConceptEntity.create(
+                tenantId,
+                patientId,
+                document.getId(),
+                document.getDocumentType().name(),
+                document.getTitle(),
+                document.getReportDate(),
+                "LAB_RESULT",
+                "hba1c",
+                "HbA1c",
+                "8.4",
+                "%",
+                "HbA1c 8.4",
+                "Clinical extraction",
+                "ACCEPTED",
+                new BigDecimal("0.99"),
+                document.getReportDate().atStartOfDay().atOffset(ZoneOffset.UTC)
+        );
+
+        when(repository.findByTenantIdAndPatientIdOrderByObservedAtDescCreatedAtDesc(tenantId, patientId)).thenReturn(List.of(
+                acceptedHba1c,
+                pendingHba1c,
+                pollutedRecommendation
+        ));
+
+        PatientLongitudinalMemoryProfile profile = service.buildProfile(tenantId, patientId);
+
+        assertThat(profile.knownConditions()).isEmpty();
+        assertThat(profile.latestHbA1c()).isNotNull();
+        assertThat(profile.latestHbA1c().verificationStatus()).isEqualTo("ACCEPTED");
+        assertThat(profile.history()).extracting(LongitudinalConceptSnapshot::conceptKey).containsExactly("hba1c");
+    }
+
+    @Test
+    void buildProfilePrefersCleanFactualPendingConceptsOverPollutedRetestRows() {
+        PatientLongitudinalConceptRepository repository = mock(PatientLongitudinalConceptRepository.class);
+        PatientLongitudinalMemoryService service = new PatientLongitudinalMemoryService(repository, new ClinicalConceptMapper(), new ObjectMapper());
+
+        UUID tenantId = UUID.randomUUID();
+        UUID patientId = UUID.randomUUID();
+        ClinicalDocumentEntity pollutedDocument = document(tenantId, patientId, "Diabetes Follow-up Lab Report Retest 4", LocalDate.of(2026, 1, 8));
+        ClinicalDocumentEntity cleanDocument = document(tenantId, patientId, "Diabetes Follow-up Lab Report Retest 5", LocalDate.of(2026, 1, 8));
+
+        PatientLongitudinalConceptEntity pollutedBloodSugar = PatientLongitudinalConceptEntity.create(
+                tenantId, patientId, pollutedDocument.getId(), pollutedDocument.getDocumentType().name(), pollutedDocument.getTitle(),
+                pollutedDocument.getReportDate(), "LAB_RESULT", "blood_sugar", "Blood Sugar", "1", "mg/dL",
+                "Review the elevated HbA1c and recommend lifestyle modifications.", "Polluted", "PENDING_REVIEW",
+                new BigDecimal("0.99"), pollutedDocument.getReportDate().atStartOfDay().atOffset(ZoneOffset.UTC)
+        );
+        PatientLongitudinalConceptEntity pollutedHba1c = PatientLongitudinalConceptEntity.create(
+                tenantId, patientId, pollutedDocument.getId(), pollutedDocument.getDocumentType().name(), pollutedDocument.getTitle(),
+                pollutedDocument.getReportDate(), "LAB_RESULT", "hba1c", "HbA1c", "14.1", "%",
+                "Hemoglobin 14.1 g/dL 13 - 17 Normal", "Polluted", "PENDING_REVIEW",
+                new BigDecimal("0.99"), pollutedDocument.getReportDate().atStartOfDay().atOffset(ZoneOffset.UTC)
+        );
+        PatientLongitudinalConceptEntity cleanBloodSugar = PatientLongitudinalConceptEntity.create(
+                tenantId, patientId, cleanDocument.getId(), cleanDocument.getDocumentType().name(), cleanDocument.getTitle(),
+                cleanDocument.getReportDate(), "LAB_RESULT", "blood_sugar", "Blood Sugar", "198", "mg/dL",
+                "Random Blood Sugar 198 mg/dL 70 - 140 High", "Clean", "PENDING_REVIEW",
+                new BigDecimal("0.91"), cleanDocument.getReportDate().atStartOfDay().atOffset(ZoneOffset.UTC)
+        );
+        PatientLongitudinalConceptEntity cleanHba1c = PatientLongitudinalConceptEntity.create(
+                tenantId, patientId, cleanDocument.getId(), cleanDocument.getDocumentType().name(), cleanDocument.getTitle(),
+                cleanDocument.getReportDate(), "LAB_RESULT", "hba1c", "HbA1c", "8.4", "%",
+                "HbA1c 8.4 % < 5.7 normal; > 6.5 diabetic High", "Clean", "PENDING_REVIEW",
+                new BigDecimal("0.91"), cleanDocument.getReportDate().atStartOfDay().atOffset(ZoneOffset.UTC)
+        );
+
+        when(repository.findByTenantIdAndPatientIdOrderByObservedAtDescCreatedAtDesc(tenantId, patientId))
+                .thenReturn(List.of(pollutedBloodSugar, pollutedHba1c, cleanBloodSugar, cleanHba1c));
+
+        PatientLongitudinalMemoryProfile profile = service.buildProfile(tenantId, patientId);
+
+        assertThat(profile.latestHbA1c()).isNotNull();
+        assertThat(profile.latestHbA1c().valueText()).isEqualTo("8.4");
+        assertThat(profile.latestHbA1c().sourceDocumentTitle()).isEqualTo("Diabetes Follow-up Lab Report Retest 5");
+        assertThat(profile.latestBloodSugar()).isNotNull();
+        assertThat(profile.latestBloodSugar().valueText()).isEqualTo("198");
+        assertThat(profile.latestBloodSugar().sourceDocumentTitle()).isEqualTo("Diabetes Follow-up Lab Report Retest 5");
+    }
+
     private ClinicalDocumentEntity document(String title, LocalDate reportDate) {
         return document(UUID.randomUUID(), UUID.randomUUID(), title, reportDate);
     }
@@ -551,5 +760,45 @@ class PatientLongitudinalMemoryServiceTest {
                 UUID.randomUUID()
         );
         return entity;
+    }
+
+    private static void setField(Object entity, String fieldName, Object value) {
+        try {
+            Field field = entity.getClass().getDeclaredField(fieldName);
+            field.setAccessible(true);
+            field.set(entity, value);
+        } catch (ReflectiveOperationException ex) {
+            throw new IllegalStateException(ex);
+        }
+    }
+
+    private static PatientLongitudinalConceptEntity pendingConcept(UUID tenantId,
+                                                                   UUID patientId,
+                                                                   ClinicalDocumentEntity document,
+                                                                   String family,
+                                                                   String key,
+                                                                   String label,
+                                                                   String valueText,
+                                                                   String unit,
+                                                                   String evidenceText,
+                                                                   String sourceSummary) {
+        return PatientLongitudinalConceptEntity.create(
+                tenantId,
+                patientId,
+                document.getId(),
+                document.getDocumentType().name(),
+                document.getTitle(),
+                document.getReportDate(),
+                family,
+                key,
+                label,
+                valueText,
+                unit,
+                evidenceText,
+                sourceSummary,
+                "PENDING_REVIEW",
+                new BigDecimal("0.91"),
+                document.getReportDate().atStartOfDay().atOffset(ZoneOffset.UTC)
+        );
     }
 }

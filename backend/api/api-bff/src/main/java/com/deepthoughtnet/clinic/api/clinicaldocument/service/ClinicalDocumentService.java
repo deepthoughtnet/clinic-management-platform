@@ -3,6 +3,7 @@ package com.deepthoughtnet.clinic.api.clinicaldocument.service;
 import com.deepthoughtnet.clinic.api.clinicaldocument.db.ClinicalDocumentEntity;
 import com.deepthoughtnet.clinic.api.clinicaldocument.db.ClinicalDocumentRepository;
 import com.deepthoughtnet.clinic.api.clinicaldocument.db.ClinicalDocumentType;
+import com.deepthoughtnet.clinic.api.clinicaldocument.dto.ClinicalDocumentAiOps;
 import com.deepthoughtnet.clinic.identity.db.AppUserRepository;
 import com.deepthoughtnet.clinic.platform.audit.AuditEntityType;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventCommand;
@@ -684,9 +685,31 @@ public class ClinicalDocumentService {
                 entity.getAiExtractionOverrideReason(),
                 entity.getAiExtractionReviewedByAppUserId(),
                 entity.getAiExtractionReviewedAt(),
+                toAiOps(entity),
                 entity.isActive(),
                 entity.getCreatedAt(),
                 entity.getUpdatedAt()
+        );
+    }
+
+    private ClinicalDocumentAiOps toAiOps(ClinicalDocumentEntity entity) {
+        if (entity == null) {
+            return null;
+        }
+        return new ClinicalDocumentAiOps(
+                entity.getLastAiRetryAt() == null ? null : entity.getLastAiRetryAt().toString(),
+                entity.getLastAiRetryStatus(),
+                entity.getLastAiRetryMessage(),
+                entity.getLastAiRetryJobId() == null ? null : entity.getLastAiRetryJobId().toString(),
+                entity.getLastMemoryRepairAt() == null ? null : entity.getLastMemoryRepairAt().toString(),
+                entity.getLastMemoryRepairStatus(),
+                entity.getLastMemoryRepairMessage(),
+                entity.getLastMemoryRepairBy() == null ? null : entity.getLastMemoryRepairBy().toString(),
+                entity.getLastMemoryRepairDeletedPendingConceptCount(),
+                entity.getLastMemoryRepairInsertedConceptCount(),
+                entity.getLastMemoryRepairSkippedAcceptedConceptCount(),
+                entity.getLastMemoryRepairFilteredPollutedConceptCount(),
+                entity.getLastMemoryRepairCorrectedValues()
         );
     }
 }

@@ -3,6 +3,7 @@ package com.deepthoughtnet.clinic.api.clinicaldocument;
 import com.deepthoughtnet.clinic.api.clinicaldocument.ai.service.ClinicalDocumentAiExtractionService;
 import com.deepthoughtnet.clinic.api.clinicaldocument.db.ClinicalDocumentType;
 import com.deepthoughtnet.clinic.api.clinicaldocument.dto.AiExtractionReviewRequest;
+import com.deepthoughtnet.clinic.api.clinicaldocument.ai.dto.ClinicalMemoryRepairResult;
 import com.deepthoughtnet.clinic.api.clinicaldocument.dto.ClinicalDocumentResponse;
 import com.deepthoughtnet.clinic.api.clinicaldocument.dto.DocumentDownloadUrlResponse;
 import com.deepthoughtnet.clinic.api.clinicaldocument.dto.PatientTimelineItemResponse;
@@ -10,6 +11,7 @@ import com.deepthoughtnet.clinic.api.clinicaldocument.service.ClinicalDocumentPa
 import com.deepthoughtnet.clinic.api.clinicaldocument.service.ClinicalDocumentRecord;
 import com.deepthoughtnet.clinic.api.clinicaldocument.service.ClinicalDocumentService;
 import com.deepthoughtnet.clinic.api.clinicaldocument.service.ClinicalDocumentUploadCommand;
+import com.deepthoughtnet.clinic.api.security.ClinicalDocumentAiAuthorizationService;
 import com.deepthoughtnet.clinic.api.security.DoctorAssignmentSecurityService;
 import com.deepthoughtnet.clinic.consultation.service.ConsultationService;
 import com.deepthoughtnet.clinic.patient.service.PatientService;
@@ -24,6 +26,8 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -49,6 +53,7 @@ import jakarta.validation.Valid;
 @Validated
 @RequestMapping("/api")
 public class ClinicalDocumentController {
+    private static final Logger log = LoggerFactory.getLogger(ClinicalDocumentController.class);
     private static final Duration DOWNLOAD_TTL = Duration.ofMinutes(10);
 
     private final ClinicalDocumentService documentService;
@@ -58,6 +63,7 @@ public class ClinicalDocumentController {
     private final PrescriptionService prescriptionService;
     private final VaccinationService vaccinationService;
     private final DoctorAssignmentSecurityService doctorAssignmentSecurityService;
+    private final ClinicalDocumentAiAuthorizationService clinicalDocumentAiAuthorizationService;
 
     public ClinicalDocumentController(
             ClinicalDocumentService documentService,
@@ -66,7 +72,8 @@ public class ClinicalDocumentController {
             ConsultationService consultationService,
             PrescriptionService prescriptionService,
             VaccinationService vaccinationService,
-            DoctorAssignmentSecurityService doctorAssignmentSecurityService
+            DoctorAssignmentSecurityService doctorAssignmentSecurityService,
+            ClinicalDocumentAiAuthorizationService clinicalDocumentAiAuthorizationService
     ) {
         this.documentService = documentService;
         this.aiExtractionService = aiExtractionService;
@@ -75,6 +82,7 @@ public class ClinicalDocumentController {
         this.prescriptionService = prescriptionService;
         this.vaccinationService = vaccinationService;
         this.doctorAssignmentSecurityService = doctorAssignmentSecurityService;
+        this.clinicalDocumentAiAuthorizationService = clinicalDocumentAiAuthorizationService;
     }
 
     @GetMapping("/patients/{patientId}/documents")
@@ -211,19 +219,28 @@ public class ClinicalDocumentController {
     }
 
     @PostMapping("/patient-documents/{documentId}/ai-extraction/reprocess")
-    @PreAuthorize("@permissionChecker.hasPermission('consultation.update') or @permissionChecker.hasPermission('consultation.complete')")
     public ClinicalDocumentResponse reprocessAiExtraction(@PathVariable UUID documentId) {
         return reprocessClinicalDocumentAi(documentId);
     }
 
     @PostMapping("/clinical-documents/{documentId}/ai/reprocess")
-    @PreAuthorize("@permissionChecker.hasPermission('consultation.update') or @permissionChecker.hasPermission('consultation.complete')")
     public ClinicalDocumentResponse reprocessClinicalDocumentAi(@PathVariable UUID documentId) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        log.info("[AI-REPROCESS-ENDPOINT-HIT] documentId={} tenantId={} actorAppUserId={}", documentId, tenantId, actorAppUserId);
+        clinicalDocumentAiAuthorizationService.requireReprocessAccess(tenantId, documentId);
         aiExtractionService.reprocessExtraction(tenantId, documentId, actorAppUserId);
         ClinicalDocumentRecord record = documentService.get(tenantId, documentId);
         return toResponse(record);
+    }
+
+    @PostMapping("/clinical-documents/{documentId}/clinical-memory/repair")
+    public ClinicalMemoryRepairResult repairClinicalMemory(@PathVariable UUID documentId) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        log.info("[AI-MEMORY-REPAIR-ENDPOINT-HIT] documentId={} tenantId={} actorAppUserId={}", documentId, tenantId, actorAppUserId);
+        clinicalDocumentAiAuthorizationService.requireRepairMemoryAccess(tenantId, documentId);
+        return aiExtractionService.repairClinicalMemory(tenantId, documentId, actorAppUserId);
     }
 
     @GetMapping("/patient-documents/{documentId}")
@@ -589,6 +606,7 @@ public class ClinicalDocumentController {
                 record.aiExtractionOverrideReason(),
                 record.aiExtractionReviewedByAppUserId() == null ? null : record.aiExtractionReviewedByAppUserId().toString(),
                 record.aiExtractionReviewedAt() == null ? null : record.aiExtractionReviewedAt().toString(),
+                record.aiOps(),
                 record.active(),
                 record.createdAt().toString(),
                 record.updatedAt().toString()

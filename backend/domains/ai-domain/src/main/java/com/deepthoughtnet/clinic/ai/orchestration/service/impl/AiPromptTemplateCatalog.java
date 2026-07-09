@@ -120,12 +120,66 @@ public class AiPromptTemplateCatalog {
                     List.of("Verify the timeline against EHR records", "Prioritize allergy and chronic-condition interactions"),
                     List.of("This is an AI-generated draft. Doctor must verify before use.")),
             entry("clinic.clinical.document-extraction.v1", AiProductCode.CLINIC, AiTaskType.CLINICAL_DOCUMENT_EXTRACTION,
-                    "Extract structured clinical findings from the supplied OCR text and document context. Return JSON with keys such as documentType, summary, diagnosesMentioned, medicines, allergies, chronicConditions, labValues, abnormalFindings, referralDoctor, referralHospital, followUpSuggestions, confidenceNotes, and reviewFlags. Do not diagnose; only extract and summarize what the source shows.",
+                    """
+                    Extract structured clinical findings from the supplied OCR text and document context.
+                    Return ONLY strict JSON. No markdown. No prose outside JSON.
+                    Keep factual findings separate from summary or recommendations.
+                    Do not return an answer wrapper.
+                    Do not return a classification wrapper.
+                    Use exactly this shape:
+                    {
+                      "documentType": "EXTERNAL_LAB_REPORT",
+                      "reportDate": "2026-01-08",
+                      "factualFindings": {
+                        "labResults": [
+                          {
+                            "testName": "HbA1c",
+                            "canonicalKey": "hba1c",
+                            "value": "8.4",
+                            "unit": "%",
+                            "referenceRange": "< 5.7 normal; > 6.5 diabetic",
+                            "flag": "HIGH",
+                            "evidenceText": "HbA1c 8.4 % < 5.7 normal; > 6.5 diabetic High"
+                          }
+                        ],
+                        "conditions": [
+                          {
+                            "canonicalKey": "diabetes_mellitus",
+                            "label": "Diabetes Mellitus",
+                            "evidenceText": "Known diabetic"
+                          }
+                        ],
+                        "riskFlags": [
+                          {
+                            "canonicalKey": "lipid_risk",
+                            "label": "Dyslipidemia",
+                            "evidenceText": "Total Cholesterol 228 mg/dL < 200 High"
+                          }
+                        ]
+                      },
+                      "summary": "Brief factual summary only.",
+                      "recommendations": [],
+                      "limitations": [],
+                      "confidence": "HIGH"
+                    }
+                    Map only direct factual findings from the source.
+                    If the document contains lab values, populate factualFindings.labResults directly at the top level.
+                    Do not nest lab values under answer.classification or any other wrapper.
+                    Do not put recommendations, suggested actions, follow-up advice, or narrative plan text inside factualFindings.
+                    For every lab result, ensure evidenceText contains the same test label and value.
+                    Do not diagnose; only extract and summarize what the source shows.
+                    """,
                     List.of("Verify extracted facts against the source document", "Review any low-confidence or ambiguous fields before saving", "Keep the extracted data advisory until a clinician reviews it", "Highlight possible abnormal findings without claiming a diagnosis"),
                     List.of("Extraction output is advisory until reviewed", "OCR and provider limits may affect accuracy", "Do not auto-save critical clinical fields without clinician review")),
             entry("clinic.clinical.summary.v1", AiProductCode.CLINIC, AiTaskType.CLINICAL_SUMMARY,
                     "Summarize prior visits and chronic context in clinician-friendly language. Use the supplied clinical context summary and JSON as the primary source of truth. Focus on previous visit summary, chronic history summary, recent consultation summary, medicine history, and uploaded report themes.",
                     List.of("Confirm the summary against the chart", "Use the summary as a review aid only", "Mention recurring conditions and follow-up gaps"),
+                    List.of("This is an AI-generated draft. Doctor must verify before use.")),
+            entry("clinic.clinical.reasoning.v1", AiProductCode.CLINIC, AiTaskType.CLINICAL_REASONING,
+                    SYSTEM_PROMPT,
+                    "{{input.reasoningPrompt}}",
+                    "Brief clinician-friendly reasoning draft.",
+                    List.of("Check for emergency red flags before suggesting urgent diagnoses", "Use longitudinal memory and reports as evidence", "Always mention uncertainty and missing information"),
                     List.of("This is an AI-generated draft. Doctor must verify before use.")),
             entry("clinic.consultation.structure-notes.v1", AiProductCode.CLINIC, AiTaskType.CONSULTATION_NOTE_STRUCTURING,
                     "Structure consultation notes into standardized medical sections using the supplied clinical context summary and JSON as the primary source of truth.",
@@ -243,6 +297,7 @@ public class AiPromptTemplateCatalog {
             case PATIENT_HISTORY_SUMMARY -> defaults.get("clinic.patient.summary.v1");
             case CLINICAL_DOCUMENT_EXTRACTION -> defaults.get("clinic.clinical.document-extraction.v1");
             case CLINICAL_SUMMARY -> defaults.get("clinic.clinical.summary.v1");
+            case CLINICAL_REASONING -> defaults.get("clinic.clinical.reasoning.v1");
             case CONSULTATION_NOTE_STRUCTURING -> defaults.get("clinic.consultation.structure-notes.v1");
             case CONSULTATION_COPILOT -> defaults.get("clinic.consultation.copilot.v1");
             case SYMPTOMS_DIAGNOSIS_DRAFT -> defaults.get("clinic.consultation.suggest-diagnosis.v1");

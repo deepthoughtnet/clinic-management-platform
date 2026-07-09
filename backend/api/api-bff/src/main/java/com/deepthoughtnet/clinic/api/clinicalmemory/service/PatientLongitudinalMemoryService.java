@@ -1,6 +1,9 @@
 package com.deepthoughtnet.clinic.api.clinicalmemory.service;
 
 import com.deepthoughtnet.clinic.api.clinicaldocument.db.ClinicalDocumentEntity;
+import com.deepthoughtnet.clinic.api.clinicaldocument.dto.ClinicalMemoryRepairCorrectedValue;
+import com.deepthoughtnet.clinic.api.clinicaldocument.ai.dto.ClinicalMemoryRepairResult;
+import com.deepthoughtnet.clinic.api.clinicaldocument.ai.service.DeterministicLabFactParser;
 import com.deepthoughtnet.clinic.api.clinicalmemory.db.PatientLongitudinalConceptEntity;
 import com.deepthoughtnet.clinic.api.clinicalmemory.db.PatientLongitudinalConceptRepository;
 import com.deepthoughtnet.clinic.api.clinicalmemory.mapping.ClinicalConceptMapper;
@@ -25,6 +28,7 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.annotation.Propagation;
@@ -36,16 +40,38 @@ public class PatientLongitudinalMemoryService {
     private static final String PENDING_REVIEW = "PENDING_REVIEW";
     private static final String ACCEPTED = "ACCEPTED";
     private static final String REJECTED = "REJECTED";
+    private static final java.util.Set<String> ALLOWED_CONCEPT_FAMILIES = java.util.Set.of(
+            "CONDITION",
+            "LAB_RESULT",
+            "MEDICATION",
+            "ALLERGY",
+            "VITAL",
+            "RISK_FLAG",
+            "PROCEDURE",
+            "VACCINATION",
+            "FAMILY_HISTORY",
+            "SOCIAL_HISTORY"
+    );
 
     private final PatientLongitudinalConceptRepository repository;
     private final ClinicalConceptMapper mapper;
+    private final DeterministicLabFactParser deterministicLabFactParser;
     private final ObjectMapper objectMapper;
 
     public PatientLongitudinalMemoryService(PatientLongitudinalConceptRepository repository,
                                             ClinicalConceptMapper mapper,
                                             ObjectMapper objectMapper) {
+        this(repository, mapper, new DeterministicLabFactParser(), objectMapper);
+    }
+
+    @Autowired
+    public PatientLongitudinalMemoryService(PatientLongitudinalConceptRepository repository,
+                                            ClinicalConceptMapper mapper,
+                                            DeterministicLabFactParser deterministicLabFactParser,
+                                            ObjectMapper objectMapper) {
         this.repository = repository;
         this.mapper = mapper;
+        this.deterministicLabFactParser = deterministicLabFactParser;
         this.objectMapper = objectMapper;
     }
 
@@ -54,13 +80,124 @@ public class PatientLongitudinalMemoryService {
         if (document == null || document.getTenantId() == null || document.getPatientId() == null) {
             return;
         }
+        persistConcepts(document, structuredJson, ocrText, confidence, sourceSummary, null, "persist-before-save");
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public ClinicalMemoryRepairResult repairPendingConcepts(ClinicalDocumentEntity document, String structuredJson, String sourceText, BigDecimal confidence, String sourceSummary, UUID repairedByAppUserId) {
+        if (document == null || document.getTenantId() == null || document.getPatientId() == null) {
+            return new ClinicalMemoryRepairResult(null, "FAILED", OffsetDateTime.now(), repairedByAppUserId, 0, 0, 0, List.of(), 0, "Missing tenant or patient context");
+        }
+        return persistConcepts(document, structuredJson, sourceText, confidence, sourceSummary, repairedByAppUserId, "repair-before-save");
+    }
+
+    private ClinicalMemoryRepairResult persistConcepts(ClinicalDocumentEntity document,
+                                                       String structuredJson,
+                                                       String sourceText,
+                                                       BigDecimal confidence,
+                                                       String sourceSummary,
+                                                       UUID repairedByAppUserId,
+                                                       String traceLabel) {
         Map<String, Object> extracted = parseStructuredJson(structuredJson);
-        List<MappedConcept> concepts = mapper.map(document, extracted, ocrText, confidence);
-        tracePersistenceFieldLengths("persist-before-save", document, sourceSummary, concepts);
-        tracePersistBatch("persist-before-save", document, PENDING_REVIEW, concepts);
-        repository.deleteByDocumentAndStatus(document.getTenantId(), document.getPatientId(), document.getId(), PENDING_REVIEW);
-        repository.saveAllAndFlush(concepts.stream().map(concept -> toEntity(document, concept, PENDING_REVIEW, null, null, null, sourceSummary)).toList());
+        extracted = ensureFactualLabResults(document, extracted, sourceText);
+        if (repairedByAppUserId != null && !hasFactualLabResults(extracted)) {
+            return new ClinicalMemoryRepairResult(
+                    document.getId(),
+                    "FAILED",
+                    OffsetDateTime.now(),
+                    repairedByAppUserId,
+                    0,
+                    0,
+                    0,
+                    List.of(),
+                    0,
+                    "No factual lab rows available for memory repair."
+            );
+        }
+        String repairSourceText = buildRepairSourceText(extracted, sourceText);
+        List<MappedConcept> mappedConcepts = mapper.map(document, extracted, repairSourceText, confidence);
+        List<MappedConcept> persistableConcepts = new ArrayList<>();
+        int filteredPollutedCount = 0;
+        for (MappedConcept concept : mappedConcepts) {
+            if (isPersistableMappedConcept(concept)) {
+                persistableConcepts.add(concept);
+            } else {
+                filteredPollutedCount++;
+            }
+        }
+        if (repairedByAppUserId != null && persistableConcepts.stream().noneMatch(concept -> "LAB_RESULT".equalsIgnoreCase(concept.family()))) {
+            return new ClinicalMemoryRepairResult(
+                    document.getId(),
+                    "FAILED",
+                    OffsetDateTime.now(),
+                    repairedByAppUserId,
+                    0,
+                    0,
+                    0,
+                    List.of(),
+                    filteredPollutedCount,
+                    "No factual lab rows available for memory repair."
+            );
+        }
+        tracePersistenceFieldLengths(traceLabel, document, sourceSummary, persistableConcepts);
+        tracePersistBatch(traceLabel, document, PENDING_REVIEW, persistableConcepts);
+
+        List<PatientLongitudinalConceptEntity> existingConcepts = repository
+                .findByTenantIdAndPatientIdAndSourceDocumentIdOrderByCreatedAtAsc(document.getTenantId(), document.getPatientId(), document.getId());
+        Map<String, PatientLongitudinalConceptEntity> pendingByKey = new LinkedHashMap<>();
+        Map<String, PatientLongitudinalConceptEntity> acceptedByKey = new LinkedHashMap<>();
+        for (PatientLongitudinalConceptEntity concept : existingConcepts) {
+            String key = conceptKey(concept.getConceptFamily(), concept.getConceptKey(), concept.getObservedAt() == null ? null : concept.getObservedAt().toLocalDate(), concept.getSourceDocumentId());
+            if (PENDING_REVIEW.equals(concept.getVerificationStatus())) {
+                pendingByKey.putIfAbsent(key, concept);
+            } else if (ACCEPTED.equals(concept.getVerificationStatus())) {
+                acceptedByKey.putIfAbsent(key, concept);
+            }
+        }
+
+        int deletedPendingCount = repository.deleteByDocumentAndStatus(document.getTenantId(), document.getPatientId(), document.getId(), PENDING_REVIEW);
+        int skippedAcceptedCount = 0;
+        List<ClinicalMemoryRepairCorrectedValue> correctedValues = new ArrayList<>();
+        List<PatientLongitudinalConceptEntity> toSave = new ArrayList<>();
+        for (MappedConcept concept : persistableConcepts) {
+            String key = conceptKey(concept.family(), concept.key(), concept.observedOn(), concept.sourceDocumentId());
+            if (acceptedByKey.containsKey(key)) {
+                skippedAcceptedCount++;
+                continue;
+            }
+            PatientLongitudinalConceptEntity previous = pendingByKey.get(key);
+            if (previous != null && !java.util.Objects.equals(previous.getValueText(), concept.valueText())) {
+                correctedValues.add(new ClinicalMemoryRepairCorrectedValue(concept.key(), previous.getValueText(), concept.valueText(), concept.valueUnit()));
+            }
+            toSave.add(toEntity(document, concept, PENDING_REVIEW, repairedByAppUserId, null, null, sourceSummary));
+        }
+        log.info("[AI-DOC-PIPELINE-TRACE] tenantId={} patientId={} documentId={} deletePendingCount={} insertCount={} hba1cCandidate={} bloodSugarCandidate={} pollutedRejectedCount={}",
+                document.getTenantId(),
+                document.getPatientId(),
+                document.getId(),
+                deletedPendingCount,
+                toSave.size(),
+                summarizeMappedConcept(persistableConcepts, "hba1c"),
+                summarizeMappedConcept(persistableConcepts, "blood_sugar"),
+                filteredPollutedCount);
+        if (!toSave.isEmpty()) {
+            repository.saveAllAndFlush(toSave);
+        }
         tracePersistedState(document);
+
+        String message = buildRepairMessage(toSave.size(), filteredPollutedCount, correctedValues);
+        return new ClinicalMemoryRepairResult(
+                document.getId(),
+                "SUCCESS",
+                OffsetDateTime.now(),
+                repairedByAppUserId,
+                deletedPendingCount,
+                toSave.size(),
+                skippedAcceptedCount,
+                correctedValues,
+                filteredPollutedCount,
+                message
+        );
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -98,11 +235,14 @@ public class PatientLongitudinalMemoryService {
         List<PatientLongitudinalConceptEntity> rawConcepts = repository.findByTenantIdAndPatientIdOrderByObservedAtDescCreatedAtDesc(tenantId, patientId);
         List<PatientLongitudinalConceptEntity> visibleConcepts = rawConcepts.stream()
                 .filter(concept -> !REJECTED.equals(concept.getVerificationStatus()))
+                .filter(this::isClinicalFactConcept)
+                .filter(this::isSelectableConcept)
                 .toList();
-        Map<String, List<PatientLongitudinalConceptEntity>> grouped = visibleConcepts.stream()
+        List<PatientLongitudinalConceptEntity> dedupedConcepts = dedupeVisibleConcepts(visibleConcepts);
+        Map<String, List<PatientLongitudinalConceptEntity>> grouped = dedupedConcepts.stream()
                 .collect(Collectors.groupingBy(PatientLongitudinalConceptEntity::getConceptKey, LinkedHashMap::new, Collectors.toList()));
 
-        List<LongitudinalConceptSnapshot> history = visibleConcepts.stream().map(this::toSnapshot).toList();
+        List<LongitudinalConceptSnapshot> history = dedupedConcepts.stream().map(this::toSnapshot).toList();
         List<LongitudinalConceptSnapshot> conditions = latestByFamily(grouped, "CONDITION");
         List<LongitudinalConceptSnapshot> medications = latestByFamily(grouped, "MEDICATION");
         LongitudinalConceptSnapshot hbA1c = latestByKey(grouped, "hba1c");
@@ -113,7 +253,7 @@ public class PatientLongitudinalMemoryService {
         List<LongitudinalConceptSnapshot> riskFlags = latestByFamily(grouped, "RISK_FLAG");
         String labSummary = buildLabSummary(hbA1c, bloodSugar, lipids);
 
-        traceProfileSelection(tenantId, patientId, rawConcepts, visibleConcepts, conditions, hbA1c, bloodSugar, lipids, riskFlags);
+        traceProfileSelection(tenantId, patientId, rawConcepts, visibleConcepts, dedupedConcepts, conditions, hbA1c, bloodSugar, lipids, riskFlags);
 
         return new PatientLongitudinalMemoryProfile(
                 conditions,
@@ -131,8 +271,11 @@ public class PatientLongitudinalMemoryService {
 
     @Transactional(readOnly = true)
     public List<ClinicalContextResponse.TimelineEvent> buildTimelineEvents(UUID tenantId, UUID patientId, int limit) {
-        return repository.findByTenantIdAndPatientIdOrderByObservedAtDescCreatedAtDesc(tenantId, patientId).stream()
-                .filter(concept -> ACCEPTED.equals(concept.getVerificationStatus()) || PENDING_REVIEW.equals(concept.getVerificationStatus()))
+        List<PatientLongitudinalConceptEntity> concepts = dedupeVisibleConcepts(repository.findByTenantIdAndPatientIdOrderByObservedAtDescCreatedAtDesc(tenantId, patientId).stream()
+                .filter(concept -> (ACCEPTED.equals(concept.getVerificationStatus()) || PENDING_REVIEW.equals(concept.getVerificationStatus()))
+                        && isClinicalFactConcept(concept))
+                .toList());
+        return concepts.stream()
                 .sorted(Comparator.comparing(PatientLongitudinalConceptEntity::getObservedAt, Comparator.nullsLast(Comparator.naturalOrder())).reversed())
                 .limit(Math.max(0, limit))
                 .map(this::toTimelineEvent)
@@ -253,6 +396,16 @@ public class PatientLongitudinalMemoryService {
         if (right == null) {
             return left;
         }
+        int leftRank = verificationRank(left.getVerificationStatus());
+        int rightRank = verificationRank(right.getVerificationStatus());
+        if (leftRank != rightRank) {
+            return rightRank > leftRank ? right : left;
+        }
+        int leftReliability = reliabilityRank(left);
+        int rightReliability = reliabilityRank(right);
+        if (leftReliability != rightReliability) {
+            return rightReliability > leftReliability ? right : left;
+        }
         OffsetDateTime leftObserved = left.getObservedAt();
         OffsetDateTime rightObserved = right.getObservedAt();
         if (leftObserved == null && rightObserved != null) {
@@ -264,10 +417,9 @@ public class PatientLongitudinalMemoryService {
         if (leftObserved != null && rightObserved != null && !leftObserved.isEqual(rightObserved)) {
             return rightObserved.isAfter(leftObserved) ? right : left;
         }
-        int leftRank = verificationRank(left.getVerificationStatus());
-        int rightRank = verificationRank(right.getVerificationStatus());
-        if (leftRank != rightRank) {
-            return rightRank > leftRank ? right : left;
+        int confidenceRank = compareConfidence(left.getConfidence(), right.getConfidence());
+        if (confidenceRank != 0) {
+            return confidenceRank > 0 ? left : right;
         }
         if (isQualitativeLipidValue(right) && !isQualitativeLipidValue(left)) {
             return right;
@@ -284,6 +436,19 @@ public class PatientLongitudinalMemoryService {
             return left;
         }
         return rightCreated.isAfter(leftCreated) ? right : left;
+    }
+
+    private int compareConfidence(BigDecimal left, BigDecimal right) {
+        if (left == null && right == null) {
+            return 0;
+        }
+        if (left == null) {
+            return -1;
+        }
+        if (right == null) {
+            return 1;
+        }
+        return left.compareTo(right);
     }
 
     private int verificationRank(String status) {
@@ -304,6 +469,88 @@ public class PatientLongitudinalMemoryService {
             return false;
         }
         return !concept.getValueText().trim().matches("-?\\d+(?:\\.\\d+)?");
+    }
+
+    private List<PatientLongitudinalConceptEntity> dedupeVisibleConcepts(List<PatientLongitudinalConceptEntity> concepts) {
+        LinkedHashMap<String, PatientLongitudinalConceptEntity> deduped = new LinkedHashMap<>();
+        for (PatientLongitudinalConceptEntity concept : concepts) {
+            String key = dedupeKey(concept);
+            deduped.merge(key, concept, this::choosePreferredConcept);
+        }
+        return new ArrayList<>(deduped.values());
+    }
+
+    private String dedupeKey(PatientLongitudinalConceptEntity concept) {
+        return String.join("|",
+                String.valueOf(concept.getTenantId()),
+                String.valueOf(concept.getPatientId()),
+                String.valueOf(concept.getConceptFamily()),
+                String.valueOf(concept.getConceptKey()),
+                concept.getObservedAt() == null ? "" : concept.getObservedAt().toLocalDate().toString(),
+                String.valueOf(concept.getSourceDocumentId()));
+    }
+
+    private boolean isClinicalFactConcept(PatientLongitudinalConceptEntity concept) {
+        if (concept == null || !hasText(concept.getConceptFamily())) {
+            return false;
+        }
+        if (!ALLOWED_CONCEPT_FAMILIES.contains(concept.getConceptFamily().toUpperCase(java.util.Locale.ROOT))) {
+            return false;
+        }
+        if ("CONDITION".equalsIgnoreCase(concept.getConceptFamily())) {
+            return isConditionLabel(concept.getConceptLabel(), concept.getValueText());
+        }
+        return true;
+    }
+
+    private boolean isSelectableConcept(PatientLongitudinalConceptEntity concept) {
+        if (concept == null) {
+            return false;
+        }
+        if (ACCEPTED.equals(concept.getVerificationStatus())) {
+            return true;
+        }
+        if ("LAB_RESULT".equalsIgnoreCase(concept.getConceptFamily())) {
+            return isReliableLabEntity(concept);
+        }
+        if ("RISK_FLAG".equalsIgnoreCase(concept.getConceptFamily())) {
+            return !isNarrativeEvidence(concept.getEvidenceText());
+        }
+        return true;
+    }
+
+    private boolean isConditionLabel(String label, String valueText) {
+        String text = firstHasText(label, valueText);
+        if (!hasText(text)) {
+            return false;
+        }
+        String normalized = text.trim().toLowerCase(java.util.Locale.ROOT);
+        if (normalized.length() > 80) {
+            return false;
+        }
+        if (normalized.matches(".*\\b(review|consider|discuss|recommend|adjust|monitor|follow\\s*up|follow-up|start|stop|continue|take|please|advice|suggest)\\b.*")) {
+            return false;
+        }
+        if (normalized.contains(".") || normalized.contains("!") || normalized.contains("?") || normalized.contains(":")) {
+            return false;
+        }
+        return normalized.matches(".*\\b(diabetes|hypertension|asthma|copd|kidney disease|ckd|thyroid|hypothyroidism|hyperthyroidism|known diabetic|dm)\\b.*");
+    }
+
+    private String firstHasText(String... values) {
+        if (values == null) {
+            return null;
+        }
+        for (String value : values) {
+            if (hasText(value)) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.trim().isEmpty();
     }
 
     private String buildLabSummary(LongitudinalConceptSnapshot hbA1c,
@@ -401,6 +648,13 @@ public class PatientLongitudinalMemoryService {
                 document.getConsultationId(),
                 document.getId(),
                 persisted.size());
+        log.info("[AI-DOC-PIPELINE-TRACE] tenantId={} patientId={} documentId={} persistedConceptCount={} persistedHba1c={} persistedBloodSugar={}",
+                document.getTenantId(),
+                document.getPatientId(),
+                document.getId(),
+                persisted.size(),
+                summarizePersistedConcept(persisted, "hba1c"),
+                summarizePersistedConcept(persisted, "blood_sugar"));
         for (PatientLongitudinalConceptEntity concept : persisted) {
             log.info(
                     "[JEEV-LONG-MEM-TRACE] persist-after-save tenantId={} patientId={} consultationId={} documentId={} conceptType={} conceptCode={} conceptName={} value={} unit={} observedDate={} verificationStatus={} sourceDocumentId={}",
@@ -424,6 +678,7 @@ public class PatientLongitudinalMemoryService {
                                        UUID patientId,
                                        List<PatientLongitudinalConceptEntity> rawConcepts,
                                        List<PatientLongitudinalConceptEntity> visibleConcepts,
+                                       List<PatientLongitudinalConceptEntity> dedupedConcepts,
                                        List<LongitudinalConceptSnapshot> conditions,
                                        LongitudinalConceptSnapshot hbA1c,
                                        LongitudinalConceptSnapshot bloodSugar,
@@ -432,11 +687,14 @@ public class PatientLongitudinalMemoryService {
         if (!log.isInfoEnabled()) {
             return;
         }
-        log.info("[JEEV-LONG-MEM-TRACE] profile-build tenantId={} patientId={} conceptCount={} visibleConceptCount={} conditionGroupCount={} labGroupCount={} riskFlagCount={}",
+        int filteredRecommendationCount = Math.max(0, (rawConcepts == null ? 0 : rawConcepts.size()) - (visibleConcepts == null ? 0 : visibleConcepts.size()));
+        log.info("[JEEV-LONG-MEM-TRACE] profile-build tenantId={} patientId={} conceptCount={} visibleConceptCount={} dedupedConceptCount={} filteredRecommendationCount={} conditionGroupCount={} labGroupCount={} riskFlagCount={}",
                 tenantId,
                 patientId,
                 rawConcepts == null ? 0 : rawConcepts.size(),
                 visibleConcepts == null ? 0 : visibleConcepts.size(),
+                dedupedConcepts == null ? 0 : dedupedConcepts.size(),
+                filteredRecommendationCount,
                 conditions == null ? 0 : conditions.size(),
                 lipids == null ? 0 : lipids.size(),
                 riskFlags == null ? 0 : riskFlags.size());
@@ -465,6 +723,211 @@ public class PatientLongitudinalMemoryService {
 
     private int lengthOf(String value) {
         return value == null ? 0 : value.length();
+    }
+
+    private String buildRepairSourceText(Map<String, Object> extracted, String fallbackText) {
+        List<String> evidenceLines = new ArrayList<>();
+        Object factualFindings = extracted == null ? null : extracted.get("factualFindings");
+        collectRepairEvidenceText(factualFindings, evidenceLines, null);
+        if (evidenceLines.isEmpty() && StringUtils.hasText(fallbackText)) {
+            evidenceLines.add(fallbackText);
+        }
+        return String.join("\n", new LinkedHashSet<>(evidenceLines));
+    }
+
+    private void collectRepairEvidenceText(Object value, List<String> target, String key) {
+        if (value == null || target == null) {
+            return;
+        }
+        if (value instanceof Map<?, ?> map) {
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                String childKey = entry.getKey() == null ? null : entry.getKey().toString();
+                if (isEvidenceKey(childKey)) {
+                    collectRepairEvidenceText(entry.getValue(), target, childKey);
+                } else if (entry.getValue() instanceof Map<?, ?> || entry.getValue() instanceof Iterable<?>) {
+                    collectRepairEvidenceText(entry.getValue(), target, childKey);
+                }
+            }
+            return;
+        }
+        if (value instanceof Iterable<?> iterable) {
+            for (Object item : iterable) {
+                collectRepairEvidenceText(item, target, key);
+            }
+            return;
+        }
+        String text = value.toString().trim();
+        if (text.isBlank()) {
+            return;
+        }
+        if (hasText(key) && isEvidenceKey(key)) {
+            target.add(text);
+            return;
+        }
+        if (hasText(text) && text.length() > 8 && text.length() < 400) {
+            target.add(text);
+        }
+    }
+
+    private boolean isEvidenceKey(String key) {
+        if (!hasText(key)) {
+            return false;
+        }
+        String normalized = key.replaceAll("[^a-zA-Z0-9]", "").toLowerCase(java.util.Locale.ROOT);
+        return normalized.contains("evidence")
+                || normalized.contains("sourcetext")
+                || normalized.contains("ocrtext")
+                || normalized.contains("rawtext")
+                || normalized.contains("finding")
+                || normalized.contains("abnormalfinding");
+    }
+
+    private boolean isPersistableMappedConcept(MappedConcept concept) {
+        if (concept == null || !hasText(concept.family()) || !hasText(concept.key())) {
+            return false;
+        }
+        if (!ALLOWED_CONCEPT_FAMILIES.contains(concept.family().toUpperCase(java.util.Locale.ROOT))) {
+            return false;
+        }
+        if ("CONDITION".equalsIgnoreCase(concept.family())) {
+            return isConditionLabel(concept.label(), concept.valueText());
+        }
+        if ("LAB_RESULT".equalsIgnoreCase(concept.family()) && !isValidLabConcept(concept)) {
+            return false;
+        }
+        return true;
+    }
+
+    private boolean hasFactualLabResults(Map<String, Object> extracted) {
+        if (extracted == null) {
+            return false;
+        }
+        Object factualFindings = extracted.get("factualFindings");
+        if (!(factualFindings instanceof Map<?, ?> factualMap)) {
+            return false;
+        }
+        Object labResults = factualMap.get("labResults");
+        if (!(labResults instanceof Iterable<?> iterable)) {
+            return false;
+        }
+        for (Object ignored : iterable) {
+            return true;
+        }
+        return false;
+    }
+
+    private boolean isValidLabConcept(MappedConcept concept) {
+        BigDecimal numeric = parseNumericValue(concept.valueText());
+        String key = concept.key() == null ? "" : concept.key().toLowerCase(java.util.Locale.ROOT);
+        String evidence = concept.evidenceText() == null ? "" : concept.evidenceText().toLowerCase(java.util.Locale.ROOT);
+        if ("hba1c".equals(key)) {
+            if (evidence.contains("hemoglobin") && !evidence.contains("hba1c") && !evidence.contains("a1c") && !evidence.contains("glycated hemoglobin")) {
+                return false;
+            }
+            return numeric == null || (numeric.compareTo(new BigDecimal("2")) >= 0 && numeric.compareTo(new BigDecimal("20")) <= 0);
+        }
+        if ("blood_sugar".equals(key)) {
+            return numeric == null || (numeric.compareTo(new BigDecimal("20")) >= 0 && numeric.compareTo(new BigDecimal("1000")) <= 0);
+        }
+        if ("cholesterol".equals(key) || "ldl".equals(key) || "hdl".equals(key) || "triglycerides".equals(key)) {
+            return numeric == null || (numeric.compareTo(BigDecimal.ZERO) >= 0 && numeric.compareTo(new BigDecimal("1000")) <= 0);
+        }
+        return true;
+    }
+
+    private boolean isReliableLabEntity(PatientLongitudinalConceptEntity concept) {
+        if (concept == null) {
+            return false;
+        }
+        BigDecimal numeric = parseNumericValue(concept.getValueText());
+        String key = concept.getConceptKey() == null ? "" : concept.getConceptKey().toLowerCase(java.util.Locale.ROOT);
+        String evidence = concept.getEvidenceText() == null ? "" : concept.getEvidenceText().toLowerCase(java.util.Locale.ROOT);
+        if (isNarrativeEvidence(evidence)) {
+            return false;
+        }
+        if ("hba1c".equals(key)) {
+            if (evidence.contains("hemoglobin") && !evidence.contains("hba1c") && !evidence.contains("a1c") && !evidence.contains("glycated hemoglobin")) {
+                return false;
+            }
+            return numeric != null && numeric.compareTo(new BigDecimal("2")) >= 0 && numeric.compareTo(new BigDecimal("20")) <= 0;
+        }
+        if ("blood_sugar".equals(key)) {
+            return numeric != null && numeric.compareTo(new BigDecimal("20")) >= 0 && numeric.compareTo(new BigDecimal("1000")) <= 0
+                    && (evidence.contains("blood sugar") || evidence.contains("glucose") || evidence.contains("rbs"));
+        }
+        if (java.util.Set.of("cholesterol", "ldl", "hdl", "triglycerides", "estimated_average_glucose", "hemoglobin").contains(key)) {
+            return numeric != null && numeric.compareTo(BigDecimal.ZERO) >= 0 && numeric.compareTo(new BigDecimal("2000")) <= 0;
+        }
+        return true;
+    }
+
+    private boolean isNarrativeEvidence(String evidence) {
+        if (!hasText(evidence)) {
+            return false;
+        }
+        String normalized = evidence.trim().toLowerCase(java.util.Locale.ROOT);
+        return normalized.startsWith("review")
+                || normalized.startsWith("discuss")
+                || normalized.startsWith("recommend")
+                || normalized.startsWith("consider")
+                || normalized.startsWith("possible abnormal finding detected");
+    }
+
+    private int reliabilityRank(PatientLongitudinalConceptEntity concept) {
+        if (concept == null) {
+            return 0;
+        }
+        if ("LAB_RESULT".equalsIgnoreCase(concept.getConceptFamily())) {
+            return isReliableLabEntity(concept) ? 2 : 0;
+        }
+        if ("RISK_FLAG".equalsIgnoreCase(concept.getConceptFamily())) {
+            return isNarrativeEvidence(concept.getEvidenceText()) ? 0 : 1;
+        }
+        return 1;
+    }
+
+    private String conceptKey(String family, String key, LocalDate observedOn, UUID sourceDocumentId) {
+        return String.join("|",
+                String.valueOf(family),
+                String.valueOf(key),
+                observedOn == null ? "" : observedOn.toString(),
+                String.valueOf(sourceDocumentId));
+    }
+
+    private String buildRepairMessage(int insertedConceptCount, int filteredPollutedCount, List<ClinicalMemoryRepairCorrectedValue> correctedValues) {
+        List<String> parts = new ArrayList<>();
+        parts.add("Memory repaired");
+        parts.add(insertedConceptCount + " concepts inserted");
+        if (filteredPollutedCount > 0) {
+            parts.add(filteredPollutedCount + " polluted concepts filtered");
+        }
+        if (correctedValues != null && !correctedValues.isEmpty()) {
+            ClinicalMemoryRepairCorrectedValue corrected = correctedValues.getFirst();
+            parts.add("%s corrected %s -> %s".formatted(corrected.conceptKey(), corrected.oldValue(), corrected.newValue()));
+        }
+        return String.join(", ", parts);
+    }
+
+    private String summarizeMappedConcept(List<MappedConcept> concepts, String key) {
+        if (concepts == null || key == null) {
+            return null;
+        }
+        return concepts.stream()
+                .filter(concept -> key.equalsIgnoreCase(concept.key()))
+                .findFirst()
+                .map(concept -> "%s|%s|%s".formatted(concept.key(), concept.valueText(), concept.valueUnit()))
+                .orElse(null);
+    }
+
+    private String summarizePersistedConcept(List<PatientLongitudinalConceptEntity> concepts, String key) {
+        if (concepts == null || key == null) {
+            return null;
+        }
+        return concepts.stream()
+                .filter(concept -> key.equalsIgnoreCase(concept.getConceptKey()))
+                .findFirst()
+                .map(concept -> "%s|%s|%s".formatted(concept.getConceptKey(), concept.getValueText(), concept.getValueUnit()))
+                .orElse(null);
     }
 
     private PatientLongitudinalConceptEntity toEntity(ClinicalDocumentEntity document,
@@ -507,6 +970,51 @@ public class PatientLongitudinalMemoryService {
             return parsed == null ? Map.of() : parsed;
         } catch (JsonProcessingException ex) {
             return Map.of("raw", structuredJson);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> ensureFactualLabResults(ClinicalDocumentEntity document, Map<String, Object> extracted, String sourceText) {
+        Map<String, Object> normalized = extracted == null ? new LinkedHashMap<>() : new LinkedHashMap<>(extracted);
+        if (hasFactualLabResults(normalized) || !StringUtils.hasText(sourceText)) {
+            return normalized;
+        }
+        List<Map<String, Object>> parsedFacts = deterministicLabFactParser.parse(document.getId(), sourceText, null);
+        if (parsedFacts.isEmpty()) {
+            return normalized;
+        }
+        Map<String, Object> factualFindings;
+        Object existing = normalized.get("factualFindings");
+        if (existing instanceof Map<?, ?> map) {
+            factualFindings = new LinkedHashMap<>((Map<String, Object>) map);
+        } else {
+            factualFindings = new LinkedHashMap<>();
+        }
+        factualFindings.put("labResults", parsedFacts);
+        Object existingConditions = factualFindings.get("conditions");
+        if (!(existingConditions instanceof List<?>) && sourceText.toLowerCase(java.util.Locale.ROOT).contains("diabet")) {
+            factualFindings.put("conditions", List.of(Map.of(
+                    "canonicalKey", "diabetes_mellitus",
+                    "label", "Diabetes Mellitus",
+                    "evidenceText", "Known diabetic"
+            )));
+        }
+        normalized.put("factualFindings", factualFindings);
+        return normalized;
+    }
+
+    private BigDecimal parseNumericValue(String text) {
+        if (!hasText(text)) {
+            return null;
+        }
+        java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("(-?\\d+(?:\\.\\d+)?)").matcher(text);
+        if (!matcher.find()) {
+            return null;
+        }
+        try {
+            return new BigDecimal(matcher.group(1));
+        } catch (RuntimeException ex) {
+            return null;
         }
     }
 }

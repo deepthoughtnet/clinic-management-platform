@@ -6,9 +6,11 @@ import com.deepthoughtnet.clinic.ai.orchestration.service.AiProviderRouter;
 import com.deepthoughtnet.clinic.ai.orchestration.service.AiRequestAuditService;
 import com.deepthoughtnet.clinic.ai.orchestration.platform.service.AiGuardrailService;
 import com.deepthoughtnet.clinic.ai.orchestration.platform.service.AiInvocationLogService;
+import com.deepthoughtnet.clinic.ai.orchestration.platform.service.AiTaskGenerationConfigService;
 import com.deepthoughtnet.clinic.ai.orchestration.service.model.AiPromptTemplateDefinition;
 import com.deepthoughtnet.clinic.ai.orchestration.service.model.AiRequestAuditCommand;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiEvidenceReference;
+import com.deepthoughtnet.clinic.platform.contracts.ai.AiFinishReasonNormalizer;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiOrchestrationRequest;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiOrchestrationResponse;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiProvider;
@@ -46,6 +48,7 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
     private final AiRequestAuditService auditService;
     private final AiGuardrailService guardrailService;
     private final AiInvocationLogService invocationLogService;
+    private final AiTaskGenerationConfigService taskGenerationConfigService;
     private final ObjectMapper objectMapper;
 
     public AiOrchestrationServiceImpl(AiPromptTemplateRegistryService templateRegistry,
@@ -53,12 +56,14 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                                       AiRequestAuditService auditService,
                                       AiGuardrailService guardrailService,
                                       AiInvocationLogService invocationLogService,
+                                      AiTaskGenerationConfigService taskGenerationConfigService,
                                       ObjectMapper objectMapper) {
         this.templateRegistry = templateRegistry;
         this.providerRouter = providerRouter;
         this.auditService = auditService;
         this.guardrailService = guardrailService;
         this.invocationLogService = invocationLogService;
+        this.taskGenerationConfigService = taskGenerationConfigService;
         this.objectMapper = objectMapper;
     }
 
@@ -71,7 +76,35 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
         Map<String, Object> renderedVariables = renderVariables(request, template);
         String evidenceSummary = summarizeEvidence(request.evidence());
         String userPrompt = render(template.userPromptTemplate(), renderedVariables, evidenceSummary);
-        guardrailService.validatePreExecution(request.tenantId(), userPrompt, request, null);
+        AiGuardrailService.ExecutionSettings executionSettings = guardrailService.resolveExecutionSettings(request.tenantId(), userPrompt, request, null);
+        AiTaskGenerationConfigService.GenerationConfig generationConfig = taskGenerationConfigService.resolve(request.taskType());
+        boolean strictJson = requiresStrictJson(template);
+        String schemaMode = executionSettings.compactMode()
+                ? "COMPACT_JSON"
+                : (strictJson ? "STRICT_JSON" : "FREEFORM");
+        List<AiProvider> candidates = providerRouter.resolveCandidates(request.taskType());
+        AiProvider candidateForLog = candidates.isEmpty() ? null : candidates.get(0);
+        String fallbackOrder = buildFallbackOrder(candidates);
+        log.info("[AI-REQUEST] taskType={} provider={} resolvedModel={} requestedMaxTokens={} effectiveMaxTokens={} guardrailLimit={} temperature={} topP={} schemaMode={} compactMode={} promptChars={} estimatedPromptTokens={} thinkingBudget={} strictJsonMode={} fallbackOrder={}",
+                request.taskType(),
+                candidateForLog == null ? null : candidateForLog.providerName(),
+                generationConfig.modelOverride(),
+                executionSettings.requestedMaxTokens(),
+                executionSettings.effectiveMaxTokens(),
+                executionSettings.guardrailLimit(),
+                request.temperature(),
+                null,
+                schemaMode,
+                executionSettings.compactMode(),
+                executionSettings.promptChars(),
+                executionSettings.estimatedPromptTokens(),
+                generationConfig.thinkingBudget(),
+                generationConfig.strictJsonMode(),
+                fallbackOrder);
+        AiOrchestrationRequest executionRequest = applyMaxTokens(request, executionSettings.effectiveMaxTokens());
+        renderedVariables = renderVariables(executionRequest, template);
+        userPrompt = render(template.userPromptTemplate(), renderedVariables, evidenceSummary);
+        guardrailService.validatePreExecution(request.tenantId(), userPrompt, executionRequest, null);
 
         AiProvider provider = null;
         AiProviderResponse providerResponse = null;
@@ -79,18 +112,20 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
         AiProviderException lastFailure = null;
         boolean fallbackUsed = false;
         AiOrchestrationResponse response = null;
-        List<AiProvider> candidates = providerRouter.resolveCandidates(request.taskType());
-        AiProviderRequest providerRequest = new AiProviderRequest(
-                request,
-                template.version(),
-                template.systemPrompt(),
-                userPrompt,
-                renderedVariables,
-                request.evidence(),
-                requestId
-        );
         for (int i = 0; i < candidates.size(); i++) {
             AiProvider candidate = candidates.get(i);
+            AiProviderRequest providerRequest = new AiProviderRequest(
+                    executionRequest,
+                    template.version(),
+                    template.systemPrompt(),
+                    userPrompt,
+                    renderedVariables,
+                    request.evidence(),
+                    requestId,
+                    "GEMINI".equalsIgnoreCase(candidate.providerName()) ? generationConfig.modelOverride() : null,
+                    "GEMINI".equalsIgnoreCase(candidate.providerName()) ? generationConfig.thinkingBudget() : null,
+                    generationConfig.strictJsonMode()
+            );
             long providerStarted = System.currentTimeMillis();
             log.info("AI provider attempt. requestId={}, provider={}, attempt={}, taskType={}",
                     requestId, candidate.providerName(), i + 1, request.taskType());
@@ -105,11 +140,13 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                     log.info("AI provider fallback selected. requestId={}, provider={}, attempt={}, taskType={}",
                             requestId, candidate.providerName(), i + 1, request.taskType());
                 }
-                log.info("AI provider completed. requestId={}, provider={}, latencyMs={}, responseChars={}",
+                log.info("AI provider completed. requestId={}, provider={}, latencyMs={}, responseChars={}, finishReason={}, normalizedFinishReason={}",
                         requestId,
                         candidate.providerName(),
                         System.currentTimeMillis() - providerStarted,
-                        providerResponse == null || providerResponse.outputText() == null ? 0 : providerResponse.outputText().length());
+                        providerResponse == null || providerResponse.responseChars() == null ? 0 : providerResponse.responseChars(),
+                        providerResponse == null ? null : providerResponse.finishReason(),
+                        providerResponse == null ? null : providerResponse.normalizedFinishReason());
                 response = toResponse(request, requestId, provider, providerResponse, template, request.evidence(),
                         started, fallbackUsed, fallbackUsed ? "Fallback provider was used. Please verify before acting." : null);
                 break;
@@ -200,6 +237,47 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
         return response;
     }
 
+    private AiOrchestrationRequest applyMaxTokens(AiOrchestrationRequest request, Integer maxTokens) {
+        if (request == null) {
+            return null;
+        }
+        if (request.maxTokens() != null && request.maxTokens().equals(maxTokens)) {
+            return request;
+        }
+        return new AiOrchestrationRequest(
+                request.productCode(),
+                request.tenantId(),
+                request.actorUserId(),
+                request.taskType(),
+                request.promptTemplateCode(),
+                request.inputVariables(),
+                request.evidence(),
+                maxTokens,
+                request.temperature(),
+                request.correlationId(),
+                request.useCaseCode()
+        );
+    }
+
+    private String buildFallbackOrder(List<AiProvider> candidates) {
+        List<String> order = new ArrayList<>();
+        if (candidates != null) {
+            for (AiProvider provider : candidates) {
+                if (provider == null || provider.providerName() == null || provider.providerName().isBlank()) {
+                    continue;
+                }
+                String normalized = provider.providerName().trim().toLowerCase(java.util.Locale.ROOT);
+                if (!order.contains(normalized)) {
+                    order.add(normalized);
+                }
+            }
+        }
+        if (!order.contains("mock")) {
+            order.add("mock");
+        }
+        return String.join(",", order);
+    }
+
     private Integer parseVersionNumber(String version) {
         if (version == null || version.isBlank()) {
             return null;
@@ -224,7 +302,7 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                                                long started,
                                                boolean fallbackUsed,
                                                String errorMessage) {
-        ParsedOutput parsed = parseProviderOutput(providerResponse);
+        ParsedOutput parsed = parseProviderOutput(providerResponse, template);
         List<String> suggestedActions = !parsed.suggestedActions().isEmpty()
                 ? parsed.suggestedActions()
                 : template.fallbackSuggestedActions();
@@ -258,7 +336,12 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                 providerResponse.tokenUsage(),
                 System.currentTimeMillis() - started,
                 fallbackUsed,
-                errorMessage
+                errorMessage,
+                providerResponse.finishReason(),
+                parsed.normalizedFinishReason(),
+                parsed.responseChars(),
+                parsed.rawText(),
+                parsed.parseStatus()
         );
     }
 
@@ -271,10 +354,9 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
         List<String> suggestions = template.fallbackSuggestedActions();
         List<String> limitations = new ArrayList<>(template.fallbackLimitations());
         limitations.add("No autonomous action was taken.");
-        String outputText = template.fallbackSummary();
-        if (evidenceSummary != null && !evidenceSummary.isBlank()) {
-            outputText = outputText + " Context: " + evidenceSummary;
-        }
+        String outputText = errorMessage == null || errorMessage.isBlank()
+                ? "AI providers are temporarily unavailable. Please retry."
+                : errorMessage;
         return new AiOrchestrationResponse(
                 requestId,
                 requestId,
@@ -291,7 +373,12 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                 null,
                 System.currentTimeMillis() - started,
                 true,
-                errorMessage
+                errorMessage,
+                null,
+                "FAILED",
+                outputText == null ? 0 : outputText.length(),
+                outputText,
+                "FAILED"
         );
     }
 
@@ -357,48 +444,71 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
         return trimTo(builder.toString(), 1200);
     }
 
-    private ParsedOutput parseProviderOutput(AiProviderResponse response) {
-        if (response == null || response.outputText() == null || response.outputText().isBlank()) {
-            log.warn("AI provider returned empty content. provider={}", response == null ? "unknown" : response.providerName());
-            String fallbackMessage = "AI returned unstructured text. Please review carefully.";
-            return new ParsedOutput(
-                    fallbackMessage,
-                    fallbackStructuredJson(fallbackMessage),
-                    List.of(),
-                    List.of(fallbackMessage),
-                    response == null ? null : response.confidence(),
-                    ""
-            );
+    private ParsedOutput parseProviderOutput(AiProviderResponse response, AiPromptTemplateDefinition template) {
+        String raw = response == null ? null : firstNonBlank(response.rawText(), response.outputText());
+        Integer responseChars = response == null ? null : response.responseChars();
+        if (responseChars == null && raw != null) {
+            responseChars = raw.length();
         }
-        String raw = response.outputText().trim();
+        String normalizedFinishReason = AiFinishReasonNormalizer.normalize(response == null ? null : response.normalizedFinishReason());
+        log.info("[NORMALIZED] provider={} model={} normalizedChars={} first300Chars=\"{}\" last300Chars=\"{}\" finishReason={} normalizedFinishReason={} parseStatus={}",
+                response == null ? null : response.providerName(),
+                response == null ? null : response.model(),
+                raw == null ? 0 : raw.length(),
+                previewStart(raw),
+                previewEnd(raw),
+                response == null ? null : response.finishReason(),
+                normalizedFinishReason,
+                response == null ? null : response.parseStatus());
+        if ((raw == null || raw.isBlank())) {
+            log.warn("AI provider returned empty content. provider={}", response == null ? "unknown" : response.providerName());
+            String emptyMessage = normalizedFinishReason.equals("BLOCKED")
+                    ? "AI response was blocked by safety filters. Please retry."
+                    : normalizedFinishReason.equals("TRUNCATED")
+                    ? "AI response was truncated. Please retry."
+                    : "AI returned unstructured text. Please review carefully.";
+            return invalidParsedOutput(emptyMessage, response == null ? null : response.confidence(), raw, normalizedFinishReason,
+                    normalizedFinishReason.equals("BLOCKED") ? "BLOCKED" : normalizedFinishReason.equals("TRUNCATED") ? "TRUNCATED" : "FAILED");
+        }
+
+        boolean strictJson = requiresStrictJson(template);
         String jsonCandidate = extractJsonCandidate(raw);
         try {
             JsonNode root = objectMapper.readTree(jsonCandidate);
-            if (root.isArray()) {
-                JsonNode normalized = normalizeArrayOutput(root);
-                String answer = text(normalized, "summary");
-                if (answer == null) {
-                    answer = text(normalized, "answer");
-                }
-                List<String> suggestions = new ArrayList<>(strings(normalized, "recommendedInvestigations"));
-                suggestions.addAll(strings(normalized, "followUpSuggestions"));
-                List<String> limitations = new ArrayList<>(strings(normalized, "safetyNotes"));
-                String safetyNote = text(normalized, "safetyNote");
-                if (safetyNote != null) {
-                    limitations.add(safetyNote);
-                }
-                return new ParsedOutput(
-                        answer == null ? "AI diagnosis suggestions generated. Please review." : answer,
-                        normalized.toString(),
-                        suggestions,
-                        limitations,
-                        response.confidence(),
-                        raw
-                );
-            }
             if (!root.isObject()) {
+                if (strictJson) {
+                    return invalidParsedOutput("AI returned an invalid response. Please retry.",
+                            response.confidence(), raw, normalizedFinishReason, parseStatusFromFinishReason(normalizedFinishReason, "FAILED"));
+                }
+                if (root.isArray()) {
+                    JsonNode normalized = normalizeArrayOutput(root);
+                    String answer = text(normalized, "summary");
+                    if (answer == null) {
+                        answer = text(normalized, "answer");
+                    }
+                    List<String> suggestions = new ArrayList<>(strings(normalized, "recommendedInvestigations"));
+                    suggestions.addAll(strings(normalized, "followUpSuggestions"));
+                    List<String> limitations = new ArrayList<>(strings(normalized, "safetyNotes"));
+                    String safetyNote = text(normalized, "safetyNote");
+                    if (safetyNote != null) {
+                        limitations.add(safetyNote);
+                    }
+                    return new ParsedOutput(
+                            answer == null ? "AI diagnosis suggestions generated. Please review." : answer,
+                            normalized.toString(),
+                            suggestions,
+                            limitations,
+                            response.confidence(),
+                            raw,
+                            responseChars,
+                            "VALID",
+                            normalizedFinishReason,
+                            null
+                    );
+                }
                 log.warn("AI provider returned non-object JSON. provider={}", response.providerName());
-                return invalidParsedOutput("AI returned an invalid response. Please retry.", response.confidence(), raw);
+                return invalidParsedOutput("AI returned an invalid response. Please retry.", response.confidence(), raw, normalizedFinishReason,
+                        parseStatusFromFinishReason(normalizedFinishReason, "FAILED"));
             }
             String answer = text(root, "answer");
             if (answer == null) {
@@ -421,20 +531,30 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                 log.warn("AI provider output looked like prompt/template leakage. provider={}, rawPreview=\"{}\"",
                         response.providerName(),
                         trimTo(raw.replaceAll("[\\r\\n\\t]+", " "), 300));
-                return invalidParsedOutput("AI returned an invalid response. Please retry.", response.confidence(), raw);
+                return invalidParsedOutput("AI returned an invalid response. Please retry.", response.confidence(), raw, normalizedFinishReason,
+                        parseStatusFromFinishReason(normalizedFinishReason, "FAILED"));
             }
             return new ParsedOutput(answer == null ? raw : answer, root.toString(), suggestions, limitations,
-                    confidence == null ? response.confidence() : confidence, raw);
+                    confidence == null ? response.confidence() : confidence, raw, responseChars, "VALID", normalizedFinishReason, null);
         } catch (Exception ex) {
             if (looksLikePromptLeak(raw)) {
                 log.warn("AI provider response matched prompt/template leakage. provider={}, rawPreview=\"{}\"",
                         response.providerName(),
                         trimTo(raw.replaceAll("[\\r\\n\\t]+", " "), 300));
-                return invalidParsedOutput("AI returned an invalid response. Please retry.", response.confidence(), raw);
+                return invalidParsedOutput("AI returned an invalid response. Please retry.", response.confidence(), raw, normalizedFinishReason,
+                        parseStatusFromFinishReason(normalizedFinishReason, "FAILED"));
             }
-            boolean likelyTruncatedJson = looksLikeJson(raw);
+            if (AiFinishReasonNormalizer.isBlocked(normalizedFinishReason)) {
+                return invalidParsedOutput("AI response was blocked by safety filters. Please retry.", response.confidence(), raw, normalizedFinishReason, "BLOCKED");
+            }
+            if (AiFinishReasonNormalizer.isTruncated(normalizedFinishReason)) {
+                return invalidParsedOutput("AI response was truncated. Please retry.", response.confidence(), raw, normalizedFinishReason, "TRUNCATED");
+            }
             log.warn("AI provider response parsing fallback used. provider={}, error={}, rawPreview=\"{}\"",
                     response.providerName(), safeMessage(ex), trimTo(raw.replaceAll("[\\r\\n\\t]+", " "), 300));
+            if (strictJson) {
+                return invalidParsedOutput("AI response could not be parsed. Please retry.", response.confidence(), raw, normalizedFinishReason, "FAILED");
+            }
             String extractedAnswer = extractAnswerFromMalformedJson(raw);
             if (extractedAnswer != null) {
                 return new ParsedOutput(
@@ -443,11 +563,12 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                         List.of(),
                         List.of("AI returned partially structured output. Please verify."),
                         response.confidence(),
-                        raw
+                        raw,
+                        responseChars,
+                        "VALID",
+                        normalizedFinishReason,
+                        null
                 );
-            }
-            if (likelyTruncatedJson) {
-                return invalidParsedOutput("Sorry, I missed that. Could you please repeat?", response.confidence(), "Sorry, I missed that. Could you please repeat?");
             }
             return new ParsedOutput(
                     raw,
@@ -455,7 +576,11 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                     List.of(),
                     List.of("AI returned unstructured text. Please review carefully."),
                     response.confidence(),
-                    raw
+                    raw,
+                    responseChars,
+                    "VALID",
+                    normalizedFinishReason,
+                    null
             );
         }
     }
@@ -604,14 +729,19 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
         return safeJson(payload);
     }
 
-    private ParsedOutput invalidParsedOutput(String message, BigDecimal confidence, String rawText) {
+    private ParsedOutput invalidParsedOutput(String message, BigDecimal confidence, String rawText,
+                                             String normalizedFinishReason, String parseStatus) {
         return new ParsedOutput(
                 message,
                 invalidStructuredJson(message),
                 List.of(),
                 List.of(message, "AI suggestions are assistive only and must be reviewed."),
                 confidence,
-                rawText
+                rawText,
+                rawText == null ? 0 : rawText.length(),
+                parseStatus,
+                normalizedFinishReason,
+                message
         );
     }
 
@@ -621,6 +751,33 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
         }
         String trimmed = raw.trim();
         return trimmed.startsWith("{") || trimmed.startsWith("[");
+    }
+
+    private boolean requiresStrictJson(AiPromptTemplateDefinition template) {
+        String text = ((template == null ? null : template.systemPrompt()) == null ? "" : template.systemPrompt())
+                + "\n"
+                + ((template == null ? null : template.userPromptTemplate()) == null ? "" : template.userPromptTemplate());
+        String normalized = text.toLowerCase();
+        return normalized.contains("return only valid json")
+                || normalized.contains("return only strict json")
+                || normalized.contains("strict json")
+                || normalized.contains("no prose outside json")
+                || normalized.contains("no markdown")
+                || normalized.contains("use exactly this shape")
+                || normalized.contains("return only json");
+    }
+
+    private String parseStatusFromFinishReason(String normalizedFinishReason, String defaultStatus) {
+        if (AiFinishReasonNormalizer.isTruncated(normalizedFinishReason)) {
+            return "TRUNCATED";
+        }
+        if (AiFinishReasonNormalizer.isBlocked(normalizedFinishReason)) {
+            return "BLOCKED";
+        }
+        if (AiFinishReasonNormalizer.isFailed(normalizedFinishReason)) {
+            return "FAILED";
+        }
+        return defaultStatus == null ? "FAILED" : defaultStatus;
     }
 
     private String requestHash(AiOrchestrationRequest request, AiPromptTemplateDefinition template, String evidenceSummary) {
@@ -729,10 +886,28 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
         return ex.getMessage();
     }
 
+    private String previewStart(String value) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+        String normalized = value.replaceAll("[\\r\\n\\t]+", " ").trim();
+        return normalized.length() <= 300 ? normalized : normalized.substring(0, 300);
+    }
+
+    private String previewEnd(String value) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+        String normalized = value.replaceAll("[\\r\\n\\t]+", " ").trim();
+        return normalized.length() <= 300 ? normalized : normalized.substring(normalized.length() - 300);
+    }
+
     private record ParsedOutput(String answer, String structuredJson, List<String> suggestedActions,
-                                List<String> limitations, BigDecimal confidence, String rawText) {
+                                List<String> limitations, BigDecimal confidence, String rawText,
+                                Integer responseChars, String parseStatus, String normalizedFinishReason,
+                                String errorMessage) {
         private static ParsedOutput empty() {
-            return new ParsedOutput(null, null, List.of(), List.of(), null, null);
+            return new ParsedOutput(null, null, List.of(), List.of(), null, null, 0, "UNKNOWN", "UNKNOWN", null);
         }
     }
 }

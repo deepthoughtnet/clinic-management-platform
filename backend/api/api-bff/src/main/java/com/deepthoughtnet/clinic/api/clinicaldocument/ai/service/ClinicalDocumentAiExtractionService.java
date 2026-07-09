@@ -4,6 +4,7 @@ import com.deepthoughtnet.clinic.api.ai.dto.AiDraftResponse;
 import com.deepthoughtnet.clinic.api.ai.service.AiDoctorCopilotService;
 import com.deepthoughtnet.clinic.api.clinicaldocument.ai.db.ClinicalAiJobEntity;
 import com.deepthoughtnet.clinic.api.clinicaldocument.ai.db.ClinicalAiJobRepository;
+import com.deepthoughtnet.clinic.api.clinicaldocument.ai.dto.ClinicalMemoryRepairResult;
 import com.deepthoughtnet.clinic.api.clinicaldocument.ai.model.ClinicalAiJobStatus;
 import com.deepthoughtnet.clinic.api.clinicaldocument.ai.model.ClinicalAiJobType;
 import com.deepthoughtnet.clinic.api.clinicaldocument.ai.model.ClinicalDocumentTextExtractionResult;
@@ -11,6 +12,7 @@ import com.deepthoughtnet.clinic.api.clinicaldocument.db.ClinicalDocumentEntity;
 import com.deepthoughtnet.clinic.api.clinicaldocument.db.ClinicalDocumentRepository;
 import com.deepthoughtnet.clinic.api.clinicaldocument.service.ClinicalDocumentRecord;
 import com.deepthoughtnet.clinic.api.clinicaldocument.service.ClinicalDocumentService;
+import com.deepthoughtnet.clinic.api.clinicaldocument.dto.ClinicalMemoryRepairCorrectedValue;
 import com.deepthoughtnet.clinic.ai.orchestration.service.AgentExecutionLogService;
 import com.deepthoughtnet.clinic.carepilot.notificationsettings.service.TenantNotificationSettingsService;
 import com.deepthoughtnet.clinic.carepilot.notificationsettings.service.model.NotificationSettingsRecord;
@@ -37,18 +39,24 @@ import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 
 @Service
 public class ClinicalDocumentAiExtractionService {
@@ -71,10 +79,12 @@ public class ClinicalDocumentAiExtractionService {
     private final AgentExecutionLogService agentExecutionLogService;
     private final PatientService patientService;
     private final TenantNotificationSettingsService notificationSettingsService;
+    private final DeterministicLabFactParser deterministicLabFactParser;
     private final ObjectMapper objectMapper;
     private final long retryBackoffMs;
     private final int maxAttempts;
 
+    @Autowired
     public ClinicalDocumentAiExtractionService(ClinicalAiJobRepository jobRepository,
                                                ClinicalDocumentRepository documentRepository,
                                                ClinicalDocumentService documentService,
@@ -90,6 +100,40 @@ public class ClinicalDocumentAiExtractionService {
                                                ObjectMapper objectMapper,
                                                @Value("${clinic.ai.jobs.retryBackoffMs:60000}") long retryBackoffMs,
                                                @Value("${clinic.ai.jobs.maxAttempts:3}") int maxAttempts) {
+        this(jobRepository,
+                documentRepository,
+                documentService,
+                longitudinalMemoryService,
+                appUserRepository,
+                textExtractionService,
+                aiDoctorCopilotService,
+                storageService,
+                auditEventPublisher,
+                agentExecutionLogService,
+                patientService,
+                notificationSettingsService,
+                new DeterministicLabFactParser(),
+                objectMapper,
+                retryBackoffMs,
+                maxAttempts);
+    }
+
+    public ClinicalDocumentAiExtractionService(ClinicalAiJobRepository jobRepository,
+                                               ClinicalDocumentRepository documentRepository,
+                                               ClinicalDocumentService documentService,
+                                               PatientLongitudinalMemoryService longitudinalMemoryService,
+                                               AppUserRepository appUserRepository,
+                                               ClinicalDocumentTextExtractionService textExtractionService,
+                                               AiDoctorCopilotService aiDoctorCopilotService,
+                                               ObjectStorageService storageService,
+                                               AuditEventPublisher auditEventPublisher,
+                                               AgentExecutionLogService agentExecutionLogService,
+                                               PatientService patientService,
+                                               TenantNotificationSettingsService notificationSettingsService,
+                                               DeterministicLabFactParser deterministicLabFactParser,
+                                               ObjectMapper objectMapper,
+                                               @Value("${clinic.ai.jobs.retryBackoffMs:60000}") long retryBackoffMs,
+                                               @Value("${clinic.ai.jobs.maxAttempts:3}") int maxAttempts) {
         this.jobRepository = jobRepository;
         this.documentRepository = documentRepository;
         this.documentService = documentService;
@@ -102,6 +146,7 @@ public class ClinicalDocumentAiExtractionService {
         this.agentExecutionLogService = agentExecutionLogService;
         this.patientService = patientService;
         this.notificationSettingsService = notificationSettingsService;
+        this.deterministicLabFactParser = deterministicLabFactParser;
         this.objectMapper = objectMapper;
         this.retryBackoffMs = retryBackoffMs <= 0 ? 60000 : retryBackoffMs;
         this.maxAttempts = maxAttempts <= 0 ? 3 : maxAttempts;
@@ -119,6 +164,151 @@ public class ClinicalDocumentAiExtractionService {
         ClinicalDocumentEntity document = documentRepository.findByTenantIdAndId(tenantId, documentId)
                 .orElseThrow(() -> new IllegalArgumentException("Document not found"));
         return enqueueExtraction(document, actorAppUserId, true, "clinical.document.ai_extraction.reprocess_requested");
+    }
+
+    @Transactional
+    public ClinicalMemoryRepairResult repairClinicalMemory(UUID tenantId, UUID documentId, UUID actorAppUserId) {
+        long startedAt = System.currentTimeMillis();
+        log.info("[AI-MEMORY-REPAIR-START] tenantId={} documentId={} actorAppUserId={}", tenantId, documentId, actorAppUserId);
+        ClinicalDocumentEntity document = documentRepository.findByTenantIdAndId(tenantId, documentId)
+                .orElseThrow(() -> new IllegalArgumentException("Document not found"));
+        ClinicalAiJobEntity latestJob = jobRepository.findFirstByTenantIdAndDocumentIdAndJobTypeOrderByCreatedAtDesc(
+                        tenantId,
+                        documentId,
+                        ClinicalAiJobType.DOCUMENT_EXTRACTION)
+                .orElse(null);
+        String structuredJson = firstHasText(
+                document.getAiExtractionStructuredJson(),
+                latestJob == null ? null : latestJob.getResultJson(),
+                document.getAiExtractionAcceptedJson()
+        );
+        log.info("[AI-MEMORY-REPAIR] tenantId={} patientId={} sourceDocumentId={} sourceStructuredJsonLength={} sourceAcceptedJsonLength={} sourceJobResultJsonLength={}",
+                tenantId,
+                document.getPatientId(),
+                documentId,
+                lengthOf(document.getAiExtractionStructuredJson()),
+                lengthOf(document.getAiExtractionAcceptedJson()),
+                latestJob == null ? 0 : lengthOf(latestJob.getResultJson()));
+        if (!StringUtils.hasText(structuredJson)) {
+            ClinicalMemoryRepairResult failed = new ClinicalMemoryRepairResult(
+                    documentId,
+                    "FAILED",
+                    OffsetDateTime.now(),
+                    actorAppUserId,
+                    0,
+                    0,
+                    0,
+                    List.of(),
+                    0,
+                    "Stored AI extraction data not found for document"
+            );
+            document.markClinicalMemoryRepair(actorAppUserId, failed.status(), failed.message(), 0, 0, 0, 0, "[]");
+            documentRepository.save(document);
+            log.info("[AI-MEMORY-REPAIR] tenantId={} patientId={} documentId={} status={} deletedPendingConceptCount={} insertedConceptCount={} filteredPollutedConceptCount={} correctedValues={} durationMs={}",
+                    tenantId,
+                    document.getPatientId(),
+                    documentId,
+                    failed.status(),
+                    failed.deletedPendingConceptCount(),
+                    failed.insertedConceptCount(),
+                    failed.filteredPollutedConceptCount(),
+                    toJson(failed.correctedValues()),
+                    System.currentTimeMillis() - startedAt);
+            log.info("[AI-MEMORY-REPAIR-END] tenantId={} documentId={} status={} durationMs={}", tenantId, documentId, failed.status(), System.currentTimeMillis() - startedAt);
+            return failed;
+        }
+        String sourceSummary = firstHasText(document.getAiExtractionSummary(), latestJob == null ? null : latestJob.getSummaryText(), "Clinical memory repair");
+        String legacySourceText = buildLegacyRepairSourceText(structuredJson, latestJob);
+        structuredJson = normalizeStoredStructuredJson(document, structuredJson, legacySourceText, sourceSummary);
+        String sourceText = buildRepairSourceText(structuredJson, latestJob);
+        try {
+            int beforeConceptCount = historyCount(tenantId, document.getPatientId());
+            String hba1cBefore = latestHbA1cValue(tenantId, document.getPatientId());
+            ClinicalMemoryRepairResult result = longitudinalMemoryService.repairPendingConcepts(document, structuredJson, sourceText, document.getAiExtractionConfidence(), sourceSummary, actorAppUserId);
+            document.markClinicalMemoryRepair(
+                    actorAppUserId,
+                    result.status(),
+                    result.message(),
+                    result.deletedPendingConceptCount(),
+                    result.insertedConceptCount(),
+                    result.skippedAcceptedConceptCount(),
+                    result.filteredPollutedConceptCount(),
+                    toJson(result.correctedValues())
+            );
+            documentRepository.save(document);
+            auditEventPublisher.record(new AuditEventCommand(
+                    tenantId,
+                    AuditEntityType.DOCUMENT,
+                    documentId,
+                    "clinical.document.clinical_memory.repaired",
+                    actorAppUserId,
+                    OffsetDateTime.now(),
+                    "Repaired longitudinal clinical memory from stored AI extraction data",
+                    "{\"documentId\":\"%s\"}".formatted(documentId)
+            ));
+            log.info("[AI-MEMORY-REPAIR] tenantId={} patientId={} documentId={} status={} deletedPendingConceptCount={} insertedConceptCount={} filteredPollutedConceptCount={} correctedValues={} durationMs={}",
+                    tenantId,
+                    document.getPatientId(),
+                    documentId,
+                    result.status(),
+                    result.deletedPendingConceptCount(),
+                    result.insertedConceptCount(),
+                    result.filteredPollutedConceptCount(),
+                    toJson(result.correctedValues()),
+                    System.currentTimeMillis() - startedAt);
+            int afterConceptCount = historyCount(tenantId, document.getPatientId());
+            String hba1cAfter = latestHbA1cValue(tenantId, document.getPatientId());
+            log.info("[AI-MEMORY-REPAIR] tenantId={} patientId={} sourceDocumentId={} beforeConceptCount={} deletedPendingConceptCount={} insertedConceptCount={} filteredPollutedConceptCount={} hba1cBefore={} hba1cAfter={} status={} error={}",
+                    tenantId,
+                    document.getPatientId(),
+                    documentId,
+                    beforeConceptCount,
+                    result.deletedPendingConceptCount(),
+                    result.insertedConceptCount(),
+                    result.filteredPollutedConceptCount(),
+                    hba1cBefore,
+                    hba1cAfter,
+                    result.status(),
+                    null);
+            log.info("[AI-MEMORY-REPAIR] tenantId={} patientId={} sourceDocumentId={} afterConceptCount={} hba1cAfter={} status={}",
+                    tenantId,
+                    document.getPatientId(),
+                    documentId,
+                    afterConceptCount,
+                    hba1cAfter,
+                    result.status());
+            log.info("[AI-MEMORY-REPAIR-END] tenantId={} documentId={} status={} durationMs={}", tenantId, documentId, result.status(), System.currentTimeMillis() - startedAt);
+            return result;
+        } catch (RuntimeException ex) {
+            String technicalMessage = ex.getMessage() == null || ex.getMessage().isBlank() ? ex.getClass().getSimpleName() : ex.getMessage();
+            ClinicalMemoryRepairResult failed = new ClinicalMemoryRepairResult(
+                    documentId,
+                    "FAILED",
+                    OffsetDateTime.now(),
+                    actorAppUserId,
+                    0,
+                    0,
+                    0,
+                    List.of(),
+                    0,
+                    "Clinical memory repair failed safely"
+            );
+            document.markClinicalMemoryRepair(actorAppUserId, failed.status(), failed.message(), 0, 0, 0, 0, "[]");
+            documentRepository.save(document);
+            log.warn("[AI-MEMORY-REPAIR] tenantId={} patientId={} documentId={} status={} deletedPendingConceptCount={} insertedConceptCount={} filteredPollutedConceptCount={} correctedValues={} durationMs={} error={}",
+                    tenantId,
+                    document.getPatientId(),
+                    documentId,
+                    failed.status(),
+                    failed.deletedPendingConceptCount(),
+                    failed.insertedConceptCount(),
+                    failed.filteredPollutedConceptCount(),
+                    toJson(failed.correctedValues()),
+                    System.currentTimeMillis() - startedAt,
+                    technicalMessage, ex);
+            log.info("[AI-MEMORY-REPAIR-END] tenantId={} documentId={} status={} durationMs={}", tenantId, documentId, failed.status(), System.currentTimeMillis() - startedAt);
+            return failed;
+        }
     }
 
     @Transactional
@@ -156,6 +346,7 @@ public class ClinicalDocumentAiExtractionService {
                     job.getId(), job.getTenantId(), job.getDocumentId(), job.getPatientId(), context.correlationId());
             byte[] bytes = storageService.getObjectBytes(document.getStorageKey());
             ClinicalDocumentTextExtractionResult textResult = textExtractionService.extract(document, bytes);
+            traceOcrExtraction(document, textResult);
             if ("FAILED".equalsIgnoreCase(textResult.status())) {
                 log.warn("Clinical document OCR failed. jobId={}, tenantId={}, documentId={}, patientId={}, correlationId={}, stage=OCR_FAILED, ocrProvider={}",
                         job.getId(), job.getTenantId(), job.getDocumentId(), job.getPatientId(), context.correlationId(), textResult.provider());
@@ -194,6 +385,7 @@ public class ClinicalDocumentAiExtractionService {
                     input,
                     evidence
             );
+            traceAiResponse(document, response);
 
             Map<String, Object> structuredData = new LinkedHashMap<>();
             if (response.structuredData() != null) {
@@ -203,6 +395,7 @@ public class ClinicalDocumentAiExtractionService {
             structuredData.putIfAbsent("possibleAbnormalFindings", abnormalFindings(textResult.text()));
             structuredData.putIfAbsent("ocrProvider", textResult.provider());
             structuredData.putIfAbsent("ocrStatus", textResult.status());
+            structuredData = normalizeExtractionSchema(document, textResult, response, structuredData);
             traceStructuredData(job, document, context, structuredData);
             String resultJson = toJson(structuredData);
             String summary = response.draft();
@@ -225,9 +418,9 @@ public class ClinicalDocumentAiExtractionService {
             } else {
                 job.markSucceeded(response.provider(), response.model(), textResult.provider(), confidence, summary, resultJson, reviewStatus, null, null, null);
             }
-            jobRepository.save(job);
-            try {
-                longitudinalMemoryService.ingestPendingConcepts(document, resultJson, textResult.text(), confidence, summary);
+                jobRepository.save(job);
+                try {
+                    longitudinalMemoryService.ingestPendingConcepts(document, resultJson, textResult.text(), confidence, summary);
             } catch (RuntimeException persistenceEx) {
                 log.warn("Clinical document longitudinal concept persistence failed. jobId={}, tenantId={}, documentId={}, patientId={}, correlationId={}, stage=LONGITUDINAL_PERSISTENCE_FAILED, error={}",
                         job.getId(), job.getTenantId(), job.getDocumentId(), job.getPatientId(), context.correlationId(),
@@ -254,6 +447,10 @@ public class ClinicalDocumentAiExtractionService {
                     "Completed clinical AI extraction",
                     resultJson
             ));
+            if (context.reprocessRequested()) {
+                document.markAiRetryCompleted(reviewStatus, summary);
+                documentRepository.save(document);
+            }
             log.info("Clinical document AI extraction completed. jobId={}, tenantId={}, documentId={}, patientId={}, correlationId={}, stage=AI_EXTRACTION_COMPLETED, reviewStatus={}",
                     job.getId(), job.getTenantId(), job.getDocumentId(), job.getPatientId(), context.correlationId(), reviewStatus);
         } catch (RuntimeException ex) {
@@ -263,6 +460,10 @@ public class ClinicalDocumentAiExtractionService {
             documentRepository.save(document);
             job.markFailed(technicalMessage, retryable, retryBackoffMs);
             jobRepository.save(job);
+            if (context.reprocessRequested()) {
+                document.markAiRetryCompleted("FAILED", FRIENDLY_AI_FAILURE_MESSAGE);
+                documentRepository.save(document);
+            }
             if (isExpectedMissingContextFailure(ex)) {
                 log.warn("Clinical AI extraction failed due to missing worker context. jobId={}, tenantId={}, documentId={}, patientId={}, correlationId={}, stage=REQUEST_CONTEXT_RESTORE, retryable={}, error={}",
                         job.getId(), job.getTenantId(), job.getDocumentId(), job.getPatientId(), context.correlationId(), retryable, technicalMessage);
@@ -460,6 +661,26 @@ public class ClinicalDocumentAiExtractionService {
         if (!log.isInfoEnabled()) {
             return;
         }
+        Object factualFindings = structuredData == null ? null : structuredData.get("factualFindings");
+        int labCount = countTraceItems(factualFindings instanceof Map<?, ?> map ? map.get("labResults") : null);
+        int conditionCount = countTraceItems(factualFindings instanceof Map<?, ?> map ? map.get("conditions") : null);
+        int riskFlagCount = countTraceItems(factualFindings instanceof Map<?, ?> map ? map.get("riskFlags") : null);
+        int recommendationCount = countTraceItems(structuredData == null ? null : structuredData.get("recommendations"));
+        log.info("[AI-DOC-EXTRACTION-SCHEMA] documentId={} hasFactualFindings={} labResultCount={} conditionCount={} riskFlagCount={} recommendationCount={} summaryPresent={}",
+                document.getId(),
+                factualFindings instanceof Map<?, ?>,
+                labCount,
+                conditionCount,
+                riskFlagCount,
+                recommendationCount,
+                structuredData != null && hasText(stringValue(structuredData.get("summary"))));
+        log.info("[AI-DOC-PIPELINE-TRACE] documentId={} stage=AI_NORMALIZED sourceUsed={} keysPresent={} labResultCount={} conditionCount={} riskFlagCount={}",
+                document.getId(),
+                factualFindings instanceof Map<?, ?> ? "STRUCTURED_LABS" : "LEGACY_FIELDS",
+                structuredData == null ? List.of() : new ArrayList<>(structuredData.keySet()),
+                labCount,
+                conditionCount,
+                riskFlagCount);
         log.info(
                 "[JEEV-LONG-MEM-TRACE] parsed-extraction tenantId={} patientId={} consultationId={} documentId={} extractedJsonKeys={} extractedLabCount={} extractedConditionCount={} extractedRiskFlagCount={}",
                 job.getTenantId(),
@@ -467,9 +688,9 @@ public class ClinicalDocumentAiExtractionService {
                 document.getConsultationId(),
                 document.getId(),
                 structuredData == null ? List.of() : new ArrayList<>(structuredData.keySet()),
-                countTraceItems(structuredData, "labs", "lab", "labResults", "lab_results", "results"),
-                countTraceItems(structuredData, "conditions", "condition", "knownConditions", "known_conditions", "diagnoses"),
-                countTraceItems(structuredData, "riskFlags", "risk_flag", "riskFlags", "risks", "flags")
+                labCount,
+                conditionCount,
+                riskFlagCount
         );
     }
 
@@ -554,6 +775,1060 @@ public class ClinicalDocumentAiExtractionService {
                 && ex.getMessage().contains("Missing RequestContext");
     }
 
+    private String buildRepairSourceText(String structuredJson, ClinicalAiJobEntity latestJob) {
+        Map<String, Object> extracted = parseStructuredJson(structuredJson);
+        List<String> evidence = new ArrayList<>();
+        collectRepairEvidenceText(extracted.get("factualFindings"), evidence, null);
+        if (evidence.isEmpty() && latestJob != null && StringUtils.hasText(latestJob.getResultJson())) {
+            collectRepairEvidenceText(parseStructuredJson(latestJob.getResultJson()).get("factualFindings"), evidence, null);
+        }
+        return String.join("\n", new java.util.LinkedHashSet<>(evidence));
+    }
+
+    private String buildLegacyRepairSourceText(String structuredJson, ClinicalAiJobEntity latestJob) {
+        Map<String, Object> extracted = parseStructuredJson(structuredJson);
+        List<String> evidence = new ArrayList<>();
+        collectRepairEvidenceText(extracted, evidence, null);
+        if (evidence.isEmpty() && latestJob != null && StringUtils.hasText(latestJob.getResultJson())) {
+            collectRepairEvidenceText(parseStructuredJson(latestJob.getResultJson()), evidence, null);
+        }
+        return String.join("\n", new java.util.LinkedHashSet<>(evidence));
+    }
+
+    private void collectRepairEvidenceText(Object value, List<String> target, String key) {
+        if (value == null || target == null) {
+            return;
+        }
+        if (value instanceof Map<?, ?> map) {
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                String childKey = entry.getKey() == null ? null : entry.getKey().toString();
+                collectRepairEvidenceText(entry.getValue(), target, childKey);
+            }
+            return;
+        }
+        if (value instanceof Iterable<?> iterable) {
+            for (Object item : iterable) {
+                collectRepairEvidenceText(item, target, key);
+            }
+            return;
+        }
+        String text = value.toString().trim();
+        if (text.isBlank()) {
+            return;
+        }
+        if (isEvidenceKey(key)) {
+            target.add(text);
+            return;
+        }
+        if (text.length() > 8 && text.length() < 400 && !looksLikeNarrativeRecommendation(text)) {
+            target.add(text);
+        }
+    }
+
+    private boolean looksLikeNarrativeRecommendation(String text) {
+        if (!StringUtils.hasText(text)) {
+            return false;
+        }
+        String normalized = text.trim().toLowerCase(java.util.Locale.ROOT);
+        return normalized.contains("review ")
+                || normalized.contains("discuss ")
+                || normalized.contains("recommend ")
+                || normalized.contains("consider ")
+                || normalized.contains("monitor ")
+                || normalized.contains("follow up")
+                || normalized.contains("follow-up")
+                || normalized.contains("lifestyle modification")
+                || normalized.contains("patient instruction")
+                || normalized.contains("doctor advice")
+                || normalized.contains("suggested action")
+                || normalized.contains("clinical summary")
+                || normalized.contains("ai summary");
+    }
+
+    private boolean isEvidenceKey(String key) {
+        if (key == null || key.isBlank()) {
+            return false;
+        }
+        String normalized = key.replaceAll("[^a-zA-Z0-9]", "").toLowerCase(java.util.Locale.ROOT);
+        return normalized.contains("evidence")
+                || normalized.contains("sourcetext")
+                || normalized.contains("ocrtext")
+                || normalized.contains("rawtext")
+                || normalized.contains("finding")
+                || normalized.contains("abnormalfinding");
+    }
+
+    private Map<String, Object> normalizeExtractionSchema(ClinicalDocumentEntity document,
+                                                          ClinicalDocumentTextExtractionResult textResult,
+                                                          AiDraftResponse response,
+                                                          Map<String, Object> rawStructuredData) {
+        Map<String, Object> normalized = new LinkedHashMap<>();
+        normalized.put("documentType", firstHasText(stringValue(rawStructuredData.get("documentType")), document.getDocumentType() == null ? null : document.getDocumentType().name()));
+        normalized.put("reportDate", document.getReportDate() == null ? null : document.getReportDate().toString());
+        normalized.put("factualFindings", buildFactualFindings(document, textResult, rawStructuredData));
+        normalized.put("summary", firstHasText(stringValue(rawStructuredData.get("summary")), stringValue(rawStructuredData.get("answer")), response.draft()));
+        normalized.put("recommendations", collectRecommendationList(rawStructuredData, response));
+        normalized.put("limitations", collectLimitations(rawStructuredData, response));
+        normalized.put("confidence", normalizeConfidence(rawStructuredData.get("confidence"), response.confidence()));
+        normalized.put("ocrProvider", textResult.provider());
+        normalized.put("ocrStatus", textResult.status());
+        normalized.put("possibleAbnormalFindings", abnormalFindings(textResult.text()));
+        return normalized;
+    }
+
+    private String normalizeStoredStructuredJson(ClinicalDocumentEntity document,
+                                                 String structuredJson,
+                                                 String sourceText,
+                                                 String sourceSummary) {
+        Map<String, Object> rawStructuredData = parseStructuredJson(structuredJson);
+        Map<String, Object> normalized = normalizeExtractionSchema(
+                document,
+                new ClinicalDocumentTextExtractionResult(
+                        "UNKNOWN",
+                        firstHasText(document.getOcrStatus(), "COMPLETED"),
+                        sourceText
+                ),
+                new AiDraftResponse(
+                        true,
+                        false,
+                        "Normalized stored extraction",
+                        null,
+                        null,
+                        sourceSummary,
+                        rawStructuredData,
+                        document.getAiExtractionConfidence(),
+                        List.of(),
+                        List.of(),
+                        null
+                ),
+                rawStructuredData
+        );
+        return toJson(normalized);
+    }
+
+    private Map<String, Object> buildFactualFindings(ClinicalDocumentEntity document,
+                                                     ClinicalDocumentTextExtractionResult textResult,
+                                                     Map<String, Object> rawStructuredData) {
+        Map<String, Object> factualFindings = new LinkedHashMap<>();
+        List<Map<String, Object>> labResults = normalizeLabFacts(document, textResult.text(), rawStructuredData);
+        List<Map<String, Object>> conditions = normalizeConditions(rawStructuredData, textResult.text());
+        List<Map<String, Object>> riskFlags = normalizeRiskFlags(rawStructuredData, textResult.text(), labResults, conditions);
+        factualFindings.put("labResults", labResults);
+        factualFindings.put("conditions", conditions);
+        factualFindings.put("riskFlags", riskFlags);
+        return factualFindings;
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> normalizeLabFacts(ClinicalDocumentEntity document, String ocrText, Map<String, Object> rawStructuredData) {
+        LinkedHashMap<String, Map<String, Object>> normalizedByKey = new LinkedHashMap<>();
+
+        addNormalizedLabFacts(
+                normalizedByKey,
+                document.getId(),
+                ocrText,
+                deterministicLabFactParser.parse(document.getId(), ocrText, extractDetectedLabLines(ocrText)),
+                "OCR_TABLE_LINES",
+                true
+        );
+
+        Object factualFindings = rawStructuredData.get("factualFindings");
+        Object candidate = factualFindings instanceof Map<?, ?> factualMap ? factualMap.get("labResults") : null;
+        if (candidate != null) {
+            addNormalizedLabFacts(normalizedByKey, document.getId(), ocrText, candidate, "STRUCTURED_LABS", false);
+        }
+
+        List<Map<String, Object>> classificationDetails = extractClassificationDetailLabResults(rawStructuredData);
+        if (!classificationDetails.isEmpty()) {
+            addNormalizedLabFacts(normalizedByKey, document.getId(), ocrText, classificationDetails, "AI_CLASSIFICATION_DETAILS", false);
+        }
+
+        Object legacyCandidate = firstNonNull(rawStructuredData.get("labResults"), rawStructuredData.get("labValues"), rawStructuredData.get("labs"), rawStructuredData.get("results"));
+        if (legacyCandidate != null) {
+            addNormalizedLabFacts(normalizedByKey, document.getId(), ocrText, legacyCandidate, "LEGACY_FIELDS", false);
+        }
+
+        return new ArrayList<>(normalizedByKey.values());
+    }
+
+    @SuppressWarnings("unchecked")
+    private void addNormalizedLabFacts(LinkedHashMap<String, Map<String, Object>> target,
+                                       UUID documentId,
+                                       String ocrText,
+                                       Object candidate,
+                                       String sourceUsed,
+                                       boolean preferExisting) {
+        if (candidate == null) {
+            return;
+        }
+        if (candidate instanceof Iterable<?> iterable) {
+            for (Object item : iterable) {
+                if (!(item instanceof Map<?, ?> fact)) {
+                    continue;
+                }
+                Map<String, Object> row = normalizeLabFact(documentId, ocrText, (Map<String, Object>) fact, null, null, sourceUsed, "labResults[]");
+                addFactRow(target, row, preferExisting);
+            }
+            return;
+        }
+        if (candidate instanceof Map<?, ?> map) {
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                Map<String, Object> row = normalizeLabFact(documentId, ocrText, null, stringValue(entry.getKey()), entry.getValue(), sourceUsed, "labs." + stringValue(entry.getKey()));
+                addFactRow(target, row, preferExisting);
+            }
+        }
+    }
+
+    private void addFactRow(LinkedHashMap<String, Map<String, Object>> target, Map<String, Object> row, boolean preferExisting) {
+        if (row == null) {
+            return;
+        }
+        String key = stringValue(row.get("canonicalKey"));
+        if (!hasText(key)) {
+            return;
+        }
+        if (preferExisting) {
+            target.putIfAbsent(key, row);
+            return;
+        }
+        target.putIfAbsent(key, row);
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> extractClassificationDetailLabResults(Map<String, Object> rawStructuredData) {
+        if (rawStructuredData == null) {
+            return List.of();
+        }
+        Object answer = rawStructuredData.get("answer");
+        if (!(answer instanceof Map<?, ?> answerMap)) {
+            return List.of();
+        }
+        Object classification = answerMap.get("classification");
+        if (!(classification instanceof Map<?, ?> classificationMap)) {
+            return List.of();
+        }
+        List<Map<String, Object>> derived = new ArrayList<>();
+        for (Map.Entry<?, ?> classificationEntry : classificationMap.entrySet()) {
+            String classificationKey = stringValue(classificationEntry.getKey());
+            Object classificationValue = classificationEntry.getValue();
+            if (!(classificationValue instanceof Map<?, ?> sectionMap)) {
+                continue;
+            }
+            Object details = sectionMap.get("details");
+            if (!(details instanceof Iterable<?> iterable)) {
+                continue;
+            }
+            for (Object item : iterable) {
+                if (!(item instanceof Map<?, ?> detail)) {
+                    continue;
+                }
+                String testName = firstHasText(stringValue(detail.get("test")), stringValue(detail.get("testName")), stringValue(detail.get("label")));
+                String canonicalKey = canonicalLabKey(testName);
+                if (!hasText(canonicalKey)) {
+                    continue;
+                }
+                String result = firstHasText(stringValue(detail.get("result")), stringValue(detail.get("value")));
+                String referenceRange = stringValue(detail.get("referenceRange"));
+                String flag = normalizeFlagLabel(firstHasText(stringValue(detail.get("flag")), stringValue(detail.get("status")), stringValue(detail.get("abnormality"))));
+                String evidenceText = buildDetailEvidence(testName, result, referenceRange, flag);
+                Map<String, Object> fact = new LinkedHashMap<>();
+                fact.put("testName", displayTestName(canonicalKey, testName));
+                fact.put("canonicalKey", canonicalKey);
+                fact.put("value", result);
+                fact.put("unit", extractUnitFromResult(result));
+                fact.put("referenceRange", referenceRange);
+                fact.put("flag", flag);
+                fact.put("evidenceText", evidenceText);
+                fact.put("sourcePath", "answer.classification." + firstHasText(classificationKey, "unknown") + ".details[]");
+                derived.add(fact);
+            }
+        }
+        return derived;
+    }
+
+    private List<Map<String, Object>> extractOcrFallbackLabResults(UUID documentId, String ocrText) {
+        if (!hasText(ocrText)) {
+            return List.of();
+        }
+        List<Map<String, Object>> results = new ArrayList<>();
+        addOcrFallbackLabResult(results, documentId, ocrText, "HbA1c", "hba1c");
+        addOcrFallbackLabResult(results, documentId, ocrText, "Estimated Average Glucose", "estimated_average_glucose");
+        addOcrFallbackLabResult(results, documentId, ocrText, "Random Blood Sugar", "blood_sugar");
+        addOcrFallbackLabResult(results, documentId, ocrText, "Total Cholesterol", "cholesterol");
+        addOcrFallbackLabResult(results, documentId, ocrText, "LDL Cholesterol", "ldl");
+        addOcrFallbackLabResult(results, documentId, ocrText, "HDL Cholesterol", "hdl");
+        addOcrFallbackLabResult(results, documentId, ocrText, "Triglycerides", "triglycerides");
+        addOcrFallbackLabResult(results, documentId, ocrText, "Hemoglobin", "hemoglobin");
+        return results;
+    }
+
+    private void addOcrFallbackLabResult(List<Map<String, Object>> results,
+                                         UUID documentId,
+                                         String ocrText,
+                                         String testName,
+                                         String canonicalKey) {
+        String line = findEvidenceLineForLab(ocrText, canonicalKey);
+        if (!hasText(line)) {
+            return;
+        }
+        String value = normalizeLabValue(canonicalKey, null, line);
+        String unit = normalizeLabUnit(canonicalKey, null, null, line);
+        String flag = normalizeFlag(null, line, canonicalKey, value);
+        String referenceRange = extractReferenceRangeFromEvidence(line, value, unit, flag);
+        Map<String, Object> fact = new LinkedHashMap<>();
+        fact.put("testName", testName);
+        fact.put("canonicalKey", canonicalKey);
+        fact.put("value", value);
+        fact.put("unit", unit);
+        fact.put("referenceRange", referenceRange);
+        fact.put("flag", flag);
+        fact.put("evidenceText", line.trim());
+        fact.put("sourcePath", "ocr.labLines");
+        log.info("[AI-DOC-PIPELINE-TRACE] documentId={} stage=OCR_FALLBACK conceptKey={} sourcePath={} rawValue={} evidenceText={}",
+                documentId, canonicalKey, "ocr.labLines", value, summarizeText(line));
+        results.add(fact);
+    }
+
+    private Map<String, Object> normalizeLabFact(UUID documentId,
+                                                 String ocrText,
+                                                 Map<String, Object> fact,
+                                                 String fallbackKey,
+                                                 Object fallbackValue,
+                                                 String sourceUsed,
+                                                 String sourceField) {
+        String sourceKey = firstHasText(
+                stringValue(fact == null ? null : firstNonNull(fact.get("canonicalKey"), fact.get("conceptKey"), fact.get("key"))),
+                fallbackKey,
+                stringValue(fact == null ? null : firstNonNull(fact.get("testName"), fact.get("label")))
+        );
+        String canonicalKey = canonicalLabKey(sourceKey);
+        String testName = displayTestName(canonicalKey, stringValue(fact == null ? null : firstNonNull(fact.get("testName"), fact.get("label"))));
+        String rawValue = firstHasText(
+                stringValue(fact == null ? null : firstNonNull(fact.get("value"), fact.get("result"), fact.get("valueText"))),
+                stringValue(fallbackValue)
+        );
+        if (isBlockedNarrativeLabSource(rawValue)) {
+            log.info("[AI-DOC-PIPELINE-TRACE] documentId={} sourceUsed={} conceptKey={} proposedValue={} unit={} sourceField={} evidenceText={} accepted={} rejectionReason={}",
+                    documentId, sourceUsed, canonicalKey, summarizeValue(rawValue), null, sourceField, summarizeText(rawValue), false, "BLOCKED_NARRATIVE_SOURCE");
+            return null;
+        }
+        String evidenceText = firstHasText(
+                stringValue(fact == null ? null : firstNonNull(fact.get("evidenceText"), fact.get("evidence"), fact.get("sourceText"))),
+                rawValueLooksLikeEvidence(canonicalKey, rawValue) ? rawValue : null,
+                findEvidenceLineForLab(ocrText, canonicalKey)
+        );
+        if (isBlockedNarrativeLabSource(evidenceText)) {
+            log.info("[AI-DOC-PIPELINE-TRACE] documentId={} sourceUsed={} conceptKey={} proposedValue={} unit={} sourceField={} evidenceText={} accepted={} rejectionReason={}",
+                    documentId, sourceUsed, canonicalKey, summarizeValue(rawValue), null, sourceField, summarizeText(evidenceText), false, "BLOCKED_NARRATIVE_EVIDENCE");
+            return null;
+        }
+        String normalizedValue = normalizeLabValue(canonicalKey, rawValue, evidenceText);
+        String unit = normalizeLabUnit(canonicalKey, stringValue(fact == null ? null : firstNonNull(fact.get("unit"), fact.get("valueUnit"))), rawValue, evidenceText);
+        String referenceRange = stringValue(fact == null ? null : fact.get("referenceRange"));
+        String flag = normalizeFlag(stringValue(fact == null ? null : fact.get("flag")), evidenceText, canonicalKey, normalizedValue);
+        if (fact != null && hasText(stringValue(fact.get("sourcePath")))) {
+            sourceField = stringValue(fact.get("sourcePath"));
+        }
+
+        String rejectionReason = validateLabFact(canonicalKey, testName, normalizedValue, evidenceText);
+        boolean accepted = rejectionReason == null;
+        log.info("[AI-DOC-LAB-FACT] documentId={} canonicalKey={} testName={} value={} unit={} flag={} accepted={} reason={}",
+                documentId, canonicalKey, testName, normalizedValue, unit, flag, accepted, accepted ? "ACCEPTED" : rejectionReason);
+        log.info("[AI-DOC-PIPELINE-TRACE] documentId={} sourceUsed={} conceptKey={} proposedValue={} unit={} sourceField={} evidenceText={} accepted={} rejectionReason={}",
+                documentId, sourceUsed, canonicalKey, normalizedValue, unit, sourceField, summarizeText(evidenceText), accepted, rejectionReason);
+        if (!accepted) {
+            return null;
+        }
+
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("testName", testName);
+        row.put("canonicalKey", canonicalKey);
+        row.put("value", normalizedValue);
+        row.put("unit", unit);
+        row.put("referenceRange", referenceRange);
+        row.put("flag", flag);
+        row.put("evidenceText", evidenceText);
+        return row;
+    }
+
+    private List<Map<String, Object>> normalizeConditions(Map<String, Object> rawStructuredData, String ocrText) {
+        List<Map<String, Object>> normalized = new ArrayList<>();
+        Object factualFindings = rawStructuredData.get("factualFindings");
+        Object candidate = factualFindings instanceof Map<?, ?> factualMap ? factualMap.get("conditions") : null;
+        if (candidate == null) {
+            candidate = firstNonNull(rawStructuredData.get("knownConditions"), rawStructuredData.get("chronicConditions"), rawStructuredData.get("conditions"), rawStructuredData.get("diagnosesMentioned"));
+        }
+        if (candidate instanceof Iterable<?> iterable) {
+            for (Object item : iterable) {
+                Map<String, Object> condition = normalizeConditionFact(item, ocrText);
+                if (condition != null) {
+                    normalized.add(condition);
+                }
+            }
+        } else {
+            Map<String, Object> condition = normalizeConditionFact(candidate, ocrText);
+            if (condition != null) {
+                normalized.add(condition);
+            }
+        }
+        if (normalized.isEmpty() && hasText(ocrText) && ocrText.toLowerCase(Locale.ROOT).contains("diabetic")) {
+            normalized.add(Map.of(
+                    "canonicalKey", "diabetes_mellitus",
+                    "label", "Diabetes Mellitus",
+                    "evidenceText", firstHasText(findLine(ocrText, "diabetes"), "Known diabetic")
+            ));
+        }
+        return dedupeFactRows(normalized, "canonicalKey");
+    }
+
+    private Map<String, Object> normalizeConditionFact(Object item, String ocrText) {
+        String label;
+        String canonicalKey;
+        String evidenceText;
+        if (item instanceof Map<?, ?> fact) {
+            label = firstHasText(stringValue(fact.get("label")), stringValue(fact.get("name")), stringValue(fact.get("value")));
+            canonicalKey = firstHasText(stringValue(fact.get("canonicalKey")), stringValue(fact.get("conceptKey")), stringValue(fact.get("key")));
+            evidenceText = firstHasText(stringValue(fact.get("evidenceText")), stringValue(fact.get("evidence")), findLine(ocrText, label));
+        } else {
+            label = stringValue(item);
+            canonicalKey = null;
+            evidenceText = firstHasText(findLine(ocrText, label), label);
+        }
+        if (!hasText(label)) {
+            return null;
+        }
+        String normalizedLabel = label.toLowerCase(Locale.ROOT).contains("diabet") ? "Diabetes Mellitus" : label.trim();
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("canonicalKey", firstHasText(canonicalKey, normalizedLabel.toLowerCase(Locale.ROOT).contains("diabet") ? "diabetes_mellitus" : slug(normalizedLabel)));
+        row.put("label", normalizedLabel);
+        row.put("evidenceText", evidenceText);
+        return row;
+    }
+
+    private List<Map<String, Object>> normalizeRiskFlags(Map<String, Object> rawStructuredData,
+                                                         String ocrText,
+                                                         List<Map<String, Object>> labResults,
+                                                         List<Map<String, Object>> conditions) {
+        List<Map<String, Object>> normalized = new ArrayList<>();
+        Object factualFindings = rawStructuredData.get("factualFindings");
+        Object candidate = factualFindings instanceof Map<?, ?> factualMap ? factualMap.get("riskFlags") : null;
+        if (candidate == null) {
+            candidate = rawStructuredData.get("riskFlags");
+        }
+        if (candidate instanceof Iterable<?> iterable) {
+            for (Object item : iterable) {
+                Map<String, Object> risk = normalizeRiskFact(item, ocrText);
+                if (risk != null) {
+                    normalized.add(risk);
+                }
+            }
+        }
+        boolean diabetesCondition = conditions.stream().anyMatch(condition -> "diabetes_mellitus".equals(stringValue(condition.get("canonicalKey"))));
+        if (diabetesCondition || labResults.stream().anyMatch(lab -> "hba1c".equals(stringValue(lab.get("canonicalKey"))) && "HIGH".equalsIgnoreCase(stringValue(lab.get("flag"))))) {
+            normalized.add(Map.of("canonicalKey", "diabetes_risk", "label", "Diabetes", "evidenceText", firstHasText(findLine(ocrText, "hba1c"), "HbA1c evidence")));
+        }
+        if (labResults.stream().anyMatch(lab -> Set.of("cholesterol", "ldl", "hdl", "triglycerides").contains(stringValue(lab.get("canonicalKey"))) && Set.of("HIGH", "LOW").contains(stringValue(lab.get("flag")).toUpperCase(Locale.ROOT)))) {
+            normalized.add(Map.of("canonicalKey", "lipid_risk", "label", "Dyslipidemia", "evidenceText", firstHasText(findLine(ocrText, "cholesterol"), "Lipid evidence")));
+        }
+        return dedupeFactRows(normalized, "canonicalKey");
+    }
+
+    private Map<String, Object> normalizeRiskFact(Object item, String ocrText) {
+        if (!(item instanceof Map<?, ?> fact)) {
+            return null;
+        }
+        String label = firstHasText(stringValue(fact.get("label")), stringValue(fact.get("name")), stringValue(fact.get("value")));
+        if (!hasText(label)) {
+            return null;
+        }
+        String canonicalKey = firstHasText(stringValue(fact.get("canonicalKey")), stringValue(fact.get("conceptKey")), stringValue(fact.get("key")));
+        if (!hasText(canonicalKey)) {
+            canonicalKey = label.toLowerCase(Locale.ROOT).contains("diabet") ? "diabetes_risk" : "lipid_risk";
+        }
+        return Map.of(
+                "canonicalKey", canonicalKey,
+                "label", label.toLowerCase(Locale.ROOT).contains("diabet") ? "Diabetes" : label,
+                "evidenceText", firstHasText(stringValue(fact.get("evidenceText")), stringValue(fact.get("evidence")), findLine(ocrText, label))
+        );
+    }
+
+    private List<Map<String, Object>> dedupeFactRows(List<Map<String, Object>> rows, String keyField) {
+        LinkedHashMap<String, Map<String, Object>> deduped = new LinkedHashMap<>();
+        for (Map<String, Object> row : rows) {
+            String key = stringValue(row.get(keyField));
+            if (hasText(key)) {
+                deduped.putIfAbsent(key, row);
+            }
+        }
+        return new ArrayList<>(deduped.values());
+    }
+
+    private List<String> collectRecommendationList(Map<String, Object> rawStructuredData, AiDraftResponse response) {
+        LinkedHashSet<String> recommendations = new LinkedHashSet<>();
+        addStrings(recommendations, rawStructuredData.get("recommendations"));
+        addStrings(recommendations, rawStructuredData.get("suggestedActions"));
+        addStrings(recommendations, rawStructuredData.get("followUpSuggestions"));
+        if (response.suggestedActions() != null) {
+            recommendations.addAll(response.suggestedActions());
+        }
+        return new ArrayList<>(recommendations);
+    }
+
+    private List<String> collectLimitations(Map<String, Object> rawStructuredData, AiDraftResponse response) {
+        LinkedHashSet<String> limitations = new LinkedHashSet<>();
+        addStrings(limitations, rawStructuredData.get("limitations"));
+        addStrings(limitations, rawStructuredData.get("warnings"));
+        if (response.warnings() != null) {
+            limitations.addAll(response.warnings());
+        }
+        return new ArrayList<>(limitations);
+    }
+
+    private void addStrings(Collection<String> target, Object value) {
+        if (target == null || value == null) {
+            return;
+        }
+        if (value instanceof Iterable<?> iterable) {
+            for (Object item : iterable) {
+                if (hasText(stringValue(item))) {
+                    target.add(stringValue(item).trim());
+                }
+            }
+            return;
+        }
+        if (hasText(stringValue(value))) {
+            target.add(stringValue(value).trim());
+        }
+    }
+
+    private String validateLabFact(String canonicalKey, String testName, String value, String evidenceText) {
+        if (!hasText(canonicalKey) || !hasText(testName) || !hasText(value) || !hasText(evidenceText)) {
+            return "MISSING_REQUIRED_FIELDS";
+        }
+        String normalizedEvidence = evidenceText.trim().toLowerCase(Locale.ROOT);
+        if (startsWithAny(normalizedEvidence, "review", "discuss", "recommend", "consider", "possible abnormal finding detected")) {
+            return "RECOMMENDATION_TEXT";
+        }
+        if (!normalizedEvidence.contains(value.toLowerCase(Locale.ROOT))) {
+            return "VALUE_NOT_IN_EVIDENCE";
+        }
+        if ("hba1c".equals(canonicalKey)) {
+            if (!containsAny(normalizedEvidence, "hba1c", "a1c", "glycated hemoglobin")) {
+                return "HBA1C_LABEL_MISSING";
+            }
+            if (normalizedEvidence.contains("hemoglobin") && !normalizedEvidence.contains("hba1c") && !normalizedEvidence.contains("a1c")) {
+                return "HEMOGLOBIN_MISMATCH";
+            }
+        }
+        if ("blood_sugar".equals(canonicalKey) && !containsAny(normalizedEvidence, "blood sugar", "glucose", "rbs")) {
+            return "BLOOD_SUGAR_LABEL_MISSING";
+        }
+        return null;
+    }
+
+    private String findEvidenceLineForLab(String ocrText, String canonicalKey) {
+        if (!hasText(canonicalKey)) {
+            return null;
+        }
+        return switch (canonicalKey) {
+            case "hba1c" -> findLine(ocrText, "HbA1c", "A1c", "Glycated Hemoglobin");
+            case "blood_sugar" -> findLine(ocrText, "Random Blood Sugar", "Blood Sugar", "Glucose", "RBS");
+            case "estimated_average_glucose" -> findLine(ocrText, "Estimated Average Glucose", "Average Glucose", "Glucose");
+            case "cholesterol" -> findLine(ocrText, "Total Cholesterol", "Cholesterol");
+            case "ldl" -> findLine(ocrText, "LDL Cholesterol", "LDL");
+            case "hdl" -> findLine(ocrText, "HDL Cholesterol", "HDL");
+            case "triglycerides" -> findLine(ocrText, "Triglycerides");
+            case "hemoglobin" -> findLine(ocrText, "Hemoglobin");
+            default -> null;
+        };
+    }
+
+    private String normalizeLabValue(String canonicalKey, String rawValue, String evidenceText) {
+        if (!hasText(canonicalKey)) {
+            return null;
+        }
+        if ("hba1c".equals(canonicalKey)) {
+            return firstHasText(decimalFrom(rawValue), decimalFrom(extractLabelBoundValue(evidenceText, "hba1c", "a1c", "glycated hemoglobin")));
+        }
+        return firstHasText(numberFrom(rawValue), numberFrom(extractLabelBoundValue(evidenceText, evidenceLabelsFor(canonicalKey))));
+    }
+
+    private String normalizeLabUnit(String canonicalKey, String unit, String rawValue, String evidenceText) {
+        if (hasText(unit)) {
+            return canonicalUnit(unit);
+        }
+        if (hasText(rawValue) && rawValue.toLowerCase(Locale.ROOT).contains("mg/dl")) {
+            return "mg/dL";
+        }
+        if (hasText(rawValue) && rawValue.contains("%")) {
+            return "%";
+        }
+        return switch (canonicalKey) {
+            case "hba1c" -> hasText(evidenceText) && evidenceText.contains("%") ? "%" : "%";
+            default -> hasText(evidenceText) && evidenceText.toLowerCase(Locale.ROOT).contains("mg/dl") ? "mg/dL" : "mg/dL";
+        };
+    }
+
+    private String normalizeFlag(String rawFlag, String evidenceText, String canonicalKey, String value) {
+        if (hasText(rawFlag)) {
+            return rawFlag.trim().toUpperCase(Locale.ROOT);
+        }
+        if (hasText(evidenceText)) {
+            String normalized = evidenceText.toLowerCase(Locale.ROOT);
+            if (normalized.contains(" high")) return "HIGH";
+            if (normalized.contains(" low")) return "LOW";
+        }
+        BigDecimal numeric = parseNumber(value);
+        if (numeric == null) {
+            return "UNKNOWN";
+        }
+        return switch (canonicalKey) {
+            case "hba1c" -> numeric.compareTo(new BigDecimal("6.5")) >= 0 ? "HIGH" : "UNKNOWN";
+            case "estimated_average_glucose" -> numeric.compareTo(new BigDecimal("154")) >= 0 ? "HIGH" : "UNKNOWN";
+            case "blood_sugar" -> numeric.compareTo(new BigDecimal("140")) > 0 ? "HIGH" : "UNKNOWN";
+            case "cholesterol" -> numeric.compareTo(new BigDecimal("200")) >= 0 ? "HIGH" : "UNKNOWN";
+            case "ldl" -> numeric.compareTo(new BigDecimal("100")) >= 0 ? "HIGH" : "UNKNOWN";
+            case "hdl" -> numeric.compareTo(new BigDecimal("40")) < 0 ? "LOW" : "UNKNOWN";
+            case "triglycerides" -> numeric.compareTo(new BigDecimal("150")) >= 0 ? "HIGH" : "UNKNOWN";
+            default -> "UNKNOWN";
+        };
+    }
+
+    private String displayTestName(String canonicalKey, String fallback) {
+        if (hasText(fallback)) {
+            return fallback.trim();
+        }
+        if (!hasText(canonicalKey)) {
+            return "Lab Result";
+        }
+        return switch (canonicalKey) {
+            case "hba1c" -> "HbA1c";
+            case "estimated_average_glucose" -> "Estimated Average Glucose";
+            case "blood_sugar" -> "Random Blood Sugar";
+            case "cholesterol" -> "Total Cholesterol";
+            case "ldl" -> "LDL Cholesterol";
+            case "hdl" -> "HDL Cholesterol";
+            case "triglycerides" -> "Triglycerides";
+            case "hemoglobin" -> "Hemoglobin";
+            default -> fallback;
+        };
+    }
+
+    private String canonicalLabKey(String raw) {
+        if (!hasText(raw)) {
+            return null;
+        }
+        String normalized = slug(raw);
+        if (containsAny(normalized, "hba1c", "a1c", "glycated_hemoglobin")) return "hba1c";
+        if (containsAny(normalized, "estimated_average_glucose", "eag")) return "estimated_average_glucose";
+        if (containsAny(normalized, "random_blood_sugar", "blood_sugar", "glucose", "rbs")) return "blood_sugar";
+        if (containsAny(normalized, "hemoglobin")) return "hemoglobin";
+        if (containsAny(normalized, "ldl")) return "ldl";
+        if (containsAny(normalized, "hdl")) return "hdl";
+        if (containsAny(normalized, "triglycerides", "triglyceride")) return "triglycerides";
+        if (containsAny(normalized, "total_cholesterol", "cholesterol")) return "cholesterol";
+        return null;
+    }
+
+    private String[] evidenceLabelsFor(String canonicalKey) {
+        return switch (canonicalKey) {
+            case "hba1c" -> new String[]{"HbA1c", "A1c", "Glycated Hemoglobin"};
+            case "estimated_average_glucose" -> new String[]{"Estimated Average Glucose", "Average Glucose", "EAG"};
+            case "blood_sugar" -> new String[]{"Random Blood Sugar", "Blood Sugar", "Glucose", "RBS"};
+            case "cholesterol" -> new String[]{"Total Cholesterol", "Cholesterol"};
+            case "ldl" -> new String[]{"LDL Cholesterol", "LDL"};
+            case "hdl" -> new String[]{"HDL Cholesterol", "HDL"};
+            case "triglycerides" -> new String[]{"Triglycerides"};
+            case "hemoglobin" -> new String[]{"Hemoglobin"};
+            default -> new String[]{canonicalKey};
+        };
+    }
+
+    private String extractLabelBoundValue(String text, String... labels) {
+        if (!hasText(text) || labels == null || labels.length == 0) {
+            return null;
+        }
+        String labelPattern = java.util.Arrays.stream(labels)
+                .filter(this::hasText)
+                .map(Pattern::quote)
+                .collect(java.util.stream.Collectors.joining("|"));
+        Pattern pattern = Pattern.compile("(?i)\\b(?:" + labelPattern + ")\\b[^\\d\\n]{0,24}([<>]?\\s*\\d+(?:\\.\\d+)?)");
+        for (String line : text.split("\\R")) {
+            Matcher matcher = pattern.matcher(line);
+            if (matcher.find()) {
+                return matcher.group(1);
+            }
+        }
+        return null;
+    }
+
+    private String decimalFrom(String text) {
+        if (!hasText(text)) {
+            return null;
+        }
+        Matcher matcher = Pattern.compile("(-?\\d+\\.\\d+)").matcher(text);
+        return matcher.find() ? matcher.group(1) : null;
+    }
+
+    private String numberFrom(String text) {
+        if (!hasText(text)) {
+            return null;
+        }
+        Matcher matcher = Pattern.compile("(-?\\d+(?:\\.\\d+)?)").matcher(text);
+        return matcher.find() ? matcher.group(1) : null;
+    }
+
+    private BigDecimal parseNumber(String text) {
+        String numeric = numberFrom(text);
+        if (!hasText(numeric)) {
+            return null;
+        }
+        try {
+            return new BigDecimal(numeric);
+        } catch (RuntimeException ex) {
+            return null;
+        }
+    }
+
+    private String canonicalUnit(String unit) {
+        String normalized = unit.trim().toLowerCase(Locale.ROOT);
+        if (normalized.contains("mg/dl")) {
+            return "mg/dL";
+        }
+        if (normalized.contains("%")) {
+            return "%";
+        }
+        return unit.trim();
+    }
+
+    private String extractReferenceRangeFromEvidence(String evidenceText, String value, String unit, String flag) {
+        if (!hasText(evidenceText)) {
+            return null;
+        }
+        String normalized = evidenceText.trim();
+        String valueToken = firstHasText(value, "");
+        String unitToken = firstHasText(unit, "");
+        String afterValue = normalized;
+        if (hasText(valueToken)) {
+            int index = normalized.toLowerCase(Locale.ROOT).indexOf(valueToken.toLowerCase(Locale.ROOT));
+            if (index >= 0) {
+                afterValue = normalized.substring(index + valueToken.length()).trim();
+            }
+        }
+        if (hasText(unitToken) && afterValue.toLowerCase(Locale.ROOT).startsWith(unitToken.toLowerCase(Locale.ROOT))) {
+            afterValue = afterValue.substring(unitToken.length()).trim();
+        }
+        if (hasText(flag) && afterValue.toUpperCase(Locale.ROOT).endsWith(flag)) {
+            afterValue = afterValue.substring(0, afterValue.length() - flag.length()).trim();
+        }
+        return afterValue.isBlank() ? null : afterValue;
+    }
+
+    private boolean rawValueLooksLikeEvidence(String canonicalKey, String rawValue) {
+        if (!hasText(canonicalKey) || !hasText(rawValue)) {
+            return false;
+        }
+        String normalized = rawValue.toLowerCase(Locale.ROOT);
+        if (startsWithAny(normalized, "review", "discuss", "recommend", "consider", "possible abnormal finding detected")) {
+            return false;
+        }
+        for (String label : evidenceLabelsFor(canonicalKey)) {
+            if (hasText(label) && normalized.contains(label.toLowerCase(Locale.ROOT))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void traceOcrExtraction(ClinicalDocumentEntity document, ClinicalDocumentTextExtractionResult textResult) {
+        if (!log.isInfoEnabled() || document == null || textResult == null) {
+            return;
+        }
+        String ocrText = firstHasText(textResult.text(), "");
+        log.info("[AI-DOC-PIPELINE-TRACE] documentId={} stage=OCR provider={} ocrChars={} sanitizedPreview={} labLines={}",
+                document.getId(),
+                textResult.provider(),
+                ocrText.length(),
+                sanitizePreview(ocrText),
+                extractDetectedLabLines(ocrText));
+    }
+
+    private void traceAiResponse(ClinicalDocumentEntity document, AiDraftResponse response) {
+        if (!log.isInfoEnabled() || document == null || response == null) {
+            return;
+        }
+        Map<String, Object> structuredData = response.structuredData() == null ? Map.of() : response.structuredData();
+        log.info("[AI-DOC-PIPELINE-TRACE] documentId={} stage=AI_RESPONSE provider={} model={} parseStatus={} keysPresent={} labRelatedFields={} suggestedActionsCount={} summaryPresent={}",
+                document.getId(),
+                response.provider(),
+                response.model(),
+                "VALID",
+                new ArrayList<>(structuredData.keySet()),
+                collectLabRelatedFields(structuredData),
+                response.suggestedActions() == null ? 0 : response.suggestedActions().size(),
+                hasText(response.draft()) || hasText(stringValue(structuredData.get("summary"))) || hasText(stringValue(structuredData.get("answer"))));
+        log.info("[AI-DOC-PIPELINE-TRACE] stage=AI_STRUCTURED_JSON documentId={} jsonKeys={} labResultsRaw={} factualFindingsRaw={} summaryPresent={} recommendationsPresent={}",
+                document.getId(),
+                new ArrayList<>(structuredData.keySet()),
+                summarizeJsonField(rawLabResults(structuredData)),
+                summarizeJsonField(structuredData.get("factualFindings")),
+                hasText(stringValue(structuredData.get("summary"))) || hasText(stringValue(structuredData.get("answer"))) || hasText(response.draft()),
+                structuredData.get("recommendations") != null || structuredData.get("suggestedActions") != null || (response.suggestedActions() != null && !response.suggestedActions().isEmpty()));
+    }
+
+    @SuppressWarnings("unchecked")
+    private Object rawLabResults(Map<String, Object> structuredData) {
+        if (structuredData == null || structuredData.isEmpty()) {
+            return null;
+        }
+        Object factualFindings = structuredData.get("factualFindings");
+        if (factualFindings instanceof Map<?, ?> factualMap && factualMap.get("labResults") != null) {
+            return factualMap.get("labResults");
+        }
+        List<Map<String, Object>> classificationRows = extractClassificationDetailLabResults(structuredData);
+        if (!classificationRows.isEmpty()) {
+            return classificationRows;
+        }
+        return firstNonNull(structuredData.get("labResults"), structuredData.get("labValues"), structuredData.get("labs"), structuredData.get("results"));
+    }
+
+    private List<String> extractDetectedLabLines(String ocrText) {
+        if (!hasText(ocrText)) {
+            return List.of();
+        }
+        List<String> lines = new ArrayList<>();
+        for (String line : ocrText.split("\\R")) {
+            String normalized = line.toLowerCase(Locale.ROOT);
+            if (containsAny(normalized, "hba1c", "hemoglobin", "random blood sugar", "glucose", "cholesterol", "hdl", "ldl", "triglycerides")) {
+                lines.add(summarizeText(line));
+            }
+        }
+        return lines.stream().distinct().toList();
+    }
+
+    private List<String> collectLabRelatedFields(Map<String, Object> structuredData) {
+        if (structuredData == null || structuredData.isEmpty()) {
+            return List.of();
+        }
+        List<String> fields = new ArrayList<>();
+        collectLabRelatedFields(structuredData, "", fields);
+        return fields.stream().distinct().toList();
+    }
+
+    private void collectLabRelatedFields(Object value, String path, List<String> target) {
+        if (value == null || target == null) {
+            return;
+        }
+        if (value instanceof Map<?, ?> map) {
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                String key = stringValue(entry.getKey());
+                String childPath = hasText(path) ? path + "." + key : key;
+                if (containsAny(childPath == null ? null : childPath.toLowerCase(Locale.ROOT), "lab", "hba1c", "a1c", "glucose", "sugar", "cholesterol", "ldl", "hdl", "triglyceride")) {
+                    target.add(childPath);
+                }
+                collectLabRelatedFields(entry.getValue(), childPath, target);
+            }
+            return;
+        }
+        if (value instanceof Iterable<?> iterable) {
+            int index = 0;
+            for (Object item : iterable) {
+                collectLabRelatedFields(item, path + "[" + index++ + "]", target);
+            }
+        }
+    }
+
+    private boolean isBlockedNarrativeLabSource(String text) {
+        if (!hasText(text)) {
+            return false;
+        }
+        String normalized = text.trim().toLowerCase(Locale.ROOT);
+        return startsWithAny(normalized, "review", "discuss", "recommend", "consider", "possible abnormal finding detected", "suggestedactions", "answer")
+                || normalized.contains("recommend lifestyle")
+                || normalized.contains("follow up")
+                || normalized.contains("follow-up")
+                || normalized.contains("discuss abnormal lipid profile");
+    }
+
+    private String sanitizePreview(String text) {
+        String sanitized = summarizeText(text);
+        return sanitized == null ? null : sanitized.substring(0, Math.min(1000, sanitized.length()));
+    }
+
+    private String summarizeText(String text) {
+        if (!hasText(text)) {
+            return null;
+        }
+        String sanitized = text.replaceAll("\\s+", " ").trim();
+        return sanitized.length() <= 240 ? sanitized : sanitized.substring(0, 240);
+    }
+
+    private String summarizeValue(String text) {
+        if (!hasText(text)) {
+            return null;
+        }
+        return text.length() <= 64 ? text : text.substring(0, 64);
+    }
+
+    private String buildDetailEvidence(String testName, String result, String referenceRange, String flag) {
+        List<String> parts = new ArrayList<>();
+        if (hasText(testName)) {
+            parts.add(testName.trim());
+        }
+        if (hasText(result)) {
+            parts.add(result.trim());
+        }
+        if (hasText(referenceRange)) {
+            parts.add(referenceRange.trim());
+        }
+        if (hasText(flag)) {
+            parts.add(flag.trim());
+        }
+        return String.join(" ", parts).trim();
+    }
+
+    private String extractUnitFromResult(String result) {
+        if (!hasText(result)) {
+            return null;
+        }
+        String normalized = result.toLowerCase(Locale.ROOT);
+        if (normalized.contains("mg/dl")) {
+            return "mg/dL";
+        }
+        if (normalized.contains("%")) {
+            return "%";
+        }
+        if (normalized.contains("g/dl")) {
+            return "g/dL";
+        }
+        return null;
+    }
+
+    private String normalizeFlagLabel(String value) {
+        if (!hasText(value)) {
+            return null;
+        }
+        String normalized = value.trim().toUpperCase(Locale.ROOT);
+        if (normalized.contains("HIGH")) {
+            return "HIGH";
+        }
+        if (normalized.contains("LOW")) {
+            return "LOW";
+        }
+        if (normalized.contains("NORMAL")) {
+            return "NORMAL";
+        }
+        return normalized;
+    }
+
+    private String normalizeConfidence(Object rawConfidence, BigDecimal responseConfidence) {
+        String fromStructured = stringValue(rawConfidence);
+        if (hasText(fromStructured)) {
+            return fromStructured.trim().toUpperCase(Locale.ROOT);
+        }
+        if (responseConfidence == null) {
+            return null;
+        }
+        BigDecimal percent = responseConfidence.multiply(new BigDecimal("100"));
+        if (percent.compareTo(new BigDecimal("90")) >= 0) {
+            return "VERY_HIGH";
+        }
+        if (percent.compareTo(new BigDecimal("75")) >= 0) {
+            return "HIGH";
+        }
+        if (percent.compareTo(new BigDecimal("60")) >= 0) {
+            return "MEDIUM";
+        }
+        return "LOW";
+    }
+
+    private String summarizeJsonField(Object value) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            return summarizeText(objectMapper.writeValueAsString(value));
+        } catch (Exception ex) {
+            return summarizeText(String.valueOf(value));
+        }
+    }
+
+    private String findLine(String text, String... needles) {
+        if (!hasText(text) || needles == null) {
+            return null;
+        }
+        for (String line : text.split("\\R")) {
+            String normalized = line.toLowerCase(Locale.ROOT);
+            for (String needle : needles) {
+                if (hasText(needle) && normalized.contains(needle.toLowerCase(Locale.ROOT))) {
+                    return line.trim();
+                }
+            }
+        }
+        return null;
+    }
+
+    private boolean startsWithAny(String text, String... prefixes) {
+        if (!hasText(text) || prefixes == null) {
+            return false;
+        }
+        for (String prefix : prefixes) {
+            if (hasText(prefix) && text.startsWith(prefix.toLowerCase(Locale.ROOT))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean containsAny(String value, String... needles) {
+        if (!hasText(value) || needles == null) {
+            return false;
+        }
+        String normalized = value.toLowerCase(Locale.ROOT);
+        for (String needle : needles) {
+            if (hasText(needle) && normalized.contains(needle.toLowerCase(Locale.ROOT))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private Object firstNonNull(Object... values) {
+        if (values == null) {
+            return null;
+        }
+        for (Object value : values) {
+            if (value != null) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.trim().isEmpty();
+    }
+
+    private String stringValue(Object value) {
+        return value == null ? null : String.valueOf(value);
+    }
+
+    private String slug(String value) {
+        return value == null ? null : value.replaceAll("[^A-Za-z0-9]+", "_").replaceAll("_+", "_").replaceAll("^_|_$", "").toLowerCase(Locale.ROOT);
+    }
+
+    private Map<String, Object> parseStructuredJson(String structuredJson) {
+        if (!StringUtils.hasText(structuredJson)) {
+            return Map.of();
+        }
+        try {
+            Map<String, Object> parsed = objectMapper.readValue(structuredJson, new TypeReference<>() {});
+            return parsed == null ? Map.of() : parsed;
+        } catch (JsonProcessingException ex) {
+            return Map.of();
+        }
+    }
+
     private String toJson(Object value) {
         try {
             return objectMapper.writeValueAsString(value);
@@ -583,7 +1858,8 @@ public class ClinicalDocumentAiExtractionService {
                 documentId,
                 actorAppUserId,
                 requestContext,
-                resolveActorUsername(tenantId, actorAppUserId)
+                resolveActorUsername(tenantId, actorAppUserId),
+                forceNewJob
         );
         ClinicalAiJobEntity job = ClinicalAiJobEntity.queued(
                 tenantId,
@@ -604,6 +1880,9 @@ public class ClinicalDocumentAiExtractionService {
         );
         ClinicalAiJobEntity saved = jobRepository.save(job);
         document.markAiExtractionQueued("NOT_STARTED");
+        if (forceNewJob) {
+            document.markAiRetryRequested(saved.getId(), actorAppUserId, "Queued document AI reprocess");
+        }
         documentRepository.save(document);
         auditEventPublisher.record(new AuditEventCommand(
                 tenantId,
@@ -618,6 +1897,42 @@ public class ClinicalDocumentAiExtractionService {
         return saved;
     }
 
+    private String firstHasText(String... values) {
+        if (values == null) {
+            return null;
+        }
+        for (String value : values) {
+            if (StringUtils.hasText(value)) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private String latestHbA1cValue(UUID tenantId, UUID patientId) {
+        try {
+            var profile = longitudinalMemoryService.buildProfile(tenantId, patientId);
+            return profile == null || profile.latestHbA1c() == null
+                    ? null
+                    : profile.latestHbA1c().valueText();
+        } catch (RuntimeException ex) {
+            return null;
+        }
+    }
+
+    private int historyCount(UUID tenantId, UUID patientId) {
+        try {
+            var profile = longitudinalMemoryService.buildProfile(tenantId, patientId);
+            return profile == null || profile.history() == null ? 0 : profile.history().size();
+        } catch (RuntimeException ex) {
+            return 0;
+        }
+    }
+
+    private int lengthOf(String value) {
+        return value == null ? 0 : value.length();
+    }
+
     private record ProcessingRequestContext(
             UUID tenantId,
             String tenantCode,
@@ -628,7 +1943,8 @@ public class ClinicalDocumentAiExtractionService {
             String correlationId,
             String requestId,
             UUID patientId,
-            UUID documentId
+            UUID documentId,
+            boolean reprocessRequested
     ) {
         private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
 
@@ -637,7 +1953,8 @@ public class ClinicalDocumentAiExtractionService {
                                                 UUID documentId,
                                                 UUID actorAppUserId,
                                                 RequestContext requestContext,
-                                                String actorUsername) {
+                                                String actorUsername,
+                                                boolean reprocessRequested) {
             String correlationId = requestContext == null || requestContext.correlationId() == null || requestContext.correlationId().isBlank()
                     ? UUID.randomUUID().toString()
                     : requestContext.correlationId();
@@ -651,7 +1968,8 @@ public class ClinicalDocumentAiExtractionService {
                     correlationId,
                     correlationId,
                     patientId,
-                    documentId
+                    documentId,
+                    reprocessRequested
             );
         }
 
@@ -672,7 +1990,8 @@ public class ClinicalDocumentAiExtractionService {
                         CorrelationId.ensure(stringValue(rawContext.get("correlationId"))),
                         stringValue(rawContext.get("requestId")),
                         uuidValue(rawContext.get("patientId"), job.getPatientId()),
-                        uuidValue(rawContext.get("documentId"), job.getDocumentId())
+                        uuidValue(rawContext.get("documentId"), job.getDocumentId()),
+                        booleanValue(rawContext.get("reprocess"))
                 );
             } catch (Exception ex) {
                 log.warn("Unable to deserialize clinical document AI job context. jobId={}, tenantId={}, documentId={}, patientId={}, stage=REQUEST_CONTEXT_RESTORE, error={}",
@@ -693,6 +2012,7 @@ public class ClinicalDocumentAiExtractionService {
             payload.put("requestId", requestId);
             payload.put("patientId", patientId);
             payload.put("documentId", documentId);
+            payload.put("reprocess", reprocessRequested);
             return payload;
         }
 
@@ -708,7 +2028,8 @@ public class ClinicalDocumentAiExtractionService {
                     correlationId,
                     correlationId,
                     job.getPatientId(),
-                    job.getDocumentId()
+                    job.getDocumentId(),
+                    false
             );
         }
 
@@ -729,6 +2050,16 @@ public class ClinicalDocumentAiExtractionService {
             }
             String text = value.toString();
             return text.isBlank() ? null : text;
+        }
+
+        private static boolean booleanValue(Object value) {
+            if (value == null) {
+                return false;
+            }
+            if (value instanceof Boolean bool) {
+                return bool;
+            }
+            return Boolean.parseBoolean(value.toString());
         }
     }
 }

@@ -34,7 +34,7 @@ public class AiStatusService {
             List<AiProvider> providers,
             @Value("${clinic.ai.enabled:false}") boolean clinicAiEnabled,
             @Value("${clinic.ai.provider:DISABLED}") String clinicAiProvider,
-            @Value("${clinic.ai.provider-chain:GEMINI,GROQ,MOCK}") String clinicAiProviderChain,
+            @Value("${clinic.ai.provider-chain:${AI_LLM_PROVIDER_ORDER:${AI_PROVIDER_CHAIN:${VOICE_LLM_PROVIDER_ORDER:gemini,groq,mock}}}}") String clinicAiProviderChain,
             @Value("${clinic.ai.gemini.enabled:false}") boolean geminiEnabled,
             @Value("${clinic.ai.gemini.api-key:}") String geminiApiKey,
             @Value("${clinic.ocr.enabled:true}") boolean ocrEnabled,
@@ -59,6 +59,9 @@ public class AiStatusService {
         List<String> providerStates = providers.stream()
                 .map(provider -> normalize(provider.providerName(), "UNKNOWN") + ":" + provider.status())
                 .toList();
+        List<String> clinicalReasoningOrder = parseProviderChain().stream()
+                .map(provider -> provider + ":" + providerStatus(provider))
+                .toList();
         boolean geminiKeyPresent = geminiApiKey != null && !geminiApiKey.isBlank();
         String geminiKeyPrefix = geminiKeyPresent ? geminiApiKey.substring(0, Math.min(4, geminiApiKey.length())) : "-";
         org.slf4j.LoggerFactory.getLogger(AiStatusService.class).info(
@@ -71,6 +74,10 @@ public class AiStatusService {
                 geminiKeyPresent,
                 geminiKeyPrefix,
                 providerStates
+        );
+        org.slf4j.LoggerFactory.getLogger(AiStatusService.class).info(
+                "AI provider order for CLINICAL_REASONING = {}",
+                clinicalReasoningOrder.isEmpty() ? "NONE" : String.join(" > ", clinicalReasoningOrder)
         );
     }
 
@@ -137,6 +144,14 @@ public class AiStatusService {
                 .anyMatch(provider -> provider.status() != AiProviderStatus.UNAVAILABLE);
     }
 
+    private AiProviderStatus providerStatus(String providerName) {
+        return providers.stream()
+                .filter(provider -> providerName.equalsIgnoreCase(normalize(provider.providerName(), "")))
+                .map(AiProvider::status)
+                .findFirst()
+                .orElse(AiProviderStatus.UNAVAILABLE);
+    }
+
     private String activeProviderName() {
         List<String> chain = parseProviderChain();
         for (String providerName : chain) {
@@ -161,11 +176,15 @@ public class AiStatusService {
         if (clinicAiProviderChain == null || clinicAiProviderChain.isBlank()) {
             return List.of("GEMINI", "GROQ", "MOCK");
         }
-        return java.util.Arrays.stream(clinicAiProviderChain.split(","))
+        List<String> parsed = java.util.Arrays.stream(clinicAiProviderChain.split(","))
                 .map(value -> normalize(value, ""))
                 .filter(value -> !value.isBlank())
+                .filter(value -> !"MOCK".equals(value))
                 .distinct()
                 .toList();
+        java.util.ArrayList<String> ordered = new java.util.ArrayList<>(parsed);
+        ordered.add("MOCK");
+        return List.copyOf(ordered);
     }
 
     private String normalize(String value, String fallback) {

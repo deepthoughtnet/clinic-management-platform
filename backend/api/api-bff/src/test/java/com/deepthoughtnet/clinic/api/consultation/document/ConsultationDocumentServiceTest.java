@@ -111,6 +111,8 @@ class ConsultationDocumentServiceTest {
                 null,
                 null,
                 null,
+                null,
+                null,
                 false,
                 OffsetDateTime.now(ZoneOffset.UTC),
                 OffsetDateTime.now(ZoneOffset.UTC)

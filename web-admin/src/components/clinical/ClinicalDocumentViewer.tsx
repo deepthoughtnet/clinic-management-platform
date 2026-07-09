@@ -18,9 +18,11 @@ type Props = {
   onClose: () => void;
   onReprocess?: () => void;
   reprocessBusy?: boolean;
+  onRepairMemory?: () => void;
+  repairBusy?: boolean;
 };
 
-export function ClinicalDocumentViewer({ open, document, url, onClose, onReprocess, reprocessBusy }: Props) {
+export function ClinicalDocumentViewer({ open, document, url, onClose, onReprocess, reprocessBusy, onRepairMemory, repairBusy }: Props) {
   const [zoom, setZoom] = React.useState(1);
   const [pan, setPan] = React.useState({ x: 0, y: 0 });
   const [fullScreen, setFullScreen] = React.useState(false);
@@ -40,7 +42,9 @@ export function ClinicalDocumentViewer({ open, document, url, onClose, onReproce
   const businessStatus = documentBusinessStatusLabel(document);
   const aiStatus = String(document?.aiExtractionStatus || "").trim().toUpperCase();
   const ocrStatus = String(document?.ocrStatus || "").trim().toUpperCase();
+  const aiOps = document?.aiOps || null;
   const canReprocess = Boolean(onReprocess) && (aiStatus === "FAILED" || aiStatus === "REVIEW_REQUIRED" || aiStatus === "PROCESSING" || aiStatus === "QUEUED" || ocrStatus === "FAILED");
+  const canRepair = Boolean(onRepairMemory) && (aiStatus === "REVIEW_REQUIRED" || aiStatus === "APPROVED" || aiStatus === "AI_COMPLETED");
   const sizeLabel = formatSize(document?.sizeBytes);
   const metaChips = publishedLabDocument
     ? ["Lab Report", "Published"]
@@ -128,6 +132,13 @@ export function ClinicalDocumentViewer({ open, document, url, onClose, onReproce
                 {publishedLabDocument ? null : <Typography variant="body2"><b>AI override reason:</b> {document?.aiExtractionOverrideReason || "-"}</Typography>}
                 {publishedLabDocument ? null : <Typography variant="body2"><b>Reviewed by:</b> {document?.aiExtractionReviewedByAppUserId || "-"}</Typography>}
                 {publishedLabDocument ? null : <Typography variant="body2"><b>Reviewed at:</b> {document?.aiExtractionReviewedAt || "-"}</Typography>}
+                {publishedLabDocument || !aiOps ? null : (
+                  <>
+                    <Typography variant="body2"><b>AI retry:</b> {formatAiOpStatus(aiOps.lastAiRetryStatus)}{aiOps.lastAiRetryAt ? ` • ${formatAiTimestamp(aiOps.lastAiRetryAt)}` : ""}{aiOps.lastAiRetryMessage ? ` • ${aiOps.lastAiRetryMessage}` : ""}</Typography>
+                    <Typography variant="body2"><b>Memory repair:</b> {formatAiOpStatus(aiOps.lastMemoryRepairStatus)}{aiOps.lastMemoryRepairAt ? ` • ${formatAiTimestamp(aiOps.lastMemoryRepairAt)}` : ""}{typeof aiOps.lastMemoryRepairInsertedConceptCount === "number" ? ` • +${aiOps.lastMemoryRepairInsertedConceptCount}` : ""}{typeof aiOps.lastMemoryRepairFilteredPollutedConceptCount === "number" ? ` • filtered ${aiOps.lastMemoryRepairFilteredPollutedConceptCount}` : ""}</Typography>
+                    {aiOps.lastMemoryRepairCorrectedValues ? <Typography variant="body2" sx={{ whiteSpace: "pre-wrap" }}><b>Corrections:</b> {aiOps.lastMemoryRepairCorrectedValues}</Typography> : null}
+                  </>
+                )}
                 {businessStatus ? <Typography variant="body2"><b>Status:</b> {businessStatus}</Typography> : null}
                 <Typography variant="body2"><b>Checksum:</b> {document?.checksumSha256 || "-"}</Typography>
                 <Typography variant="body2"><b>Storage:</b> {document?.storageBucket ? `${document.storageBucket}/${document.storageKey}` : document?.storageKey || "-"}</Typography>
@@ -141,11 +152,26 @@ export function ClinicalDocumentViewer({ open, document, url, onClose, onReproce
           {url ? <Button startIcon={<DownloadRoundedIcon />} component="a" href={url} download target="_blank" rel="noreferrer">Download</Button> : null}
           {url ? <Button startIcon={<OpenInNewRoundedIcon />} onClick={() => window.open(url, "_blank", "noopener,noreferrer")}>Open</Button> : null}
           {canReprocess ? <Button variant="outlined" onClick={onReprocess} disabled={reprocessBusy}>Retry AI Processing</Button> : null}
+          {canRepair ? <Button variant="outlined" onClick={onRepairMemory} disabled={repairBusy}>Repair Memory</Button> : null}
         </Stack>
         <Button onClick={onClose}>Close</Button>
       </DialogActions>
     </Dialog>
   );
+}
+
+function formatAiTimestamp(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+}
+
+function formatAiOpStatus(value: string | null | undefined) {
+  if (!value) return "-";
+  const normalized = value.trim().toUpperCase();
+  if (normalized === "SUCCESS") return "Repaired";
+  if (normalized === "FAILED") return "Repair Failed";
+  return normalized.replaceAll("_", " ");
 }
 
 function formatSize(sizeBytes: number | null | undefined) {

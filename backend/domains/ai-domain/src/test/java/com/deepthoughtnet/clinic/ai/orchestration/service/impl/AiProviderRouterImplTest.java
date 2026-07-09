@@ -47,6 +47,21 @@ class AiProviderRouterImplTest {
         assertEquals("MOCK", candidates.get(1).providerName());
     }
 
+    @Test
+    void clinicalReasoningKeepsMockAsFinalFallback() {
+        AiProvider mock = new StubProvider("MOCK");
+        AiProvider groq = new StubProvider("GROQ");
+        AiProvider gemini = new StubProvider("GEMINI");
+        AiProviderRouterImpl router = new AiProviderRouterImpl(List.of(mock, groq, gemini), "GEMINI,GROQ,MOCK");
+
+        List<AiProvider> candidates = router.resolveCandidates(AiTaskType.CLINICAL_REASONING);
+
+        assertEquals("GEMINI", candidates.get(0).providerName());
+        assertEquals("GROQ", candidates.get(1).providerName());
+        assertEquals("MOCK", candidates.get(2).providerName());
+        assertEquals(3, candidates.size());
+    }
+
     private static final class StubProvider implements AiProvider {
         private final String name;
         private final AiProviderStatus status;
@@ -73,7 +88,7 @@ class AiProviderRouterImplTest {
         @Override
         public AiProviderResponse complete(AiProviderRequest request) {
             return new AiProviderResponse(name, "model", "ok", null, BigDecimal.ONE,
-                    new AiTokenUsage(1L, 1L, 2L, BigDecimal.ONE));
+                    new AiTokenUsage(1L, 1L, 2L, BigDecimal.ONE), null);
         }
 
         @Override

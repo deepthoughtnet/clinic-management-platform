@@ -130,9 +130,42 @@ export type ClinicalDocument = {
   aiExtractionOverrideReason: string | null;
   aiExtractionReviewedByAppUserId: string | null;
   aiExtractionReviewedAt: string | null;
+  aiOps: {
+    lastAiRetryAt: string | null;
+    lastAiRetryStatus: string | null;
+    lastAiRetryMessage: string | null;
+    lastAiRetryJobId: string | null;
+    lastMemoryRepairAt: string | null;
+    lastMemoryRepairStatus: string | null;
+    lastMemoryRepairMessage: string | null;
+    lastMemoryRepairBy: string | null;
+    lastMemoryRepairDeletedPendingConceptCount: number | null;
+    lastMemoryRepairInsertedConceptCount: number | null;
+    lastMemoryRepairSkippedAcceptedConceptCount: number | null;
+    lastMemoryRepairFilteredPollutedConceptCount: number | null;
+    lastMemoryRepairCorrectedValues: string | null;
+  } | null;
   active: boolean;
   createdAt: string;
   updatedAt: string;
+};
+
+export type ClinicalMemoryRepairResult = {
+  documentId: string | null;
+  status: "SUCCESS" | "FAILED" | string;
+  repairedAt: string;
+  repairedBy: string | null;
+  deletedPendingConceptCount: number;
+  insertedConceptCount: number;
+  skippedAcceptedConceptCount: number;
+  correctedValues: Array<{
+    conceptKey: string;
+    oldValue: string | null;
+    newValue: string | null;
+    unit: string | null;
+  }>;
+  filteredPollutedConceptCount: number;
+  message: string;
 };
 
 export type AiClinicalAnalytics = {
@@ -396,6 +429,241 @@ export type ClinicalContextResponse = {
   aiPromptContext: string;
   clinicalContextJson: string;
   generatedAt: string;
+};
+
+export type ClinicalReasoningResult = {
+  consultationId: string;
+  patientId: string;
+  generatedAt: string;
+  provider: string | null;
+  model: string | null;
+  confidence: string;
+  primaryDiagnosis: {
+    name: string | null;
+    confidence: number | null;
+    status: string | null;
+    whyConsidered: string | null;
+    whyLessLikely: string | null;
+    supportingEvidence: Array<{
+      text: string | null;
+      source: string | null;
+      observationDate: string | null;
+      confidence: number | null;
+      type: string | null;
+      sourceType?: string | null;
+      sourceTitle?: string | null;
+      verificationStatus?: string | null;
+    }>;
+    contradictingEvidence: Array<{
+      text: string | null;
+      source: string | null;
+      observationDate: string | null;
+      confidence: number | null;
+      type: string | null;
+      sourceType?: string | null;
+      sourceTitle?: string | null;
+      verificationStatus?: string | null;
+    }>;
+    missingInformation: Array<{
+      name: string | null;
+      whyItMatters: string | null;
+      requestedAction: string | null;
+      confidence: number | null;
+    }>;
+    recommendedTests: Array<{
+      name: string | null;
+      reason: string | null;
+      priority: string | null;
+      timing: string | null;
+      confidence: number | null;
+      source: string | null;
+      observationDate: string | null;
+      sourceType?: string | null;
+      sourceTitle?: string | null;
+      verificationStatus?: string | null;
+      alreadyAvailable?: boolean | null;
+      pendingOrderExists?: boolean | null;
+      actionType?: string | null;
+    }>;
+    redFlags: Array<{
+      name: string | null;
+      reason: string | null;
+      severity: string | null;
+      action: string | null;
+      confidence: number | null;
+      source: string | null;
+      observationDate: string | null;
+      sourceType?: string | null;
+      sourceTitle?: string | null;
+      verificationStatus?: string | null;
+    }>;
+  } | null;
+  differentialDiagnoses: Array<{
+    name: string | null;
+    confidence: number | null;
+    status: string | null;
+    whyConsidered: string | null;
+    whyLessLikely: string | null;
+    supportingEvidence: Array<{
+      text: string | null;
+      source: string | null;
+      observationDate: string | null;
+      confidence: number | null;
+      type: string | null;
+    }>;
+    contradictingEvidence: Array<{
+      text: string | null;
+      source: string | null;
+      observationDate: string | null;
+      confidence: number | null;
+      type: string | null;
+    }>;
+    missingInformation: Array<{
+      name: string | null;
+      whyItMatters: string | null;
+      requestedAction: string | null;
+      confidence: number | null;
+    }>;
+    recommendedTests: Array<{
+      name: string | null;
+      reason: string | null;
+      priority: string | null;
+      timing: string | null;
+      confidence: number | null;
+      source: string | null;
+      observationDate: string | null;
+    }>;
+    redFlags: Array<{
+      name: string | null;
+      reason: string | null;
+      severity: string | null;
+      action: string | null;
+      confidence: number | null;
+      source: string | null;
+      observationDate: string | null;
+    }>;
+  }>;
+  supportingEvidence: Array<{
+    text: string | null;
+    source: string | null;
+    observationDate: string | null;
+    confidence: number | null;
+    type: string | null;
+  }>;
+  contradictingEvidence: Array<{
+    text: string | null;
+    source: string | null;
+    observationDate: string | null;
+    confidence: number | null;
+    type: string | null;
+  }>;
+  missingInformation: Array<{
+    name: string | null;
+    whyItMatters: string | null;
+    requestedAction: string | null;
+    confidence: number | null;
+  }>;
+  redFlags: Array<{
+    name: string | null;
+    reason: string | null;
+    severity: string | null;
+    action: string | null;
+    confidence: number | null;
+    source: string | null;
+    observationDate: string | null;
+  }>;
+  recommendedTests: Array<{
+    name: string | null;
+    reason: string | null;
+    priority: string | null;
+    timing: string | null;
+    confidence: number | null;
+    source: string | null;
+    observationDate: string | null;
+    sourceType?: string | null;
+    sourceTitle?: string | null;
+    verificationStatus?: string | null;
+    alreadyAvailable?: boolean | null;
+    pendingOrderExists?: boolean | null;
+    actionType?: string | null;
+  }>;
+  reasoningSummary: string | null;
+  safetyNotes: Array<{
+      message: string | null;
+      severity: string | null;
+      rationale: string | null;
+      action: string | null;
+      sourceType?: string | null;
+      sourceTitle?: string | null;
+      verificationStatus?: string | null;
+      actionType?: string | null;
+    }>;
+  followUpAdvice: string[];
+  patientExplanation: string | null;
+  sourceContextSummary: {
+    chiefComplaint: string | null;
+    symptoms: string[];
+    vitals: string | null;
+    vitalsSource?: string | null;
+    knownConditions: string[];
+    recentReports: string[];
+    currentMedicines: string[];
+  };
+  metadata: {
+    reasoningEngineVersion?: string | null;
+    promptVersion: string | null;
+    contextVersion: string | null;
+    schemaVersion?: string | null;
+    provider: string | null;
+    model: string | null;
+    tokens: Record<string, unknown>;
+    parseStatus: string;
+    requestId: string | null;
+    correlationId: string | null;
+    latencyMs: number | null;
+    fallbackUsed: boolean;
+    finishReason: string | null;
+    normalizedFinishReason?: string | null;
+    rawChars: number | null;
+    errorMessage: string | null;
+    responseChars?: number | null;
+  };
+};
+
+export type ClinicalReasoningResponse = {
+  consultation: {
+    consultationId: string;
+    patientId: string;
+    status: string | null;
+    chiefComplaint: string | null;
+    symptoms: string | null;
+    diagnosis: string | null;
+    advice: string | null;
+    clinicalNotes: string | null;
+    vitals: string | null;
+    vitalsSource: string | null;
+    vitalsSourceTitle: string | null;
+  } | null;
+  clinicalContextSummary: {
+    patientName: string | null;
+    ageYears: number | null;
+    gender: string | null;
+    chiefComplaint: string | null;
+    vitals: string | null;
+    vitalsSource: string | null;
+    chronicConditions: string | null;
+    allergies: string | null;
+    knownConditions: string[];
+    latestLabs: string[];
+    pendingInvestigations: string[];
+    recentReports: string[];
+    riskFlags: string[];
+    lastVisitDiagnosis: string | null;
+    safetyContext: string | null;
+  } | null;
+  reasoningResult: ClinicalReasoningResult | null;
+  metadata: ClinicalReasoningResult["metadata"] | null;
+  debug?: Record<string, unknown> | null;
 };
 
 export type ClinicalIntakeResponse = {
@@ -4126,6 +4394,22 @@ export async function aiSuggestDiagnosis(token: string, tenantId: string, body: 
   return httpPost<AiDraftResponse>("/api/ai/consultation/suggest-diagnosis", body, { token, tenantId });
 }
 
+export async function generateClinicalReasoning(token: string, tenantId: string, consultationId: string, body: {
+  patientId?: string | null;
+  chiefComplaint?: string | null;
+  symptoms?: string | null;
+  findings?: string | null;
+  vitals?: string | null;
+  diagnosis?: string | null;
+  advice?: string | null;
+  notes?: string | null;
+  currentPrescriptionDraft?: string | null;
+  labOrdersSummary?: string | null;
+}, options?: { debug?: boolean }) {
+  const debugQuery = options?.debug ? "?debug=true" : "";
+  return httpPost<ClinicalReasoningResponse>(`/api/consultations/${consultationId}/clinical-reasoning/generate${debugQuery}`, body, { token, tenantId });
+}
+
 export async function aiSuggestPrescriptionTemplate(token: string, tenantId: string, body: {
   consultationId: string;
   patientId: string;
@@ -4169,6 +4453,10 @@ export async function reviewClinicalDocumentExtraction(token: string, tenantId: 
 
 export async function reprocessClinicalDocumentExtraction(token: string, tenantId: string, documentId: string) {
   return httpPost<ClinicalDocument>(`/api/clinical-documents/${documentId}/ai/reprocess`, undefined, { token, tenantId });
+}
+
+export async function repairClinicalMemory(token: string, tenantId: string, documentId: string) {
+  return httpPost<ClinicalMemoryRepairResult>(`/api/clinical-documents/${documentId}/clinical-memory/repair`, undefined, { token, tenantId });
 }
 
 export async function getRecentAiRequests(token: string, tenantId: string) {

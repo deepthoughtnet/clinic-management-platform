@@ -38,6 +38,7 @@ public record ClinicalDocumentResponse(
         String aiExtractionOverrideReason,
         String aiExtractionReviewedByAppUserId,
         String aiExtractionReviewedAt,
+        ClinicalDocumentAiOps aiOps,
         Boolean active,
         String createdAt,
         String updatedAt

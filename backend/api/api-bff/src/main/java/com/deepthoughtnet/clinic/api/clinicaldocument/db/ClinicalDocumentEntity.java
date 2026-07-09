@@ -135,6 +135,45 @@ public class ClinicalDocumentEntity {
     @Column(name = "ai_extraction_reviewed_at")
     private OffsetDateTime aiExtractionReviewedAt;
 
+    @Column(name = "last_ai_retry_at")
+    private OffsetDateTime lastAiRetryAt;
+
+    @Column(name = "last_ai_retry_status", length = 32)
+    private String lastAiRetryStatus;
+
+    @Column(name = "last_ai_retry_message", columnDefinition = "text")
+    private String lastAiRetryMessage;
+
+    @Column(name = "last_ai_retry_job_id")
+    private UUID lastAiRetryJobId;
+
+    @Column(name = "last_memory_repair_at")
+    private OffsetDateTime lastMemoryRepairAt;
+
+    @Column(name = "last_memory_repair_status", length = 32)
+    private String lastMemoryRepairStatus;
+
+    @Column(name = "last_memory_repair_message", columnDefinition = "text")
+    private String lastMemoryRepairMessage;
+
+    @Column(name = "last_memory_repair_by")
+    private UUID lastMemoryRepairBy;
+
+    @Column(name = "last_memory_repair_deleted_pending_concept_count")
+    private Integer lastMemoryRepairDeletedPendingConceptCount;
+
+    @Column(name = "last_memory_repair_inserted_concept_count")
+    private Integer lastMemoryRepairInsertedConceptCount;
+
+    @Column(name = "last_memory_repair_skipped_accepted_concept_count")
+    private Integer lastMemoryRepairSkippedAcceptedConceptCount;
+
+    @Column(name = "last_memory_repair_filtered_polluted_concept_count")
+    private Integer lastMemoryRepairFilteredPollutedConceptCount;
+
+    @Column(name = "last_memory_repair_corrected_values", columnDefinition = "text")
+    private String lastMemoryRepairCorrectedValues;
+
     @Column(name = "active", nullable = false)
     private boolean active;
 
@@ -221,6 +260,19 @@ public class ClinicalDocumentEntity {
         entity.aiExtractionOverrideReason = null;
         entity.aiExtractionReviewedByUserId = null;
         entity.aiExtractionReviewedAt = null;
+        entity.lastAiRetryAt = null;
+        entity.lastAiRetryStatus = null;
+        entity.lastAiRetryMessage = null;
+        entity.lastAiRetryJobId = null;
+        entity.lastMemoryRepairAt = null;
+        entity.lastMemoryRepairStatus = null;
+        entity.lastMemoryRepairMessage = null;
+        entity.lastMemoryRepairBy = null;
+        entity.lastMemoryRepairDeletedPendingConceptCount = null;
+        entity.lastMemoryRepairInsertedConceptCount = null;
+        entity.lastMemoryRepairSkippedAcceptedConceptCount = null;
+        entity.lastMemoryRepairFilteredPollutedConceptCount = null;
+        entity.lastMemoryRepairCorrectedValues = null;
         entity.active = true;
         entity.createdAt = now;
         entity.updatedAt = now;
@@ -322,6 +374,19 @@ public class ClinicalDocumentEntity {
     public UUID getAiExtractionReviewedByUserId() { return aiExtractionReviewedByUserId; }
     public UUID getAiExtractionReviewedByAppUserId() { return aiExtractionReviewedByUserId; }
     public OffsetDateTime getAiExtractionReviewedAt() { return aiExtractionReviewedAt; }
+    public OffsetDateTime getLastAiRetryAt() { return lastAiRetryAt; }
+    public String getLastAiRetryStatus() { return lastAiRetryStatus; }
+    public String getLastAiRetryMessage() { return lastAiRetryMessage; }
+    public UUID getLastAiRetryJobId() { return lastAiRetryJobId; }
+    public OffsetDateTime getLastMemoryRepairAt() { return lastMemoryRepairAt; }
+    public String getLastMemoryRepairStatus() { return lastMemoryRepairStatus; }
+    public String getLastMemoryRepairMessage() { return lastMemoryRepairMessage; }
+    public UUID getLastMemoryRepairBy() { return lastMemoryRepairBy; }
+    public Integer getLastMemoryRepairDeletedPendingConceptCount() { return lastMemoryRepairDeletedPendingConceptCount; }
+    public Integer getLastMemoryRepairInsertedConceptCount() { return lastMemoryRepairInsertedConceptCount; }
+    public Integer getLastMemoryRepairSkippedAcceptedConceptCount() { return lastMemoryRepairSkippedAcceptedConceptCount; }
+    public Integer getLastMemoryRepairFilteredPollutedConceptCount() { return lastMemoryRepairFilteredPollutedConceptCount; }
+    public String getLastMemoryRepairCorrectedValues() { return lastMemoryRepairCorrectedValues; }
     public boolean isActive() { return active; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
@@ -414,6 +479,19 @@ public class ClinicalDocumentEntity {
         this.aiExtractionOverrideReason = null;
         this.aiExtractionReviewedByUserId = null;
         this.aiExtractionReviewedAt = null;
+        this.lastAiRetryAt = null;
+        this.lastAiRetryStatus = null;
+        this.lastAiRetryMessage = null;
+        this.lastAiRetryJobId = null;
+        this.lastMemoryRepairAt = null;
+        this.lastMemoryRepairStatus = null;
+        this.lastMemoryRepairMessage = null;
+        this.lastMemoryRepairBy = null;
+        this.lastMemoryRepairDeletedPendingConceptCount = null;
+        this.lastMemoryRepairInsertedConceptCount = null;
+        this.lastMemoryRepairSkippedAcceptedConceptCount = null;
+        this.lastMemoryRepairFilteredPollutedConceptCount = null;
+        this.lastMemoryRepairCorrectedValues = null;
         this.updatedAt = OffsetDateTime.now();
     }
 
@@ -455,6 +533,43 @@ public class ClinicalDocumentEntity {
         this.aiExtractionAcceptedJson = acceptedJson;
         this.aiExtractionOverrideReason = overrideReason;
         this.aiExtractionStatus = reviewStatus;
+        this.updatedAt = OffsetDateTime.now();
+    }
+
+    public void markAiRetryRequested(UUID jobId, UUID requestedByAppUserId, String message) {
+        this.lastAiRetryAt = OffsetDateTime.now();
+        this.lastAiRetryStatus = "QUEUED";
+        this.lastAiRetryMessage = message;
+        this.lastAiRetryJobId = jobId;
+        this.updatedBy = requestedByAppUserId;
+        this.updatedAt = OffsetDateTime.now();
+    }
+
+    public void markAiRetryCompleted(String status, String message) {
+        this.lastAiRetryAt = OffsetDateTime.now();
+        this.lastAiRetryStatus = status;
+        this.lastAiRetryMessage = message;
+        this.updatedAt = OffsetDateTime.now();
+    }
+
+    public void markClinicalMemoryRepair(UUID repairedByAppUserId,
+                                         String status,
+                                         String message,
+                                         int deletedPendingConceptCount,
+                                         int insertedConceptCount,
+                                         int skippedAcceptedConceptCount,
+                                         int filteredPollutedConceptCount,
+                                         String correctedValuesJson) {
+        this.lastMemoryRepairAt = OffsetDateTime.now();
+        this.lastMemoryRepairStatus = status;
+        this.lastMemoryRepairMessage = message;
+        this.lastMemoryRepairBy = repairedByAppUserId;
+        this.lastMemoryRepairDeletedPendingConceptCount = deletedPendingConceptCount;
+        this.lastMemoryRepairInsertedConceptCount = insertedConceptCount;
+        this.lastMemoryRepairSkippedAcceptedConceptCount = skippedAcceptedConceptCount;
+        this.lastMemoryRepairFilteredPollutedConceptCount = filteredPollutedConceptCount;
+        this.lastMemoryRepairCorrectedValues = correctedValuesJson;
+        this.updatedBy = repairedByAppUserId;
         this.updatedAt = OffsetDateTime.now();
     }
 }

@@ -40,6 +40,7 @@ import {
   getPatientDocumentViewUrl,
   getPatientTimeline,
   reviewClinicalDocumentExtraction,
+  repairClinicalMemory as repairClinicalMemoryApi,
   reprocessClinicalDocumentExtraction,
   uploadPatientDocument,
   searchBills,
@@ -249,12 +250,27 @@ export default function PatientDetailPage() {
       || ocrStatus === "FAILED"
       || documentHasFriendlyFailure(document);
     const canReprocessAi = aiStatus === "REVIEW_REQUIRED" || aiSummary.includes("AI REVIEW_REQUIRED");
-    const canSeeAction = canRetryAi || canReprocessAi;
+    const canRepairMemory = aiStatus === "REVIEW_REQUIRED" || aiStatus === "APPROVED" || aiStatus === "AI_COMPLETED" || aiSummary.includes("AI COMPLETED");
     const allowedByRole = canUploadClinicalDocument || canReviewAiExtraction || currentUserRole === "RECEPTIONIST" || currentUserRole === "DOCTOR";
     const showRetry = allowedByRole && canRetryAi;
     const showReprocess = allowedByRole && canReprocessAi;
-    return { aiStatus, ocrStatus, canRetryAi, canReprocessAi, showRetry, showReprocess };
+    const showRepairMemory = allowedByRole && canRepairMemory;
+    return { aiStatus, ocrStatus, canRetryAi, canReprocessAi, canRepairMemory, showRetry, showReprocess, showRepairMemory };
   }, [canReviewAiExtraction, canUploadClinicalDocument, currentUserRole, documentHasFriendlyFailure]);
+
+  const formatDocumentOpsSummary = React.useCallback((document: ClinicalDocument) => {
+    const parts: string[] = [];
+    const aiStatus = String(document.aiExtractionStatus || "NOT_STARTED").replaceAll("_", " ");
+    const confidence = document.aiExtractionConfidence != null ? ` · ${(document.aiExtractionConfidence * 100).toFixed(0)}%` : "";
+    parts.push(`AI: ${aiStatus}${confidence}`);
+    const repairStatus = String(document.aiOps?.lastMemoryRepairStatus || "").trim().toUpperCase();
+    if (repairStatus) {
+      const repairedAt = document.aiOps?.lastMemoryRepairAt ? formatShortTimestamp(document.aiOps.lastMemoryRepairAt) : null;
+      const label = repairStatus === "SUCCESS" ? "Repaired" : repairStatus === "FAILED" ? "Repair Failed" : repairStatus.replaceAll("_", " ");
+      parts.push(`Memory: ${label}${repairedAt ? ` ${repairedAt}` : ""}`);
+    }
+    return parts.join(" · ");
+  }, []);
 
   const documentIsTerminal = React.useCallback((document: ClinicalDocument | null) => {
     if (!document) return true;
@@ -404,6 +420,30 @@ export default function PatientDetailPage() {
       setError(err instanceof Error ? err.message : "Failed to reprocess AI extraction");
       setRowActionBusyDocumentId((current) => (current === documentId ? null : current));
     } finally {
+    }
+  };
+
+  const repairDocumentMemory = async (documentId: string) => {
+    if (!auth.accessToken || !auth.tenantId) return;
+    if (!window.confirm("Repair clinical memory for this document?")) {
+      return;
+    }
+    setRowActionBusyDocumentId(documentId);
+    setError(null);
+    try {
+      const result = await repairClinicalMemoryApi(auth.accessToken, auth.tenantId, documentId);
+      const corrected = result.correctedValues?.[0];
+      const correctedText = corrected ? `, ${corrected.conceptKey} corrected ${corrected.oldValue} → ${corrected.newValue}` : "";
+      setToast(
+        result.status === "SUCCESS"
+          ? `Memory repaired: ${result.insertedConceptCount} concepts inserted, ${result.filteredPollutedConceptCount} polluted concepts filtered${correctedText}`
+          : `Memory repair failed: ${result.message}`
+      );
+      await refreshDocuments();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to repair clinical memory");
+    } finally {
+      setRowActionBusyDocumentId((current) => (current === documentId ? null : current));
     }
   };
 
@@ -628,6 +668,9 @@ export default function PatientDetailPage() {
                             : ` · OCR ${document.ocrStatus || "NOT_STARTED"} · AI ${document.aiExtractionStatus || "NOT_STARTED"}${document.aiExtractionConfidence != null ? ` · ${(document.aiExtractionConfidence * 100).toFixed(0)}%` : ""}`}
                         </Typography>
                         <Typography variant="caption" color="text.secondary" display="block">
+                          {formatDocumentOpsSummary(document)}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary" display="block">
                           {document.uploadedByName}{document.reportDate ? ` • Report date ${document.reportDate}` : ""}{isPublishedLabDocument(document) ? ` • ${documentBusinessStatusLabel(document) || "Published"}` : document.visibility ? ` • ${document.visibility}` : ""}
                         </Typography>
                       </Box>
@@ -648,6 +691,16 @@ export default function PatientDetailPage() {
                             disabled={rowActionBusyDocumentId === document.id || pollingDocumentId === document.id}
                           >
                             {documentActions.showReprocess ? "Reprocess AI" : "Retry AI"}
+                          </Button>
+                        ) : null}
+                        {documentActions.showRepairMemory ? (
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={() => void repairDocumentMemory(document.id)}
+                            disabled={rowActionBusyDocumentId === document.id}
+                          >
+                            Repair Memory
                           </Button>
                         ) : null}
                       </Stack>
@@ -914,8 +967,22 @@ export default function PatientDetailPage() {
         onClose={() => { setViewerDocument(null); setViewerUrl(null); }}
         onReprocess={viewerDocument && canReviewAiExtraction ? () => void reprocessDocument(viewerDocument.id) : undefined}
         reprocessBusy={Boolean(viewerDocument && (rowActionBusyDocumentId === viewerDocument.id || pollingDocumentId === viewerDocument.id))}
+        onRepairMemory={viewerDocument && computeDocumentAiActions(viewerDocument).showRepairMemory ? () => void repairDocumentMemory(viewerDocument.id) : undefined}
+        repairBusy={Boolean(viewerDocument && rowActionBusyDocumentId === viewerDocument.id)}
       />
       <Snackbar open={Boolean(toast)} autoHideDuration={3500} onClose={() => setToast(null)} message={toast || ""} />
     </Stack>
   );
+}
+
+function formatShortTimestamp(value: string | null | undefined) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleString([], {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }

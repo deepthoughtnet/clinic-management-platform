@@ -63,6 +63,7 @@ import static org.springframework.http.HttpStatus.NOT_FOUND;
 public class ClinicalContextService {
     private static final Logger log = LoggerFactory.getLogger(ClinicalContextService.class);
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ISO_LOCAL_DATE;
+    private static final DateTimeFormatter HUMAN_DATE_FORMAT = DateTimeFormatter.ofPattern("dd-MMM-yyyy", Locale.ENGLISH);
     private static final List<String> ANTIBIOTIC_HINTS = List.of(
             "amox",
             "augmentin",
@@ -133,10 +134,15 @@ public class ClinicalContextService {
         List<PatientClinicalIntakeEntity> clinicalIntakes = patientClinicalIntakeRepository.findByTenantIdAndPatientIdOrderByCreatedAtDesc(tenantId, patientId);
         List<LabOrderEntity> labOrders = labOrderRepository.findByTenantIdAndPatientIdOrderByCreatedAtDesc(tenantId, patientId);
 
-        List<ConsultationEntity> previousConsultations = consultations.stream()
+        List<ConsultationEntity> historicalConsultations = consultations.stream()
+                .filter(this::isCompletedConsultation)
                 .filter(consultation -> consultationId == null || !consultation.getId().equals(consultationId))
                 .limit(5)
                 .toList();
+        ConsultationEntity currentConsultation = consultations.stream()
+                .filter(consultation -> consultationId != null && consultationId.equals(consultation.getId()))
+                .findFirst()
+                .orElse(null);
 
         Map<UUID, List<PrescriptionMedicineEntity>> medicinesByPrescriptionId = loadPrescriptionMedicines(tenantId, prescriptions, 5);
         Map<UUID, List<PrescriptionTestEntity>> testsByPrescriptionId = loadPrescriptionTests(tenantId, prescriptions, 5);
@@ -147,12 +153,12 @@ public class ClinicalContextService {
         List<String> duplicateMedicines = findDuplicateMedicines(patient, prescriptions, medicinesByPrescriptionId);
         List<String> medicationAlerts = buildMedicationAlerts(patient, activeMedications, recentAntibiotics, duplicateMedicines);
 
-        List<VisitSummary> previousVisits = previousConsultations.stream()
+        List<VisitSummary> previousVisits = historicalConsultations.stream()
                 .map(consultation -> toVisitSummary(consultation, prescriptions, medicinesByPrescriptionId, testsByPrescriptionId))
                 .toList();
 
-        String lastVisitDiagnosis = consultations.isEmpty() ? null : compactText(firstNonBlank(consultations.get(0).getDiagnosis(), consultations.get(0).getChiefComplaints()));
-        List<String> previousDiagnoses = previousConsultations.stream()
+        String lastVisitDiagnosis = historicalConsultations.isEmpty() ? null : compactText(firstNonBlank(historicalConsultations.get(0).getDiagnosis(), historicalConsultations.get(0).getChiefComplaints()));
+        List<String> previousDiagnoses = historicalConsultations.stream()
                 .map(ConsultationEntity::getDiagnosis)
                 .filter(this::hasText)
                 .map(this::compactText)
@@ -163,6 +169,13 @@ public class ClinicalContextService {
         LabIntelligence labIntelligence = buildLabIntelligence(tenantId, labOrders, longitudinalProfile);
         DocumentIntelligence documentIntelligence = buildDocumentIntelligence(documents);
         IntakeSummary intakeSummary = buildIntakeSummary(clinicalIntakes, documents);
+        String hydratedVitals = buildHydratedConsultationVitals(currentConsultation, intakeSummary);
+        if (currentConsultation != null && isConsultationVitalsNull(currentConsultation) && intakeSummary != null && intakeSummary.latestVitals() != null) {
+            log.info("[CONSULTATION-VITALS-HYDRATION] consultationId={} patientId={} hydratedFields={} source=INTAKE",
+                    currentConsultation.getId(),
+                    patientId,
+                    summarizeHydratedVitals(intakeSummary.latestVitals()));
+        }
         TimelineSummary timelineSummary = buildTimelineSummary(consultations, prescriptions, clinicalIntakes, documents, labOrders, longitudinalMemoryService.buildTimelineEvents(tenantId, patientId, 8));
 
         PatientSnapshot patientSnapshot = new PatientSnapshot(
@@ -177,11 +190,12 @@ public class ClinicalContextService {
 
         DiagnosisSummary diagnosisSummary = new DiagnosisSummary(lastVisitDiagnosis, previousDiagnoses);
         String aiSummary = buildAiSummary(patientSnapshot, medicationAlerts, labIntelligence, documentIntelligence, timelineSummary);
-        String aiPromptContext = buildPromptContext(patientSnapshot, previousVisits, diagnosisSummary, medicationAlerts, intakeSummary, labIntelligence, documentIntelligence, timelineSummary);
+        String aiPromptContext = buildPromptContext(patientSnapshot, previousVisits, diagnosisSummary, medicationAlerts, intakeSummary, labIntelligence, documentIntelligence, timelineSummary, historicalConsultations, currentConsultation, hydratedVitals);
         MedicationSummary medicationSummary = new MedicationSummary(activeMedications, discontinuedMedications, recentAntibiotics, duplicateMedicines, medicationAlerts);
         ClinicalContextResponse.LongitudinalMemory longitudinalMemory = toLongitudinalMemory(longitudinalProfile);
-        String clinicalContextJson = buildClinicalContextJson(patientSnapshot, previousVisits, medicationSummary, diagnosisSummary, intakeSummary, labIntelligence, documentIntelligence, timelineSummary, longitudinalMemory);
+        String clinicalContextJson = buildClinicalContextJson(patientSnapshot, previousVisits, medicationSummary, diagnosisSummary, intakeSummary, labIntelligence, documentIntelligence, timelineSummary, longitudinalMemory, historicalConsultations, currentConsultation, hydratedVitals);
         traceClinicalContext(tenantId, patientId, consultationId, patientSnapshot, labIntelligence, documentIntelligence, longitudinalMemory);
+        traceAiContext(tenantId, patientId, consultationId, clinicalContextJson, aiPromptContext, longitudinalProfile, labIntelligence, documentIntelligence, historicalConsultations);
 
         return new ClinicalContextResponse(
                 tenantId,
@@ -359,24 +373,17 @@ public class ClinicalContextService {
         List<String> latestLabReports = recentOrders.stream()
                 .filter(order -> order.getReportPublishedAt() != null || order.getReportGeneratedAt() != null || order.getResultEnteredAt() != null)
                 .limit(3)
-                .map(order -> joinSegments(segments(
-                        formatDate(order.getReportPublishedAt() != null ? order.getReportPublishedAt() : order.getReportGeneratedAt() != null ? order.getReportGeneratedAt() : order.getResultEnteredAt()),
-                        firstNonBlank(order.getOrderNumber(), "Lab report")
-                )))
+                .map(this::formatLabReportSummary)
                 .filter(this::hasText)
                 .toList();
 
-        List<String> abnormalValues = allResults.stream()
-                .filter(this::isAbnormalResult)
-                .limit(6)
-                .map(this::formatResultSummary)
-                .toList();
+        List<String> abnormalValues = buildAbnormalValues(allResults, longitudinalProfile);
 
         List<String> previousTrends = buildLabTrends(allResults);
         List<String> pendingInvestigations = recentOrders.stream()
                 .filter(order -> isPendingLabOrderStatus(order.getStatus()))
                 .limit(6)
-                .map(order -> order.getOrderNumber() + (hasText(order.getNotes()) ? " - " + compactText(order.getNotes(), 80) : ""))
+                .map(this::formatPendingLabOrderSummary)
                 .toList();
 
         String latestHbA1c = longitudinalProfile.latestHbA1c() == null ? findLatestLabValue(allResults, "HBA1C") : formatLongitudinalConcept(longitudinalProfile.latestHbA1c());
@@ -387,11 +394,11 @@ public class ClinicalContextService {
         String latestCbc = findLatestLabValue(allResults, "CBC");
         String latestCreatinine = findLatestLabValue(allResults, "CREATININE");
 
-        String latestLabReport = latestLabReports.isEmpty()
-                ? null
-                : latestLabReports.get(0);
+        String latestLabReport = hasText(longitudinalProfile == null ? null : longitudinalProfile.mostRecentLaboratorySummary())
+                ? longitudinalProfile.mostRecentLaboratorySummary()
+                : (latestLabReports.isEmpty() ? null : latestLabReports.get(0));
         if (latestLabReport == null && !recentOrders.isEmpty()) {
-            latestLabReport = recentOrders.get(0).getOrderNumber() + " - " + compactText(recentOrders.get(0).getNotes());
+            latestLabReport = formatPendingLabOrderSummary(recentOrders.get(0));
         }
 
         return new LabIntelligence(
@@ -412,7 +419,7 @@ public class ClinicalContextService {
     private DocumentIntelligence buildDocumentIntelligence(List<ClinicalDocumentEntity> documents) {
         List<String> recentReports = documents.stream()
                 .limit(5)
-                .map(document -> formatDocument(document))
+                .map(this::formatDocument)
                 .toList();
         List<String> radiology = documents.stream()
                 .filter(document -> isType(document, "RADIOLOGY_REPORT", "X_RAY", "MRI_CT"))
@@ -462,16 +469,16 @@ public class ClinicalContextService {
                 )));
         documents.stream().limit(5).forEach(document ->
                 events.add(new TimelineEvent(
-                        formatDate(document.getCreatedAt()),
+                        formatHumanDate(firstNonNull(document.getReportDate(), document.getCreatedAt() == null ? null : document.getCreatedAt().toLocalDate())),
                         documentLabel(document),
-                        compactText(firstNonBlank(document.getTitle(), document.getDescription(), document.getFileName())),
+                        compactText(firstNonBlank(document.getTitle(), document.getDescription(), documentLabel(document))),
                         "DOCUMENT"
                 )));
         labOrders.stream().limit(5).forEach(order ->
                 events.add(new TimelineEvent(
-                        formatDate(order.getOrderedAt()),
+                        formatHumanDate(firstNonNullDateTime(order.getReportPublishedAt(), order.getReportGeneratedAt(), order.getResultEnteredAt(), order.getOrderedAt())),
                         "Lab Order",
-                        compactText(firstNonBlank(order.getOrderNumber(), order.getNotes(), order.getStatus() == null ? null : order.getStatus().name())),
+                        compactText(firstNonBlank(order.getNotes(), order.getSampleType(), order.getExternalReferenceNumber(), order.getStatus() == null ? null : order.getStatus().name())),
                         "LAB_ORDER"
                 )));
         longitudinalEvents.stream().limit(12).forEach(event ->
@@ -482,7 +489,7 @@ public class ClinicalContextService {
                         event.type()
                 )));
 
-        events.sort(Comparator.comparing((TimelineEvent event) -> parseDateValue(event.occurredOn())).reversed());
+        events.sort(Comparator.comparing((TimelineEvent event) -> parseDateValue(event.occurredOn()), Comparator.nullsLast(Comparator.naturalOrder())).reversed());
         List<TimelineEvent> limited = events.stream().limit(8).toList();
         String recentImportantEvents = limited.stream()
                 .map(event -> joinSegments(segments(event.occurredOn(), event.title(), event.detail())))
@@ -674,9 +681,16 @@ public class ClinicalContextService {
                                       IntakeSummary intakeSummary,
                                       LabIntelligence labIntelligence,
                                       DocumentIntelligence documentIntelligence,
-                                      TimelineSummary timelineSummary) {
+                                      TimelineSummary timelineSummary,
+                                      List<ConsultationEntity> historicalConsultations,
+                                      ConsultationEntity consultation,
+                                      String hydratedVitals) {
         List<String> lines = new ArrayList<>();
-        lines.add("Patient snapshot: " + joinSegments(segments(patientSnapshot.patientName(), patientSnapshot.ageYears() == null ? null : patientSnapshot.ageYears() + "y", patientSnapshot.gender())));
+        lines.add("Patient: " + joinSegments(segments(
+                patientSnapshot.patientName(),
+                patientSnapshot.ageYears() == null ? null : patientSnapshot.ageYears() + "y",
+                patientSnapshot.gender()
+        )));
         if (hasText(patientSnapshot.chronicConditions())) {
             lines.add("Chronic conditions: " + patientSnapshot.chronicConditions());
         }
@@ -686,30 +700,27 @@ public class ClinicalContextService {
         if (!patientSnapshot.currentMedications().isEmpty()) {
             lines.add("Current medications: " + joinCompact(patientSnapshot.currentMedications(), 5));
         }
-        if (hasText(diagnosisSummary.lastVisitDiagnosis()) || !diagnosisSummary.previousDiagnoses().isEmpty()) {
-            lines.add("Diagnosis history: " + joinSegments(segments(
-                    hasText(diagnosisSummary.lastVisitDiagnosis()) ? "Last visit: " + diagnosisSummary.lastVisitDiagnosis() : null,
-                    diagnosisSummary.previousDiagnoses().isEmpty() ? null : "Previous: " + joinCompact(diagnosisSummary.previousDiagnoses(), 5)
+        if (intakeSummary != null && (hasText(intakeSummary.chiefComplaint()) || intakeSummary.latestVitals() != null || hasText(intakeSummary.notes()) || hasText(hydratedVitals))) {
+            lines.add("Current visit: " + joinSegments(segments(
+                    hasText(intakeSummary.chiefComplaint()) ? "Chief complaint: " + intakeSummary.chiefComplaint() : null,
+                    hydratedVitals == null ? (intakeSummary.latestVitals() == null ? null : "Vitals: " + formatVitalsSnapshot(intakeSummary.latestVitals())) : "Vitals: " + hydratedVitals,
+                    hasText(intakeSummary.notes()) ? "Notes: " + intakeSummary.notes() : null
             )));
         }
         if (!medicationAlerts.isEmpty()) {
             lines.add("Medication alerts: " + joinCompact(medicationAlerts, 4));
         }
-        if (intakeSummary != null && (intakeSummary.latestVitals() != null || hasText(intakeSummary.chiefComplaint()) || hasText(intakeSummary.vitalsTrendSummary()) || hasText(intakeSummary.uploadedDocumentSummary()))) {
-            lines.add("Clinical intake: " + joinSegments(segments(
-                    hasText(intakeSummary.chiefComplaint()) ? "Chief complaint: " + intakeSummary.chiefComplaint() : null,
-                    intakeSummary.latestVitals() == null ? null : "Vitals: " + formatVitalsSnapshot(intakeSummary.latestVitals()),
+        if (intakeSummary != null && (hasText(intakeSummary.vitalsTrendSummary()) || !intakeSummary.abnormalVitalsAlerts().isEmpty() || hasText(intakeSummary.uploadedDocumentSummary()))) {
+            lines.add("Intake support: " + joinSegments(segments(
                     hasText(intakeSummary.vitalsTrendSummary()) ? "Trend: " + intakeSummary.vitalsTrendSummary() : null,
                     intakeSummary.abnormalVitalsAlerts().isEmpty() ? null : "Alerts: " + joinCompact(intakeSummary.abnormalVitalsAlerts(), 4),
-                    hasText(intakeSummary.uploadedDocumentSummary()) ? "Documents: " + intakeSummary.uploadedDocumentSummary() : null,
-                    hasText(intakeSummary.notes()) ? "Notes: " + intakeSummary.notes() : null
+                    hasText(intakeSummary.uploadedDocumentSummary()) ? "Documents: " + intakeSummary.uploadedDocumentSummary() : null
             )));
         }
         if (hasText(labIntelligence.latestLabReport()) || !labIntelligence.abnormalValues().isEmpty() || !labIntelligence.pendingInvestigations().isEmpty()) {
-            lines.add("Lab intelligence: " + joinSegments(segments(
-                    labIntelligence.latestLabReport(),
+            lines.add("Labs: " + joinSegments(segments(
+                    hasText(labIntelligence.latestLabReport()) ? labIntelligence.latestLabReport() : null,
                     labIntelligence.abnormalValues().isEmpty() ? null : "Abnormal: " + joinCompact(labIntelligence.abnormalValues(), 4),
-                    labIntelligence.previousTrends().isEmpty() ? null : "Trends: " + joinCompact(labIntelligence.previousTrends(), 3),
                     labIntelligence.pendingInvestigations().isEmpty() ? null : "Pending: " + joinCompact(labIntelligence.pendingInvestigations(), 4),
                     hasText(labIntelligence.lastHbA1c()) ? "HbA1c: " + labIntelligence.lastHbA1c() : null,
                     hasText(labIntelligence.latestBloodSugar()) ? "Blood sugar: " + labIntelligence.latestBloodSugar() : null,
@@ -720,19 +731,31 @@ public class ClinicalContextService {
                     hasText(labIntelligence.lastCreatinine()) ? "Creatinine: " + labIntelligence.lastCreatinine() : null
             )));
         }
+        String pendingOrderGuidance = buildPendingOrderGuidance(labIntelligence);
+        if (hasText(pendingOrderGuidance)) {
+            lines.add(pendingOrderGuidance);
+        }
         if (!documentIntelligence.recentReports().isEmpty() || !documentIntelligence.radiology().isEmpty() || !documentIntelligence.referrals().isEmpty() || !documentIntelligence.dischargeSummaries().isEmpty()) {
-            lines.add("Document intelligence: " + joinSegments(segments(
-                    documentIntelligence.recentReports().isEmpty() ? null : "Recent reports: " + joinCompact(documentIntelligence.recentReports(), 4),
+            lines.add("Recent reports: " + joinSegments(segments(
+                    documentIntelligence.recentReports().isEmpty() ? null : joinCompact(dedupeRecentReportsForPrompt(documentIntelligence.recentReports()), 4),
                     documentIntelligence.radiology().isEmpty() ? null : "Radiology: " + joinCompact(documentIntelligence.radiology(), 3),
                     documentIntelligence.referrals().isEmpty() ? null : "Referrals: " + joinCompact(documentIntelligence.referrals(), 3),
                     documentIntelligence.dischargeSummaries().isEmpty() ? null : "Discharge: " + joinCompact(documentIntelligence.dischargeSummaries(), 3)
             )));
         }
         if (!previousVisits.isEmpty()) {
-            lines.add("Previous visits: " + previousVisits.stream().limit(5).map(visit -> joinSegments(segments(visit.consultationDate(), visit.diagnosis()))).collect(Collectors.joining(" | ")));
+            lines.add("History: " + previousVisits.stream().limit(5).map(visit -> joinSegments(segments(visit.consultationDate(), visit.diagnosis()))).collect(Collectors.joining(" | ")));
+        } else if (diagnosisSummary != null && (hasText(diagnosisSummary.lastVisitDiagnosis()) || !diagnosisSummary.previousDiagnoses().isEmpty())) {
+            lines.add("History: " + joinSegments(segments(
+                    hasText(diagnosisSummary.lastVisitDiagnosis()) ? "Last visit: " + diagnosisSummary.lastVisitDiagnosis() : null,
+                    diagnosisSummary.previousDiagnoses().isEmpty() ? null : "Previous: " + joinCompact(diagnosisSummary.previousDiagnoses(), 5)
+            )));
         }
         if (hasText(timelineSummary.recentImportantEvents())) {
-            lines.add("Timeline summary: " + timelineSummary.recentImportantEvents());
+            lines.add("Safety context: " + timelineSummary.recentImportantEvents());
+        }
+        if (consultation != null) {
+            lines.add("Current consultation status: " + consultation.getStatus());
         }
         return String.join("\n", lines.stream().filter(this::hasText).toList());
     }
@@ -745,7 +768,10 @@ public class ClinicalContextService {
                                             LabIntelligence labIntelligence,
                                             DocumentIntelligence documentIntelligence,
                                             TimelineSummary timelineSummary,
-                                            ClinicalContextResponse.LongitudinalMemory longitudinalMemory) {
+                                            ClinicalContextResponse.LongitudinalMemory longitudinalMemory,
+                                            List<ConsultationEntity> historicalConsultations,
+                                            ConsultationEntity consultation,
+                                            String hydratedVitals) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("patientSummary", patientSnapshot);
         payload.put("previousVisits", previousVisits);
@@ -757,7 +783,7 @@ public class ClinicalContextService {
         payload.put("timelineSummary", timelineSummary);
         payload.put("longitudinalMemory", longitudinalMemory);
         payload.put("aiSummary", buildAiSummary(patientSnapshot, medicationSnapshot.alerts(), labIntelligence, documentIntelligence, timelineSummary));
-        payload.put("aiPromptContext", buildPromptContext(patientSnapshot, previousVisits, diagnosisSummary, medicationSnapshot.alerts(), intakeSummary, labIntelligence, documentIntelligence, timelineSummary));
+        payload.put("aiPromptContext", buildPromptContext(patientSnapshot, previousVisits, diagnosisSummary, medicationSnapshot.alerts(), intakeSummary, labIntelligence, documentIntelligence, timelineSummary, historicalConsultations, consultation, hydratedVitals));
         try {
             return objectMapper.writeValueAsString(payload);
         } catch (JsonProcessingException ex) {
@@ -853,6 +879,78 @@ public class ClinicalContextService {
         );
     }
 
+    private void traceAiContext(UUID tenantId,
+                                UUID patientId,
+                                UUID consultationId,
+                                String clinicalContextJson,
+                                String aiPromptContext,
+                                PatientLongitudinalMemoryProfile longitudinalProfile,
+                                LabIntelligence labIntelligence,
+                                DocumentIntelligence documentIntelligence,
+                                List<ConsultationEntity> historicalConsultations) {
+        if (!log.isInfoEnabled()) {
+            return;
+        }
+        int conditionCount = longitudinalProfile == null || longitudinalProfile.knownConditions() == null ? 0 : longitudinalProfile.knownConditions().size();
+        int labCount = 0;
+        if (longitudinalProfile != null) {
+            if (longitudinalProfile.latestHbA1c() != null) {
+                labCount++;
+            }
+            if (longitudinalProfile.latestBloodSugar() != null) {
+                labCount++;
+            }
+            if (longitudinalProfile.latestBloodPressure() != null) {
+                labCount++;
+            }
+            if (longitudinalProfile.latestBmi() != null) {
+                labCount++;
+            }
+            labCount += longitudinalProfile.latestLipidSummary() == null ? 0 : longitudinalProfile.latestLipidSummary().size();
+        }
+        int abnormalLabCount = labIntelligence == null || labIntelligence.abnormalValues() == null ? 0 : labIntelligence.abnormalValues().size();
+        int reportCount = documentIntelligence == null || documentIntelligence.recentReports() == null ? 0 : documentIntelligence.recentReports().size();
+        int historyCount = historicalConsultations == null ? 0 : historicalConsultations.size();
+        int dedupedConceptCount = longitudinalProfile == null || longitudinalProfile.history() == null ? 0 : longitudinalProfile.history().size();
+        String hba1cValue = longitudinalProfile == null || longitudinalProfile.latestHbA1c() == null ? null : longitudinalProfile.latestHbA1c().valueText();
+        String latestBloodSugar = longitudinalProfile == null || longitudinalProfile.latestBloodSugar() == null ? null : longitudinalProfile.latestBloodSugar().valueText();
+        List<String> selectedSourceDocumentIds = new ArrayList<>();
+        if (longitudinalProfile != null) {
+            if (longitudinalProfile.latestHbA1c() != null && longitudinalProfile.latestHbA1c().sourceDocumentId() != null) {
+                selectedSourceDocumentIds.add(String.valueOf(longitudinalProfile.latestHbA1c().sourceDocumentId()));
+            }
+            if (longitudinalProfile.latestBloodSugar() != null && longitudinalProfile.latestBloodSugar().sourceDocumentId() != null) {
+                selectedSourceDocumentIds.add(String.valueOf(longitudinalProfile.latestBloodSugar().sourceDocumentId()));
+            }
+            if (longitudinalProfile.latestLipidSummary() != null) {
+                longitudinalProfile.latestLipidSummary().stream()
+                        .map(LongitudinalConceptSnapshot::sourceDocumentId)
+                        .filter(Objects::nonNull)
+                        .map(String::valueOf)
+                        .forEach(selectedSourceDocumentIds::add);
+            }
+        }
+        log.info(
+                "[AI-CONTEXT-TRACE] tenantId={} patientId={} consultationId={} contextChars={} promptContextChars={} conditionCount={} labCount={} abnormalLabCount={} reportCount={} historyCount={} filteredRecommendationCount={} dedupedConceptCount={} hba1cValue={} latestBloodSugar={} lipidCount={} selectedSourceDocumentIds={}",
+                tenantId,
+                patientId,
+                consultationId,
+                clinicalContextJson == null ? 0 : clinicalContextJson.length(),
+                aiPromptContext == null ? 0 : aiPromptContext.length(),
+                conditionCount,
+                labCount,
+                abnormalLabCount,
+                reportCount,
+                historyCount,
+                0,
+                dedupedConceptCount,
+                hba1cValue,
+                latestBloodSugar,
+                longitudinalProfile == null || longitudinalProfile.latestLipidSummary() == null ? 0 : longitudinalProfile.latestLipidSummary().size(),
+                selectedSourceDocumentIds.stream().distinct().toList()
+        );
+    }
+
     private String formatLongitudinalConcept(LongitudinalConceptSnapshot concept) {
         if (concept == null) {
             return null;
@@ -861,6 +959,198 @@ public class ClinicalContextService {
         String source = hasText(concept.sourceDocumentTitle()) ? "Source: " + concept.sourceDocumentTitle() : null;
         String date = concept.observedOn() == null ? null : concept.observedOn().toString();
         return joinSegments(segments(value, date, source));
+    }
+
+    private List<String> buildAbnormalValues(List<LabOrderResultEntity> allResults, PatientLongitudinalMemoryProfile profile) {
+        LinkedHashSet<String> values = new LinkedHashSet<>();
+        if (profile != null) {
+            addDerivedAbnormalValue(values, profile.latestHbA1c());
+            addDerivedAbnormalValue(values, profile.latestBloodSugar());
+            if (profile.latestLipidSummary() != null) {
+                profile.latestLipidSummary().forEach(snapshot -> addDerivedAbnormalValue(values, snapshot));
+            }
+        }
+        if (values.isEmpty() && allResults != null) {
+            allResults.stream()
+                    .filter(this::isAbnormalResult)
+                    .map(this::formatResultSummary)
+                    .filter(this::hasText)
+                    .forEach(values::add);
+        }
+        return values.stream().limit(6).toList();
+    }
+
+    private String buildPendingOrderGuidance(LabIntelligence labIntelligence) {
+        if (labIntelligence == null || labIntelligence.pendingInvestigations() == null || labIntelligence.pendingInvestigations().isEmpty()) {
+            return null;
+        }
+        List<String> guidance = new ArrayList<>();
+        if (labIntelligence.pendingInvestigations().stream().anyMatch(value -> containsAny(value, "cbc"))) {
+            guidance.add("Complete pending CBC/lab order before placing duplicate.");
+        }
+        if (hasText(labIntelligence.lastHbA1c())) {
+            guidance.add("HbA1c already available from latest report; repeat only if clinically needed.");
+        }
+        return guidance.isEmpty() ? null : "Lab guidance: " + joinCompact(guidance, 3);
+    }
+
+    private String buildHydratedConsultationVitals(ConsultationEntity consultation, IntakeSummary intakeSummary) {
+        String consultationVitals = buildConsultationVitals(consultation);
+        if (hasText(consultationVitals)) {
+            return consultationVitals;
+        }
+        return intakeSummary == null || intakeSummary.latestVitals() == null ? null : "INTAKE " + formatVitalsSnapshot(intakeSummary.latestVitals());
+    }
+
+    private String buildConsultationVitals(ConsultationEntity consultation) {
+        if (consultation == null) {
+            return null;
+        }
+        return joinSegments(segments(
+                consultation.getBloodPressureSystolic() == null || consultation.getBloodPressureDiastolic() == null ? null : "BP " + consultation.getBloodPressureSystolic() + "/" + consultation.getBloodPressureDiastolic(),
+                consultation.getPulseRate() == null ? null : "Pulse " + consultation.getPulseRate(),
+                consultation.getTemperature() == null ? null : "Temp " + consultation.getTemperature() + (consultation.getTemperatureUnit() == null ? "" : " " + consultation.getTemperatureUnit().name()),
+                consultation.getSpo2() == null ? null : "SpO2 " + consultation.getSpo2(),
+                consultation.getRespiratoryRate() == null ? null : "RR " + consultation.getRespiratoryRate(),
+                consultation.getWeightKg() == null ? null : "Weight " + compactText(String.valueOf(consultation.getWeightKg()), 16),
+                consultation.getHeightCm() == null ? null : "Height " + compactText(String.valueOf(consultation.getHeightCm()), 16)
+        ));
+    }
+
+    private List<String> dedupeRecentReportsForPrompt(List<String> reports) {
+        if (reports == null || reports.isEmpty()) {
+            return List.of();
+        }
+        LinkedHashMap<String, String> deduped = new LinkedHashMap<>();
+        for (String report : reports) {
+            if (!hasText(report)) {
+                continue;
+            }
+            String normalized = normalizeRecentReportKey(report);
+            deduped.putIfAbsent(normalized, report);
+        }
+        if (deduped.size() > 3) {
+            return deduped.values().stream().limit(3).toList();
+        }
+        return new ArrayList<>(deduped.values());
+    }
+
+    private String normalizeRecentReportKey(String value) {
+        if (!hasText(value)) {
+            return "";
+        }
+        String normalized = value.toLowerCase(Locale.ROOT);
+        normalized = normalized.replaceAll("retest\\s*\\d+", "retest");
+        normalized = normalized.replaceAll("\\b\\d{4}-\\d{2}-\\d{2}\\b", "");
+        normalized = normalized.replaceAll("[^a-z0-9]+", " ").trim();
+        return normalized;
+    }
+
+    private boolean isConsultationVitalsNull(ConsultationEntity consultation) {
+        return consultation != null
+                && consultation.getBloodPressureSystolic() == null
+                && consultation.getBloodPressureDiastolic() == null
+                && consultation.getPulseRate() == null
+                && consultation.getTemperature() == null
+                && consultation.getSpo2() == null
+                && consultation.getRespiratoryRate() == null
+                && consultation.getWeightKg() == null
+                && consultation.getHeightCm() == null;
+    }
+
+    private String summarizeHydratedVitals(ClinicalContextResponse.VitalsSnapshot vitals) {
+        if (vitals == null) {
+            return null;
+        }
+        return joinSegments(segments(
+                vitals.bloodPressureSystolic() == null || vitals.bloodPressureDiastolic() == null ? null : "BP",
+                vitals.pulseRate() == null ? null : "Pulse",
+                vitals.temperature() == null ? null : "Temp",
+                vitals.spo2() == null ? null : "SpO2",
+                vitals.respiratoryRate() == null ? null : "RR",
+                vitals.randomBloodSugar() == null ? null : "RBS",
+                vitals.bmi() == null ? null : "BMI"
+        ));
+    }
+
+    private boolean containsAny(String value, String... terms) {
+        if (!hasText(value) || terms == null || terms.length == 0) {
+            return false;
+        }
+        String normalized = value.toLowerCase(Locale.ROOT);
+        for (String term : terms) {
+            if (hasText(term) && normalized.contains(term.toLowerCase(Locale.ROOT))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void addDerivedAbnormalValue(Set<String> values, LongitudinalConceptSnapshot concept) {
+        if (concept == null) {
+            return;
+        }
+        String flag = deriveAbnormalFlag(concept.label(), concept.valueText(), concept.valueUnit(), concept.evidenceText());
+        if (!hasText(flag) || "Normal".equalsIgnoreCase(flag) || "Unknown".equalsIgnoreCase(flag)) {
+            return;
+        }
+        String summary = joinSegments(segments(
+                concept.label(),
+                concept.valueText() == null ? null : concept.valueText() + (hasText(concept.valueUnit()) ? " " + concept.valueUnit() : ""),
+                flag
+        ));
+        if (hasText(summary)) {
+            values.add(summary);
+        }
+    }
+
+    private String deriveAbnormalFlag(String label, String valueText, String unit, String evidenceText) {
+        String evidence = evidenceText == null ? "" : evidenceText.toLowerCase(Locale.ROOT);
+        if (evidence.contains("high")) {
+            return "High";
+        }
+        if (evidence.contains("low")) {
+            return "Low";
+        }
+        Double numeric = parseNumericValue(valueText);
+        if (numeric == null) {
+            numeric = parseNumericValue(evidenceText);
+        }
+        if (numeric == null || !hasText(label)) {
+            return "Unknown";
+        }
+        String normalizedLabel = label.toLowerCase(Locale.ROOT);
+        if (normalizedLabel.contains("hba1c") || normalizedLabel.contains("a1c") || normalizedLabel.contains("glycated hemoglobin")) {
+            return numeric >= 6.5 ? "High" : "Normal";
+        }
+        if (normalizedLabel.contains("blood sugar") || normalizedLabel.contains("glucose") || normalizedLabel.contains("rbs")) {
+            return numeric > 140 ? "High" : "Normal";
+        }
+        if (normalizedLabel.contains("ldl")) {
+            return numeric >= 100 ? "High" : "Normal";
+        }
+        if (normalizedLabel.contains("hdl")) {
+            return numeric < 40 ? "Low" : "Normal";
+        }
+        if (normalizedLabel.contains("triglyceride")) {
+            return numeric >= 150 ? "High" : "Normal";
+        }
+        if (normalizedLabel.contains("cholesterol")) {
+            return numeric >= 200 ? "High" : "Normal";
+        }
+        return "Unknown";
+    }
+
+    private Double parseNumericValue(String value) {
+        if (!hasText(value)) {
+            return null;
+        }
+        try {
+            java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("(-?\\d+(?:\\.\\d+)?)").matcher(value);
+            return matcher.find() ? Double.valueOf(matcher.group(1)) : null;
+        } catch (Exception ex) {
+            return null;
+        }
     }
 
     private boolean isPendingLabOrderStatus(com.deepthoughtnet.clinic.api.lab.db.LabOrderStatus status) {
@@ -943,9 +1233,9 @@ public class ClinicalContextService {
 
     private String formatDocument(ClinicalDocumentEntity document) {
         return joinSegments(segments(
-                formatDate(document.getCreatedAt()),
-                compactText(firstNonBlank(document.getTitle(), document.getDocumentType().name())),
-                compactText(firstNonBlank(document.getDescription(), document.getFileName()))
+                formatHumanDate(firstNonNull(document.getReportDate(), document.getCreatedAt() == null ? null : document.getCreatedAt().toLocalDate())),
+                compactText(firstNonBlank(document.getTitle(), documentLabel(document))),
+                compactText(documentStatusLabel(document))
         ));
     }
 
@@ -991,6 +1281,113 @@ public class ClinicalContextService {
 
     private boolean hasText(String value) {
         return value != null && !value.trim().isEmpty();
+    }
+
+    private boolean isCompletedConsultation(ConsultationEntity consultation) {
+        return consultation != null && consultation.getStatus() == com.deepthoughtnet.clinic.consultation.service.model.ConsultationStatus.COMPLETED;
+    }
+
+    private String documentStatusLabel(ClinicalDocumentEntity document) {
+        if (document == null) {
+            return null;
+        }
+        String status = firstNonBlank(document.getAiExtractionStatus(), document.getVerificationStatus());
+        if (!hasText(status)) {
+            return null;
+        }
+        return switch (status.trim().toUpperCase(Locale.ROOT)) {
+            case "REVIEW_REQUIRED", "AI_REVIEW_REQUIRED", "PENDING_REVIEW", "UNVERIFIED", "NOT_REVIEWED" -> "Pending Review";
+            case "APPROVED" -> "Verified";
+            case "REJECTED" -> "Rejected";
+            case "FAILED" -> "AI Failed";
+            default -> compactText(status);
+        };
+    }
+
+    private String formatHumanDate(LocalDate value) {
+        return value == null ? null : value.format(HUMAN_DATE_FORMAT);
+    }
+
+    private LocalDate firstNonNull(LocalDate... values) {
+        if (values == null) {
+            return null;
+        }
+        for (LocalDate value : values) {
+            if (value != null) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private LocalDate firstNonNullDateTime(OffsetDateTime... values) {
+        if (values == null) {
+            return null;
+        }
+        for (OffsetDateTime value : values) {
+            if (value != null) {
+                return value.toLocalDate();
+            }
+        }
+        return null;
+    }
+
+    private String formatLabReportSummary(LabOrderEntity order) {
+        if (order == null) {
+            return null;
+        }
+        String title = sanitizeLabTitle(firstNonBlank(order.getNotes(), order.getSampleType(), order.getExternalLabVendor(), order.getExternalReferenceNumber()));
+        if (!hasText(title)) {
+            title = isPendingLabOrderStatus(order.getStatus()) ? "Pending lab order" : "Lab report";
+        }
+        return joinSegments(segments(
+                formatHumanDate(firstNonNullDateTime(order.getReportPublishedAt(), order.getReportGeneratedAt(), order.getResultEnteredAt(), order.getOrderedAt())),
+                compactText(title),
+                order.getStatus() != null && isPendingLabOrderStatus(order.getStatus()) ? "Pending" : null
+        ));
+    }
+
+    private String formatPendingLabOrderSummary(LabOrderEntity order) {
+        if (order == null) {
+            return null;
+        }
+        String title = sanitizeLabTitle(firstNonBlank(order.getNotes(), order.getSampleType(), order.getExternalLabVendor(), order.getExternalReferenceNumber()));
+        if (!hasText(title)) {
+            title = isPendingLabOrderStatus(order.getStatus()) ? "Pending lab order" : "Lab order";
+        }
+        return joinSegments(segments(
+                formatHumanDate(firstNonNullDateTime(order.getReportPublishedAt(), order.getReportGeneratedAt(), order.getResultEnteredAt(), order.getOrderedAt())),
+                compactText(title),
+                order.getStatus() == null ? null : order.getStatus().name().replace('_', ' ')
+        ));
+    }
+
+    private String documentStatusLike(LabOrderEntity order) {
+        if (order == null || order.getStatus() == null) {
+            return null;
+        }
+        return switch (order.getStatus()) {
+            case ORDERED, PAYMENT_PENDING, PAID, READY_FOR_COLLECTION, SAMPLE_COLLECTED, PROCESSING, RESULT_ENTERED -> "Pending";
+            case REPORT_READY, REPORT_GENERATED, DOCTOR_REVIEWED, DELIVERED -> "Completed";
+            default -> order.getStatus().name().replace('_', ' ');
+        };
+    }
+
+    private String sanitizeLabTitle(String title) {
+        if (!hasText(title)) {
+            return null;
+        }
+        String normalized = title.trim();
+        if (normalized.matches("(?i)^LAB-[A-Z0-9-]+$")) {
+            return null;
+        }
+        if (normalized.matches("(?i)^null$")) {
+            return null;
+        }
+        if (normalized.length() > 80) {
+            normalized = normalized.substring(0, 77) + "...";
+        }
+        return normalized;
     }
 
     private String firstNonBlank(String... values) {

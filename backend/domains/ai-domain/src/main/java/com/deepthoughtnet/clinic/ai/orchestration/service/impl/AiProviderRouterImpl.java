@@ -18,7 +18,7 @@ public class AiProviderRouterImpl implements AiProviderRouter {
     private final Map<String, Integer> providerOrder;
 
     public AiProviderRouterImpl(List<AiProvider> providers,
-                                @Value("${clinic.ai.provider-chain:GEMINI,GROQ,MOCK}") String providerChain) {
+                                @Value("${clinic.ai.provider-chain:${AI_LLM_PROVIDER_ORDER:${AI_PROVIDER_CHAIN:${VOICE_LLM_PROVIDER_ORDER:gemini,groq,mock}}}}") String providerChain) {
         this.providers = providers == null ? List.of() : List.copyOf(providers);
         this.providerOrder = buildProviderOrder(providerChain);
     }
@@ -32,14 +32,19 @@ public class AiProviderRouterImpl implements AiProviderRouter {
 
     @Override
     public List<AiProvider> resolveCandidates(AiTaskType taskType) {
-        return providers.stream()
+        List<AiProvider> candidates = providers.stream()
                 .filter(provider -> provider.supports(taskType))
                 .filter(provider -> provider.status() != AiProviderStatus.UNAVAILABLE)
-                .sorted(Comparator.comparingInt(provider -> providerNameRank(provider.providerName())))
+                .sorted(Comparator.comparingInt(provider -> providerNameRank(taskType, provider.providerName())))
                 .toList();
+        return candidates;
     }
 
-    private int providerNameRank(String providerName) {
+    private boolean isMockProvider(String providerName) {
+        return providerName != null && "MOCK".equalsIgnoreCase(providerName.trim());
+    }
+
+    private int providerNameRank(AiTaskType taskType, String providerName) {
         if (providerName == null) {
             return Integer.MAX_VALUE;
         }

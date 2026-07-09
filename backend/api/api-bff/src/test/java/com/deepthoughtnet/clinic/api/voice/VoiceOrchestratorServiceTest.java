@@ -84,6 +84,7 @@ class VoiceOrchestratorServiceTest {
                 null,
                 25L,
                 false,
+                null,
                 null
         ));
 
@@ -124,7 +125,7 @@ class VoiceOrchestratorServiceTest {
         AiOrchestrationService aiOrchestrationService = mock(AiOrchestrationService.class);
         when(aiOrchestrationService.complete(any())).thenReturn(new AiOrchestrationResponse(
                 UUID.randomUUID(), UUID.randomUUID(), AiProductCode.GENERIC, AiTaskType.GENERIC_COPILOT,
-                "groq", "llama", "Fallback answer", null, BigDecimal.ONE, List.of(), List.of(), List.of(), null, 10L, true, null
+                "groq", "llama", "Fallback answer", null, BigDecimal.ONE, List.of(), List.of(), List.of(), null, 10L, true, null, null
         ));
 
         SpeechToTextProvider broken = new SpeechToTextProvider() {
@@ -166,7 +167,7 @@ class VoiceOrchestratorServiceTest {
         AiOrchestrationService aiOrchestrationService = mock(AiOrchestrationService.class);
         when(aiOrchestrationService.complete(any())).thenReturn(new AiOrchestrationResponse(
                 UUID.randomUUID(), UUID.randomUUID(), AiProductCode.GENERIC, AiTaskType.GENERIC_COPILOT,
-                "gemini", "gemini", "Fallback answer", null, BigDecimal.ONE, List.of(), List.of(), List.of(), null, 10L, false, null
+                "gemini", "gemini", "Fallback answer", null, BigDecimal.ONE, List.of(), List.of(), List.of(), null, 10L, false, null, null
         ));
 
         SpeechToTextProvider sarvam = new SpeechToTextProvider() {
@@ -235,7 +236,7 @@ class VoiceOrchestratorServiceTest {
         AiOrchestrationService aiOrchestrationService = mock(AiOrchestrationService.class);
         when(aiOrchestrationService.complete(any())).thenReturn(new AiOrchestrationResponse(
                 UUID.randomUUID(), UUID.randomUUID(), AiProductCode.GENERIC, AiTaskType.GENERIC_COPILOT,
-                "gemini", "gemini", "Fallback answer", null, BigDecimal.ONE, List.of(), List.of(), List.of(), null, 10L, false, null
+                "gemini", "gemini", "Fallback answer", null, BigDecimal.ONE, List.of(), List.of(), List.of(), null, 10L, false, null, null
         ));
 
         TextToSpeechProvider sarvam = new TextToSpeechProvider() {
@@ -318,6 +319,7 @@ class VoiceOrchestratorServiceTest {
                 null,
                 25L,
                 true,
+                null,
                 null
         ));
 
@@ -422,7 +424,7 @@ class VoiceOrchestratorServiceTest {
         AiOrchestrationService ai = mock(AiOrchestrationService.class);
         when(ai.complete(any())).thenReturn(new AiOrchestrationResponse(
                 UUID.randomUUID(), UUID.randomUUID(), AiProductCode.GENERIC, AiTaskType.GENERIC_COPILOT,
-                "gemini", "gemini", "Handled", null, BigDecimal.ONE, List.of(), List.of(), List.of(), null, 1L, false, null
+                "gemini", "gemini", "Handled", null, BigDecimal.ONE, List.of(), List.of(), List.of(), null, 1L, false, null, null
         ));
 
         FasterWhisperSpeechToTextProvider fasterWhisper = mock(FasterWhisperSpeechToTextProvider.class);
@@ -476,7 +478,7 @@ class VoiceOrchestratorServiceTest {
         when(ai.complete(any())).thenReturn(new AiOrchestrationResponse(
                 UUID.randomUUID(), UUID.randomUUID(), AiProductCode.GENERIC, AiTaskType.GENERIC_COPILOT,
                 "GEMINI", "gemini", "{\"answer\":\"Sure, what day works best for you?\",\"suggestedActions\":[]}",
-                null, BigDecimal.ONE, List.of(), List.of(), List.of(), null, 1L, false, null
+                null, BigDecimal.ONE, List.of(), List.of(), List.of(), null, 1L, false, null, null
         ));
 
         VoiceOrchestratorService service = new VoiceOrchestratorService(
@@ -519,7 +521,7 @@ class VoiceOrchestratorServiceTest {
         when(ai.complete(any())).thenReturn(new AiOrchestrationResponse(
                 UUID.randomUUID(), UUID.randomUUID(), AiProductCode.GENERIC, AiTaskType.GENERIC_COPILOT,
                 "GEMINI", "gemini", "AI response was incomplete. Please retry.",
-                null, BigDecimal.ONE, List.of(), List.of(), List.of(), null, 1L, false, null
+                null, BigDecimal.ONE, List.of(), List.of(), List.of(), null, 1L, false, null, null
         ));
 
         VoiceOrchestratorService service = new VoiceOrchestratorService(
@@ -555,7 +557,7 @@ class VoiceOrchestratorServiceTest {
         when(ai.complete(any())).thenReturn(new AiOrchestrationResponse(
                 UUID.randomUUID(), UUID.randomUUID(), AiProductCode.GENERIC, AiTaskType.GENERIC_COPILOT,
                 "GEMINI", "gemini", "{\"answer\":\"Dr Vikas Singh · 27 Jun 2026 · 10:00\",\"suggestedActions\":[]}",
-                null, BigDecimal.ONE, List.of(), List.of(), List.of(), null, 1L, false, null
+                null, BigDecimal.ONE, List.of(), List.of(), List.of(), null, 1L, false, null, null
         ));
 
         AtomicReference<String> capturedLanguage = new AtomicReference<>();
@@ -614,7 +616,7 @@ class VoiceOrchestratorServiceTest {
         when(ai.complete(any())).thenReturn(new AiOrchestrationResponse(
                 UUID.randomUUID(), UUID.randomUUID(), AiProductCode.GENERIC, AiTaskType.GENERIC_COPILOT,
                 "GEMINI", "gemini", "{\"answer\":\"नमस्ते, आप किस समय आना चाहेंगे?\",\"suggestedActions\":[]}",
-                null, BigDecimal.ONE, List.of(), List.of(), List.of(), null, 1L, false, null
+                null, BigDecimal.ONE, List.of(), List.of(), List.of(), null, 1L, false, null, null
         ));
 
         VoiceOrchestratorService service = new VoiceOrchestratorService(
@@ -655,7 +657,7 @@ class VoiceOrchestratorServiceTest {
         when(ai.complete(any())).thenReturn(new AiOrchestrationResponse(
                 UUID.randomUUID(), UUID.randomUUID(), AiProductCode.GENERIC, AiTaskType.GENERIC_COPILOT,
                 "GEMINI", "gemini", "{\"answer\":\"कल सुबह डॉक्टर एबीसी उपलब्ध हैं। क्या मैं इसे कन्फर्म कर दूँ?\",\"suggestedActions\":[]}",
-                null, BigDecimal.ONE, List.of(), List.of(), List.of(), null, 1L, false, null
+                null, BigDecimal.ONE, List.of(), List.of(), List.of(), null, 1L, false, null, null
         ));
         AppointmentService appointmentService = mock(AppointmentService.class);
         when(appointmentService.listAvailabilities(tenantId)).thenReturn(List.of(
@@ -718,7 +720,7 @@ class VoiceOrchestratorServiceTest {
         AiOrchestrationService ai = mock(AiOrchestrationService.class);
         when(ai.complete(any())).thenReturn(new AiOrchestrationResponse(
                 UUID.randomUUID(), UUID.randomUUID(), AiProductCode.GENERIC, AiTaskType.GENERIC_COPILOT,
-                "GEMINI", "gemini", "Generic assistant answer.", null, BigDecimal.ONE, List.of(), List.of(), List.of(), null, 1L, false, null
+                "GEMINI", "gemini", "Generic assistant answer.", null, BigDecimal.ONE, List.of(), List.of(), List.of(), null, 1L, false, null, null
         ));
 
         VoiceOrchestratorService service = new VoiceOrchestratorService(
@@ -760,7 +762,7 @@ class VoiceOrchestratorServiceTest {
         AiOrchestrationService ai = mock(AiOrchestrationService.class);
         when(ai.complete(any())).thenReturn(new AiOrchestrationResponse(
                 UUID.randomUUID(), UUID.randomUUID(), AiProductCode.GENERIC, AiTaskType.GENERIC_COPILOT,
-                "gemini", "gemini", "Fallback", null, BigDecimal.ONE, List.of(), List.of(), List.of(), null, 1L, false, null
+                "gemini", "gemini", "Fallback", null, BigDecimal.ONE, List.of(), List.of(), List.of(), null, 1L, false, null, null
         ));
 
         VoiceOrchestratorService service = new VoiceOrchestratorService(
@@ -802,7 +804,7 @@ class VoiceOrchestratorServiceTest {
         AiOrchestrationService ai = mock(AiOrchestrationService.class);
         when(ai.complete(any())).thenReturn(new AiOrchestrationResponse(
                 UUID.randomUUID(), UUID.randomUUID(), AiProductCode.GENERIC, AiTaskType.GENERIC_COPILOT,
-                "gemini", "gemini", "Handled", null, BigDecimal.ONE, List.of(), List.of(), List.of(), null, 1L, false, null
+                "gemini", "gemini", "Handled", null, BigDecimal.ONE, List.of(), List.of(), List.of(), null, 1L, false, null, null
         ));
 
         FasterWhisperSpeechToTextProvider fasterWhisper = mock(FasterWhisperSpeechToTextProvider.class);

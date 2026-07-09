@@ -7,7 +7,10 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -16,6 +19,7 @@ import com.deepthoughtnet.clinic.ai.orchestration.service.AiProviderRouter;
 import com.deepthoughtnet.clinic.ai.orchestration.service.AiRequestAuditService;
 import com.deepthoughtnet.clinic.ai.orchestration.platform.service.AiGuardrailService;
 import com.deepthoughtnet.clinic.ai.orchestration.platform.service.AiInvocationLogService;
+import com.deepthoughtnet.clinic.ai.orchestration.platform.service.AiTaskGenerationConfigService;
 import com.deepthoughtnet.clinic.ai.orchestration.service.model.AiPromptTemplateDefinition;
 import com.deepthoughtnet.clinic.ai.orchestration.service.model.AiRequestAuditCommand;
 import com.deepthoughtnet.clinic.llm.spi.AiProviderException;
@@ -35,6 +39,8 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -78,6 +84,101 @@ class AiOrchestrationServiceImplTest {
     }
 
     @Test
+    void clampsRequestedMaxTokensToGuardrailLimitBeforeProviderCall() {
+        AiPromptTemplateRegistryService registry = mock(AiPromptTemplateRegistryService.class);
+        AiProviderRouter router = mock(AiProviderRouter.class);
+        AiRequestAuditService auditService = mock(AiRequestAuditService.class);
+        AiGuardrailService guardrailService = mock(AiGuardrailService.class);
+        AiInvocationLogService invocationLogService = mock(AiInvocationLogService.class);
+        AiTaskGenerationConfigService taskGenerationConfigService = new AiTaskGenerationConfigService(null, "gemini-2.5-flash", 0, true);
+        AiOrchestrationServiceImpl service = new AiOrchestrationServiceImpl(
+                registry,
+                router,
+                auditService,
+                guardrailService,
+                invocationLogService,
+                taskGenerationConfigService,
+                new ObjectMapper()
+        );
+
+        AiOrchestrationRequest request = new AiOrchestrationRequest(
+                AiProductCode.CLINIC,
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                AiTaskType.CLINICAL_REASONING,
+                "clinic.clinical.reasoning.v1",
+                Map.of("chiefComplaint", "Fever, cough, body ache and weakness"),
+                List.of(),
+                4096,
+                0.1d,
+                "corr-clamp",
+                "clinical_reasoning_generate"
+        );
+        AiPromptTemplateDefinition template = new AiPromptTemplateDefinition(
+                "clinic.clinical.reasoning.v1",
+                "v1",
+                AiProductCode.CLINIC,
+                AiTaskType.CLINICAL_REASONING,
+                "system prompt",
+                "{\"answer\":\"{{chiefComplaint}}\"}",
+                com.deepthoughtnet.clinic.platform.contracts.ai.AiPromptTemplateStatus.ACTIVE,
+                "fallback summary",
+                List.of("Review manually"),
+                List.of("Advisory only")
+        );
+        when(registry.resolve(request)).thenReturn(template);
+        AtomicReference<Integer> observedMaxTokens = new AtomicReference<>();
+        AtomicReference<String> observedModelOverride = new AtomicReference<>();
+        AtomicReference<Integer> observedThinkingBudget = new AtomicReference<>();
+        AtomicReference<Boolean> observedStrictJson = new AtomicReference<>();
+        AiProvider provider = new AiProvider() {
+            @Override
+            public String providerName() {
+                return "GEMINI";
+            }
+
+            @Override
+            public boolean supports(AiTaskType taskType) {
+                return true;
+            }
+
+            @Override
+            public AiProviderResponse complete(AiProviderRequest providerRequest) {
+                observedMaxTokens.set(providerRequest.request() == null ? null : providerRequest.request().maxTokens());
+                observedModelOverride.set(providerRequest.modelOverride());
+                observedThinkingBudget.set(providerRequest.thinkingBudget());
+                observedStrictJson.set(providerRequest.strictJsonMode());
+                return new AiProviderResponse(
+                        "GEMINI",
+                        "gemini-2.5-flash",
+                        "{\"answer\":\"ok\"}",
+                        null,
+                        BigDecimal.ONE,
+                        new AiTokenUsage(1L, 1L, 2L, BigDecimal.ONE),
+                        "STOP"
+                );
+            }
+
+            @Override
+            public AiProviderStatus status() {
+                return AiProviderStatus.AVAILABLE;
+            }
+        };
+        when(router.resolveCandidates(AiTaskType.CLINICAL_REASONING)).thenReturn(List.of(provider));
+        when(guardrailService.resolveExecutionSettings(any(), anyString(), any(), eq(null)))
+                .thenReturn(new AiGuardrailService.ExecutionSettings(4096, 2048, 2048, 120, 30, false));
+
+        AiOrchestrationResponse response = service.complete(request);
+
+        assertEquals("GEMINI", response.provider());
+        assertEquals(2048, observedMaxTokens.get());
+        assertEquals("gemini-2.5-flash", observedModelOverride.get());
+        assertEquals(0, observedThinkingBudget.get());
+        assertTrue(observedStrictJson.get());
+        verify(guardrailService, times(1)).resolveExecutionSettings(any(), anyString(), any(), eq(null));
+    }
+
+    @Test
     void fallbackPathReturnsSafeResponseAndAuditsFallback() {
         AiPromptTemplateRegistryService registry = mock(AiPromptTemplateRegistryService.class);
         AiProviderRouter router = mock(AiProviderRouter.class);
@@ -103,7 +204,7 @@ class AiOrchestrationServiceImplTest {
         AiOrchestrationResponse response = service.complete(request);
 
         assertTrue(response.fallbackUsed());
-        assertTrue(response.outputText().contains("fallback summary"));
+        assertEquals("AI providers are temporarily unavailable. Please retry.", response.outputText());
         assertEquals(null, response.provider());
         ArgumentCaptor<AiRequestAuditCommand> captor = ArgumentCaptor.forClass(AiRequestAuditCommand.class);
         verify(auditService).record(captor.capture());
@@ -216,6 +317,93 @@ class AiOrchestrationServiceImplTest {
     }
 
     @Test
+    void clinicalReasoningFallsBackFromGeminiToGroqWithoutExpandingPrompt() {
+        AiPromptTemplateRegistryService registry = mock(AiPromptTemplateRegistryService.class);
+        AiProviderRouter router = mock(AiProviderRouter.class);
+        AiRequestAuditService auditService = mock(AiRequestAuditService.class);
+        AiOrchestrationServiceImpl service = newService(registry, router, auditService);
+
+        AiOrchestrationRequest request = new AiOrchestrationRequest(
+                AiProductCode.CLINIC,
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                AiTaskType.CLINICAL_REASONING,
+                "clinic.clinical.reasoning.v1",
+                Map.of("reasoningPrompt", "Compact reasoning prompt"),
+                List.of(),
+                null,
+                0.1d,
+                "corr-reasoning",
+                "clinical_reasoning_generate"
+        );
+        AiPromptTemplateDefinition template = new AiPromptTemplateDefinition(
+                "clinic.clinical.reasoning.v1",
+                "v1",
+                AiProductCode.CLINIC,
+                AiTaskType.CLINICAL_REASONING,
+                "system prompt",
+                "{{input.reasoningPrompt}}",
+                com.deepthoughtnet.clinic.platform.contracts.ai.AiPromptTemplateStatus.ACTIVE,
+                "fallback summary",
+                List.of("Review manually"),
+                List.of("Advisory only")
+        );
+        when(registry.resolve(request)).thenReturn(template);
+        AiProvider gemini = failingProvider("GEMINI", "Gemini quota exceeded.", 429);
+        AtomicReference<String> groqModelOverride = new AtomicReference<>();
+        AtomicReference<Integer> groqThinkingBudget = new AtomicReference<>();
+        AtomicReference<Boolean> groqStrictJson = new AtomicReference<>();
+        AiProvider groq = new AiProvider() {
+            @Override
+            public String providerName() {
+                return "GROQ";
+            }
+
+            @Override
+            public boolean supports(AiTaskType taskType) {
+                return true;
+            }
+
+            @Override
+            public AiProviderResponse complete(AiProviderRequest request) {
+                groqModelOverride.set(request == null ? null : request.modelOverride());
+                groqThinkingBudget.set(request == null ? null : request.thinkingBudget());
+                groqStrictJson.set(request != null && request.strictJsonMode());
+                return new AiProviderResponse(
+                        "GROQ",
+                        "llama-3.1-8b-instant",
+                        "{\"confidence\":\"HIGH\",\"primaryDiagnosis\":{\"name\":\"Viral Upper Respiratory Infection\",\"confidence\":0.82,\"status\":\"SUGGESTED\"},\"reasoningSummary\":\"Likely viral respiratory illness.\",\"metadata\":{\"promptVersion\":\"clinic.clinical.reasoning.v1\",\"contextVersion\":\"v1\",\"provider\":\"GROQ\",\"model\":\"llama-3.1-8b-instant\",\"tokens\":{},\"parseStatus\":\"VALID\"}}",
+                        "{\"confidence\":\"HIGH\",\"primaryDiagnosis\":{\"name\":\"Viral Upper Respiratory Infection\",\"confidence\":0.82,\"status\":\"SUGGESTED\"},\"reasoningSummary\":\"Likely viral respiratory illness.\",\"metadata\":{\"promptVersion\":\"clinic.clinical.reasoning.v1\",\"contextVersion\":\"v1\",\"provider\":\"GROQ\",\"model\":\"llama-3.1-8b-instant\",\"tokens\":{},\"parseStatus\":\"VALID\"}}",
+                        BigDecimal.valueOf(0.88),
+                        null,
+                        "STOP",
+                        "COMPLETE",
+                        344,
+                        "{\"confidence\":\"HIGH\",\"primaryDiagnosis\":{\"name\":\"Viral Upper Respiratory Infection\",\"confidence\":0.82,\"status\":\"SUGGESTED\"},\"reasoningSummary\":\"Likely viral respiratory illness.\",\"metadata\":{\"promptVersion\":\"clinic.clinical.reasoning.v1\",\"contextVersion\":\"v1\",\"provider\":\"GROQ\",\"model\":\"llama-3.1-8b-instant\",\"tokens\":{},\"parseStatus\":\"VALID\"}}",
+                        "VALID"
+                );
+            }
+
+            @Override
+            public AiProviderStatus status() {
+                return AiProviderStatus.AVAILABLE;
+            }
+        };
+        AiProvider mockProvider = provider("MOCK", "{\"confidence\":\"LOW\",\"primaryDiagnosis\":{\"name\":\"Viral Upper Respiratory Infection\",\"confidence\":0.55,\"status\":\"SUGGESTED\"},\"reasoningSummary\":\"Mock clinical reasoning fallback.\",\"metadata\":{\"promptVersion\":\"clinic.clinical.reasoning.v1\",\"contextVersion\":\"v1\",\"provider\":\"MOCK\",\"model\":\"mock-clinic-ai\",\"tokens\":{},\"parseStatus\":\"VALID\"}}", AiProviderStatus.AVAILABLE);
+        when(router.resolveCandidates(AiTaskType.CLINICAL_REASONING)).thenReturn(List.of(gemini, groq, mockProvider));
+
+        AiOrchestrationResponse response = service.complete(request);
+
+        assertEquals("GROQ", response.provider());
+        assertTrue(response.fallbackUsed());
+        assertEquals(null, groqModelOverride.get());
+        assertEquals(null, groqThinkingBudget.get());
+        assertEquals(true, groqStrictJson.get());
+        assertTrue(response.outputText().contains("Viral Upper Respiratory Infection"));
+        assertEquals("llama-3.1-8b-instant", response.model());
+    }
+
+    @Test
     void fallsBackFromGeminiToGroqOnTimeout() {
         AiPromptTemplateRegistryService registry = mock(AiPromptTemplateRegistryService.class);
         AiProviderRouter router = mock(AiProviderRouter.class);
@@ -292,7 +480,7 @@ class AiOrchestrationServiceImplTest {
         assertTrue(response.fallbackUsed());
         assertEquals(null, response.provider());
         assertEquals("AI providers are temporarily unavailable. Please retry.", response.errorMessage());
-        assertTrue(response.outputText().contains("fallback summary"));
+        assertEquals("AI providers are temporarily unavailable. Please retry.", response.outputText());
     }
 
     @Test
@@ -398,10 +586,10 @@ class AiOrchestrationServiceImplTest {
         ));
 
         AiOrchestrationResponse response = service.complete(request);
-        assertEquals("Sorry, I missed that. Could you please repeat?", response.outputText());
+        assertEquals("[{\"diagnosis\":\"Gastroenteritis\",", response.outputText());
         assertNotNull(response.structuredJson());
-        assertTrue(response.structuredJson().contains("Sorry, I missed that. Could you please repeat?"));
-        assertFalse(response.outputText().contains("{\"diagnosis\""));
+        assertTrue(response.structuredJson().contains("AI returned unstructured text"));
+        assertFalse(response.outputText().contains("Sorry, I missed that"));
     }
 
     @Test
@@ -478,7 +666,7 @@ class AiOrchestrationServiceImplTest {
             @Override
             public AiProviderResponse complete(AiProviderRequest request) {
                 return new AiProviderResponse(name, "model", outputText, null, BigDecimal.valueOf(0.91),
-                        new AiTokenUsage(10L, 5L, 15L, BigDecimal.valueOf(0.12)));
+                        new AiTokenUsage(10L, 5L, 15L, BigDecimal.valueOf(0.12)), null);
             }
 
             @Override
@@ -519,12 +707,39 @@ class AiOrchestrationServiceImplTest {
     private AiOrchestrationServiceImpl newService(AiPromptTemplateRegistryService registry,
                                                   AiProviderRouter router,
                                                   AiRequestAuditService auditService) {
+        AiGuardrailService guardrailService = mock(AiGuardrailService.class);
+        when(guardrailService.resolveExecutionSettings(any(), anyString(), any(), eq(null)))
+                .thenAnswer(invocation -> {
+                    String prompt = invocation.getArgument(1);
+                    AiOrchestrationRequest request = invocation.getArgument(2);
+                    int promptChars = prompt == null ? 0 : prompt.length();
+                    int guardrailLimit = 2048;
+                    Integer requested = request == null ? null : request.maxTokens();
+                    int effective = requested == null ? guardrailLimit : Math.min(requested, guardrailLimit);
+                    return new AiGuardrailService.ExecutionSettings(requested, guardrailLimit, effective, promptChars, Math.max(1, (promptChars + 3) / 4), false);
+                });
         return new AiOrchestrationServiceImpl(
                 registry,
                 router,
                 auditService,
-                mock(AiGuardrailService.class),
+                guardrailService,
                 mock(AiInvocationLogService.class),
+                new AiTaskGenerationConfigService(null, "gemini-2.5-flash", 0, true),
+                new ObjectMapper()
+        );
+    }
+
+    private AiOrchestrationServiceImpl newService(AiPromptTemplateRegistryService registry,
+                                                  AiProviderRouter router,
+                                                  AiRequestAuditService auditService,
+                                                  AiGuardrailService guardrailService) {
+        return new AiOrchestrationServiceImpl(
+                registry,
+                router,
+                auditService,
+                guardrailService,
+                mock(AiInvocationLogService.class),
+                new AiTaskGenerationConfigService(null, "gemini-2.5-flash", 0, true),
                 new ObjectMapper()
         );
     }

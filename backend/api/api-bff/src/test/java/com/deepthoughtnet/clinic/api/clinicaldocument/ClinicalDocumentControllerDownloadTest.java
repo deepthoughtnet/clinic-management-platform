@@ -7,6 +7,7 @@ import com.deepthoughtnet.clinic.api.clinicaldocument.ai.service.ClinicalDocumen
 import com.deepthoughtnet.clinic.api.clinicaldocument.db.ClinicalDocumentType;
 import com.deepthoughtnet.clinic.api.clinicaldocument.service.ClinicalDocumentRecord;
 import com.deepthoughtnet.clinic.api.clinicaldocument.service.ClinicalDocumentService;
+import com.deepthoughtnet.clinic.api.security.ClinicalDocumentAiAuthorizationService;
 import com.deepthoughtnet.clinic.api.security.DoctorAssignmentSecurityService;
 import com.deepthoughtnet.clinic.consultation.service.ConsultationService;
 import com.deepthoughtnet.clinic.patient.service.PatientService;
@@ -57,6 +58,9 @@ class ClinicalDocumentControllerDownloadTest {
     @Mock
     private DoctorAssignmentSecurityService doctorAssignmentSecurityService;
 
+    @Mock
+    private ClinicalDocumentAiAuthorizationService clinicalDocumentAiAuthorizationService;
+
     private ClinicalDocumentController controller;
 
     @BeforeEach
@@ -68,7 +72,8 @@ class ClinicalDocumentControllerDownloadTest {
                 consultationService,
                 prescriptionService,
                 vaccinationService,
-                doctorAssignmentSecurityService
+                doctorAssignmentSecurityService,
+                clinicalDocumentAiAuthorizationService
         );
         RequestContextHolder.set(new RequestContext(TenantId.of(UUID.randomUUID()), UUID.randomUUID(), null, null, null, "download-test"));
         doNothing().when(doctorAssignmentSecurityService).requirePatientAccess(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
@@ -128,6 +133,8 @@ class ClinicalDocumentControllerDownloadTest {
                 null,
                 null,
                 BigDecimal.valueOf(0.99),
+                null,
+                null,
                 null,
                 null,
                 null,

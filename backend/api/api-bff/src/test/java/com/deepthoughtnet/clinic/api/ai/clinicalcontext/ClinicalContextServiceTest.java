@@ -207,6 +207,19 @@ class ClinicalContextServiceTest {
         assertThat(context.intakeSummary().abnormalVitalsAlerts()).isNotEmpty();
         assertThat(context.intakeSummary().uploadedDocumentSummary()).isNotNull();
         assertThat(context.labIntelligence().abnormalValues()).isNotEmpty();
+        assertThat(context.labIntelligence().abnormalValues())
+                .anySatisfy(value -> assertThat(value).contains("HbA1c").contains("8.4"));
+        assertThat(context.labIntelligence().abnormalValues())
+                .anySatisfy(value -> assertThat(value).contains("Blood Sugar").contains("198"));
+        assertThat(context.labIntelligence().abnormalValues())
+                .anySatisfy(value -> assertThat(value).contains("Total Cholesterol").contains("228"));
+        assertThat(context.labIntelligence().abnormalValues())
+                .anySatisfy(value -> assertThat(value).contains("LDL"));
+        assertThat(context.labIntelligence().abnormalValues())
+                .anySatisfy(value -> assertThat(value).contains("HDL"));
+        assertThat(context.labIntelligence().abnormalValues())
+                .anySatisfy(value -> assertThat(value).contains("Triglycerides"));
+        assertThat(context.labIntelligence().latestLabReport()).doesNotContain("null");
         assertThat(context.labIntelligence().lastHbA1c()).contains("8.4");
         assertThat(context.labIntelligence().latestBloodSugar()).contains("198");
         assertThat(context.labIntelligence().latestLipidSummary()).contains("Total Cholesterol", "LDL Cholesterol", "Triglycerides", "HDL Cholesterol");
@@ -219,8 +232,132 @@ class ClinicalContextServiceTest {
         assertThat(context.longitudinalMemory().latestHbA1c().verificationStatus()).isEqualTo("PENDING_REVIEW");
         assertThat(context.longitudinalMemory().riskFlags()).extracting(ClinicalContextResponse.LongitudinalConcept::label).contains("Diabetes", "Dyslipidemia");
         assertThat(context.aiSummary()).contains("Medication alerts");
-        assertThat(context.aiPromptContext()).contains("Patient snapshot");
+        assertThat(context.aiPromptContext()).contains("Patient:").contains("Chronic conditions").contains("INTAKE");
         assertThat(context.clinicalContextJson()).contains("patientSummary");
+        assertThat(context.diagnosisHistory().lastVisitDiagnosis()).isNull();
+        assertThat(context.previousVisits()).isEmpty();
+    }
+
+    @Test
+    void buildClinicalContextUsesOnlyCompletedHistoryAndHumanReadableLabTitles() {
+        UUID tenantId = UUID.randomUUID();
+        UUID patientId = UUID.randomUUID();
+        UUID currentConsultationId = UUID.randomUUID();
+        UUID historicalConsultationId = UUID.randomUUID();
+
+        PatientEntity patient = PatientEntity.create(tenantId, "PAT-2");
+        patient.update("Rohan", "Sharma", PatientGender.MALE, null, 42, "9876543210", null, null, null, null, null, null, null, null, null, null, "Penicillin", null, null, null, null, true);
+
+        ConsultationEntity currentConsultation = ConsultationEntity.create(tenantId, patientId, UUID.randomUUID(), null);
+        currentConsultation.update("Fever and cough", "Fever", "Viral URI", "Current draft", "Rest", null, null, null, null, null, null, null, null, null, null);
+        setId(currentConsultation, currentConsultationId);
+        ConsultationEntity completedConsultation = ConsultationEntity.create(tenantId, patientId, UUID.randomUUID(), null);
+        completedConsultation.update("Older follow-up", "Recovered", "Past viral URI", "Completed", "Follow advice", null, null, null, null, null, null, null, null, null, null);
+        completedConsultation.complete();
+        setId(completedConsultation, historicalConsultationId);
+
+        ClinicalDocumentEntity document = ClinicalDocumentEntity.create(
+                tenantId,
+                patientId,
+                currentConsultationId,
+                null,
+                UUID.randomUUID(),
+                ClinicalDocumentType.EXTERNAL_LAB_REPORT,
+                "Diabetes Follow-up Lab Report Retest 3",
+                "image/jpeg",
+                2048,
+                "checksum",
+                "patients/1/documents/1/report.jpg",
+                "HbA1c 8.4",
+                null,
+                null,
+                null
+        );
+        setField(document, "uploadSource", "Reception");
+        setField(document, "sourceModule", "CLINICAL_INTAKE");
+        setField(document, "reportDate", java.time.LocalDate.of(2026, 1, 8));
+
+        LabOrderEntity labOrder = LabOrderEntity.create(
+                tenantId,
+                "LAB-A1A5C702DE",
+                patientId,
+                "PAT-2",
+                "Rohan Sharma",
+                UUID.randomUUID(),
+                "Dr. Jain",
+                currentConsultationId,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+        );
+        labOrder.markReportGenerated(UUID.randomUUID(), "cbc.pdf");
+        LabOrderResultEntity abnormalResult = LabOrderResultEntity.create(tenantId, labOrder.getId(), null, "CBC", "CBC", "Hemoglobin", null, "10.2", "g/dL", "12-16", 1, "LOW", true);
+
+        PatientRepository patientRepository = mock(PatientRepository.class);
+        ConsultationRepository consultationRepository = mock(ConsultationRepository.class);
+        PrescriptionRepository prescriptionRepository = mock(PrescriptionRepository.class);
+        PrescriptionMedicineRepository prescriptionMedicineRepository = mock(PrescriptionMedicineRepository.class);
+        PrescriptionTestRepository prescriptionTestRepository = mock(PrescriptionTestRepository.class);
+        ClinicalDocumentRepository clinicalDocumentRepository = mock(ClinicalDocumentRepository.class);
+        PatientClinicalIntakeRepository patientClinicalIntakeRepository = mock(PatientClinicalIntakeRepository.class);
+        LabOrderRepository labOrderRepository = mock(LabOrderRepository.class);
+        LabOrderResultRepository labOrderResultRepository = mock(LabOrderResultRepository.class);
+        PatientLongitudinalMemoryService longitudinalMemoryService = mock(PatientLongitudinalMemoryService.class);
+
+        when(patientRepository.findByTenantIdAndId(tenantId, patientId)).thenReturn(java.util.Optional.of(patient));
+        when(consultationRepository.findByTenantIdAndPatientIdOrderByCreatedAtDesc(tenantId, patientId)).thenReturn(List.of(currentConsultation, completedConsultation));
+        when(prescriptionRepository.findByTenantIdAndPatientIdOrderByCreatedAtDesc(tenantId, patientId)).thenReturn(List.of());
+        when(prescriptionMedicineRepository.findByTenantIdAndPrescriptionIdOrderBySortOrderAsc(tenantId, UUID.randomUUID())).thenReturn(List.of());
+        when(prescriptionTestRepository.findByTenantIdAndPrescriptionIdOrderBySortOrderAsc(tenantId, UUID.randomUUID())).thenReturn(List.of());
+        when(clinicalDocumentRepository.findByTenantIdAndPatientIdAndActiveTrueOrderByCreatedAtDesc(tenantId, patientId)).thenReturn(List.of(document));
+        when(patientClinicalIntakeRepository.findByTenantIdAndPatientIdOrderByCreatedAtDesc(tenantId, patientId)).thenReturn(List.of());
+        when(labOrderRepository.findByTenantIdAndPatientIdOrderByCreatedAtDesc(tenantId, patientId)).thenReturn(List.of(labOrder));
+        when(labOrderResultRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAscCreatedAtAsc(tenantId, labOrder.getId())).thenReturn(List.of(abnormalResult));
+        when(longitudinalMemoryService.buildProfile(tenantId, patientId)).thenReturn(new PatientLongitudinalMemoryProfile(
+                List.of(new LongitudinalConceptSnapshot("CONDITION", "diabetes_mellitus", "Diabetes Mellitus", "Diabetes Mellitus", null, document.getTitle(), document.getDocumentType().name(), document.getId(), document.getReportDate(), new java.math.BigDecimal("0.96"), "PENDING_REVIEW", "Known diabetic")),
+                List.of(),
+                new LongitudinalConceptSnapshot("LAB_RESULT", "hba1c", "HbA1c", "8.4", "%", document.getTitle(), document.getDocumentType().name(), document.getId(), document.getReportDate(), new java.math.BigDecimal("0.96"), "PENDING_REVIEW", "HbA1c 8.4"),
+                new LongitudinalConceptSnapshot("LAB_RESULT", "blood_sugar", "Blood Sugar", "198", "mg/dL", document.getTitle(), document.getDocumentType().name(), document.getId(), document.getReportDate(), new java.math.BigDecimal("0.96"), "PENDING_REVIEW", "Random Blood Sugar 198"),
+                List.of(
+                        new LongitudinalConceptSnapshot("LAB_RESULT", "cholesterol", "Total Cholesterol", "228", "mg/dL", document.getTitle(), document.getDocumentType().name(), document.getId(), document.getReportDate(), new java.math.BigDecimal("0.96"), "PENDING_REVIEW", "Total Cholesterol 228"),
+                        new LongitudinalConceptSnapshot("LAB_RESULT", "ldl", "LDL Cholesterol", "152", "mg/dL", document.getTitle(), document.getDocumentType().name(), document.getId(), document.getReportDate(), new java.math.BigDecimal("0.96"), "PENDING_REVIEW", "LDL 152"),
+                        new LongitudinalConceptSnapshot("LAB_RESULT", "triglycerides", "Triglycerides", "238", "mg/dL", document.getTitle(), document.getDocumentType().name(), document.getId(), document.getReportDate(), new java.math.BigDecimal("0.96"), "PENDING_REVIEW", "Triglycerides 238"),
+                        new LongitudinalConceptSnapshot("LAB_RESULT", "hdl", "HDL Cholesterol", "39", "mg/dL", document.getTitle(), document.getDocumentType().name(), document.getId(), document.getReportDate(), new java.math.BigDecimal("0.96"), "PENDING_REVIEW", "HDL 39")
+                ),
+                null,
+                null,
+                List.of(),
+                List.of(),
+                "HbA1c 8.4, Blood Sugar 198"
+        ));
+
+        ClinicalContextService service = new ClinicalContextService(
+                patientRepository,
+                consultationRepository,
+                prescriptionRepository,
+                prescriptionMedicineRepository,
+                prescriptionTestRepository,
+                clinicalDocumentRepository,
+                patientClinicalIntakeRepository,
+                labOrderRepository,
+                labOrderResultRepository,
+                longitudinalMemoryService,
+                new ObjectMapper()
+        );
+
+        ClinicalContextResponse context = service.buildClinicalContext(tenantId, patientId, currentConsultationId);
+
+        assertThat(context.diagnosisHistory().lastVisitDiagnosis()).isEqualTo("Past viral URI");
+        assertThat(context.previousVisits()).hasSize(1);
+        assertThat(context.documentIntelligence().recentReports()).anySatisfy(report -> assertThat(report).contains("08-Jan-2026", "Diabetes Follow-up Lab Report Retest 3"));
+        assertThat(context.labIntelligence().latestLabReport()).doesNotContain("null");
+        assertThat(context.labIntelligence().abnormalValues()).anySatisfy(value -> assertThat(value).contains("HbA1c").contains("8.4"));
+        assertThat(context.labIntelligence().abnormalValues()).anySatisfy(value -> assertThat(value).contains("Blood Sugar").contains("198"));
+        assertThat(context.labIntelligence().abnormalValues()).anySatisfy(value -> assertThat(value).contains("Total Cholesterol").contains("228"));
     }
 
     private static void setId(Object entity, UUID id) {

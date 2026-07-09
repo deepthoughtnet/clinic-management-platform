@@ -27,16 +27,13 @@ public class AiDoctorCopilotService {
     private final AiOrchestrationService aiOrchestrationService;
     private final ObjectMapper objectMapper;
     private final boolean enabled;
-    private final int consultationMaxOutputTokens;
 
     public AiDoctorCopilotService(AiOrchestrationService aiOrchestrationService,
                                   ObjectMapper objectMapper,
-                                  @Value("${clinic.ai.enabled:false}") boolean enabled,
-                                  @Value("${clinic.ai.consultation.max-output-tokens:${GEMINI_MAX_OUTPUT_TOKENS:2048}}") int consultationMaxOutputTokens) {
+                                  @Value("${clinic.ai.enabled:false}") boolean enabled) {
         this.aiOrchestrationService = aiOrchestrationService;
         this.objectMapper = objectMapper;
         this.enabled = enabled;
-        this.consultationMaxOutputTokens = Math.max(1024, consultationMaxOutputTokens);
     }
 
     public AiDraftResponse draft(AiTaskType taskType,
@@ -60,7 +57,7 @@ public class AiDoctorCopilotService {
                 promptTemplateCode,
                 input,
                 evidence,
-                consultationMaxOutputTokens,
+                null,
                 0.1d,
                 correlationId,
                 useCaseCode
@@ -73,6 +70,22 @@ public class AiDoctorCopilotService {
         }
 
         Map<String, Object> structured = toStructuredData(response.structuredJson());
+        String rawText = response.rawText();
+        String draftText = response.outputText();
+        String structuredJson = response.structuredJson();
+        log.info("[NORMALIZED] taskType={} provider={} model={} rawChars={} outputChars={} structuredChars={} responseChars={} finishReason={} normalizedFinishReason={} parseStatus={} first300Chars=\"{}\" last300Chars=\"{}\"",
+                taskType,
+                response.provider(),
+                response.model(),
+                rawText == null ? 0 : rawText.length(),
+                draftText == null ? 0 : draftText.length(),
+                structuredJson == null ? 0 : structuredJson.length(),
+                response.responseChars(),
+                response.finishReason(),
+                response.normalizedFinishReason(),
+                response.parseStatus(),
+                previewStart(rawText),
+                previewEnd(rawText));
         log.debug("{} requestId={} provider={} model={} draftChars={} structuredKeys={} fallbackUsed={}",
                 responsePrefix(taskType),
                 response.requestId(),
@@ -91,8 +104,29 @@ public class AiDoctorCopilotService {
                 structured,
                 response.confidence(),
                 response.suggestedActions() == null ? List.of() : response.suggestedActions(),
-                List.copyOf(warnings)
+                List.copyOf(warnings),
+                response.finishReason(),
+                response.normalizedFinishReason(),
+                response.responseChars(),
+                response.rawText(),
+                response.parseStatus()
         );
+    }
+
+    private String previewStart(String value) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+        String normalized = value.replaceAll("[\\r\\n\\t]+", " ").trim();
+        return normalized.length() <= 300 ? normalized : normalized.substring(0, 300);
+    }
+
+    private String previewEnd(String value) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+        String normalized = value.replaceAll("[\\r\\n\\t]+", " ").trim();
+        return normalized.length() <= 300 ? normalized : normalized.substring(normalized.length() - 300);
     }
 
     private Map<String, Object> toStructuredData(String json) {
@@ -120,7 +154,12 @@ public class AiDoctorCopilotService {
                 Map.of(),
                 null,
                 List.of(),
-                List.of(SAFETY_NOTICE)
+                List.of(SAFETY_NOTICE),
+                null,
+                "UNKNOWN",
+                0,
+                null,
+                "FAILED"
         );
     }
 
@@ -130,6 +169,9 @@ public class AiDoctorCopilotService {
         }
         if (taskType == AiTaskType.PRESCRIPTION_TEMPLATE_SUGGESTION) {
             return "AI_MEDICINE_RESPONSE";
+        }
+        if (taskType == AiTaskType.CLINICAL_REASONING) {
+            return "AI_REASONING_RESPONSE";
         }
         return "AI_RESPONSE";
     }

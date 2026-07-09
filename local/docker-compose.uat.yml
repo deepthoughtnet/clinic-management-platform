@@ -88,6 +88,8 @@ services:
       dockerfile: backend/api/api-bff/Dockerfile
     container_name: ${CONTAINER_NAME_PREFIX:-jeevanam-uat}-api
     restart: unless-stopped
+    env_file:
+      - .env.full-docker
     environment:
       SPRING_PROFILES_ACTIVE: docker
       SPRING_DATASOURCE_URL: ${SPRING_DATASOURCE_URL}

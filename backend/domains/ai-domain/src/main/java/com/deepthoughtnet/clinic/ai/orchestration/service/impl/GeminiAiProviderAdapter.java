@@ -3,6 +3,7 @@ package com.deepthoughtnet.clinic.ai.orchestration.service.impl;
 import com.deepthoughtnet.clinic.llm.spi.LlmClient;
 import com.deepthoughtnet.clinic.llm.spi.LlmRequest;
 import com.deepthoughtnet.clinic.llm.spi.LlmResponse;
+import com.deepthoughtnet.clinic.platform.contracts.ai.AiFinishReasonNormalizer;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiProvider;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiProviderRequest;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiProviderResponse;
@@ -43,18 +44,30 @@ public class GeminiAiProviderAdapter implements AiProvider {
                 null,
                 null,
                 request.request() == null ? null : request.request().temperature(),
-                request.request() == null ? null : request.request().maxTokens()
+                request.request() == null ? null : request.request().maxTokens(),
+                request.request() == null ? null : request.request().taskType(),
+                request.modelOverride(),
+                request.thinkingBudget(),
+                request.strictJsonMode()
         ));
         if (response == null || response.text() == null || response.text().isBlank()) {
             throw new IllegalStateException("Gemini returned an empty response");
         }
+        String outputText = response.text().trim();
         return new AiProviderResponse(
                 response.provider() == null ? providerName() : response.provider(),
                 response.model(),
-                response.text().trim(),
+                outputText,
                 null,
                 null,
-                response.tokenUsage()
+                response.tokenUsage(),
+                response.finishReason(),
+                response.normalizedFinishReason() == null
+                        ? AiFinishReasonNormalizer.normalize(response.finishReason())
+                        : response.normalizedFinishReason(),
+                response.responseChars() == null ? outputText.length() : response.responseChars(),
+                response.rawText() == null ? outputText : response.rawText(),
+                response.parseStatus()
         );
     }
 

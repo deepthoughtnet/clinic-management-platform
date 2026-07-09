@@ -4,6 +4,7 @@ import com.deepthoughtnet.clinic.llm.spi.AiProviderException;
 import com.deepthoughtnet.clinic.llm.spi.LlmClient;
 import com.deepthoughtnet.clinic.llm.spi.LlmRequest;
 import com.deepthoughtnet.clinic.llm.spi.LlmResponse;
+import com.deepthoughtnet.clinic.platform.contracts.ai.AiFinishReasonNormalizer;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiTokenUsage;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -95,9 +96,17 @@ public class GroqLlmClient implements LlmClient {
         }
 
         Map<String, Object> payload = buildPayload(request);
+        String effectiveModel = request.modelOverride() != null && !request.modelOverride().isBlank() ? request.modelOverride() : model;
+        log.info("[AI-REQUEST] taskType={} provider=GROQ model={} maxOutputTokens={} thinkingBudget={} strictJsonMode={} chars={}",
+                request.taskType(),
+                effectiveModel,
+                request.maxOutputTokens() != null ? request.maxOutputTokens() : defaultMaxOutputTokens,
+                request.thinkingBudget(),
+                request.strictJsonMode(),
+                request.userPrompt().length());
         log.info("Calling Groq provider. requestId={}, model={}, chars={}, hasAttachment={}, timeoutSeconds={}",
                 requestId,
-                model,
+                effectiveModel,
                 request.userPrompt().length(),
                 request.bytes() != null && request.bytes().length > 0,
                 timeoutSeconds);
@@ -114,6 +123,13 @@ public class GroqLlmClient implements LlmClient {
 
             ParsedGroqResponse parsed = extractResponse(responseBody);
             long latencyMs = System.currentTimeMillis() - startedAt;
+            log.info("[LLM-RAW] provider=GROQ rawChars={} first300Chars=\"{}\" last300Chars=\"{}\" finishReason={} candidateCount={} safetyBlocked={}",
+                    responseBody == null ? 0 : responseBody.length(),
+                    previewStart(responseBody),
+                    previewEnd(responseBody),
+                    parsed.finishReason(),
+                    parsed.text() == null || parsed.text().isBlank() ? 0 : 1,
+                    false);
             log.info(
                     "Groq response received. requestId={}, status=200, latencyMs={}, responseChars={}, finishReason={}, tokenUsage={}",
                     requestId,
@@ -126,6 +142,12 @@ public class GroqLlmClient implements LlmClient {
             if (log.isDebugEnabled()) {
                 log.debug("Groq preview. requestId={}, text=\"{}\"", requestId, safePreview(parsed.text()));
             }
+            log.info("[NORMALIZED] provider=GROQ normalizedChars={} first300Chars=\"{}\" last300Chars=\"{}\" finishReason={} tokenUsage={}",
+                    parsed.text() == null ? 0 : parsed.text().length(),
+                    previewStart(parsed.text()),
+                    previewEnd(parsed.text()),
+                    parsed.finishReason(),
+                    formatTokenUsage(parsed.tokenUsage()));
             if ("length".equalsIgnoreCase(parsed.finishReason())) {
                 log.warn("Groq response truncated by max output tokens. requestId={}, maxOutputTokens={}",
                         requestId,
@@ -143,7 +165,17 @@ public class GroqLlmClient implements LlmClient {
                         null
                 );
             }
-            return new LlmResponse(providerName(), model, parsed.text().trim(), parsed.tokenUsage());
+            String text = parsed.text().trim();
+            return new LlmResponse(
+                    providerName(),
+                    model,
+                    text,
+                    parsed.tokenUsage(),
+                    parsed.finishReason(),
+                    AiFinishReasonNormalizer.normalize(parsed.finishReason()),
+                    text.length(),
+                    text,
+                    "UNKNOWN");
         } catch (RestClientResponseException ex) {
             int status = ex.getRawStatusCode();
             String bodyPreview = sanitizePreview(ex.getResponseBodyAsString(), 300);
@@ -206,7 +238,7 @@ public class GroqLlmClient implements LlmClient {
             payload.put("messages", List.of(Map.of("role", "user", "content", request.userPrompt())));
         }
 
-        payload.put("model", model);
+        payload.put("model", request.modelOverride() != null && !request.modelOverride().isBlank() ? request.modelOverride() : model);
         payload.put("temperature", request.temperature() != null ? request.temperature() : defaultTemperature);
         payload.put("max_tokens", request.maxOutputTokens() != null ? request.maxOutputTokens() : defaultMaxOutputTokens);
 
@@ -301,6 +333,22 @@ public class GroqLlmClient implements LlmClient {
 
     private String safePreview(String value) {
         return sanitizePreview(value, 240);
+    }
+
+    private String previewStart(String value) {
+        String sanitized = sanitize(value);
+        if (sanitized.isBlank()) {
+            return "";
+        }
+        return sanitized.length() <= 300 ? sanitized : sanitized.substring(0, 300);
+    }
+
+    private String previewEnd(String value) {
+        String sanitized = sanitize(value);
+        if (sanitized.isBlank()) {
+            return "";
+        }
+        return sanitized.length() <= 300 ? sanitized : sanitized.substring(sanitized.length() - 300);
     }
 
     private String formatTokenUsage(AiTokenUsage usage) {

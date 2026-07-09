@@ -119,6 +119,8 @@ class VaccinationDocumentControllerRouteTest {
                 null,
                 null,
                 null,
+                null,
+                null,
                 true,
                 OffsetDateTime.parse("2026-07-07T10:00:00Z"),
                 OffsetDateTime.parse("2026-07-07T10:00:00Z")

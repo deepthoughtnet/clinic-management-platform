@@ -212,6 +212,7 @@ class PatientPortalCareAiResponseComposerServiceTest {
                 outputText,
                 null,
                 BigDecimal.valueOf(0.9),
+                null,
                 null
         );
     }

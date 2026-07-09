@@ -12,6 +12,7 @@ import UsersRolesPage from "../pages/settings/UsersRolesPage";
 import TemplatesPage from "../pages/admin/TemplatesPage";
 import NotificationSettingsPage from "../pages/admin/NotificationSettingsPage";
 import IntegrationsPage from "../pages/admin/IntegrationsPage";
+import ReasoningTestConsolePage from "../pages/admin/ReasoningTestConsolePage";
 import AiOpsPage from "../pages/admin/AiOpsPage";
 import PlatformOpsPage from "../pages/admin/PlatformOpsPage";
 import HelpCmsPage from "../pages/admin/HelpCmsPage";
@@ -400,6 +401,7 @@ function AuthedApp() {
         <Route path="/admin/notification-settings" element={<NotificationSettingsPage />} />
         <Route path="/admin/integrations" element={<IntegrationsPage />} />
         <Route path="/admin/ai-ops" element={<ModuleGate moduleKey="aiCopilot"><AiOpsPage /></ModuleGate>} />
+        <Route path="/admin/ai-reasoning-console" element={<ReasoningTestConsolePage />} />
         <Route path="/admin/platform-ops" element={<PlatformOpsPage />} />
         <Route path="/admin/realtime-ai" element={<ModuleGate moduleKey="aiCopilot"><RealtimeAiPage /></ModuleGate>} />
         <Route path="/ai/voice-test" element={<ModuleGate moduleKey="aiCopilot"><VoiceTestPage /></ModuleGate>} />

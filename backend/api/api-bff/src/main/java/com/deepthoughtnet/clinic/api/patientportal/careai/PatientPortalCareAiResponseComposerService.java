@@ -99,7 +99,10 @@ public class PatientPortalCareAiResponseComposerService {
                                     buildUserPrompt(normalizedRaw, responseType, language, workflow, safeStructuredFacts),
                                     input,
                                     List.of(),
-                                    requestId
+                                    requestId,
+                                    null,
+                                    null,
+                                    false
                             )), executor)
                             .get(Math.max(1, properties.getTimeoutSeconds()), TimeUnit.SECONDS);
                 } catch (TimeoutException ex) {

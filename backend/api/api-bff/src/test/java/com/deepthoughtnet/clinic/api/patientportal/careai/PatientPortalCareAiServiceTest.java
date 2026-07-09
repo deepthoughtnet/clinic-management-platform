@@ -1475,6 +1475,7 @@ class PatientPortalCareAiServiceTest {
                 null,
                 18L,
                 false,
+                null,
                 null
         ));
         when(patientPortalService.doctorSlots("doctor-neha", tomorrow)).thenReturn(List.of(
@@ -1513,6 +1514,7 @@ class PatientPortalCareAiServiceTest {
                 null,
                 8L,
                 false,
+                null,
                 null
         ));
         when(patientPortalService.doctorSlots("doctor-neha", tomorrow)).thenReturn(List.of(
@@ -1583,6 +1585,7 @@ class PatientPortalCareAiServiceTest {
                 null,
                 21L,
                 false,
+                null,
                 null
         ));
         when(patientPortalService.doctorSlots("doctor-neha", targetDate)).thenReturn(List.of(
@@ -2208,6 +2211,7 @@ class PatientPortalCareAiServiceTest {
                 null,
                 12L,
                 false,
+                null,
                 null
         );
     }

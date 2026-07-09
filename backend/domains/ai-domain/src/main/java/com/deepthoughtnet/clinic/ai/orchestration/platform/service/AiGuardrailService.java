@@ -9,4 +9,13 @@ public interface AiGuardrailService {
     void validatePreExecution(UUID tenantId, String renderedPrompt, AiOrchestrationRequest request, String profileKey);
 
     AiGuardrailProfileEntity resolveProfile(UUID tenantId, String profileKey);
+
+    ExecutionSettings resolveExecutionSettings(UUID tenantId, String renderedPrompt, AiOrchestrationRequest request, String profileKey);
+
+    record ExecutionSettings(Integer requestedMaxTokens,
+                             Integer guardrailLimit,
+                             Integer effectiveMaxTokens,
+                             Integer promptChars,
+                             Integer estimatedPromptTokens,
+                             boolean compactMode) {}
 }

@@ -42,7 +42,8 @@ class AiConsultationAskServiceTest {
                 Map.of("answer", "Check hydration and fever"),
                 BigDecimal.valueOf(0.9),
                 List.of("Review"),
-                List.of("Advisory")
+                List.of("Advisory"),
+                null
         ));
 
         AiConsultationAskService service = new AiConsultationAskService(copilotService, clinicalContextService);

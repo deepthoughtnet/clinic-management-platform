@@ -117,6 +117,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { key: "notification-settings", label: "Notification Settings", path: "/admin/notification-settings", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"] },
       { key: "integrations", label: "Integrations", path: "/admin/integrations", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"] },
       { key: "ai-ops", label: "AI Ops", path: "/admin/ai-ops", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"], moduleAny: ["AI_COPILOT"] },
+      { key: "ai-reasoning-console", label: "AI Reasoning Console", path: "/admin/ai-reasoning-console", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "TENANT_ADMIN", "ADMIN", "PLATFORM_ADMIN"] },
       { key: "platform-ops", label: "Platform Ops", path: "/admin/platform-ops", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"] },
       { key: "realtime-ai", label: "Realtime AI", path: "/admin/realtime-ai", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"], moduleAny: ["AI_COPILOT"] },
       { key: "voice-test", label: "Voice Test", path: "/ai/voice-test", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "TENANT_ADMIN", "RECEPTIONIST", "PLATFORM_ADMIN"] },

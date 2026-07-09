@@ -3,6 +3,7 @@ package com.deepthoughtnet.clinic.ai.orchestration.service.impl;
 import com.deepthoughtnet.clinic.llm.spi.LlmClient;
 import com.deepthoughtnet.clinic.llm.spi.LlmRequest;
 import com.deepthoughtnet.clinic.llm.spi.LlmResponse;
+import com.deepthoughtnet.clinic.platform.contracts.ai.AiFinishReasonNormalizer;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiProvider;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiProviderRequest;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiProviderResponse;
@@ -45,6 +46,7 @@ public class GroqAiProviderAdapter implements AiProvider {
                 || taskType == AiTaskType.PATIENT_HISTORY_SUMMARY
                 || taskType == AiTaskType.CONSULTATION_NOTE_STRUCTURING
                 || taskType == AiTaskType.SYMPTOMS_DIAGNOSIS_DRAFT
+                || taskType == AiTaskType.CLINICAL_REASONING
                 || taskType == AiTaskType.PRESCRIPTION_TEMPLATE_SUGGESTION
                 || taskType == AiTaskType.PATIENT_INSTRUCTIONS_DRAFT
                 || taskType == AiTaskType.ALLERGY_CONDITION_WARNING;
@@ -69,26 +71,38 @@ public class GroqAiProviderAdapter implements AiProvider {
                 null,
                 null,
                 request.request() == null ? null : request.request().temperature(),
-                request.request() == null ? null : request.request().maxTokens()
+                request.request() == null ? null : request.request().maxTokens(),
+                request.request() == null ? null : request.request().taskType(),
+                request.modelOverride(),
+                request.thinkingBudget(),
+                request.strictJsonMode()
         ));
         if (response == null || response.text() == null || response.text().isBlank()) {
             log.warn("LLM provider returned empty content. provider=GROQ, requestId={}", request == null ? null : request.requestId());
             throw new IllegalStateException("Groq returned an empty response");
         }
+        String outputText = response.text().trim();
         log.info("Groq response received. requestId={}, latencyMs={}, responseChars={}, tokenUsage={}",
                 request == null ? null : request.requestId(),
                 System.currentTimeMillis() - started,
-                response.text().trim().length(),
+                outputText.length(),
                 response.tokenUsage() == null ? "n/a" : ("prompt=" + response.tokenUsage().promptTokens()
                         + ",completion=" + response.tokenUsage().completionTokens()
                         + ",total=" + response.tokenUsage().totalTokens()));
         return new AiProviderResponse(
                 response.provider() == null ? providerName() : response.provider(),
                 response.model(),
-                response.text().trim(),
+                outputText,
                 null,
                 null,
-                response.tokenUsage()
+                response.tokenUsage(),
+                response.finishReason(),
+                response.normalizedFinishReason() == null
+                        ? AiFinishReasonNormalizer.normalize(response.finishReason())
+                        : response.normalizedFinishReason(),
+                response.responseChars() == null ? outputText.length() : response.responseChars(),
+                response.rawText() == null ? outputText : response.rawText(),
+                response.parseStatus()
         );
     }
 
