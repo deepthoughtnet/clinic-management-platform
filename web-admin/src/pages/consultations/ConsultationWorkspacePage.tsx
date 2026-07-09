@@ -2,6 +2,9 @@ import * as React from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   Alert,
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
   Box,
   Button,
   Card,
@@ -32,8 +35,10 @@ import {
   Tabs,
   TextField,
   Typography,
+  Tooltip,
 } from "@mui/material";
 import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
+import ExpandMoreRoundedIcon from "@mui/icons-material/ExpandMoreRounded";
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 import AddRoundedIcon from "@mui/icons-material/AddRounded";
 import DescriptionRoundedIcon from "@mui/icons-material/DescriptionRounded";
@@ -126,6 +131,7 @@ import {
   type PatientDetail,
   type ClinicalDocument,
   type ClinicalContextResponse,
+  type ClinicalReasoningResult,
   type ClinicalDocumentType,
   type PatientTimelineItem,
   type Prescription,
@@ -235,6 +241,7 @@ type ClinicalDraftGenerationStepState = {
   error: string | null;
   message: string | null;
 };
+type ClinicalReasoningSectionKey = "primaryDiagnosis" | "differentials" | "evidence" | "missingInformation" | "redFlags" | "recommendedTests" | "safetyNotes" | "debug";
 type MedicineShortcut = Pick<
   Medicine,
   "medicineName" | "strength" | "defaultDosage" | "defaultFrequency" | "defaultDurationDays" | "defaultTiming" | "defaultInstructions"
@@ -787,6 +794,57 @@ function appendUniqueTokenLine(base: string, token: string): string {
     return base;
   }
   return appendTokenLine(base, nextToken);
+}
+
+function confidenceLevelFromPercent(value: number | null | undefined) {
+  if (value == null || Number.isNaN(value)) return "Unknown";
+  if (value >= 0.8) return "Very High";
+  if (value >= 0.6) return "High";
+  if (value >= 0.4) return "Moderate";
+  return "Low";
+}
+
+function likelihoodLevelFromPercent(value: number | null | undefined) {
+  if (value == null || Number.isNaN(value)) return "Unclear";
+  if (value >= 0.8) return "Very likely";
+  if (value >= 0.6) return "Likely";
+  if (value >= 0.4) return "Possible";
+  return "Less likely";
+}
+
+function confidenceLevelFromText(value: string | null | undefined) {
+  const normalized = String(value || "").toUpperCase();
+  if (normalized.includes("VERY_HIGH")) return "Very High";
+  if (normalized.includes("HIGH")) return "High";
+  if (normalized.includes("MEDIUM") || normalized.includes("MODERATE")) return "Moderate";
+  if (normalized.includes("LOW")) return "Low";
+  return "Unknown";
+}
+
+function classifyClinicalReasoningTests(tests: ClinicalReasoningResult["recommendedTests"]) {
+  const buckets = {
+    alreadyAvailable: [] as NonNullable<ClinicalReasoningResult["recommendedTests"]>,
+    recommended: [] as NonNullable<ClinicalReasoningResult["recommendedTests"]>,
+    optional: [] as NonNullable<ClinicalReasoningResult["recommendedTests"]>,
+  };
+  tests.forEach((test) => {
+    const text = [test.name, test.reason, test.source, test.actionType].filter(Boolean).join(" ").toLowerCase();
+    if (test.alreadyAvailable || test.pendingOrderExists || text.includes("already available") || text.includes("existing result") || text.includes("display only if clinically needed") || text.includes("already done")) {
+      buckets.alreadyAvailable.push(test);
+      return;
+    }
+    if (text.includes("consider") || text.includes("optional") || text.includes("if indicated")) {
+      buckets.optional.push(test);
+      return;
+    }
+    buckets.recommended.push(test);
+  });
+  return buckets;
+}
+
+function formatClinicalReasoningMetaValue(value: unknown) {
+  if (value == null || value === "") return null;
+  return String(value);
 }
 
 function followUpChipToDate(value: string): string {
@@ -1634,6 +1692,17 @@ export default function ConsultationWorkspacePage() {
   const [prescriptionIntelligenceTab, setPrescriptionIntelligenceTab] = React.useState<"safety" | "comparison" | "instructions" | "summary">("safety");
   const [prescriptionIntelligenceExpanded, setPrescriptionIntelligenceExpanded] = React.useState(false);
   const [clinicalReasoningAskedMissingInfo, setClinicalReasoningAskedMissingInfo] = React.useState<Record<string, boolean>>({});
+  const [clinicalReasoningLoadingStepIndex, setClinicalReasoningLoadingStepIndex] = React.useState(0);
+  const [clinicalReasoningSectionsOpen, setClinicalReasoningSectionsOpen] = React.useState<Record<ClinicalReasoningSectionKey, boolean>>({
+    primaryDiagnosis: true,
+    differentials: true,
+    evidence: false,
+    missingInformation: false,
+    redFlags: false,
+    recommendedTests: false,
+    safetyNotes: false,
+    debug: false,
+  });
   const [consultationDocumentDrafts, setConsultationDocumentDrafts] = React.useState<Record<ConsultationDocumentationKind, ConsultationDocumentDraftState>>(() => createEmptyConsultationDocumentDrafts());
   const [consultationDocumentationLanguage, setConsultationDocumentationLanguage] = React.useState<"ENGLISH" | "HINDI" | "MARATHI">("ENGLISH");
   const [consultationReferralPriority, setConsultationReferralPriority] = React.useState<ConsultationDocumentPriority>("ROUTINE");
@@ -1660,6 +1729,16 @@ export default function ConsultationWorkspacePage() {
   const aiDiagnosisItemsRef = React.useRef(aiDiagnosisItems);
   const aiPrescriptionSuggestionRef = React.useRef(aiPrescriptionSuggestion);
   const aiPrescriptionItemsRef = React.useRef(aiPrescriptionItems);
+  const clinicalReasoningReviewRef = React.useRef<HTMLDivElement | null>(null);
+  const clinicalReasoningSectionRefs = React.useRef<Record<Exclude<ClinicalReasoningSectionKey, "debug">, HTMLDivElement | null>>({
+    primaryDiagnosis: null,
+    differentials: null,
+    evidence: null,
+    missingInformation: null,
+    redFlags: null,
+    recommendedTests: null,
+    safetyNotes: null,
+  });
   const savedConsultationSnapshotRef = React.useRef(serializeConsultationForm(emptyConsultationForm()));
   const savedPrescriptionSnapshotRef = React.useRef(serializePrescriptionForm(emptyPrescriptionForm()));
   const autosaveTimerRef = React.useRef<number | null>(null);
@@ -2034,6 +2113,17 @@ export default function ConsultationWorkspacePage() {
       setAiDiagnosisUnstructured(false);
       setAiDiagnosisProvider(null);
       setClinicalReasoningAskedMissingInfo({});
+      setClinicalReasoningLoadingStepIndex(0);
+      setClinicalReasoningSectionsOpen({
+        primaryDiagnosis: true,
+        differentials: true,
+        evidence: false,
+        missingInformation: false,
+        redFlags: false,
+        recommendedTests: false,
+        safetyNotes: false,
+        debug: false,
+      });
       setAiPrescriptionSuggestion(null);
       setAiPrescriptionItems([]);
       setAiPrescriptionUnstructured(false);
@@ -2311,6 +2401,23 @@ export default function ConsultationWorkspacePage() {
   React.useEffect(() => {
     clinicalReasoning.resetReasoning();
   }, [consultationId, clinicalReasoning.resetReasoning]);
+  React.useEffect(() => {
+    if (!clinicalReasoning.loading) {
+      return;
+    }
+    setClinicalReasoningLoadingStepIndex(0);
+    const messages = [
+      "Reviewing symptoms...",
+      "Reviewing vitals...",
+      "Reviewing laboratory reports...",
+      "Reviewing longitudinal memory...",
+      "Generating clinical reasoning...",
+    ];
+    const intervalId = window.setInterval(() => {
+      setClinicalReasoningLoadingStepIndex((current) => (current + 1) % messages.length);
+    }, 1800);
+    return () => window.clearInterval(intervalId);
+  }, [clinicalReasoning.loading]);
   const hasClinicalReasoningContext = Boolean(
     consultation
       && patient
@@ -2369,6 +2476,26 @@ export default function ConsultationWorkspacePage() {
     () => labOrders.flatMap((order) => order.items.map((item) => item.testName)).filter(Boolean),
     [labOrders],
   );
+  const isClinicalReasoningAdminView = Boolean(
+    auth.rolesUpper.some((role) => ["PLATFORM_ADMIN", "CLINIC_ADMIN", "TENANT_ADMIN", "ADMIN"].includes(role)),
+  );
+  const clinicalReasoningLoadingMessages = React.useMemo(() => [
+    "Reviewing symptoms...",
+    "Reviewing vitals...",
+    "Reviewing laboratory reports...",
+    "Reviewing longitudinal memory...",
+    "Generating clinical reasoning...",
+  ], []);
+  const clinicalReasoningTestBuckets = React.useMemo(
+    () => classifyClinicalReasoningTests(clinicalReasoningResult?.recommendedTests || []),
+    [clinicalReasoningResult?.recommendedTests],
+  );
+  const clinicalReasoningPrimaryConfidenceLabel = confidenceLevelFromPercent(clinicalReasoningResult?.primaryDiagnosis?.confidence);
+  const clinicalReasoningPrimaryConfidencePercent = clinicalReasoningResult?.primaryDiagnosis?.confidence != null
+    ? `${Math.round((clinicalReasoningResult.primaryDiagnosis.confidence || 0) * 100)}%`
+    : null;
+  const clinicalReasoningSummaryConfidenceLabel = confidenceLevelFromText(clinicalReasoningResult?.confidence);
+  const clinicalReasoningProviderLabel = clinicalReasoningResult?.provider || clinicalReasoningResult?.metadata?.provider || clinicalReasoningResult?.metadata?.model || "Unknown";
   const triggerClinicalReasoning = React.useCallback(() => {
     if (!consultation) {
       return;
@@ -2415,6 +2542,24 @@ export default function ConsultationWorkspacePage() {
       ...current,
       [key]: !current[key],
     }));
+  }, []);
+  const toggleClinicalReasoningSection = React.useCallback((key: ClinicalReasoningSectionKey) => {
+    setClinicalReasoningSectionsOpen((current) => ({
+      ...current,
+      [key]: !current[key],
+    }));
+  }, []);
+  const setClinicalReasoningSectionRef = React.useCallback(
+    (key: Exclude<ClinicalReasoningSectionKey, "debug">) => (node: HTMLDivElement | null) => {
+      clinicalReasoningSectionRefs.current[key] = node;
+    },
+    [],
+  );
+  const scrollToClinicalReasoningSection = React.useCallback((key: Exclude<ClinicalReasoningSectionKey, "debug">) => {
+    clinicalReasoningSectionRefs.current[key]?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
+  const scrollToClinicalReasoningDetails = React.useCallback(() => {
+    clinicalReasoningReviewRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
   const aiUnavailableCard = (
     <Box sx={{ p: 1.35, border: 1, borderStyle: "dashed", borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
@@ -6883,11 +7028,7 @@ export default function ConsultationWorkspacePage() {
                 icon={<PsychologyRoundedIcon fontSize="small" />}
                 expanded={expanded.diagnosis}
                 onToggle={toggleSection}
-                primaryAction={(
-                  <Button type="button" size="small" variant="outlined" startIcon={<AutoAwesomeRoundedIcon fontSize="small" />} disabled={!canGenerateClinicalDraft} onClick={() => void runClinicalDraftAction("diagnosis")}>
-                    Suggest
-                  </Button>
-                )}
+                primaryAction={null}
               >
                 <Stack spacing={1}>
                   {clinicalAiDrafts.diagnosis.generatedAt || clinicalAiDrafts.diagnosis.error || clinicalAiDrafts.diagnosis.status !== "DRAFTED" || clinicalAiDrafts.diagnosis.draftText.trim() ? renderClinicalAiDraftCard("diagnosis") : null}
@@ -6920,17 +7061,6 @@ export default function ConsultationWorkspacePage() {
                       >
                         Add
                       </Button>
-                      {aiAssistantEnabled ? (
-                          <Button
-                          type="button"
-                          variant="outlined"
-                          startIcon={<AutoAwesomeRoundedIcon fontSize="small" />}
-                          disabled={!canGenerateClinicalReasoning}
-                          onClick={() => void runClinicalReasoningAction()}
-                        >
-                          Explain
-                        </Button>
-                      ) : null}
                   </Stack>
                 </Stack>
 
@@ -6961,7 +7091,7 @@ export default function ConsultationWorkspacePage() {
                         </Stack>
                         {clinicalReasoning.loading ? (
                           <Alert severity="info" sx={{ py: 0.5 }}>
-                            Analyzing symptoms, vitals, reports, and clinical context…
+                            {clinicalReasoningLoadingMessages[clinicalReasoningLoadingStepIndex]}
                           </Alert>
                         ) : null}
                         {clinicalReasoning.error ? (
@@ -6979,563 +7109,505 @@ export default function ConsultationWorkspacePage() {
                         ) : null}
                         {clinicalReasoningResult ? (
                           <Stack spacing={1}>
-                            <Stack spacing={0.35}>
-                              <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
-                                <Stack direction="row" spacing={0.75} alignItems="center">
-                                  <AutoAwesomeRoundedIcon fontSize="small" color="primary" />
-                                  <Typography variant="subtitle2" sx={{ fontWeight: 950 }}>Clinical Reasoning</Typography>
-                                </Stack>
-                                <Button type="button" size="small" variant="outlined" onClick={() => triggerClinicalReasoning()} disabled={clinicalReasoning.loading || aiBusy}>
-                                  Refresh Clinical Reasoning
-                                </Button>
+                            <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                              <Stack direction="row" spacing={0.75} alignItems="center" flexWrap="wrap">
+                                <AutoAwesomeRoundedIcon fontSize="small" color="primary" />
+                                <Typography variant="subtitle2" sx={{ fontWeight: 950 }}>Reasoning details</Typography>
+                                <Chip size="small" variant="outlined" label={`Provider: ${clinicalReasoningProviderLabel}`} />
+                                <Chip size="small" variant="outlined" label={`Generated: ${compactDateTime(clinicalReasoningResult.generatedAt)}`} />
+                                <Chip size="small" color="primary" variant="outlined" label={`Confidence: ${clinicalReasoningSummaryConfidenceLabel}`} />
                               </Stack>
-                              <Typography variant="caption" color="text.secondary">
-                                Generated: {compactDateTime(clinicalReasoningResult.generatedAt)}
-                              </Typography>
+                              <Stack direction="row" spacing={0.75} alignItems="center" useFlexGap flexWrap="wrap">
+                                <Tooltip title="Refresh clinical reasoning">
+                                  <span>
+                                    <Button
+                                      type="button"
+                                      size="small"
+                                      variant="contained"
+                                      startIcon={<RefreshRoundedIcon fontSize="small" />}
+                                      disabled={clinicalReasoning.loading || aiBusy}
+                                      onClick={() => triggerClinicalReasoning()}
+                                      aria-label="Refresh clinical reasoning"
+                                    >
+                                      Refresh
+                                    </Button>
+                                  </span>
+                                </Tooltip>
+                                <Tooltip title="Accept the primary diagnosis into the diagnosis field">
+                                  <span>
+                                    <Button
+                                      type="button"
+                                      size="small"
+                                      variant="outlined"
+                                      onClick={() => void acceptClinicalReasoningDiagnosis()}
+                                      disabled={!clinicalReasoningResult.primaryDiagnosis?.name && !clinicalReasoningResult.reasoningSummary}
+                                      aria-label="Accept diagnosis from clinical reasoning"
+                                    >
+                                      Accept Diagnosis
+                                    </Button>
+                                  </span>
+                                </Tooltip>
+                              </Stack>
                             </Stack>
-                            <Divider />
-                            <Box sx={{ p: 1, border: 1, borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
-                              <Stack spacing={0.75}>
-                                <Stack direction="row" spacing={0.5} justifyContent="space-between" alignItems="flex-start" flexWrap="wrap">
-                                  <Box sx={{ minWidth: 0 }}>
-                                    <Typography variant="caption" color="text.secondary">Primary diagnosis</Typography>
-                                    <Stack direction="row" spacing={0.5} alignItems="center" useFlexGap flexWrap="wrap">
-                                      <Typography variant="body2" sx={{ fontWeight: 800 }}>
-                                        {clinicalReasoningResult.primaryDiagnosis?.name || "Not available"}
-                                      </Typography>
-                                      {clinicalReasoningResult.primaryDiagnosis?.confidence != null ? (
-                                        <Chip size="small" variant="outlined" label={`${Math.round((clinicalReasoningResult.primaryDiagnosis.confidence || 0) * 100)}%`} />
-                                      ) : null}
-                                      {clinicalReasoningResult.primaryDiagnosis?.status ? (
-                                        <Chip size="small" variant="outlined" label={clinicalReasoningResult.primaryDiagnosis.status.replaceAll("_", " ")} />
-                                      ) : null}
-                                    </Stack>
-                                  </Box>
-                                  <Button type="button" size="small" variant="contained" onClick={() => void acceptClinicalReasoningDiagnosis()} disabled={!clinicalReasoningResult.primaryDiagnosis?.name && !clinicalReasoningResult.reasoningSummary}>
-                                    Accept Diagnosis
-                                  </Button>
-                                </Stack>
-                                {clinicalReasoningResult.primaryDiagnosis?.whyConsidered ? (
-                                  <Typography variant="caption" color="text.secondary">
-                                    Why considered: {clinicalReasoningResult.primaryDiagnosis.whyConsidered}
-                                  </Typography>
-                                ) : null}
-                                {clinicalReasoningResult.primaryDiagnosis?.whyLessLikely ? (
-                                  <Typography variant="caption" color="text.secondary">
-                                    Why less likely: {clinicalReasoningResult.primaryDiagnosis.whyLessLikely}
-                                  </Typography>
-                                ) : null}
-                              </Stack>
-                            </Box>
-                            <Box>
-                              <Typography variant="caption" color="text.secondary">Differential diagnoses</Typography>
-                              <Stack spacing={0.75} sx={{ mt: 0.5 }}>
-                                {clinicalReasoningResult.differentialDiagnoses.length ? clinicalReasoningResult.differentialDiagnoses.map((item, index) => (
-                                  <Card key={`differential-${index}-${item.name || "item"}`} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5 }}>
-                                    <CardContent sx={{ p: 0.85, "&:last-child": { pb: 0.85 } }}>
-                                      <Stack spacing={0.45}>
-                                        <Stack direction="row" spacing={0.5} justifyContent="space-between" alignItems="flex-start" flexWrap="wrap">
-                                          <Box sx={{ minWidth: 0 }}>
-                                            <Typography variant="body2" sx={{ fontWeight: 800 }}>
-                                              {item.name || "Differential diagnosis"}
-                                            </Typography>
-                                            {item.whyConsidered ? <Typography variant="caption" color="text.secondary">{item.whyConsidered}</Typography> : null}
-                                          </Box>
-                                          <Button type="button" size="small" variant="outlined" onClick={() => addClinicalReasoningDifferential(item.name || item.whyConsidered || "")} disabled={!item.name && !item.whyConsidered}>
-                                            Add
-                                          </Button>
-                                        </Stack>
-                                        {item.confidence != null ? <Chip size="small" variant="outlined" label={`${Math.round((item.confidence || 0) * 100)}%`} /> : null}
-                                        {item.whyLessLikely ? <Typography variant="caption" color="text.secondary">Less likely: {item.whyLessLikely}</Typography> : null}
-                                      </Stack>
-                                    </CardContent>
-                                  </Card>
-                                )) : (
-                                  <Typography variant="body2" color="text.secondary">No differential diagnoses returned.</Typography>
-                                )}
-                              </Stack>
-                            </Box>
-                            <Box>
-                              <Typography variant="caption" color="text.secondary">Supporting evidence</Typography>
-                              <Stack spacing={0.5} sx={{ mt: 0.5 }}>
-                                {clinicalReasoningResult.supportingEvidence.length ? clinicalReasoningResult.supportingEvidence.map((item, index) => (
-                                  <Stack key={`supporting-${index}`} direction="row" spacing={0.75} alignItems="flex-start">
-                                    <Checkbox checked disabled size="small" sx={{ mt: -0.4 }} />
-                                    <Box sx={{ minWidth: 0 }}>
-                                      <Typography variant="body2">
-                                        {item.text || item.source || "Supporting evidence"}
-                                      </Typography>
-                                      {item.source || item.observationDate ? (
-                                        <Typography variant="caption" color="text.secondary">
-                                          {[item.source, item.observationDate].filter(Boolean).join(" · ")}
-                                        </Typography>
-                                      ) : null}
-                                    </Box>
-                                  </Stack>
-                                )) : (
-                                  <Typography variant="body2" color="text.secondary">No supporting evidence returned.</Typography>
-                                )}
-                              </Stack>
-                            </Box>
-                            <Box>
-                              <Typography variant="caption" color="text.secondary">Missing information</Typography>
-                              <Stack spacing={0.5} sx={{ mt: 0.5 }}>
-                                {clinicalReasoningResult.missingInformation.length ? clinicalReasoningResult.missingInformation.map((item, index) => {
-                                  const key = `${item.name || item.whyItMatters || index}`;
-                                  const asked = Boolean(clinicalReasoningAskedMissingInfo[key]);
-                                  return (
-                                    <Card key={`missing-${key}`} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5 }}>
-                                      <CardContent sx={{ p: 0.85, "&:last-child": { pb: 0.85 } }}>
-                                        <Stack direction="row" spacing={0.75} alignItems="flex-start">
-                                          <Checkbox checked={asked} onChange={() => toggleClinicalReasoningMissingInfoAsked(key)} size="small" sx={{ mt: -0.4 }} />
-                                          <Box sx={{ minWidth: 0, flex: 1 }}>
-                                            <Stack direction="row" spacing={0.5} alignItems="center" flexWrap="wrap">
-                                              <Typography variant="body2" sx={{ fontWeight: 800 }}>
-                                                {item.name || item.whyItMatters || "Missing information"}
-                                              </Typography>
-                                              <Chip size="small" variant="outlined" label="Mark Asked" />
-                                            </Stack>
-                                            {item.whyItMatters ? <Typography variant="caption" color="text.secondary">{item.whyItMatters}</Typography> : null}
-                                          </Box>
-                                        </Stack>
-                                      </CardContent>
-                                    </Card>
-                                  );
-                                }) : (
-                                  <Typography variant="body2" color="text.secondary">No missing information returned.</Typography>
-                                )}
-                              </Stack>
-                            </Box>
-                            <Box>
-                              <Typography variant="caption" color="text.secondary">Red flags</Typography>
-                              <Stack spacing={0.75} sx={{ mt: 0.5 }}>
-                                {clinicalReasoningResult.redFlags.length ? clinicalReasoningResult.redFlags.map((flag, index) => (
-                                  <Card key={`red-flag-${index}`} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5, borderColor: "warning.main", bgcolor: "background.paper" }}>
-                                    <CardContent sx={{ p: 0.85, "&:last-child": { pb: 0.85 } }}>
-                                      <Stack spacing={0.25}>
-                                        <Typography variant="body2" sx={{ fontWeight: 800 }}>
-                                          {flag.name || flag.reason || "Red flag"}
-                                        </Typography>
-                                        {flag.reason ? <Typography variant="caption" color="text.secondary">{flag.reason}</Typography> : null}
-                                        {flag.action ? <Typography variant="caption" color="warning.main">{flag.action}</Typography> : null}
-                                      </Stack>
-                                    </CardContent>
-                                  </Card>
-                                )) : (
-                                  <Typography variant="body2" color="text.secondary">No red flags returned.</Typography>
-                                )}
-                              </Stack>
-                            </Box>
-                            <Box>
-                              <Typography variant="caption" color="text.secondary">Recommended tests</Typography>
-                              <Stack spacing={0.75} sx={{ mt: 0.5 }}>
-                                {clinicalReasoningResult.recommendedTests.length ? clinicalReasoningResult.recommendedTests.map((test, index) => (
-                                  <Card key={`recommended-test-${index}-${test.name || "item"}`} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5 }}>
-                                    <CardContent sx={{ p: 0.85, "&:last-child": { pb: 0.85 } }}>
-                                      <Stack spacing={0.3}>
-                                        <Stack direction="row" spacing={0.5} alignItems="center" flexWrap="wrap">
-                                          <Chip size="small" color="primary" variant="outlined" label="Recommended" />
-                                          <Typography variant="body2" sx={{ fontWeight: 800 }}>
-                                            {test.name || "Recommended test"}
-                                          </Typography>
-                                        </Stack>
-                                        {test.reason ? <Typography variant="caption" color="text.secondary">{test.reason}</Typography> : null}
-                                      </Stack>
-                                    </CardContent>
-                                  </Card>
-                                )) : (
-                                  <Typography variant="body2" color="text.secondary">No recommended tests returned.</Typography>
-                                )}
-                              </Stack>
-                            </Box>
-                            <Box>
-                              <Typography variant="caption" color="text.secondary">Safety notes</Typography>
-                              <Stack spacing={0.75} sx={{ mt: 0.5 }}>
-                                {clinicalReasoningResult.safetyNotes.length ? clinicalReasoningResult.safetyNotes.map((note, index) => (
-                                  <Card key={`safety-note-${index}`} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5 }}>
-                                    <CardContent sx={{ p: 0.85, "&:last-child": { pb: 0.85 } }}>
-                                      <Stack spacing={0.3}>
-                                        <Stack direction="row" spacing={0.5} alignItems="flex-start" justifyContent="space-between" flexWrap="wrap">
-                                          <Box sx={{ minWidth: 0 }}>
-                                            <Typography variant="body2" sx={{ fontWeight: 800 }}>
-                                              {note.message || note.action || "Safety note"}
-                                            </Typography>
-                                            {note.rationale ? <Typography variant="caption" color="text.secondary">{note.rationale}</Typography> : null}
-                                          </Box>
-                                          <Button type="button" size="small" variant="outlined" onClick={() => addClinicalReasoningSafetyNote(note.message || note.action || "")} disabled={!note.message && !note.action}>
-                                            Add to Advice
-                                          </Button>
-                                        </Stack>
-                                      </Stack>
-                                    </CardContent>
-                                  </Card>
-                                )) : (
-                                  <Typography variant="body2" color="text.secondary">No safety notes returned.</Typography>
-                                )}
-                              </Stack>
-                            </Box>
-                          </Stack>
-                        ) : (
-                          <Box sx={{ p: 1.1, border: 1, borderStyle: "dashed", borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
-                            <Typography variant="body2" color="text.secondary">
-                              Generate clinical reasoning to view a structured read-only summary.
-                            </Typography>
-                          </Box>
-                        )}
-                      </Stack>
-                    </CardContent>
-                  </Card>
 
-                  <Grid container spacing={1}>
-                    <Grid size={{ xs: 12, md: 4 }}>
-                      <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2, height: "100%" }}>
-                        <CardContent sx={{ p: 1.1, "&:last-child": { pb: 1.1 } }}>
-                          <Stack spacing={0.8}>
-                            <Stack direction="row" spacing={0.75} alignItems="center">
-                              <PsychologyRoundedIcon fontSize="small" color="primary" />
-                              <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Selected diagnosis</Typography>
-                            </Stack>
-                            <Typography variant="caption" color="text.secondary">Confirmed diagnoses and manual entries</Typography>
-                            <QuickChipGroup disabled={readOnly} chips={DIAGNOSIS_CHIPS} color="primary" onPick={(chip) => setConsultationForm((c) => ({ ...c, diagnosis: appendTokenLine(c.diagnosis, chip) }))} />
-                            <TextField
-                              size="small"
-                              fullWidth
-                              multiline
-                              minRows={3}
-                              label="Selected diagnosis"
-                              value={consultationForm.diagnosis}
-                              onChange={(e) => setConsultationForm((c) => ({ ...c, diagnosis: e.target.value }))}
-                              disabled={readOnly}
-                              InputProps={{
-                                sx: {
-                                  maxHeight: 150,
-                                  overflowY: "auto",
-                                  alignItems: "flex-start",
-                                  "& textarea": { whiteSpace: "pre-wrap", overflowWrap: "anywhere" },
-                                },
-                              }}
-                            />
-                          </Stack>
-                        </CardContent>
-                      </Card>
-                    </Grid>
-
-                    <Grid size={{ xs: 12, md: 4 }}>
-                      <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2, height: "100%" }}>
-                        <CardContent sx={{ p: 1.1, "&:last-child": { pb: 1.1 } }}>
-                          <Stack spacing={0.8}>
-                            <Stack direction="row" spacing={0.75} alignItems="center">
-                              <HistoryEduRoundedIcon fontSize="small" color="primary" />
-                              <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Suggested differential</Typography>
-                            </Stack>
-                            <Typography variant="caption" color="text.secondary">AI suggestions and red flags</Typography>
-                            {clinicalReasoningResult ? (
-                                <Stack spacing={0.75}>
-                                  <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" alignItems="center">
-                                    {clinicalReasoningResult.provider ? <Chip size="small" variant="outlined" label={`Provider: ${clinicalReasoningResult.provider}`} /> : null}
-                                    {clinicalReasoningResult.confidence ? <Chip size="small" color="primary" variant="outlined" label={`Confidence: ${clinicalReasoningResult.confidence}`} /> : null}
-                                    {clinicalReasoningResult.metadata?.parseStatus ? <Chip size="small" variant="outlined" label={`Parse: ${clinicalReasoningResult.metadata.parseStatus}`} /> : null}
-                                  </Stack>
-                                  {clinicalReasoningResult.metadata?.parseStatus && clinicalReasoningResult.metadata.parseStatus !== "VALID" ? (
-                                    <Alert severity={clinicalReasoningResult.metadata.parseStatus === "TRUNCATED" ? "warning" : "error"} sx={{ py: 0.5 }}>
-                                      {clinicalReasoningResult.metadata.errorMessage || (clinicalReasoningResult.metadata.parseStatus === "TRUNCATED"
-                                        ? "AI reasoning response was truncated. Please retry."
-                                        : "AI reasoning could not be generated. Please retry.")}
-                                    </Alert>
-                                  ) : null}
-                                  <Box sx={{ p: 0.9, border: 1, borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
-                                  <Stack spacing={0.45}>
-                                    <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>
-                                      Primary diagnosis
-                                    </Typography>
-                                    <Stack direction="row" spacing={0.5} alignItems="center" useFlexGap flexWrap="wrap">
-                                      <Typography variant="body2" sx={{ fontWeight: 800 }}>
-                                        {clinicalReasoningResult.primaryDiagnosis?.name || "Not available"}
-                                      </Typography>
-                                      {clinicalReasoningResult.primaryDiagnosis?.confidence != null ? (
-                                        <Chip size="small" variant="outlined" label={`${Math.round((clinicalReasoningResult.primaryDiagnosis.confidence || 0) * 100)}%`} />
-                                      ) : null}
-                                      {clinicalReasoningResult.primaryDiagnosis?.status ? (
-                                        <Chip size="small" color="warning" variant="outlined" label={clinicalReasoningResult.primaryDiagnosis.status.replaceAll("_", " ")} />
-                                      ) : null}
-                                    </Stack>
-                                    {clinicalReasoningResult.primaryDiagnosis?.whyConsidered ? (
-                                      <Typography variant="caption" color="text.secondary">
-                                        Why considered: {clinicalReasoningResult.primaryDiagnosis.whyConsidered}
-                                      </Typography>
-                                    ) : null}
-                                    {clinicalReasoningResult.primaryDiagnosis?.whyLessLikely ? (
-                                      <Typography variant="caption" color="text.secondary">
-                                        Why less likely: {clinicalReasoningResult.primaryDiagnosis.whyLessLikely}
-                                      </Typography>
-                                    ) : null}
-                                  </Stack>
-                                </Box>
-                                <Stack spacing={0.4}>
-                                  <Typography variant="caption" color="text.secondary">Differentials</Typography>
-                                  <Stack spacing={0.5}>
-                                    {clinicalReasoningResult.differentialDiagnoses.length ? clinicalReasoningResult.differentialDiagnoses.slice(0, 3).map((item, index) => (
-                                      <Card key={`${item.name || "differential"}-${index}`} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5 }}>
-                                        <CardContent sx={{ p: 0.85, "&:last-child": { pb: 0.85 } }}>
-                                          <Stack spacing={0.35}>
-                                            <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={0.5}>
-                                              <Box sx={{ minWidth: 0, flex: 1 }}>
-                                                <Typography variant="body2" sx={{ fontWeight: 800 }}>
-                                                  {item.name || "Differential diagnosis"}
-                                                </Typography>
-                                                {item.whyConsidered ? <Typography variant="caption" color="text.secondary">{item.whyConsidered}</Typography> : null}
-                                              </Box>
-                                              {item.confidence != null ? <Chip size="small" variant="outlined" label={`${Math.round((item.confidence || 0) * 100)}%`} /> : null}
-                                            </Stack>
-                                            {item.whyLessLikely ? <Typography variant="caption" color="text.secondary">Less likely: {item.whyLessLikely}</Typography> : null}
-                                            <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
-                                              {item.redFlags?.length ? item.redFlags.slice(0, 2).map((flag) => <Chip key={`${item.name}-flag-${flag.name || flag.reason}`} size="small" color="warning" variant="outlined" label={flag.name || flag.reason || "Red flag"} />) : null}
-                                              {item.recommendedTests?.length ? item.recommendedTests.slice(0, 2).map((test) => <Chip key={`${item.name}-test-${test.name || test.reason}`} size="small" variant="outlined" label={test.name || test.reason || "Test"} />) : null}
-                                            </Stack>
-                                          </Stack>
-                                        </CardContent>
-                                      </Card>
-                                    )) : (
-                                      <Typography variant="body2" color="text.secondary">No differential diagnoses returned.</Typography>
-                                    )}
-                                  </Stack>
-                                </Stack>
-                                <Stack spacing={0.4}>
-                                  <Typography variant="caption" color="text.secondary">Evidence</Typography>
-                                  <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
-                                    {clinicalReasoningResult.supportingEvidence.length ? clinicalReasoningResult.supportingEvidence.slice(0, 4).map((item, index) => (
-                                      <Chip key={`support-${index}`} size="small" variant="outlined" label={item.text || item.source || "Supporting evidence"} />
-                                    )) : <Typography variant="body2" color="text.secondary">No supporting evidence returned.</Typography>}
-                                  </Stack>
-                                </Stack>
-                                <Stack spacing={0.4}>
-                                  <Typography variant="caption" color="text.secondary">Red flags</Typography>
-                                  <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
-                                    {clinicalReasoningResult.redFlags.length ? clinicalReasoningResult.redFlags.map((flag, index) => (
-                                      <Chip key={`red-flag-${index}`} size="small" color={flag.severity && flag.severity.toLowerCase().includes("high") ? "error" : "warning"} variant="outlined" label={flag.name || flag.reason || "Red flag"} />
-                                    )) : <Typography variant="body2" color="text.secondary">No red flags returned.</Typography>}
-                                  </Stack>
-                                </Stack>
-                                <Stack spacing={0.4}>
-                                  <Typography variant="caption" color="text.secondary">Recommended tests</Typography>
-                                  <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
-                                    {clinicalReasoningResult.recommendedTests.length ? clinicalReasoningResult.recommendedTests.map((test, index) => (
-                                      <Chip key={`test-${index}`} size="small" variant="outlined" label={test.name || test.reason || "Test"} />
-                                    )) : <Typography variant="body2" color="text.secondary">No recommended tests returned.</Typography>}
-                                  </Stack>
-                                </Stack>
-                              </Stack>
-                            ) : aiDiagnosisSuggestion || aiDiagnosisItems.length ? (
-                              <Stack spacing={0.75}>
-                                <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" alignItems="center">
-                                  {aiDiagnosisProvider ? <Chip size="small" variant="outlined" label={`Provider: ${aiDiagnosisProvider}`} /> : null}
-                                  {aiDiagnosisSummary ? <Chip size="small" color="primary" variant="outlined" label="AI ready" /> : null}
-                                </Stack>
-                                {aiDiagnosisItems.length ? (
-                                  <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" alignItems="center">
-                                    {diagnosisItemChips.map((item) => (
-                                      <Chip key={item.title} size="small" variant="outlined" label={item.title} />
-                                    ))}
-                                    {diagnosisItemOverflow > 0 ? (
+                            <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
+                              <CardContent sx={{ p: 1 }}>
+                                <Stack spacing={1}>
+                                  <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                                    <Typography variant="subtitle2" sx={{ fontWeight: 950 }}>AI Summary</Typography>
+                                    <Tooltip title="Jump to detailed reasoning">
                                       <Button
                                         type="button"
                                         size="small"
                                         variant="text"
-                                        aria-label={diagnosisItemsExpanded ? "Show less diagnosis chips" : `Show ${diagnosisItemOverflow} more diagnosis chips`}
-                                        onClick={() => setDiagnosisItemsExpanded((current) => !current)}
+                                        onClick={scrollToClinicalReasoningDetails}
+                                        aria-label="Review reasoning"
                                       >
-                                        {diagnosisItemsExpanded ? "Show less" : `+${diagnosisItemOverflow} more`}
+                                        Review Reasoning →
                                       </Button>
-                                    ) : null}
+                                    </Tooltip>
                                   </Stack>
-                                ) : null}
-                                {aiDiagnosisUnstructured && !aiDiagnosisItems.length ? (
-                                  <Alert severity="error" sx={{ py: 0.5 }}>
-                                    {aiDiagnosisSuggestion || "AI returned an invalid response. Please retry."}
-                                  </Alert>
-                                ) : null}
-                                <Stack spacing={0.65}>
-                                  {aiDiagnosisItems.length ? aiDiagnosisItems.map((item, index) => (
-                                    <Card key={`${item.title}-${index}`} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5 }}>
-                                      <CardContent sx={{ p: 0.9, "&:last-child": { pb: 0.9 } }}>
-                                        <Stack spacing={0.5}>
-                                          <Stack direction="row" spacing={0.75} alignItems="flex-start" justifyContent="space-between">
-                                            <Box sx={{ minWidth: 0, flex: 1 }}>
-                                              <Typography variant="body2" sx={{ fontWeight: 800, lineHeight: 1.25 }}>
-                                                {item.title}
-                                              </Typography>
-                                              {item.reason ? <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.15 }}>{item.reason}</Typography> : null}
-                                            </Box>
-                                            <Button type="button" size="small" variant="outlined" disabled={readOnly} onClick={() => setConsultationForm((c) => ({ ...c, diagnosis: appendTokenLine(c.diagnosis, item.title) }))}>
-                                              Add
-                                            </Button>
-                                          </Stack>
-                                          <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
-                                            {item.redFlags.length ? item.redFlags.slice(0, 2).map((flag) => <Chip key={flag} size="small" color="warning" variant="outlined" label={`Red flag: ${flag}`} />) : null}
-                                            {item.recommendedInvestigations.length ? item.recommendedInvestigations.slice(0, 2).map((test) => <Chip key={test} size="small" variant="outlined" label={test} />) : null}
-                                          </Stack>
+                                  <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
+                                    <Chip size="small" color="success" variant="outlined" label={clinicalReasoningResult.primaryDiagnosis?.name || "Primary diagnosis pending"} />
+                                    <Chip size="small" color="primary" variant="outlined" label={`Confidence ${clinicalReasoningSummaryConfidenceLabel}`} />
+                                    <Chip
+                                      size="small"
+                                      color="info"
+                                      variant="outlined"
+                                      clickable
+                                      onClick={() => scrollToClinicalReasoningSection("evidence")}
+                                      aria-label={`Evidence ${clinicalReasoningResult.supportingEvidence.length}`}
+                                      label={`Evidence ${clinicalReasoningResult.supportingEvidence.length}`}
+                                    />
+                                    <Chip
+                                      size="small"
+                                      color="warning"
+                                      variant="outlined"
+                                      clickable
+                                      onClick={() => scrollToClinicalReasoningSection("missingInformation")}
+                                      aria-label={`Questions still to ask ${clinicalReasoningResult.missingInformation.length}`}
+                                      label={`Questions ${clinicalReasoningResult.missingInformation.length}`}
+                                    />
+                                    <Chip
+                                      size="small"
+                                      color="error"
+                                      variant="outlined"
+                                      clickable
+                                      onClick={() => scrollToClinicalReasoningSection("redFlags")}
+                                      aria-label={`Red flags ${clinicalReasoningResult.redFlags.length}`}
+                                      label={`Red Flags ${clinicalReasoningResult.redFlags.length}`}
+                                    />
+                                    <Chip
+                                      size="small"
+                                      color="secondary"
+                                      variant="outlined"
+                                      clickable
+                                      onClick={() => scrollToClinicalReasoningSection("recommendedTests")}
+                                      aria-label={`Recommended investigations ${clinicalReasoningResult.recommendedTests.length}`}
+                                      label={`Investigations ${clinicalReasoningResult.recommendedTests.length}`}
+                                    />
+                                    <Chip
+                                      size="small"
+                                      color="info"
+                                      variant="outlined"
+                                      clickable
+                                      onClick={() => scrollToClinicalReasoningSection("safetyNotes")}
+                                      aria-label={`Clinical safety advice ${clinicalReasoningResult.safetyNotes.length}`}
+                                      label={`Safety ${clinicalReasoningResult.safetyNotes.length}`}
+                                    />
+                                  </Stack>
+                                </Stack>
+                              </CardContent>
+                            </Card>
+
+                            <Box ref={clinicalReasoningReviewRef}>
+                              <Stack spacing={1}>
+                                <Stack spacing={0.5} ref={setClinicalReasoningSectionRef("primaryDiagnosis")}>
+                                  <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                                    <Stack direction="row" spacing={0.75} alignItems="center">
+                                      <Typography variant="subtitle2" sx={{ fontWeight: 950, color: "success.main" }}>Primary Diagnosis</Typography>
+                                      <Chip size="small" color="success" variant="outlined" label={`Confidence: ${clinicalReasoningPrimaryConfidenceLabel}`} />
+                                      {clinicalReasoningPrimaryConfidencePercent ? <Typography variant="caption" color="text.secondary">{clinicalReasoningPrimaryConfidencePercent}</Typography> : null}
+                                    </Stack>
+                                    <Button type="button" size="small" variant="text" onClick={() => toggleClinicalReasoningSection("primaryDiagnosis")} aria-label={`${clinicalReasoningSectionsOpen.primaryDiagnosis ? "Collapse" : "Expand"} primary diagnosis`}>
+                                      {clinicalReasoningSectionsOpen.primaryDiagnosis ? "Collapse" : "Expand"}
+                                    </Button>
+                                  </Stack>
+                                  <Collapse in={clinicalReasoningSectionsOpen.primaryDiagnosis} timeout={200} unmountOnExit>
+                                    <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5, borderColor: "divider", borderLeft: 3, borderLeftColor: "success.main" }}>
+                                      <CardContent sx={{ p: 0.85, "&:last-child": { pb: 0.85 } }}>
+                                        <Stack spacing={0.45}>
+                                          <Typography variant="body2" sx={{ fontWeight: 800 }}>
+                                            {clinicalReasoningResult.primaryDiagnosis?.name || "Not available"}
+                                          </Typography>
+                                          {clinicalReasoningResult.primaryDiagnosis?.whyConsidered ? <Typography variant="caption" color="text.secondary">Why considered: {clinicalReasoningResult.primaryDiagnosis.whyConsidered}</Typography> : null}
+                                          {clinicalReasoningResult.primaryDiagnosis?.whyLessLikely ? <Typography variant="caption" color="text.secondary">Why less likely: {clinicalReasoningResult.primaryDiagnosis.whyLessLikely}</Typography> : null}
                                         </Stack>
                                       </CardContent>
                                     </Card>
-                                  )) : null}
+                                  </Collapse>
+                                </Stack>
+
+                                <Stack spacing={0.5} ref={setClinicalReasoningSectionRef("differentials")}>
+                                  <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                                    <Stack direction="row" spacing={0.75} alignItems="center">
+                                      <Typography variant="subtitle2" sx={{ fontWeight: 950, color: "success.main" }}>Differentials</Typography>
+                                      <Chip size="small" color="success" variant="outlined" label={`${clinicalReasoningResult.differentialDiagnoses.length} items`} />
+                                    </Stack>
+                                    <Button type="button" size="small" variant="text" onClick={() => toggleClinicalReasoningSection("differentials")} aria-label={`${clinicalReasoningSectionsOpen.differentials ? "Collapse" : "Expand"} differentials`}>
+                                      {clinicalReasoningSectionsOpen.differentials ? "Collapse" : "Expand"}
+                                    </Button>
+                                  </Stack>
+                                  <Collapse in={clinicalReasoningSectionsOpen.differentials} timeout={200} unmountOnExit>
+                                    <Stack spacing={0.75}>
+                                      {clinicalReasoningResult.differentialDiagnoses.length ? clinicalReasoningResult.differentialDiagnoses.map((item, index) => (
+                                        <Card key={`differential-${index}-${item.name || "item"}`} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5, borderColor: "divider", borderLeft: 3, borderLeftColor: "success.light" }}>
+                                          <CardContent sx={{ p: 0.85, "&:last-child": { pb: 0.85 } }}>
+                                            <Stack spacing={0.45}>
+                                              <Stack direction="row" spacing={0.75} justifyContent="space-between" alignItems="flex-start" flexWrap="nowrap">
+                                                <Box sx={{ minWidth: 0, flex: 1 }}>
+                                                  <Typography variant="body2" sx={{ fontWeight: 800 }}>
+                                                    {item.name || "Differential diagnosis"}
+                                                  </Typography>
+                                                  <Typography variant="caption" color="text.secondary">
+                                                    {likelihoodLevelFromPercent(item.confidence)} • {item.confidence != null ? `${Math.round((item.confidence || 0) * 100)}%` : "n/a"}
+                                                  </Typography>
+                                                  {item.whyConsidered ? <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>{item.whyConsidered}</Typography> : null}
+                                                  {item.whyLessLikely ? <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>Why less likely: {item.whyLessLikely}</Typography> : null}
+                                                </Box>
+                                                <Box sx={{ flexShrink: 0 }}>
+                                                  <Tooltip title="Append this differential to the diagnosis field">
+                                                    <Button
+                                                      type="button"
+                                                      size="small"
+                                                      variant="outlined"
+                                                      onClick={() => addClinicalReasoningDifferential(item.name || item.whyConsidered || "")}
+                                                      disabled={!item.name && !item.whyConsidered}
+                                                      aria-label={`Add differential diagnosis ${item.name || item.whyConsidered || "item"}`}
+                                                    >
+                                                      Add
+                                                    </Button>
+                                                  </Tooltip>
+                                                </Box>
+                                              </Stack>
+                                            </Stack>
+                                          </CardContent>
+                                        </Card>
+                                      )) : (
+                                        <Typography variant="body2" color="text.secondary">No differential diagnoses returned.</Typography>
+                                      )}
+                                    </Stack>
+                                  </Collapse>
+                                </Stack>
+
+                                <Stack spacing={0.5} ref={setClinicalReasoningSectionRef("evidence")}>
+                                  <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                                    <Stack direction="row" spacing={0.75} alignItems="center">
+                                      <Typography variant="subtitle2" sx={{ fontWeight: 950, color: "info.main" }}>Supporting evidence</Typography>
+                                      <Chip size="small" color="info" variant="outlined" label={`${clinicalReasoningResult.supportingEvidence.length} findings`} />
+                                    </Stack>
+                                    <Button type="button" size="small" variant="text" onClick={() => toggleClinicalReasoningSection("evidence")} aria-label={`${clinicalReasoningSectionsOpen.evidence ? "Collapse" : "Expand"} supporting evidence`}>
+                                      {clinicalReasoningSectionsOpen.evidence ? "Collapse" : "Expand"}
+                                    </Button>
+                                  </Stack>
+                                  <Collapse in={clinicalReasoningSectionsOpen.evidence} timeout={200} unmountOnExit>
+                                    <Stack spacing={0.5}>
+                                      {clinicalReasoningResult.supportingEvidence.length ? clinicalReasoningResult.supportingEvidence.map((item, index) => (
+                                        <Stack key={`supporting-${index}`} direction="row" spacing={0.75} alignItems="flex-start">
+                                          <Checkbox checked disabled size="small" sx={{ mt: -0.4 }} />
+                                          <Box sx={{ minWidth: 0 }}>
+                                            <Typography variant="body2">{item.text || item.source || "Supporting evidence"}</Typography>
+                                            {item.source || item.observationDate ? (
+                                              <Typography variant="caption" color="text.secondary">
+                                                {[item.source, item.observationDate].filter(Boolean).join(" · ")}
+                                              </Typography>
+                                            ) : null}
+                                          </Box>
+                                        </Stack>
+                                      )) : (
+                                        <Typography variant="body2" color="text.secondary">No supporting evidence returned.</Typography>
+                                      )}
+                                    </Stack>
+                                  </Collapse>
+                                </Stack>
+
+                                <Stack spacing={0.5} ref={setClinicalReasoningSectionRef("missingInformation")}>
+                                  <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                                    <Stack direction="row" spacing={0.75} alignItems="center">
+                                      <Typography variant="subtitle2" sx={{ fontWeight: 950, color: "warning.main" }}>Questions Still To Ask</Typography>
+                                      <Chip size="small" color="warning" variant="outlined" label={`${clinicalReasoningResult.missingInformation.length} items`} />
+                                    </Stack>
+                                    <Button type="button" size="small" variant="text" onClick={() => toggleClinicalReasoningSection("missingInformation")} aria-label={`${clinicalReasoningSectionsOpen.missingInformation ? "Collapse" : "Expand"} missing information`}>
+                                      {clinicalReasoningSectionsOpen.missingInformation ? "Collapse" : "Expand"}
+                                    </Button>
+                                  </Stack>
+                                  <Collapse in={clinicalReasoningSectionsOpen.missingInformation} timeout={200} unmountOnExit>
+                                    <Stack spacing={0.5}>
+                                      {clinicalReasoningResult.missingInformation.length ? clinicalReasoningResult.missingInformation.map((item, index) => {
+                                        const key = `${item.name || item.whyItMatters || index}`;
+                                        const asked = Boolean(clinicalReasoningAskedMissingInfo[key]);
+                                        return (
+                                          <Card key={`missing-${key}`} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5, borderColor: "divider", borderLeft: 3, borderLeftColor: "warning.main" }}>
+                                            <CardContent sx={{ p: 0.85, "&:last-child": { pb: 0.85 } }}>
+                                              <Stack direction="row" spacing={0.75} alignItems="flex-start">
+                                                <Checkbox checked={asked} onChange={() => toggleClinicalReasoningMissingInfoAsked(key)} size="small" sx={{ mt: -0.4 }} aria-label={`Mark asked for ${item.name || item.whyItMatters || "missing information"}`} />
+                                                <Box sx={{ minWidth: 0, flex: 1 }}>
+                                                  <Stack direction="row" spacing={0.5} alignItems="center" flexWrap="wrap">
+                                                    <Typography variant="body2" sx={{ fontWeight: 800 }}>
+                                                      {item.name || item.whyItMatters || "Questions still to ask"}
+                                                    </Typography>
+                                                    <Chip size="small" variant="outlined" label="Mark Asked" />
+                                                  </Stack>
+                                                  {item.whyItMatters ? <Typography variant="caption" color="text.secondary">{item.whyItMatters}</Typography> : null}
+                                                </Box>
+                                              </Stack>
+                                            </CardContent>
+                                          </Card>
+                                        );
+                                      }) : (
+                                        <Typography variant="body2" color="text.secondary">No missing information returned.</Typography>
+                                      )}
+                                    </Stack>
+                                  </Collapse>
+                                </Stack>
+
+                                <Stack spacing={0.5} ref={setClinicalReasoningSectionRef("redFlags")}>
+                                  <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                                    <Stack direction="row" spacing={0.75} alignItems="center">
+                                      <Typography variant="subtitle2" sx={{ fontWeight: 950, color: "error.main" }}>Red flags</Typography>
+                                      <Chip size="small" color="error" variant="outlined" label={`${clinicalReasoningResult.redFlags.length} items`} />
+                                    </Stack>
+                                    <Button type="button" size="small" variant="text" onClick={() => toggleClinicalReasoningSection("redFlags")} aria-label={`${clinicalReasoningSectionsOpen.redFlags ? "Collapse" : "Expand"} red flags`}>
+                                      {clinicalReasoningSectionsOpen.redFlags ? "Collapse" : "Expand"}
+                                    </Button>
+                                  </Stack>
+                                  <Collapse in={clinicalReasoningSectionsOpen.redFlags} timeout={200} unmountOnExit>
+                                    <Stack spacing={0.75}>
+                                      {clinicalReasoningResult.redFlags.length ? clinicalReasoningResult.redFlags.map((flag, index) => (
+                                        <Card key={`red-flag-${index}`} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5, borderColor: "divider", borderLeft: 3, borderLeftColor: "error.main" }}>
+                                          <CardContent sx={{ p: 0.85, "&:last-child": { pb: 0.85 } }}>
+                                            <Stack spacing={0.25}>
+                                              <Typography variant="body2" sx={{ fontWeight: 800 }}>{flag.name || flag.reason || "Red flag"}</Typography>
+                                              {flag.reason ? <Typography variant="caption" color="text.secondary">{flag.reason}</Typography> : null}
+                                              {flag.action ? <Typography variant="caption" color="error.main">{flag.action}</Typography> : null}
+                                            </Stack>
+                                          </CardContent>
+                                        </Card>
+                                      )) : (
+                                        <Typography variant="body2" color="text.secondary">No red flags returned.</Typography>
+                                      )}
+                                    </Stack>
+                                  </Collapse>
+                                </Stack>
+
+                                <Stack spacing={0.5} ref={setClinicalReasoningSectionRef("recommendedTests")}>
+                                  <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                                    <Stack direction="row" spacing={0.75} alignItems="center">
+                                      <Typography variant="subtitle2" sx={{ fontWeight: 950, color: "secondary.main" }}>Recommended investigations</Typography>
+                                      <Chip size="small" color="secondary" variant="outlined" label={`${clinicalReasoningResult.recommendedTests.length} items`} />
+                                    </Stack>
+                                    <Button type="button" size="small" variant="text" onClick={() => toggleClinicalReasoningSection("recommendedTests")} aria-label={`${clinicalReasoningSectionsOpen.recommendedTests ? "Collapse" : "Expand"} recommended tests`}>
+                                      {clinicalReasoningSectionsOpen.recommendedTests ? "Collapse" : "Expand"}
+                                    </Button>
+                                  </Stack>
+                                  <Collapse in={clinicalReasoningSectionsOpen.recommendedTests} timeout={200} unmountOnExit>
+                                    <Stack spacing={1}>
+                                      {clinicalReasoningTestBuckets.alreadyAvailable.length ? (
+                                        <Stack spacing={0.5}>
+                                          <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 800 }}>Already Available</Typography>
+                                          <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                            {clinicalReasoningTestBuckets.alreadyAvailable.map((test, index) => (
+                                              <Chip
+                                                key={`already-${index}-${test.name || test.reason || "test"}`}
+                                                size="small"
+                                                variant="outlined"
+                                                label={test.name || test.reason || "Recommended test"}
+                                                color="default"
+                                              />
+                                            ))}
+                                          </Stack>
+                                        </Stack>
+                                      ) : null}
+                                      {clinicalReasoningTestBuckets.recommended.length ? (
+                                        <Stack spacing={0.5}>
+                                          <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 800 }}>Recommended Investigations</Typography>
+                                          <Stack spacing={0.5}>
+                                            {clinicalReasoningTestBuckets.recommended.map((test, index) => (
+                                              <Card key={`recommended-${index}-${test.name || test.reason || "test"}`} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5, borderColor: "divider", borderLeft: 3, borderLeftColor: "secondary.main" }}>
+                                                <CardContent sx={{ p: 0.85, "&:last-child": { pb: 0.85 } }}>
+                                                  <Stack spacing={0.25}>
+                                                    <Stack direction="row" spacing={0.5} alignItems="center" flexWrap="wrap">
+                                                      <Chip size="small" color="secondary" variant="outlined" label="Recommended" />
+                                                      <Typography variant="body2" sx={{ fontWeight: 800 }}>{test.name || "Recommended test"}</Typography>
+                                                    </Stack>
+                                                    {test.reason ? <Typography variant="caption" color="text.secondary">{test.reason}</Typography> : null}
+                                                  </Stack>
+                                                </CardContent>
+                                              </Card>
+                                            ))}
+                                          </Stack>
+                                        </Stack>
+                                      ) : null}
+                                      {clinicalReasoningTestBuckets.optional.length ? (
+                                        <Stack spacing={0.5}>
+                                          <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 800 }}>Optional Investigations</Typography>
+                                          <Stack spacing={0.5}>
+                                            {clinicalReasoningTestBuckets.optional.map((test, index) => (
+                                              <Card key={`optional-${index}-${test.name || test.reason || "test"}`} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5 }}>
+                                                <CardContent sx={{ p: 0.85, "&:last-child": { pb: 0.85 } }}>
+                                                  <Stack spacing={0.25}>
+                                                    <Stack direction="row" spacing={0.5} alignItems="center" flexWrap="wrap">
+                                                      <Chip size="small" variant="outlined" label="Optional" />
+                                                      <Typography variant="body2" sx={{ fontWeight: 800 }}>{test.name || "Optional test"}</Typography>
+                                                    </Stack>
+                                                    {test.reason ? <Typography variant="caption" color="text.secondary">{test.reason}</Typography> : null}
+                                                  </Stack>
+                                                </CardContent>
+                                              </Card>
+                                            ))}
+                                          </Stack>
+                                        </Stack>
+                                      ) : null}
+                                      {!clinicalReasoningTestBuckets.alreadyAvailable.length && !clinicalReasoningTestBuckets.recommended.length && !clinicalReasoningTestBuckets.optional.length ? (
+                                        <Typography variant="body2" color="text.secondary">No recommended tests returned.</Typography>
+                                      ) : null}
+                                    </Stack>
+                                  </Collapse>
+                                </Stack>
+
+                                <Stack spacing={0.5} ref={setClinicalReasoningSectionRef("safetyNotes")}>
+                                  <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                                    <Stack direction="row" spacing={0.75} alignItems="center">
+                                      <Typography variant="subtitle2" sx={{ fontWeight: 950, color: "info.main" }}>Clinical Safety Advice</Typography>
+                                      <Chip size="small" color="info" variant="outlined" label={`${clinicalReasoningResult.safetyNotes.length} items`} />
+                                    </Stack>
+                                    <Button type="button" size="small" variant="text" onClick={() => toggleClinicalReasoningSection("safetyNotes")} aria-label={`${clinicalReasoningSectionsOpen.safetyNotes ? "Collapse" : "Expand"} safety notes`}>
+                                      {clinicalReasoningSectionsOpen.safetyNotes ? "Collapse" : "Expand"}
+                                    </Button>
+                                  </Stack>
+                                  <Collapse in={clinicalReasoningSectionsOpen.safetyNotes} timeout={200} unmountOnExit>
+                                    <Stack spacing={0.75}>
+                                      {clinicalReasoningResult.safetyNotes.length ? clinicalReasoningResult.safetyNotes.map((note, index) => (
+                                        <Card key={`safety-note-${index}`} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5, borderColor: "divider", borderLeft: 3, borderLeftColor: "info.main" }}>
+                                          <CardContent sx={{ p: 0.85, "&:last-child": { pb: 0.85 } }}>
+                                            <Stack spacing={0.3}>
+                                              <Stack direction="row" spacing={0.75} alignItems="flex-start" justifyContent="space-between" flexWrap="wrap">
+                                                <Box sx={{ minWidth: 0 }}>
+                                                  <Typography variant="body2" sx={{ fontWeight: 800 }}>{note.message || note.action || "Safety note"}</Typography>
+                                                  {note.rationale ? <Typography variant="caption" color="text.secondary">{note.rationale}</Typography> : null}
+                                                </Box>
+                                                <Tooltip title="Append this safety guidance to advice">
+                                                  <span>
+                                                    <Button type="button" size="small" variant="outlined" onClick={() => addClinicalReasoningSafetyNote(note.message || note.action || "")} disabled={!note.message && !note.action} aria-label={`Add safety note ${note.message || note.action || "item"} to advice`}>
+                                                      Add to Advice
+                                                    </Button>
+                                                  </span>
+                                                </Tooltip>
+                                              </Stack>
+                                            </Stack>
+                                          </CardContent>
+                                        </Card>
+                                      )) : (
+                                        <Typography variant="body2" color="text.secondary">No safety notes returned.</Typography>
+                                      )}
+                                    </Stack>
+                                  </Collapse>
                                 </Stack>
                               </Stack>
-                            ) : (
-                              <Box sx={{ p: 1.1, border: 1, borderStyle: "dashed", borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
-                                <Stack spacing={0.4}>
-                                  <Typography variant="body2" sx={{ fontWeight: 800 }}>
-                              Review the diagnosis suggestions based on current symptoms.
-                                  </Typography>
-                                  <Typography variant="caption" color="text.secondary">
-                                    AI suggestions are assistive only. Doctor must verify before use.
-                                  </Typography>
-                                </Stack>
-                              </Box>
-                            )}
-                          </Stack>
-                        </CardContent>
-                      </Card>
-                    </Grid>
+                            </Box>
 
-                    <Grid size={{ xs: 12, md: 4 }}>
-                      <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2, height: "100%" }}>
-                        <CardContent sx={{ p: 1.1, "&:last-child": { pb: 1.1 } }}>
-                          <Stack spacing={0.8}>
-                            <Stack direction="row" spacing={0.75} alignItems="center">
-                              <AutoAwesomeRoundedIcon fontSize="small" color="primary" />
-                              <Typography variant="subtitle2" sx={{ fontWeight: 950 }}>Clinical reasoning</Typography>
-                            </Stack>
-                            {clinicalReasoningResult ? (
-                              diagnosisReasoningOpen ? (
-                                <Stack spacing={0.75}>
-                                  {clinicalReasoningResult.metadata?.parseStatus && clinicalReasoningResult.metadata.parseStatus !== "VALID" ? (
-                                    <Alert severity={clinicalReasoningResult.metadata.parseStatus === "TRUNCATED" ? "warning" : "error"} sx={{ py: 0.5 }}>
-                                      {clinicalReasoningResult.metadata.errorMessage || (clinicalReasoningResult.metadata.parseStatus === "TRUNCATED"
-                                        ? "AI reasoning response was truncated. Please retry."
-                                        : "AI reasoning could not be generated. Please retry.")}
-                                    </Alert>
-                                  ) : null}
-                                  <Box sx={{ p: 0.9, border: 1, borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
-                                    <Stack spacing={0.55}>
-                                      <Typography variant="body2" sx={{ fontWeight: 800, lineHeight: 1.35 }}>
-                                        {aiBusy && aiActiveAction === "diagnosis"
-                                          ? "Generating reasoning..."
-                                          : clinicalReasoningResult.reasoningSummary || clinicalReasoningResult.primaryDiagnosis?.name || "Clinical reasoning available"}
-                                      </Typography>
-                                      <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
-                                        {clinicalReasoningResult.primaryDiagnosis?.name ? (
-                                          <Chip size="small" variant="outlined" label={clinicalReasoningResult.primaryDiagnosis.name} />
-                                        ) : null}
-                                        {clinicalReasoningResult.followUpAdvice.slice(0, 2).map((advice, index) => (
-                                          <Chip key={`${advice}-${index}`} size="small" variant="outlined" label={advice} />
-                                        ))}
-                                      </Stack>
-                                    </Stack>
-                                  </Box>
-                                  <Stack spacing={0.35}>
-                                    <Typography variant="caption" color="text.secondary">Reasoning summary</Typography>
-                                    <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", lineHeight: 1.45 }}>
-                                      {clinicalReasoningResult.reasoningSummary || "No reasoning summary captured yet."}
-                                    </Typography>
-                                  </Stack>
-                                  <Stack spacing={0.35}>
-                                    <Typography variant="caption" color="text.secondary">Missing information</Typography>
-                                    <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
-                                      {clinicalReasoningResult.missingInformation.length ? clinicalReasoningResult.missingInformation.map((item, index) => (
-                                        <Chip key={`missing-${index}`} size="small" color="warning" variant="outlined" label={item.name || item.whyItMatters || "Missing information"} />
-                                      )) : <Typography variant="body2" color="text.secondary">No missing information returned.</Typography>}
-                                    </Stack>
-                                  </Stack>
-                                  <Stack spacing={0.35}>
-                                    <Typography variant="caption" color="text.secondary">Safety notes</Typography>
-                                    <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
-                                      {clinicalReasoningResult.safetyNotes.length ? clinicalReasoningResult.safetyNotes.map((note, index) => (
-                                        <Chip key={`safety-${index}`} size="small" color="warning" variant="outlined" label={note.message || note.action || "Safety note"} />
-                                      )) : <Typography variant="body2" color="text.secondary">No safety notes returned.</Typography>}
-                                    </Stack>
-                                  </Stack>
+                            {isClinicalReasoningAdminView ? (
+                              <Accordion
+                                expanded={clinicalReasoningSectionsOpen.debug}
+                                onChange={(_, value) => setClinicalReasoningSectionsOpen((current) => ({ ...current, debug: value }))}
+                                disableGutters
+                                elevation={0}
+                                sx={{ border: 1, borderColor: "divider", borderRadius: 2, "&:before": { display: "none" } }}
+                              >
+                                <AccordionSummary expandIcon={<ExpandMoreRoundedIcon />} aria-controls="clinical-reasoning-debug-content" id="clinical-reasoning-debug-header">
+                                  <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Debug / Admin</Typography>
+                                </AccordionSummary>
+                                <AccordionDetails>
                                   <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
-                                    <Button
-                                      type="button"
-                                      size="small"
-                                      variant="outlined"
-                                      disabled={readOnly || clinicalReasoningResult.metadata?.parseStatus !== "VALID" || !clinicalReasoningResult.primaryDiagnosis?.name}
-                                      onClick={() => setConsultationForm((c) => ({ ...c, diagnosis: appendTokenLine(c.diagnosis, clinicalReasoningResult.primaryDiagnosis?.name || clinicalReasoningResult.reasoningSummary || "") }))}
-                                    >
-                                      Add to diagnosis
-                                    </Button>
-                                    <Button
-                                      type="button"
-                                      size="small"
-                                      variant="outlined"
-                                      disabled={readOnly || clinicalReasoningResult.metadata?.parseStatus !== "VALID" || !clinicalReasoningResult.reasoningSummary}
-                                      onClick={() => setConsultationForm((c) => ({ ...c, clinicalNotes: appendTokenLine(c.clinicalNotes, clinicalReasoningResult.reasoningSummary || "") }))}
-                                    >
-                                      Add to SOAP
-                                    </Button>
-                                    <Button
-                                      type="button"
-                                      size="small"
-                                      variant="outlined"
-                                      disabled={readOnly || clinicalReasoningResult.metadata?.parseStatus !== "VALID" || !clinicalReasoningResult.followUpAdvice.length}
-                                      onClick={() => setConsultationForm((c) => ({ ...c, advice: appendTokenLine(c.advice, clinicalReasoningResult.followUpAdvice.join(" ") || clinicalReasoningResult.reasoningSummary || "") }))}
-                                    >
-                                      Add to Advice
-                                    </Button>
-                                    <Button type="button" size="small" variant="outlined" disabled={clinicalReasoningResult.metadata?.parseStatus !== "VALID" || !clinicalReasoningResult.reasoningSummary} onClick={() => void navigator.clipboard.writeText(clinicalReasoningResult.reasoningSummary || "")}>
-                                      Copy
-                                    </Button>
+                                    {formatClinicalReasoningMetaValue(clinicalReasoningResult.metadata?.provider) ? <Chip size="small" label={`Provider: ${clinicalReasoningResult.metadata?.provider}`} /> : null}
+                                    {formatClinicalReasoningMetaValue(clinicalReasoningResult.metadata?.model) ? <Chip size="small" label={`Model: ${clinicalReasoningResult.metadata?.model}`} /> : null}
+                                    {clinicalReasoningResult.metadata?.latencyMs != null ? <Chip size="small" label={`Response Time: ${clinicalReasoningResult.metadata.latencyMs} ms`} /> : null}
+                                    {formatClinicalReasoningMetaValue(clinicalReasoningResult.generatedAt) ? <Chip size="small" label={`Generated At: ${compactDateTime(clinicalReasoningResult.generatedAt)}`} /> : null}
+                                    <Chip size="small" label={`Fallback Used: ${clinicalReasoningResult.metadata?.fallbackUsed ? "Yes" : "No"}`} />
+                                    {formatClinicalReasoningMetaValue(clinicalReasoningResult.metadata?.promptVersion) ? <Chip size="small" label={`Prompt Version: ${clinicalReasoningResult.metadata?.promptVersion}`} /> : null}
+                                    {formatClinicalReasoningMetaValue(clinicalReasoningResult.metadata?.parseStatus) ? <Chip size="small" label={`Parse Status: ${clinicalReasoningResult.metadata?.parseStatus}`} /> : null}
+                                    {formatClinicalReasoningMetaValue(clinicalReasoningResult.metadata?.contextVersion) ? <Chip size="small" label={`Memory Version: ${clinicalReasoningResult.metadata?.contextVersion}`} /> : null}
+                                    {formatClinicalReasoningMetaValue(clinicalReasoningResult.metadata?.reasoningEngineVersion) ? <Chip size="small" label={`Reasoning Version: ${clinicalReasoningResult.metadata?.reasoningEngineVersion}`} /> : null}
                                   </Stack>
-                                  <Button
-                                    type="button"
-                                    size="small"
-                                    variant="text"
-                                    aria-label="Hide reasoning"
-                                    onClick={() => setDiagnosisReasoningOpen(false)}
-                                  >
-                                    Hide reasoning
-                                  </Button>
-                                </Stack>
-                              ) : (
-                                <Box sx={{ p: 0.85, border: 1, borderStyle: "dashed", borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
-                                  <Stack spacing={0.4}>
-                                    <Typography variant="body2" sx={{ fontWeight: 800, lineHeight: 1.35 }}>
-                                      Clinical reasoning available
-                                    </Typography>
-                                    <Typography variant="caption" color="text.secondary">
-                                      Review likely assessment, differentials, red flags, and suggested tests.
-                                    </Typography>
-                                    <Button
-                                      type="button"
-                                      size="small"
-                                      variant="text"
-                                      aria-label="Review reasoning"
-                                      onClick={() => setDiagnosisReasoningOpen(true)}
-                                    >
-                                      Review reasoning
-                                    </Button>
-                                  </Stack>
-                                </Box>
-                              )
-                            ) : aiDiagnosisSuggestion || aiDiagnosisItems.length ? (
-                              <Box sx={{ p: 0.85, border: 1, borderStyle: "dashed", borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
-                                <Stack spacing={0.4}>
-                                  <Typography variant="body2" sx={{ fontWeight: 800, lineHeight: 1.35 }}>
-                                    No reasoning generated yet.
-                                  </Typography>
-                                  <Typography variant="caption" color="text.secondary">
-                                    Generate reasoning to review assessment, differentials, red flags, and suggested tests.
-                                  </Typography>
-                                </Stack>
-                              </Box>
+                                </AccordionDetails>
+                              </Accordion>
                             ) : null}
+
+                            <Divider />
+                            <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" alignItems="center">
+                              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700 }}>Legacy actions</Typography>
+                              <Tooltip title="Generate the legacy diagnosis suggestion">
+                                <span>
+                                  <Button type="button" size="small" variant="outlined" color="inherit" disabled={!canGenerateClinicalDraft || aiBusy} onClick={() => void runClinicalDraftAction("diagnosis")}>
+                                    Suggest
+                                  </Button>
+                                </span>
+                              </Tooltip>
+                              <Tooltip title="Run the legacy explain flow">
+                                <span>
+                                  <Button type="button" size="small" variant="outlined" color="inherit" disabled={!canGenerateClinicalReasoning || aiBusy} onClick={() => void runClinicalReasoningAction()}>
+                                    Explain
+                                  </Button>
+                                </span>
+                              </Tooltip>
+                            </Stack>
                           </Stack>
-                        </CardContent>
-                      </Card>
-                    </Grid>
-                  </Grid>
+                        ) : (
+                          <Stack spacing={1}>
+                            <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
+                              <CardContent sx={{ p: 1.1, "&:last-child": { pb: 1.1 } }}>
+                                <Stack spacing={1}>
+                                  <Typography variant="subtitle2" sx={{ fontWeight: 950 }}>AI Summary</Typography>
+                                  <Typography variant="body2" color="text.secondary">
+                                    Clinical reasoning has not been generated.
+                                  </Typography>
+                                  <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
+                                    <Chip size="small" color="success" variant="outlined" label="Primary diagnosis" />
+                                    <Chip size="small" color="success" variant="outlined" label="Differential diagnoses" />
+                                    <Chip size="small" color="info" variant="outlined" label="Supporting evidence" />
+                                    <Chip size="small" color="warning" variant="outlined" label="Questions still to ask" />
+                                    <Chip size="small" color="error" variant="outlined" label="Red flags" />
+                                    <Chip size="small" color="secondary" variant="outlined" label="Recommended investigations" />
+                                    <Chip size="small" color="info" variant="outlined" label="Safety guidance" />
+                                  </Stack>
+                                  <Typography variant="body2" color="text.secondary">
+                                    Generate reasoning to receive:
+                                  </Typography>
+                                  <Stack spacing={0.35}>
+                                    {[
+                                      "Primary diagnosis",
+                                      "Differential diagnoses",
+                                      "Supporting evidence",
+                                      "Questions still to ask",
+                                      "Red flags",
+                                      "Recommended investigations",
+                                      "Safety guidance",
+                                    ].map((item) => (
+                                      <Typography key={item} variant="body2" color="text.secondary">
+                                        ✓ {item}
+                                      </Typography>
+                                    ))}
+                                  </Stack>
+                                </Stack>
+                              </CardContent>
+                            </Card>
+                          </Stack>
+                        )}
+                      </Stack>
+                  </CardContent>
+                  </Card>
                 </Stack>
-              </SectionCard>
+                </SectionCard>
 
               <SectionCard
                 id="notes"
