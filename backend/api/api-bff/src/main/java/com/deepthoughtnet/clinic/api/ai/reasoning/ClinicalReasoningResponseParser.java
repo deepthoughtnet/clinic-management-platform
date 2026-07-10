@@ -73,7 +73,7 @@ public class ClinicalReasoningResponseParser {
                     "FAILED", rawChars, "AI reasoning response could not be parsed. Please retry.", normalizedFinishReason);
         }
         ClinicalReasoningResult mapped = mapResult(root, consultationId, patientId, context, response, "VALID", requestId, correlationId, latencyMs,
-                repairAttempt, rawChars, null, normalizedFinishReason);
+                response != null && response.fallbackUsed(), repairAttempt, rawChars, null, normalizedFinishReason);
         if (!hasReasoningContent(mapped)) {
             return empty(consultationId, patientId, context, response, repairAttempt, requestId, correlationId, latencyMs,
                     "FAILED", rawChars, "AI reasoning response did not contain usable clinical reasoning.", normalizedFinishReason);
@@ -91,6 +91,7 @@ public class ClinicalReasoningResponseParser {
                                               String correlationId,
                                               Long latencyMs,
                                               boolean fallbackUsed,
+                                              boolean retryUsed,
                                               Integer rawChars,
                                               String errorMessage,
                                               String normalizedFinishReason) {
@@ -119,14 +120,16 @@ public class ClinicalReasoningResponseParser {
                 correlationId,
                 latencyMs,
                 fallbackUsed,
+                retryUsed,
                 response == null ? null : response.finishReason(),
                 normalizedFinishReason,
                 response == null ? null : response.responseChars(),
                 response == null ? null : response.rawText(),
                 rawChars,
-                errorMessage
+                errorMessage,
+                null
         );
-        String confidence = normalizeConfidence(text(root, "confidence"));
+        String confidence = resolveConfidence(root, primaryDiagnosis);
         return new ClinicalReasoningResult(
                 consultationId,
                 patientId,
@@ -175,13 +178,15 @@ public class ClinicalReasoningResponseParser {
                 requestId,
                 correlationId,
                 latencyMs,
+                response != null && response.fallbackUsed(),
                 repairAttempt,
                 response == null ? null : response.finishReason(),
                 normalizedFinishReason,
                 response == null ? null : response.responseChars(),
                 response == null ? null : response.rawText(),
                 rawChars,
-                errorMessage
+                errorMessage,
+                null
         );
         return new ClinicalReasoningResult(
                 consultationId,
@@ -655,6 +660,24 @@ public class ClinicalReasoningResponseParser {
             }
         }
         return value;
+    }
+
+    private String resolveConfidence(JsonNode root, DiagnosisCandidate primaryDiagnosis) {
+        String confidence = normalizeConfidence(text(root, "confidence"));
+        if (!"UNKNOWN".equalsIgnoreCase(confidence)) {
+            return confidence;
+        }
+        if (primaryDiagnosis == null || primaryDiagnosis.confidence() == null) {
+            return confidence;
+        }
+        BigDecimal numeric = primaryDiagnosis.confidence();
+        if (numeric.compareTo(new BigDecimal("0.8")) >= 0) {
+            return "HIGH";
+        }
+        if (numeric.compareTo(new BigDecimal("0.6")) >= 0) {
+            return "MEDIUM";
+        }
+        return "LOW";
     }
 
     private String firstNonBlank(String... values) {

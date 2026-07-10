@@ -56,13 +56,11 @@ public class AiGuardrailServiceImpl implements AiGuardrailService {
                 || (request != null && request.useCaseCode() != null && request.useCaseCode().toLowerCase().contains("repair"));
         int effective = requested == null ? limit : Math.min(requested, limit);
         if (request != null && request.taskType() == AiTaskType.CLINICAL_REASONING) {
-            int clinicalReasoningCap = Math.max(256, Math.min(limit, 1800));
+            int clinicalReasoningCap = Math.max(256, Math.min(limit, requested == null ? limit : requested));
             effective = Math.min(effective, clinicalReasoningCap);
         }
         if (compactMode) {
-            if (request != null && request.taskType() == AiTaskType.CLINICAL_REASONING) {
-                effective = Math.min(effective, Math.max(256, Math.min(limit, 1024)));
-            } else {
+            if (request == null || request.taskType() != AiTaskType.CLINICAL_REASONING) {
                 effective = Math.min(effective, Math.max(256, limit / 2));
             }
         }

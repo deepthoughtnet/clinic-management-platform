@@ -58,7 +58,7 @@ class AiGuardrailServiceImplTest {
     }
 
     @Test
-    void clinicalReasoningUsesSmallerFirstAttemptBudget() {
+    void clinicalReasoningUsesConfiguredTaskBudget() {
         AiGuardrailProfileRepository repository = mock(AiGuardrailProfileRepository.class);
         UUID tenantId = UUID.randomUUID();
         when(repository.findByTenantIdAndProfileKey(tenantId, "default"))
@@ -92,12 +92,12 @@ class AiGuardrailServiceImplTest {
         AiGuardrailService.ExecutionSettings settings = service.resolveExecutionSettings(tenantId, "prompt text", request, null);
 
         assertThat(settings.guardrailLimit()).isEqualTo(2048);
-        assertThat(settings.effectiveMaxTokens()).isEqualTo(1800);
+        assertThat(settings.effectiveMaxTokens()).isEqualTo(2048);
         assertThat(settings.compactMode()).isFalse();
     }
 
     @Test
-    void repairModeUsesCompactModeAndSmallerTokenBudget() {
+    void repairModeKeepsConfiguredClinicalReasoningBudget() {
         AiGuardrailProfileRepository repository = mock(AiGuardrailProfileRepository.class);
         UUID tenantId = UUID.randomUUID();
         when(repository.findByTenantIdAndProfileKey(tenantId, "default"))
@@ -131,6 +131,6 @@ class AiGuardrailServiceImplTest {
         AiGuardrailService.ExecutionSettings settings = service.resolveExecutionSettings(tenantId, prompt, request, null);
 
         assertThat(settings.compactMode()).isTrue();
-        assertThat(settings.effectiveMaxTokens()).isEqualTo(1024);
+        assertThat(settings.effectiveMaxTokens()).isEqualTo(2048);
     }
 }

@@ -15,12 +15,14 @@ public record ReasoningMetadata(
         String correlationId,
         Long latencyMs,
         boolean fallbackUsed,
+        boolean retryUsed,
         String finishReason,
         String normalizedFinishReason,
         Integer responseChars,
         String rawText,
         Integer rawChars,
-        String errorMessage
+        String errorMessage,
+        String resultQuality
 ) {
     public ReasoningMetadata(String reasoningEngineVersion,
                              String promptVersion,
@@ -34,9 +36,11 @@ public record ReasoningMetadata(
                              String correlationId,
                              Long latencyMs,
                              boolean fallbackUsed,
+                             boolean retryUsed,
                              String finishReason,
                              Integer rawChars,
-                             String errorMessage) {
+                             String errorMessage,
+                             String resultQuality) {
         this(reasoningEngineVersion,
                 promptVersion,
                 contextVersion,
@@ -49,12 +53,14 @@ public record ReasoningMetadata(
                 correlationId,
                 latencyMs,
                 fallbackUsed,
+                retryUsed,
                 finishReason,
                 com.deepthoughtnet.clinic.platform.contracts.ai.AiFinishReasonNormalizer.normalize(finishReason),
                 rawChars,
                 null,
                 rawChars,
-                errorMessage);
+                errorMessage,
+                resultQuality);
     }
 
     public ReasoningMetadata {

@@ -381,7 +381,7 @@ function LabBadge({ tone }: { tone: "default" | "success" | "warning" | "error" 
   return <Chip size="small" label={tone === "error" ? "High" : tone === "warning" ? "Low" : tone === "success" ? "Normal" : "Unknown"} color={mappedColor} variant="filled" sx={{ fontWeight: 800, height: 22, "& .MuiChip-label": { px: 0.9, fontSize: 11 } }} />;
 }
 
-function LabFindingRow({ concept }: { concept: LongitudinalConcept }) {
+function LabFindingRow({ concept, highlight }: { concept: LongitudinalConcept; highlight?: boolean }) {
   const value = formatConceptValue(concept);
   const label = normalizeLabLabel(concept.label) || concept.label;
   const status = classifyLabStatus(concept);
@@ -396,8 +396,12 @@ function LabFindingRow({ concept }: { concept: LongitudinalConcept }) {
         py: 0.5,
         borderRadius: 1.25,
         border: 1,
-        borderColor: "divider",
-        bgcolor: "background.paper",
+        borderColor: highlight ? "primary.light" : "divider",
+        bgcolor: highlight ? "action.hover" : "background.paper",
+        outline: highlight ? 2 : 0,
+        outlineColor: highlight ? "primary.light" : "transparent",
+        outlineStyle: "solid",
+        transition: "background-color 180ms ease, outline-color 180ms ease",
       }}
     >
       <Typography variant="body2" sx={{ fontWeight: 900, lineHeight: 1.2 }} noWrap title={label}>
@@ -411,6 +415,11 @@ function LabFindingRow({ concept }: { concept: LongitudinalConcept }) {
       </Box>
     </Box>
   );
+}
+
+function highlightLabelMatches(conceptLabel: string, highlightLabel?: string | null) {
+  if (!highlightLabel) return false;
+  return normalizeLabLabel(highlightLabel) === conceptLabel;
 }
 
 function ConceptChipGroup({
@@ -457,11 +466,13 @@ export function PatientIntelligenceCard({
   loading = false,
   error = null,
   onViewSourceDocument,
+  highlightLabLabel = null,
 }: {
   context: ClinicalContextResponse | null;
   loading?: boolean;
   error?: string | null;
   onViewSourceDocument?: (documentId: string) => void;
+  highlightLabLabel?: string | null;
 }) {
   const [detailsOpen, setDetailsOpen] = React.useState(false);
 
@@ -604,7 +615,10 @@ export function PatientIntelligenceCard({
       >
         <Stack spacing={0.45}>
           {labItems.length ? (
-            labItems.map((concept) => <LabFindingRow key={conceptKey(concept)} concept={concept} />)
+            labItems.map((concept) => {
+              const conceptLabel = normalizeLabLabel(concept.label) || concept.label;
+              return <LabFindingRow key={conceptKey(concept)} concept={concept} highlight={highlightLabelMatches(conceptLabel, highlightLabLabel)} />;
+            })
           ) : (
             <Typography variant="caption" color="text.secondary">
               Not recorded

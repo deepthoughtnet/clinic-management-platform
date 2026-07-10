@@ -107,7 +107,7 @@ class ClinicalReasoningServiceTest {
                 List.of(),
                 null,
                 new ClinicalReasoningResult.SourceContextSummary("Fever", List.of(), "INTAKE BP 136/86", List.of(), List.of(), List.of()),
-                new ReasoningMetadata("engine.v1", "clinic.clinical.reasoning.v1", "v1", "v1", "GEMINI", "gemini-2.5-flash", java.util.Map.of(), "VALID", "req-1", "corr-1", 12L, false, "STOP", "COMPLETE", 321, "{\"ok\":true}", 321, null)
+                new ReasoningMetadata("engine.v1", "clinic.clinical.reasoning.v1", "v1", "v1", "GEMINI", "gemini-2.5-flash", java.util.Map.of(), "VALID", "req-1", "corr-1", 12L, false, false, "STOP", "COMPLETE", 321, "{\"ok\":true}", 321, null, "COMPLETE")
         );
         when(clinicalReasoningEngine.generate(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any())).thenReturn(reasoningResult);
 

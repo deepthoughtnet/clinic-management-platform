@@ -67,7 +67,8 @@ class ClinicalReasoningPromptBuilderTest {
 
         assertThat(input.get("reasoningPrompt").toString()).contains("Return strict JSON only");
         assertThat(input.get("reasoningPrompt").toString()).contains("avoid unsupported ACS, PE, or aortic dissection");
-        assertThat(input.get("reasoningPrompt").toString()).contains("max 4 differential diagnoses");
+        assertThat(input.get("reasoningPrompt").toString()).contains("max 3 differential diagnoses");
+        assertThat(input.get("reasoningPrompt").toString()).contains("reasoningSummary max 300 chars");
         assertThat(input.get("reasoningPrompt").toString()).contains("Pending lab orders");
         assertThat(input.get("reasoningPrompt").toString()).contains("Available labs");
         assertThat(input.get("reasoningPrompt").toString()).contains("Always populate supportingEvidence");
@@ -122,6 +123,7 @@ class ClinicalReasoningPromptBuilderTest {
 
         assertThat(repair.length()).isLessThan(primary.length());
         assertThat(repair).contains("Return valid JSON only");
+        assertThat(repair).contains("max 2 differential diagnoses");
         assertThat(repair).doesNotContain("No diagnosis without clinical justification");
     }
 }

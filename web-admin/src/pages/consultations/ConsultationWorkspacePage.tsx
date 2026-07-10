@@ -64,6 +64,8 @@ import MedicationRoundedIcon from "@mui/icons-material/MedicationRounded";
 import ScienceRoundedIcon from "@mui/icons-material/ScienceRounded";
 import MonitorHeartRoundedIcon from "@mui/icons-material/MonitorHeartRounded";
 import LightbulbRoundedIcon from "@mui/icons-material/LightbulbRounded";
+import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
+import ScheduleRoundedIcon from "@mui/icons-material/ScheduleRounded";
 import PlaylistAddCheckRoundedIcon from "@mui/icons-material/PlaylistAddCheckRounded";
 import ReceiptLongRoundedIcon from "@mui/icons-material/ReceiptLongRounded";
 import CompareArrowsRoundedIcon from "@mui/icons-material/CompareArrowsRounded";
@@ -242,6 +244,27 @@ type ClinicalDraftGenerationStepState = {
   message: string | null;
 };
 type ClinicalReasoningSectionKey = "primaryDiagnosis" | "differentials" | "evidence" | "missingInformation" | "redFlags" | "recommendedTests" | "safetyNotes" | "debug";
+type InvestigationIntelligenceStatus = "Already Available" | "Recently Completed" | "Pending" | "Recommended" | "Consider" | "Unknown";
+type InvestigationIntelligenceRow = {
+  testName: string;
+  status: InvestigationIntelligenceStatus;
+  evidence: string | null;
+  doctorNote: string;
+  duplicateRisk: boolean;
+  matchedOrderId: string | null;
+  matchedReportTitle: string | null;
+  observedOn: string | null;
+};
+type LabOrderAiPreparation = {
+  generatedAt: string;
+  investigations: string[];
+  confidence: string;
+  suggestedPriority: string;
+  reason: string;
+  supportingEvidence: string[];
+  duplicateWarnings: string[];
+  reasoningId: string | null;
+};
 type MedicineShortcut = Pick<
   Medicine,
   "medicineName" | "strength" | "defaultDosage" | "defaultFrequency" | "defaultDurationDays" | "defaultTiming" | "defaultInstructions"
@@ -842,9 +865,261 @@ function classifyClinicalReasoningTests(tests: ClinicalReasoningResult["recommen
   return buckets;
 }
 
+function normalizeInvestigationCanonicalKey(value: string) {
+  const normalized = normalizeLookupKey(value);
+  if (!normalized) return "";
+  if (/(hba1c|hba1 c|a1c|hemoglobin a1c)/.test(normalized)) return "hba1c";
+  if (/(blood sugar|blood glucose|glucose|random blood sugar|fasting blood sugar|rbs|fbs|ppbs)/.test(normalized)) return "blood sugar";
+  if (/(cbc|complete blood count)/.test(normalized)) return "cbc";
+  if (/(crp|c reactive protein|c reactive)/.test(normalized)) return "crp";
+  if (/(lipid profile|cholesterol|triglyceride|triglycerides|hdl|ldl|lipid)/.test(normalized)) return "lipid profile";
+  if (/(chest x ray|xray chest|x ray chest|cxr|chest xray)/.test(normalized)) return "chest x ray";
+  if (/(covid|sars cov 2|sars cov2|sarscov2)/.test(normalized)) return "covid 19";
+  if (/(influenza|flu)/.test(normalized)) return "influenza";
+  if (/(creatinine|rft|renal function|kidney function)/.test(normalized)) return "creatinine";
+  return normalized;
+}
+
+function investigationLabelFromCanonicalKey(key: string) {
+  switch (key) {
+    case "hba1c":
+      return "HbA1c";
+    case "blood sugar":
+      return "Blood Sugar";
+    case "cbc":
+      return "CBC";
+    case "crp":
+      return "CRP";
+    case "lipid profile":
+      return "Lipid Profile";
+    case "chest x ray":
+      return "Chest X-Ray";
+    case "covid 19":
+      return "COVID-19 test";
+    case "influenza":
+      return "Influenza test";
+    case "creatinine":
+      return "Creatinine";
+    default:
+      return key
+        .split(" ")
+        .filter(Boolean)
+        .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
+        .join(" ");
+  }
+}
+
+function investigationAliasesForCanonicalKey(key: string) {
+  switch (key) {
+    case "hba1c":
+      return ["hba1c", "hb a1c", "hemoglobin a1c", "a1c"];
+    case "blood sugar":
+      return ["blood sugar", "blood glucose", "glucose", "random blood sugar", "fasting blood sugar", "rbs", "fbs", "ppbs"];
+    case "cbc":
+      return ["cbc", "complete blood count"];
+    case "crp":
+      return ["crp", "c reactive protein", "c-reactive protein", "c reactive"];
+    case "lipid profile":
+      return ["lipid profile", "cholesterol", "triglyceride", "triglycerides", "hdl", "ldl", "lipid"];
+    case "chest x ray":
+      return ["chest x ray", "xray chest", "x ray chest", "cxr", "chest xray"];
+    case "covid 19":
+      return ["covid", "covid 19", "covid-19", "sars cov 2", "sars cov2", "sarscov2"];
+    case "influenza":
+      return ["influenza", "flu"];
+    case "creatinine":
+      return ["creatinine", "rft", "renal function", "kidney function"];
+    default:
+      return [key];
+  }
+}
+
+function investigationTextMatches(text: string, aliases: string[]) {
+  const normalizedText = normalizeLookupKey(text);
+  return aliases.some((alias) => {
+    const normalizedAlias = normalizeLookupKey(alias);
+    return Boolean(normalizedAlias) && (normalizedText.includes(normalizedAlias) || normalizedAlias.includes(normalizedText));
+  });
+}
+
+function formatInvestigationEvidenceValue(valueText: string | null, unitText: string | null, observedOn: string | null) {
+  const value = [valueText, unitText].filter(Boolean).join(" ").trim();
+  const date = observedOn ? compactDate(observedOn) : null;
+  if (value && date) return `${value} on ${date}`;
+  if (value) return value;
+  if (date) return date;
+  return null;
+}
+
+function formatRelativeAge(value: string | null | undefined) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const now = new Date();
+  const diffMs = Math.max(0, now.getTime() - date.getTime());
+  const dayMs = 24 * 60 * 60 * 1000;
+  const days = Math.floor(diffMs / dayMs);
+  if (days <= 0) return "Today";
+  if (days === 1) return "Yesterday";
+  if (days < 30) return `${days} days ago`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months} month${months === 1 ? "" : "s"} ago`;
+  const years = Math.floor(months / 12);
+  return `${years} year${years === 1 ? "" : "s"} ago`;
+}
+
+function pluralizeInvestigationCount(count: number) {
+  return `${count} Investigation${count === 1 ? "" : "s"}`;
+}
+
+function getVisibleInvestigationStatusLabel(status: InvestigationIntelligenceStatus) {
+  return status === "Consider" ? "Optional" : status;
+}
+
+function getInvestigationResultFlag(testName: string, valueText: string | null | undefined) {
+  const key = normalizeInvestigationCanonicalKey(testName);
+  const numericValue = Number.parseFloat((valueText || "").replace(/[^0-9.]+/g, ""));
+  if (Number.isNaN(numericValue)) return null;
+  if (key === "hba1c") return numericValue >= 5.7 ? "High" : "Normal";
+  if (key === "blood sugar") return numericValue >= 140 ? "High" : "Normal";
+  return null;
+}
+
 function formatClinicalReasoningMetaValue(value: unknown) {
   if (value == null || value === "") return null;
   return String(value);
+}
+
+function investigationStatusColor(status: InvestigationIntelligenceStatus) {
+  switch (status) {
+    case "Already Available":
+    case "Recently Completed":
+      return "success";
+    case "Pending":
+      return "warning";
+    case "Recommended":
+      return "primary";
+    case "Consider":
+      return "info";
+    case "Unknown":
+    default:
+      return "default";
+  }
+}
+
+function investigationStatusBorderColor(status: InvestigationIntelligenceStatus) {
+  switch (status) {
+    case "Already Available":
+    case "Recently Completed":
+      return "success.main";
+    case "Pending":
+      return "warning.main";
+    case "Recommended":
+      return "primary.main";
+    case "Consider":
+      return "info.main";
+    case "Unknown":
+    default:
+      return "divider";
+  }
+}
+
+function investigationStatusIcon(status: InvestigationIntelligenceStatus) {
+  switch (status) {
+    case "Already Available":
+    case "Recently Completed":
+      return <CheckCircleRoundedIcon fontSize="inherit" />;
+    case "Pending":
+      return <ScheduleRoundedIcon fontSize="inherit" />;
+    case "Consider":
+      return <LightbulbRoundedIcon fontSize="inherit" />;
+    case "Recommended":
+      return <ScienceRoundedIcon fontSize="inherit" />;
+    case "Unknown":
+    default:
+      return undefined;
+  }
+}
+
+function getInvestigationIcon(testName: string) {
+  const key = normalizeInvestigationCanonicalKey(testName);
+  if (key === "cbc") return <FavoriteRoundedIcon fontSize="inherit" aria-hidden="true" />;
+  if (key === "covid 19" || key === "influenza") return <BiotechRoundedIcon fontSize="inherit" aria-hidden="true" />;
+  if (key === "chest x ray") return <InsightsRoundedIcon fontSize="inherit" aria-hidden="true" />;
+  if (key === "blood sugar" || key === "hba1c" || key === "crp" || key === "creatinine" || key === "lipid profile") {
+    return <ScienceRoundedIcon fontSize="inherit" aria-hidden="true" />;
+  }
+  return <BiotechRoundedIcon fontSize="inherit" aria-hidden="true" />;
+}
+
+function investigationEvidenceLines(row: InvestigationIntelligenceRow) {
+  const evidence = row.evidence?.trim() || "";
+  if (!evidence) {
+    return ["No recent matching result found"];
+  }
+  if (row.status === "Pending") {
+    const pendingLabel = evidence.replace(/^Pending lab order:\s*/i, "").trim();
+    return ["Pending Lab Order", pendingLabel || row.testName];
+  }
+  if (row.status === "Already Available" || row.status === "Recently Completed") {
+    const date = row.observedOn ? compactDate(row.observedOn) : null;
+    const age = formatRelativeAge(row.observedOn);
+    const parts = evidence
+      .split(/\s*[•|;]\s*|\s{2,}/)
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .slice(0, 3);
+    const resultValue = (parts[0] || evidence).replace(/\s+on\s+.+$/i, "").trim();
+    const resultFlag = getInvestigationResultFlag(row.testName, resultValue);
+    const lines = [resultFlag ? `${resultValue} · ${resultFlag}` : resultValue];
+    if (date) lines.splice(1, 0, date);
+    if (age) lines.splice(2, 0, age);
+    return lines.slice(0, 3);
+  }
+  return evidence
+    .split(/\s*[•|;]\s*|\s{2,}/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, 3);
+}
+
+function investigationDoctorNote(row: InvestigationIntelligenceRow) {
+  const key = normalizeInvestigationCanonicalKey(row.testName);
+  if (row.duplicateRisk) {
+    return "Recent result or pending order already exists. Avoid repeat unless clinically indicated.";
+  }
+  if (key === "hba1c") {
+    return row.status === "Pending"
+      ? "Pending order exists. Review before creating another request."
+      : "Recent result available. Repeat only if clinically indicated.";
+  }
+  if (key === "cbc") {
+    return row.status === "Pending"
+      ? "Pending order exists. Review before creating another request."
+      : "Recent result available. Repeat only if clinically indicated.";
+  }
+  if (key === "crp") {
+    return "Useful if fever persists or inflammatory signs increase.";
+  }
+  if (key === "covid 19") {
+    return "Useful for respiratory infection or exposure assessment.";
+  }
+  if (key === "influenza") {
+    return "Useful during influenza season or prominent viral symptoms.";
+  }
+  if (row.status === "Unknown") {
+    return "Clinical judgement required.";
+  }
+  if (row.status === "Pending") {
+    return "Pending order exists. Review before creating another request.";
+  }
+  if (row.status === "Already Available" || row.status === "Recently Completed") {
+    return "Recent result available. Repeat only if clinically indicated.";
+  }
+  if (row.status === "Consider") {
+    return "Useful if clinically needed.";
+  }
+  return "Clinical judgement required.";
 }
 
 function followUpChipToDate(value: string): string {
@@ -1024,6 +1299,29 @@ function compactDate(value?: string | null): string {
 
 function compactDateTime(value?: string | null): string {
   return value ? new Date(value).toLocaleString() : "-";
+}
+
+function relativeTimeLabel(value?: string | null): string | null {
+  if (!value) return null;
+  const timestamp = new Date(value);
+  if (Number.isNaN(timestamp.getTime())) return null;
+  const diffMs = Date.now() - timestamp.getTime();
+  if (diffMs < 0) return null;
+  const diffMinutes = Math.floor(diffMs / 60000);
+  if (diffMinutes <= 0) return "Just now";
+  if (diffMinutes === 1) return "1 minute ago";
+  if (diffMinutes < 60) return `${diffMinutes} minutes ago`;
+  const diffHours = Math.floor(diffMinutes / 60);
+  if (diffHours === 1) return "1 hour ago";
+  if (diffHours < 24) return `${diffHours} hours ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays === 1) return "Yesterday";
+  if (diffDays < 30) return `${diffDays} days ago`;
+  const diffMonths = Math.floor(diffDays / 30);
+  if (diffMonths === 1) return "1 month ago";
+  if (diffMonths < 12) return `${diffMonths} months ago`;
+  const diffYears = Math.floor(diffMonths / 12);
+  return diffYears === 1 ? "1 year ago" : `${diffYears} years ago`;
 }
 
 function compactTimelineTitle(value: string) {
@@ -1626,8 +1924,10 @@ export default function ConsultationWorkspacePage() {
   const [labOrderReviewOpen, setLabOrderReviewOpen] = React.useState(false);
   const [labOrderTestIds, setLabOrderTestIds] = React.useState<string[]>([]);
   const [labOrderNotes, setLabOrderNotes] = React.useState("");
+  const [labOrderAiPreparation, setLabOrderAiPreparation] = React.useState<LabOrderAiPreparation | null>(null);
   const [labOrderSaving, setLabOrderSaving] = React.useState(false);
   const [selectedLabOrderId, setSelectedLabOrderId] = React.useState<string | null>(null);
+  const [clinicalReasoningInvestigationHighlightKey, setClinicalReasoningInvestigationHighlightKey] = React.useState<string | null>(null);
   const [medicineSearch, setMedicineSearch] = React.useState("");
   const [correctionReason, setCorrectionReason] = React.useState("Same-day correction");
   const [activeTab, setActiveTab] = React.useState(() => consultationTabKeyToIndex(searchParams.get("tab")));
@@ -1730,6 +2030,8 @@ export default function ConsultationWorkspacePage() {
   const aiPrescriptionSuggestionRef = React.useRef(aiPrescriptionSuggestion);
   const aiPrescriptionItemsRef = React.useRef(aiPrescriptionItems);
   const clinicalReasoningReviewRef = React.useRef<HTMLDivElement | null>(null);
+  const patientIntelligenceRef = React.useRef<HTMLDivElement | null>(null);
+  const labOrderWorkflowRef = React.useRef<HTMLDivElement | null>(null);
   const clinicalReasoningSectionRefs = React.useRef<Record<Exclude<ClinicalReasoningSectionKey, "debug">, HTMLDivElement | null>>({
     primaryDiagnosis: null,
     differentials: null,
@@ -2496,6 +2798,10 @@ export default function ConsultationWorkspacePage() {
     : null;
   const clinicalReasoningSummaryConfidenceLabel = confidenceLevelFromText(clinicalReasoningResult?.confidence);
   const clinicalReasoningProviderLabel = clinicalReasoningResult?.provider || clinicalReasoningResult?.metadata?.provider || clinicalReasoningResult?.metadata?.model || "Unknown";
+  const labOrderAiGeneratedRelativeLabel = React.useMemo(
+    () => relativeTimeLabel(labOrderAiPreparation?.generatedAt) || (labOrderAiPreparation?.generatedAt ? compactDateTime(labOrderAiPreparation.generatedAt) : "-"),
+    [labOrderAiPreparation?.generatedAt],
+  );
   const triggerClinicalReasoning = React.useCallback(() => {
     if (!consultation) {
       return;
@@ -2561,6 +2867,144 @@ export default function ConsultationWorkspacePage() {
   const scrollToClinicalReasoningDetails = React.useCallback(() => {
     clinicalReasoningReviewRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
+  const focusPatientIntelligence = React.useCallback(() => {
+    patientIntelligenceRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
+  const focusLabOrderWorkflow = React.useCallback(() => {
+    labOrderWorkflowRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
+  const buildLabOrderAiPreparation = React.useCallback((rows: InvestigationIntelligenceRow[]): { selectedTestIds: string[]; preparation: LabOrderAiPreparation } => {
+    const selectedItems = rows.map((row) => {
+      const aliases = investigationAliasesForCanonicalKey(normalizeInvestigationCanonicalKey(row.testName));
+      const matchedTests = labTests.filter((test) => investigationTextMatches(test.testName, aliases) || investigationTextMatches(test.testCode, aliases));
+      const matchedRecommendation = clinicalReasoningResult?.recommendedTests.find((test) => investigationTextMatches(test.name || "", aliases) || investigationTextMatches(test.reason || "", aliases) || investigationTextMatches(test.source || "", aliases)) || null;
+      return { row, aliases, matchedTests, matchedRecommendation };
+    });
+
+    const selectedTestIds = Array.from(new Set(selectedItems.flatMap((item) => item.matchedTests.map((test) => test.id))));
+    const investigations = selectedItems.length
+      ? selectedItems.map((item) => item.matchedTests[0]?.testName || item.row.testName)
+      : rows.map((row) => row.testName);
+
+    const priorityRank = (value: string | null | undefined) => {
+      const normalized = normalizeLookupKey(value || "");
+      if (/(urgent|emergency)/.test(normalized)) return 3;
+      if (/optional/.test(normalized)) return 2;
+      return 1;
+    };
+    const suggestedPriority = (() => {
+      const highest = Math.max(
+        0,
+        ...selectedItems.map((item) => Math.max(priorityRank(item.matchedRecommendation?.priority), priorityRank(item.row.doctorNote), priorityRank(item.row.evidence))),
+      );
+      if (highest >= 3) return "Urgent";
+      if (highest >= 2) return "Optional";
+      return "Routine";
+    })();
+
+    const reasonCandidates = [
+      clinicalReasoningResult?.primaryDiagnosis?.whyConsidered,
+      clinicalReasoningResult?.primaryDiagnosis?.whyLessLikely,
+      ...selectedItems.map((item) => item.matchedRecommendation?.reason || item.row.doctorNote),
+    ].filter((value): value is string => Boolean(value && value.trim()));
+    const reason = reasonCandidates[0] || "Clinical correlation required.";
+
+    const supportingEvidence = [
+      ...(clinicalReasoningResult?.primaryDiagnosis?.supportingEvidence || [])
+        .map((item) => [item.text, item.sourceTitle || item.source, item.observationDate ? compactDate(item.observationDate) : null].filter(Boolean).join(" • ").trim())
+        .filter((value): value is string => Boolean(value)),
+      clinicalContext?.longitudinalMemory?.latestHbA1c?.valueText || clinicalContext?.longitudinalMemory?.latestHbA1c?.evidenceText
+        ? `HbA1c ${formatInvestigationEvidenceValue(clinicalContext.longitudinalMemory.latestHbA1c.valueText, clinicalContext.longitudinalMemory.latestHbA1c.valueUnit, clinicalContext.longitudinalMemory.latestHbA1c.observedOn)}`
+        : null,
+      clinicalContext?.longitudinalMemory?.latestBloodSugar?.valueText || clinicalContext?.longitudinalMemory?.latestBloodSugar?.evidenceText
+        ? `Blood Sugar ${formatInvestigationEvidenceValue(clinicalContext.longitudinalMemory.latestBloodSugar.valueText, clinicalContext.longitudinalMemory.latestBloodSugar.valueUnit, clinicalContext.longitudinalMemory.latestBloodSugar.observedOn)}`
+        : null,
+      clinicalContext?.longitudinalMemory?.knownConditions?.some((concept) => normalizeLookupKey(concept.label).includes("diabetes")) ? "Known Diabetes" : null,
+    ].filter((value): value is string => Boolean(value));
+
+    const duplicateWarnings = Array.from(new Set(
+      selectedItems.flatMap((item) => item.row.duplicateRisk
+        ? [`Existing ${item.row.testName} result/order detected. Review before creating another order.`]
+        : []),
+    ));
+
+    const preparation: LabOrderAiPreparation = {
+      generatedAt: clinicalReasoningResult?.generatedAt || new Date().toISOString(),
+      investigations,
+      confidence: clinicalReasoningResult?.confidence || "Moderate",
+      suggestedPriority,
+      reason,
+      supportingEvidence: supportingEvidence.slice(0, 4),
+      duplicateWarnings,
+      reasoningId: null,
+    };
+
+    return { selectedTestIds, preparation };
+  }, [clinicalContext?.longitudinalMemory, clinicalReasoningResult, labTests]);
+  const openLabOrderPreparation = React.useCallback((rows: InvestigationIntelligenceRow[]) => {
+    if (readOnly || !labTests.length) {
+      setInfo("Laboratory ordering unavailable.");
+      return;
+    }
+    const { selectedTestIds, preparation } = buildLabOrderAiPreparation(rows);
+    setLabOrderAiPreparation(preparation);
+    setLabOrderTestIds(selectedTestIds);
+    setLabOrderNotes(
+      [
+        "Prepared from AI Recommendation",
+        `Generated: ${compactDateTime(preparation.generatedAt)}`,
+        preparation.reason ? `Reason: ${preparation.reason}` : null,
+        preparation.supportingEvidence.length ? `Supporting evidence: ${preparation.supportingEvidence.join(" • ")}` : null,
+        `Suggested priority: ${preparation.suggestedPriority}`,
+        preparation.duplicateWarnings.length ? `Warnings: ${preparation.duplicateWarnings.join(" • ")}` : null,
+        "Doctor review and confirmation are required before any laboratory request is created.",
+      ].filter((line): line is string => Boolean(line && line.trim())).join("\n"),
+    );
+    setLabOrderReviewOpen(false);
+    setActiveTab(4);
+    setLabOrderDialogOpen(true);
+    setInfo("Opening lab order workflow. Doctor must confirm before order is created.");
+    focusLabOrderWorkflow();
+  }, [buildLabOrderAiPreparation, focusLabOrderWorkflow, labTests.length, readOnly]);
+  const reviewInvestigationResult = React.useCallback((row: InvestigationIntelligenceRow) => {
+    if (row.status === "Pending" && row.matchedOrderId) {
+      setActiveTab(4);
+      setSelectedLabOrderId(row.matchedOrderId);
+      focusLabOrderWorkflow();
+      setInfo("Pending order review is available in Lab module.");
+      return;
+    }
+    if (row.status === "Already Available" || row.status === "Recently Completed") {
+      setActiveTab(2);
+      focusPatientIntelligence();
+      setClinicalReasoningInvestigationHighlightKey(row.testName);
+      window.setTimeout(() => {
+        setClinicalReasoningInvestigationHighlightKey((current) => (current === row.testName ? null : current));
+      }, 2500);
+      if (row.matchedReportTitle) {
+        setInfo(`Review existing result before repeating ${row.testName}.`);
+      } else {
+        setInfo("Available in Patient Intelligence.");
+      }
+      return;
+    }
+    if (row.duplicateRisk) {
+      setInfo("Existing result or pending order found. Please review before ordering.");
+      if (row.matchedOrderId) {
+        setActiveTab(4);
+        setSelectedLabOrderId(row.matchedOrderId);
+        focusLabOrderWorkflow();
+      } else {
+        focusPatientIntelligence();
+      }
+      return;
+    }
+    focusPatientIntelligence();
+    setInfo("Available in Patient Intelligence.");
+  }, [focusLabOrderWorkflow, focusPatientIntelligence, setInfo]);
+  const prepareInvestigationOrder = React.useCallback((row: InvestigationIntelligenceRow) => {
+    openLabOrderPreparation([row]);
+  }, [openLabOrderPreparation]);
   const aiUnavailableCard = (
     <Box sx={{ p: 1.35, border: 1, borderStyle: "dashed", borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
       <Stack spacing={0.45}>
@@ -2597,6 +3041,207 @@ export default function ConsultationWorkspacePage() {
       .slice()
       .sort((a, b) => (new Date(b.reportDate || b.createdAt).getTime() - new Date(a.reportDate || a.createdAt).getTime()));
   }, [clinicalDocuments]);
+  const clinicalReasoningInvestigationIntelligence = React.useMemo(() => {
+    const recommendedTests = clinicalReasoningResult?.recommendedTests || [];
+    const labIntelligence = clinicalContext?.labIntelligence || null;
+    const longitudinalMemory = clinicalContext?.longitudinalMemory || null;
+    const pendingInvestigationNames = new Set([
+      ...(labIntelligence?.pendingInvestigations || []),
+      ...labOrders
+        .filter((order) => ["ORDERED", "PAYMENT_PENDING", "PAID", "READY_FOR_COLLECTION", "SAMPLE_COLLECTED", "PROCESSING", "RESULT_ENTERED"].includes(order.status))
+        .flatMap((order) => order.items.map((item) => item.testName).filter(Boolean)),
+    ]);
+    const sourceAvailable = Boolean(
+      labIntelligence?.latestLabReport
+      || labIntelligence?.abnormalValues?.length
+      || labIntelligence?.previousTrends?.length
+      || labIntelligence?.pendingInvestigations?.length
+      || labIntelligence?.lastHbA1c
+      || labIntelligence?.lastCbc
+      || labIntelligence?.lastCreatinine
+      || labIntelligence?.latestBloodSugar
+      || labIntelligence?.latestLipidSummary
+      || longitudinalMemory?.latestHbA1c
+      || longitudinalMemory?.latestBloodSugar
+      || longitudinalMemory?.latestLipidSummary?.length
+      || longitudinalMemory?.latestBloodPressure
+      || longitudinalMemory?.latestBmi
+      || longitudinalMemory?.history?.length
+      || reportHistoryRows.length
+      || labOrders.length,
+    );
+    const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+
+    const structuredMatches = [
+      longitudinalMemory?.latestHbA1c ? {
+        canonicalKey: "hba1c",
+        evidence: formatInvestigationEvidenceValue(longitudinalMemory.latestHbA1c.valueText, longitudinalMemory.latestHbA1c.valueUnit, longitudinalMemory.latestHbA1c.observedOn),
+        observedOn: longitudinalMemory.latestHbA1c.observedOn,
+        searchText: [
+          longitudinalMemory.latestHbA1c.label,
+          longitudinalMemory.latestHbA1c.valueText,
+          longitudinalMemory.latestHbA1c.evidenceText,
+        ].filter(Boolean).join(" "),
+      } : null,
+      longitudinalMemory?.latestBloodSugar ? {
+        canonicalKey: "blood sugar",
+        evidence: formatInvestigationEvidenceValue(longitudinalMemory.latestBloodSugar.valueText, longitudinalMemory.latestBloodSugar.valueUnit, longitudinalMemory.latestBloodSugar.observedOn),
+        observedOn: longitudinalMemory.latestBloodSugar.observedOn,
+        searchText: [
+          longitudinalMemory.latestBloodSugar.label,
+          longitudinalMemory.latestBloodSugar.valueText,
+          longitudinalMemory.latestBloodSugar.evidenceText,
+        ].filter(Boolean).join(" "),
+      } : null,
+      longitudinalMemory?.latestLipidSummary?.length ? {
+        canonicalKey: "lipid profile",
+        evidence: longitudinalMemory.latestLipidSummary
+          .slice(0, 4)
+          .map((item) => formatInvestigationEvidenceValue(item.valueText, item.valueUnit, item.observedOn) || item.label)
+          .filter(Boolean)
+          .join(" • "),
+        observedOn: longitudinalMemory.latestLipidSummary[0]?.observedOn || null,
+        searchText: longitudinalMemory.latestLipidSummary.map((item) => [item.label, item.valueText, item.evidenceText].filter(Boolean).join(" ")).join(" "),
+      } : null,
+      longitudinalMemory?.latestBloodPressure ? {
+        canonicalKey: "blood pressure",
+        evidence: formatInvestigationEvidenceValue(longitudinalMemory.latestBloodPressure.valueText, longitudinalMemory.latestBloodPressure.valueUnit, longitudinalMemory.latestBloodPressure.observedOn),
+        observedOn: longitudinalMemory.latestBloodPressure.observedOn,
+        searchText: [
+          longitudinalMemory.latestBloodPressure.label,
+          longitudinalMemory.latestBloodPressure.valueText,
+          longitudinalMemory.latestBloodPressure.evidenceText,
+        ].filter(Boolean).join(" "),
+      } : null,
+      longitudinalMemory?.latestBmi ? {
+        canonicalKey: "bmi",
+        evidence: formatInvestigationEvidenceValue(longitudinalMemory.latestBmi.valueText, longitudinalMemory.latestBmi.valueUnit, longitudinalMemory.latestBmi.observedOn),
+        observedOn: longitudinalMemory.latestBmi.observedOn,
+        searchText: [
+          longitudinalMemory.latestBmi.label,
+          longitudinalMemory.latestBmi.valueText,
+          longitudinalMemory.latestBmi.evidenceText,
+        ].filter(Boolean).join(" "),
+      } : null,
+      labIntelligence?.lastHbA1c ? {
+        canonicalKey: "hba1c",
+        evidence: labIntelligence.lastHbA1c,
+        observedOn: null,
+        searchText: labIntelligence.lastHbA1c,
+      } : null,
+      labIntelligence?.lastCbc ? {
+        canonicalKey: "cbc",
+        evidence: labIntelligence.lastCbc,
+        observedOn: null,
+        searchText: labIntelligence.lastCbc,
+      } : null,
+      labIntelligence?.lastCreatinine ? {
+        canonicalKey: "creatinine",
+        evidence: labIntelligence.lastCreatinine,
+        observedOn: null,
+        searchText: labIntelligence.lastCreatinine,
+      } : null,
+      labIntelligence?.latestBloodSugar ? {
+        canonicalKey: "blood sugar",
+        evidence: labIntelligence.latestBloodSugar,
+        observedOn: null,
+        searchText: labIntelligence.latestBloodSugar,
+      } : null,
+      labIntelligence?.latestLipidSummary ? {
+        canonicalKey: "lipid profile",
+        evidence: labIntelligence.latestLipidSummary,
+        observedOn: null,
+        searchText: labIntelligence.latestLipidSummary,
+      } : null,
+    ].filter(Boolean) as Array<{
+      canonicalKey: string;
+      evidence: string | null;
+      observedOn: string | null;
+      searchText: string;
+    }>;
+
+    const reportRows = reportHistoryRows.map((row) => ({
+      canonicalKey: normalizeInvestigationCanonicalKey([row.title, row.originalFilename, row.documentType, row.description, row.reportDate, row.createdAt].filter(Boolean).join(" ")),
+      title: row.title || row.originalFilename || row.documentType.replaceAll("_", " "),
+      evidence: [row.title || row.originalFilename || row.documentType.replaceAll("_", " "), row.reportDate || row.createdAt ? compactDate(row.reportDate || row.createdAt) : null].filter(Boolean).join(" • "),
+      observedOn: row.reportDate || row.createdAt || null,
+      searchText: [row.title, row.originalFilename, row.documentType, row.description, row.reportDate, row.createdAt].filter(Boolean).join(" "),
+    }));
+
+    const rows = recommendedTests.map((test) => {
+      const rawText = [test.name, test.reason, test.source, test.actionType].filter(Boolean).join(" ");
+      const canonicalKey = normalizeInvestigationCanonicalKey(rawText || test.name || test.reason || "");
+      const aliases = investigationAliasesForCanonicalKey(canonicalKey);
+      const reasonText = normalizeLookupKey(rawText);
+      const consider = /\b(consider|optional|if indicated|if exposure|if symptoms persist|if clinically needed)\b/.test(reasonText);
+      const recentCutoff = Date.now() - thirtyDaysMs;
+      const structuredMatch = structuredMatches.find((entry) => entry.canonicalKey === canonicalKey || investigationTextMatches(entry.searchText, aliases));
+      const reportMatch = reportRows.find((entry) => entry.canonicalKey === canonicalKey || investigationTextMatches(entry.searchText, aliases));
+      const pendingMatch = Array.from(pendingInvestigationNames).find((pending) => investigationTextMatches(pending, aliases));
+      const availableMatch = structuredMatch || reportMatch || null;
+      const duplicateRisk = Boolean(availableMatch || pendingMatch);
+      let status: InvestigationIntelligenceStatus;
+      if (!sourceAvailable) {
+        status = "Unknown";
+      } else if (consider && !availableMatch && !pendingMatch) {
+        status = "Consider";
+      } else if (availableMatch) {
+        const observedOn = availableMatch.observedOn ? new Date(availableMatch.observedOn).getTime() : null;
+        status = observedOn != null && !Number.isNaN(observedOn) && observedOn >= recentCutoff ? "Recently Completed" : "Already Available";
+      } else if (pendingMatch) {
+        status = "Pending";
+      } else if (consider) {
+        status = "Consider";
+      } else {
+        status = "Recommended";
+      }
+
+      const evidence = availableMatch?.evidence
+        || (pendingMatch ? `Pending lab order: ${pendingMatch}` : null)
+        || (test.reason || null)
+        || (test.source || null)
+        || (sourceAvailable ? "No recent matching result found." : "Patient investigation history is not fully available.");
+      const doctorNote = duplicateRisk
+        ? "Recent result or pending order already exists. Avoid repeat unless clinically indicated."
+        : status === "Already Available"
+          ? "Recent result available. Repeat only if clinically indicated."
+          : status === "Recently Completed"
+            ? "Recent result available. Repeat only if clinically indicated."
+            : status === "Pending"
+              ? "Pending order exists. Review before creating another request."
+              : status === "Consider"
+                ? "Useful if clinically needed."
+                : status === "Unknown"
+                  ? "Clinical judgement required."
+                  : "No recent matching result found.";
+
+      return {
+        testName: test.name || investigationLabelFromCanonicalKey(canonicalKey) || "Recommended investigation",
+        status,
+        evidence,
+        doctorNote,
+        duplicateRisk,
+        matchedOrderId: pendingMatch ? labOrders.find((order) => order.items.some((item) => investigationTextMatches(item.testName, aliases)))?.id || null : null,
+        matchedReportTitle: reportMatch?.title || null,
+        observedOn: availableMatch?.observedOn || null,
+      };
+    });
+
+    const summary = {
+      alreadyAvailable: rows.filter((row) => row.status === "Already Available").length,
+      pending: rows.filter((row) => row.status === "Pending").length,
+      recommended: rows.filter((row) => row.status === "Recommended").length,
+      consider: rows.filter((row) => row.status === "Consider").length,
+      duplicateRisk: rows.filter((row) => row.duplicateRisk).length,
+      sourceAvailable,
+    };
+
+    return { rows, summary };
+  }, [clinicalContext?.labIntelligence, clinicalContext?.longitudinalMemory, clinicalReasoningResult?.recommendedTests, labOrders, reportHistoryRows]);
+  const labOrderPreparationRows = React.useMemo(
+    () => clinicalReasoningInvestigationIntelligence.rows.filter((row) => row.status === "Recommended" || row.status === "Consider"),
+    [clinicalReasoningInvestigationIntelligence.rows],
+  );
   const reportComparisonSummary = React.useMemo(() => {
     const trends = clinicalContext?.labIntelligence.previousTrends || [];
     const latestReport = clinicalContext?.labIntelligence.latestLabReport || null;
@@ -3960,6 +4605,10 @@ export default function ConsultationWorkspacePage() {
     setLabOrderTestIds((current) => current.filter((id) => labTests.some((test) => test.id === id)));
     setLabOrderDialogOpen(true);
   };
+  const closeLabOrderDialog = React.useCallback(() => {
+    setLabOrderDialogOpen(false);
+    setLabOrderAiPreparation(null);
+  }, []);
 
   const openLabOrderReview = () => {
     if (!labOrderTestIds.length) return;
@@ -3993,6 +4642,7 @@ export default function ConsultationWorkspacePage() {
       setLabOrderReviewOpen(false);
       setLabOrderTestIds([]);
       setLabOrderNotes("");
+      setLabOrderAiPreparation(null);
       setInfo(`Lab order ${created.orderNumber} created`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create lab order");
@@ -4561,7 +5211,8 @@ export default function ConsultationWorkspacePage() {
         || result?.redFlags?.length
         || result?.recommendedTests?.length
       );
-      if (result?.metadata?.parseStatus === "VALID" && hasContent) {
+      const resultQuality = result?.metadata?.resultQuality || (result?.metadata?.parseStatus === "VALID" && result?.primaryDiagnosis?.name ? "COMPLETE" : null);
+      if (resultQuality === "COMPLETE" && hasContent) {
         setInfo("Clinical reasoning generated. Doctor must verify before use.");
         return true;
       }
@@ -7094,6 +7745,11 @@ export default function ConsultationWorkspacePage() {
                             {clinicalReasoningLoadingMessages[clinicalReasoningLoadingStepIndex]}
                           </Alert>
                         ) : null}
+                        {clinicalReasoning.warning ? (
+                          <Alert severity="warning" sx={{ py: 0.5 }}>
+                            {clinicalReasoning.warning}
+                          </Alert>
+                        ) : null}
                         {clinicalReasoning.error ? (
                           <Alert
                             severity="error"
@@ -7114,7 +7770,7 @@ export default function ConsultationWorkspacePage() {
                                 <AutoAwesomeRoundedIcon fontSize="small" color="primary" />
                                 <Typography variant="subtitle2" sx={{ fontWeight: 950 }}>Reasoning details</Typography>
                                 <Chip size="small" variant="outlined" label={`Provider: ${clinicalReasoningProviderLabel}`} />
-                                <Chip size="small" variant="outlined" label={`Generated: ${compactDateTime(clinicalReasoningResult.generatedAt)}`} />
+                                <Chip size="small" variant="outlined" label={`Generated: ${compactDateTime(clinicalReasoning.lastGeneratedAt || clinicalReasoningResult.generatedAt)}`} />
                                 <Chip size="small" color="primary" variant="outlined" label={`Confidence: ${clinicalReasoningSummaryConfidenceLabel}`} />
                               </Stack>
                               <Stack direction="row" spacing={0.75} alignItems="center" useFlexGap flexWrap="wrap">
@@ -7475,6 +8131,219 @@ export default function ConsultationWorkspacePage() {
                                   </Collapse>
                                 </Stack>
 
+                                <Stack spacing={0.5}>
+                                  <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                                    <Stack direction="row" spacing={0.75} alignItems="center">
+                                      <ScienceRoundedIcon fontSize="small" color="secondary" />
+                                      <Typography variant="subtitle2" sx={{ fontWeight: 950, color: "secondary.main" }}>Investigation Intelligence</Typography>
+                                    </Stack>
+                                    <Tooltip title={labTests.length ? "Prepare recommended investigations using AI suggestions." : "Laboratory ordering unavailable."} arrow>
+                                      <span>
+                                        <Button
+                                          size="small"
+                                          variant="outlined"
+                                          color="primary"
+                                          disabled={!labTests.length || !labOrderPreparationRows.length}
+                                          onClick={() => openLabOrderPreparation(labOrderPreparationRows)}
+                                        >
+                                          Prepare AI Lab Order
+                                        </Button>
+                                      </span>
+                                    </Tooltip>
+                                  </Stack>
+                                  <Box
+                                    sx={{
+                                      display: "grid",
+                                      gridTemplateColumns: { xs: "repeat(2, minmax(0, 1fr))", lg: "repeat(5, minmax(0, 1fr))" },
+                                      gap: 0.75,
+                                    }}
+                                  >
+                                    {[
+                                      ["Already Available", clinicalReasoningInvestigationIntelligence.summary.alreadyAvailable, "success.main"],
+                                      ["Pending", clinicalReasoningInvestigationIntelligence.summary.pending, "warning.main"],
+                                      ["Recommended", clinicalReasoningInvestigationIntelligence.summary.recommended, "info.main"],
+                                      ["Optional", clinicalReasoningInvestigationIntelligence.summary.consider, "text.secondary"],
+                                      ["Duplicate Risk", clinicalReasoningInvestigationIntelligence.summary.duplicateRisk, "warning.dark"],
+                                    ].map(([label, value, accent]) => (
+                                      <Card key={label} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5, borderColor: "divider" }}>
+                                        <CardContent sx={{ p: 0.68, "&:last-child": { pb: 0.68 } }}>
+                                          <Stack spacing={0.1} sx={{ minHeight: 40, justifyContent: "center" }}>
+                                            <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 800, lineHeight: 1.1 }}>
+                                              {label}
+                                            </Typography>
+                                            <Typography variant="h6" sx={{ fontWeight: 950, lineHeight: 1, color: accent }}>
+                                              {pluralizeInvestigationCount(Number(value))}
+                                            </Typography>
+                                          </Stack>
+                                        </CardContent>
+                                      </Card>
+                                    ))}
+                                  </Box>
+                                  <Typography variant="caption" color="text.secondary">
+                                    Investigation intelligence is assistive only. Doctor must verify existing reports and clinical need before ordering.
+                                  </Typography>
+                                  <Typography variant="caption" color="text.secondary">
+                                    No investigation is ordered until the doctor confirms in the lab order workflow.
+                                  </Typography>
+                                  {!clinicalReasoningInvestigationIntelligence.summary.sourceAvailable ? (
+                                    <Alert severity="info" sx={{ py: 0.5 }}>
+                                      Patient investigation history is not fully available. Please verify manually.
+                                    </Alert>
+                                  ) : null}
+                                  {clinicalReasoningResult.recommendedTests.length ? (
+                                    <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5 }}>
+                                      <CardContent sx={{ p: 0.8, "&:last-child": { pb: 0.8 } }}>
+                                        <Stack spacing={0.7}>
+                                    <Box
+                                    sx={{
+                                      display: "grid",
+                                      gridTemplateColumns: { xs: "1fr", md: "minmax(0, 1.1fr) minmax(0, 0.9fr) minmax(0, 1.25fr) minmax(0, 1.35fr) minmax(0, 0.9fr)" },
+                                      gap: 0.75,
+                                      px: 0.35,
+                                    }}
+                                  >
+                                    <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 800 }}>Test</Typography>
+                                    <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 800 }}>Status</Typography>
+                                    <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 800 }}>Evidence</Typography>
+                                    <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 800 }}>Doctor Note</Typography>
+                                    <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 800, textAlign: "right" }}>Action</Typography>
+                                  </Box>
+                                  <Stack spacing={0.5}>
+                                    {clinicalReasoningInvestigationIntelligence.rows.map((row, index) => (
+                                      <Box
+                                                key={`${row.testName}-${index}`}
+                                                id={`investigation-intelligence-${normalizeInvestigationCanonicalKey(row.testName)}`}
+                                                sx={{
+                                                  display: "grid",
+                                                  gridTemplateColumns: { xs: "1fr", md: "minmax(0, 1.1fr) minmax(0, 0.9fr) minmax(0, 1.25fr) minmax(0, 1.35fr) minmax(0, 0.9fr)" },
+                                                  gap: 0.75,
+                                                  px: 0.85,
+                                                  py: 1.2,
+                                                  border: 1,
+                                                  borderColor: "divider",
+                                                  borderLeft: 3,
+                                                  borderLeftColor: investigationStatusBorderColor(row.status),
+                                                  borderRadius: 1.5,
+                                                  bgcolor: "background.paper",
+                                                  transition: "background-color 150ms ease",
+                                                  "&:hover": { bgcolor: "action.hover" },
+                                                  ...(clinicalReasoningInvestigationHighlightKey && normalizeInvestigationCanonicalKey(clinicalReasoningInvestigationHighlightKey) === normalizeInvestigationCanonicalKey(row.testName) ? {
+                                                    bgcolor: "action.hover",
+                                                    outline: 2,
+                                                    outlineColor: "primary.light",
+                                                    outlineStyle: "solid",
+                                                  } : {}),
+                                                }}
+                                              >
+                                                <Stack spacing={0.35} sx={{ minWidth: 0 }}>
+                                                  <Stack direction="row" spacing={0.6} alignItems="flex-start" sx={{ minWidth: 0 }}>
+                                                    <Box sx={{ mt: 0.1, color: "text.secondary", display: "grid", placeItems: "center", flexShrink: 0 }}>
+                                                      {getInvestigationIcon(row.testName)}
+                                                    </Box>
+                                                    <Typography variant="body2" sx={{ fontWeight: 800, lineHeight: 1.3, fontSize: 15, minWidth: 0 }}>
+                                                      {row.testName}
+                                                    </Typography>
+                                                  </Stack>
+                                                </Stack>
+                                                <Stack spacing={0.35} sx={{ minWidth: 0 }}>
+                                                  <Chip
+                                                    size="small"
+                                                    color={investigationStatusColor(row.status)}
+                                                    variant="outlined"
+                                                    icon={investigationStatusIcon(row.status)}
+                                                    label={getVisibleInvestigationStatusLabel(row.status)}
+                                                    aria-label={`${getVisibleInvestigationStatusLabel(row.status)} status`}
+                                                    sx={{ width: "fit-content", fontWeight: 700 }}
+                                                  />
+                                                </Stack>
+                                                <Stack spacing={0.1} sx={{ minWidth: 0 }}>
+                                                  {investigationEvidenceLines(row).map((line, lineIndex) => (
+                                                    <Typography key={`${row.testName}-evidence-${lineIndex}-${line}`} variant="body2" color="text.secondary" sx={{ minWidth: 0, lineHeight: 1.25, fontSize: 13 }}>
+                                                      {line}
+                                                    </Typography>
+                                                  ))}
+                                                </Stack>
+                                                <Stack spacing={0.25} sx={{ minWidth: 0 }}>
+                                                  {row.duplicateRisk ? (
+                                                    <Chip
+                                                      size="small"
+                                                      color="warning"
+                                                      variant="outlined"
+                                                      label="Duplicate Risk"
+                                                      sx={{ width: "fit-content", fontWeight: 700 }}
+                                                    />
+                                                  ) : null}
+                                                  <Tooltip title={investigationDoctorNote(row)} arrow>
+                                                    <Typography variant="body2" color="text.secondary" sx={{ minWidth: 0, lineHeight: 1.25, fontSize: 13 }}>
+                                                      {compactText(investigationDoctorNote(row), 85)}
+                                                    </Typography>
+                                                  </Tooltip>
+                                                </Stack>
+                                                <Stack spacing={0.35} sx={{ minWidth: 0, alignItems: "flex-end" }}>
+                                                  {row.status === "Unknown" ? (
+                                                    <Tooltip title="Insufficient data. Review manually." arrow>
+                                                      <span>
+                                                        <Button size="small" variant="outlined" disabled>
+                                                          Review Manually
+                                                        </Button>
+                                                      </span>
+                                                    </Tooltip>
+                                                  ) : row.status === "Pending" ? (
+                                                    row.matchedOrderId ? (
+                                                      <Tooltip title="Continue the pending laboratory order." arrow>
+                                                        <Button
+                                                          size="small"
+                                                          variant="outlined"
+                                                          color="warning"
+                                                          onClick={() => reviewInvestigationResult(row)}
+                                                        >
+                                                          Continue Order
+                                                        </Button>
+                                                      </Tooltip>
+                                                    ) : (
+                                                      <Tooltip title="Pending order exists. Review in Laboratory module." arrow>
+                                                        <span>
+                                                          <Button size="small" variant="outlined" color="warning" disabled>
+                                                            Continue Order
+                                                          </Button>
+                                                        </span>
+                                                      </Tooltip>
+                                                    )
+                                                  ) : row.status === "Already Available" || row.status === "Recently Completed" ? (
+                                                    <Tooltip title="Review the existing result before repeating this investigation." arrow>
+                                                      <Button size="small" variant="outlined" color="success" onClick={() => reviewInvestigationResult(row)}>
+                                                        Review Result
+                                                      </Button>
+                                                    </Tooltip>
+                                                  ) : row.duplicateRisk ? (
+                                                    <Tooltip title="Existing result or pending order found. Please review before ordering." arrow>
+                                                      <Button size="small" variant="outlined" color="warning" onClick={() => reviewInvestigationResult(row)}>
+                                                        Review Before Ordering
+                                                      </Button>
+                                                    </Tooltip>
+                                                  ) : (
+                                                    <Tooltip title="Prepare this investigation in the laboratory workflow." arrow>
+                                                      <Button size="small" variant="outlined" color="primary" onClick={() => prepareInvestigationOrder(row)}>
+                                                        Prepare Order
+                                                      </Button>
+                                                    </Tooltip>
+                                                  )}
+                                                </Stack>
+                                              </Box>
+                                            ))}
+                                          </Stack>
+                                        </Stack>
+                                      </CardContent>
+                                    </Card>
+                                  ) : (
+                                    <Alert severity="info" sx={{ py: 0.5 }}>
+                                      No AI investigation suggestions were returned.
+                                      <br />
+                                      Review the consultation and use the existing Investigations section if a test is clinically required.
+                                    </Alert>
+                                  )}
+                                </Stack>
+
                                 <Stack spacing={0.5} ref={setClinicalReasoningSectionRef("safetyNotes")}>
                                   <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
                                     <Stack direction="row" spacing={0.75} alignItems="center">
@@ -7652,6 +8521,7 @@ export default function ConsultationWorkspacePage() {
               >
                 <Stack
                   spacing={0.85}
+                  ref={labOrderWorkflowRef}
                   sx={{
                     display: "flex",
                     flexDirection: "column",
@@ -7664,12 +8534,15 @@ export default function ConsultationWorkspacePage() {
                     maxHeight: { xl: "calc(100vh - 32px)" },
                   }}
                 >
+                  <Box ref={patientIntelligenceRef}>
                   <PatientIntelligenceCard
                     context={clinicalContext}
                     loading={clinicalContextLoading}
                     error={clinicalContextError}
+                    highlightLabLabel={clinicalReasoningInvestigationHighlightKey}
                     onViewSourceDocument={(documentId) => void openClinicalDocumentById(documentId)}
                   />
+                  </Box>
                   <Card variant="outlined" sx={{ boxShadow: "none", overflow: "visible", height: "auto", minHeight: "auto" }}>
                     <CardContent sx={{ p: 0.95, "&:last-child": { pb: 0.95 } }}>
                         <Stack spacing={0.85}>
@@ -9989,37 +10862,137 @@ export default function ConsultationWorkspacePage() {
         </Grid>
       ) : null}
 
-      <Dialog open={labOrderDialogOpen} onClose={() => setLabOrderDialogOpen(false)} fullWidth maxWidth="md">
+      <Dialog open={labOrderDialogOpen} onClose={closeLabOrderDialog} fullWidth maxWidth="md">
         <DialogTitle>Select Lab Tests</DialogTitle>
         <DialogContent dividers>
           <Stack spacing={1.5} sx={{ pt: 0.5 }}>
             <Alert severity="info" sx={{ py: 0.45 }}>
-              Review history → Select tests → Check duplicates → Confirm order → Track report
+              <Typography variant="caption" sx={{ fontWeight: 700, lineHeight: 1.3, letterSpacing: 0.1 }}>
+                Review history  →  Select tests  →  Check duplicates  →  Confirm order  →  Track report
+              </Typography>
             </Alert>
+            {labOrderAiPreparation ? (
+              <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5, borderColor: "secondary.light" }}>
+                <CardContent sx={{ p: 1.15, "&:last-child": { pb: 1.15 } }}>
+                  <Stack spacing={1.1}>
+                    <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                      <Stack spacing={0.35}>
+                        <Stack direction="row" spacing={0.75} alignItems="center">
+                        <AutoAwesomeRoundedIcon fontSize="small" color="secondary" />
+                          <Typography variant="subtitle1" sx={{ fontWeight: 900, color: "secondary.main" }}>
+                            AI Recommended Laboratory Investigations
+                          </Typography>
+                        </Stack>
+                        <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.35 }}>
+                          Prepared from current consultation. Doctor review and confirmation are required before creating any laboratory request.
+                        </Typography>
+                      </Stack>
+                      <Tooltip title={compactDateTime(labOrderAiPreparation.generatedAt)} arrow>
+                        <Chip size="small" variant="outlined" label={`Generated: ${labOrderAiGeneratedRelativeLabel}`} />
+                      </Tooltip>
+                    </Stack>
+                    <Alert severity="info" sx={{ py: 0.45 }}>
+                      AI prepared these investigations based on current consultation. Doctor review and confirmation are required before any laboratory request is created.
+                    </Alert>
+                    <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                      {labOrderAiPreparation.investigations.map((testName) => (
+                        <Chip
+                          key={testName}
+                          size="small"
+                          variant="outlined"
+                          color="secondary"
+                          icon={getInvestigationIcon(testName)}
+                          label={testName}
+                          sx={{ "& .MuiChip-icon": { fontSize: 16, color: "text.secondary" } }}
+                        />
+                      ))}
+                      <Chip
+                        size="small"
+                        variant="outlined"
+                        color={labOrderAiPreparation.confidence?.toUpperCase() === "HIGH" ? "success" : labOrderAiPreparation.confidence?.toUpperCase() === "LOW" ? "error" : "warning"}
+                        label={labOrderAiPreparation.confidence === "HIGH" ? "High" : labOrderAiPreparation.confidence === "LOW" ? "Low" : "Medium"}
+                      />
+                      <Chip
+                        size="small"
+                        variant="outlined"
+                        color={labOrderAiPreparation.suggestedPriority.toUpperCase() === "STAT" ? "error" : labOrderAiPreparation.suggestedPriority.toUpperCase() === "URGENT" ? "warning" : "info"}
+                        label={labOrderAiPreparation.suggestedPriority}
+                      />
+                    </Stack>
+                    <Stack spacing={0.45}>
+                      <Typography variant="caption" color="text.secondary" sx={{ textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 800 }}>
+                        Reason
+                      </Typography>
+                      <Typography variant="body2" sx={{ lineHeight: 1.4 }}>
+                        {labOrderAiPreparation.reason}
+                      </Typography>
+                    </Stack>
+                    <Stack spacing={0.45}>
+                      <Typography variant="caption" color="text.secondary" sx={{ textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 800 }}>
+                        Supporting evidence
+                      </Typography>
+                      <Stack spacing={0.55}>
+                        {labOrderAiPreparation.supportingEvidence.length ? labOrderAiPreparation.supportingEvidence.slice(0, 6).map((item) => (
+                          <Stack key={item} direction="row" spacing={0.6} alignItems="flex-start">
+                            <CheckCircleRoundedIcon fontSize="inherit" color="success" sx={{ mt: 0.15, fontSize: 16 }} />
+                            <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.35 }}>
+                              {item}
+                            </Typography>
+                          </Stack>
+                        )) : (
+                          <Typography variant="body2" color="text.secondary">
+                            Clinical judgement required.
+                          </Typography>
+                        )}
+                      </Stack>
+                    </Stack>
+                    {labOrderAiPreparation.duplicateWarnings.length ? (
+                      <Alert severity="warning" sx={{ py: 0.45 }}>
+                        <Stack spacing={0.2}>
+                          <Typography variant="body2" sx={{ fontWeight: 800 }}>
+                            Existing result/order detected.
+                          </Typography>
+                          {labOrderAiPreparation.duplicateWarnings.map((warning) => (
+                            <Typography key={warning} variant="caption" color="text.secondary">
+                              {warning}
+                            </Typography>
+                          ))}
+                        </Stack>
+                      </Alert>
+                    ) : null}
+                  </Stack>
+                </CardContent>
+              </Card>
+            ) : null}
             <TextField
               fullWidth
               size="small"
-              label="Notes"
+              label="Clinical Order Notes"
               value={labOrderNotes}
               onChange={(e) => setLabOrderNotes(e.target.value)}
               multiline
               minRows={2}
-              placeholder="Add order notes for the lab team"
+              placeholder="Persistent fever in a diabetic patient."
+              helperText="Editable by the doctor before laboratory request creation."
             />
             {labOrderTestIds.length ? (
               <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
                 {selectedLabOrderTests.slice(0, 8).map((test) => <Chip key={test.id} size="small" variant="outlined" label={test.testName} />)}
               </Stack>
             ) : (
-              <Typography variant="caption" color="text.secondary">No tests selected yet. Pick recommended or custom tests from the Investigations tab.</Typography>
+              <Stack spacing={0.45} alignItems="center" justifyContent="center" sx={{ py: 1.5, textAlign: "center" }}>
+                <PlaylistAddCheckRoundedIcon fontSize="small" color="disabled" />
+                <Typography variant="body2" color="text.secondary">No laboratory tests selected.</Typography>
+                <Typography variant="caption" color="text.secondary">Select AI recommendations or search manually below.</Typography>
+              </Stack>
             )}
-            <Box sx={{ maxHeight: 360, overflow: "auto", border: "1px solid", borderColor: "divider", borderRadius: 1.5, p: 1.25 }}>
+            <Box sx={{ maxHeight: 360, overflow: "auto", border: "1px solid", borderColor: "divider", borderRadius: 1.5, p: 1.5 }}>
               <Stack spacing={1}>
                 {labTests.map((test) => {
                   const selected = labOrderTestIds.includes(test.id);
                   return (
                     <Card key={test.id} variant="outlined" sx={{ boxShadow: "none", borderColor: selected ? "primary.main" : "divider" }}>
-                      <CardContent sx={{ p: 1 }}>
+                      <CardContent sx={{ p: 1.25, "&:last-child": { pb: 1.25 } }}>
                         <Stack direction="row" spacing={1} justifyContent="space-between" alignItems="flex-start">
                           <Box>
                             <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>{test.testName}</Typography>
@@ -10027,13 +11000,15 @@ export default function ConsultationWorkspacePage() {
                               {test.testCode} • {test.category} • {test.sampleType || "Sample not specified"} • {test.tenantTatOverride || test.turnaroundTime || "TAT not set"} • {formatMoney(test.tenantPriceOverride ?? test.price ?? null)}
                             </Typography>
                           </Box>
-                          <Button
-                            size="small"
-                            variant={selected ? "contained" : "outlined"}
-                            onClick={() => setLabOrderTestIds((current) => selected ? current.filter((id) => id !== test.id) : [...current, test.id])}
-                          >
-                            {selected ? "Selected" : "Select"}
-                          </Button>
+                          <Tooltip title={selected ? "Remove this test from the prepared laboratory order." : "Add this test to the prepared laboratory order."} arrow>
+                            <Button
+                              size="small"
+                              variant={selected ? "contained" : "outlined"}
+                              onClick={() => setLabOrderTestIds((current) => selected ? current.filter((id) => id !== test.id) : [...current, test.id])}
+                            >
+                              {selected ? "Selected" : "Select"}
+                            </Button>
+                          </Tooltip>
                         </Stack>
                       </CardContent>
                     </Card>
@@ -10045,7 +11020,7 @@ export default function ConsultationWorkspacePage() {
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setLabOrderDialogOpen(false)}>Cancel</Button>
+          <Button onClick={closeLabOrderDialog}>Cancel</Button>
           <Button variant="outlined" disabled={labOrderSaving || !labOrderTestIds.length} onClick={openLabOrderReview}>
             Review &amp; Create Lab Order
           </Button>

@@ -73,11 +73,12 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
         long started = System.currentTimeMillis();
         UUID requestId = UUID.randomUUID();
         AiPromptTemplateDefinition template = templateRegistry.resolve(request);
-        Map<String, Object> renderedVariables = renderVariables(request, template);
+        AiTaskGenerationConfigService.GenerationConfig generationConfig = taskGenerationConfigService.resolve(request.taskType());
+        AiOrchestrationRequest requestWithTaskDefaults = applyGenerationConfig(request, generationConfig);
+        Map<String, Object> renderedVariables = renderVariables(requestWithTaskDefaults, template);
         String evidenceSummary = summarizeEvidence(request.evidence());
         String userPrompt = render(template.userPromptTemplate(), renderedVariables, evidenceSummary);
-        AiGuardrailService.ExecutionSettings executionSettings = guardrailService.resolveExecutionSettings(request.tenantId(), userPrompt, request, null);
-        AiTaskGenerationConfigService.GenerationConfig generationConfig = taskGenerationConfigService.resolve(request.taskType());
+        AiGuardrailService.ExecutionSettings executionSettings = guardrailService.resolveExecutionSettings(request.tenantId(), userPrompt, requestWithTaskDefaults, null);
         boolean strictJson = requiresStrictJson(template);
         String schemaMode = executionSettings.compactMode()
                 ? "COMPACT_JSON"
@@ -92,7 +93,7 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                 executionSettings.requestedMaxTokens(),
                 executionSettings.effectiveMaxTokens(),
                 executionSettings.guardrailLimit(),
-                request.temperature(),
+                requestWithTaskDefaults.temperature(),
                 null,
                 schemaMode,
                 executionSettings.compactMode(),
@@ -101,7 +102,7 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                 generationConfig.thinkingBudget(),
                 generationConfig.strictJsonMode(),
                 fallbackOrder);
-        AiOrchestrationRequest executionRequest = applyMaxTokens(request, executionSettings.effectiveMaxTokens());
+        AiOrchestrationRequest executionRequest = applyMaxTokens(requestWithTaskDefaults, executionSettings.effectiveMaxTokens());
         renderedVariables = renderVariables(executionRequest, template);
         userPrompt = render(template.userPromptTemplate(), renderedVariables, evidenceSummary);
         guardrailService.validatePreExecution(request.tenantId(), userPrompt, executionRequest, null);
@@ -147,8 +148,30 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                         providerResponse == null || providerResponse.responseChars() == null ? 0 : providerResponse.responseChars(),
                         providerResponse == null ? null : providerResponse.finishReason(),
                         providerResponse == null ? null : providerResponse.normalizedFinishReason());
-                response = toResponse(request, requestId, provider, providerResponse, template, request.evidence(),
-                        started, fallbackUsed, fallbackUsed ? "Fallback provider was used. Please verify before acting." : null);
+                ParsedOutput parsed = parseProviderOutput(providerResponse, template);
+                if (shouldAdvanceToNextProvider(executionRequest, parsed)) {
+                    log.warn("AI provider returned incomplete structured output. requestId={}, provider={}, attempt={}, taskType={}, parseStatus={}, finishReason={}, useCaseCode={}",
+                            requestId,
+                            candidate.providerName(),
+                            i + 1,
+                            executionRequest.taskType(),
+                            parsed.parseStatus(),
+                            parsed.normalizedFinishReason(),
+                            executionRequest.useCaseCode());
+                    lastFailure = AiProviderException.retryable(
+                            parsed.errorMessage() == null ? "AI provider returned incomplete structured output." : parsed.errorMessage(),
+                            null,
+                            candidate.providerName(),
+                            null,
+                            null,
+                            null
+                    );
+                    lastRetryableFailure = lastFailure;
+                    provider = candidate;
+                    continue;
+                }
+                response = toResponse(executionRequest, requestId, provider, providerResponse, template, request.evidence(),
+                        started, fallbackUsed, fallbackUsed ? "Fallback provider was used. Please verify before acting." : null, parsed);
                 break;
             } catch (AiProviderException ex) {
                 lastFailure = ex;
@@ -190,11 +213,11 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
 
         auditService.record(new AiRequestAuditCommand(
                 requestId,
-                request.productCode() == null ? AiProductCode.GENERIC.name() : request.productCode().name(),
-                request.tenantId(),
-                request.actorUserId(),
-                request.useCaseCode(),
-                request.taskType() == null ? AiTaskType.GENERIC_COPILOT.name() : request.taskType().name(),
+                requestWithTaskDefaults.productCode() == null ? AiProductCode.GENERIC.name() : requestWithTaskDefaults.productCode().name(),
+                requestWithTaskDefaults.tenantId(),
+                requestWithTaskDefaults.actorUserId(),
+                requestWithTaskDefaults.useCaseCode(),
+                requestWithTaskDefaults.taskType() == null ? AiTaskType.GENERIC_COPILOT.name() : requestWithTaskDefaults.taskType().name(),
                 template.templateCode(),
                 template.version(),
                 provider == null ? null : provider.providerName(),
@@ -211,14 +234,14 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                 response.tokenUsage() == null ? null : response.tokenUsage().estimatedCost(),
                 fallbackUsed || response.fallbackUsed(),
                 lastFailure == null ? response.errorMessage() : safeMessage(lastFailure),
-                request.correlationId()
+                requestWithTaskDefaults.correlationId()
         ));
         invocationLogService.record(new AiInvocationLogService.InvocationLogCommand(
-                request.tenantId(),
+                requestWithTaskDefaults.tenantId(),
                 requestId,
-                request.correlationId(),
-                request.productCode() == null ? AiProductCode.GENERIC.name() : request.productCode().name(),
-                request.useCaseCode(),
+                requestWithTaskDefaults.correlationId(),
+                requestWithTaskDefaults.productCode() == null ? AiProductCode.GENERIC.name() : requestWithTaskDefaults.productCode().name(),
+                requestWithTaskDefaults.useCaseCode(),
                 template.templateCode(),
                 parseVersionNumber(template.version()),
                 provider == null ? null : provider.providerName(),
@@ -232,7 +255,7 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                 outputSummary(response.outputText()),
                 lastFailure == null ? null : "PROVIDER_ERROR",
                 lastFailure == null ? response.errorMessage() : safeMessage(lastFailure),
-                request.actorUserId()
+                requestWithTaskDefaults.actorUserId()
         ));
         return response;
     }
@@ -253,6 +276,35 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                 request.inputVariables(),
                 request.evidence(),
                 maxTokens,
+                request.temperature(),
+                request.correlationId(),
+                request.useCaseCode()
+        );
+    }
+
+    private AiOrchestrationRequest applyGenerationConfig(AiOrchestrationRequest request,
+                                                         AiTaskGenerationConfigService.GenerationConfig generationConfig) {
+        if (request == null || generationConfig == null) {
+            return request;
+        }
+        Integer configuredMaxTokens = generationConfig.maxOutputTokens();
+        Integer nextMaxTokens = request.maxTokens();
+        if (configuredMaxTokens != null && (nextMaxTokens == null || nextMaxTokens > configuredMaxTokens)) {
+            nextMaxTokens = configuredMaxTokens;
+        }
+        boolean unchanged = request.maxTokens() == null ? nextMaxTokens == null : request.maxTokens().equals(nextMaxTokens);
+        if (unchanged) {
+            return request;
+        }
+        return new AiOrchestrationRequest(
+                request.productCode(),
+                request.tenantId(),
+                request.actorUserId(),
+                request.taskType(),
+                request.promptTemplateCode(),
+                request.inputVariables(),
+                request.evidence(),
+                nextMaxTokens,
                 request.temperature(),
                 request.correlationId(),
                 request.useCaseCode()
@@ -303,6 +355,19 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                                                boolean fallbackUsed,
                                                String errorMessage) {
         ParsedOutput parsed = parseProviderOutput(providerResponse, template);
+        return toResponse(request, requestId, provider, providerResponse, template, evidence, started, fallbackUsed, errorMessage, parsed);
+    }
+
+    private AiOrchestrationResponse toResponse(AiOrchestrationRequest request,
+                                               UUID requestId,
+                                               AiProvider provider,
+                                               AiProviderResponse providerResponse,
+                                               AiPromptTemplateDefinition template,
+                                               List<AiEvidenceReference> evidence,
+                                               long started,
+                                               boolean fallbackUsed,
+                                               String errorMessage,
+                                               ParsedOutput parsed) {
         List<String> suggestedActions = !parsed.suggestedActions().isEmpty()
                 ? parsed.suggestedActions()
                 : template.fallbackSuggestedActions();
@@ -380,6 +445,44 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                 outputText,
                 "FAILED"
         );
+    }
+
+    private boolean shouldAdvanceToNextProvider(AiOrchestrationRequest request, ParsedOutput parsed) {
+        if (request == null || request.taskType() != AiTaskType.CLINICAL_REASONING || parsed == null) {
+            return false;
+        }
+        String useCaseCode = request.useCaseCode() == null ? "" : request.useCaseCode().trim().toLowerCase();
+        if (!useCaseCode.contains("repair")) {
+            return false;
+        }
+        if (!"VALID".equalsIgnoreCase(parsed.parseStatus())) {
+            return true;
+        }
+        return !hasCompleteClinicalReasoningCore(parsed.structuredJson());
+    }
+
+    private boolean hasCompleteClinicalReasoningCore(String structuredJson) {
+        if (structuredJson == null || structuredJson.isBlank()) {
+            return false;
+        }
+        try {
+            JsonNode root = objectMapper.readTree(structuredJson);
+            if (root == null || !root.isObject()) {
+                return false;
+            }
+            String primaryDiagnosis = text(root.path("primaryDiagnosis"), "name");
+            if (primaryDiagnosis == null || primaryDiagnosis.isBlank()) {
+                return false;
+            }
+            String confidence = text(root, "confidence");
+            if (confidence != null && !confidence.isBlank()) {
+                return true;
+            }
+            JsonNode primaryConfidence = root.path("primaryDiagnosis").path("confidence");
+            return !(primaryConfidence.isMissingNode() || primaryConfidence.isNull() || primaryConfidence.asText("").isBlank());
+        } catch (Exception ex) {
+            return false;
+        }
     }
 
     private Map<String, Object> renderVariables(AiOrchestrationRequest request, AiPromptTemplateDefinition template) {

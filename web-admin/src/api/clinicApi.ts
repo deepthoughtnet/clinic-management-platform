@@ -622,11 +622,13 @@ export type ClinicalReasoningResult = {
     correlationId: string | null;
     latencyMs: number | null;
     fallbackUsed: boolean;
+    retryUsed?: boolean;
     finishReason: string | null;
     normalizedFinishReason?: string | null;
     rawChars: number | null;
     errorMessage: string | null;
     responseChars?: number | null;
+    resultQuality?: "COMPLETE" | "PARTIAL_FALLBACK" | "FAILED" | string | null;
   };
 };
 

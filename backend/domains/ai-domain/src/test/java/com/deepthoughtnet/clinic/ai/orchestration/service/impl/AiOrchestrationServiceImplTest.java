@@ -90,7 +90,7 @@ class AiOrchestrationServiceImplTest {
         AiRequestAuditService auditService = mock(AiRequestAuditService.class);
         AiGuardrailService guardrailService = mock(AiGuardrailService.class);
         AiInvocationLogService invocationLogService = mock(AiInvocationLogService.class);
-        AiTaskGenerationConfigService taskGenerationConfigService = new AiTaskGenerationConfigService(null, "gemini-2.5-flash", 0, true);
+        AiTaskGenerationConfigService taskGenerationConfigService = new AiTaskGenerationConfigService(null, "gemini-2.5-flash", 0, true, 2048);
         AiOrchestrationServiceImpl service = new AiOrchestrationServiceImpl(
                 registry,
                 router,
@@ -249,6 +249,52 @@ class AiOrchestrationServiceImplTest {
         assertEquals("GROQ", captor.getValue().provider());
         assertTrue(captor.getValue().fallbackUsed());
         assertTrue(captor.getValue().errorMessage().contains("Gemini timed out"));
+    }
+
+    @Test
+    void clinicalReasoningRepairFallsBackWhenPrimaryProviderReturnsTruncatedJson() {
+        AiPromptTemplateRegistryService registry = mock(AiPromptTemplateRegistryService.class);
+        AiProviderRouter router = mock(AiProviderRouter.class);
+        AiRequestAuditService auditService = mock(AiRequestAuditService.class);
+        AiOrchestrationServiceImpl service = newService(registry, router, auditService);
+
+        AiOrchestrationRequest request = new AiOrchestrationRequest(
+                AiProductCode.CLINIC,
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                AiTaskType.CLINICAL_REASONING,
+                "clinic.clinical.reasoning.v1",
+                Map.of("reasoningPrompt", "Return only strict JSON"),
+                List.of(),
+                null,
+                0.1d,
+                "corr-repair",
+                "clinical_reasoning_generate_repair"
+        );
+        AiPromptTemplateDefinition template = new AiPromptTemplateDefinition(
+                "clinic.clinical.reasoning.v1",
+                "v1",
+                AiProductCode.CLINIC,
+                AiTaskType.CLINICAL_REASONING,
+                "Return only strict JSON.",
+                "{{input.reasoningPrompt}}",
+                com.deepthoughtnet.clinic.platform.contracts.ai.AiPromptTemplateStatus.ACTIVE,
+                "fallback summary",
+                List.of("Review manually"),
+                List.of("Advisory only")
+        );
+        when(registry.resolve(request)).thenReturn(template);
+        AiProvider gemini = provider("GEMINI", "{\"confidence\":\"HIGH\"", AiProviderStatus.AVAILABLE, "MAX_TOKENS", "TRUNCATED");
+        AiProvider groq = provider("GROQ", "{\"confidence\":\"HIGH\",\"primaryDiagnosis\":{\"name\":\"Community Acquired Pneumonia\",\"confidence\":0.74}}", AiProviderStatus.AVAILABLE);
+        when(router.resolveCandidates(AiTaskType.CLINICAL_REASONING)).thenReturn(List.of(gemini, groq));
+
+        AiOrchestrationResponse response = service.complete(request);
+
+        assertEquals("GROQ", response.provider());
+        assertTrue(response.fallbackUsed());
+        assertEquals("VALID", response.parseStatus());
+        assertNotNull(response.structuredJson());
+        assertTrue(response.structuredJson().contains("\"primaryDiagnosis\""));
     }
 
     @Test
@@ -652,6 +698,10 @@ class AiOrchestrationServiceImplTest {
     }
 
     private AiProvider provider(String name, String outputText, AiProviderStatus status) {
+        return provider(name, outputText, status, null, null);
+    }
+
+    private AiProvider provider(String name, String outputText, AiProviderStatus status, String finishReason, String parseStatus) {
         return new AiProvider() {
             @Override
             public String providerName() {
@@ -666,7 +716,12 @@ class AiOrchestrationServiceImplTest {
             @Override
             public AiProviderResponse complete(AiProviderRequest request) {
                 return new AiProviderResponse(name, "model", outputText, null, BigDecimal.valueOf(0.91),
-                        new AiTokenUsage(10L, 5L, 15L, BigDecimal.valueOf(0.12)), null);
+                        new AiTokenUsage(10L, 5L, 15L, BigDecimal.valueOf(0.12)),
+                        finishReason,
+                        finishReason == null ? null : com.deepthoughtnet.clinic.platform.contracts.ai.AiFinishReasonNormalizer.normalize(finishReason),
+                        outputText == null ? 0 : outputText.length(),
+                        outputText,
+                        parseStatus == null ? "UNKNOWN" : parseStatus);
             }
 
             @Override
@@ -724,7 +779,7 @@ class AiOrchestrationServiceImplTest {
                 auditService,
                 guardrailService,
                 mock(AiInvocationLogService.class),
-                new AiTaskGenerationConfigService(null, "gemini-2.5-flash", 0, true),
+                new AiTaskGenerationConfigService(null, "gemini-2.5-flash", 0, true, 2048),
                 new ObjectMapper()
         );
     }
@@ -739,7 +794,7 @@ class AiOrchestrationServiceImplTest {
                 auditService,
                 guardrailService,
                 mock(AiInvocationLogService.class),
-                new AiTaskGenerationConfigService(null, "gemini-2.5-flash", 0, true),
+                new AiTaskGenerationConfigService(null, "gemini-2.5-flash", 0, true, 2048),
                 new ObjectMapper()
         );
     }

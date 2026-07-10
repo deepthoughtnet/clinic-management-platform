@@ -44,14 +44,14 @@ public class ClinicalReasoningEngine {
     public ClinicalReasoningResult generate(UUIDContext context, ConsultationEntity consultation, ClinicalReasoningRequest request, ClinicalContextResponse clinicalContext) {
         long started = System.currentTimeMillis();
         ClinicalReasoningResult result = runOnce(context, consultation, request, clinicalContext, false, null);
-        if (!"VALID".equalsIgnoreCase(result.metadata().parseStatus())
-                && !"BLOCKED".equalsIgnoreCase(result.metadata().parseStatus())) {
+        if (requiresRepair(result)) {
             result = runOnce(context, consultation, request, clinicalContext, true, retryReason(result));
         }
         long latencyMs = System.currentTimeMillis() - started;
-        result = enrichRuntimeMetadata(result, latencyMs);
         result = enrichSourceAwareness(result, clinicalContext, consultation);
         result = enrichClinicalGaps(result, clinicalContext, consultation);
+        String resultQuality = resolveResultQuality(result);
+        result = enrichRuntimeMetadata(result, latencyMs, resultQuality);
         log.info("[AI-REASONING-TRACE] tenantId={} consultationId={} patientId={} requestId={} correlationId={} provider={} model={} latencyMs={} parseStatus={} primaryDiagnosis={} differentialCount={} redFlagCount={} recommendedTestCount={} fallbackUsed={}",
                 context.tenantId(),
                 consultation.getId(),
@@ -67,6 +67,20 @@ public class ClinicalReasoningEngine {
                 result.redFlags() == null ? 0 : result.redFlags().size(),
                 result.recommendedTests() == null ? 0 : result.recommendedTests().size(),
                 result.metadata().fallbackUsed());
+        log.info("[AI-REASONING-FINAL] requestId={} provider={} model={} resultQuality={} parseStatus={} finishReason={} retryUsed={} providerFallbackUsed={} primaryDiagnosisPresent={} differentialCount={} evidenceCount={} redFlagCount={} recommendedTestCount={}",
+                context.requestId(),
+                result.provider(),
+                result.model(),
+                result.metadata() == null ? null : result.metadata().resultQuality(),
+                result.metadata() == null ? null : result.metadata().parseStatus(),
+                result.metadata() == null ? null : result.metadata().normalizedFinishReason(),
+                result.metadata() != null && result.metadata().retryUsed(),
+                result.metadata() != null && result.metadata().fallbackUsed(),
+                hasPrimaryDiagnosis(result),
+                result.differentialDiagnoses() == null ? 0 : result.differentialDiagnoses().size(),
+                result.supportingEvidence() == null ? 0 : result.supportingEvidence().size(),
+                result.redFlags() == null ? 0 : result.redFlags().size(),
+                result.recommendedTests() == null ? 0 : result.recommendedTests().size());
         return result;
     }
 
@@ -125,11 +139,72 @@ public class ClinicalReasoningEngine {
                 : result.metadata().errorMessage();
     }
 
-    private ClinicalReasoningResult enrichRuntimeMetadata(ClinicalReasoningResult result, long latencyMs) {
+    private String resolveResultQuality(ClinicalReasoningResult result) {
+        if (isCompleteResult(result)) {
+            return "COMPLETE";
+        }
+        if (hasAnyReasoningContent(result)) {
+            return "PARTIAL_FALLBACK";
+        }
+        return "FAILED";
+    }
+
+    private boolean isCompleteResult(ClinicalReasoningResult result) {
+        return result != null
+                && result.metadata() != null
+                && "VALID".equalsIgnoreCase(result.metadata().parseStatus())
+                && !"TRUNCATED".equalsIgnoreCase(result.metadata().normalizedFinishReason())
+                && hasPrimaryDiagnosis(result)
+                && hasKnownConfidence(result);
+    }
+
+    private boolean hasAnyReasoningContent(ClinicalReasoningResult result) {
+        return result != null && (
+                hasPrimaryDiagnosis(result)
+                        || hasItems(result.differentialDiagnoses())
+                        || hasItems(result.supportingEvidence())
+                        || hasItems(result.missingInformation())
+                        || hasItems(result.redFlags())
+                        || hasItems(result.recommendedTests())
+                        || hasItems(result.safetyNotes())
+                        || (result.reasoningSummary() != null && !result.reasoningSummary().isBlank())
+        );
+    }
+
+    private boolean hasPrimaryDiagnosis(ClinicalReasoningResult result) {
+        return result != null
+                && result.primaryDiagnosis() != null
+                && result.primaryDiagnosis().name() != null
+                && !result.primaryDiagnosis().name().isBlank();
+    }
+
+    private boolean hasKnownConfidence(ClinicalReasoningResult result) {
+        return result != null
+                && result.confidence() != null
+                && !result.confidence().isBlank()
+                && !"UNKNOWN".equalsIgnoreCase(result.confidence());
+    }
+
+    private boolean requiresRepair(ClinicalReasoningResult result) {
+        if (result == null || result.metadata() == null) {
+            return true;
+        }
+        if ("BLOCKED".equalsIgnoreCase(result.metadata().parseStatus())) {
+            return false;
+        }
+        return !"VALID".equalsIgnoreCase(result.metadata().parseStatus())
+                || !hasPrimaryDiagnosis(result)
+                || !hasKnownConfidence(result);
+    }
+
+    private ClinicalReasoningResult enrichRuntimeMetadata(ClinicalReasoningResult result, long latencyMs, String resultQuality) {
         if (result == null || result.metadata() == null) {
             return result;
         }
-        if (result.metadata().latencyMs() != null && result.metadata().latencyMs() >= 0) {
+        if (result.metadata().latencyMs() != null
+                && result.metadata().latencyMs() >= 0
+                && resultQuality != null
+                && resultQuality.equalsIgnoreCase(result.metadata().resultQuality() == null ? "" : result.metadata().resultQuality())) {
             return result;
         }
         ReasoningMetadata metadata = new ReasoningMetadata(
@@ -145,12 +220,14 @@ public class ClinicalReasoningEngine {
                 result.metadata().correlationId(),
                 latencyMs,
                 result.metadata().fallbackUsed(),
+                result.metadata().retryUsed(),
                 result.metadata().finishReason(),
                 result.metadata().normalizedFinishReason(),
                 result.metadata().responseChars(),
                 result.metadata().rawText(),
                 result.metadata().rawChars(),
-                result.metadata().errorMessage()
+                result.metadata().errorMessage(),
+                resultQuality
         );
         return new ClinicalReasoningResult(
                 result.consultationId(),

@@ -81,6 +81,8 @@ class ClinicalReasoningEngineTest {
         assertThat(result.redFlags()).extracting("name").contains("Diabetes with fever", "SpO2 below 94%");
         assertThat(result.safetyNotes()).extracting("message").contains("Monitor blood sugar during fever");
         assertThat(result.recommendedTests()).extracting("name").contains("COVID/Flu test");
+        assertThat(result.metadata().resultQuality()).isEqualTo("COMPLETE");
+        assertThat(result.metadata().errorMessage()).isNull();
     }
 
     @Test
@@ -165,6 +167,102 @@ class ClinicalReasoningEngineTest {
         assertThat(result.metadata().finishReason()).isEqualTo("STOP");
         assertThat(result.metadata().normalizedFinishReason()).isEqualTo("COMPLETE");
         assertThat(result.primaryDiagnosis().name()).isEqualTo("Viral Upper Respiratory Infection");
+        assertThat(result.metadata().retryUsed()).isTrue();
+        assertThat(result.metadata().resultQuality()).isEqualTo("COMPLETE");
+    }
+
+    @Test
+    void marksPartialFallbackWhenAllAiAttemptsMissPrimaryDiagnosis() {
+        AiDoctorCopilotService copilotService = mock(AiDoctorCopilotService.class);
+        ClinicalReasoningPromptBuilder promptBuilder = new ClinicalReasoningPromptBuilder();
+        ClinicalReasoningResponseParser parser = new ClinicalReasoningResponseParser(new com.fasterxml.jackson.databind.ObjectMapper());
+        ClinicalReasoningEngine engine = new ClinicalReasoningEngine(copilotService, promptBuilder, parser);
+
+        UUID tenantId = UUID.randomUUID();
+        ConsultationEntity consultation = ConsultationEntity.create(tenantId, UUID.randomUUID(), UUID.randomUUID(), null);
+        consultation.update("Fever, cough, body ache and weakness", "Fever and cough for 4 days", null, "CBC normal", null, null, null, null, null, null, null, null, null, null, null);
+        ClinicalContextResponse context = sampleContext(tenantId, consultation.getPatientId(), consultation.getId());
+        ClinicalReasoningRequest request = new ClinicalReasoningRequest(consultation.getPatientId(), "Fever, cough", "Fever and cough", "CBC normal", "BP 136/86", null, null, null, null, null);
+
+        when(copilotService.draft(eq(com.deepthoughtnet.clinic.platform.contracts.ai.AiTaskType.CLINICAL_REASONING), anyString(), anyString(), anyMap(), eq(List.of())))
+                .thenReturn(new AiDraftResponse(true, false, "bad", "GEMINI", "gemini-2.5-flash", "{\"confidence\":\"HIGH\"", Map.of("raw", "{\"confidence\":\"HIGH\""), null, List.of(), List.of(), "MAX_TOKENS", "TRUNCATED", 20, "{\"confidence\":\"HIGH\"", "TRUNCATED"))
+                .thenReturn(new AiDraftResponse(
+                        true,
+                        false,
+                        "partial",
+                        "MOCK",
+                        "mock-model",
+                        "{\"confidence\":\"HIGH\",\"supportingEvidence\":[{\"text\":\"Fever and cough\"}],\"recommendedTests\":[{\"name\":\"CBC\",\"reason\":\"Repeat if clinically indicated\"}],\"safetyNotes\":[{\"message\":\"Monitor hydration\"}],\"reasoningSummary\":\"Partial response.\"}",
+                        mapOf(
+                                "confidence", "HIGH",
+                                "supportingEvidence", List.of(mapOf("text", "Fever and cough")),
+                                "recommendedTests", List.of(mapOf("name", "CBC", "reason", "Repeat if clinically indicated")),
+                                "safetyNotes", List.of(mapOf("message", "Monitor hydration")),
+                                "reasoningSummary", "Partial response."
+                        ),
+                        BigDecimal.valueOf(0.4),
+                        List.of(),
+                        List.of(),
+                        "STOP",
+                        "COMPLETE",
+                        220,
+                        "{\"confidence\":\"HIGH\",\"supportingEvidence\":[{\"text\":\"Fever and cough\"}],\"recommendedTests\":[{\"name\":\"CBC\",\"reason\":\"Repeat if clinically indicated\"}],\"safetyNotes\":[{\"message\":\"Monitor hydration\"}],\"reasoningSummary\":\"Partial response.\"}",
+                        "VALID"
+                ));
+
+        ClinicalReasoningResult result = engine.generate(new ClinicalReasoningEngine.UUIDContext(tenantId, "corr-5", "corr-5"), consultation, request, context);
+
+        assertThat(result.primaryDiagnosis()).isNull();
+        assertThat(result.supportingEvidence()).isNotEmpty();
+        assertThat(result.redFlags()).isNotEmpty();
+        assertThat(result.metadata().retryUsed()).isTrue();
+        assertThat(result.metadata().resultQuality()).isEqualTo("PARTIAL_FALLBACK");
+    }
+
+    @Test
+    void surfacesProviderFallbackResultAfterRepair() {
+        AiDoctorCopilotService copilotService = mock(AiDoctorCopilotService.class);
+        ClinicalReasoningPromptBuilder promptBuilder = new ClinicalReasoningPromptBuilder();
+        ClinicalReasoningResponseParser parser = new ClinicalReasoningResponseParser(new com.fasterxml.jackson.databind.ObjectMapper());
+        ClinicalReasoningEngine engine = new ClinicalReasoningEngine(copilotService, promptBuilder, parser);
+
+        UUID tenantId = UUID.randomUUID();
+        ConsultationEntity consultation = ConsultationEntity.create(tenantId, UUID.randomUUID(), UUID.randomUUID(), null);
+        ClinicalContextResponse context = sampleContext(tenantId, consultation.getPatientId(), consultation.getId());
+        ClinicalReasoningRequest request = new ClinicalReasoningRequest(consultation.getPatientId(), "Fever", "Fever", "CBC normal", "BP 136/86", null, null, null, null, null);
+
+        when(copilotService.draft(eq(com.deepthoughtnet.clinic.platform.contracts.ai.AiTaskType.CLINICAL_REASONING), anyString(), anyString(), anyMap(), eq(List.of())))
+                .thenReturn(new AiDraftResponse(true, false, "bad", "GEMINI", "gemini-2.5-flash", "{\"confidence\":\"HIGH\"", Map.of("raw", "{\"confidence\":\"HIGH\""), null, List.of(), List.of(), "MAX_TOKENS", "TRUNCATED", 20, "{\"confidence\":\"HIGH\"", "TRUNCATED"))
+                .thenReturn(new AiDraftResponse(
+                        true,
+                        true,
+                        "ok",
+                        "GROQ",
+                        "llama-3.3",
+                        "{\"confidence\":\"HIGH\",\"primaryDiagnosis\":{\"name\":\"Community Acquired Pneumonia\",\"confidence\":0.72,\"status\":\"SUGGESTED\"},\"differentialDiagnoses\":[{\"name\":\"Viral URI\",\"confidence\":0.4}],\"reasoningSummary\":\"Likely bacterial lower respiratory infection.\"}",
+                        mapOf(
+                                "confidence", "HIGH",
+                                "primaryDiagnosis", mapOf("name", "Community Acquired Pneumonia", "confidence", 0.72, "status", "SUGGESTED"),
+                                "differentialDiagnoses", List.of(mapOf("name", "Viral URI", "confidence", 0.4)),
+                                "reasoningSummary", "Likely bacterial lower respiratory infection."
+                        ),
+                        BigDecimal.valueOf(0.84),
+                        List.of(),
+                        List.of(),
+                        "STOP",
+                        "COMPLETE",
+                        248,
+                        "{\"confidence\":\"HIGH\",\"primaryDiagnosis\":{\"name\":\"Community Acquired Pneumonia\",\"confidence\":0.72,\"status\":\"SUGGESTED\"},\"differentialDiagnoses\":[{\"name\":\"Viral URI\",\"confidence\":0.4}],\"reasoningSummary\":\"Likely bacterial lower respiratory infection.\"}",
+                        "VALID"
+                ));
+
+        ClinicalReasoningResult result = engine.generate(new ClinicalReasoningEngine.UUIDContext(tenantId, "corr-6", "corr-6"), consultation, request, context);
+
+        assertThat(result.provider()).isEqualTo("GROQ");
+        assertThat(result.metadata().fallbackUsed()).isTrue();
+        assertThat(result.metadata().retryUsed()).isTrue();
+        assertThat(result.metadata().resultQuality()).isEqualTo("COMPLETE");
+        assertThat(result.primaryDiagnosis().name()).isEqualTo("Community Acquired Pneumonia");
     }
 
     @Test
