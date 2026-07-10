@@ -819,6 +819,25 @@ function appendUniqueTokenLine(base: string, token: string): string {
   return appendTokenLine(base, nextToken);
 }
 
+function splitClinicalTokenEntries(value: string): string[] {
+  return value
+    .split(/[\n,;•]+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function removeClinicalTokenEntry(value: string, tokenToRemove: string): string {
+  const normalizedToken = normalizeClinicalToken(tokenToRemove);
+  const remainingEntries = splitClinicalTokenEntries(value).filter(
+    (entry) => normalizeClinicalToken(entry) !== normalizedToken
+  );
+  return remainingEntries.join(", ");
+}
+
+function pluralizeLabTests(count: number): string {
+  return `${count} ${count === 1 ? "test" : "tests"}`;
+}
+
 function confidenceLevelFromPercent(value: number | null | undefined) {
   if (value == null || Number.isNaN(value)) return "Unknown";
   if (value >= 0.8) return "Very High";
@@ -1924,6 +1943,9 @@ export default function ConsultationWorkspacePage() {
   const [labOrderReviewOpen, setLabOrderReviewOpen] = React.useState(false);
   const [labOrderTestIds, setLabOrderTestIds] = React.useState<string[]>([]);
   const [labOrderNotes, setLabOrderNotes] = React.useState("");
+  const [labTestSearch, setLabTestSearch] = React.useState("");
+  const [debouncedLabTestSearch, setDebouncedLabTestSearch] = React.useState("");
+  const [labTestCategoryFilter, setLabTestCategoryFilter] = React.useState("All");
   const [labOrderAiPreparation, setLabOrderAiPreparation] = React.useState<LabOrderAiPreparation | null>(null);
   const [labOrderSaving, setLabOrderSaving] = React.useState(false);
   const [selectedLabOrderId, setSelectedLabOrderId] = React.useState<string | null>(null);
@@ -1948,6 +1970,16 @@ export default function ConsultationWorkspacePage() {
   const [aiBusy, setAiBusy] = React.useState(false);
   const [aiActiveAction, setAiActiveAction] = React.useState<AiAssistAction | null>(null);
   const [clinicalAiActiveDraft, setClinicalAiActiveDraft] = React.useState<ClinicalAiDraftKind | null>(null);
+  const selectedDiagnosisEntries = React.useMemo(
+    () => splitClinicalTokenEntries(consultationForm.diagnosis),
+    [consultationForm.diagnosis]
+  );
+  const handleRemoveDiagnosisEntry = React.useCallback((diagnosisEntry: string) => {
+    setConsultationForm((current) => ({
+      ...current,
+      diagnosis: removeClinicalTokenEntry(current.diagnosis, diagnosisEntry),
+    }));
+  }, []);
   const [aiAssistEntries, setAiAssistEntries] = React.useState<AiAssistEntry[]>([]);
   const [aiAvailable, setAiAvailable] = React.useState(true);
   const [aiStatusMessage, setAiStatusMessage] = React.useState<string | null>(null);
@@ -2741,6 +2773,7 @@ export default function ConsultationWorkspacePage() {
   );
   const canGenerateClinicalDraft = Boolean(auth.accessToken && auth.tenantId && consultation && patient && aiAvailable && !aiBusy);
   const aiAssistantEnabled = Boolean(aiAvailable && canRunAi);
+  const diagnosisSectionSubtitle = aiAssistantEnabled ? "Suggestions with inline AI" : "Manual diagnosis entry";
   const clinicalDraftEntries = React.useMemo(
     () => (Object.values(clinicalAiDrafts) as ClinicalAiDraftState[]).filter((draft) => draft.generatedAt || draft.error || draft.status !== "DRAFTED" || draft.draftText.trim()),
     [clinicalAiDrafts],
@@ -3365,6 +3398,75 @@ export default function ConsultationWorkspacePage() {
     () => labTests.filter((test) => labOrderTestIds.includes(test.id)),
     [labOrderTestIds, labTests],
   );
+  React.useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setDebouncedLabTestSearch(labTestSearch.trim());
+    }, 180);
+    return () => window.clearTimeout(timeoutId);
+  }, [labTestSearch]);
+  React.useEffect(() => {
+    if (!labOrderDialogOpen) {
+      return;
+    }
+    setLabTestSearch("");
+    setDebouncedLabTestSearch("");
+    setLabTestCategoryFilter("All");
+  }, [labOrderDialogOpen]);
+  const labTestFilterOptions = React.useMemo(() => {
+    const categories = Array.from(
+      new Set(
+        labTests
+          .map((test) => String(test.category || "").trim())
+          .filter(Boolean)
+      )
+    ).sort((a, b) => a.localeCompare(b));
+    return [
+      { value: "All", label: "All" },
+      ...categories.map((category) => ({
+        value: category,
+        label: category === "Radiology" ? "Radiology / Imaging" : category,
+      })),
+    ];
+  }, [labTests]);
+  const filteredLabTests = React.useMemo(() => {
+    const normalizedSearch = normalizeLookupKey(debouncedLabTestSearch);
+    return [...labTests]
+      .filter((test) => labTestCategoryFilter === "All" || String(test.category || "").trim() === labTestCategoryFilter)
+      .filter((test) => {
+        if (!normalizedSearch) {
+          return true;
+        }
+        const haystack = normalizeLookupKey(
+          [
+            test.testName,
+            test.testCode,
+            test.department,
+            test.category,
+            test.sampleType,
+          ].filter(Boolean).join(" ")
+        );
+        return haystack.includes(normalizedSearch);
+      })
+      .sort((left, right) => {
+        const leftSelected = labOrderTestIds.includes(left.id);
+        const rightSelected = labOrderTestIds.includes(right.id);
+        if (leftSelected !== rightSelected) {
+          return leftSelected ? -1 : 1;
+        }
+        const leftOrder = left.displayOrder ?? Number.MAX_SAFE_INTEGER;
+        const rightOrder = right.displayOrder ?? Number.MAX_SAFE_INTEGER;
+        if (leftOrder !== rightOrder) {
+          return leftOrder - rightOrder;
+        }
+        return left.testName.localeCompare(right.testName);
+      });
+  }, [debouncedLabTestSearch, labOrderTestIds, labTestCategoryFilter, labTests]);
+  const labTestResultCountLabel = React.useMemo(() => {
+    if (filteredLabTests.length === labTests.length) {
+      return pluralizeLabTests(labTests.length);
+    }
+    return `${pluralizeLabTests(filteredLabTests.length)} of ${pluralizeLabTests(labTests.length)}`;
+  }, [filteredLabTests.length, labTests.length]);
   const labOrderReviewWarnings = React.useMemo(() => {
     const warningMap = new Map<string, string>();
     const reportText = reportHistoryRows
@@ -7675,14 +7777,13 @@ export default function ConsultationWorkspacePage() {
               <SectionCard
                 id="diagnosis"
                 title="Diagnosis"
-                subtitle="Suggestions with inline AI"
+                subtitle={diagnosisSectionSubtitle}
                 icon={<PsychologyRoundedIcon fontSize="small" />}
                 expanded={expanded.diagnosis}
                 onToggle={toggleSection}
                 primaryAction={null}
               >
                 <Stack spacing={1}>
-                  {clinicalAiDrafts.diagnosis.generatedAt || clinicalAiDrafts.diagnosis.error || clinicalAiDrafts.diagnosis.status !== "DRAFTED" || clinicalAiDrafts.diagnosis.draftText.trim() ? renderClinicalAiDraftCard("diagnosis") : null}
                   <Stack direction={{ xs: "column", md: "row" }} spacing={1} alignItems={{ xs: "stretch", md: "center" }}>
                     <TextField
                       fullWidth
@@ -7712,10 +7813,91 @@ export default function ConsultationWorkspacePage() {
                       >
                         Add
                       </Button>
+                    </Stack>
                   </Stack>
-                </Stack>
+
+                  <Stack spacing={0.75}>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>
+                      Selected Diagnoses
+                    </Typography>
+                    {selectedDiagnosisEntries.length ? (
+                      <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
+                        {selectedDiagnosisEntries.map((diagnosisEntry) => (
+                          <Chip
+                            key={diagnosisEntry}
+                            label={diagnosisEntry}
+                            variant="outlined"
+                            size="small"
+                            onDelete={readOnly ? undefined : () => handleRemoveDiagnosisEntry(diagnosisEntry)}
+                            deleteIcon={
+                              readOnly ? undefined : <DeleteOutlineRoundedIcon fontSize="small" aria-hidden="true" />
+                            }
+                            aria-label={`Remove ${diagnosisEntry}`}
+                            sx={{
+                              maxWidth: "100%",
+                              "& .MuiChip-label": {
+                                display: "block",
+                                whiteSpace: "normal",
+                              },
+                            }}
+                          />
+                        ))}
+                      </Stack>
+                    ) : (
+                      <Typography variant="body2" color="text.secondary">
+                        No diagnosis added yet. Add manually or accept an AI suggestion.
+                      </Typography>
+                    )}
+                  </Stack>
 
                   <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
+                    <CardContent sx={{ p: 1.1, "&:last-child": { pb: 1.1 } }}>
+                      <Stack spacing={0.8}>
+                        <Stack direction="row" spacing={0.75} alignItems="center">
+                          <PsychologyRoundedIcon fontSize="small" color="primary" />
+                          <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>
+                            Selected diagnosis
+                          </Typography>
+                        </Stack>
+                        <Typography variant="caption" color="text.secondary">
+                          Confirmed diagnoses and manual entries
+                        </Typography>
+                        <QuickChipGroup
+                          disabled={readOnly}
+                          chips={DIAGNOSIS_CHIPS}
+                          color="primary"
+                          onPick={(chip) => setConsultationForm((c) => ({ ...c, diagnosis: appendTokenLine(c.diagnosis, chip) }))}
+                        />
+                        <TextField
+                          size="small"
+                          fullWidth
+                          multiline
+                          minRows={3}
+                          label="Selected diagnosis"
+                          value={consultationForm.diagnosis}
+                          onChange={(e) => setConsultationForm((c) => ({ ...c, diagnosis: e.target.value }))}
+                          disabled={readOnly}
+                          InputProps={{
+                            sx: {
+                              maxHeight: 150,
+                              overflowY: "auto",
+                              alignItems: "flex-start",
+                              "& textarea": {
+                                whiteSpace: "pre-wrap",
+                                overflowWrap: "anywhere",
+                              },
+                            },
+                          }}
+                        />
+                      </Stack>
+                    </CardContent>
+                  </Card>
+
+                  {aiAssistantEnabled ? (
+                    <>
+                      {clinicalAiDrafts.diagnosis.generatedAt || clinicalAiDrafts.diagnosis.error || clinicalAiDrafts.diagnosis.status !== "DRAFTED" || clinicalAiDrafts.diagnosis.draftText.trim() ? renderClinicalAiDraftCard("diagnosis") : null}
+
+                      <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
                     <CardContent sx={{ p: 1.1, "&:last-child": { pb: 1.1 } }}>
                       <Stack spacing={1}>
                         <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
@@ -8475,6 +8657,8 @@ export default function ConsultationWorkspacePage() {
                       </Stack>
                   </CardContent>
                   </Card>
+                    </>
+                  ) : null}
                 </Stack>
                 </SectionCard>
 
@@ -10986,9 +11170,60 @@ export default function ConsultationWorkspacePage() {
                 <Typography variant="caption" color="text.secondary">Select AI recommendations or search manually below.</Typography>
               </Stack>
             )}
-            <Box sx={{ maxHeight: 360, overflow: "auto", border: "1px solid", borderColor: "divider", borderRadius: 1.5, p: 1.5 }}>
+            {labTests.length ? (
               <Stack spacing={1}>
-                {labTests.map((test) => {
+                <Stack spacing={0.75}>
+                  <Stack direction={{ xs: "column", sm: "row" }} spacing={0.75} alignItems={{ xs: "stretch", sm: "center" }}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="Search laboratory tests"
+                      placeholder="Search by test name, code, department, category, or specimen"
+                      value={labTestSearch}
+                      onChange={(e) => setLabTestSearch(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Escape" && labTestSearch.trim()) {
+                          e.preventDefault();
+                          setLabTestSearch("");
+                          setDebouncedLabTestSearch("");
+                          setLabTestCategoryFilter("All");
+                        }
+                      }}
+                    />
+                    <Button
+                      type="button"
+                      size="small"
+                      variant="outlined"
+                      onClick={() => {
+                        setLabTestSearch("");
+                        setDebouncedLabTestSearch("");
+                        setLabTestCategoryFilter("All");
+                      }}
+                      disabled={!labTestSearch.trim() && labTestCategoryFilter === "All"}
+                    >
+                      Clear Search
+                    </Button>
+                  </Stack>
+                  <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                    {labTestFilterOptions.map((option) => (
+                      <Chip
+                        key={option.value}
+                        size="small"
+                        clickable
+                        color={labTestCategoryFilter === option.value ? "primary" : "default"}
+                        variant={labTestCategoryFilter === option.value ? "filled" : "outlined"}
+                        label={option.label}
+                        onClick={() => setLabTestCategoryFilter(option.value)}
+                      />
+                    ))}
+                  </Stack>
+                  <Typography variant="caption" color="text.secondary">
+                    {labTestResultCountLabel}
+                  </Typography>
+                </Stack>
+                <Box sx={{ maxHeight: 360, overflow: "auto", border: "1px solid", borderColor: "divider", borderRadius: 1.5, p: 1.5 }}>
+                  <Stack spacing={1}>
+                    {filteredLabTests.map((test) => {
                   const selected = labOrderTestIds.includes(test.id);
                   return (
                     <Card key={test.id} variant="outlined" sx={{ boxShadow: "none", borderColor: selected ? "primary.main" : "divider" }}>
@@ -10997,7 +11232,7 @@ export default function ConsultationWorkspacePage() {
                           <Box>
                             <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>{test.testName}</Typography>
                             <Typography variant="caption" color="text.secondary">
-                              {test.testCode} • {test.category} • {test.sampleType || "Sample not specified"} • {test.tenantTatOverride || test.turnaroundTime || "TAT not set"} • {formatMoney(test.tenantPriceOverride ?? test.price ?? null)}
+                              {[test.testCode, test.department, test.category, test.sampleType || "Sample not specified", test.tenantTatOverride || test.turnaroundTime || "TAT not set", formatMoney(test.tenantPriceOverride ?? test.price ?? null)].filter(Boolean).join(" • ")}
                             </Typography>
                           </Box>
                           <Tooltip title={selected ? "Remove this test from the prepared laboratory order." : "Add this test to the prepared laboratory order."} arrow>
@@ -11014,9 +11249,38 @@ export default function ConsultationWorkspacePage() {
                     </Card>
                   );
                 })}
-                {!labTests.length ? <Alert severity="info">No active lab tests found.</Alert> : null}
+                    {!filteredLabTests.length ? (
+                      <Stack spacing={0.75} alignItems="center" justifyContent="center" sx={{ py: 3, textAlign: "center" }}>
+                        <Typography variant="body2" color="text.secondary">
+                          No laboratory tests match your search.
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          Try another test name, code, department, or category.
+                        </Typography>
+                        <Button
+                          type="button"
+                          size="small"
+                          variant="outlined"
+                          onClick={() => {
+                            setLabTestSearch("");
+                            setDebouncedLabTestSearch("");
+                            setLabTestCategoryFilter("All");
+                          }}
+                        >
+                          Clear Search
+                        </Button>
+                      </Stack>
+                    ) : null}
+                  </Stack>
+                </Box>
               </Stack>
-            </Box>
+            ) : (
+              <Alert severity="info">
+                No laboratory tests are currently configured.
+                <br />
+                Contact the clinic administrator to configure the test catalog.
+              </Alert>
+            )}
           </Stack>
         </DialogContent>
         <DialogActions>
