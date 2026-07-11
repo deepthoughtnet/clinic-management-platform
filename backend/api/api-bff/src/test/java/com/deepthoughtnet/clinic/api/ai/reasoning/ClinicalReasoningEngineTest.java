@@ -82,9 +82,62 @@ class ClinicalReasoningEngineTest {
         assertThat(result.safetyNotes()).extracting("message").contains("Monitor blood sugar during fever");
         assertThat(result.recommendedTests()).extracting("name").contains("COVID/Flu test");
         assertThat(result.longitudinalContext()).isNotNull();
-        assertThat(result.longitudinalContext().findings()).extracting("title").contains("Worsening glycemic control", "Previous chest imaging");
+        assertThat(result.longitudinalContext().findings()).extracting("title").containsExactly("Worsening glycemic control", "Previous chest imaging", "Previous renal function");
         assertThat(result.metadata().resultQuality()).isEqualTo("COMPLETE");
         assertThat(result.metadata().errorMessage()).isNull();
+    }
+
+    @Test
+    void prefersDeterministicLongitudinalFindingsAndDropsMockImagingNoise() {
+        AiDoctorCopilotService copilotService = mock(AiDoctorCopilotService.class);
+        ClinicalReasoningPromptBuilder promptBuilder = new ClinicalReasoningPromptBuilder();
+        ClinicalReasoningResponseParser parser = new ClinicalReasoningResponseParser(new com.fasterxml.jackson.databind.ObjectMapper());
+        ClinicalReasoningEngine engine = new ClinicalReasoningEngine(copilotService, promptBuilder, parser);
+
+        UUID tenantId = UUID.randomUUID();
+        ConsultationEntity consultation = ConsultationEntity.create(tenantId, UUID.randomUUID(), UUID.randomUUID(), null);
+        consultation.update("Fever, cough and body ache", "Fever and cough for 4 days", null, "CBC normal", null, null, null, null, null, null, null, null, null, null, null);
+        ClinicalContextResponse context = sampleContext(tenantId, consultation.getPatientId(), consultation.getId());
+        ClinicalReasoningRequest request = new ClinicalReasoningRequest(consultation.getPatientId(), "Fever, cough and body ache", "Fever and cough for 4 days", "CBC normal", "BP 136/86, Pulse 96, Temp 101.2 F, SpO2 96", null, null, null, null, null);
+
+        String providerJson = "{\"confidence\":\"HIGH\",\"primaryDiagnosis\":{\"name\":\"Viral Upper Respiratory Infection\",\"confidence\":0.82,\"status\":\"SUGGESTED\"},\"longitudinalContext\":[{\"title\":\"HbA1c Trend\",\"summary\":\"HbA1c has been consistently high over the past year.\",\"clinicalRelevance\":\"Poor control.\",\"sourceDate\":\"2026-07-08\",\"sourceType\":\"LONGITUDINAL_MEMORY\",\"sourceReference\":\"HbA1c trend\",\"verificationStatus\":\"VERIFIED\",\"importance\":\"HIGH\"},{\"title\":\"Renal Function Trend\",\"summary\":\"Creatinine and eGFR remained stable.\",\"clinicalRelevance\":\"Kidney function preserved.\",\"sourceDate\":\"2026-05-20\",\"sourceType\":\"LONGITUDINAL_MEMORY\",\"sourceReference\":\"Kidney function history\",\"verificationStatus\":\"VERIFIED\",\"importance\":\"MEDIUM\"},{\"title\":\"Previous imaging\",\"summary\":\"Imaging on 08-Jul-2026 showed Mock AI provider is active. No external model was called.\",\"clinicalRelevance\":\"Mock AI provider is active.\",\"sourceDate\":\"2026-07-08\",\"sourceType\":\"Imaging\",\"sourceReference\":\"Rohan_Sharma_HbA1c_Followup_Report_2026-07-08 • Imaging\",\"verificationStatus\":\"VERIFIED\",\"importance\":\"MEDIUM\"}],\"reasoningSummary\":\"Likely viral respiratory illness.\",\"metadata\":{\"promptVersion\":\"clinic.clinical.reasoning.v1\",\"contextVersion\":\"v1\",\"provider\":\"MOCK\",\"model\":\"mock-model\",\"tokens\":{},\"parseStatus\":\"VALID\"}}";
+        when(copilotService.draft(eq(com.deepthoughtnet.clinic.platform.contracts.ai.AiTaskType.CLINICAL_REASONING), anyString(), anyString(), anyMap(), eq(List.of())))
+                .thenReturn(new AiDraftResponse(
+                        true,
+                        false,
+                        "ok",
+                        "MOCK",
+                        "mock-model",
+                        providerJson,
+                        mapOf(
+                                "confidence", "HIGH",
+                                "primaryDiagnosis", mapOf("name", "Viral Upper Respiratory Infection", "confidence", 0.82, "status", "SUGGESTED"),
+                                "longitudinalContext", List.of(
+                                        mapOf("title", "HbA1c Trend", "summary", "HbA1c has been consistently high over the past year.", "clinicalRelevance", "Poor control.", "sourceDate", "2026-07-08", "sourceType", "LONGITUDINAL_MEMORY", "sourceReference", "HbA1c trend", "verificationStatus", "VERIFIED", "importance", "HIGH"),
+                                        mapOf("title", "Renal Function Trend", "summary", "Creatinine and eGFR remained stable.", "clinicalRelevance", "Kidney function preserved.", "sourceDate", "2026-05-20", "sourceType", "LONGITUDINAL_MEMORY", "sourceReference", "Kidney function history", "verificationStatus", "VERIFIED", "importance", "MEDIUM"),
+                                        mapOf("title", "Previous imaging", "summary", "Imaging on 08-Jul-2026 showed Mock AI provider is active. No external model was called.", "clinicalRelevance", "Mock AI provider is active.", "sourceDate", "2026-07-08", "sourceType", "Imaging", "sourceReference", "Rohan_Sharma_HbA1c_Followup_Report_2026-07-08 • Imaging", "verificationStatus", "VERIFIED", "importance", "MEDIUM")
+                                ),
+                                "reasoningSummary", "Likely viral respiratory illness.",
+                                "metadata", mapOf("promptVersion", "clinic.clinical.reasoning.v1", "contextVersion", "v1", "provider", "MOCK", "model", "mock-model", "tokens", mapOf(), "parseStatus", "VALID")
+                        ),
+                        BigDecimal.valueOf(0.88),
+                        List.of(),
+                        List.of(),
+                        "STOP",
+                        "COMPLETE",
+                        355,
+                        providerJson,
+                        "VALID"
+                ));
+
+        ClinicalReasoningResult result = engine.generate(new ClinicalReasoningEngine.UUIDContext(tenantId, "corr-1b", "corr-1b"), consultation, request, context);
+
+        assertThat(result.longitudinalContext().findings()).extracting("title")
+                .containsExactly("Worsening glycemic control", "Previous chest imaging", "Previous renal function");
+        assertThat(result.longitudinalContext().findings()).extracting("title")
+                .doesNotContain("HbA1c Trend", "Renal Function Trend", "Previous imaging");
+        assertThat(result.longitudinalContext().findings()).anySatisfy(finding ->
+                assertThat(finding.summary()).doesNotContain("Mock AI provider is active"));
     }
 
     @Test
@@ -319,11 +372,11 @@ class ClinicalReasoningEngineTest {
                         "Known diabetic with recent report"
                 ),
                 new ClinicalContextResponse.LongitudinalClinicalContext(
-                        List.of(new ClinicalContextResponse.LabTrend("hba1c", "HbA1c", "7.3", "%", "2026-01-15", "8.4", "%", "2026-07-10", "WORSENING", "Poorer glycemic control may increase infection risk and delay recovery.", "+1.1 percentage points", "approximately 6 months", List.of(), "VERIFIED")),
+                        List.of(new ClinicalContextResponse.LabTrend("hba1c", "HbA1c", "7.3", "%", "2026-01-15", "8.4", "%", "2026-07-08", "WORSENING", "Poorer glycemic control may increase infection risk and delay recovery.", "+1.1 percentage points", "approximately 6 months", List.of(), "PENDING_VERIFICATION")),
                         List.of(new ClinicalContextResponse.ImagingHistoryItem("Chest X-ray", "Chest", "2026-07-02", "mild bronchitic changes without focal consolidation or pneumonia", List.of("No focal consolidation", "No pneumonia"), "VERIFIED", UUID.randomUUID().toString(), "Chest X-ray")),
                         new ClinicalContextResponse.RenalContext("1.08 mg/dL", "2026-05-20", "84 mL/min/1.73m2", "2026-05-20", "Previous renal function was preserved; current function should be rechecked if clinically indicated.", 51, "VERIFIED", List.of()),
                         List.of(
-                                new ClinicalContextResponse.HistoricalFinding("LAB_TREND", "Worsening glycemic control", "HbA1c increased from 7.3% on 15-Jan-2026 to 8.4% on 10-Jul-2026.", "Poorer glycemic control may increase infection risk and delay recovery.", "2026-07-10", "LONGITUDINAL_MEMORY", "HbA1c trend", "VERIFIED", "HIGH", null),
+                                new ClinicalContextResponse.HistoricalFinding("LAB_TREND", "Worsening glycemic control", "HbA1c increased from 7.3% on 15-Jan-2026 to 8.4% on 08-Jul-2026 (+1.1 percentage points).", "This indicates worsening glycemic control over approximately 6 months. Poorer glycemic control may increase susceptibility to infection or delay recovery.", "2026-07-08", "LONGITUDINAL_MEMORY", "HbA1c trend", "PENDING_VERIFICATION", "HIGH", null),
                                 new ClinicalContextResponse.HistoricalFinding("IMAGING_HISTORY", "Previous chest imaging", "Chest X-ray on 02-Jul-2026 showed mild bronchitic changes without focal consolidation or pneumonia.", "Repeat imaging should depend on current findings, hypoxia, and symptom progression.", "2026-07-02", "Chest X-ray", "Chest X-ray", "VERIFIED", "MEDIUM", null)
                         ),
                         List.of()
@@ -375,11 +428,11 @@ class ClinicalReasoningEngineTest {
                 new ClinicalContextResponse.TimelineSummary(List.of(), "Recent lab report uploaded"),
                 new ClinicalContextResponse.LongitudinalMemory(List.of(), List.of(), null, null, List.of(), null, null, List.of(), List.of(), "Known diabetic"),
                 new ClinicalContextResponse.LongitudinalClinicalContext(
-                        List.of(new ClinicalContextResponse.LabTrend("hba1c", "HbA1c", "7.3", "%", "2026-01-15", "8.4", "%", "2026-07-10", "WORSENING", "Poorer glycemic control may increase infection risk and delay recovery.", "+1.1 percentage points", "approximately 6 months", List.of(), "VERIFIED")),
+                        List.of(new ClinicalContextResponse.LabTrend("hba1c", "HbA1c", "7.3", "%", "2026-01-15", "8.4", "%", "2026-07-08", "WORSENING", "Poorer glycemic control may increase infection risk and delay recovery.", "+1.1 percentage points", "approximately 6 months", List.of(), "PENDING_VERIFICATION")),
                         List.of(new ClinicalContextResponse.ImagingHistoryItem("Chest X-ray", "Chest", "2026-07-02", "mild bronchitic changes without focal consolidation or pneumonia", List.of("No focal consolidation", "No pneumonia"), "VERIFIED", UUID.randomUUID().toString(), "Chest X-ray")),
                         new ClinicalContextResponse.RenalContext("1.08 mg/dL", "2026-05-20", "84 mL/min/1.73m2", "2026-05-20", "Previous renal function was preserved; current function should be rechecked if clinically indicated.", 51, "VERIFIED", List.of()),
                         List.of(
-                                new ClinicalContextResponse.HistoricalFinding("LAB_TREND", "Worsening glycemic control", "HbA1c increased from 7.3% on 15-Jan-2026 to 8.4% on 10-Jul-2026.", "Poorer glycemic control may increase infection risk and delay recovery.", "2026-07-10", "LONGITUDINAL_MEMORY", "HbA1c trend", "VERIFIED", "HIGH", null),
+                                new ClinicalContextResponse.HistoricalFinding("LAB_TREND", "Worsening glycemic control", "HbA1c increased from 7.3% on 15-Jan-2026 to 8.4% on 08-Jul-2026 (+1.1 percentage points).", "This indicates worsening glycemic control over approximately 6 months. Poorer glycemic control may increase susceptibility to infection or delay recovery.", "2026-07-08", "LONGITUDINAL_MEMORY", "HbA1c trend", "PENDING_VERIFICATION", "HIGH", null),
                                 new ClinicalContextResponse.HistoricalFinding("IMAGING_HISTORY", "Previous chest imaging", "Chest X-ray on 02-Jul-2026 showed mild bronchitic changes without focal consolidation or pneumonia.", "Repeat imaging should depend on current findings, hypoxia, and symptom progression.", "2026-07-02", "Chest X-ray", "Chest X-ray", "VERIFIED", "MEDIUM", null),
                                 new ClinicalContextResponse.HistoricalFinding("RENAL_CONTEXT", "Previous renal function", "Creatinine 1.08 mg/dL | eGFR 84 mL/min/1.73m2 | on 20-May-2026", "Previous renal function was preserved; current function should be rechecked if clinically indicated.", "2026-05-20", "LONGITUDINAL_MEMORY", "Kidney function history", "VERIFIED", "MEDIUM", null)
                         ),

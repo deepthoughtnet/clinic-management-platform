@@ -177,11 +177,7 @@ public class ClinicalDocumentAiExtractionService {
                         documentId,
                         ClinicalAiJobType.DOCUMENT_EXTRACTION)
                 .orElse(null);
-        String structuredJson = firstHasText(
-                document.getAiExtractionStructuredJson(),
-                latestJob == null ? null : latestJob.getResultJson(),
-                document.getAiExtractionAcceptedJson()
-        );
+        String structuredJson = selectRepairStructuredJson(document, latestJob);
         log.info("[AI-MEMORY-REPAIR] tenantId={} patientId={} sourceDocumentId={} sourceStructuredJsonLength={} sourceAcceptedJsonLength={} sourceJobResultJsonLength={}",
                 tenantId,
                 document.getPatientId(),
@@ -218,9 +214,12 @@ public class ClinicalDocumentAiExtractionService {
             return failed;
         }
         String sourceSummary = firstHasText(document.getAiExtractionSummary(), latestJob == null ? null : latestJob.getSummaryText(), "Clinical memory repair");
-        String legacySourceText = buildLegacyRepairSourceText(structuredJson, latestJob);
-        structuredJson = normalizeStoredStructuredJson(document, structuredJson, legacySourceText, sourceSummary);
         String sourceText = buildRepairSourceText(structuredJson, latestJob);
+        if (!hasStructuredRepairLabRows(structuredJson)) {
+            String legacySourceText = buildLegacyRepairSourceText(structuredJson, latestJob);
+            structuredJson = normalizeStoredStructuredJson(document, structuredJson, legacySourceText, sourceSummary);
+            sourceText = buildRepairSourceText(structuredJson, latestJob);
+        }
         try {
             int beforeConceptCount = historyCount(tenantId, document.getPatientId());
             String hba1cBefore = latestHbA1cValue(tenantId, document.getPatientId());
@@ -778,11 +777,29 @@ public class ClinicalDocumentAiExtractionService {
     private String buildRepairSourceText(String structuredJson, ClinicalAiJobEntity latestJob) {
         Map<String, Object> extracted = parseStructuredJson(structuredJson);
         List<String> evidence = new ArrayList<>();
-        collectRepairEvidenceText(extracted.get("factualFindings"), evidence, null);
+        collectRepairLabRowsAsText(extracted.get("factualFindings"), evidence);
+        collectRepairEvidenceText(extracted.get("possibleAbnormalFindings"), evidence, "possibleAbnormalFindings");
+        collectRepairEvidenceText(extracted.get("possibleAbnormalities"), evidence, "possibleAbnormalities");
+        collectRepairEvidenceText(extracted.get("labResults"), evidence, "labResults");
+        collectRepairEvidenceText(extracted.get("labs"), evidence, "labs");
+        collectRepairEvidenceText(extracted.get("results"), evidence, "results");
+        if (evidence.isEmpty()) {
+            collectRepairEvidenceText(extracted.get("factualFindings"), evidence, null);
+        }
         if (latestJob != null && StringUtils.hasText(latestJob.getResultJson())) {
             Map<String, Object> latestExtracted = parseStructuredJson(latestJob.getResultJson());
-            collectRepairEvidenceText(latestExtracted.get("factualFindings"), evidence, null);
-            collectRepairEvidenceText(latestExtracted, evidence, null);
+            collectRepairLabRowsAsText(latestExtracted.get("factualFindings"), evidence);
+            collectRepairEvidenceText(latestExtracted.get("possibleAbnormalFindings"), evidence, "possibleAbnormalFindings");
+            collectRepairEvidenceText(latestExtracted.get("possibleAbnormalities"), evidence, "possibleAbnormalities");
+            collectRepairEvidenceText(latestExtracted.get("labResults"), evidence, "labResults");
+            collectRepairEvidenceText(latestExtracted.get("labs"), evidence, "labs");
+            collectRepairEvidenceText(latestExtracted.get("results"), evidence, "results");
+            if (evidence.isEmpty()) {
+                collectRepairEvidenceText(latestExtracted.get("factualFindings"), evidence, null);
+            }
+            if (evidence.isEmpty()) {
+                collectRepairEvidenceText(latestExtracted, evidence, null);
+            }
         }
         return String.join("\n", new java.util.LinkedHashSet<>(evidence));
     }
@@ -824,6 +841,40 @@ public class ClinicalDocumentAiExtractionService {
         }
         if (text.length() > 8 && text.length() < 400 && !looksLikeNarrativeRecommendation(text)) {
             target.add(text);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private void collectRepairLabRowsAsText(Object factualFindings, List<String> target) {
+        if (!(factualFindings instanceof Map<?, ?> factualMap) || target == null) {
+            return;
+        }
+        Object labResults = factualMap.get("labResults");
+        if (!(labResults instanceof Iterable<?> iterable)) {
+            return;
+        }
+        for (Object item : iterable) {
+            if (!(item instanceof Map<?, ?> row)) {
+                continue;
+            }
+            String canonicalKey = canonicalRepairLabKey(firstNonNull(row.get("canonicalKey"), row.get("conceptKey"), row.get("key"), row.get("testName"), row.get("label")));
+            String testName = firstHasText(stringValue(row.get("testName")), stringValue(row.get("label")), displayRepairLabName(canonicalKey));
+            String value = stringValue(firstNonNull(row.get("value"), row.get("result"), row.get("valueText")));
+            String unit = canonicalRepairUnit(stringValue(firstNonNull(row.get("unit"), row.get("valueUnit"))), canonicalKey);
+            List<String> parts = new ArrayList<>();
+            if (hasText(testName)) {
+                parts.add(testName.trim());
+            }
+            if (hasText(value)) {
+                parts.add(value.trim());
+            }
+            if (hasText(unit)) {
+                parts.add(unit);
+            }
+            String text = String.join(" ", parts).trim();
+            if (text.length() > 8 && text.length() < 400) {
+                target.add(text);
+            }
         }
     }
 
@@ -870,6 +921,118 @@ public class ClinicalDocumentAiExtractionService {
                 || normalized.contains("rawtext")
                 || normalized.contains("finding")
                 || normalized.contains("abnormalfinding");
+    }
+
+    private String selectRepairStructuredJson(ClinicalDocumentEntity document, ClinicalAiJobEntity latestJob) {
+        List<String> candidates = new ArrayList<>();
+        if (document != null) {
+            candidates.add(document.getAiExtractionStructuredJson());
+            candidates.add(document.getAiExtractionAcceptedJson());
+        }
+        if (latestJob != null) {
+            candidates.add(latestJob.getResultJson());
+        }
+        for (String candidate : candidates) {
+            if (hasStructuredRepairLabRows(candidate)) {
+                return candidate;
+            }
+        }
+        for (String candidate : candidates) {
+            if (StringUtils.hasText(candidate)) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    private boolean hasStructuredRepairLabRows(String structuredJson) {
+        Map<String, Object> extracted = parseStructuredJson(structuredJson);
+        Object factualFindings = extracted.get("factualFindings");
+        if (!(factualFindings instanceof Map<?, ?> factualMap)) {
+            return false;
+        }
+        Object labResults = factualMap.get("labResults");
+        if (!(labResults instanceof Iterable<?> iterable)) {
+            return false;
+        }
+        for (Object item : iterable) {
+            if (item instanceof Map<?, ?> row) {
+                String canonicalKey = canonicalRepairLabKey(firstNonNull(row.get("canonicalKey"), row.get("conceptKey"), row.get("key"), row.get("testName"), row.get("label")));
+                if (hasText(canonicalKey)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private String canonicalRepairLabKey(Object rawKey) {
+        if (rawKey == null) {
+            return null;
+        }
+        String normalized = rawKey.toString().trim().toLowerCase(java.util.Locale.ROOT);
+        if (normalized.isBlank()) {
+            return null;
+        }
+        if (normalized.contains("hba1c") || normalized.contains("hb_a1c") || normalized.contains("a1c") || normalized.contains("glycated_hemoglobin") || normalized.contains("glycosylated_hemoglobin")) return "hba1c";
+        if (normalized.contains("estimated_average_glucose") || normalized.contains("eag")) return "estimated_average_glucose";
+        if (normalized.contains("blood_sugar") || normalized.contains("random_blood_sugar") || normalized.contains("glucose") || normalized.contains("rbs")) return "blood_sugar";
+        if (normalized.contains("hemoglobin")) return "hemoglobin";
+        if (normalized.contains("creatinine") || normalized.contains("serum_creatinine")) return "creatinine";
+        if (normalized.contains("egfr") || normalized.contains("estimated_gfr") || normalized.contains("estimated_glomerular_filtration_rate")) return "egfr";
+        if (normalized.contains("crp") || normalized.contains("c_reactive_protein")) return "crp";
+        if (normalized.contains("alt") || normalized.contains("sgpt") || normalized.contains("alanine_aminotransferase")) return "alt";
+        if (normalized.contains("ast") || normalized.contains("sgot") || normalized.contains("aspartate_aminotransferase")) return "ast";
+        if (normalized.contains("ldl")) return "ldl";
+        if (normalized.contains("hdl")) return "hdl";
+        if (normalized.contains("triglycerides") || normalized.contains("triglyceride")) return "triglycerides";
+        if (normalized.contains("cholesterol")) return "cholesterol";
+        return normalized;
+    }
+
+    private String displayRepairLabName(String canonicalKey) {
+        if (!hasText(canonicalKey)) {
+            return "Lab Result";
+        }
+        return switch (canonicalKey) {
+            case "hba1c" -> "HbA1c";
+            case "estimated_average_glucose" -> "Estimated Average Glucose";
+            case "blood_sugar" -> "Blood Sugar";
+            case "hemoglobin" -> "Hemoglobin";
+            case "creatinine" -> "Creatinine";
+            case "egfr" -> "eGFR";
+            case "crp" -> "CRP";
+            case "alt" -> "ALT";
+            case "ast" -> "AST";
+            case "ldl" -> "LDL Cholesterol";
+            case "hdl" -> "HDL Cholesterol";
+            case "triglycerides" -> "Triglycerides";
+            case "cholesterol" -> "Total Cholesterol";
+            default -> canonicalKey;
+        };
+    }
+
+    private String canonicalRepairUnit(String unit, String canonicalKey) {
+        if (!hasText(unit)) {
+            return switch (canonicalKey) {
+                case "hba1c" -> "%";
+                case "hemoglobin" -> "g/dL";
+                case "egfr" -> "mL/min/1.73m2";
+                case "crp" -> "mg/L";
+                case "alt", "ast" -> "U/L";
+                default -> "mg/dL";
+            };
+        }
+        String normalized = unit.trim().toLowerCase(java.util.Locale.ROOT)
+                .replace("m²", "m2")
+                .replace("ml/min/1.73m²", "ml/min/1.73m2");
+        if (normalized.contains("mg/dl")) return "mg/dL";
+        if (normalized.contains("g/dl")) return "g/dL";
+        if (normalized.contains("ml/min/1.73m2")) return "mL/min/1.73m2";
+        if (normalized.contains("%")) return "%";
+        if (normalized.contains("mg/l")) return "mg/L";
+        if (normalized.contains("u/l")) return "U/L";
+        return unit.trim();
     }
 
     private Map<String, Object> normalizeExtractionSchema(ClinicalDocumentEntity document,

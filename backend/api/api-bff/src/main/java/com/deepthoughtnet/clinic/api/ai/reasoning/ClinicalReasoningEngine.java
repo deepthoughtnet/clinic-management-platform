@@ -263,9 +263,7 @@ public class ClinicalReasoningEngine {
         if (result == null) {
             return null;
         }
-        List<ClinicalReasoningFinding> currentFindings = result.longitudinalContext() == null || result.longitudinalContext().findings() == null
-                ? new ArrayList<>()
-                : new ArrayList<>(result.longitudinalContext().findings());
+        List<ClinicalReasoningFinding> currentFindings = new ArrayList<>();
         if (clinicalContext != null
                 && clinicalContext.longitudinalClinicalContext() != null
                 && clinicalContext.longitudinalClinicalContext().importantHistoricalFindings() != null) {
@@ -275,6 +273,14 @@ public class ClinicalReasoningEngine {
                     continue;
                 }
                 currentFindings.add(mapped);
+            }
+        }
+        if (result.longitudinalContext() != null && result.longitudinalContext().findings() != null) {
+            for (ClinicalReasoningFinding finding : result.longitudinalContext().findings()) {
+                if (finding == null || !isSupportedProviderLongitudinalFinding(finding, clinicalContext) || isDuplicateLongitudinalFinding(currentFindings, finding)) {
+                    continue;
+                }
+                currentFindings.add(finding);
             }
         }
         return new ClinicalReasoningResult(
@@ -953,18 +959,171 @@ public class ClinicalReasoningEngine {
         if (existing == null || candidate == null) {
             return false;
         }
+        String candidateCategory = longitudinalFindingCategory(candidate);
+        String candidateDate = normalizeFindingValue(candidate.sourceDate());
+        String candidateSource = normalizeFindingValue(firstNonBlank(candidate.sourceReference(), candidate.sourceType()));
         String candidateKey = normalizeLongitudinalFindingKey(candidate);
         return existing.stream()
                 .filter(Objects::nonNull)
-                .map(this::normalizeLongitudinalFindingKey)
-                .anyMatch(candidateKey::equals);
+                .anyMatch(existingFinding -> {
+                    if (candidateCategory.equals(longitudinalFindingCategory(existingFinding))) {
+                        String existingDate = normalizeFindingValue(existingFinding.sourceDate());
+                        if (hasText(candidateDate) && hasText(existingDate) && candidateDate.equals(existingDate)) {
+                            return true;
+                        }
+                        String existingSource = normalizeFindingValue(firstNonBlank(existingFinding.sourceReference(), existingFinding.sourceType()));
+                        if (hasText(candidateSource) && hasText(existingSource) && candidateSource.equals(existingSource)) {
+                            return true;
+                        }
+                    }
+                    return candidateKey.equals(normalizeLongitudinalFindingKey(existingFinding));
+                });
     }
 
     private String normalizeLongitudinalFindingKey(ClinicalReasoningFinding finding) {
-        return ((finding == null ? null : finding.title()) + "|" + (finding == null ? null : finding.summary()))
-                .toLowerCase(java.util.Locale.ROOT)
-                .replaceAll("[^a-z0-9]+", " ")
-                .trim();
+        if (finding == null) {
+            return "";
+        }
+        return String.join("|",
+                longitudinalFindingCategory(finding),
+                normalizeFindingValue(finding.sourceDate()),
+                normalizeFindingValue(finding.sourceType()),
+                normalizeFindingValue(finding.sourceReference()),
+                normalizeFindingValue(finding.title()),
+                normalizeFindingValue(finding.summary()));
+    }
+
+    private boolean isSupportedProviderLongitudinalFinding(ClinicalReasoningFinding finding, ClinicalContextResponse clinicalContext) {
+        String category = longitudinalFindingCategory(finding);
+        return switch (category) {
+            case "imaging" -> hasGroundedImagingSupport(finding, clinicalContext);
+            case "renal" -> hasGroundedRenalSupport(finding, clinicalContext);
+            case "hba1c" -> hasGroundedHbA1cSupport(finding, clinicalContext);
+            default -> true;
+        };
+    }
+
+    private boolean hasGroundedHbA1cSupport(ClinicalReasoningFinding finding, ClinicalContextResponse clinicalContext) {
+        if (clinicalContext == null || clinicalContext.longitudinalClinicalContext() == null || clinicalContext.longitudinalClinicalContext().labTrends() == null) {
+            return false;
+        }
+        String candidateDate = normalizeFindingValue(finding == null ? null : finding.sourceDate());
+        for (ClinicalContextResponse.LabTrend trend : clinicalContext.longitudinalClinicalContext().labTrends()) {
+            if (trend == null || !"hba1c".equals(trend.analyteCode())) {
+                continue;
+            }
+            if (normalizeFindingValue(trend.newerDate()).equals(candidateDate) || normalizeFindingValue(trend.olderDate()).equals(candidateDate)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean hasGroundedRenalSupport(ClinicalReasoningFinding finding, ClinicalContextResponse clinicalContext) {
+        if (clinicalContext == null || clinicalContext.longitudinalClinicalContext() == null || clinicalContext.longitudinalClinicalContext().renalContext() == null) {
+            return false;
+        }
+        String candidateDate = normalizeFindingValue(finding == null ? null : finding.sourceDate());
+        ClinicalContextResponse.RenalContext renalContext = clinicalContext.longitudinalClinicalContext().renalContext();
+        return candidateDate.equals(normalizeFindingValue(renalContext.creatinineDate()))
+                || candidateDate.equals(normalizeFindingValue(renalContext.egfrDate()));
+    }
+
+    private boolean hasGroundedImagingSupport(ClinicalReasoningFinding finding, ClinicalContextResponse clinicalContext) {
+        if (clinicalContext == null || clinicalContext.longitudinalClinicalContext() == null || clinicalContext.longitudinalClinicalContext().imagingHistory() == null) {
+            return false;
+        }
+        String candidateDate = normalizeFindingValue(finding == null ? null : finding.sourceDate());
+        String candidateReference = normalizeFindingValue(finding == null ? null : finding.sourceReference());
+        if (!hasText(candidateReference)) {
+            return false;
+        }
+        for (ClinicalContextResponse.ImagingHistoryItem item : clinicalContext.longitudinalClinicalContext().imagingHistory()) {
+            if (item == null || isMetadataOnlyImagingSummary(item.summary())) {
+                continue;
+            }
+            if (!candidateDate.equals(normalizeFindingValue(item.reportDate()))) {
+                continue;
+            }
+            String itemReference = normalizeFindingValue(item.sourceReference());
+            String modality = normalizeFindingValue(item.modality());
+            String bodyPart = normalizeFindingValue(item.bodyPart());
+            if (candidateReference.equals(itemReference)
+                    || candidateReference.contains(itemReference)
+                    || itemReference.contains(candidateReference)
+                    || candidateReference.contains(modality)
+                    || candidateReference.contains(bodyPart)
+                    || candidateReference.contains("xray")
+                    || candidateReference.contains("x ray")
+                    || candidateReference.contains("cxr")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isMetadataOnlyImagingSummary(String summary) {
+        if (!hasText(summary)) {
+            return true;
+        }
+        String normalized = summary.toLowerCase(java.util.Locale.ROOT);
+        return normalized.contains("structured radiology findings are not currently available");
+    }
+
+    private String longitudinalFindingCategory(ClinicalReasoningFinding finding) {
+        String haystack = joinSegments(
+                firstNonBlank(finding == null ? null : finding.title(), ""),
+                firstNonBlank(finding == null ? null : finding.summary(), ""),
+                firstNonBlank(finding == null ? null : finding.sourceType(), ""),
+                firstNonBlank(finding == null ? null : finding.sourceReference(), "")
+        ).toLowerCase(java.util.Locale.ROOT);
+        if (containsAny(haystack, "hba1c", "hb a1c", "a1c", "glycated hemoglobin", "glycosylated hemoglobin")) {
+            return "hba1c";
+        }
+        if (containsAny(haystack, "creatinine", "egfr", "estimated glomerular filtration rate", "renal", "kidney")) {
+            return "renal";
+        }
+        if (containsAny(haystack, "x ray", "xray", "x-ray", "cxr", "ct", "mri", "ultrasound", "usg", "radiograph", "mammogram", "echocardiography", "imaging")) {
+            return "imaging";
+        }
+        return "general";
+    }
+
+    private String normalizeFindingValue(String value) {
+        if (!hasText(value)) {
+            return "";
+        }
+        return value.toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z0-9]+", " ").trim();
+    }
+
+    private String joinSegments(String... segments) {
+        if (segments == null || segments.length == 0) {
+            return "";
+        }
+        StringBuilder builder = new StringBuilder();
+        for (String segment : segments) {
+            if (!hasText(segment)) {
+                continue;
+            }
+            if (builder.length() > 0) {
+                builder.append(' ');
+            }
+            builder.append(segment.trim());
+        }
+        return builder.toString();
+    }
+
+    private boolean containsAny(String haystack, String... needles) {
+        if (!hasText(haystack) || needles == null || needles.length == 0) {
+            return false;
+        }
+        String normalized = haystack.toLowerCase(java.util.Locale.ROOT);
+        for (String needle : needles) {
+            if (hasText(needle) && normalized.contains(needle.toLowerCase(java.util.Locale.ROOT))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private String firstNonBlank(String first, String second) {

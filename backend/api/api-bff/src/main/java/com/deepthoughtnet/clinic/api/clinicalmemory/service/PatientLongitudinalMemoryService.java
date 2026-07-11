@@ -99,7 +99,10 @@ public class PatientLongitudinalMemoryService {
                                                        UUID repairedByAppUserId,
                                                        String traceLabel) {
         Map<String, Object> extracted = parseStructuredJson(structuredJson);
-        extracted = ensureFactualLabResults(document, extracted, sourceText);
+        List<Map<String, Object>> parsedRepairFacts = StringUtils.hasText(sourceText)
+                ? deterministicLabFactParser.parse(document.getId(), sourceText, null)
+                : List.of();
+        extracted = ensureFactualLabResults(document, extracted, sourceText, parsedRepairFacts, traceLabel);
         if (repairedByAppUserId != null && !hasFactualLabResults(extracted)) {
             return new ClinicalMemoryRepairResult(
                     document.getId(),
@@ -116,6 +119,12 @@ public class PatientLongitudinalMemoryService {
         }
         String repairSourceText = buildRepairSourceText(extracted, sourceText);
         List<MappedConcept> mappedConcepts = mapper.map(document, extracted, repairSourceText, confidence);
+        if (log.isInfoEnabled()) {
+            log.info("[LONG-MEM-REPAIR-TRACE] documentId={} traceLabel={} mappedConceptKeys={}",
+                    document.getId(),
+                    traceLabel,
+                    summarizeMappedKeys(mappedConcepts));
+        }
         List<MappedConcept> persistableConcepts = new ArrayList<>();
         int filteredPollutedCount = 0;
         for (MappedConcept concept : mappedConcepts) {
@@ -180,6 +189,14 @@ public class PatientLongitudinalMemoryService {
                 summarizeMappedConcept(persistableConcepts, "hba1c"),
                 summarizeMappedConcept(persistableConcepts, "blood_sugar"),
                 filteredPollutedCount);
+        if (log.isInfoEnabled()) {
+            log.info("[LONG-MEM-REPAIR-TRACE] documentId={} traceLabel={} insertedConceptKeys={} skippedAcceptedCount={} filteredPollutedCount={}",
+                    document.getId(),
+                    traceLabel,
+                    summarizeConceptKeys(toSave),
+                    skippedAcceptedCount,
+                    filteredPollutedCount);
+        }
         if (!toSave.isEmpty()) {
             repository.saveAllAndFlush(toSave);
         }
@@ -741,10 +758,85 @@ public class PatientLongitudinalMemoryService {
         List<String> evidenceLines = new ArrayList<>();
         Object factualFindings = extracted == null ? null : extracted.get("factualFindings");
         collectRepairEvidenceText(factualFindings, evidenceLines, null);
+        if (extracted != null) {
+            collectRepairEvidenceText(extracted.get("possibleAbnormalFindings"), evidenceLines, "possibleAbnormalFindings");
+            collectRepairEvidenceText(extracted.get("possibleAbnormalities"), evidenceLines, "possibleAbnormalities");
+            collectRepairEvidenceText(extracted.get("labResults"), evidenceLines, "labResults");
+            collectRepairEvidenceText(extracted.get("labs"), evidenceLines, "labs");
+            collectRepairEvidenceText(extracted.get("results"), evidenceLines, "results");
+        }
         if (evidenceLines.isEmpty() && StringUtils.hasText(fallbackText)) {
             evidenceLines.add(fallbackText);
         }
         return String.join("\n", new LinkedHashSet<>(evidenceLines));
+    }
+
+    @SuppressWarnings("unused")
+    private Map<String, Object> ensureFactualLabResults(ClinicalDocumentEntity document,
+                                                       Map<String, Object> extracted,
+                                                       String sourceText,
+                                                       List<Map<String, Object>> parsedRepairFacts,
+                                                       String traceLabel) {
+        Map<String, Object> normalized = extracted == null ? new LinkedHashMap<>() : new LinkedHashMap<>(extracted);
+        Map<String, Object> factualFindings;
+        Object existing = normalized.get("factualFindings");
+        if (existing instanceof Map<?, ?> map) {
+            factualFindings = new LinkedHashMap<>((Map<String, Object>) map);
+        } else {
+            factualFindings = new LinkedHashMap<>();
+        }
+        LinkedHashMap<String, Map<String, Object>> mergedLabResults = new LinkedHashMap<>();
+        List<String> existingLabKeys = new ArrayList<>();
+        Object existingLabResults = factualFindings.get("labResults");
+        if (existingLabResults instanceof Iterable<?> iterable) {
+            for (Object item : iterable) {
+                if (item instanceof Map<?, ?> row) {
+                    Map<String, Object> normalizedRow = normalizeRepairLabRow(row, "factualFindings.labResults");
+                    String key = canonicalLabResultKey(normalizedRow);
+                    if (hasText(key)) {
+                        existingLabKeys.add(key);
+                        mergedLabResults.putIfAbsent(key, normalizedRow);
+                    }
+                }
+            }
+        }
+        List<String> parsedLabKeys = new ArrayList<>();
+        if (parsedRepairFacts != null) {
+            for (Map<String, Object> fact : parsedRepairFacts) {
+                Map<String, Object> normalizedFact = normalizeRepairLabRow(fact, "deterministic.labResults");
+                String key = canonicalLabResultKey(normalizedFact);
+                if (hasText(key)) {
+                    parsedLabKeys.add(key);
+                    mergedLabResults.putIfAbsent(key, normalizedFact);
+                }
+            }
+        }
+        if (log.isInfoEnabled()) {
+            log.info("[LONG-MEM-REPAIR-TRACE] documentId={} traceLabel={} existingLabKeys={} parsedLabKeys={} mergedLabKeys={}",
+                    document == null ? null : document.getId(),
+                    traceLabel,
+                    existingLabKeys,
+                    parsedLabKeys,
+                    new ArrayList<>(mergedLabResults.keySet()));
+        }
+        if (mergedLabResults.isEmpty()) {
+            if (existingLabResults != null) {
+                factualFindings.put("labResults", existingLabResults);
+            }
+            normalized.put("factualFindings", factualFindings);
+            return normalized;
+        }
+        factualFindings.put("labResults", new ArrayList<>(mergedLabResults.values()));
+        Object existingConditions = factualFindings.get("conditions");
+        if (!(existingConditions instanceof List<?>) && StringUtils.hasText(sourceText) && sourceText.toLowerCase(java.util.Locale.ROOT).contains("diabet")) {
+            factualFindings.put("conditions", List.of(Map.of(
+                    "canonicalKey", "diabetes_mellitus",
+                    "label", "Diabetes Mellitus",
+                    "evidenceText", "Known diabetic"
+            )));
+        }
+        normalized.put("factualFindings", factualFindings);
+        return normalized;
     }
 
     private void collectRepairEvidenceText(Object value, List<String> target, String key) {
@@ -838,6 +930,28 @@ public class PatientLongitudinalMemoryService {
             return true;
         }
         return false;
+    }
+
+    private List<String> summarizeMappedKeys(List<MappedConcept> concepts) {
+        if (concepts == null || concepts.isEmpty()) {
+            return List.of();
+        }
+        return concepts.stream()
+                .map(MappedConcept::key)
+                .filter(this::hasText)
+                .distinct()
+                .toList();
+    }
+
+    private List<String> summarizeConceptKeys(List<PatientLongitudinalConceptEntity> concepts) {
+        if (concepts == null || concepts.isEmpty()) {
+            return List.of();
+        }
+        return concepts.stream()
+                .map(PatientLongitudinalConceptEntity::getConceptKey)
+                .filter(this::hasText)
+                .distinct()
+                .toList();
     }
 
     private boolean isValidLabConcept(MappedConcept concept) {
@@ -998,60 +1112,101 @@ public class PatientLongitudinalMemoryService {
     }
 
     @SuppressWarnings("unchecked")
-    private Map<String, Object> ensureFactualLabResults(ClinicalDocumentEntity document, Map<String, Object> extracted, String sourceText) {
-        Map<String, Object> normalized = extracted == null ? new LinkedHashMap<>() : new LinkedHashMap<>(extracted);
-        Map<String, Object> factualFindings;
-        Object existing = normalized.get("factualFindings");
-        if (existing instanceof Map<?, ?> map) {
-            factualFindings = new LinkedHashMap<>((Map<String, Object>) map);
-        } else {
-            factualFindings = new LinkedHashMap<>();
-        }
-        LinkedHashMap<String, Map<String, Object>> mergedLabResults = new LinkedHashMap<>();
-        Object existingLabResults = factualFindings.get("labResults");
-        if (existingLabResults instanceof Iterable<?> iterable) {
-            for (Object item : iterable) {
-                if (item instanceof Map<?, ?> row) {
-                    String key = canonicalLabResultKey(row);
-                    if (hasText(key)) {
-                        mergedLabResults.putIfAbsent(key, new LinkedHashMap<>((Map<String, Object>) row));
-                    }
-                }
-            }
-        }
-        if (StringUtils.hasText(sourceText)) {
-            for (Map<String, Object> fact : deterministicLabFactParser.parse(document.getId(), sourceText, null)) {
-                String key = canonicalLabResultKey(fact);
-                if (hasText(key)) {
-                    mergedLabResults.putIfAbsent(key, new LinkedHashMap<>(fact));
-                }
-            }
-        }
-        if (mergedLabResults.isEmpty()) {
-            if (existingLabResults != null) {
-                factualFindings.put("labResults", existingLabResults);
-            }
-            normalized.put("factualFindings", factualFindings);
+    private Map<String, Object> normalizeRepairLabRow(Map<?, ?> row, String sourcePath) {
+        Map<String, Object> normalized = new LinkedHashMap<>();
+        if (row == null) {
             return normalized;
         }
-        factualFindings.put("labResults", new ArrayList<>(mergedLabResults.values()));
-        Object existingConditions = factualFindings.get("conditions");
-        if (!(existingConditions instanceof List<?>) && StringUtils.hasText(sourceText) && sourceText.toLowerCase(java.util.Locale.ROOT).contains("diabet")) {
-            factualFindings.put("conditions", List.of(Map.of(
-                    "canonicalKey", "diabetes_mellitus",
-                    "label", "Diabetes Mellitus",
-                    "evidenceText", "Known diabetic"
-            )));
-        }
-        normalized.put("factualFindings", factualFindings);
+        Object rawKey = firstNonNull(row.get("canonicalKey"), row.get("conceptKey"), row.get("key"), row.get("testName"), row.get("label"));
+        String canonicalKey = canonicalLabResultKey(rawKey);
+        normalized.put("canonicalKey", canonicalKey);
+        String testName = firstHasText(
+                stringValue(row.get("testName")),
+                stringValue(row.get("label")),
+                displayRepairLabName(canonicalKey)
+        );
+        normalized.put("testName", testName);
+        normalized.put("value", stringValue(firstNonNull(row.get("value"), row.get("result"), row.get("valueText"))));
+        normalized.put("unit", canonicalRepairUnit(stringValue(firstNonNull(row.get("unit"), row.get("valueUnit"))), canonicalKey));
+        normalized.put("referenceRange", firstHasText(stringValue(row.get("referenceRange")), stringValue(row.get("range"))));
+        normalized.put("flag", firstHasText(stringValue(row.get("flag")), stringValue(row.get("status"))));
+        normalized.put("sourcePath", firstHasText(stringValue(row.get("sourcePath")), sourcePath));
+        String evidenceText = firstHasText(
+                stringValue(row.get("evidenceText")),
+                stringValue(row.get("evidence")),
+                stringValue(row.get("sourceText")),
+                buildRepairLabEvidenceText(testName, stringValue(firstNonNull(row.get("value"), row.get("result"), row.get("valueText"))), stringValue(firstNonNull(row.get("unit"), row.get("valueUnit"))), canonicalKey)
+        );
+        normalized.put("evidenceText", evidenceText);
         return normalized;
     }
 
-    private String canonicalLabResultKey(Map<?, ?> row) {
-        if (row == null) {
-            return null;
+    private String stringValue(Object value) {
+        return value == null ? null : value.toString();
+    }
+
+    private String buildRepairLabEvidenceText(String testName, String value, String unit, String canonicalKey) {
+        List<String> parts = new ArrayList<>();
+        if (hasText(testName)) {
+            parts.add(testName.trim());
+        } else {
+            parts.add(displayRepairLabName(canonicalKey));
         }
-        Object rawKey = firstNonNull(row.get("canonicalKey"), row.get("conceptKey"), row.get("key"));
+        if (hasText(value)) {
+            parts.add(value.trim());
+        }
+        if (hasText(unit)) {
+            parts.add(canonicalRepairUnit(unit, canonicalKey));
+        }
+        return String.join(" ", parts).trim();
+    }
+
+    private String displayRepairLabName(String canonicalKey) {
+        if (!hasText(canonicalKey)) {
+            return "Lab Result";
+        }
+        return switch (canonicalKey) {
+            case "hba1c" -> "HbA1c";
+            case "estimated_average_glucose" -> "Estimated Average Glucose";
+            case "blood_sugar" -> "Random Blood Sugar";
+            case "cholesterol" -> "Total Cholesterol";
+            case "ldl" -> "LDL Cholesterol";
+            case "hdl" -> "HDL Cholesterol";
+            case "triglycerides" -> "Triglycerides";
+            case "hemoglobin" -> "Hemoglobin";
+            case "creatinine" -> "Creatinine";
+            case "egfr" -> "eGFR";
+            case "crp" -> "CRP";
+            case "alt" -> "ALT";
+            case "ast" -> "AST";
+            default -> canonicalKey;
+        };
+    }
+
+    private String canonicalRepairUnit(String unit, String canonicalKey) {
+        if (!hasText(unit)) {
+            return switch (canonicalKey) {
+                case "hba1c" -> "%";
+                case "hemoglobin" -> "g/dL";
+                case "egfr" -> "mL/min/1.73m2";
+                case "crp" -> "mg/L";
+                case "alt", "ast" -> "U/L";
+                default -> "mg/dL";
+            };
+        }
+        String normalized = unit.trim().toLowerCase(java.util.Locale.ROOT)
+                .replace("m²", "m2")
+                .replace("ml/min/1.73m²", "ml/min/1.73m2");
+        if (normalized.contains("mg/dl")) return "mg/dL";
+        if (normalized.contains("g/dl")) return "g/dL";
+        if (normalized.contains("ml/min/1.73m2")) return "mL/min/1.73m2";
+        if (normalized.contains("%")) return "%";
+        if (normalized.contains("mg/l")) return "mg/L";
+        if (normalized.contains("u/l")) return "U/L";
+        return unit.trim();
+    }
+
+    private String canonicalLabResultKey(Object rawKey) {
         if (rawKey == null) {
             return null;
         }

@@ -73,7 +73,7 @@ public class DeterministicLabFactParser {
             return null;
         }
         String labelPattern = quotedAlternation(labels);
-        Pattern pattern = Pattern.compile("(?i)\\b(?:" + labelPattern + ")\\b\\s*(?:[:=\\-]|\\|)?\\s*([<>]?\\s*\\d+(?:\\.\\d+)?)\\s*(%|mg/dL|g/dL|U/L|mg/L|mL/min/1\\.73m2)?\\s*(.*)$");
+        Pattern pattern = Pattern.compile("(?i)\\b(?:" + labelPattern + ")\\b\\s*(?:[:=\\-]|\\|)?\\s*([<>]?\\s*\\d+(?:\\.\\d+)?)\\s*(%|mg/dL|g/dL|U/L|mg/L|mL/min/1\\.73m2|mL/min/1\\.73m²|ml/min/1\\.73m2|ml/min/1\\.73m²)?\\s*(.*)$");
         Matcher matcher = pattern.matcher(line.trim());
         if (!matcher.find()) {
             return null;
@@ -243,15 +243,24 @@ public class DeterministicLabFactParser {
         if (!hasText(unit)) {
             return null;
         }
-        String normalized = unit.trim().toLowerCase(Locale.ROOT);
+        String normalized = unit.trim().toLowerCase(Locale.ROOT).replace("m²", "m2");
         if (normalized.contains("mg/dl")) {
             return "mg/dL";
         }
         if (normalized.contains("g/dl")) {
             return "g/dL";
         }
+        if (normalized.contains("ml/min/1.73m2")) {
+            return "mL/min/1.73m2";
+        }
         if (normalized.contains("%")) {
             return "%";
+        }
+        if (normalized.contains("mg/l")) {
+            return "mg/L";
+        }
+        if (normalized.contains("u/l")) {
+            return "U/L";
         }
         return unit.trim();
     }

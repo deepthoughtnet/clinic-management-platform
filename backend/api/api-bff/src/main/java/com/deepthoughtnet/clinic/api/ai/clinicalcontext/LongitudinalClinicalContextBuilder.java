@@ -43,7 +43,7 @@ final class LongitudinalClinicalContextBuilder {
             Map.entry("weight", new AnalyteDefinition("weight", "Weight", Set.of("weight"), "kg", TrendSemantics.INDETERMINATE)),
             Map.entry("bmi", new AnalyteDefinition("bmi", "BMI", Set.of("bmi", "body mass index"), "kg/m2", TrendSemantics.INDETERMINATE))
     );
-    private static final Set<String> IMAGING_ALIASES = Set.of("x ray", "xray", "x-ray", "cxr", "ct", "mri", "ultrasound", "usg", "mammography", "echocardiography");
+    private static final Set<String> IMAGING_ALIASES = Set.of("x ray", "xray", "x-ray", "cxr", "ct", "computed tomography", "mri", "magnetic resonance", "ultrasound", "usg", "mammography", "echocardiography", "echo", "radiograph");
     private static final Set<String> CHEST_ALIASES = Set.of("chest", "cxr", "lung", "pulmonary", "pneumonia", "bronchitic");
     private final ObjectMapper objectMapper;
 
@@ -160,7 +160,7 @@ final class LongitudinalClinicalContextBuilder {
         }
         Map<String, List<Observation>> grouped = new LinkedHashMap<>();
         for (Observation observation : observations) {
-            if (observation == null || !isReliableObservation(observation)) {
+            if (observation == null || !isTrendEligibleObservation(observation)) {
                 continue;
             }
             grouped.computeIfAbsent(observation.analyteKey(), ignored -> new ArrayList<>()).add(observation);
@@ -168,21 +168,15 @@ final class LongitudinalClinicalContextBuilder {
 
         List<ClinicalContextResponse.LabTrend> trends = new ArrayList<>();
         for (AnalyteDefinition definition : ANALYTES.values().stream().sorted(Comparator.comparing(AnalyteDefinition::displayName)).toList()) {
-            List<Observation> analyteObservations = grouped.getOrDefault(definition.key(), List.of()).stream()
-                    .sorted(Comparator.comparing(Observation::observedOn))
-                    .toList();
-            if (analyteObservations.isEmpty()) {
-                continue;
-            }
-            List<Observation> uniqueDatedObservations = collapseSameDateObservations(analyteObservations);
-            if (uniqueDatedObservations.size() < 2) {
-                if ("hba1c".equals(definition.key())) {
-                    warnings.add("HbA1c trend could not be confirmed because only one reliable report date was available.");
+            List<Observation> selectedObservations = selectTrendObservations(grouped.getOrDefault(definition.key(), List.of()));
+            if (selectedObservations.size() < 2) {
+                if ("hba1c".equals(definition.key()) && !selectedObservations.isEmpty()) {
+                    warnings.add("HbA1c trend could not be confirmed because only one report date was available.");
                 }
                 continue;
             }
-            Observation older = uniqueDatedObservations.get(uniqueDatedObservations.size() - 2);
-            Observation newer = uniqueDatedObservations.get(uniqueDatedObservations.size() - 1);
+            Observation older = selectedObservations.get(selectedObservations.size() - 2);
+            Observation newer = selectedObservations.get(selectedObservations.size() - 1);
             if (!newer.observedOn().isAfter(older.observedOn())) {
                 if ("hba1c".equals(definition.key())) {
                     warnings.add("HbA1c trend not generated because the newer value predates the older value.");
@@ -213,12 +207,40 @@ final class LongitudinalClinicalContextBuilder {
         return trends;
     }
 
+    private List<Observation> selectTrendObservations(List<Observation> observations) {
+        if (observations == null || observations.isEmpty()) {
+            return List.of();
+        }
+        LinkedHashMap<String, Observation> deduped = new LinkedHashMap<>();
+        for (Observation observation : observations) {
+            if (observation == null || !isTrendEligibleObservation(observation)) {
+                continue;
+            }
+            deduped.merge(trendObservationKey(observation), observation, this::choosePreferredObservation);
+        }
+        List<Observation> ordered = new ArrayList<>(deduped.values());
+        ordered.sort(Comparator.comparing(Observation::observedOn));
+        return collapseSameDateObservations(ordered);
+    }
+
     private List<Observation> collapseSameDateObservations(List<Observation> observations) {
         LinkedHashMap<LocalDate, Observation> deduped = new LinkedHashMap<>();
         for (Observation observation : observations) {
             deduped.merge(observation.observedOn(), observation, this::choosePreferredObservation);
         }
         return new ArrayList<>(deduped.values());
+    }
+
+    private String trendObservationKey(Observation observation) {
+        if (observation == null) {
+            return "";
+        }
+        return String.join("|",
+                firstNonBlank(observation.analyteKey(), ""),
+                observation.observedOn() == null ? "" : observation.observedOn().toString(),
+                normalizeText(firstNonBlank(observation.valueText(), "")),
+                normalizeText(firstNonBlank(observation.unit(), "")),
+                normalizeSourceIdentity(observation.sourceDocumentId(), observation.sourceDocumentTitle(), observation.sourceDocumentType()));
     }
 
     private List<ClinicalContextResponse.ImagingHistoryItem> buildImagingHistory(List<ClinicalDocumentEntity> documents, List<String> warnings) {
@@ -234,12 +256,14 @@ final class LongitudinalClinicalContextBuilder {
             if (!isImagingDocument(document)) {
                 continue;
             }
-            if (isChestImagingDocument(document)) {
+            boolean chestImaging = isChestImagingDocument(document);
+            if (chestImaging) {
                 sawChestImaging = true;
             }
             String summary = extractDocumentSummary(document);
-            if (!hasText(summary)) {
-                continue;
+            boolean groundedSummary = hasText(summary);
+            if (!groundedSummary) {
+                summary = metadataOnlyImagingSummary(document);
             }
             items.add(new ClinicalContextResponse.ImagingHistoryItem(
                     detectImagingModality(document),
@@ -252,8 +276,8 @@ final class LongitudinalClinicalContextBuilder {
                     compactText(firstNonBlank(document.getTitle(), document.getDescription(), detectImagingModality(document)), 120)
             ));
         }
-        if (sawChestImaging && items.stream().noneMatch(item -> containsAny(item.bodyPart(), "chest") || containsAny(item.summary(), "bronchitic", "pneumonia", "consolidation"))) {
-            warnings.add("Chest X-ray document exists but no usable report summary was available.");
+        if (sawChestImaging && items.stream().noneMatch(item -> containsAny(item.bodyPart(), "chest") && !isMetadataOnlyImagingSummary(item.summary()))) {
+            warnings.add("Chest X-ray document exists but structured radiology findings are not currently available for clinical reasoning.");
         }
         return items.stream().distinct().limit(3).toList();
     }
@@ -261,11 +285,12 @@ final class LongitudinalClinicalContextBuilder {
     private ClinicalContextResponse.RenalContext buildRenalContext(List<Observation> observations,
                                                                    List<ClinicalDocumentEntity> documents,
                                                                    List<String> warnings) {
-        List<Observation> reliableObservations = observations == null ? List.of() : observations.stream()
-                .filter(this::isReliableObservation)
+        List<Observation> renalObservations = observations == null ? List.of() : observations.stream()
+                .filter(observation -> observation != null
+                        && ("creatinine".equals(observation.analyteKey()) || "egfr".equals(observation.analyteKey())))
                 .toList();
-        Observation creatinine = latestObservation(reliableObservations, "creatinine");
-        Observation egfr = latestObservation(reliableObservations, "egfr");
+        Observation creatinine = latestObservation(renalObservations, "creatinine");
+        Observation egfr = latestObservation(renalObservations, "egfr");
         if (creatinine == null && egfr == null) {
             if (hasRenalDocument(documents)) {
                 warnings.add("Kidney-function report exists but creatinine/eGFR values were not extracted.");
@@ -357,12 +382,24 @@ final class LongitudinalClinicalContextBuilder {
             };
             String summary = "HbA1c " + ("IMPROVING".equals(trend.direction()) ? "decreased" : "WORSENING".equals(trend.direction()) ? "increased" : "was stable")
                     + " from " + trend.olderValue() + "% on " + formatHumanDate(parseLocalDate(trend.olderDate()))
-                    + " to " + trend.newerValue() + "% on " + formatHumanDate(parseLocalDate(trend.newerDate())) + ".";
+                    + " to " + trend.newerValue() + "% on " + formatHumanDate(parseLocalDate(trend.newerDate()))
+                    + " (" + trend.absoluteChange() + ").";
+            String clinicalRelevance = switch (trend.direction()) {
+                case "WORSENING" -> "This indicates worsening glycemic control"
+                        + (trend.interval() == null ? "" : " over " + trend.interval())
+                        + ". Poorer glycemic control may increase susceptibility to infection or delay recovery.";
+                case "IMPROVING" -> "This indicates improving glycemic control"
+                        + (trend.interval() == null ? "" : " over " + trend.interval())
+                        + ".";
+                default -> "This indicates stable glycemic control"
+                        + (trend.interval() == null ? "" : " over " + trend.interval())
+                        + ".";
+            };
             return new ClinicalContextResponse.HistoricalFinding(
                     "LAB_TREND",
                     title,
                     summary,
-                    trend.clinicalInterpretation(),
+                    clinicalRelevance,
                     trend.newerDate(),
                     "LONGITUDINAL_MEMORY",
                     "HbA1c trend",
@@ -390,6 +427,14 @@ final class LongitudinalClinicalContextBuilder {
             return "Previous kidney-function results are available and should be interpreted with current clinical status.";
         }
         return null;
+    }
+
+    private boolean isTrendEligibleObservation(Observation observation) {
+        if (observation == null) {
+            return false;
+        }
+        String status = normalizeVerificationStatus(observation.verificationStatus());
+        return !"REJECTED".equals(status);
     }
 
     private String trendDirection(AnalyteDefinition definition, double change) {
@@ -421,14 +466,6 @@ final class LongitudinalClinicalContextBuilder {
             return String.format(Locale.ROOT, "%+.1f percentage points", change);
         }
         return String.format(Locale.ROOT, "%+.1f", change);
-    }
-
-    private boolean isReliableObservation(Observation observation) {
-        if (observation == null) {
-            return false;
-        }
-        String status = normalizeVerificationStatus(observation.verificationStatus());
-        return "VERIFIED".equals(status);
     }
 
     private String normalizeAnalyteKey(String conceptKey, String label, String evidenceText) {
@@ -483,7 +520,11 @@ final class LongitudinalClinicalContextBuilder {
                 || document.getDocumentType() == ClinicalDocumentType.MRI_CT) {
             return true;
         }
-        String haystack = joinSegments(firstNonBlank(document.getTitle(), ""), firstNonBlank(document.getDescription(), ""), firstNonBlank(document.getAiExtractionSummary(), ""));
+        String haystack = joinSegments(
+                firstNonBlank(document.getTitle(), ""),
+                firstNonBlank(document.getDescription(), ""),
+                firstNonBlank(extractDocumentSummary(document), "")
+        );
         return IMAGING_ALIASES.stream().anyMatch(alias -> containsAny(haystack, alias));
     }
 
@@ -491,7 +532,7 @@ final class LongitudinalClinicalContextBuilder {
         String haystack = joinSegments(
                 firstNonBlank(document == null ? null : document.getTitle(), ""),
                 firstNonBlank(document == null ? null : document.getDescription(), ""),
-                firstNonBlank(document == null ? null : document.getAiExtractionSummary(), "")
+                firstNonBlank(extractDocumentSummary(document), "")
         );
         return CHEST_ALIASES.stream().anyMatch(alias -> containsAny(haystack, alias));
     }
@@ -515,17 +556,21 @@ final class LongitudinalClinicalContextBuilder {
         for (String raw : Arrays.asList(document.getAiExtractionAcceptedJson(), document.getAiExtractionStructuredJson())) {
             addJsonSummaryCandidates(candidates, raw);
         }
-        if (hasText(document.getAiExtractionSummary())) {
-            candidates.add(document.getAiExtractionSummary());
-        }
-        if (hasText(document.getDescription())) {
-            candidates.add(document.getDescription());
-        }
         return candidates.stream()
                 .map(value -> compactText(cleanSummary(value), 260))
-                .filter(this::hasText)
+                .filter(value -> hasText(value) && !isOperationalImagingSummary(value))
                 .findFirst()
                 .orElse(null);
+    }
+
+    private String metadataOnlyImagingSummary(ClinicalDocumentEntity document) {
+        String modality = detectImagingModality(document);
+        LocalDate observedOn = documentObservedOn(document);
+        String datePart = observedOn == null ? null : formatHumanDate(observedOn);
+        if (hasText(datePart)) {
+            return modality + " report dated " + datePart + " is available; structured radiology findings are not currently available for clinical reasoning.";
+        }
+        return modality + " report is available; structured radiology findings are not currently available for clinical reasoning.";
     }
 
     private void addJsonSummaryCandidates(List<String> candidates, String rawJson) {
@@ -593,6 +638,26 @@ final class LongitudinalClinicalContextBuilder {
         cleaned = cleaned.replaceAll("(?i)^summary\\s*[:\\-]\\s*", "");
         cleaned = cleaned.replaceAll("(?i)^impression\\s*[:\\-]\\s*", "");
         return cleaned;
+    }
+
+    private boolean isOperationalImagingSummary(String summary) {
+        if (!hasText(summary)) {
+            return false;
+        }
+        String normalized = summary.toLowerCase(Locale.ROOT);
+        return normalized.contains("mock ai provider is active")
+                || normalized.contains("no external model was called")
+                || normalized.contains("no external model")
+                || normalized.contains("mock ai")
+                || normalized.contains("provider is active");
+    }
+
+    private boolean isMetadataOnlyImagingSummary(String summary) {
+        if (!hasText(summary)) {
+            return true;
+        }
+        String normalized = summary.toLowerCase(Locale.ROOT);
+        return normalized.contains("structured radiology findings are not currently available");
     }
 
     private List<String> extractNegativeFindings(String summary) {
@@ -664,14 +729,18 @@ final class LongitudinalClinicalContextBuilder {
             return null;
         }
         for (String status : statuses) {
-            if ("VERIFIED".equals(normalizeVerificationStatus(status))) {
-                return "VERIFIED";
+            if ("REJECTED".equals(normalizeVerificationStatus(status))) {
+                return "REJECTED";
             }
         }
         for (String status : statuses) {
-            String normalized = normalizeVerificationStatus(status);
-            if (normalized != null) {
-                return normalized;
+            if ("PENDING_VERIFICATION".equals(normalizeVerificationStatus(status))) {
+                return "PENDING_VERIFICATION";
+            }
+        }
+        for (String status : statuses) {
+            if ("VERIFIED".equals(normalizeVerificationStatus(status))) {
+                return "VERIFIED";
             }
         }
         return null;

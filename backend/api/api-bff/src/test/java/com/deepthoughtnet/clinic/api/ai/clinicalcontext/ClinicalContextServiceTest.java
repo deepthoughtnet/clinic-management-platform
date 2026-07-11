@@ -242,7 +242,12 @@ class ClinicalContextServiceTest {
         assertThat(context.longitudinalClinicalContext().labTrends()).hasSize(1);
         assertThat(context.longitudinalClinicalContext().labTrends().get(0).direction()).isEqualTo("WORSENING");
         assertThat(context.longitudinalClinicalContext().imagingHistory()).hasSize(1);
-        assertThat(context.longitudinalClinicalContext().imagingHistory().get(0).summary()).contains("bronchitic");
+        assertThat(context.longitudinalClinicalContext().imagingHistory().get(0).summary())
+                .contains("Chest X-ray report dated 02-Jul-2026 is available")
+                .contains("structured radiology findings are not currently available")
+                .doesNotContain("bronchitic")
+                .doesNotContain("Mock AI provider is active")
+                .doesNotContain("No external model was called");
         assertThat(context.longitudinalClinicalContext().renalContext()).isNotNull();
         assertThat(context.longitudinalClinicalContext().renalContext().interpretation()).contains("preserved");
         assertThat(context.aiSummary()).contains("Medication alerts");
@@ -372,6 +377,106 @@ class ClinicalContextServiceTest {
         assertThat(context.labIntelligence().abnormalValues()).anySatisfy(value -> assertThat(value).contains("HbA1c").contains("8.4"));
         assertThat(context.labIntelligence().abnormalValues()).anySatisfy(value -> assertThat(value).contains("Blood Sugar").contains("198"));
         assertThat(context.labIntelligence().abnormalValues()).anySatisfy(value -> assertThat(value).contains("Total Cholesterol").contains("228"));
+    }
+
+    @Test
+    void buildClinicalContextRetainsGroundedChestXrayFindingsFromTrustedStructuredJson() {
+        UUID tenantId = UUID.randomUUID();
+        UUID patientId = UUID.randomUUID();
+        UUID consultationId = UUID.randomUUID();
+
+        PatientEntity patient = PatientEntity.create(tenantId, "PAT-3");
+        patient.update("Rohan", "Sharma", PatientGender.MALE, null, 42, "9999999999", null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, true);
+
+        ConsultationEntity consultation = ConsultationEntity.create(tenantId, patientId, UUID.randomUUID(), null);
+        consultation.update("Cough", "Fever", "Chest symptoms", "Stable", "Rest", null, null, null, null, null, null, null, null, null, null);
+        setId(consultation, consultationId);
+
+        ClinicalDocumentEntity document = ClinicalDocumentEntity.create(
+                tenantId,
+                patientId,
+                consultationId,
+                null,
+                UUID.randomUUID(),
+                ClinicalDocumentType.RADIOLOGY_REPORT,
+                "Chest X-Ray",
+                "application/pdf",
+                2048,
+                "checksum",
+                "patients/1/documents/chest-xray.pdf",
+                "Chest X-Ray",
+                null,
+                null,
+                null
+        );
+        setField(document, "uploadSource", "RECEPTION");
+        setField(document, "sourceModule", "CLINICAL_INTAKE");
+        setField(document, "reportDate", java.time.LocalDate.of(2026, 7, 2));
+        setField(document, "aiExtractionSummary", "Mock AI provider is active. No external model was called.");
+        setField(document, "aiExtractionAcceptedJson", """
+                {
+                  "summary": "Mild bronchitic changes. No focal consolidation. No pneumonia."
+                }
+                """);
+
+        PatientRepository patientRepository = mock(PatientRepository.class);
+        ConsultationRepository consultationRepository = mock(ConsultationRepository.class);
+        PrescriptionRepository prescriptionRepository = mock(PrescriptionRepository.class);
+        PrescriptionMedicineRepository prescriptionMedicineRepository = mock(PrescriptionMedicineRepository.class);
+        PrescriptionTestRepository prescriptionTestRepository = mock(PrescriptionTestRepository.class);
+        ClinicalDocumentRepository clinicalDocumentRepository = mock(ClinicalDocumentRepository.class);
+        PatientClinicalIntakeRepository patientClinicalIntakeRepository = mock(PatientClinicalIntakeRepository.class);
+        LabOrderRepository labOrderRepository = mock(LabOrderRepository.class);
+        LabOrderResultRepository labOrderResultRepository = mock(LabOrderResultRepository.class);
+        PatientLongitudinalMemoryService longitudinalMemoryService = mock(PatientLongitudinalMemoryService.class);
+
+        when(patientRepository.findByTenantIdAndId(tenantId, patientId)).thenReturn(java.util.Optional.of(patient));
+        when(consultationRepository.findByTenantIdAndPatientIdOrderByCreatedAtDesc(tenantId, patientId)).thenReturn(List.of(consultation));
+        when(prescriptionRepository.findByTenantIdAndPatientIdOrderByCreatedAtDesc(tenantId, patientId)).thenReturn(List.of());
+        when(prescriptionMedicineRepository.findByTenantIdAndPrescriptionIdOrderBySortOrderAsc(tenantId, UUID.randomUUID())).thenReturn(List.of());
+        when(prescriptionTestRepository.findByTenantIdAndPrescriptionIdOrderBySortOrderAsc(tenantId, UUID.randomUUID())).thenReturn(List.of());
+        when(clinicalDocumentRepository.findByTenantIdAndPatientIdAndActiveTrueOrderByCreatedAtDesc(tenantId, patientId)).thenReturn(List.of(document));
+        when(patientClinicalIntakeRepository.findByTenantIdAndPatientIdOrderByCreatedAtDesc(tenantId, patientId)).thenReturn(List.of());
+        when(labOrderRepository.findByTenantIdAndPatientIdOrderByCreatedAtDesc(tenantId, patientId)).thenReturn(List.of());
+        when(labOrderResultRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAscCreatedAtAsc(tenantId, UUID.randomUUID())).thenReturn(List.of());
+        when(longitudinalMemoryService.buildProfile(tenantId, patientId)).thenReturn(new PatientLongitudinalMemoryProfile(
+                List.of(),
+                List.of(),
+                null,
+                null,
+                List.of(),
+                null,
+                null,
+                List.of(),
+                List.of(),
+                null
+        ));
+
+        ClinicalContextService service = new ClinicalContextService(
+                patientRepository,
+                consultationRepository,
+                prescriptionRepository,
+                prescriptionMedicineRepository,
+                prescriptionTestRepository,
+                clinicalDocumentRepository,
+                patientClinicalIntakeRepository,
+                labOrderRepository,
+                labOrderResultRepository,
+                longitudinalMemoryService,
+                new ObjectMapper()
+        );
+
+        ClinicalContextResponse context = service.buildClinicalContext(tenantId, patientId, consultationId);
+
+        assertThat(context.longitudinalClinicalContext()).isNotNull();
+        assertThat(context.longitudinalClinicalContext().imagingHistory()).hasSize(1);
+        assertThat(context.longitudinalClinicalContext().imagingHistory().get(0).summary())
+                .contains("Mild bronchitic changes")
+                .contains("No focal consolidation")
+                .doesNotContain("Mock AI provider is active")
+                .doesNotContain("No external model was called");
+        assertThat(context.longitudinalClinicalContext().imagingHistory().get(0).verificationStatus()).isEqualTo("PENDING_VERIFICATION");
+        assertThat(context.longitudinalClinicalContext().imagingHistory().get(0).reportDate()).isEqualTo("2026-07-02");
     }
 
     private static void setId(Object entity, UUID id) {

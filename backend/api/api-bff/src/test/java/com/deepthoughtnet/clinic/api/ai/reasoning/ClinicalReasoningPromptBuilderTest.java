@@ -45,10 +45,10 @@ class ClinicalReasoningPromptBuilderTest {
                         "Known diabetic, HbA1c 8.4%"
                 ),
                 new ClinicalContextResponse.LongitudinalClinicalContext(
-                        List.of(new ClinicalContextResponse.LabTrend("hba1c", "HbA1c", "7.3", "%", "2026-01-15", "8.4", "%", "2026-07-10", "WORSENING", "Poorer glycemic control may increase infection risk and delay recovery.", "+1.1 percentage points", "approximately 6 months", List.of(), "VERIFIED")),
+                        List.of(new ClinicalContextResponse.LabTrend("hba1c", "HbA1c", "7.3", "%", "2026-01-15", "8.4", "%", "2026-07-08", "WORSENING", "Poorer glycemic control may increase infection risk and delay recovery.", "+1.1 percentage points", "approximately 6 months", List.of(), "PENDING_VERIFICATION")),
                         List.of(),
                         null,
-                        List.of(new ClinicalContextResponse.HistoricalFinding("LAB_TREND", "Worsening glycemic control", "HbA1c increased from 7.3% on 15-Jan-2026 to 8.4% on 10-Jul-2026.", "Poorer glycemic control may increase infection risk and delay recovery.", "2026-07-10", "LONGITUDINAL_MEMORY", "HbA1c trend", "VERIFIED", "HIGH", null)),
+                        List.of(new ClinicalContextResponse.HistoricalFinding("LAB_TREND", "Worsening glycemic control", "HbA1c increased from 7.3% on 15-Jan-2026 to 8.4% on 08-Jul-2026 (+1.1 percentage points).", "This indicates worsening glycemic control over approximately 6 months. Poorer glycemic control may increase susceptibility to infection or delay recovery.", "2026-07-08", "LONGITUDINAL_MEMORY", "HbA1c trend", "PENDING_VERIFICATION", "HIGH", null)),
                         List.of()
                 ),
                 "Known diabetic with recent report",

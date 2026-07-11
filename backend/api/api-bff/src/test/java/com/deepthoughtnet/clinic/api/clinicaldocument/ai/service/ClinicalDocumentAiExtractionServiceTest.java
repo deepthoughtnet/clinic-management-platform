@@ -993,6 +993,161 @@ class ClinicalDocumentAiExtractionServiceTest {
     }
 
     @Test
+    void repairClinicalMemoryPreservesStoredKidneyFunctionLabsWithoutSourceText() {
+        ClinicalAiJobRepository jobRepository = mock(ClinicalAiJobRepository.class);
+        ClinicalDocumentRepository documentRepository = mock(ClinicalDocumentRepository.class);
+        ClinicalDocumentService documentService = mock(ClinicalDocumentService.class);
+        PatientLongitudinalMemoryService longitudinalMemoryService = mock(PatientLongitudinalMemoryService.class);
+        AppUserRepository appUserRepository = mock(AppUserRepository.class);
+        ClinicalDocumentTextExtractionService textExtractionService = mock(ClinicalDocumentTextExtractionService.class);
+        AiDoctorCopilotService aiDoctorCopilotService = mock(AiDoctorCopilotService.class);
+        ObjectStorageService storageService = mock(ObjectStorageService.class);
+        AuditEventPublisher auditEventPublisher = mock(AuditEventPublisher.class);
+        AgentExecutionLogService agentExecutionLogService = mock(AgentExecutionLogService.class);
+        PatientService patientService = mock(PatientService.class);
+        TenantNotificationSettingsService notificationSettingsService = mock(TenantNotificationSettingsService.class);
+        ClinicalDocumentAiExtractionService service = new ClinicalDocumentAiExtractionService(
+                jobRepository,
+                documentRepository,
+                documentService,
+                longitudinalMemoryService,
+                appUserRepository,
+                textExtractionService,
+                aiDoctorCopilotService,
+                storageService,
+                auditEventPublisher,
+                agentExecutionLogService,
+                patientService,
+                notificationSettingsService,
+                new ObjectMapper(),
+                1000L,
+                3
+        );
+
+        ClinicalDocumentEntity document = document();
+        setField(document, "aiExtractionStructuredJson", """
+                {
+                  "factualFindings":{
+                    "labResults":[
+                      {"canonicalKey":"creatinine","testName":"Creatinine","value":"1.08","unit":"mg/dL"},
+                      {"canonicalKey":"egfr","testName":"eGFR","value":"84","unit":"mL/min/1.73m²"}
+                    ]
+                  }
+                }
+                """);
+        setField(document, "aiExtractionSummary", "AI draft generated.");
+        setField(document, "aiExtractionConfidence", BigDecimal.valueOf(0.18));
+
+        when(documentRepository.findByTenantIdAndId(eq(TENANT_ID), eq(DOCUMENT_ID))).thenReturn(Optional.of(document));
+        when(jobRepository.findFirstByTenantIdAndDocumentIdAndJobTypeOrderByCreatedAtDesc(eq(TENANT_ID), eq(DOCUMENT_ID), eq(ClinicalAiJobType.DOCUMENT_EXTRACTION)))
+                .thenReturn(Optional.empty());
+        when(longitudinalMemoryService.repairPendingConcepts(any(), anyString(), anyString(), any(), anyString(), any()))
+                .thenAnswer(invocation -> {
+                    String structuredJson = invocation.getArgument(1);
+                    String sourceText = invocation.getArgument(2);
+                    assertThat(structuredJson).contains("creatinine").contains("egfr");
+                    assertThat(sourceText).contains("Creatinine 1.08 mg/dL").contains("eGFR 84 mL/min/1.73m2");
+                    return new com.deepthoughtnet.clinic.api.clinicaldocument.ai.dto.ClinicalMemoryRepairResult(
+                            DOCUMENT_ID,
+                            "SUCCESS",
+                            OffsetDateTime.now(),
+                            REVIEWER_ID,
+                            1,
+                            2,
+                            0,
+                            List.of(),
+                            0,
+                            "Memory repaired"
+                    );
+                });
+        when(documentRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        service.repairClinicalMemory(TENANT_ID, DOCUMENT_ID, REVIEWER_ID);
+
+        verify(longitudinalMemoryService).repairPendingConcepts(eq(document), anyString(), anyString(), eq(BigDecimal.valueOf(0.18)), eq("AI draft generated."), eq(REVIEWER_ID));
+        verify(textExtractionService, never()).extract(any(), any());
+        verify(aiDoctorCopilotService, never()).draft(any(), anyString(), anyString(), any(), any());
+    }
+
+    @Test
+    void repairClinicalMemoryIncludesPossibleAbnormalFindingsInRepairSourceText() {
+        ClinicalAiJobRepository jobRepository = mock(ClinicalAiJobRepository.class);
+        ClinicalDocumentRepository documentRepository = mock(ClinicalDocumentRepository.class);
+        ClinicalDocumentService documentService = mock(ClinicalDocumentService.class);
+        PatientLongitudinalMemoryService longitudinalMemoryService = mock(PatientLongitudinalMemoryService.class);
+        AppUserRepository appUserRepository = mock(AppUserRepository.class);
+        ClinicalDocumentTextExtractionService textExtractionService = mock(ClinicalDocumentTextExtractionService.class);
+        AiDoctorCopilotService aiDoctorCopilotService = mock(AiDoctorCopilotService.class);
+        ObjectStorageService storageService = mock(ObjectStorageService.class);
+        AuditEventPublisher auditEventPublisher = mock(AuditEventPublisher.class);
+        AgentExecutionLogService agentExecutionLogService = mock(AgentExecutionLogService.class);
+        PatientService patientService = mock(PatientService.class);
+        TenantNotificationSettingsService notificationSettingsService = mock(TenantNotificationSettingsService.class);
+        ClinicalDocumentAiExtractionService service = new ClinicalDocumentAiExtractionService(
+                jobRepository,
+                documentRepository,
+                documentService,
+                longitudinalMemoryService,
+                appUserRepository,
+                textExtractionService,
+                aiDoctorCopilotService,
+                storageService,
+                auditEventPublisher,
+                agentExecutionLogService,
+                patientService,
+                notificationSettingsService,
+                new ObjectMapper(),
+                1000L,
+                3
+        );
+
+        ClinicalDocumentEntity document = document();
+        setField(document, "aiExtractionStructuredJson", """
+                {
+                  "factualFindings":{
+                    "labResults":[
+                      {"canonicalKey":"estimated_average_glucose","testName":"Estimated Average Glucose","value":"163","unit":"mg/dL","evidenceText":"Estimated Average Glucose 163 mg/dL"}
+                    ]
+                  },
+                  "possibleAbnormalFindings":[
+                    "Possible abnormal finding detected: HbA1c 7.3"
+                  ]
+                }
+                """);
+        setField(document, "aiExtractionSummary", "AI draft generated.");
+        setField(document, "aiExtractionConfidence", BigDecimal.valueOf(0.91));
+
+        when(documentRepository.findByTenantIdAndId(eq(TENANT_ID), eq(DOCUMENT_ID))).thenReturn(Optional.of(document));
+        when(jobRepository.findFirstByTenantIdAndDocumentIdAndJobTypeOrderByCreatedAtDesc(eq(TENANT_ID), eq(DOCUMENT_ID), eq(ClinicalAiJobType.DOCUMENT_EXTRACTION)))
+                .thenReturn(Optional.empty());
+        when(longitudinalMemoryService.repairPendingConcepts(any(), anyString(), anyString(), any(), anyString(), any()))
+                .thenAnswer(invocation -> {
+                    String sourceText = invocation.getArgument(2);
+                    assertThat(sourceText).contains("HbA1c 7.3");
+                    assertThat(sourceText).contains("Estimated Average Glucose 163 mg/dL");
+                    return new com.deepthoughtnet.clinic.api.clinicaldocument.ai.dto.ClinicalMemoryRepairResult(
+                            DOCUMENT_ID,
+                            "SUCCESS",
+                            OffsetDateTime.now(),
+                            REVIEWER_ID,
+                            1,
+                            2,
+                            0,
+                            List.of(),
+                            0,
+                            "Memory repaired"
+                    );
+                });
+        when(documentRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        service.repairClinicalMemory(TENANT_ID, DOCUMENT_ID, REVIEWER_ID);
+
+        verify(longitudinalMemoryService).repairPendingConcepts(eq(document), anyString(), anyString(), eq(BigDecimal.valueOf(0.91)), eq("AI draft generated."), eq(REVIEWER_ID));
+        verify(textExtractionService, never()).extract(any(), any());
+        verify(aiDoctorCopilotService, never()).draft(any(), anyString(), anyString(), any(), any());
+    }
+
+    @Test
     void repairClinicalMemoryPrefersStructuredExtractionAndEvidenceLinesOverAcceptedJson() {
         ClinicalAiJobRepository jobRepository = mock(ClinicalAiJobRepository.class);
         ClinicalDocumentRepository documentRepository = mock(ClinicalDocumentRepository.class);

@@ -113,6 +113,9 @@ public class ClinicalConceptMapper {
             }
             String evidenceText = normalizeText(firstNonNull(fact.get("evidenceText"), fact.get("evidence"), fact.get("sourceText")));
             String rawValue = normalizeText(firstNonNull(fact.get("value"), fact.get("result"), fact.get("valueText")));
+            if (!hasText(evidenceText)) {
+                evidenceText = buildStructuredLabEvidenceText(canonicalKey, rawValue, fact);
+            }
             log.info("[AI-DOC-PIPELINE-TRACE] stage=MAPPER_INPUT documentId={} conceptKey={} sourcePath={} rawValue={} evidenceText={}",
                     document.getId(),
                     canonicalKey,
@@ -572,12 +575,15 @@ public class ClinicalConceptMapper {
         if (text == null) {
             return fallback;
         }
-        String lower = text.toLowerCase(Locale.ROOT);
+        String lower = text.toLowerCase(Locale.ROOT).replace("m²", "m2");
         if (lower.contains("%")) {
             return "%";
         }
         if (lower.contains("mg/dl")) {
             return "mg/dL";
+        }
+        if (lower.contains("ml/min/1.73m2")) {
+            return "mL/min/1.73m2";
         }
         if (lower.contains("mmhg")) {
             return "mmHg";
@@ -585,7 +591,46 @@ public class ClinicalConceptMapper {
         if (lower.contains("kg/m2") || lower.contains("kg/m²")) {
             return "kg/m2";
         }
+        if (lower.contains("mg/l")) {
+            return "mg/L";
+        }
+        if (lower.contains("u/l")) {
+            return "U/L";
+        }
         return fallback;
+    }
+
+    private String buildStructuredLabEvidenceText(String canonicalKey, String rawValue, Map<?, ?> fact) {
+        List<String> parts = new ArrayList<>();
+        String testName = normalizeText(firstNonNull(fact.get("testName"), fact.get("label")));
+        if (!hasText(testName)) {
+            testName = displayLabelForLabKey(canonicalKey);
+        }
+        if (hasText(testName)) {
+            parts.add(testName);
+        }
+        if (hasText(rawValue)) {
+            parts.add(rawValue);
+        }
+        String unit = normalizeText(firstNonNull(fact.get("unit"), fact.get("valueUnit")));
+        if (!hasText(unit)) {
+            unit = defaultUnitForLabKey(canonicalKey);
+        }
+        if (hasText(unit)) {
+            parts.add(unit);
+        }
+        return parts.isEmpty() ? null : String.join(" ", parts);
+    }
+
+    private String defaultUnitForLabKey(String canonicalKey) {
+        return switch (normalizeKey(canonicalKey)) {
+            case "hba1c" -> "%";
+            case "hemoglobin" -> "g/dL";
+            case "egfr" -> "mL/min/1.73m2";
+            case "crp" -> "mg/L";
+            case "alt", "ast" -> "U/L";
+            default -> "mg/dL";
+        };
     }
 
     private String displayLabelFromKey(String rawKey) {
@@ -882,9 +927,6 @@ public class ClinicalConceptMapper {
         }
         String normalized = text.toLowerCase(Locale.ROOT);
         if (containsAny(normalized, "review", "discuss", "recommend", "consider", "monitor", "follow up", "follow-up", "adjust", "advice", "suggest", "summary", "answer", "suggestedactions", "patient instructions", "doctor advice")) {
-            return false;
-        }
-        if (containsAny(normalized, "hemoglobin") && !containsAny(normalized, "hba1c", "hb a1c", "a1c", "glycated hemoglobin", "glycosylated hemoglobin")) {
             return false;
         }
         boolean matchesLabel = false;

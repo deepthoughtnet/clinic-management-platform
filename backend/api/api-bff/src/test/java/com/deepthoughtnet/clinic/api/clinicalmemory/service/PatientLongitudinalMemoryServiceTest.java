@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -255,6 +256,193 @@ class PatientLongitudinalMemoryServiceTest {
         assertThat(saved.get()).filteredOn(concept -> "LAB_RESULT".equals(concept.getConceptFamily()) && "estimated_average_glucose".equals(concept.getConceptKey()))
                 .extracting(PatientLongitudinalConceptEntity::getValueText, PatientLongitudinalConceptEntity::getValueUnit)
                 .containsExactly(org.assertj.core.groups.Tuple.tuple("163", "mg/dL"));
+    }
+
+    @Test
+    void repairPendingConceptsPersistsHbA1cAndHemoglobinAsSeparateLabs() {
+        PatientLongitudinalConceptRepository repository = mock(PatientLongitudinalConceptRepository.class);
+        AtomicReference<List<PatientLongitudinalConceptEntity>> saved = new AtomicReference<>(List.of());
+        doAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            List<PatientLongitudinalConceptEntity> value = (List<PatientLongitudinalConceptEntity>) invocation.getArgument(0);
+            saved.set(value);
+            return value;
+        }).when(repository).saveAllAndFlush(anyList());
+        when(repository.deleteByDocumentAndStatus(any(), any(), any(), any())).thenReturn(1);
+
+        UUID tenantId = UUID.randomUUID();
+        UUID patientId = UUID.randomUUID();
+        ClinicalDocumentEntity document = document(tenantId, patientId, "HbA1c follow-up report", LocalDate.of(2026, 1, 15));
+        String structuredJson = """
+                {
+                  "factualFindings":{
+                    "labResults":[
+                      {"canonicalKey":"estimated_average_glucose","testName":"Estimated Average Glucose","value":"163","unit":"mg/dL","evidenceText":"Estimated Average Glucose 163 mg/dL"}
+                    ]
+                  }
+                }
+                """;
+        String sourceText = """
+                HbA1c | 7.3 %
+                Hemoglobin | 14.1 g/dL
+                Estimated Average Glucose | 163 mg/dL
+                """;
+
+        PatientLongitudinalMemoryService service = new PatientLongitudinalMemoryService(repository, new ClinicalConceptMapper(), new ObjectMapper());
+        var result = service.repairPendingConcepts(document, structuredJson, sourceText, new BigDecimal("0.91"), "AI draft generated.", UUID.randomUUID());
+
+        assertThat(result.status()).isEqualTo("SUCCESS");
+        assertThat(saved.get()).extracting(PatientLongitudinalConceptEntity::getConceptKey)
+                .containsExactlyInAnyOrder("hba1c", "hemoglobin", "estimated_average_glucose", "diabetes_risk");
+        assertThat(saved.get()).filteredOn(concept -> "LAB_RESULT".equals(concept.getConceptFamily()) && "hba1c".equals(concept.getConceptKey()))
+                .extracting(PatientLongitudinalConceptEntity::getValueText, PatientLongitudinalConceptEntity::getValueUnit)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("7.3", "%"));
+        assertThat(saved.get()).filteredOn(concept -> "LAB_RESULT".equals(concept.getConceptFamily()) && "hemoglobin".equals(concept.getConceptKey()))
+                .extracting(PatientLongitudinalConceptEntity::getValueText, PatientLongitudinalConceptEntity::getValueUnit)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("14.1", "g/dL"));
+        assertThat(saved.get()).noneMatch(concept -> "LAB_RESULT".equals(concept.getConceptFamily())
+                && "hba1c".equals(concept.getConceptKey())
+                && "14.1".equals(concept.getValueText()));
+    }
+
+    @Test
+    void repairPendingConceptsIsIdempotentForSameDocument() {
+        PatientLongitudinalConceptRepository repository = mock(PatientLongitudinalConceptRepository.class);
+        List<PatientLongitudinalConceptEntity> persisted = new ArrayList<>();
+        doAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            List<PatientLongitudinalConceptEntity> value = (List<PatientLongitudinalConceptEntity>) invocation.getArgument(0);
+            persisted.removeIf(concept -> concept.getSourceDocumentId() != null && concept.getSourceDocumentId().equals(value.getFirst().getSourceDocumentId()));
+            persisted.addAll(value);
+            return value;
+        }).when(repository).saveAllAndFlush(anyList());
+        doAnswer(invocation -> {
+            UUID sourceDocumentId = invocation.getArgument(2);
+            persisted.removeIf(concept -> sourceDocumentId.equals(concept.getSourceDocumentId())
+                    && "PENDING_REVIEW".equals(concept.getVerificationStatus()));
+            return 1;
+        }).when(repository).deleteByDocumentAndStatus(any(), any(), any(), any());
+
+        UUID tenantId = UUID.randomUUID();
+        UUID patientId = UUID.randomUUID();
+        ClinicalDocumentEntity document = document(tenantId, patientId, "HbA1c follow-up report", LocalDate.of(2026, 1, 15));
+        String structuredJson = """
+                {
+                  "factualFindings":{
+                    "labResults":[
+                      {"canonicalKey":"estimated_average_glucose","testName":"Estimated Average Glucose","value":"163","unit":"mg/dL","evidenceText":"Estimated Average Glucose 163 mg/dL"}
+                    ]
+                  }
+                }
+                """;
+        String sourceText = """
+                HbA1c | 7.3 %
+                Estimated Average Glucose | 163 mg/dL
+                """;
+
+        PatientLongitudinalMemoryService service = new PatientLongitudinalMemoryService(repository, new ClinicalConceptMapper(), new ObjectMapper());
+        service.repairPendingConcepts(document, structuredJson, sourceText, new BigDecimal("0.91"), "AI draft generated.", UUID.randomUUID());
+        service.repairPendingConcepts(document, structuredJson, sourceText, new BigDecimal("0.91"), "AI draft generated.", UUID.randomUUID());
+
+        assertThat(persisted).extracting(PatientLongitudinalConceptEntity::getConceptKey)
+                .containsExactlyInAnyOrder("hba1c", "estimated_average_glucose", "diabetes_risk");
+        assertThat(persisted).hasSize(3);
+    }
+
+    @Test
+    void repairPendingConceptsUsesStoredStructuredKidneyLabsWithoutSourceTextAndNormalizesEgfrUnit() {
+        PatientLongitudinalConceptRepository repository = mock(PatientLongitudinalConceptRepository.class);
+        AtomicReference<List<PatientLongitudinalConceptEntity>> saved = new AtomicReference<>(List.of());
+        doAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            List<PatientLongitudinalConceptEntity> value = (List<PatientLongitudinalConceptEntity>) invocation.getArgument(0);
+            saved.set(value);
+            return value;
+        }).when(repository).saveAllAndFlush(anyList());
+        when(repository.deleteByDocumentAndStatus(any(), any(), any(), any())).thenReturn(1);
+
+        UUID tenantId = UUID.randomUUID();
+        UUID patientId = UUID.randomUUID();
+        ClinicalDocumentEntity document = document(tenantId, patientId, "Kidney Function Report", LocalDate.of(2026, 5, 20));
+        String structuredJson = """
+                {
+                  "factualFindings":{
+                    "labResults":[
+                      {"canonicalKey":"creatinine","testName":"Creatinine","value":"1.08","unit":"mg/dL"},
+                      {"canonicalKey":"egfr","testName":"eGFR","value":"84","unit":"mL/min/1.73m²"}
+                    ]
+                  }
+                }
+                """;
+
+        PatientLongitudinalMemoryService service = new PatientLongitudinalMemoryService(repository, new ClinicalConceptMapper(), new ObjectMapper());
+        var result = service.repairPendingConcepts(document, structuredJson, "", new BigDecimal("0.18"), "Mock provider", UUID.randomUUID());
+
+        assertThat(result.status()).isEqualTo("SUCCESS");
+        assertThat(result.insertedConceptCount()).isEqualTo(2);
+        assertThat(saved.get()).extracting(PatientLongitudinalConceptEntity::getConceptKey)
+                .containsExactlyInAnyOrder("creatinine", "egfr");
+        assertThat(saved.get()).filteredOn(concept -> "LAB_RESULT".equals(concept.getConceptFamily()) && "egfr".equals(concept.getConceptKey()))
+                .extracting(PatientLongitudinalConceptEntity::getValueUnit)
+                .containsExactly("mL/min/1.73m2");
+        assertThat(saved.get()).extracting(PatientLongitudinalConceptEntity::getVerificationStatus).containsOnly("PENDING_REVIEW");
+    }
+
+    @Test
+    void repairPendingConceptsMergesParsedEgfrIntoPartialStructuredKidneyLabs() {
+        PatientLongitudinalConceptRepository repository = mock(PatientLongitudinalConceptRepository.class);
+        AtomicReference<List<PatientLongitudinalConceptEntity>> saved = new AtomicReference<>(List.of());
+        doAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            List<PatientLongitudinalConceptEntity> value = (List<PatientLongitudinalConceptEntity>) invocation.getArgument(0);
+            saved.set(value);
+            return value;
+        }).when(repository).saveAllAndFlush(anyList());
+        when(repository.deleteByDocumentAndStatus(any(), any(), any(), any())).thenReturn(1);
+
+        UUID tenantId = UUID.randomUUID();
+        UUID patientId = UUID.randomUUID();
+        ClinicalDocumentEntity document = document(tenantId, patientId, "Kidney Function Report", LocalDate.of(2026, 5, 20));
+        String structuredJson = """
+                {
+                  "factualFindings":{
+                    "labResults":[
+                      {"canonicalKey":"creatinine","testName":"Creatinine","value":"1.08","unit":"mg/dL"}
+                    ]
+                  }
+                }
+                """;
+        String sourceText = """
+                Creatinine 1.08 mg/dL
+                eGFR 84 mL/min/1.73m²
+                """;
+
+        PatientLongitudinalMemoryService service = new PatientLongitudinalMemoryService(repository, new ClinicalConceptMapper(), new ObjectMapper());
+        var result = service.repairPendingConcepts(document, structuredJson, sourceText, new BigDecimal("0.18"), "Mock provider", UUID.randomUUID());
+
+        assertThat(result.status()).isEqualTo("SUCCESS");
+        assertThat(saved.get()).extracting(PatientLongitudinalConceptEntity::getConceptKey)
+                .containsExactlyInAnyOrder("creatinine", "egfr");
+        assertThat(saved.get()).filteredOn(concept -> "LAB_RESULT".equals(concept.getConceptFamily()) && "egfr".equals(concept.getConceptKey()))
+                .extracting(PatientLongitudinalConceptEntity::getValueText, PatientLongitudinalConceptEntity::getValueUnit)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("84", "mL/min/1.73m2"));
+    }
+
+    @Test
+    void repairPendingConceptsReturnsFailureWhenNoFactualLabRowsExist() {
+        PatientLongitudinalConceptRepository repository = mock(PatientLongitudinalConceptRepository.class);
+        when(repository.deleteByDocumentAndStatus(any(), any(), any(), any())).thenReturn(0);
+
+        UUID tenantId = UUID.randomUUID();
+        UUID patientId = UUID.randomUUID();
+        ClinicalDocumentEntity document = document(tenantId, patientId, "Kidney Function Report", LocalDate.of(2026, 5, 20));
+
+        PatientLongitudinalMemoryService service = new PatientLongitudinalMemoryService(repository, new ClinicalConceptMapper(), new ObjectMapper());
+        var result = service.repairPendingConcepts(document, "{}", "", new BigDecimal("0.18"), "Mock provider", UUID.randomUUID());
+
+        assertThat(result.status()).isEqualTo("FAILED");
+        assertThat(result.message()).isEqualTo("No factual lab rows available for memory repair.");
+        verify(repository, never()).saveAllAndFlush(anyList());
     }
 
     @Test
