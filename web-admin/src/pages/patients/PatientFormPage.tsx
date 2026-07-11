@@ -172,6 +172,36 @@ function fromCsv(value: string) {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
 }
 
+function normalizeCsvValues(values: string[]) {
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  for (const value of values) {
+    const trimmed = value.trim().replace(/\s+/g, " ");
+    if (!trimmed) continue;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    normalized.push(trimmed);
+  }
+  return normalized;
+}
+
+function mergeAllergiesValue(existing: string, pending: string, replaceSingleExisting = false) {
+  const currentValues = normalizeCsvValues(fromCsv(existing));
+  const draft = pending.trim().replace(/\s+/g, " ");
+  if (!draft) {
+    return toCsv(currentValues);
+  }
+  const draftKey = draft.toLowerCase();
+  if (currentValues.some((value) => value.toLowerCase() === draftKey)) {
+    return toCsv(currentValues);
+  }
+  const mergedValues = replaceSingleExisting && currentValues.length === 1
+    ? [draft]
+    : [...currentValues, draft];
+  return toCsv(normalizeCsvValues(mergedValues));
+}
+
 function friendlyError(err: unknown) {
   const message = err instanceof Error ? err.message : "Unable to save patient. Please check the details and try again.";
   if (message.includes("mobile is required")) return "Mobile number is required.";
@@ -198,6 +228,7 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
   const [success, setSuccess] = React.useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = React.useState<Record<string, string>>({});
   const [loadedPatient, setLoadedPatient] = React.useState<Patient | null>(null);
+  const [allergiesInput, setAllergiesInput] = React.useState("");
   const [dobEstimatedFromAge, setDobEstimatedFromAge] = React.useState(false);
   const mobileInputRef = React.useRef<HTMLInputElement | null>(null);
   const firstNameInputRef = React.useRef<HTMLInputElement | null>(null);
@@ -249,6 +280,7 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
         if (!cancelled) {
           setLoadedPatient(detail.patient);
           setForm(patientToForm(detail.patient));
+          setAllergiesInput("");
           setDobEstimatedFromAge(false);
         }
       } catch (err) {
@@ -273,9 +305,10 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
 
   const tenantRole = (auth.tenantRole || "").toUpperCase();
   const isDoctor = auth.rolesUpper.includes("DOCTOR") || tenantRole === "DOCTOR";
+  const isClinicAdmin = auth.rolesUpper.includes("CLINIC_ADMIN") || tenantRole === "CLINIC_ADMIN";
   const canEditRecord = mode === "create"
     ? !isDoctor && auth.hasPermission("patient.create")
-    : Boolean(loadedPatient?.canEdit ?? auth.hasPermission("patient.update"));
+    : Boolean(auth.hasPermission("patient.update") && (isClinicAdmin || loadedPatient?.canEdit === true));
 
   const updateField = (field: Exclude<keyof FormState, "ageYears" | "active" | "gender" | "dateOfBirth" | "mobile">) =>
     (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
@@ -306,6 +339,16 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
     setError(null);
     setDobEstimatedFromAge(value !== null);
     setForm((current) => ({ ...current, ageYears: value, dateOfBirth: approximateDobFromAge(value) }));
+  };
+
+  const commitAllergiesInput = (replaceSingleExisting = false) => {
+    const pending = allergiesInput.trim();
+    if (!pending) {
+      setAllergiesInput("");
+      return;
+    }
+    setForm((current) => ({ ...current, allergies: mergeAllergiesValue(current.allergies, pending, replaceSingleExisting) }));
+    setAllergiesInput("");
   };
 
   const focusFirstInvalidField = () => {
@@ -349,7 +392,13 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
 
   const savePatient = async (next: "detail" | "appointment" | "queue" = "detail") => {
     if (!auth.accessToken || !auth.tenantId) return;
-    const payload = formToInput({ ...form, mobile: normalizeIndianMobileInput(form.mobile) as string });
+    const allergies = mergeAllergiesValue(form.allergies, allergiesInput, true);
+    const nextForm = { ...form, allergies };
+    if (allergies !== form.allergies) {
+      setForm(nextForm);
+    }
+    setAllergiesInput("");
+    const payload = formToInput({ ...nextForm, mobile: normalizeIndianMobileInput(nextForm.mobile) as string });
     const parsed = validationSchema.safeParse(payload);
     if (!parsed.success) {
       setSuccess(null);
@@ -678,10 +727,27 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
                     freeSolo
                     options={commonAllergies}
                     value={fromCsv(form.allergies)}
-                    onChange={(_, values) => setForm((current) => ({ ...current, allergies: toCsv(values) }))}
+                    inputValue={allergiesInput}
+                    onChange={(_, values) => {
+                      setForm((current) => ({ ...current, allergies: toCsv(normalizeCsvValues(values)) }));
+                      setAllergiesInput("");
+                    }}
+                    onInputChange={(_, inputValue, reason) => {
+                      if (reason === "reset") {
+                        return;
+                      }
+                      setAllergiesInput(inputValue);
+                    }}
                     disabled={disabled}
                     renderTags={(value, getTagProps) => value.map((option, index) => <Chip color="error" variant="outlined" label={option} {...getTagProps({ index })} key={option} />)}
-                    renderInput={(params) => <TextField {...params} label="Allergies" helperText="Use chips for fast capture. Add custom values if needed." />}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Allergies"
+                        helperText="Use chips for fast capture. Add custom values if needed."
+                        onBlur={() => commitAllergiesInput(false)}
+                      />
+                    )}
                   />
                 </Grid>
                 <Grid size={{ xs: 12, md: 6 }}>

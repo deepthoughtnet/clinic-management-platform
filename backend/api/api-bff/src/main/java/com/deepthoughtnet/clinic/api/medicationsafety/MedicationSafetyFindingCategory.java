@@ -1,0 +1,16 @@
+package com.deepthoughtnet.clinic.api.medicationsafety;
+
+public enum MedicationSafetyFindingCategory {
+    DUPLICATE_MEDICATION,
+    DUPLICATE_INGREDIENT,
+    DUPLICATE_CLASS,
+    ALLERGY_CONFLICT,
+    CONDITION_CONTRAINDICATION,
+    RENAL_CAUTION,
+    HEPATIC_CAUTION,
+    DOSE_LIMIT,
+    FREQUENCY_LIMIT,
+    DRUG_INTERACTION,
+    CURRENT_MEDICATION_OVERLAP,
+    DATA_QUALITY
+}

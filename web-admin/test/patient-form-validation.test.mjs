@@ -19,5 +19,7 @@ test("patient form maps validation issues to field errors", () => {
   assert.ok(source.includes("fieldErrors.firstName"));
   assert.ok(source.includes("fieldErrors.dateOfBirth"));
   assert.ok(source.includes("fieldErrors.emergencyContactMobile"));
-  assert.ok(source.includes("disabled={disabled || checkingDuplicates || !validationPreview.success}"));
+  assert.ok(source.includes("const isClinicAdmin = auth.rolesUpper.includes(\"CLINIC_ADMIN\") || tenantRole === \"CLINIC_ADMIN\";"));
+  assert.ok(source.includes("loadedPatient?.canEdit === true"));
+  assert.ok(source.includes("disabled={disabled || checking || !validationPreview.success}"));
 });

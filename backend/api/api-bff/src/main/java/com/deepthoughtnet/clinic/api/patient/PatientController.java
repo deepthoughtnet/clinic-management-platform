@@ -365,14 +365,10 @@ public class PatientController {
         if (!permissionChecker.hasPermission("patient.update")) {
             return false;
         }
-        String normalizedRole = normalizeRole(actorRole);
-        if ("CLINIC_ADMIN".equals(normalizedRole)) {
-            return true;
-        }
-        if ("RECEPTIONIST".equals(normalizedRole)) {
+        if ("RECEPTIONIST".equals(normalizeRole(actorRole))) {
             return patientService.canEditPatient(patient, actorRole, tenantZone);
         }
-        return false;
+        return true;
     }
 
     private void ensureCanEditPatient(PatientRecord patient, String actorRole, ZoneId tenantZone) {

@@ -1469,6 +1469,72 @@ export type Prescription = {
   recommendedTests: PrescriptionTest[];
 };
 
+export type MedicationSafetySeverity = "NONE" | "INFO" | "WARNING" | "CRITICAL" | "NOT_EVALUATED";
+export type MedicationSafetyFindingCategory =
+  | "DUPLICATE_MEDICATION"
+  | "DUPLICATE_INGREDIENT"
+  | "DUPLICATE_CLASS"
+  | "ALLERGY_CONFLICT"
+  | "CONDITION_CONTRAINDICATION"
+  | "RENAL_CAUTION"
+  | "HEPATIC_CAUTION"
+  | "DOSE_LIMIT"
+  | "FREQUENCY_LIMIT"
+  | "DRUG_INTERACTION"
+  | "CURRENT_MEDICATION_OVERLAP"
+  | "DATA_QUALITY";
+
+export type MedicationSafetyCoverage = {
+  exactDuplicateEvaluated: boolean;
+  ingredientDuplicateEvaluated: boolean;
+  classDuplicateEvaluated: boolean;
+  allergyEvaluated: boolean;
+  conditionRulesEvaluated: boolean;
+  renalEvaluated: boolean;
+  renalCoverageStatus?: "EVALUATED" | "PARTIAL" | "UNAVAILABLE" | string;
+  hepaticEvaluated: boolean;
+  doseEvaluated: boolean;
+  interactionEvaluated: boolean;
+  currentMedicationOverlapEvaluated: boolean;
+};
+
+export type MedicationSafetyFinding = {
+  findingId: string;
+  ruleCode: string;
+  category: MedicationSafetyFindingCategory;
+  severity: MedicationSafetySeverity;
+  title: string;
+  summary: string;
+  clinicalRationale: string;
+  affectedMedicationIds: string[];
+  affectedMedicineNames: string[];
+  evidence: string[];
+  sourceReferences: string[];
+  verificationStatus: string | null;
+  acknowledgementRequired: boolean;
+  overrideAllowed: boolean;
+  suggestedDoctorAction: string | null;
+  dataQualityNotes: string[];
+};
+
+export type MedicationSafetyEvaluationResult = {
+  evaluationId: string;
+  evaluatedAt: string;
+  prescriptionId: string | null;
+  overallSeverity: MedicationSafetySeverity;
+  findings: MedicationSafetyFinding[];
+  dataQualityWarnings: string[];
+  evaluationCoverage: MedicationSafetyCoverage;
+  rulesVersion: string;
+  sourceSnapshotMetadata: {
+    tenantId: string | null;
+    patientId: string | null;
+    consultationId: string | null;
+    prescriptionId: string | null;
+    prescriptionStatus: string | null;
+  };
+};
+
 export type BillStatus = "DRAFT" | "UNPAID" | "ISSUED" | "PARTIALLY_PAID" | "PAID" | "REFUND_PENDING" | "PARTIALLY_REFUNDED" | "REFUNDED" | "CANCELLED" | "CANCELLED_REFUNDED";
 export type BillItemType = "CONSULTATION" | "MEDICINE" | "TEST" | "VACCINATION" | "PROCEDURE" | "OTHER";
 export type PaymentMode = "CASH" | "CARD" | "UPI" | "INSURANCE" | "PAYTM" | "PHONEPE" | "GOOGLE_PAY" | "BANK_TRANSFER" | "CHEQUE" | "OTHER";
@@ -3540,6 +3606,10 @@ export async function getPrescription(token: string, tenantId: string, id: strin
 
 export async function getConsultationPrescription(token: string, tenantId: string, consultationId: string) {
   return httpGet<Prescription>(`/api/prescriptions/consultations/${consultationId}`, { token, tenantId });
+}
+
+export async function getMedicationSafetyEvaluation(token: string, tenantId: string, consultationId: string) {
+  return httpGet<MedicationSafetyEvaluationResult>(`/api/consultations/${consultationId}/prescription/safety`, { token, tenantId });
 }
 
 export async function getPrescriptionHistory(token: string, tenantId: string, prescriptionId: string) {

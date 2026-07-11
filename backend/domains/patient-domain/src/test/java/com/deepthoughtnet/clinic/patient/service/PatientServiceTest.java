@@ -401,6 +401,71 @@ class PatientServiceTest {
     }
 
     @Test
+    void clinicAdminCanPersistAllergiesOnUpdate() {
+        UUID tenantId = UUID.randomUUID();
+        UUID patientId = UUID.randomUUID();
+        UUID actorId = UUID.randomUUID();
+        PatientEntity patient = patient(tenantId, patientId, "PAT-3002", OffsetDateTime.now(UTC).minusDays(1));
+        patient.update(
+                "Asha",
+                "Rao",
+                PatientGender.FEMALE,
+                null,
+                31,
+                "9999999999",
+                "old@example.com",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                "Old notes",
+                true
+        );
+        when(repository.findByTenantIdAndId(tenantId, patientId)).thenReturn(Optional.of(patient));
+
+        PatientUpsertCommand command = new PatientUpsertCommand(
+                "Asha",
+                "Rao",
+                PatientGender.FEMALE,
+                null,
+                31,
+                "9999999999",
+                "old@example.com",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                "Paracetamol",
+                null,
+                null,
+                "Uses inhaler",
+                "Old notes",
+                true
+        );
+
+        var saved = service.update(tenantId, patientId, command, actorId, "CLINIC_ADMIN", UTC, "admin@clinic.test");
+
+        assertThat(saved.allergies()).isEqualTo("Paracetamol");
+        assertThat(saved.surgicalHistory()).isEqualTo("Uses inhaler");
+        assertThat(saved.notes()).isEqualTo("Old notes");
+        verify(repository).save(any(PatientEntity.class));
+    }
+
+    @Test
     void receptionistCannotDeactivateOlderPatient() {
         UUID tenantId = UUID.randomUUID();
         UUID patientId = UUID.randomUUID();

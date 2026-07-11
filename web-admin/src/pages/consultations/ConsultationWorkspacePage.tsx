@@ -97,6 +97,7 @@ import {
   getLabOrders,
   getLabTests,
   getConsultationPrescription,
+  getMedicationSafetyEvaluation,
   getClinicalContext,
   getMedicines,
   getPatient,
@@ -136,6 +137,7 @@ import {
   type ClinicalReasoningResult,
   type ClinicalDocumentType,
   type PatientTimelineItem,
+  type MedicationSafetyEvaluationResult,
   type Prescription,
   type PrescriptionInput,
   type PrescriptionMedicine,
@@ -2036,6 +2038,9 @@ export default function ConsultationWorkspacePage() {
   const [prescriptionComparisonDetailsOpen, setPrescriptionComparisonDetailsOpen] = React.useState(false);
   const [prescriptionIntelligenceTab, setPrescriptionIntelligenceTab] = React.useState<"safety" | "comparison" | "instructions" | "summary">("safety");
   const [prescriptionIntelligenceExpanded, setPrescriptionIntelligenceExpanded] = React.useState(false);
+  const [medicationSafetyEvaluation, setMedicationSafetyEvaluation] = React.useState<MedicationSafetyEvaluationResult | null>(null);
+  const [medicationSafetyLoading, setMedicationSafetyLoading] = React.useState(false);
+  const [medicationSafetyError, setMedicationSafetyError] = React.useState<string | null>(null);
   const [clinicalReasoningAskedMissingInfo, setClinicalReasoningAskedMissingInfo] = React.useState<Record<string, boolean>>({});
   const [clinicalReasoningLoadingStepIndex, setClinicalReasoningLoadingStepIndex] = React.useState(0);
   const [clinicalReasoningSectionsOpen, setClinicalReasoningSectionsOpen] = React.useState<Record<ClinicalReasoningSectionKey, boolean>>({
@@ -2107,6 +2112,34 @@ export default function ConsultationWorkspacePage() {
   React.useEffect(() => {
     prescriptionRef.current = prescription;
   }, [prescription]);
+
+  const refreshMedicationSafety = React.useCallback(async () => {
+    if (!auth.accessToken || !auth.tenantId || !consultation?.id) {
+      setMedicationSafetyEvaluation(null);
+      setMedicationSafetyError(null);
+      return;
+    }
+    setMedicationSafetyLoading(true);
+    try {
+      const result = await getMedicationSafetyEvaluation(auth.accessToken, auth.tenantId, consultation.id);
+      setMedicationSafetyEvaluation(result);
+      setMedicationSafetyError(null);
+    } catch (err) {
+      setMedicationSafetyEvaluation(null);
+      setMedicationSafetyError(err instanceof Error ? err.message : "Medication safety evaluation unavailable");
+    } finally {
+      setMedicationSafetyLoading(false);
+    }
+  }, [auth.accessToken, auth.tenantId, consultation?.id]);
+
+  React.useEffect(() => {
+    if (!consultation?.id || !prescription) {
+      setMedicationSafetyEvaluation(null);
+      setMedicationSafetyError(null);
+      return;
+    }
+    void refreshMedicationSafety();
+  }, [consultation?.id, prescription?.id, prescription?.updatedAt, refreshMedicationSafety]);
 
   const refreshClinicalArtifacts = React.useCallback(async (
     patientId: string,
@@ -3644,31 +3677,29 @@ export default function ConsultationWorkspacePage() {
   const fastPackAiSuggestions = React.useMemo(() => aiPrescriptionItems.slice(0, 4), [aiPrescriptionItems]);
   const prescriptionSafetyChecks = React.useMemo(() => {
     const allergies = splitCompactList(patientRow?.allergies);
-    const activeMedicines = clinicalContext?.medicationHistory.activeMedicines || [];
     const duplicateNames = currentMedicineRows
       .map((row) => row.medicineName.trim())
       .filter(Boolean)
       .filter((name, index, array) => array.findIndex((item) => normalizeMedicationKey(item) === normalizeMedicationKey(name)) !== index);
-    const duplicateWithActive = currentMedicineRows.filter((row) => activeMedicines.some((active) => normalizeMedicationKey(active) === normalizeMedicationKey(row.medicineName))).map((row) => row.medicineName);
+    const allergyText = (patientRow?.allergies || "").trim();
+    const noKnownAllergy = /^(?:nkda|none|no known allergies?|no allergies?)$/i.test(allergyText);
     const allergyMatch = allergies.find((allergy: string) => currentMedicineRows.some((row) => normalizeMedicationKey(row.medicineName).includes(normalizeMedicationKey(allergy)) || normalizeMedicationKey(allergy).includes(normalizeMedicationKey(row.medicineName))));
-    const antibioticRepeated = currentMedicineRows.some((row) => isAntibioticMedicine(row.medicineName)) && latestPreviousMedicineNames.some((name) => isAntibioticMedicine(name));
-    const painkillerRepeated = currentMedicineRows.some((row) => isPainkillerMedicine(row.medicineName)) && latestPreviousMedicineNames.some((name) => isPainkillerMedicine(name));
     const hasCurrentDraft = currentMedicineRows.length > 0;
     return [
       {
         label: "Drug-drug interaction",
-        status: hasCurrentDraft && activeMedicines.length ? "warning" : "not_enough_data",
-        message: hasCurrentDraft && activeMedicines.length ? "Review current regimen for interactions." : "Not enough data",
+        status: "not_enough_data",
+        message: currentMedicineRows.length > 1 ? "Interaction checking is unavailable because no trusted interaction reference is configured." : "Not enough data",
       },
       {
         label: "Allergy check",
-        status: allergyMatch ? "critical" : allergies.length ? "safe" : "not_enough_data",
-        message: allergyMatch ? `Penicillin allergy recorded. Review ${currentMedicineRows.find((row) => normalizeMedicationKey(row.medicineName).includes(normalizeMedicationKey(allergyMatch)) || normalizeMedicationKey(allergyMatch).includes(normalizeMedicationKey(row.medicineName)))?.medicineName || "medicine"}.` : allergies.length ? "No direct allergy match found." : "Not enough data",
+        status: allergyMatch ? "critical" : allergies.length || noKnownAllergy ? "safe" : "needs_review",
+        message: allergyMatch ? `Recorded allergy matches ${currentMedicineRows.find((row) => normalizeMedicationKey(row.medicineName).includes(normalizeMedicationKey(allergyMatch)) || normalizeMedicationKey(allergyMatch).includes(normalizeMedicationKey(row.medicineName)))?.medicineName || "medicine"}.` : allergies.length || noKnownAllergy ? "No direct allergy match found." : "Allergy status is not recorded.",
       },
       {
         label: "Duplicate therapy",
-        status: duplicateNames.length || duplicateWithActive.length ? "warning" : hasCurrentDraft ? "safe" : "not_enough_data",
-        message: duplicateNames.length || duplicateWithActive.length ? "Duplicate therapy possible." : hasCurrentDraft ? "No obvious duplicate detected." : "Not enough data",
+        status: duplicateNames.length ? "warning" : hasCurrentDraft ? "safe" : "not_enough_data",
+        message: duplicateNames.length ? "Duplicate therapy detected in the draft." : hasCurrentDraft ? "No obvious duplicate detected." : "Not enough data",
       },
       {
         label: "Contraindications",
@@ -3697,25 +3728,25 @@ export default function ConsultationWorkspacePage() {
       },
       {
         label: "Maximum dose",
-        status: currentMedicineRows.some((row) => isPainkillerMedicine(row.medicineName)) ? "warning" : "not_enough_data",
-        message: currentMedicineRows.some((row) => isPainkillerMedicine(row.medicineName)) ? "Check maximum dose for analgesics." : "Not enough data",
+        status: "not_enough_data",
+        message: "Maximum-dose reference unavailable.",
       },
       {
         label: "Allergy conflict checked",
-        status: allergyMatch ? "critical" : allergies.length ? "complete" : "needs_review",
-        message: allergyMatch ? "Review before prescribing." : allergies.length ? "Checked against available allergy data." : "Not enough data",
+        status: allergyMatch ? "critical" : allergies.length || noKnownAllergy ? "complete" : "missing",
+        message: allergyMatch ? "Review before prescribing." : allergies.length || noKnownAllergy ? "Checked against available allergy data." : "Allergy status is not recorded.",
       },
       {
         label: "Interaction checked",
-        status: hasCurrentDraft ? "needs_review" : "needs_review",
-        message: hasCurrentDraft ? "Review interactions before finalizing." : "Not enough data",
+        status: "not_enough_data",
+        message: "No trusted interaction reference is configured.",
       },
     ] as Array<{
       label: string;
       status: "safe" | "warning" | "critical" | "not_enough_data" | "complete" | "needs_review";
       message: string;
     }>;
-  }, [clinicalContext?.medicationHistory.activeMedicines, currentMedicineRows, latestPreviousMedicineNames, patientRow?.ageYears, patientRow?.allergies]);
+  }, [currentMedicineRows, patientRow?.ageYears, patientRow?.allergies]);
   const prescriptionSafetySummary = React.useMemo(() => ({
     critical: prescriptionSafetyChecks.filter((item) => item.status === "critical").length,
     review: prescriptionSafetyChecks.filter((item) => item.status === "warning" || item.status === "needs_review").length,
@@ -3736,7 +3767,7 @@ export default function ConsultationWorkspacePage() {
       { label: "Duration specified", state: hasDurationIssue ? "needs_review" : currentMedicineRows.length ? "complete" : "missing" },
       { label: "Advice present", state: normalizeStringValue(prescriptionForm.advice || consultationForm.advice) ? "complete" : "missing" },
       { label: "Follow-up present", state: normalizeStringValue(prescriptionForm.followUpDate || consultationForm.followUpDate) ? "complete" : "missing" },
-      { label: "Allergy conflict checked", state: allergyCheck?.status === "critical" ? "needs_review" : allergyCheck?.status === "not_enough_data" ? "missing" : "complete" },
+      { label: "Allergy conflict checked", state: allergyCheck?.status === "critical" ? "needs_review" : allergyCheck?.status === "needs_review" ? "needs_review" : allergyCheck?.status === "not_enough_data" ? "missing" : "complete" },
       { label: "Interaction checked", state: interactionCheck?.status === "not_enough_data" ? "missing" : "needs_review" },
     ] as Array<{ label: string; state: "complete" | "missing" | "needs_review" }>;
   }, [consultationForm.advice, consultationForm.diagnosis, consultationForm.followUpDate, currentMedicineRows, prescriptionForm.advice, prescriptionForm.diagnosisSnapshot, prescriptionForm.followUpDate, prescriptionSafetyChecks]);
@@ -9793,27 +9824,101 @@ export default function ConsultationWorkspacePage() {
                               {prescriptionIntelligenceTab === "safety" ? (
                                 <Stack spacing={0.75}>
                                   <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
-                                    <Typography variant="body2" color="text.secondary">
-                                      Safety: {prescriptionSafetySummary.critical} critical · {prescriptionSafetySummary.review} review · {prescriptionSafetySummary.safe} safe · {prescriptionSafetySummary.unavailable} unavailable
-                                    </Typography>
-                                    <Button type="button" size="small" variant="text" aria-label={prescriptionSafetyDetailsOpen ? "Hide medication safety details" : "View medication safety details"} onClick={() => setPrescriptionSafetyDetailsOpen((current) => !current)}>
-                                      {prescriptionSafetyDetailsOpen ? "Hide details" : "View details"}
-                                    </Button>
+                                    <Stack spacing={0.15}>
+                                      <Typography variant="body2" sx={{ fontWeight: 800 }}>
+                                        {medicationSafetyEvaluation ? `Medication safety: ${medicationSafetyEvaluation.overallSeverity.replaceAll("_", " ").toLowerCase()}` : "Medication safety: unavailable"}
+                                      </Typography>
+                                      <Typography variant="caption" color="text.secondary">
+                                        {medicationSafetyEvaluation
+                                          ? `Rules version ${medicationSafetyEvaluation.rulesVersion} · ${medicationSafetyEvaluation.findings.length} findings · ${medicationSafetyEvaluation.dataQualityWarnings.length} data-quality warnings`
+                                          : "Fallback checks use available structured data; unsupported rules remain unavailable."}
+                                      </Typography>
+                                    </Stack>
+                                    <Stack direction="row" spacing={0.5} alignItems="center">
+                                      <Button type="button" size="small" variant="outlined" onClick={() => void refreshMedicationSafety()} disabled={medicationSafetyLoading || !consultation}>
+                                        Run safety check
+                                      </Button>
+                                      <Button type="button" size="small" variant="text" aria-label={prescriptionSafetyDetailsOpen ? "Hide medication safety details" : "View medication safety details"} onClick={() => setPrescriptionSafetyDetailsOpen((current) => !current)}>
+                                        {prescriptionSafetyDetailsOpen ? "Hide details" : "View details"}
+                                      </Button>
+                                    </Stack>
                                   </Stack>
                                   <Collapse in={prescriptionSafetyDetailsOpen} timeout={200} easing={{ enter: "ease-in-out", exit: "ease-in-out" }} unmountOnExit>
                                     <Stack spacing={0.55}>
-                                      {prescriptionSafetyChecks.filter((check) => check.status !== "not_enough_data").map((check) => (
-                                        <Stack key={check.label} direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
-                                          <Typography variant="body2" sx={{ fontWeight: 700 }}>{check.label}</Typography>
-                                          <Stack direction="row" spacing={0.5} alignItems="center">
-                                            <Chip size="small" variant="outlined" color={check.status === "critical" ? "error" : check.status === "warning" ? "warning" : check.status === "safe" ? "success" : "default"} label={check.status === "critical" ? "Critical" : check.status === "warning" ? "Warning" : check.status === "safe" ? "Safe" : "Needs review"} />
-                                            <Typography variant="caption" color="text.secondary" sx={{ maxWidth: 180 }} noWrap title={check.message}>{check.message}</Typography>
+                                      {medicationSafetyLoading ? <LinearProgress /> : null}
+                                      {medicationSafetyError ? (
+                                        <Alert severity="warning">{medicationSafetyError}</Alert>
+                                      ) : null}
+                                      {medicationSafetyEvaluation ? (
+                                        <Stack spacing={0.7}>
+                                          <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                            <Chip size="small" label={`Overall: ${medicationSafetyEvaluation.overallSeverity.replaceAll("_", " ")}`} color={medicationSafetyEvaluation.overallSeverity === "CRITICAL" ? "error" : medicationSafetyEvaluation.overallSeverity === "WARNING" ? "warning" : medicationSafetyEvaluation.overallSeverity === "INFO" ? "info" : "default"} variant="outlined" />
+                                            <Chip size="small" label={`Exact duplicate: ${medicationSafetyEvaluation.evaluationCoverage.exactDuplicateEvaluated ? "checked" : "not evaluated"}`} variant="outlined" />
+                                            <Chip size="small" label={`Ingredient: ${medicationSafetyEvaluation.evaluationCoverage.ingredientDuplicateEvaluated ? "checked" : "not evaluated"}`} variant="outlined" />
+                                            <Chip size="small" label={`Class: ${medicationSafetyEvaluation.evaluationCoverage.classDuplicateEvaluated ? "checked" : "not evaluated"}`} variant="outlined" />
+                                            <Chip size="small" label={`Allergy: ${medicationSafetyEvaluation.evaluationCoverage.allergyEvaluated ? "checked" : "not evaluated"}`} variant="outlined" />
+                                            <Chip
+                                              size="small"
+                                              label={`Renal: ${(
+                                                medicationSafetyEvaluation.evaluationCoverage.renalCoverageStatus ||
+                                                (medicationSafetyEvaluation.evaluationCoverage.renalEvaluated ? "EVALUATED" : "UNAVAILABLE")
+                                              )
+                                                .toLowerCase()}`}
+                                              variant="outlined"
+                                            />
                                           </Stack>
+                                          {medicationSafetyEvaluation.findings.length ? (
+                                            <Stack spacing={0.55}>
+                                              {medicationSafetyEvaluation.findings.map((finding) => (
+                                                <Card key={finding.findingId} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5 }}>
+                                                  <CardContent sx={{ p: 1, "&:last-child": { pb: 1 } }}>
+                                                    <Stack spacing={0.45}>
+                                                      <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                                                        <Typography variant="body2" sx={{ fontWeight: 900 }}>{finding.title}</Typography>
+                                                        <Chip size="small" variant="outlined" color={finding.severity === "CRITICAL" ? "error" : finding.severity === "WARNING" ? "warning" : finding.severity === "INFO" ? "info" : "default"} label={finding.severity.replaceAll("_", " ").toLowerCase()} />
+                                                      </Stack>
+                                                      <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", lineHeight: 1.45 }}>{finding.summary}</Typography>
+                                                      {finding.clinicalRationale ? <Typography variant="caption" color="text.secondary">{finding.clinicalRationale}</Typography> : null}
+                                                      {finding.evidence.length ? <Typography variant="caption" color="text.secondary">Evidence: {finding.evidence.join(" • ")}</Typography> : null}
+                                                      {finding.sourceReferences.length ? <Typography variant="caption" color="text.secondary">Sources: {finding.sourceReferences.join(" • ")}</Typography> : null}
+                                                    </Stack>
+                                                  </CardContent>
+                                                </Card>
+                                              ))}
+                                            </Stack>
+                                          ) : (
+                                            <Alert severity="success">No alerts found in evaluated rules.</Alert>
+                                          )}
+                                          {medicationSafetyEvaluation.dataQualityWarnings.length ? (
+                                            <Stack spacing={0.35}>
+                                              <Typography variant="caption" color="text.secondary">Data quality warnings</Typography>
+                                              {medicationSafetyEvaluation.dataQualityWarnings.map((warning) => (
+                                                <Typography key={warning} variant="caption" color="text.secondary">• {warning}</Typography>
+                                              ))}
+                                            </Stack>
+                                          ) : null}
+                                          {medicationSafetyEvaluation.sourceSnapshotMetadata.prescriptionStatus ? (
+                                            <Typography variant="caption" color="text.secondary">
+                                              Source status: {medicationSafetyEvaluation.sourceSnapshotMetadata.prescriptionStatus.replaceAll("_", " ").toLowerCase()}
+                                            </Typography>
+                                          ) : null}
                                         </Stack>
-                                      ))}
-                                      <Typography variant="caption" color="text.secondary">
-                                        Advanced checks require renal function, liver function, pregnancy status, pediatric age, or max-dose reference data.
-                                      </Typography>
+                                      ) : (
+                                        <Stack spacing={0.55}>
+                                          {prescriptionSafetyChecks.map((check) => (
+                                                <Stack key={check.label} direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                                                  <Typography variant="body2" sx={{ fontWeight: 700 }}>{check.label}</Typography>
+                                                  <Stack direction="row" spacing={0.5} alignItems="center">
+                                                <Chip size="small" variant="outlined" color={check.status === "critical" ? "error" : check.status === "warning" ? "warning" : check.status === "safe" || check.status === "complete" ? "success" : "default"} label={check.status === "critical" ? "Critical" : check.status === "warning" ? "Warning" : check.status === "safe" || check.status === "complete" ? "Passed" : check.status === "needs_review" ? "Needs review" : "Unavailable"} />
+                                                <Typography variant="caption" color="text.secondary" sx={{ maxWidth: 180 }} noWrap title={check.message}>{check.message}</Typography>
+                                              </Stack>
+                                            </Stack>
+                                          ))}
+                                          <Typography variant="caption" color="text.secondary">
+                                            Advanced checks require renal function, liver function, pregnancy status, pediatric age, or max-dose reference data.
+                                          </Typography>
+                                        </Stack>
+                                      )}
                                     </Stack>
                                   </Collapse>
                                 </Stack>
