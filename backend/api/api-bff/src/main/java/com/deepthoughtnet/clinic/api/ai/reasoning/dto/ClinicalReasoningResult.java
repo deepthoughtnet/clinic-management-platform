@@ -12,6 +12,7 @@ public record ClinicalReasoningResult(
         String provider,
         String model,
         String confidence,
+        ClinicalReasoningLongitudinalContext longitudinalContext,
         DiagnosisCandidate primaryDiagnosis,
         List<DiagnosisCandidate> differentialDiagnoses,
         List<EvidenceItem> supportingEvidence,

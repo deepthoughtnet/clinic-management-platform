@@ -35,9 +35,12 @@ import com.deepthoughtnet.clinic.prescription.db.PrescriptionTestRepository;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionStatus;
 import com.deepthoughtnet.clinic.consultation.service.ConsultationVitalsCalculator;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.temporal.ChronoUnit;
 import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
 import java.util.ArrayList;
@@ -98,6 +101,7 @@ public class ClinicalContextService {
     private final LabOrderResultRepository labOrderResultRepository;
     private final PatientLongitudinalMemoryService longitudinalMemoryService;
     private final ObjectMapper objectMapper;
+    private final LongitudinalClinicalContextBuilder longitudinalClinicalContextBuilder;
 
     public ClinicalContextService(PatientRepository patientRepository,
                                   ConsultationRepository consultationRepository,
@@ -121,6 +125,7 @@ public class ClinicalContextService {
         this.labOrderResultRepository = labOrderResultRepository;
         this.longitudinalMemoryService = longitudinalMemoryService;
         this.objectMapper = objectMapper;
+        this.longitudinalClinicalContextBuilder = new LongitudinalClinicalContextBuilder(objectMapper);
     }
 
     public ClinicalContextResponse buildClinicalContext(UUID tenantId, UUID patientId, UUID consultationId) {
@@ -189,11 +194,12 @@ public class ClinicalContextService {
         );
 
         DiagnosisSummary diagnosisSummary = new DiagnosisSummary(lastVisitDiagnosis, previousDiagnoses);
-        String aiSummary = buildAiSummary(patientSnapshot, medicationAlerts, labIntelligence, documentIntelligence, timelineSummary);
-        String aiPromptContext = buildPromptContext(patientSnapshot, previousVisits, diagnosisSummary, medicationAlerts, intakeSummary, labIntelligence, documentIntelligence, timelineSummary, historicalConsultations, currentConsultation, hydratedVitals);
         MedicationSummary medicationSummary = new MedicationSummary(activeMedications, discontinuedMedications, recentAntibiotics, duplicateMedicines, medicationAlerts);
         ClinicalContextResponse.LongitudinalMemory longitudinalMemory = toLongitudinalMemory(longitudinalProfile);
-        String clinicalContextJson = buildClinicalContextJson(patientSnapshot, previousVisits, medicationSummary, diagnosisSummary, intakeSummary, labIntelligence, documentIntelligence, timelineSummary, longitudinalMemory, historicalConsultations, currentConsultation, hydratedVitals);
+        ClinicalContextResponse.LongitudinalClinicalContext longitudinalClinicalContext = longitudinalClinicalContextBuilder.build(longitudinalProfile, documents);
+        String aiSummary = buildAiSummary(patientSnapshot, medicationAlerts, labIntelligence, documentIntelligence, timelineSummary);
+        String aiPromptContext = buildPromptContext(patientSnapshot, previousVisits, diagnosisSummary, medicationAlerts, intakeSummary, labIntelligence, documentIntelligence, timelineSummary, longitudinalClinicalContext, historicalConsultations, currentConsultation, hydratedVitals);
+        String clinicalContextJson = buildClinicalContextJson(patientSnapshot, previousVisits, medicationSummary, diagnosisSummary, intakeSummary, labIntelligence, documentIntelligence, timelineSummary, longitudinalMemory, longitudinalClinicalContext, historicalConsultations, currentConsultation, hydratedVitals);
         traceClinicalContext(tenantId, patientId, consultationId, patientSnapshot, labIntelligence, documentIntelligence, longitudinalMemory);
         traceAiContext(tenantId, patientId, consultationId, clinicalContextJson, aiPromptContext, longitudinalProfile, labIntelligence, documentIntelligence, historicalConsultations);
 
@@ -210,6 +216,7 @@ public class ClinicalContextService {
                 documentIntelligence,
                 timelineSummary,
                 longitudinalMemory,
+                longitudinalClinicalContext,
                 aiSummary,
                 aiPromptContext,
                 clinicalContextJson,
@@ -682,6 +689,7 @@ public class ClinicalContextService {
                                       LabIntelligence labIntelligence,
                                       DocumentIntelligence documentIntelligence,
                                       TimelineSummary timelineSummary,
+                                      ClinicalContextResponse.LongitudinalClinicalContext longitudinalClinicalContext,
                                       List<ConsultationEntity> historicalConsultations,
                                       ConsultationEntity consultation,
                                       String hydratedVitals) {
@@ -754,6 +762,17 @@ public class ClinicalContextService {
         if (hasText(timelineSummary.recentImportantEvents())) {
             lines.add("Safety context: " + timelineSummary.recentImportantEvents());
         }
+        if (longitudinalClinicalContext != null && longitudinalClinicalContext.importantHistoricalFindings() != null && !longitudinalClinicalContext.importantHistoricalFindings().isEmpty()) {
+            lines.add("Longitudinal context: " + longitudinalClinicalContext.importantHistoricalFindings().stream()
+                    .map(finding -> joinSegments(segments(
+                            finding.title(),
+                            finding.summary(),
+                            hasText(finding.clinicalRelevance()) ? "Relevance: " + finding.clinicalRelevance() : null,
+                            hasText(finding.verificationStatus()) ? "Verification: " + finding.verificationStatus() : null
+                    )))
+                    .filter(this::hasText)
+                    .collect(Collectors.joining(" | ")));
+        }
         if (consultation != null) {
             lines.add("Current consultation status: " + consultation.getStatus());
         }
@@ -769,6 +788,7 @@ public class ClinicalContextService {
                                             DocumentIntelligence documentIntelligence,
                                             TimelineSummary timelineSummary,
                                             ClinicalContextResponse.LongitudinalMemory longitudinalMemory,
+                                            ClinicalContextResponse.LongitudinalClinicalContext longitudinalClinicalContext,
                                             List<ConsultationEntity> historicalConsultations,
                                             ConsultationEntity consultation,
                                             String hydratedVitals) {
@@ -782,8 +802,9 @@ public class ClinicalContextService {
         payload.put("documentIntelligence", documentIntelligence);
         payload.put("timelineSummary", timelineSummary);
         payload.put("longitudinalMemory", longitudinalMemory);
+        payload.put("longitudinalClinicalContext", longitudinalClinicalContext);
         payload.put("aiSummary", buildAiSummary(patientSnapshot, medicationSnapshot.alerts(), labIntelligence, documentIntelligence, timelineSummary));
-        payload.put("aiPromptContext", buildPromptContext(patientSnapshot, previousVisits, diagnosisSummary, medicationSnapshot.alerts(), intakeSummary, labIntelligence, documentIntelligence, timelineSummary, historicalConsultations, consultation, hydratedVitals));
+        payload.put("aiPromptContext", buildPromptContext(patientSnapshot, previousVisits, diagnosisSummary, medicationSnapshot.alerts(), intakeSummary, labIntelligence, documentIntelligence, timelineSummary, longitudinalClinicalContext, historicalConsultations, consultation, hydratedVitals));
         try {
             return objectMapper.writeValueAsString(payload);
         } catch (JsonProcessingException ex) {
@@ -806,6 +827,210 @@ public class ClinicalContextService {
                 toConceptDtos(profile.riskFlags()),
                 toConceptDtos(profile.history()),
                 profile.mostRecentLaboratorySummary()
+        );
+    }
+
+    private ClinicalContextResponse.LongitudinalClinicalContext buildLongitudinalClinicalContext(PatientLongitudinalMemoryProfile profile,
+                                                                                                  List<ClinicalDocumentEntity> documents) {
+        List<String> warnings = new ArrayList<>();
+        ClinicalContextResponse.LabTrend hbA1cTrend = buildHbA1cTrend(profile, warnings);
+        List<ClinicalContextResponse.ImagingHistoryItem> imagingHistory = buildChestImagingHistory(documents);
+        ClinicalContextResponse.RenalContext renalContext = buildRenalContext(profile, warnings);
+        List<ClinicalContextResponse.HistoricalFinding> findings = new ArrayList<>();
+        if (hbA1cTrend != null) {
+            findings.add(toHbA1cHistoricalFinding(hbA1cTrend));
+        }
+        if (!imagingHistory.isEmpty()) {
+            findings.add(toImagingHistoricalFinding(imagingHistory.get(0)));
+        }
+        if (renalContext != null) {
+            findings.add(toRenalHistoricalFinding(renalContext));
+        }
+        return new ClinicalContextResponse.LongitudinalClinicalContext(
+                hbA1cTrend == null ? List.of() : List.of(hbA1cTrend),
+                imagingHistory,
+                renalContext,
+                findings,
+                warnings
+        );
+    }
+
+    private ClinicalContextResponse.LabTrend buildHbA1cTrend(PatientLongitudinalMemoryProfile profile, List<String> warnings) {
+        if (profile == null || profile.history() == null || profile.history().isEmpty()) {
+            return null;
+        }
+        List<LongitudinalConceptSnapshot> concepts = profile.history().stream()
+                .filter(Objects::nonNull)
+                .filter(this::isHbA1cConcept)
+                .filter(concept -> concept.observedOn() != null)
+                .filter(concept -> parseNumericValue(concept.valueText()) != null)
+                .filter(concept -> isCompatiblePercentUnit(concept.valueUnit()))
+                .sorted(Comparator.comparing(LongitudinalConceptSnapshot::observedOn))
+                .toList();
+        if (concepts.size() < 2) {
+            return null;
+        }
+        LongitudinalConceptSnapshot newer = concepts.get(concepts.size() - 1);
+        LongitudinalConceptSnapshot older = null;
+        for (int index = concepts.size() - 2; index >= 0; index--) {
+            LongitudinalConceptSnapshot candidate = concepts.get(index);
+            if (!Objects.equals(candidate.observedOn(), newer.observedOn())) {
+                older = candidate;
+                break;
+            }
+        }
+        if (older == null) {
+            warnings.add("HbA1c trend could not be confirmed because only one reliable report date was available.");
+            return null;
+        }
+        Double olderValue = parseNumericValue(older.valueText());
+        Double newerValue = parseNumericValue(newer.valueText());
+        if (olderValue == null || newerValue == null) {
+            warnings.add("HbA1c trend could not be confirmed because one of the values was not numeric.");
+            return null;
+        }
+        double change = newerValue - olderValue;
+        String direction = Math.abs(change) < 0.05 ? "STABLE" : (change > 0 ? "WORSENING" : "IMPROVING");
+        String interpretation = switch (direction) {
+            case "WORSENING" -> "Poorer glycemic control may increase infection risk and delay recovery.";
+            case "IMPROVING" -> "Improved glycemic control supports better metabolic stability.";
+            default -> "Glycemic control appears stable across the available interval.";
+        };
+        return new ClinicalContextResponse.LabTrend(
+                "hba1c",
+                "HbA1c",
+                formatNumeric(olderValue),
+                "%",
+                older.observedOn().toString(),
+                formatNumeric(newerValue),
+                "%",
+                newer.observedOn().toString(),
+                direction,
+                interpretation,
+                formatPercentagePointChange(change),
+                approximateInterval(older.observedOn(), newer.observedOn()),
+                sourceDocumentIds(older, newer),
+                mergedVerificationStatus(older.verificationStatus(), newer.verificationStatus())
+        );
+    }
+
+    private List<ClinicalContextResponse.ImagingHistoryItem> buildChestImagingHistory(List<ClinicalDocumentEntity> documents) {
+        if (documents == null || documents.isEmpty()) {
+            return List.of();
+        }
+        return documents.stream()
+                .filter(Objects::nonNull)
+                .filter(document -> isType(document, "RADIOLOGY_REPORT", "X_RAY", "MRI_CT"))
+                .filter(this::isChestImagingDocument)
+                .sorted(Comparator.comparing(this::documentObservedOn, Comparator.nullsLast(Comparator.naturalOrder())).reversed())
+                .map(this::toImagingHistoryItem)
+                .filter(Objects::nonNull)
+                .limit(1)
+                .toList();
+    }
+
+    private ClinicalContextResponse.ImagingHistoryItem toImagingHistoryItem(ClinicalDocumentEntity document) {
+        LocalDate observedOn = documentObservedOn(document);
+        String summary = firstNonBlank(extractDocumentAcceptedSummary(document), compactText(document.getAiExtractionSummary(), 220), compactText(document.getDescription(), 220));
+        if (!hasText(summary)) {
+            return null;
+        }
+        return new ClinicalContextResponse.ImagingHistoryItem(
+                hasText(document.getTitle()) ? compactText(document.getTitle(), 80) : "Chest imaging",
+                "Chest",
+                observedOn == null ? null : observedOn.toString(),
+                compactText(summary, 220),
+                extractNegativeFindings(summary),
+                visibleVerificationStatus(document),
+                document.getId() == null ? null : document.getId().toString(),
+                compactText(firstNonBlank(document.getTitle(), documentLabel(document)), 120)
+        );
+    }
+
+    private ClinicalContextResponse.RenalContext buildRenalContext(PatientLongitudinalMemoryProfile profile, List<String> warnings) {
+        if (profile == null || profile.history() == null || profile.history().isEmpty()) {
+            return null;
+        }
+        LongitudinalConceptSnapshot creatinine = latestConcept(profile.history(), this::isCreatinineConcept);
+        LongitudinalConceptSnapshot egfr = latestConcept(profile.history(), this::isEgfrConcept);
+        if (creatinine == null && egfr == null) {
+            return null;
+        }
+        LocalDate referenceDate = latestDate(creatinine == null ? null : creatinine.observedOn(), egfr == null ? null : egfr.observedOn());
+        String interpretation = buildRenalInterpretation(creatinine, egfr);
+        if (!hasText(interpretation)) {
+            warnings.add("Renal context was available but could not be interpreted confidently.");
+        }
+        return new ClinicalContextResponse.RenalContext(
+                formatValueWithUnit(creatinine == null ? null : creatinine.valueText(), creatinine == null ? null : creatinine.valueUnit(), "mg/dL"),
+                creatinine == null || creatinine.observedOn() == null ? null : creatinine.observedOn().toString(),
+                formatValueWithUnit(egfr == null ? null : egfr.valueText(), egfr == null ? null : egfr.valueUnit(), null),
+                egfr == null || egfr.observedOn() == null ? null : egfr.observedOn().toString(),
+                interpretation,
+                referenceDate == null ? null : (int) ChronoUnit.DAYS.between(referenceDate, LocalDate.now()),
+                mergedVerificationStatus(creatinine == null ? null : creatinine.verificationStatus(), egfr == null ? null : egfr.verificationStatus()),
+                sourceDocumentIds(creatinine, egfr)
+        );
+    }
+
+    private ClinicalContextResponse.HistoricalFinding toHbA1cHistoricalFinding(ClinicalContextResponse.LabTrend trend) {
+        String title = switch (trend.direction()) {
+            case "IMPROVING" -> "Improving glycemic control";
+            case "STABLE" -> "Stable glycemic control";
+            default -> "Worsening glycemic control";
+        };
+        String verb = switch (trend.direction()) {
+            case "IMPROVING" -> "decreased";
+            case "STABLE" -> "was stable";
+            default -> "increased";
+        };
+        return new ClinicalContextResponse.HistoricalFinding(
+                "LAB_TREND",
+                title,
+                "HbA1c " + verb + " from " + trend.olderValue() + "% on " + formatHumanDate(parseLocalDate(trend.olderDate()))
+                        + " to " + trend.newerValue() + "% on " + formatHumanDate(parseLocalDate(trend.newerDate())) + ".",
+                trend.clinicalInterpretation(),
+                trend.newerDate(),
+                "LONGITUDINAL_MEMORY",
+                "HbA1c trend",
+                trend.verificationStatus(),
+                "HIGH",
+                trend.sourceDocumentIds().isEmpty() ? null : trend.sourceDocumentIds().get(0)
+        );
+    }
+
+    private ClinicalContextResponse.HistoricalFinding toImagingHistoricalFinding(ClinicalContextResponse.ImagingHistoryItem item) {
+        return new ClinicalContextResponse.HistoricalFinding(
+                "IMAGING_HISTORY",
+                "Previous chest imaging",
+                "Chest X-ray on " + formatHumanDate(parseLocalDate(item.reportDate())) + " showed " + item.summary() + ".",
+                "Repeat imaging should depend on current findings, hypoxia, and symptom progression.",
+                item.reportDate(),
+                item.modality(),
+                item.sourceReference(),
+                item.verificationStatus(),
+                "MEDIUM",
+                item.sourceDocumentId()
+        );
+    }
+
+    private ClinicalContextResponse.HistoricalFinding toRenalHistoricalFinding(ClinicalContextResponse.RenalContext renalContext) {
+        String referenceDate = firstNonBlank(renalContext.creatinineDate(), renalContext.egfrDate());
+        return new ClinicalContextResponse.HistoricalFinding(
+                "RENAL_CONTEXT",
+                "Previous renal function",
+                joinSegments(segments(
+                        renalContext.creatinine() == null ? null : "Creatinine " + renalContext.creatinine(),
+                        renalContext.egfr() == null ? null : "eGFR " + renalContext.egfr(),
+                        referenceDate == null ? null : "on " + formatHumanDate(parseLocalDate(referenceDate))
+                )),
+                firstNonBlank(renalContext.interpretation(), "Previous kidney-function results should be reviewed with current clinical status."),
+                referenceDate,
+                "LONGITUDINAL_MEMORY",
+                "Kidney function history",
+                renalContext.verificationStatus(),
+                "MEDIUM",
+                renalContext.sourceDocumentIds().isEmpty() ? null : renalContext.sourceDocumentIds().get(0)
         );
     }
 
@@ -1044,6 +1269,235 @@ public class ClinicalContextService {
         normalized = normalized.replaceAll("\\b\\d{4}-\\d{2}-\\d{2}\\b", "");
         normalized = normalized.replaceAll("[^a-z0-9]+", " ").trim();
         return normalized;
+    }
+
+    private boolean isHbA1cConcept(LongitudinalConceptSnapshot concept) {
+        return concept != null && containsAny(joinSegments(segments(concept.conceptKey(), concept.label(), concept.evidenceText())), "hba1c", "hb a1c", "a1c", "glycated hemoglobin");
+    }
+
+    private boolean isCreatinineConcept(LongitudinalConceptSnapshot concept) {
+        return concept != null && containsAny(joinSegments(segments(concept.conceptKey(), concept.label(), concept.evidenceText())), "creatinine", "serum creatinine");
+    }
+
+    private boolean isEgfrConcept(LongitudinalConceptSnapshot concept) {
+        return concept != null && containsAny(joinSegments(segments(concept.conceptKey(), concept.label(), concept.evidenceText())), "egfr", "e gfr", "estimated gfr");
+    }
+
+    private boolean isCompatiblePercentUnit(String unit) {
+        return !hasText(unit) || "%".equals(unit.trim()) || "percent".equalsIgnoreCase(unit.trim());
+    }
+
+    private String mergedVerificationStatus(String... statuses) {
+        if (statuses == null || statuses.length == 0) {
+            return null;
+        }
+        for (String status : statuses) {
+            if (isVerifiedClinicalStatus(status)) {
+                return "VERIFIED";
+            }
+        }
+        for (String status : statuses) {
+            if (hasText(status)) {
+                return "PENDING_VERIFICATION";
+            }
+        }
+        return null;
+    }
+
+    private boolean isVerifiedClinicalStatus(String status) {
+        if (!hasText(status)) {
+            return false;
+        }
+        String normalized = status.trim().toUpperCase(Locale.ROOT);
+        return normalized.equals("ACCEPTED") || normalized.equals("APPROVED") || normalized.equals("VERIFIED");
+    }
+
+    private List<String> sourceDocumentIds(LongitudinalConceptSnapshot... concepts) {
+        if (concepts == null) {
+            return List.of();
+        }
+        return Arrays.stream(concepts)
+                .filter(Objects::nonNull)
+                .map(LongitudinalConceptSnapshot::sourceDocumentId)
+                .filter(Objects::nonNull)
+                .map(UUID::toString)
+                .distinct()
+                .toList();
+    }
+
+    private LongitudinalConceptSnapshot latestConcept(List<LongitudinalConceptSnapshot> concepts,
+                                                      java.util.function.Predicate<LongitudinalConceptSnapshot> predicate) {
+        if (concepts == null || concepts.isEmpty()) {
+            return null;
+        }
+        return concepts.stream()
+                .filter(Objects::nonNull)
+                .filter(predicate)
+                .sorted(Comparator.comparing(LongitudinalConceptSnapshot::observedOn, Comparator.nullsLast(Comparator.naturalOrder())).reversed())
+                .findFirst()
+                .orElse(null);
+    }
+
+    private String buildRenalInterpretation(LongitudinalConceptSnapshot creatinine, LongitudinalConceptSnapshot egfr) {
+        Double creatinineValue = creatinine == null ? null : parseNumericValue(creatinine.valueText());
+        Double egfrValue = egfr == null ? null : parseNumericValue(egfr.valueText());
+        if (creatinineValue != null && egfrValue != null && creatinineValue <= 1.3d && egfrValue >= 60d) {
+            return "Previous renal function was preserved; current function should be rechecked if clinically indicated.";
+        }
+        if (creatinineValue != null || egfrValue != null) {
+            return "Previous kidney-function results are available and should be interpreted with current clinical status.";
+        }
+        return null;
+    }
+
+    private LocalDate latestDate(LocalDate first, LocalDate second) {
+        if (first == null) {
+            return second;
+        }
+        if (second == null) {
+            return first;
+        }
+        return first.isAfter(second) ? first : second;
+    }
+
+    private String approximateInterval(LocalDate older, LocalDate newer) {
+        if (older == null || newer == null) {
+            return null;
+        }
+        long days = ChronoUnit.DAYS.between(older, newer);
+        if (days < 45) {
+            return days + " days";
+        }
+        long months = Math.max(1, Math.round(days / 30.0));
+        return "approximately " + months + (months == 1 ? " month" : " months");
+    }
+
+    private String formatPercentagePointChange(double change) {
+        return String.format(Locale.ROOT, "%+.1f percentage points", change);
+    }
+
+    private String formatNumeric(Double value) {
+        if (value == null) {
+            return null;
+        }
+        return Math.abs(value - Math.rint(value)) < 0.001d
+                ? String.format(Locale.ROOT, "%.0f", value)
+                : String.format(Locale.ROOT, "%.1f", value);
+    }
+
+    private String formatValueWithUnit(String value, String unit, String fallbackUnit) {
+        if (!hasText(value)) {
+            return null;
+        }
+        String resolvedUnit = hasText(unit) ? unit.trim() : hasText(fallbackUnit) ? fallbackUnit.trim() : null;
+        return resolvedUnit == null ? compactText(value, 48) : compactText(value, 48) + " " + resolvedUnit;
+    }
+
+    private LocalDate documentObservedOn(ClinicalDocumentEntity document) {
+        return firstNonNull(document == null ? null : document.getReportDate(), document == null || document.getCreatedAt() == null ? null : document.getCreatedAt().toLocalDate());
+    }
+
+    private boolean isChestImagingDocument(ClinicalDocumentEntity document) {
+        String haystack = joinSegments(segments(
+                document == null ? null : document.getTitle(),
+                document == null ? null : document.getDescription(),
+                document == null ? null : document.getAiExtractionSummary()
+        ));
+        return containsAny(haystack, "chest", "cxr", "pneumonia", "bronchitic");
+    }
+
+    private String extractDocumentAcceptedSummary(ClinicalDocumentEntity document) {
+        if (document == null) {
+            return null;
+        }
+        for (String raw : Arrays.asList(document.getAiExtractionAcceptedJson(), document.getAiExtractionStructuredJson())) {
+            String extracted = extractSummaryFromJson(raw);
+            if (hasText(extracted)) {
+                return extracted;
+            }
+        }
+        return null;
+    }
+
+    private String extractSummaryFromJson(String raw) {
+        if (!hasText(raw)) {
+            return null;
+        }
+        try {
+            JsonNode root = objectMapper.readTree(raw);
+            for (String key : List.of("summary", "impression", "conclusion", "findings", "reportSummary")) {
+                JsonNode candidate = findTextNode(root, key);
+                if (candidate != null && hasText(candidate.asText())) {
+                    return compactText(candidate.asText(), 220);
+                }
+            }
+        } catch (Exception ignored) {
+            return null;
+        }
+        return null;
+    }
+
+    private JsonNode findTextNode(JsonNode node, String key) {
+        if (node == null || key == null) {
+            return null;
+        }
+        if (node.isObject()) {
+            JsonNode direct = node.get(key);
+            if (direct != null && direct.isTextual()) {
+                return direct;
+            }
+            var fields = node.fields();
+            while (fields.hasNext()) {
+                Map.Entry<String, JsonNode> entry = fields.next();
+                JsonNode nested = findTextNode(entry.getValue(), key);
+                if (nested != null && nested.isTextual()) {
+                    return nested;
+                }
+            }
+        } else if (node.isArray()) {
+            for (JsonNode item : node) {
+                JsonNode nested = findTextNode(item, key);
+                if (nested != null && nested.isTextual()) {
+                    return nested;
+                }
+            }
+        }
+        return null;
+    }
+
+    private List<String> extractNegativeFindings(String summary) {
+        if (!hasText(summary)) {
+            return List.of();
+        }
+        List<String> findings = new ArrayList<>();
+        String normalized = summary.trim();
+        for (String fragment : normalized.split("[.;]")) {
+            String candidate = fragment.trim();
+            if (candidate.toLowerCase(Locale.ROOT).startsWith("no ")) {
+                findings.add(compactText(candidate, 120));
+            }
+        }
+        return findings.stream().limit(4).toList();
+    }
+
+    private String visibleVerificationStatus(ClinicalDocumentEntity document) {
+        if (document == null) {
+            return null;
+        }
+        return isVerifiedClinicalStatus(firstNonBlank(document.getVerificationStatus(), document.getAiExtractionStatus()))
+                ? "VERIFIED"
+                : "PENDING_VERIFICATION";
+    }
+
+    private LocalDate parseLocalDate(String value) {
+        if (!hasText(value)) {
+            return null;
+        }
+        try {
+            return LocalDate.parse(value.trim(), DATE_FORMAT);
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 
     private boolean isConsultationVitalsNull(ConsultationEntity consultation) {

@@ -64,7 +64,7 @@ public class ClinicalDocumentAiExtractionService {
     private static final String ENTITY_TYPE = "CLINICAL_DOCUMENT_AI";
     private static final String FRIENDLY_AI_FAILURE_MESSAGE = "AI processing could not complete. Please retry.";
     private static final Pattern LAB_PATTERN = Pattern.compile(
-            "(?i)\\b(hemoglobin|hb|glucose|blood sugar|cholesterol|hdl|ldl|triglycerides|bilirubin|alt|ast|alp|alk phos|creatinine)\\b[^\\d\\n]{0,20}([<>]?\\s*\\d+(?:\\.\\d+)?)"
+            "(?i)\\b(hba1c|hb a1c|a1c|glycated hemoglobin|glycosylated hemoglobin|hemoglobin|hb|glucose|blood sugar|cholesterol|hdl|ldl|triglycerides|bilirubin|alt|ast|alp|alk phos|creatinine|egfr|estimated gfr|estimated glomerular filtration rate|crp|c-reactive protein)\\b[^\\d\\n]{0,20}([<>]?\\s*\\d+(?:\\.\\d+)?)"
     );
 
     private final ClinicalAiJobRepository jobRepository;
@@ -779,8 +779,10 @@ public class ClinicalDocumentAiExtractionService {
         Map<String, Object> extracted = parseStructuredJson(structuredJson);
         List<String> evidence = new ArrayList<>();
         collectRepairEvidenceText(extracted.get("factualFindings"), evidence, null);
-        if (evidence.isEmpty() && latestJob != null && StringUtils.hasText(latestJob.getResultJson())) {
-            collectRepairEvidenceText(parseStructuredJson(latestJob.getResultJson()).get("factualFindings"), evidence, null);
+        if (latestJob != null && StringUtils.hasText(latestJob.getResultJson())) {
+            Map<String, Object> latestExtracted = parseStructuredJson(latestJob.getResultJson());
+            collectRepairEvidenceText(latestExtracted.get("factualFindings"), evidence, null);
+            collectRepairEvidenceText(latestExtracted, evidence, null);
         }
         return String.join("\n", new java.util.LinkedHashSet<>(evidence));
     }
@@ -789,7 +791,7 @@ public class ClinicalDocumentAiExtractionService {
         Map<String, Object> extracted = parseStructuredJson(structuredJson);
         List<String> evidence = new ArrayList<>();
         collectRepairEvidenceText(extracted, evidence, null);
-        if (evidence.isEmpty() && latestJob != null && StringUtils.hasText(latestJob.getResultJson())) {
+        if (latestJob != null && StringUtils.hasText(latestJob.getResultJson())) {
             collectRepairEvidenceText(parseStructuredJson(latestJob.getResultJson()), evidence, null);
         }
         return String.join("\n", new java.util.LinkedHashSet<>(evidence));
@@ -812,7 +814,7 @@ public class ClinicalDocumentAiExtractionService {
             }
             return;
         }
-        String text = value.toString().trim();
+        String text = normalizeRepairEvidenceText(value.toString());
         if (text.isBlank()) {
             return;
         }
@@ -823,6 +825,18 @@ public class ClinicalDocumentAiExtractionService {
         if (text.length() > 8 && text.length() < 400 && !looksLikeNarrativeRecommendation(text)) {
             target.add(text);
         }
+    }
+
+    private String normalizeRepairEvidenceText(String text) {
+        if (!hasText(text)) {
+            return "";
+        }
+        String normalized = text.trim();
+        String prefix = "Possible abnormal finding detected:";
+        if (normalized.regionMatches(true, 0, prefix, 0, prefix.length())) {
+            return normalized.substring(prefix.length()).trim();
+        }
+        return normalized;
     }
 
     private boolean looksLikeNarrativeRecommendation(String text) {
@@ -1059,6 +1073,11 @@ public class ClinicalDocumentAiExtractionService {
         addOcrFallbackLabResult(results, documentId, ocrText, "HDL Cholesterol", "hdl");
         addOcrFallbackLabResult(results, documentId, ocrText, "Triglycerides", "triglycerides");
         addOcrFallbackLabResult(results, documentId, ocrText, "Hemoglobin", "hemoglobin");
+        addOcrFallbackLabResult(results, documentId, ocrText, "Creatinine", "creatinine");
+        addOcrFallbackLabResult(results, documentId, ocrText, "eGFR", "egfr");
+        addOcrFallbackLabResult(results, documentId, ocrText, "CRP", "crp");
+        addOcrFallbackLabResult(results, documentId, ocrText, "ALT", "alt");
+        addOcrFallbackLabResult(results, documentId, ocrText, "AST", "ast");
         return results;
     }
 
@@ -1313,7 +1332,7 @@ public class ClinicalDocumentAiExtractionService {
             return "VALUE_NOT_IN_EVIDENCE";
         }
         if ("hba1c".equals(canonicalKey)) {
-            if (!containsAny(normalizedEvidence, "hba1c", "a1c", "glycated hemoglobin")) {
+            if (!containsAny(normalizedEvidence, "hba1c", "hb a1c", "a1c", "glycated hemoglobin", "glycosylated hemoglobin")) {
                 return "HBA1C_LABEL_MISSING";
             }
             if (normalizedEvidence.contains("hemoglobin") && !normalizedEvidence.contains("hba1c") && !normalizedEvidence.contains("a1c")) {
@@ -1331,7 +1350,7 @@ public class ClinicalDocumentAiExtractionService {
             return null;
         }
         return switch (canonicalKey) {
-            case "hba1c" -> findLine(ocrText, "HbA1c", "A1c", "Glycated Hemoglobin");
+            case "hba1c" -> findLine(ocrText, "HbA1c", "Hb A1c", "A1c", "Glycated Hemoglobin", "Glycosylated Hemoglobin");
             case "blood_sugar" -> findLine(ocrText, "Random Blood Sugar", "Blood Sugar", "Glucose", "RBS");
             case "estimated_average_glucose" -> findLine(ocrText, "Estimated Average Glucose", "Average Glucose", "Glucose");
             case "cholesterol" -> findLine(ocrText, "Total Cholesterol", "Cholesterol");
@@ -1339,6 +1358,11 @@ public class ClinicalDocumentAiExtractionService {
             case "hdl" -> findLine(ocrText, "HDL Cholesterol", "HDL");
             case "triglycerides" -> findLine(ocrText, "Triglycerides");
             case "hemoglobin" -> findLine(ocrText, "Hemoglobin");
+            case "creatinine" -> findLine(ocrText, "Creatinine", "Serum Creatinine");
+            case "egfr" -> findLine(ocrText, "eGFR", "Estimated GFR", "Estimated Glomerular Filtration Rate");
+            case "crp" -> findLine(ocrText, "CRP", "C-Reactive Protein", "C Reactive Protein");
+            case "alt" -> findLine(ocrText, "ALT", "SGPT", "Alanine Aminotransferase");
+            case "ast" -> findLine(ocrText, "AST", "SGOT", "Aspartate Aminotransferase");
             default -> null;
         };
     }
@@ -1348,7 +1372,7 @@ public class ClinicalDocumentAiExtractionService {
             return null;
         }
         if ("hba1c".equals(canonicalKey)) {
-            return firstHasText(decimalFrom(rawValue), decimalFrom(extractLabelBoundValue(evidenceText, "hba1c", "a1c", "glycated hemoglobin")));
+            return firstHasText(decimalFrom(rawValue), decimalFrom(extractLabelBoundValue(evidenceText, "hba1c", "hb a1c", "a1c", "glycated hemoglobin", "glycosylated hemoglobin")));
         }
         return firstHasText(numberFrom(rawValue), numberFrom(extractLabelBoundValue(evidenceText, evidenceLabelsFor(canonicalKey))));
     }
@@ -1365,6 +1389,9 @@ public class ClinicalDocumentAiExtractionService {
         }
         return switch (canonicalKey) {
             case "hba1c" -> hasText(evidenceText) && evidenceText.contains("%") ? "%" : "%";
+            case "egfr" -> "mL/min/1.73m2";
+            case "crp" -> hasText(evidenceText) && evidenceText.toLowerCase(Locale.ROOT).contains("mg/l") ? "mg/L" : "mg/L";
+            case "alt", "ast" -> hasText(evidenceText) && evidenceText.toLowerCase(Locale.ROOT).contains("u/l") ? "U/L" : "U/L";
             default -> hasText(evidenceText) && evidenceText.toLowerCase(Locale.ROOT).contains("mg/dl") ? "mg/dL" : "mg/dL";
         };
     }
@@ -1390,6 +1417,8 @@ public class ClinicalDocumentAiExtractionService {
             case "ldl" -> numeric.compareTo(new BigDecimal("100")) >= 0 ? "HIGH" : "UNKNOWN";
             case "hdl" -> numeric.compareTo(new BigDecimal("40")) < 0 ? "LOW" : "UNKNOWN";
             case "triglycerides" -> numeric.compareTo(new BigDecimal("150")) >= 0 ? "HIGH" : "UNKNOWN";
+            case "creatinine" -> numeric.compareTo(new BigDecimal("1.3")) > 0 ? "HIGH" : "UNKNOWN";
+            case "egfr" -> numeric.compareTo(new BigDecimal("60")) < 0 ? "LOW" : "UNKNOWN";
             default -> "UNKNOWN";
         };
     }
@@ -1410,6 +1439,11 @@ public class ClinicalDocumentAiExtractionService {
             case "hdl" -> "HDL Cholesterol";
             case "triglycerides" -> "Triglycerides";
             case "hemoglobin" -> "Hemoglobin";
+            case "creatinine" -> "Creatinine";
+            case "egfr" -> "eGFR";
+            case "crp" -> "CRP";
+            case "alt" -> "ALT";
+            case "ast" -> "AST";
             default -> fallback;
         };
     }
@@ -1423,6 +1457,11 @@ public class ClinicalDocumentAiExtractionService {
         if (containsAny(normalized, "estimated_average_glucose", "eag")) return "estimated_average_glucose";
         if (containsAny(normalized, "random_blood_sugar", "blood_sugar", "glucose", "rbs")) return "blood_sugar";
         if (containsAny(normalized, "hemoglobin")) return "hemoglobin";
+        if (containsAny(normalized, "creatinine", "serum_creatinine")) return "creatinine";
+        if (containsAny(normalized, "egfr", "estimated_gfr", "estimated_glomerular_filtration_rate")) return "egfr";
+        if (containsAny(normalized, "crp", "c_reactive_protein")) return "crp";
+        if (containsAny(normalized, "alt", "sgpt", "alanine_aminotransferase")) return "alt";
+        if (containsAny(normalized, "ast", "sgot", "aspartate_aminotransferase")) return "ast";
         if (containsAny(normalized, "ldl")) return "ldl";
         if (containsAny(normalized, "hdl")) return "hdl";
         if (containsAny(normalized, "triglycerides", "triglyceride")) return "triglycerides";
@@ -1440,6 +1479,11 @@ public class ClinicalDocumentAiExtractionService {
             case "hdl" -> new String[]{"HDL Cholesterol", "HDL"};
             case "triglycerides" -> new String[]{"Triglycerides"};
             case "hemoglobin" -> new String[]{"Hemoglobin"};
+            case "creatinine" -> new String[]{"Creatinine", "Serum Creatinine"};
+            case "egfr" -> new String[]{"eGFR", "Estimated GFR", "Estimated Glomerular Filtration Rate"};
+            case "crp" -> new String[]{"CRP", "C-Reactive Protein", "C Reactive Protein"};
+            case "alt" -> new String[]{"ALT", "SGPT", "Alanine Aminotransferase"};
+            case "ast" -> new String[]{"AST", "SGOT", "Aspartate Aminotransferase"};
             default -> new String[]{canonicalKey};
         };
     }
@@ -1599,7 +1643,7 @@ public class ClinicalDocumentAiExtractionService {
         List<String> lines = new ArrayList<>();
         for (String line : ocrText.split("\\R")) {
             String normalized = line.toLowerCase(Locale.ROOT);
-            if (containsAny(normalized, "hba1c", "hemoglobin", "random blood sugar", "glucose", "cholesterol", "hdl", "ldl", "triglycerides")) {
+            if (containsAny(normalized, "hba1c", "hb a1c", "a1c", "glycated hemoglobin", "glycosylated hemoglobin", "hemoglobin", "random blood sugar", "glucose", "cholesterol", "hdl", "ldl", "triglycerides", "creatinine", "egfr", "estimated gfr", "crp", "c-reactive protein", "alt", "ast", "sgpt", "sgot")) {
                 lines.add(summarizeText(line));
             }
         }
@@ -1623,7 +1667,7 @@ public class ClinicalDocumentAiExtractionService {
             for (Map.Entry<?, ?> entry : map.entrySet()) {
                 String key = stringValue(entry.getKey());
                 String childPath = hasText(path) ? path + "." + key : key;
-                if (containsAny(childPath == null ? null : childPath.toLowerCase(Locale.ROOT), "lab", "hba1c", "a1c", "glucose", "sugar", "cholesterol", "ldl", "hdl", "triglyceride")) {
+                if (containsAny(childPath == null ? null : childPath.toLowerCase(Locale.ROOT), "lab", "hba1c", "a1c", "glucose", "sugar", "cholesterol", "ldl", "hdl", "triglyceride", "creatinine", "egfr", "crp", "alt", "ast")) {
                     target.add(childPath);
                 }
                 collectLabRelatedFields(entry.getValue(), childPath, target);

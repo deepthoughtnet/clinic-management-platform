@@ -85,6 +85,7 @@ class ClinicalReasoningServiceTest {
                 new com.deepthoughtnet.clinic.api.ai.dto.ClinicalContextResponse.LongitudinalMemory(List.of(), List.of(), null, null, List.of(), null, null, List.of(), List.of(), null),
                 null,
                 null,
+                null,
                 "{}",
                 OffsetDateTime.now()
         ));
@@ -95,6 +96,7 @@ class ClinicalReasoningServiceTest {
                 "GEMINI",
                 "gemini-2.5-flash",
                 "HIGH",
+                null,
                 null,
                 List.of(),
                 List.of(),

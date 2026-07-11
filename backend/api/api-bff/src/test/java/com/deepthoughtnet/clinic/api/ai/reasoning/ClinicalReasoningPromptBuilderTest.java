@@ -44,6 +44,13 @@ class ClinicalReasoningPromptBuilderTest {
                         List.of(),
                         "Known diabetic, HbA1c 8.4%"
                 ),
+                new ClinicalContextResponse.LongitudinalClinicalContext(
+                        List.of(new ClinicalContextResponse.LabTrend("hba1c", "HbA1c", "7.3", "%", "2026-01-15", "8.4", "%", "2026-07-10", "WORSENING", "Poorer glycemic control may increase infection risk and delay recovery.", "+1.1 percentage points", "approximately 6 months", List.of(), "VERIFIED")),
+                        List.of(),
+                        null,
+                        List.of(new ClinicalContextResponse.HistoricalFinding("LAB_TREND", "Worsening glycemic control", "HbA1c increased from 7.3% on 15-Jan-2026 to 8.4% on 10-Jul-2026.", "Poorer glycemic control may increase infection risk and delay recovery.", "2026-07-10", "LONGITUDINAL_MEMORY", "HbA1c trend", "VERIFIED", "HIGH", null)),
+                        List.of()
+                ),
                 "Known diabetic with recent report",
                 "Patient snapshot",
                 "{\"patientSummary\":{\"patientName\":\"Rohan Sharma\"}}",
@@ -71,6 +78,8 @@ class ClinicalReasoningPromptBuilderTest {
         assertThat(input.get("reasoningPrompt").toString()).contains("reasoningSummary max 300 chars");
         assertThat(input.get("reasoningPrompt").toString()).contains("Pending lab orders");
         assertThat(input.get("reasoningPrompt").toString()).contains("Available labs");
+        assertThat(input.get("reasoningPrompt").toString()).contains("Structured longitudinal context");
+        assertThat(input.get("reasoningPrompt").toString()).contains("include a compact longitudinalContext section");
         assertThat(input.get("reasoningPrompt").toString()).contains("Always populate supportingEvidence");
         assertThat(input.get("reasoningPrompt").toString()).contains("For fever with diabetes");
         assertThat(input.get("reasoningPrompt").toString()).doesNotContain("\"patientId\"");
@@ -100,6 +109,7 @@ class ClinicalReasoningPromptBuilderTest {
                 new ClinicalContextResponse.DocumentIntelligence(List.of("Diabetes Follow-up Lab Report"), List.of(), List.of(), List.of()),
                 new ClinicalContextResponse.TimelineSummary(List.of(), "Recent lab report uploaded"),
                 new ClinicalContextResponse.LongitudinalMemory(List.of(), List.of(), null, null, List.of(), null, null, List.of(), List.of(), "Known diabetic, HbA1c 8.4%"),
+                null,
                 "Known diabetic with recent report",
                 "Patient snapshot",
                 "{\"patientSummary\":{\"patientName\":\"Rohan Sharma\"}}",

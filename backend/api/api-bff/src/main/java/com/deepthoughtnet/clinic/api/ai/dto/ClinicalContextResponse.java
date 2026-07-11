@@ -17,6 +17,7 @@ public record ClinicalContextResponse(
         DocumentIntelligence documentIntelligence,
         TimelineSummary timelineSummary,
         LongitudinalMemory longitudinalMemory,
+        LongitudinalClinicalContext longitudinalClinicalContext,
         String aiSummary,
         String aiPromptContext,
         String clinicalContextJson,
@@ -125,6 +126,66 @@ public record ClinicalContextResponse(
             List<LongitudinalConcept> riskFlags,
             List<LongitudinalConcept> history,
             String mostRecentLaboratorySummary
+    ) {}
+
+    public record LongitudinalClinicalContext(
+            List<LabTrend> labTrends,
+            List<ImagingHistoryItem> imagingHistory,
+            RenalContext renalContext,
+            List<HistoricalFinding> importantHistoricalFindings,
+            List<String> dataQualityWarnings
+    ) {}
+
+    public record LabTrend(
+            String analyteCode,
+            String analyteName,
+            String olderValue,
+            String olderUnit,
+            String olderDate,
+            String newerValue,
+            String newerUnit,
+            String newerDate,
+            String direction,
+            String clinicalInterpretation,
+            String absoluteChange,
+            String interval,
+            List<String> sourceDocumentIds,
+            String verificationStatus
+    ) {}
+
+    public record ImagingHistoryItem(
+            String modality,
+            String bodyPart,
+            String reportDate,
+            String summary,
+            List<String> keyNegativeFindings,
+            String verificationStatus,
+            String sourceDocumentId,
+            String sourceReference
+    ) {}
+
+    public record RenalContext(
+            String creatinine,
+            String creatinineDate,
+            String egfr,
+            String egfrDate,
+            String interpretation,
+            Integer stalenessDays,
+            String verificationStatus,
+            List<String> sourceDocumentIds
+    ) {}
+
+    public record HistoricalFinding(
+            String kind,
+            String title,
+            String summary,
+            String clinicalRelevance,
+            String sourceDate,
+            String sourceType,
+            String sourceReference,
+            String verificationStatus,
+            String importance,
+            String sourceDocumentId
     ) {}
 
     public record LongitudinalConcept(

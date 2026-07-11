@@ -3,6 +3,8 @@ package com.deepthoughtnet.clinic.api.ai.reasoning;
 import com.deepthoughtnet.clinic.api.ai.dto.AiDraftResponse;
 import com.deepthoughtnet.clinic.api.ai.dto.ClinicalContextResponse;
 import com.deepthoughtnet.clinic.api.ai.reasoning.dto.ClinicalReasoningRequest;
+import com.deepthoughtnet.clinic.api.ai.reasoning.dto.ClinicalReasoningFinding;
+import com.deepthoughtnet.clinic.api.ai.reasoning.dto.ClinicalReasoningLongitudinalContext;
 import com.deepthoughtnet.clinic.api.ai.reasoning.dto.ClinicalSafetyNote;
 import com.deepthoughtnet.clinic.api.ai.reasoning.dto.DiagnosisCandidate;
 import com.deepthoughtnet.clinic.api.ai.reasoning.dto.EvidenceItem;
@@ -21,6 +23,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -48,6 +51,7 @@ public class ClinicalReasoningEngine {
             result = runOnce(context, consultation, request, clinicalContext, true, retryReason(result));
         }
         long latencyMs = System.currentTimeMillis() - started;
+        result = enrichLongitudinalContext(result, clinicalContext);
         result = enrichSourceAwareness(result, clinicalContext, consultation);
         result = enrichClinicalGaps(result, clinicalContext, consultation);
         String resultQuality = resolveResultQuality(result);
@@ -161,6 +165,7 @@ public class ClinicalReasoningEngine {
     private boolean hasAnyReasoningContent(ClinicalReasoningResult result) {
         return result != null && (
                 hasPrimaryDiagnosis(result)
+                        || (result.longitudinalContext() != null && hasItems(result.longitudinalContext().findings()))
                         || hasItems(result.differentialDiagnoses())
                         || hasItems(result.supportingEvidence())
                         || hasItems(result.missingInformation())
@@ -236,6 +241,7 @@ public class ClinicalReasoningEngine {
                 result.provider(),
                 result.model(),
                 result.confidence(),
+                result.longitudinalContext(),
                 result.primaryDiagnosis(),
                 result.differentialDiagnoses(),
                 result.supportingEvidence(),
@@ -249,6 +255,49 @@ public class ClinicalReasoningEngine {
                 result.patientExplanation(),
                 result.sourceContextSummary(),
                 metadata
+        );
+    }
+
+    private ClinicalReasoningResult enrichLongitudinalContext(ClinicalReasoningResult result,
+                                                              ClinicalContextResponse clinicalContext) {
+        if (result == null) {
+            return null;
+        }
+        List<ClinicalReasoningFinding> currentFindings = result.longitudinalContext() == null || result.longitudinalContext().findings() == null
+                ? new ArrayList<>()
+                : new ArrayList<>(result.longitudinalContext().findings());
+        if (clinicalContext != null
+                && clinicalContext.longitudinalClinicalContext() != null
+                && clinicalContext.longitudinalClinicalContext().importantHistoricalFindings() != null) {
+            for (ClinicalContextResponse.HistoricalFinding finding : clinicalContext.longitudinalClinicalContext().importantHistoricalFindings()) {
+                ClinicalReasoningFinding mapped = mapHistoricalFinding(finding);
+                if (mapped == null || isDuplicateLongitudinalFinding(currentFindings, mapped)) {
+                    continue;
+                }
+                currentFindings.add(mapped);
+            }
+        }
+        return new ClinicalReasoningResult(
+                result.consultationId(),
+                result.patientId(),
+                result.generatedAt(),
+                result.provider(),
+                result.model(),
+                result.confidence(),
+                new ClinicalReasoningLongitudinalContext(currentFindings),
+                result.primaryDiagnosis(),
+                result.differentialDiagnoses(),
+                result.supportingEvidence(),
+                result.contradictingEvidence(),
+                result.missingInformation(),
+                result.redFlags(),
+                result.recommendedTests(),
+                result.reasoningSummary(),
+                result.safetyNotes(),
+                result.followUpAdvice(),
+                result.patientExplanation(),
+                result.sourceContextSummary(),
+                result.metadata()
         );
     }
 
@@ -275,6 +324,7 @@ public class ClinicalReasoningEngine {
                 result.provider(),
                 result.model(),
                 result.confidence(),
+                result.longitudinalContext(),
                 primary,
                 differentials,
                 supporting,
@@ -329,6 +379,7 @@ public class ClinicalReasoningEngine {
                 result.provider(),
                 result.model(),
                 result.confidence(),
+                result.longitudinalContext(),
                 primary,
                 differentials,
                 supportingEvidence,
@@ -879,6 +930,41 @@ public class ClinicalReasoningEngine {
             match.observedOn = snapshot.observedOn() == null ? match.observedOn : snapshot.observedOn().toString();
             match.verificationStatus = snapshot.verificationStatus();
         }
+    }
+
+    private ClinicalReasoningFinding mapHistoricalFinding(ClinicalContextResponse.HistoricalFinding finding) {
+        if (finding == null || (!hasText(finding.title()) && !hasText(finding.summary()))) {
+            return null;
+        }
+        return new ClinicalReasoningFinding(
+                finding.title(),
+                finding.summary(),
+                finding.clinicalRelevance(),
+                finding.sourceDate(),
+                finding.sourceType(),
+                finding.sourceReference(),
+                finding.verificationStatus(),
+                finding.importance(),
+                null
+        );
+    }
+
+    private boolean isDuplicateLongitudinalFinding(List<ClinicalReasoningFinding> existing, ClinicalReasoningFinding candidate) {
+        if (existing == null || candidate == null) {
+            return false;
+        }
+        String candidateKey = normalizeLongitudinalFindingKey(candidate);
+        return existing.stream()
+                .filter(Objects::nonNull)
+                .map(this::normalizeLongitudinalFindingKey)
+                .anyMatch(candidateKey::equals);
+    }
+
+    private String normalizeLongitudinalFindingKey(ClinicalReasoningFinding finding) {
+        return ((finding == null ? null : finding.title()) + "|" + (finding == null ? null : finding.summary()))
+                .toLowerCase(java.util.Locale.ROOT)
+                .replaceAll("[^a-z0-9]+", " ")
+                .trim();
     }
 
     private String firstNonBlank(String first, String second) {

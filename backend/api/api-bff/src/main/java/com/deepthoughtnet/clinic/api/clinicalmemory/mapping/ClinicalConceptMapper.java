@@ -488,8 +488,8 @@ public class ClinicalConceptMapper {
     }
 
     private String normalizedHbA1cValue(String text) {
-        String value = extractMetricValue(text, "hba1c", "a1c", "glycated hemoglobin");
-        if (value != null && isSafeLabEvidenceText(text, "hba1c", "a1c", "glycated hemoglobin")) {
+        String value = extractMetricValue(text, "hba1c", "hb a1c", "a1c", "glycated hemoglobin", "glycosylated hemoglobin");
+        if (value != null && isSafeLabEvidenceText(text, "hba1c", "hb a1c", "a1c", "glycated hemoglobin", "glycosylated hemoglobin")) {
             return value;
         }
         return null;
@@ -562,7 +562,8 @@ public class ClinicalConceptMapper {
         return switch (normalizedKey) {
             case "hba1c" -> numeric.compareTo(new BigDecimal("2")) >= 0 && numeric.compareTo(new BigDecimal("20")) <= 0;
             case "blood_sugar" -> numeric.compareTo(new BigDecimal("20")) >= 0 && numeric.compareTo(new BigDecimal("1000")) <= 0;
-            case "cholesterol", "ldl", "hdl", "triglycerides" -> numeric.compareTo(BigDecimal.ZERO) >= 0 && numeric.compareTo(new BigDecimal("1000")) <= 0;
+            case "cholesterol", "ldl", "hdl", "triglycerides", "creatinine", "egfr", "crp", "alt", "ast" ->
+                    numeric.compareTo(BigDecimal.ZERO) >= 0 && numeric.compareTo(new BigDecimal("5000")) <= 0;
             default -> true;
         };
     }
@@ -651,16 +652,26 @@ public class ClinicalConceptMapper {
             case "estimated_average_glucose" -> "Estimated Average Glucose";
             case "hemoglobin" -> "Hemoglobin";
             case "blood_sugar" -> "Blood Sugar";
+            case "creatinine" -> "Creatinine";
+            case "egfr" -> "eGFR";
+            case "crp" -> "CRP";
+            case "alt" -> "ALT";
+            case "ast" -> "AST";
             default -> displayLabelForLipidKey(key);
         };
     }
 
     private String canonicalLabKey(String rawKey) {
         String normalized = normalizeKey(rawKey);
-        if (containsAny(normalized, "hba1c", "a1c", "glycated_hemoglobin")) return "hba1c";
+        if (containsAny(normalized, "hba1c", "hb_a1c", "a1c", "glycated_hemoglobin", "glycosylated_hemoglobin")) return "hba1c";
         if (containsAny(normalized, "estimated_average_glucose", "eag")) return "estimated_average_glucose";
         if (containsAny(normalized, "blood_sugar", "random_blood_sugar", "glucose", "rbs")) return "blood_sugar";
         if (containsAny(normalized, "hemoglobin")) return "hemoglobin";
+        if (containsAny(normalized, "creatinine", "serum_creatinine")) return "creatinine";
+        if (containsAny(normalized, "egfr", "estimated_gfr", "estimated_glomerular_filtration_rate")) return "egfr";
+        if (containsAny(normalized, "crp", "c_reactive_protein")) return "crp";
+        if (containsAny(normalized, "alt", "sgpt", "alanine_aminotransferase")) return "alt";
+        if (containsAny(normalized, "ast", "sgot", "aspartate_aminotransferase")) return "ast";
         if (containsAny(normalized, "ldl")) return "ldl";
         if (containsAny(normalized, "hdl")) return "hdl";
         if (containsAny(normalized, "triglycerides", "triglyceride")) return "triglycerides";
@@ -670,7 +681,7 @@ public class ClinicalConceptMapper {
 
     private String[] evidenceLabelsFor(String canonicalKey) {
         return switch (normalizeKey(canonicalKey)) {
-            case "hba1c" -> new String[]{"hba1c", "a1c", "glycated hemoglobin"};
+            case "hba1c" -> new String[]{"hba1c", "hb a1c", "a1c", "glycated hemoglobin", "glycosylated hemoglobin"};
             case "estimated_average_glucose" -> new String[]{"estimated average glucose", "average glucose", "eag"};
             case "blood_sugar" -> new String[]{"random blood sugar", "blood sugar", "glucose", "rbs"};
             case "cholesterol" -> new String[]{"total cholesterol", "cholesterol"};
@@ -678,6 +689,11 @@ public class ClinicalConceptMapper {
             case "hdl" -> new String[]{"hdl cholesterol", "hdl"};
             case "triglycerides" -> new String[]{"triglycerides", "triglyceride"};
             case "hemoglobin" -> new String[]{"hemoglobin"};
+            case "creatinine" -> new String[]{"creatinine", "serum creatinine"};
+            case "egfr" -> new String[]{"egfr", "estimated gfr", "estimated glomerular filtration rate"};
+            case "crp" -> new String[]{"crp", "c reactive protein", "c-reactive protein"};
+            case "alt" -> new String[]{"alt", "sgpt", "alanine aminotransferase"};
+            case "ast" -> new String[]{"ast", "sgot", "aspartate aminotransferase"};
             default -> new String[]{canonicalKey};
         };
     }
@@ -689,7 +705,7 @@ public class ClinicalConceptMapper {
         if ("blood_sugar".equals(normalizeKey(canonicalKey))) {
             return firstNonBlank(normalizedMetricValue(evidenceText, evidenceLabelsFor(canonicalKey)), structuredMetricLiteral(rawValue), rawValue);
         }
-        if (List.of("estimated_average_glucose", "cholesterol", "ldl", "hdl", "triglycerides", "hemoglobin").contains(normalizeKey(canonicalKey))) {
+        if (List.of("estimated_average_glucose", "cholesterol", "ldl", "hdl", "triglycerides", "hemoglobin", "creatinine", "egfr", "crp", "alt", "ast").contains(normalizeKey(canonicalKey))) {
             return firstNonBlank(normalizedMetricValue(evidenceText, evidenceLabelsFor(canonicalKey)), structuredMetricLiteral(rawValue), rawValue);
         }
         return rawValue;
@@ -701,8 +717,11 @@ public class ClinicalConceptMapper {
         }
         return switch (normalizeKey(canonicalKey)) {
             case "hba1c" -> inferUnit(evidenceText, "%");
-            case "blood_sugar", "estimated_average_glucose", "cholesterol", "ldl", "hdl", "triglycerides" -> inferUnit(evidenceText, "mg/dL");
+            case "blood_sugar", "estimated_average_glucose", "cholesterol", "ldl", "hdl", "triglycerides", "creatinine" -> inferUnit(evidenceText, "mg/dL");
             case "hemoglobin" -> inferUnit(evidenceText, "g/dL");
+            case "egfr" -> inferUnit(evidenceText, "mL/min/1.73m2");
+            case "crp" -> inferUnit(evidenceText, "mg/L");
+            case "alt", "ast" -> inferUnit(evidenceText, "U/L");
             default -> inferUnit(evidenceText, null);
         };
     }
@@ -809,7 +828,8 @@ public class ClinicalConceptMapper {
         return switch (key) {
             case "hba1c" -> numeric.compareTo(new BigDecimal("2")) >= 0 && numeric.compareTo(new BigDecimal("20")) <= 0 ? 100 : 1;
             case "blood_sugar" -> numeric.compareTo(new BigDecimal("20")) >= 0 && numeric.compareTo(new BigDecimal("1000")) <= 0 ? 100 : 1;
-            case "cholesterol", "ldl", "hdl", "triglycerides" -> numeric.compareTo(BigDecimal.ZERO) >= 0 && numeric.compareTo(new BigDecimal("1000")) <= 0 ? 100 : 1;
+            case "cholesterol", "ldl", "hdl", "triglycerides", "creatinine", "egfr", "crp", "alt", "ast" ->
+                    numeric.compareTo(BigDecimal.ZERO) >= 0 && numeric.compareTo(new BigDecimal("5000")) <= 0 ? 100 : 1;
             default -> 50;
         };
     }
@@ -864,7 +884,7 @@ public class ClinicalConceptMapper {
         if (containsAny(normalized, "review", "discuss", "recommend", "consider", "monitor", "follow up", "follow-up", "adjust", "advice", "suggest", "summary", "answer", "suggestedactions", "patient instructions", "doctor advice")) {
             return false;
         }
-        if (containsAny(normalized, "hemoglobin") && !containsAny(normalized, "hba1c", "a1c", "glycated hemoglobin")) {
+        if (containsAny(normalized, "hemoglobin") && !containsAny(normalized, "hba1c", "hb a1c", "a1c", "glycated hemoglobin", "glycosylated hemoglobin")) {
             return false;
         }
         boolean matchesLabel = false;

@@ -81,6 +81,8 @@ class ClinicalReasoningEngineTest {
         assertThat(result.redFlags()).extracting("name").contains("Diabetes with fever", "SpO2 below 94%");
         assertThat(result.safetyNotes()).extracting("message").contains("Monitor blood sugar during fever");
         assertThat(result.recommendedTests()).extracting("name").contains("COVID/Flu test");
+        assertThat(result.longitudinalContext()).isNotNull();
+        assertThat(result.longitudinalContext().findings()).extracting("title").contains("Worsening glycemic control", "Previous chest imaging");
         assertThat(result.metadata().resultQuality()).isEqualTo("COMPLETE");
         assertThat(result.metadata().errorMessage()).isNull();
     }
@@ -316,6 +318,16 @@ class ClinicalReasoningEngineTest {
                         List.of(),
                         "Known diabetic with recent report"
                 ),
+                new ClinicalContextResponse.LongitudinalClinicalContext(
+                        List.of(new ClinicalContextResponse.LabTrend("hba1c", "HbA1c", "7.3", "%", "2026-01-15", "8.4", "%", "2026-07-10", "WORSENING", "Poorer glycemic control may increase infection risk and delay recovery.", "+1.1 percentage points", "approximately 6 months", List.of(), "VERIFIED")),
+                        List.of(new ClinicalContextResponse.ImagingHistoryItem("Chest X-ray", "Chest", "2026-07-02", "mild bronchitic changes without focal consolidation or pneumonia", List.of("No focal consolidation", "No pneumonia"), "VERIFIED", UUID.randomUUID().toString(), "Chest X-ray")),
+                        new ClinicalContextResponse.RenalContext("1.08 mg/dL", "2026-05-20", "84 mL/min/1.73m2", "2026-05-20", "Previous renal function was preserved; current function should be rechecked if clinically indicated.", 51, "VERIFIED", List.of()),
+                        List.of(
+                                new ClinicalContextResponse.HistoricalFinding("LAB_TREND", "Worsening glycemic control", "HbA1c increased from 7.3% on 15-Jan-2026 to 8.4% on 10-Jul-2026.", "Poorer glycemic control may increase infection risk and delay recovery.", "2026-07-10", "LONGITUDINAL_MEMORY", "HbA1c trend", "VERIFIED", "HIGH", null),
+                                new ClinicalContextResponse.HistoricalFinding("IMAGING_HISTORY", "Previous chest imaging", "Chest X-ray on 02-Jul-2026 showed mild bronchitic changes without focal consolidation or pneumonia.", "Repeat imaging should depend on current findings, hypoxia, and symptom progression.", "2026-07-02", "Chest X-ray", "Chest X-ray", "VERIFIED", "MEDIUM", null)
+                        ),
+                        List.of()
+                ),
                 "Known diabetic with recent report",
                 "Patient snapshot",
                 "{\"patientSummary\":{\"patientName\":\"Rohan Sharma\"}}",
@@ -362,6 +374,17 @@ class ClinicalReasoningEngineTest {
                 new ClinicalContextResponse.DocumentIntelligence(List.of("Diabetes Follow-up Lab Report"), List.of(), List.of(), List.of()),
                 new ClinicalContextResponse.TimelineSummary(List.of(), "Recent lab report uploaded"),
                 new ClinicalContextResponse.LongitudinalMemory(List.of(), List.of(), null, null, List.of(), null, null, List.of(), List.of(), "Known diabetic"),
+                new ClinicalContextResponse.LongitudinalClinicalContext(
+                        List.of(new ClinicalContextResponse.LabTrend("hba1c", "HbA1c", "7.3", "%", "2026-01-15", "8.4", "%", "2026-07-10", "WORSENING", "Poorer glycemic control may increase infection risk and delay recovery.", "+1.1 percentage points", "approximately 6 months", List.of(), "VERIFIED")),
+                        List.of(new ClinicalContextResponse.ImagingHistoryItem("Chest X-ray", "Chest", "2026-07-02", "mild bronchitic changes without focal consolidation or pneumonia", List.of("No focal consolidation", "No pneumonia"), "VERIFIED", UUID.randomUUID().toString(), "Chest X-ray")),
+                        new ClinicalContextResponse.RenalContext("1.08 mg/dL", "2026-05-20", "84 mL/min/1.73m2", "2026-05-20", "Previous renal function was preserved; current function should be rechecked if clinically indicated.", 51, "VERIFIED", List.of()),
+                        List.of(
+                                new ClinicalContextResponse.HistoricalFinding("LAB_TREND", "Worsening glycemic control", "HbA1c increased from 7.3% on 15-Jan-2026 to 8.4% on 10-Jul-2026.", "Poorer glycemic control may increase infection risk and delay recovery.", "2026-07-10", "LONGITUDINAL_MEMORY", "HbA1c trend", "VERIFIED", "HIGH", null),
+                                new ClinicalContextResponse.HistoricalFinding("IMAGING_HISTORY", "Previous chest imaging", "Chest X-ray on 02-Jul-2026 showed mild bronchitic changes without focal consolidation or pneumonia.", "Repeat imaging should depend on current findings, hypoxia, and symptom progression.", "2026-07-02", "Chest X-ray", "Chest X-ray", "VERIFIED", "MEDIUM", null),
+                                new ClinicalContextResponse.HistoricalFinding("RENAL_CONTEXT", "Previous renal function", "Creatinine 1.08 mg/dL | eGFR 84 mL/min/1.73m2 | on 20-May-2026", "Previous renal function was preserved; current function should be rechecked if clinically indicated.", "2026-05-20", "LONGITUDINAL_MEMORY", "Kidney function history", "VERIFIED", "MEDIUM", null)
+                        ),
+                        List.of()
+                ),
                 "Known diabetic with recent report",
                 "Patient snapshot",
                 "{\"patientSummary\":{\"patientName\":\"Rohan Sharma\"}}",

@@ -549,6 +549,18 @@ public class PatientLongitudinalMemoryService {
         return null;
     }
 
+    private Object firstNonNull(Object... values) {
+        if (values == null) {
+            return null;
+        }
+        for (Object value : values) {
+            if (value != null) {
+                return value;
+            }
+        }
+        return null;
+    }
+
     private boolean hasText(String value) {
         return value != null && !value.trim().isEmpty();
     }
@@ -756,7 +768,7 @@ public class PatientLongitudinalMemoryService {
             }
             return;
         }
-        String text = value.toString().trim();
+        String text = normalizeRepairEvidenceText(value.toString());
         if (text.isBlank()) {
             return;
         }
@@ -767,6 +779,18 @@ public class PatientLongitudinalMemoryService {
         if (hasText(text) && text.length() > 8 && text.length() < 400) {
             target.add(text);
         }
+    }
+
+    private String normalizeRepairEvidenceText(String text) {
+        if (!hasText(text)) {
+            return "";
+        }
+        String normalized = text.trim();
+        String prefix = "Possible abnormal finding detected:";
+        if (normalized.regionMatches(true, 0, prefix, 0, prefix.length())) {
+            return normalized.substring(prefix.length()).trim();
+        }
+        return normalized;
     }
 
     private boolean isEvidenceKey(String key) {
@@ -976,13 +1000,6 @@ public class PatientLongitudinalMemoryService {
     @SuppressWarnings("unchecked")
     private Map<String, Object> ensureFactualLabResults(ClinicalDocumentEntity document, Map<String, Object> extracted, String sourceText) {
         Map<String, Object> normalized = extracted == null ? new LinkedHashMap<>() : new LinkedHashMap<>(extracted);
-        if (hasFactualLabResults(normalized) || !StringUtils.hasText(sourceText)) {
-            return normalized;
-        }
-        List<Map<String, Object>> parsedFacts = deterministicLabFactParser.parse(document.getId(), sourceText, null);
-        if (parsedFacts.isEmpty()) {
-            return normalized;
-        }
         Map<String, Object> factualFindings;
         Object existing = normalized.get("factualFindings");
         if (existing instanceof Map<?, ?> map) {
@@ -990,9 +1007,36 @@ public class PatientLongitudinalMemoryService {
         } else {
             factualFindings = new LinkedHashMap<>();
         }
-        factualFindings.put("labResults", parsedFacts);
+        LinkedHashMap<String, Map<String, Object>> mergedLabResults = new LinkedHashMap<>();
+        Object existingLabResults = factualFindings.get("labResults");
+        if (existingLabResults instanceof Iterable<?> iterable) {
+            for (Object item : iterable) {
+                if (item instanceof Map<?, ?> row) {
+                    String key = canonicalLabResultKey(row);
+                    if (hasText(key)) {
+                        mergedLabResults.putIfAbsent(key, new LinkedHashMap<>((Map<String, Object>) row));
+                    }
+                }
+            }
+        }
+        if (StringUtils.hasText(sourceText)) {
+            for (Map<String, Object> fact : deterministicLabFactParser.parse(document.getId(), sourceText, null)) {
+                String key = canonicalLabResultKey(fact);
+                if (hasText(key)) {
+                    mergedLabResults.putIfAbsent(key, new LinkedHashMap<>(fact));
+                }
+            }
+        }
+        if (mergedLabResults.isEmpty()) {
+            if (existingLabResults != null) {
+                factualFindings.put("labResults", existingLabResults);
+            }
+            normalized.put("factualFindings", factualFindings);
+            return normalized;
+        }
+        factualFindings.put("labResults", new ArrayList<>(mergedLabResults.values()));
         Object existingConditions = factualFindings.get("conditions");
-        if (!(existingConditions instanceof List<?>) && sourceText.toLowerCase(java.util.Locale.ROOT).contains("diabet")) {
+        if (!(existingConditions instanceof List<?>) && StringUtils.hasText(sourceText) && sourceText.toLowerCase(java.util.Locale.ROOT).contains("diabet")) {
             factualFindings.put("conditions", List.of(Map.of(
                     "canonicalKey", "diabetes_mellitus",
                     "label", "Diabetes Mellitus",
@@ -1001,6 +1045,18 @@ public class PatientLongitudinalMemoryService {
         }
         normalized.put("factualFindings", factualFindings);
         return normalized;
+    }
+
+    private String canonicalLabResultKey(Map<?, ?> row) {
+        if (row == null) {
+            return null;
+        }
+        Object rawKey = firstNonNull(row.get("canonicalKey"), row.get("conceptKey"), row.get("key"));
+        if (rawKey == null) {
+            return null;
+        }
+        String key = rawKey.toString().trim().toLowerCase(java.util.Locale.ROOT);
+        return key.isBlank() ? null : key;
     }
 
     private BigDecimal parseNumericValue(String text) {

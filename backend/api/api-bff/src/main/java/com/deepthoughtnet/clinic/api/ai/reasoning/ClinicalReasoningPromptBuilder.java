@@ -64,6 +64,13 @@ public class ClinicalReasoningPromptBuilder {
         builder.append("Do not duplicate the same clinical context across multiple fields.\n");
         builder.append("Use concise phrases rather than paragraphs.\n");
         builder.append("Never present AI as final diagnosis. Doctor must verify.\n");
+        builder.append("Use verified historical values to compare meaningful changes across time.\n");
+        builder.append("If verified longitudinal context is available, include a compact longitudinalContext section before diagnosis reasoning.\n");
+        builder.append("Mention source dates for meaningful historical findings.\n");
+        builder.append("Do not state unverified extraction as confirmed fact; mark it as pending verification or avoid definitive claims.\n");
+        builder.append("Use prior imaging appropriately. Do not describe completed historical imaging as pending.\n");
+        builder.append("When older results are available, distinguish historical status from current status.\n");
+        builder.append("Avoid unsupported causality. Use phrasing such as may increase risk, is associated with, supports, or does not currently show.\n");
         builder.append("No diagnosis without clinical justification.\n");
         builder.append("No emergency diagnosis unless red flags support it.\n");
         builder.append("Mention uncertainty and missing information.\n");
@@ -80,8 +87,9 @@ public class ClinicalReasoningPromptBuilder {
             }
         }
         builder.append("Required JSON shape:\n");
-        builder.append("{\"confidence\":\"HIGH\",\"primaryDiagnosis\":{\"name\":\"...\",\"confidence\":0.0,\"status\":\"SUGGESTED\",\"whyConsidered\":\"...\",\"whyLessLikely\":\"...\",\"supportingEvidence\":[],\"contradictingEvidence\":[],\"missingInformation\":[],\"recommendedTests\":[],\"redFlags\":[]},\"differentialDiagnoses\":[{\"name\":\"...\",\"confidence\":0.0,\"whyConsidered\":\"...\",\"whyLessLikely\":\"...\",\"recommendedTests\":[]}],\"supportingEvidence\":[],\"contradictingEvidence\":[],\"missingInformation\":[],\"redFlags\":[],\"recommendedTests\":[],\"reasoningSummary\":\"...\",\"safetyNotes\":[],\"followUpAdvice\":[],\"patientExplanation\":\"...\",\"sourceContextSummary\":{\"chiefComplaint\":\"...\",\"symptoms\":[],\"vitals\":\"...\",\"knownConditions\":[],\"recentReports\":[],\"currentMedicines\":[]}}\n");
+        builder.append("{\"confidence\":\"HIGH\",\"longitudinalContext\":[{\"title\":\"...\",\"summary\":\"...\",\"clinicalRelevance\":\"...\",\"sourceDate\":\"YYYY-MM-DD\",\"sourceType\":\"...\",\"sourceReference\":\"...\",\"verificationStatus\":\"VERIFIED\",\"importance\":\"HIGH\",\"confidence\":0.0}],\"primaryDiagnosis\":{\"name\":\"...\",\"confidence\":0.0,\"status\":\"SUGGESTED\",\"whyConsidered\":\"...\",\"whyLessLikely\":\"...\",\"supportingEvidence\":[],\"contradictingEvidence\":[],\"missingInformation\":[],\"recommendedTests\":[],\"redFlags\":[]},\"differentialDiagnoses\":[{\"name\":\"...\",\"confidence\":0.0,\"whyConsidered\":\"...\",\"whyLessLikely\":\"...\",\"recommendedTests\":[]}],\"supportingEvidence\":[],\"contradictingEvidence\":[],\"missingInformation\":[],\"redFlags\":[],\"recommendedTests\":[],\"reasoningSummary\":\"...\",\"safetyNotes\":[],\"followUpAdvice\":[],\"patientExplanation\":\"...\",\"sourceContextSummary\":{\"chiefComplaint\":\"...\",\"symptoms\":[],\"vitals\":\"...\",\"knownConditions\":[],\"recentReports\":[],\"currentMedicines\":[]}}\n");
         builder.append("Constraints:\n");
+        builder.append("- max 4 longitudinalContext items\n");
         builder.append("- max 1 primary diagnosis\n");
         builder.append("- max 3 differential diagnoses\n");
         builder.append("- max 6 supportingEvidence items\n");
@@ -101,6 +109,8 @@ public class ClinicalReasoningPromptBuilder {
         builder.append("- recommendedTest reason max 120 chars\n");
         builder.append("- safetyNote max 120 chars\n");
         builder.append("- reasoningSummary max 300 chars\n");
+        builder.append("- longitudinalContext summary max 160 chars\n");
+        builder.append("- longitudinalContext clinicalRelevance max 140 chars\n");
         builder.append("Patient context:\n");
         builder.append("- Chief complaint: ").append(firstNonBlank(request == null ? null : request.chiefComplaint(), consultation.getChiefComplaints())).append('\n');
         builder.append("- Symptoms: ").append(firstNonBlank(request == null ? null : request.symptoms(), consultation.getSymptoms())).append('\n');
@@ -115,6 +125,7 @@ public class ClinicalReasoningPromptBuilder {
         builder.append("- Current medicines: ").append(String.join(", ", currentMedicines(context))).append('\n');
         builder.append("- Patient snapshot: ").append(context == null || context.patientSummary() == null ? "" : context.patientSummary().patientName()).append('\n');
         builder.append("- Longitudinal memory summary: ").append(context == null || context.aiSummary() == null ? "" : context.aiSummary()).append('\n');
+        builder.append("- Structured longitudinal context: ").append(context == null || context.longitudinalClinicalContext() == null ? "" : String.valueOf(context.longitudinalClinicalContext())).append('\n');
         return builder.toString();
     }
 
@@ -127,13 +138,15 @@ public class ClinicalReasoningPromptBuilder {
         builder.append("Do not repeat the same context in multiple arrays.\n");
         builder.append("Use very short phrases only.\n");
         builder.append("Use compact schema:\n");
-        builder.append("{\"confidence\":\"HIGH\",\"primaryDiagnosis\":{\"name\":\"...\",\"confidence\":0.0,\"status\":\"SUGGESTED\",\"whyConsidered\":\"...\",\"whyLessLikely\":\"...\",\"supportingEvidence\":[],\"contradictingEvidence\":[],\"missingInformation\":[],\"recommendedTests\":[],\"redFlags\":[]},\"differentialDiagnoses\":[{\"name\":\"...\",\"confidence\":0.0,\"whyConsidered\":\"...\",\"whyLessLikely\":\"...\",\"recommendedTests\":[]}],\"supportingEvidence\":[],\"contradictingEvidence\":[],\"missingInformation\":[],\"redFlags\":[],\"recommendedTests\":[],\"reasoningSummary\":\"...\",\"safetyNotes\":[],\"followUpAdvice\":[],\"patientExplanation\":\"...\"}\n");
+        builder.append("{\"confidence\":\"HIGH\",\"longitudinalContext\":[{\"title\":\"...\",\"summary\":\"...\",\"clinicalRelevance\":\"...\",\"sourceDate\":\"YYYY-MM-DD\",\"sourceType\":\"...\",\"sourceReference\":\"...\",\"verificationStatus\":\"VERIFIED\",\"importance\":\"HIGH\",\"confidence\":0.0}],\"primaryDiagnosis\":{\"name\":\"...\",\"confidence\":0.0,\"status\":\"SUGGESTED\",\"whyConsidered\":\"...\",\"whyLessLikely\":\"...\",\"supportingEvidence\":[],\"contradictingEvidence\":[],\"missingInformation\":[],\"recommendedTests\":[],\"redFlags\":[]},\"differentialDiagnoses\":[{\"name\":\"...\",\"confidence\":0.0,\"whyConsidered\":\"...\",\"whyLessLikely\":\"...\",\"recommendedTests\":[]}],\"supportingEvidence\":[],\"contradictingEvidence\":[],\"missingInformation\":[],\"redFlags\":[],\"recommendedTests\":[],\"reasoningSummary\":\"...\",\"safetyNotes\":[],\"followUpAdvice\":[],\"patientExplanation\":\"...\"}\n");
         builder.append("Doctor must verify.\n");
         builder.append("Always populate supportingEvidence, missingInformation, redFlags, recommendedTests, and safetyNotes when possible.\n");
+        builder.append("If verified longitudinal facts exist, include them concisely with dates.\n");
         builder.append("For fever with diabetes, include glucose monitoring, hydration, worsening fever, breathlessness, SpO2 below 94, and confusion.\n");
         builder.append("If HbA1c or CBC already exists or is pending, do not duplicate it without justification.\n");
         builder.append("Constraints:\n");
         builder.append("- max 1 primary diagnosis\n");
+        builder.append("- max 3 longitudinalContext items\n");
         builder.append("- max 2 differential diagnoses\n");
         builder.append("- max 4 supportingEvidence items\n");
         builder.append("- max 3 contradictingEvidence items\n");
@@ -157,6 +170,7 @@ public class ClinicalReasoningPromptBuilder {
         builder.append("Pending lab orders: ").append(String.join(", ", pendingInvestigations(context))).append('\n');
         builder.append("Known conditions: ").append(String.join(", ", listFromContext(context))).append('\n');
         builder.append("Recent reports: ").append(String.join(", ", recentReports(context))).append('\n');
+        builder.append("Structured longitudinal context: ").append(context == null || context.longitudinalClinicalContext() == null ? "" : String.valueOf(context.longitudinalClinicalContext())).append('\n');
         return builder.toString();
     }
 

@@ -22,7 +22,7 @@ public class DeterministicLabFactParser {
         List<String> candidateLines = candidateLines(ocrText, detectedLabLines);
         LinkedHashMap<String, Map<String, Object>> results = new LinkedHashMap<>();
 
-        addFact(results, parseLine(documentId, candidateLines, "hba1c", "HbA1c", "HbA1c", "A1c", "Glycated Hemoglobin"));
+        addFact(results, parseLine(documentId, candidateLines, "hba1c", "HbA1c", "HbA1c", "Hb A1c", "Hb A1C", "A1c", "Glycated Hemoglobin", "Glycosylated Hemoglobin"));
         addFact(results, parseLine(documentId, candidateLines, "estimated_average_glucose", "Estimated Average Glucose", "Estimated Average Glucose", "Average Glucose", "EAG"));
         addFact(results, parseLine(documentId, candidateLines, "blood_sugar", "Random Blood Sugar", "Random Blood Sugar", "Blood Sugar", "RBS"));
         addFact(results, parseLine(documentId, candidateLines, "cholesterol", "Total Cholesterol", "Total Cholesterol", "Cholesterol"));
@@ -30,6 +30,11 @@ public class DeterministicLabFactParser {
         addFact(results, parseLine(documentId, candidateLines, "hdl", "HDL Cholesterol", "HDL Cholesterol", "HDL"));
         addFact(results, parseLine(documentId, candidateLines, "triglycerides", "Triglycerides", "Triglycerides"));
         addFact(results, parseLine(documentId, candidateLines, "hemoglobin", "Hemoglobin", "Hemoglobin"));
+        addFact(results, parseLine(documentId, candidateLines, "creatinine", "Creatinine", "Creatinine", "Serum Creatinine"));
+        addFact(results, parseLine(documentId, candidateLines, "egfr", "eGFR", "eGFR", "Estimated Glomerular Filtration Rate", "Estimated GFR"));
+        addFact(results, parseLine(documentId, candidateLines, "crp", "CRP", "CRP", "C-Reactive Protein", "C Reactive Protein"));
+        addFact(results, parseLine(documentId, candidateLines, "alt", "ALT", "ALT", "SGPT", "Alanine Aminotransferase"));
+        addFact(results, parseLine(documentId, candidateLines, "ast", "AST", "AST", "SGOT", "Aspartate Aminotransferase"));
 
         log.info("[AI-LAB-FACT-PARSER] documentId={} labLineCount={} parsedCount={} hba1c={} bloodSugar={} cholesterol={} ldl={} hdl={} triglycerides={}",
                 documentId,
@@ -68,7 +73,7 @@ public class DeterministicLabFactParser {
             return null;
         }
         String labelPattern = quotedAlternation(labels);
-        Pattern pattern = Pattern.compile("(?i)\\b(?:" + labelPattern + ")\\b\\s*[:=\\-]?\\s*([<>]?\\s*\\d+(?:\\.\\d+)?)\\s*(%|mg/dL|g/dL)?\\s*(.*)$");
+        Pattern pattern = Pattern.compile("(?i)\\b(?:" + labelPattern + ")\\b\\s*(?:[:=\\-]|\\|)?\\s*([<>]?\\s*\\d+(?:\\.\\d+)?)\\s*(%|mg/dL|g/dL|U/L|mg/L|mL/min/1\\.73m2)?\\s*(.*)$");
         Matcher matcher = pattern.matcher(line.trim());
         if (!matcher.find()) {
             return null;
@@ -110,7 +115,7 @@ public class DeterministicLabFactParser {
                     continue;
                 }
                 String normalized = line.toLowerCase(Locale.ROOT);
-                if (containsAny(normalized, "hba1c", "a1c", "glycated hemoglobin", "estimated average glucose", "random blood sugar", "blood sugar", "cholesterol", "ldl", "hdl", "triglycerides", "hemoglobin")) {
+                if (containsAny(normalized, "hba1c", "hb a1c", "a1c", "glycated hemoglobin", "glycosylated hemoglobin", "estimated average glucose", "random blood sugar", "blood sugar", "cholesterol", "ldl", "hdl", "triglycerides", "hemoglobin", "creatinine", "egfr", "estimated gfr", "c-reactive protein", "crp", "alt", "ast", "sgpt", "sgot", "alanine aminotransferase", "aspartate aminotransferase")) {
                     lines.add(line.trim());
                 }
             }
@@ -154,9 +159,9 @@ public class DeterministicLabFactParser {
         }
         String normalizedLine = line == null ? "" : line.toLowerCase(Locale.ROOT);
         return switch (canonicalKey) {
-            case "hba1c" -> normalizedLine.contains("hba1c") || normalizedLine.contains("a1c") || normalizedLine.contains("glycated hemoglobin");
+            case "hba1c" -> normalizedLine.contains("hba1c") || normalizedLine.contains("hb a1c") || normalizedLine.contains("a1c") || normalizedLine.contains("glycated hemoglobin") || normalizedLine.contains("glycosylated hemoglobin");
             case "blood_sugar" -> numeric.compareTo(new BigDecimal("20")) >= 0 && numeric.compareTo(new BigDecimal("1000")) <= 0;
-            case "estimated_average_glucose", "cholesterol", "ldl", "hdl", "triglycerides", "hemoglobin" ->
+            case "estimated_average_glucose", "cholesterol", "ldl", "hdl", "triglycerides", "hemoglobin", "creatinine", "egfr", "crp", "alt", "ast" ->
                     numeric.compareTo(BigDecimal.ZERO) >= 0 && numeric.compareTo(new BigDecimal("2000")) <= 0;
             default -> true;
         };
@@ -185,6 +190,9 @@ public class DeterministicLabFactParser {
             case "ldl" -> numeric.compareTo(new BigDecimal("100")) >= 0 ? "HIGH" : "UNKNOWN";
             case "hdl" -> numeric.compareTo(new BigDecimal("40")) < 0 ? "LOW" : "UNKNOWN";
             case "triglycerides" -> numeric.compareTo(new BigDecimal("150")) >= 0 ? "HIGH" : "UNKNOWN";
+            case "creatinine" -> numeric.compareTo(new BigDecimal("1.3")) > 0 ? "HIGH" : "UNKNOWN";
+            case "egfr" -> numeric.compareTo(new BigDecimal("60")) < 0 ? "LOW" : "UNKNOWN";
+            case "crp", "alt", "ast" -> "UNKNOWN";
             default -> "UNKNOWN";
         };
     }
@@ -204,6 +212,9 @@ public class DeterministicLabFactParser {
         return switch (canonicalKey) {
             case "hba1c" -> "%";
             case "hemoglobin" -> "g/dL";
+            case "egfr" -> "mL/min/1.73m2";
+            case "crp" -> "mg/L";
+            case "alt", "ast" -> "U/L";
             default -> "mg/dL";
         };
     }

@@ -214,6 +214,50 @@ class PatientLongitudinalMemoryServiceTest {
     }
 
     @Test
+    void repairPendingConceptsMergesParsedHbA1cIntoPartialStructuredLabFacts() {
+        PatientLongitudinalConceptRepository repository = mock(PatientLongitudinalConceptRepository.class);
+        AtomicReference<List<PatientLongitudinalConceptEntity>> saved = new AtomicReference<>(List.of());
+        doAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            List<PatientLongitudinalConceptEntity> value = (List<PatientLongitudinalConceptEntity>) invocation.getArgument(0);
+            saved.set(value);
+            return value;
+        }).when(repository).saveAllAndFlush(anyList());
+        when(repository.deleteByDocumentAndStatus(any(), any(), any(), any())).thenReturn(1);
+
+        UUID tenantId = UUID.randomUUID();
+        UUID patientId = UUID.randomUUID();
+        ClinicalDocumentEntity document = document(tenantId, patientId, "HbA1c follow-up report", LocalDate.of(2026, 1, 15));
+        String structuredJson = """
+                {
+                  "factualFindings":{
+                    "labResults":[
+                      {"canonicalKey":"estimated_average_glucose","testName":"Estimated Average Glucose","value":"163","unit":"mg/dL","evidenceText":"Estimated Average Glucose 163 mg/dL"}
+                    ]
+                  }
+                }
+                """;
+        String sourceText = """
+                Test | Result
+                HbA1c | 7.3 %
+                Estimated Average Glucose | 163 mg/dL
+                """;
+
+        PatientLongitudinalMemoryService service = new PatientLongitudinalMemoryService(repository, new ClinicalConceptMapper(), new ObjectMapper());
+        var result = service.repairPendingConcepts(document, structuredJson, sourceText, new BigDecimal("0.91"), "AI draft generated.", UUID.randomUUID());
+
+        assertThat(result.status()).isEqualTo("SUCCESS");
+        assertThat(saved.get()).extracting(PatientLongitudinalConceptEntity::getConceptKey)
+                .contains("hba1c", "estimated_average_glucose");
+        assertThat(saved.get()).filteredOn(concept -> "LAB_RESULT".equals(concept.getConceptFamily()) && "hba1c".equals(concept.getConceptKey()))
+                .extracting(PatientLongitudinalConceptEntity::getValueText, PatientLongitudinalConceptEntity::getValueUnit)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("7.3", "%"));
+        assertThat(saved.get()).filteredOn(concept -> "LAB_RESULT".equals(concept.getConceptFamily()) && "estimated_average_glucose".equals(concept.getConceptKey()))
+                .extracting(PatientLongitudinalConceptEntity::getValueText, PatientLongitudinalConceptEntity::getValueUnit)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("163", "mg/dL"));
+    }
+
+    @Test
     void verifyAndProfileKeepsHistoryAndUsesLatestAcceptedValues() {
         PatientLongitudinalConceptRepository repository = mock(PatientLongitudinalConceptRepository.class);
         PatientLongitudinalMemoryService service = new PatientLongitudinalMemoryService(repository, new ClinicalConceptMapper(), new ObjectMapper());

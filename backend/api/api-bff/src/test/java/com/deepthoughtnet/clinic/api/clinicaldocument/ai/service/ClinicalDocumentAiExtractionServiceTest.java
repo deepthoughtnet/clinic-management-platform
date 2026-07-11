@@ -478,6 +478,64 @@ class ClinicalDocumentAiExtractionServiceTest {
     }
 
     @Test
+    void processExtractsPipeDelimitedHbA1cTableRow() {
+        ClinicalAiJobRepository jobRepository = mock(ClinicalAiJobRepository.class);
+        ClinicalDocumentRepository documentRepository = mock(ClinicalDocumentRepository.class);
+        ClinicalDocumentService documentService = mock(ClinicalDocumentService.class);
+        PatientLongitudinalMemoryService longitudinalMemoryService = mock(PatientLongitudinalMemoryService.class);
+        AppUserRepository appUserRepository = mock(AppUserRepository.class);
+        ClinicalDocumentTextExtractionService textExtractionService = mock(ClinicalDocumentTextExtractionService.class);
+        AiDoctorCopilotService aiDoctorCopilotService = mock(AiDoctorCopilotService.class);
+        ObjectStorageService storageService = mock(ObjectStorageService.class);
+        AuditEventPublisher auditEventPublisher = mock(AuditEventPublisher.class);
+        AgentExecutionLogService agentExecutionLogService = mock(AgentExecutionLogService.class);
+        PatientService patientService = mock(PatientService.class);
+        TenantNotificationSettingsService notificationSettingsService = mock(TenantNotificationSettingsService.class);
+        ClinicalDocumentAiExtractionService service = new ClinicalDocumentAiExtractionService(
+                jobRepository, documentRepository, documentService, longitudinalMemoryService, appUserRepository,
+                textExtractionService, aiDoctorCopilotService, storageService, auditEventPublisher,
+                agentExecutionLogService, patientService, notificationSettingsService, new ObjectMapper(), 1000L, 3
+        );
+
+        ClinicalDocumentEntity document = document();
+        ClinicalAiJobEntity job = ClinicalAiJobEntity.queued(
+                TENANT_ID, ClinicalAiJobType.DOCUMENT_EXTRACTION, "PATIENT_CLINICAL_DOCUMENT",
+                DOCUMENT_ID, DOCUMENT_ID, PATIENT_ID, null, REVIEWER_ID, "{\"documentId\":\"doc\"}"
+        );
+        when(jobRepository.findById(eq(job.getId()))).thenReturn(Optional.of(job));
+        when(documentRepository.findByTenantIdAndId(eq(TENANT_ID), eq(DOCUMENT_ID))).thenReturn(Optional.of(document));
+        when(documentRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(jobRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(storageService.getObjectBytes(anyString())).thenReturn("fake-bytes".getBytes());
+        when(textExtractionService.extract(any(), any())).thenReturn(new ClinicalDocumentTextExtractionResult(
+                "TESSERACT", "COMPLETED",
+                """
+                        Test | Result
+                        HbA1c | 7.3 %
+                        Estimated Average Glucose | 163 mg/dL
+                        """
+        ));
+        when(patientService.findById(eq(TENANT_ID), eq(PATIENT_ID))).thenReturn(Optional.of(patientRecord()));
+        when(aiDoctorCopilotService.draft(any(), anyString(), anyString(), any(), any())).thenReturn(
+                new AiDraftResponse(
+                        true, false, "Clinical extraction complete.", "GEMINI", "gemini-1.5-flash", "AI draft generated.",
+                        Map.of("answer", "Narrative only", "suggestedActions", List.of("Review with clinician")),
+                        BigDecimal.valueOf(0.91), List.of(), List.of(), null
+                )
+        );
+
+        service.process(job.getId());
+
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"canonicalKey\":\"hba1c\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"value\":\"7.3\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"unit\":\"%\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"canonicalKey\":\"estimated_average_glucose\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"value\":\"163\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"unit\":\"mg/dL\"");
+        verify(longitudinalMemoryService, atLeastOnce()).ingestPendingConcepts(eq(document), anyString(), anyString(), eq(BigDecimal.valueOf(0.91)), anyString());
+    }
+
+    @Test
     void processPrefersDeterministicOcrFactsOverPollutedAiLabRows() {
         ClinicalAiJobRepository jobRepository = mock(ClinicalAiJobRepository.class);
         ClinicalDocumentRepository documentRepository = mock(ClinicalDocumentRepository.class);

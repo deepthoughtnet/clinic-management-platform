@@ -345,6 +345,57 @@ export type ClinicalContextResponse = {
     }>;
     mostRecentLaboratorySummary: string | null;
   };
+  longitudinalClinicalContext?: {
+    labTrends: Array<{
+      analyteCode: string | null;
+      analyteName: string | null;
+      olderValue: string | null;
+      olderUnit: string | null;
+      olderDate: string | null;
+      newerValue: string | null;
+      newerUnit: string | null;
+      newerDate: string | null;
+      direction: string | null;
+      clinicalInterpretation: string | null;
+      absoluteChange: string | null;
+      interval: string | null;
+      sourceDocumentIds: string[];
+      verificationStatus: string | null;
+    }>;
+    imagingHistory: Array<{
+      modality: string | null;
+      bodyPart: string | null;
+      reportDate: string | null;
+      summary: string | null;
+      keyNegativeFindings: string[];
+      verificationStatus: string | null;
+      sourceDocumentId: string | null;
+      sourceReference: string | null;
+    }>;
+    renalContext: {
+      creatinine: string | null;
+      creatinineDate: string | null;
+      egfr: string | null;
+      egfrDate: string | null;
+      interpretation: string | null;
+      stalenessDays: number | null;
+      verificationStatus: string | null;
+      sourceDocumentIds: string[];
+    } | null;
+    importantHistoricalFindings: Array<{
+      kind: string | null;
+      title: string | null;
+      summary: string | null;
+      clinicalRelevance: string | null;
+      sourceDate: string | null;
+      sourceType: string | null;
+      sourceReference: string | null;
+      verificationStatus: string | null;
+      importance: string | null;
+      sourceDocumentId: string | null;
+    }>;
+    dataQualityWarnings: string[];
+  } | null;
   patientSummary: {
     patientName: string | null;
     ageYears: number | null;
@@ -438,6 +489,19 @@ export type ClinicalReasoningResult = {
   provider: string | null;
   model: string | null;
   confidence: string;
+  longitudinalContext?: {
+    findings: Array<{
+      title: string | null;
+      summary: string | null;
+      clinicalRelevance: string | null;
+      sourceDate: string | null;
+      sourceType: string | null;
+      sourceReference: string | null;
+      verificationStatus: string | null;
+      importance: string | null;
+      confidence: number | null;
+    }>;
+  } | null;
   primaryDiagnosis: {
     name: string | null;
     confidence: number | null;

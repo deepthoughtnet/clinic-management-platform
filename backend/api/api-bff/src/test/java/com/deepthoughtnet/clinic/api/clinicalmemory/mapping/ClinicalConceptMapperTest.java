@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.api.clinicalmemory.mapping;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 
 import com.deepthoughtnet.clinic.api.clinicaldocument.db.ClinicalDocumentEntity;
 import com.deepthoughtnet.clinic.api.clinicaldocument.db.ClinicalDocumentType;
@@ -102,6 +103,34 @@ class ClinicalConceptMapperTest {
         assertThat(concepts).filteredOn(concept -> "LAB_RESULT".equals(concept.family()) && "hba1c".equals(concept.key()))
                 .extracting(ClinicalConceptMapper.MappedConcept::valueText)
                 .contains("8.4");
+    }
+
+    @Test
+    void normalizesHbA1cAliasVariantsAndPercentUnits() {
+        ClinicalDocumentEntity document = clinicalDocument(
+                "Diabetes Follow-up Lab Report",
+                LocalDate.of(2026, 1, 15)
+        );
+        ClinicalConceptMapper mapper = new ClinicalConceptMapper();
+
+        Map<String, Object> structuredJson = new LinkedHashMap<>();
+        structuredJson.put("factualFindings", Map.of(
+                "labResults", List.of(
+                        Map.of("testName", "Hb A1c", "canonicalKey", "hb a1c", "value", "7.3 %", "unit", "%", "evidenceText", "Hb A1c | 7.3 %"),
+                        Map.of("testName", "Glycosylated Hemoglobin", "canonicalKey", "glycosylated hemoglobin", "value", "7.3", "unit", "%", "evidenceText", "Glycosylated Hemoglobin | 7.3 %")
+                )
+        ));
+
+        List<ClinicalConceptMapper.MappedConcept> concepts = mapper.map(
+                document,
+                structuredJson,
+                "",
+                new java.math.BigDecimal("0.96")
+        );
+
+        assertThat(concepts).filteredOn(concept -> "LAB_RESULT".equals(concept.family()) && "hba1c".equals(concept.key()))
+                .extracting(ClinicalConceptMapper.MappedConcept::label, ClinicalConceptMapper.MappedConcept::valueText, ClinicalConceptMapper.MappedConcept::valueUnit)
+                .contains(tuple("HbA1c", "7.3", "%"));
     }
 
     @Test
@@ -228,6 +257,34 @@ class ClinicalConceptMapperTest {
                 .doesNotContain("blood_sugar");
         assertThat(concepts).noneMatch(concept -> concept.evidenceText() != null
                 && concept.evidenceText().toLowerCase().startsWith("review"));
+    }
+
+    @Test
+    void mapsKidneyFunctionFactsIntoNormalizedLongitudinalConcepts() {
+        ClinicalDocumentEntity document = clinicalDocument(
+                "Kidney Function Report",
+                LocalDate.of(2026, 5, 20)
+        );
+        ClinicalConceptMapper mapper = new ClinicalConceptMapper();
+
+        Map<String, Object> structuredJson = new LinkedHashMap<>();
+        structuredJson.put("factualFindings", Map.of(
+                "labResults", List.of(
+                        Map.of("testName", "Creatinine", "canonicalKey", "creatinine", "value", "1.08", "unit", "mg/dL", "evidenceText", "Creatinine 1.08 mg/dL"),
+                        Map.of("testName", "eGFR", "canonicalKey", "egfr", "value", "84", "unit", "mL/min/1.73m2", "evidenceText", "eGFR 84 mL/min/1.73m2")
+                )
+        ));
+
+        List<ClinicalConceptMapper.MappedConcept> concepts = mapper.map(
+                document,
+                structuredJson,
+                "",
+                new java.math.BigDecimal("0.96")
+        );
+
+        assertThat(concepts).filteredOn(concept -> "LAB_RESULT".equals(concept.family()))
+                .extracting(ClinicalConceptMapper.MappedConcept::key)
+                .contains("creatinine", "egfr");
     }
 
     private ClinicalDocumentEntity clinicalDocument(String title, LocalDate reportDate) {

@@ -92,6 +92,8 @@ class ClinicalContextServiceTest {
         );
         setField(document, "uploadSource", "RECEPTION");
         setField(document, "sourceModule", "CLINICAL_INTAKE");
+        setField(document, "reportDate", java.time.LocalDate.of(2026, 7, 2));
+        setField(document, "aiExtractionSummary", "Mild bronchitic changes. No focal consolidation. No pneumonia.");
 
         PatientClinicalIntakeEntity intake = PatientClinicalIntakeEntity.create(
                 intakeId,
@@ -179,7 +181,12 @@ class ClinicalContextServiceTest {
                         new LongitudinalConceptSnapshot("RISK_FLAG", "diabetes_risk", "Diabetes", "Diabetes", null, "Diabetes Follow-up Lab Report", "EXTERNAL_LAB_REPORT", document.getId(), java.time.LocalDate.of(2026, 1, 8), new java.math.BigDecimal("0.96"), "PENDING_REVIEW", "Known diabetic"),
                         new LongitudinalConceptSnapshot("RISK_FLAG", "lipid_risk", "Dyslipidemia", "Dyslipidemia", null, "Diabetes Follow-up Lab Report", "EXTERNAL_LAB_REPORT", document.getId(), java.time.LocalDate.of(2026, 1, 8), new java.math.BigDecimal("0.96"), "PENDING_REVIEW", "High cholesterol")
                 ),
-                List.of(),
+                List.of(
+                        new LongitudinalConceptSnapshot("LAB_RESULT", "hba1c", "HbA1c", "7.3", "%", "Diabetes Follow-up Lab Report", "EXTERNAL_LAB_REPORT", document.getId(), java.time.LocalDate.of(2026, 1, 15), new java.math.BigDecimal("0.96"), "ACCEPTED", "HbA1c 7.3%"),
+                        new LongitudinalConceptSnapshot("LAB_RESULT", "hba1c", "HbA1c", "8.4", "%", "Diabetes Follow-up Lab Report", "EXTERNAL_LAB_REPORT", document.getId(), java.time.LocalDate.of(2026, 7, 10), new java.math.BigDecimal("0.96"), "ACCEPTED", "HbA1c 8.4%"),
+                        new LongitudinalConceptSnapshot("LAB_RESULT", "creatinine", "Creatinine", "1.08", "mg/dL", "Kidney Function Report", "EXTERNAL_LAB_REPORT", document.getId(), java.time.LocalDate.of(2026, 5, 20), new java.math.BigDecimal("0.96"), "ACCEPTED", "Creatinine 1.08 mg/dL"),
+                        new LongitudinalConceptSnapshot("LAB_RESULT", "egfr", "eGFR", "84", "mL/min/1.73m2", "Kidney Function Report", "EXTERNAL_LAB_REPORT", document.getId(), java.time.LocalDate.of(2026, 5, 20), new java.math.BigDecimal("0.96"), "ACCEPTED", "eGFR 84 mL/min/1.73m2")
+                ),
                 "HbA1c 8.4%, Random Blood Sugar 198 mg/dL"
         ));
 
@@ -231,6 +238,13 @@ class ClinicalContextServiceTest {
         assertThat(context.longitudinalMemory().latestHbA1c()).isNotNull();
         assertThat(context.longitudinalMemory().latestHbA1c().verificationStatus()).isEqualTo("PENDING_REVIEW");
         assertThat(context.longitudinalMemory().riskFlags()).extracting(ClinicalContextResponse.LongitudinalConcept::label).contains("Diabetes", "Dyslipidemia");
+        assertThat(context.longitudinalClinicalContext()).isNotNull();
+        assertThat(context.longitudinalClinicalContext().labTrends()).hasSize(1);
+        assertThat(context.longitudinalClinicalContext().labTrends().get(0).direction()).isEqualTo("WORSENING");
+        assertThat(context.longitudinalClinicalContext().imagingHistory()).hasSize(1);
+        assertThat(context.longitudinalClinicalContext().imagingHistory().get(0).summary()).contains("bronchitic");
+        assertThat(context.longitudinalClinicalContext().renalContext()).isNotNull();
+        assertThat(context.longitudinalClinicalContext().renalContext().interpretation()).contains("preserved");
         assertThat(context.aiSummary()).contains("Medication alerts");
         assertThat(context.aiPromptContext()).contains("Patient:").contains("Chronic conditions").contains("INTAKE");
         assertThat(context.clinicalContextJson()).contains("patientSummary");

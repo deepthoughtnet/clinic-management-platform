@@ -196,6 +196,7 @@ class ClinicalReasoningResponseParserTest {
                 new ClinicalContextResponse.DocumentIntelligence(List.of("Diabetes Follow-up Lab Report"), List.of(), List.of(), List.of()),
                 new ClinicalContextResponse.TimelineSummary(List.of(), "Recent lab report uploaded"),
                 new ClinicalContextResponse.LongitudinalMemory(List.of(), List.of(), null, null, List.of(), null, null, List.of(), List.of(), "Known diabetic"),
+                null,
                 "Known diabetic with recent report",
                 "Patient snapshot",
                 "{\"patientSummary\":{\"patientName\":\"Rohan Sharma\"}}",

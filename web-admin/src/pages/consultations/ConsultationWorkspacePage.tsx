@@ -243,7 +243,7 @@ type ClinicalDraftGenerationStepState = {
   error: string | null;
   message: string | null;
 };
-type ClinicalReasoningSectionKey = "primaryDiagnosis" | "differentials" | "evidence" | "missingInformation" | "redFlags" | "recommendedTests" | "safetyNotes" | "debug";
+type ClinicalReasoningSectionKey = "longitudinalContext" | "primaryDiagnosis" | "differentials" | "evidence" | "missingInformation" | "redFlags" | "recommendedTests" | "safetyNotes" | "debug";
 type InvestigationIntelligenceStatus = "Already Available" | "Recently Completed" | "Pending" | "Recommended" | "Consider" | "Unknown";
 type InvestigationIntelligenceRow = {
   testName: string;
@@ -1007,6 +1007,19 @@ function getInvestigationResultFlag(testName: string, valueText: string | null |
 function formatClinicalReasoningMetaValue(value: unknown) {
   if (value == null || value === "") return null;
   return String(value);
+}
+
+function formatClinicalReasoningVerificationLabel(value: string | null | undefined) {
+  const normalized = String(value || "").toUpperCase();
+  if (["VERIFIED", "APPROVED", "ACCEPTED"].includes(normalized)) return "Verified";
+  if (["PENDING_REVIEW", "PENDING_VERIFICATION", "UNVERIFIED", "NOT_REVIEWED", "REVIEW_REQUIRED", "AI_REVIEW_REQUIRED"].includes(normalized)) return "Pending verification";
+  if (normalized === "REJECTED") return "Rejected";
+  return null;
+}
+
+function clinicalReasoningHistoricalLabel(sourceDate: string | null | undefined) {
+  if (!sourceDate) return "Historical result";
+  return compactDate(sourceDate);
 }
 
 function investigationStatusColor(status: InvestigationIntelligenceStatus) {
@@ -2026,6 +2039,7 @@ export default function ConsultationWorkspacePage() {
   const [clinicalReasoningAskedMissingInfo, setClinicalReasoningAskedMissingInfo] = React.useState<Record<string, boolean>>({});
   const [clinicalReasoningLoadingStepIndex, setClinicalReasoningLoadingStepIndex] = React.useState(0);
   const [clinicalReasoningSectionsOpen, setClinicalReasoningSectionsOpen] = React.useState<Record<ClinicalReasoningSectionKey, boolean>>({
+    longitudinalContext: true,
     primaryDiagnosis: true,
     differentials: true,
     evidence: false,
@@ -2065,6 +2079,7 @@ export default function ConsultationWorkspacePage() {
   const patientIntelligenceRef = React.useRef<HTMLDivElement | null>(null);
   const labOrderWorkflowRef = React.useRef<HTMLDivElement | null>(null);
   const clinicalReasoningSectionRefs = React.useRef<Record<Exclude<ClinicalReasoningSectionKey, "debug">, HTMLDivElement | null>>({
+    longitudinalContext: null,
     primaryDiagnosis: null,
     differentials: null,
     evidence: null,
@@ -2449,6 +2464,7 @@ export default function ConsultationWorkspacePage() {
       setClinicalReasoningAskedMissingInfo({});
       setClinicalReasoningLoadingStepIndex(0);
       setClinicalReasoningSectionsOpen({
+        longitudinalContext: true,
         primaryDiagnosis: true,
         differentials: true,
         evidence: false,
@@ -2824,6 +2840,10 @@ export default function ConsultationWorkspacePage() {
   const clinicalReasoningTestBuckets = React.useMemo(
     () => classifyClinicalReasoningTests(clinicalReasoningResult?.recommendedTests || []),
     [clinicalReasoningResult?.recommendedTests],
+  );
+  const clinicalReasoningLongitudinalFindings = React.useMemo(
+    () => clinicalReasoningResult?.longitudinalContext?.findings?.filter((item) => item && (item.title || item.summary)) || [],
+    [clinicalReasoningResult?.longitudinalContext?.findings],
   );
   const clinicalReasoningPrimaryConfidenceLabel = confidenceLevelFromPercent(clinicalReasoningResult?.primaryDiagnosis?.confidence);
   const clinicalReasoningPrimaryConfidencePercent = clinicalReasoningResult?.primaryDiagnosis?.confidence != null
@@ -8008,6 +8028,17 @@ export default function ConsultationWorkspacePage() {
                                   <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
                                     <Chip size="small" color="success" variant="outlined" label={clinicalReasoningResult.primaryDiagnosis?.name || "Primary diagnosis pending"} />
                                     <Chip size="small" color="primary" variant="outlined" label={`Confidence ${clinicalReasoningSummaryConfidenceLabel}`} />
+                                    {clinicalReasoningLongitudinalFindings.length ? (
+                                      <Chip
+                                        size="small"
+                                        color="primary"
+                                        variant="outlined"
+                                        clickable
+                                        onClick={() => scrollToClinicalReasoningSection("longitudinalContext")}
+                                        aria-label={`Longitudinal findings ${clinicalReasoningLongitudinalFindings.length}`}
+                                        label={`Longitudinal ${clinicalReasoningLongitudinalFindings.length}`}
+                                      />
+                                    ) : null}
                                     <Chip
                                       size="small"
                                       color="info"
@@ -8060,6 +8091,46 @@ export default function ConsultationWorkspacePage() {
 
                             <Box ref={clinicalReasoningReviewRef}>
                               <Stack spacing={1}>
+                                <Stack spacing={0.5} ref={setClinicalReasoningSectionRef("longitudinalContext")}>
+                                  <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                                    <Stack direction="row" spacing={0.75} alignItems="center">
+                                      <Typography variant="subtitle2" sx={{ fontWeight: 950, color: "primary.main" }}>Longitudinal Clinical Context</Typography>
+                                      <Chip size="small" color="primary" variant="outlined" label={`${clinicalReasoningLongitudinalFindings.length} findings`} />
+                                    </Stack>
+                                    <Button type="button" size="small" variant="text" onClick={() => toggleClinicalReasoningSection("longitudinalContext")} aria-label={`${clinicalReasoningSectionsOpen.longitudinalContext ? "Collapse" : "Expand"} longitudinal clinical context`}>
+                                      {clinicalReasoningSectionsOpen.longitudinalContext ? "Collapse" : "Expand"}
+                                    </Button>
+                                  </Stack>
+                                  <Collapse in={clinicalReasoningSectionsOpen.longitudinalContext} timeout={200} unmountOnExit>
+                                    <Stack spacing={0.75}>
+                                      {clinicalReasoningLongitudinalFindings.length ? clinicalReasoningLongitudinalFindings.map((item, index) => (
+                                        <Card key={`longitudinal-finding-${index}-${item.title || item.summary || "item"}`} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5, borderColor: "divider", borderLeft: 3, borderLeftColor: "primary.main" }}>
+                                          <CardContent sx={{ p: 0.85, "&:last-child": { pb: 0.85 } }}>
+                                            <Stack spacing={0.45}>
+                                              <Stack direction="row" spacing={0.75} alignItems="center" useFlexGap flexWrap="wrap">
+                                                <Typography variant="body2" sx={{ fontWeight: 800 }}>{item.title || "Historical finding"}</Typography>
+                                                <Chip size="small" variant="outlined" label={clinicalReasoningHistoricalLabel(item.sourceDate)} />
+                                                {formatClinicalReasoningVerificationLabel(item.verificationStatus) ? (
+                                                  <Chip size="small" variant="outlined" label={formatClinicalReasoningVerificationLabel(item.verificationStatus)} />
+                                                ) : null}
+                                              </Stack>
+                                              {item.summary ? <Typography variant="caption" color="text.secondary">{item.summary}</Typography> : null}
+                                              {item.clinicalRelevance ? <Typography variant="caption" color="text.secondary">Clinical relevance: {item.clinicalRelevance}</Typography> : null}
+                                              {(item.sourceReference || item.sourceType) ? (
+                                                <Typography variant="caption" color="text.secondary">
+                                                  Source: {[item.sourceReference, item.sourceType].filter(Boolean).join(" • ")}
+                                                </Typography>
+                                              ) : null}
+                                            </Stack>
+                                          </CardContent>
+                                        </Card>
+                                      )) : (
+                                        <Typography variant="body2" color="text.secondary">No longitudinal findings were returned.</Typography>
+                                      )}
+                                    </Stack>
+                                  </Collapse>
+                                </Stack>
+
                                 <Stack spacing={0.5} ref={setClinicalReasoningSectionRef("primaryDiagnosis")}>
                                   <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
                                     <Stack direction="row" spacing={0.75} alignItems="center">

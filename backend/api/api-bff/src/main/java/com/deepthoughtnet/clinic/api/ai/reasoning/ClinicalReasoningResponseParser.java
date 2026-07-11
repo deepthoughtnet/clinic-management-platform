@@ -3,6 +3,8 @@ package com.deepthoughtnet.clinic.api.ai.reasoning;
 import com.deepthoughtnet.clinic.api.ai.dto.AiDraftResponse;
 import com.deepthoughtnet.clinic.api.ai.dto.ClinicalContextResponse;
 import com.deepthoughtnet.clinic.api.ai.reasoning.dto.ClinicalReasoningResult;
+import com.deepthoughtnet.clinic.api.ai.reasoning.dto.ClinicalReasoningFinding;
+import com.deepthoughtnet.clinic.api.ai.reasoning.dto.ClinicalReasoningLongitudinalContext;
 import com.deepthoughtnet.clinic.api.ai.reasoning.dto.ClinicalSafetyNote;
 import com.deepthoughtnet.clinic.api.ai.reasoning.dto.DiagnosisCandidate;
 import com.deepthoughtnet.clinic.api.ai.reasoning.dto.EvidenceItem;
@@ -96,6 +98,7 @@ public class ClinicalReasoningResponseParser {
                                               String errorMessage,
                                               String normalizedFinishReason) {
         DiagnosisCandidate primaryDiagnosis = parseDiagnosisCandidate(root.path("primaryDiagnosis"));
+        ClinicalReasoningLongitudinalContext longitudinalContext = parseLongitudinalContext(root.path("longitudinalContext"));
         List<DiagnosisCandidate> differentialDiagnoses = parseDiagnosisCandidates(root.path("differentialDiagnoses"));
         List<EvidenceItem> supportingEvidence = parseEvidenceItems(root.path("supportingEvidence"));
         List<EvidenceItem> contradictingEvidence = parseEvidenceItems(root.path("contradictingEvidence"));
@@ -137,6 +140,7 @@ public class ClinicalReasoningResponseParser {
                 firstNonBlank(text(root.path("metadata"), "provider"), response.provider()),
                 firstNonBlank(text(root.path("metadata"), "model"), response.model()),
                 confidence,
+                longitudinalContext,
                 primaryDiagnosis,
                 differentialDiagnoses,
                 supportingEvidence,
@@ -195,6 +199,7 @@ public class ClinicalReasoningResponseParser {
                 response == null ? null : response.provider(),
                 response == null ? null : response.model(),
                 "UNKNOWN",
+                new ClinicalReasoningLongitudinalContext(List.of()),
                 null,
                 List.of(),
                 List.of(),
@@ -209,6 +214,40 @@ public class ClinicalReasoningResponseParser {
                 sourceContextSummary,
                 metadata
         );
+    }
+
+    private ClinicalReasoningLongitudinalContext parseLongitudinalContext(JsonNode node) {
+        if (node == null || !node.isArray()) {
+            return new ClinicalReasoningLongitudinalContext(List.of());
+        }
+        List<ClinicalReasoningFinding> findings = new ArrayList<>();
+        for (JsonNode element : node) {
+            if (element == null || element.isNull()) {
+                continue;
+            }
+            if (element.isTextual()) {
+                String text = element.asText().trim();
+                if (!text.isBlank()) {
+                    findings.add(new ClinicalReasoningFinding(text, text, null, null, null, null, null, null, null));
+                }
+                continue;
+            }
+            ClinicalReasoningFinding finding = new ClinicalReasoningFinding(
+                    text(element, "title", "name"),
+                    text(element, "summary", "text", "description"),
+                    text(element, "clinicalRelevance", "relevance", "reason"),
+                    text(element, "sourceDate", "observationDate", "date"),
+                    text(element, "sourceType"),
+                    text(element, "sourceReference", "sourceTitle", "source"),
+                    text(element, "verificationStatus"),
+                    text(element, "importance", "severity"),
+                    decimal(element, "confidence")
+            );
+            if (hasText(finding.title()) || hasText(finding.summary())) {
+                findings.add(finding);
+            }
+        }
+        return new ClinicalReasoningLongitudinalContext(findings);
     }
 
     private int rawChars(AiDraftResponse response) {
@@ -230,6 +269,8 @@ public class ClinicalReasoningResponseParser {
 
     private boolean hasReasoningContent(ClinicalReasoningResult result) {
         return result != null && (
+                (result.longitudinalContext() != null && !result.longitudinalContext().findings().isEmpty())
+                        ||
                 (result.primaryDiagnosis() != null && hasText(result.primaryDiagnosis().name()))
                         || !result.differentialDiagnoses().isEmpty()
                         || hasText(result.reasoningSummary())
