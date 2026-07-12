@@ -56,6 +56,10 @@ public class MedicationSafetyEngine {
     );
     private static final Set<String> INTERACTION_UNAVAILABLE_HINTS = Set.of("comprehensive interaction checking is not available");
 
+    String rulesVersion() {
+        return RULES_VERSION;
+    }
+
     public MedicationSafetyEvaluationResult evaluate(MedicationSafetyEvaluationRequest request) {
         List<MedicationSafetyMedicationItem> proposed = request == null ? List.of() : safeMedications(request.proposedMedications());
         List<MedicationSafetyMedicationItem> current = dedupeMedications(request == null ? List.of() : request.currentMedications());

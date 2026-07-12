@@ -2,7 +2,6 @@ package com.deepthoughtnet.clinic.api.medicationsafety;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -27,10 +26,10 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -43,9 +42,25 @@ class MedicationSafetyServiceTest {
     @Mock MedicineRepository medicineRepository;
     @Mock ClinicalContextService clinicalContextService;
     @Mock MedicationSafetyEngine medicationSafetyEngine;
+    MedicationSafetySnapshotHasher medicationSafetySnapshotHasher = new MedicationSafetySnapshotHasher();
     @Mock AuditEventPublisher auditEventPublisher;
 
-    @InjectMocks MedicationSafetyService medicationSafetyService;
+    MedicationSafetyService medicationSafetyService;
+
+    @BeforeEach
+    void setUp() {
+        medicationSafetyService = new MedicationSafetyService(
+                consultationRepository,
+                prescriptionRepository,
+                prescriptionMedicineRepository,
+                patientRepository,
+                medicineRepository,
+                clinicalContextService,
+                medicationSafetyEngine,
+                medicationSafetySnapshotHasher,
+                auditEventPublisher
+        );
+    }
 
     @Test
     void assemblesRequestFromPersistedPrescriptionRows() {

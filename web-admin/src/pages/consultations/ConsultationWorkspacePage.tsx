@@ -21,6 +21,7 @@ import {
   DialogTitle,
   Drawer,
   FormControl,
+  FormControlLabel,
   Grid,
   IconButton,
   InputLabel,
@@ -98,6 +99,8 @@ import {
   getLabTests,
   getConsultationPrescription,
   getMedicationSafetyEvaluation,
+  getMedicationSafetyReview,
+  submitMedicationSafetyReview,
   getClinicalContext,
   getMedicines,
   getPatient,
@@ -138,6 +141,9 @@ import {
   type ClinicalDocumentType,
   type PatientTimelineItem,
   type MedicationSafetyEvaluationResult,
+  type MedicationSafetyReviewResponse,
+  type MedicationSafetyFindingReviewDecision,
+  type MedicationSafetyFindingReviewStatus,
   type Prescription,
   type PrescriptionInput,
   type PrescriptionMedicine,
@@ -237,6 +243,9 @@ type ConsultationDocumentDraftState = {
   documentId: string | null;
   downloadUrl: string | null;
   notes: string | null;
+};
+type MedicationSafetyReviewDraftState = {
+  findings: Record<string, MedicationSafetyFindingReviewDecision>;
 };
 type ClinicalDraftGenerationStep = ClinicalAiDraftKind | "prescriptionSuggestion" | "clinicalReasoning";
 type ClinicalDraftStepStatus = "pending" | "generating" | "done" | "failed";
@@ -2041,6 +2050,11 @@ export default function ConsultationWorkspacePage() {
   const [medicationSafetyEvaluation, setMedicationSafetyEvaluation] = React.useState<MedicationSafetyEvaluationResult | null>(null);
   const [medicationSafetyLoading, setMedicationSafetyLoading] = React.useState(false);
   const [medicationSafetyError, setMedicationSafetyError] = React.useState<string | null>(null);
+  const [medicationSafetyReview, setMedicationSafetyReview] = React.useState<MedicationSafetyReviewResponse | null>(null);
+  const [medicationSafetyReviewLoading, setMedicationSafetyReviewLoading] = React.useState(false);
+  const [medicationSafetyReviewError, setMedicationSafetyReviewError] = React.useState<string | null>(null);
+  const [medicationSafetyReviewSubmitting, setMedicationSafetyReviewSubmitting] = React.useState(false);
+  const [medicationSafetyReviewDraft, setMedicationSafetyReviewDraft] = React.useState<MedicationSafetyReviewDraftState>({ findings: {} });
   const [clinicalReasoningAskedMissingInfo, setClinicalReasoningAskedMissingInfo] = React.useState<Record<string, boolean>>({});
   const [clinicalReasoningLoadingStepIndex, setClinicalReasoningLoadingStepIndex] = React.useState(0);
   const [clinicalReasoningSectionsOpen, setClinicalReasoningSectionsOpen] = React.useState<Record<ClinicalReasoningSectionKey, boolean>>({
@@ -2116,30 +2130,124 @@ export default function ConsultationWorkspacePage() {
   const refreshMedicationSafety = React.useCallback(async () => {
     if (!auth.accessToken || !auth.tenantId || !consultation?.id) {
       setMedicationSafetyEvaluation(null);
+      setMedicationSafetyReview(null);
       setMedicationSafetyError(null);
+      setMedicationSafetyReviewError(null);
       return;
     }
     setMedicationSafetyLoading(true);
+    setMedicationSafetyReviewLoading(true);
     try {
       const result = await getMedicationSafetyEvaluation(auth.accessToken, auth.tenantId, consultation.id);
       setMedicationSafetyEvaluation(result);
       setMedicationSafetyError(null);
+      try {
+        const review = await getMedicationSafetyReview(auth.accessToken, auth.tenantId, consultation.id);
+        setMedicationSafetyReview(review);
+        setMedicationSafetyReviewError(null);
+        setMedicationSafetyReviewDraft({
+          findings: Object.fromEntries((review.findingReviews || []).map((finding) => [finding.findingId, {
+            findingId: finding.findingId,
+            ruleCode: finding.ruleCode,
+            acknowledged: finding.acknowledged,
+            overrideApplied: finding.overrideApplied,
+            reasonCode: finding.reasonCode,
+            reasonText: finding.reasonText,
+          }])),
+        });
+      } catch (reviewErr) {
+        setMedicationSafetyReview(null);
+        setMedicationSafetyReviewError(reviewErr instanceof Error ? reviewErr.message : "Medication safety review unavailable");
+        setMedicationSafetyReviewDraft({ findings: {} });
+      }
     } catch (err) {
       setMedicationSafetyEvaluation(null);
       setMedicationSafetyError(err instanceof Error ? err.message : "Medication safety evaluation unavailable");
+      setMedicationSafetyReview(null);
+      setMedicationSafetyReviewError(null);
+      setMedicationSafetyReviewDraft({ findings: {} });
     } finally {
       setMedicationSafetyLoading(false);
+      setMedicationSafetyReviewLoading(false);
     }
   }, [auth.accessToken, auth.tenantId, consultation?.id]);
 
   React.useEffect(() => {
     if (!consultation?.id || !prescription) {
       setMedicationSafetyEvaluation(null);
+      setMedicationSafetyReview(null);
       setMedicationSafetyError(null);
+      setMedicationSafetyReviewError(null);
+      setMedicationSafetyReviewDraft({ findings: {} });
       return;
     }
     void refreshMedicationSafety();
   }, [consultation?.id, prescription?.id, prescription?.updatedAt, refreshMedicationSafety]);
+
+  const updateMedicationSafetyFindingReview = React.useCallback((findingId: string, patch: Partial<MedicationSafetyFindingReviewDecision>) => {
+    setMedicationSafetyReviewDraft((current) => {
+      const existing = current.findings[findingId] || {
+        findingId,
+        ruleCode: null,
+        acknowledged: false,
+        overrideApplied: false,
+        reasonCode: null,
+        reasonText: null,
+      };
+      return {
+        findings: {
+          ...current.findings,
+          [findingId]: {
+            ...existing,
+            ...patch,
+          },
+        },
+      };
+    });
+  }, []);
+
+  const saveMedicationSafetyReview = React.useCallback(async () => {
+    if (!auth.accessToken || !auth.tenantId || !consultation?.id || !medicationSafetyEvaluation) {
+      return;
+    }
+    setMedicationSafetyReviewSubmitting(true);
+    try {
+      const requestFindings = medicationSafetyEvaluation.findings.map((finding) => {
+        const draft = medicationSafetyReviewDraft.findings[finding.findingId];
+        return {
+          findingId: finding.findingId,
+          ruleCode: finding.ruleCode,
+          acknowledged: draft?.acknowledged ?? false,
+          overrideApplied: draft?.overrideApplied ?? false,
+          reasonCode: draft?.reasonCode?.trim() || null,
+          reasonText: draft?.reasonText?.trim() || null,
+        };
+      });
+      const review = await submitMedicationSafetyReview(auth.accessToken, auth.tenantId, consultation.id, {
+        evaluationId: medicationSafetyReview?.evaluationId ?? medicationSafetyEvaluation.evaluationId,
+        prescriptionHash: medicationSafetyReview?.prescriptionHash ?? null,
+        patientContextHash: medicationSafetyReview?.patientContextHash ?? null,
+        rulesVersion: medicationSafetyReview?.rulesVersion ?? medicationSafetyEvaluation.rulesVersion,
+        findings: requestFindings,
+      });
+      setMedicationSafetyReview(review);
+      setMedicationSafetyReviewError(null);
+      setMedicationSafetyReviewDraft({
+        findings: Object.fromEntries((review.findingReviews || []).map((finding: MedicationSafetyFindingReviewStatus) => [finding.findingId, {
+          findingId: finding.findingId,
+          ruleCode: finding.ruleCode,
+          acknowledged: finding.acknowledged,
+          overrideApplied: finding.overrideApplied,
+          reasonCode: finding.reasonCode,
+          reasonText: finding.reasonText,
+        }])),
+      });
+    } catch (err) {
+      setMedicationSafetyReviewError(err instanceof Error ? err.message : "Medication safety review could not be saved");
+    } finally {
+      setMedicationSafetyReviewSubmitting(false);
+    }
+  }, [auth.accessToken, auth.tenantId, consultation?.id, medicationSafetyEvaluation, medicationSafetyReview, medicationSafetyReviewDraft.findings]);
 
   const refreshClinicalArtifacts = React.useCallback(async (
     patientId: string,
@@ -4654,6 +4762,11 @@ export default function ConsultationWorkspacePage() {
       });
       setInfo("Prescription finalized");
     } catch (err) {
+      if (err instanceof ApiClientError && typeof err.code === "string" && err.code.startsWith("SAFETY_")) {
+        setPrescriptionIntelligenceTab("safety");
+        setPrescriptionSafetyDetailsOpen(true);
+        void refreshMedicationSafety();
+      }
       setError(err instanceof Error ? err.message : "Failed to finalize prescription");
     } finally {
       setSaving(false);
@@ -9897,6 +10010,96 @@ export default function ConsultationWorkspacePage() {
                                               ))}
                                             </Stack>
                                           ) : null}
+                                          <Stack spacing={0.5}>
+                                            <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" alignItems="center">
+                                              <Chip
+                                                size="small"
+                                                variant="outlined"
+                                                color={medicationSafetyReview?.stale ? "warning" : medicationSafetyReview?.readyForFinalization ? "success" : "default"}
+                                                label={`Review: ${medicationSafetyReview?.decisionStatus || "NOT_REVIEWED"}`}
+                                              />
+                                              <Chip size="small" variant="outlined" label={medicationSafetyReview?.stale ? "Stale" : "Current"} color={medicationSafetyReview?.stale ? "warning" : "default"} />
+                                              <Chip size="small" variant="outlined" label={medicationSafetyReview?.readyForFinalization ? "Ready for finalization" : "Review required"} color={medicationSafetyReview?.readyForFinalization ? "success" : "warning"} />
+                                            </Stack>
+                                            {medicationSafetyReview?.stale ? (
+                                              <Alert severity="warning">Prescription changed after safety review. Run the safety check again.</Alert>
+                                            ) : null}
+                                            {medicationSafetyReviewError ? <Alert severity="warning">{medicationSafetyReviewError}</Alert> : null}
+                                            {medicationSafetyReviewLoading ? <LinearProgress /> : null}
+                                            {medicationSafetyEvaluation.findings.some((finding) => finding.severity === "WARNING" || finding.severity === "CRITICAL") ? (
+                                              <Stack spacing={0.55}>
+                                                <Typography variant="caption" color="text.secondary">Review findings</Typography>
+                                                {medicationSafetyEvaluation.findings
+                                                  .filter((finding) => finding.severity === "WARNING" || finding.severity === "CRITICAL")
+                                                  .map((finding) => {
+                                                    const draft = medicationSafetyReviewDraft.findings[finding.findingId] || {
+                                                      findingId: finding.findingId,
+                                                      ruleCode: finding.ruleCode,
+                                                      acknowledged: false,
+                                                      overrideApplied: false,
+                                                      reasonCode: null,
+                                                      reasonText: null,
+                                                    };
+                                                    const isCritical = finding.severity === "CRITICAL";
+                                                    return (
+                                                      <Card key={finding.findingId} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5 }}>
+                                                        <CardContent sx={{ p: 1, "&:last-child": { pb: 1 } }}>
+                                                          <Stack spacing={0.6}>
+                                                            <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                                                              <Typography variant="body2" sx={{ fontWeight: 900 }}>{finding.title}</Typography>
+                                                              <Chip size="small" variant="outlined" color={isCritical ? "error" : "warning"} label={isCritical ? "Critical" : "Warning"} />
+                                                            </Stack>
+                                                            <Typography variant="caption" color="text.secondary">{finding.summary}</Typography>
+                                                            {finding.evidence.length ? <Typography variant="caption" color="text.secondary">Evidence: {finding.evidence.join(" • ")}</Typography> : null}
+                                                            {finding.sourceReferences.length ? <Typography variant="caption" color="text.secondary">Sources: {finding.sourceReferences.join(" • ")}</Typography> : null}
+                                                            <FormControlLabel
+                                                              control={
+                                                                <Checkbox
+                                                                  checked={isCritical ? draft.overrideApplied : draft.acknowledged}
+                                                                  onChange={(_, checked) => updateMedicationSafetyFindingReview(finding.findingId, isCritical ? { overrideApplied: checked } : { acknowledged: checked })}
+                                                                  size="small"
+                                                                />
+                                                              }
+                                                              label={isCritical ? "Override with clinical reason" : "Acknowledge reviewed"}
+                                                            />
+                                                            <FormControl size="small" fullWidth>
+                                                              <InputLabel id={`med-safety-reason-${finding.findingId}`}>Reason code</InputLabel>
+                                                              <Select
+                                                                labelId={`med-safety-reason-${finding.findingId}`}
+                                                                label="Reason code"
+                                                                value={draft.reasonCode || ""}
+                                                                onChange={(event) => updateMedicationSafetyFindingReview(finding.findingId, { reasonCode: String(event.target.value) })}
+                                                              >
+                                                                <MenuItem value="">Select reason</MenuItem>
+                                                                <MenuItem value="BENEFIT_OUTWEIGHS_RISK">Benefit outweighs risk</MenuItem>
+                                                                <MenuItem value="CONTINUATION_CONFIRMED">Continuation confirmed</MenuItem>
+                                                                <MenuItem value="DUPLICATE_INTENTIONAL">Duplicate intentional</MenuItem>
+                                                                <MenuItem value="PATIENT_HISTORY_VERIFIED">Patient history verified</MenuItem>
+                                                                <MenuItem value="OTHER">Other</MenuItem>
+                                                              </Select>
+                                                            </FormControl>
+                                                            <TextField
+                                                              label={isCritical ? "Override reason" : "Review note"}
+                                                              size="small"
+                                                              fullWidth
+                                                              multiline
+                                                              minRows={2}
+                                                              value={draft.reasonText || ""}
+                                                              onChange={(event) => updateMedicationSafetyFindingReview(finding.findingId, { reasonText: event.target.value })}
+                                                            />
+                                                          </Stack>
+                                                        </CardContent>
+                                                      </Card>
+                                                    );
+                                                  })}
+                                                <Stack direction="row" spacing={0.5} justifyContent="flex-end">
+                                                  <Button type="button" size="small" variant="outlined" onClick={() => void saveMedicationSafetyReview()} disabled={medicationSafetyReviewSubmitting || medicationSafetyLoading || !medicationSafetyEvaluation}>
+                                                    Save review
+                                                  </Button>
+                                                </Stack>
+                                              </Stack>
+                                            ) : null}
+                                          </Stack>
                                           {medicationSafetyEvaluation.sourceSnapshotMetadata.prescriptionStatus ? (
                                             <Typography variant="caption" color="text.secondary">
                                               Source status: {medicationSafetyEvaluation.sourceSnapshotMetadata.prescriptionStatus.replaceAll("_", " ").toLowerCase()}

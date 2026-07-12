@@ -6,15 +6,14 @@ import com.deepthoughtnet.clinic.api.config.PersistenceScanConfig;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.context.annotation.Import;
 
-@DataJpaTest(properties = {
-        "spring.jpa.hibernate.ddl-auto=create-drop",
-        "spring.flyway.enabled=false"
-})
+@DataJpaTest
+@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import(PersistenceScanConfig.class)
-class PatientLongitudinalConceptRepositoryTest {
+class PatientLongitudinalConceptRepositoryTest extends com.deepthoughtnet.clinic.api.support.AbstractPostgresDataJpaTest {
 
     @Autowired
     private PatientLongitudinalConceptRepository repository;

@@ -4,6 +4,7 @@ import com.deepthoughtnet.clinic.api.prescription.dto.PrescriptionRequest;
 import com.deepthoughtnet.clinic.api.prescription.dto.PrescriptionMedicineRequest;
 import com.deepthoughtnet.clinic.api.prescription.dto.PrescriptionTestRequest;
 import com.deepthoughtnet.clinic.api.prescription.dto.PrescriptionResponse;
+import com.deepthoughtnet.clinic.api.medicationsafety.MedicationSafetyReviewService;
 import com.deepthoughtnet.clinic.api.prescriptiontemplate.service.PrescriptionTemplateService;
 import com.deepthoughtnet.clinic.api.security.DoctorAssignmentSecurityService;
 import com.deepthoughtnet.clinic.api.notifications.NotificationActionService;
@@ -42,17 +43,20 @@ import jakarta.validation.constraints.Size;
 public class PrescriptionController {
     private final PrescriptionService prescriptionService;
     private final NotificationActionService notificationActionService;
+    private final MedicationSafetyReviewService medicationSafetyReviewService;
     private final DoctorAssignmentSecurityService doctorAssignmentSecurityService;
     private final PrescriptionTemplateService prescriptionTemplateService;
 
     public PrescriptionController(
             PrescriptionService prescriptionService,
             NotificationActionService notificationActionService,
+            MedicationSafetyReviewService medicationSafetyReviewService,
             DoctorAssignmentSecurityService doctorAssignmentSecurityService,
             PrescriptionTemplateService prescriptionTemplateService
     ) {
         this.prescriptionService = prescriptionService;
         this.notificationActionService = notificationActionService;
+        this.medicationSafetyReviewService = medicationSafetyReviewService;
         this.doctorAssignmentSecurityService = doctorAssignmentSecurityService;
         this.prescriptionTemplateService = prescriptionTemplateService;
     }
@@ -109,9 +113,13 @@ public class PrescriptionController {
     @PreAuthorize("@permissionChecker.hasPermission('prescription.finalize')")
     public PrescriptionResponse finalizePrescription(@PathVariable UUID id) {
         UUID tenantId = RequestContextHolder.requireTenantId();
-        prescriptionService.findById(tenantId, id).ifPresent(record -> doctorAssignmentSecurityService.requirePatientAccess(tenantId, record.patientId()));
+        PrescriptionRecord current = prescriptionService.findById(tenantId, id)
+                .orElseThrow(() -> new IllegalArgumentException("Prescription not found"));
+        doctorAssignmentSecurityService.requirePatientAccess(tenantId, current.patientId());
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        medicationSafetyReviewService.assertFinalizationReady(tenantId, current.consultationId(), actorAppUserId);
         PrescriptionResponse response = toResponse(prescriptionService.finalizePrescription(tenantId, id, actorAppUserId));
+        medicationSafetyReviewService.markFinalized(tenantId, current.consultationId(), actorAppUserId);
         notificationActionService.sendPrescriptionReady(tenantId, id, actorAppUserId);
         return response;
     }

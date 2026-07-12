@@ -18,10 +18,13 @@ import java.util.Map;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Component
 public class HelpCmsSeeder {
@@ -31,77 +34,113 @@ public class HelpCmsSeeder {
     private final HelpSectionRepository sectionRepository;
     private final HelpContentRepository contentRepository;
     private final ObjectMapper objectMapper;
+    private final JdbcTemplate jdbcTemplate;
+    private final TransactionTemplate requiresNewTransactionTemplate;
 
     public HelpCmsSeeder(
             HelpPageRepository pageRepository,
             HelpSectionRepository sectionRepository,
             HelpContentRepository contentRepository,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            JdbcTemplate jdbcTemplate,
+            PlatformTransactionManager transactionManager
     ) {
         this.pageRepository = pageRepository;
         this.sectionRepository = sectionRepository;
         this.contentRepository = contentRepository;
         this.objectMapper = objectMapper;
+        this.jdbcTemplate = jdbcTemplate;
+        this.requiresNewTransactionTemplate = new TransactionTemplate(transactionManager);
+        this.requiresNewTransactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     @EventListener(ApplicationReadyEvent.class)
-    @Transactional
     public void seed() {
+        List<String> missingTables = missingHelpTables();
+        if (!missingTables.isEmpty()) {
+            log.warn("Skipping Help CMS seeding because required tables are missing: {}", missingTables);
+            return;
+        }
         for (HelpPageSeed seed : seeds()) {
             try {
-                HelpPageEntity page = pageRepository.findByPageKeyIgnoreCase(seed.pageKey())
-                        .orElseGet(() -> {
-                            HelpPageEntity created = HelpPageEntity.create(
-                                    seed.moduleKey(),
-                                    seed.pageKey(),
-                                    seed.title(),
-                                    seed.icon(),
-                                    HelpPageStatus.PUBLISHED.name(),
-                                    true,
-                                    null
-                            );
-                            created.setVersion(1);
-                            return pageRepository.save(created);
-                        });
-                if (!seed.title().equals(page.getTitle()) || !seed.icon().equals(page.getIcon()) || !seed.moduleKey().equals(page.getModuleKey()) || !page.isActive() || !HelpPageStatus.PUBLISHED.name().equals(page.getStatus())) {
-                    page.update(seed.moduleKey(), seed.title(), seed.icon(), HelpPageStatus.PUBLISHED.name(), true, null);
-                    pageRepository.save(page);
-                }
-                for (HelpSectionSeed sectionSeed : seed.sections()) {
-                    if (sectionRepository.findByPage_IdAndSectionKeyIgnoreCase(page.getId(), sectionSeed.sectionKey()).isPresent()) {
-                        continue;
+                requiresNewTransactionTemplate.executeWithoutResult(status -> {
+                    try {
+                        seedPage(seed);
+                    } catch (JsonProcessingException ex) {
+                        throw new IllegalStateException("Unable to seed help page " + seed.pageKey(), ex);
                     }
-                    HelpSectionEntity section = HelpSectionEntity.create(
-                            page,
-                            sectionSeed.sectionKey(),
-                            sectionSeed.sectionType(),
-                            sectionSeed.displayOrder(),
-                            sectionSeed.collapsible(),
-                            sectionSeed.active()
-                    );
-                    section = sectionRepository.save(section);
-                    contentRepository.save(HelpContentEntity.create(
-                            section,
-                            "en",
-                            json(sectionSeed.content()),
-                            1,
-                            HelpContentStatus.PUBLISHED.name(),
-                            null
-                    ));
-                }
-                if ("BILLING".equalsIgnoreCase(seed.pageKey())) {
-                    deactivateObsoleteBillingSections(page, seed);
-                }
-                if ("PHARMACY_INVENTORY".equalsIgnoreCase(seed.pageKey()) || "PHARMACY_DISPENSING".equalsIgnoreCase(seed.pageKey()) || "PHARMACY_DASHBOARD".equalsIgnoreCase(seed.pageKey()) || "REPORTS".equalsIgnoreCase(seed.pageKey()) || "BILLING".equalsIgnoreCase(seed.pageKey()) || "LABORATORY".equalsIgnoreCase(seed.pageKey())) {
-                    boolean refreshed = refreshSeedContent(page, seed);
-                    if (refreshed) {
-                        page.setVersion(page.getVersion() + 1);
-                        pageRepository.save(page);
-                    }
-                }
+                });
                 log.info("Seeded help page {}", seed.pageKey());
             } catch (Exception ex) {
                 log.warn("Skipping help seed {}: {}", seed.pageKey(), ex.toString());
+            }
+        }
+    }
+
+    private List<String> missingHelpTables() {
+        List<String> missingTables = new ArrayList<>();
+        for (String table : List.of("help_pages", "help_sections", "help_content", "help_attachments")) {
+            String relation = jdbcTemplate.queryForObject(
+                    "select to_regclass(current_schema() || '.' || ?)",
+                    String.class,
+                    table
+            );
+            if (relation == null) {
+                missingTables.add(table);
+            }
+        }
+        return missingTables;
+    }
+
+    private void seedPage(HelpPageSeed seed) throws JsonProcessingException {
+        HelpPageEntity page = pageRepository.findByPageKeyIgnoreCase(seed.pageKey())
+                .orElseGet(() -> {
+                    HelpPageEntity created = HelpPageEntity.create(
+                            seed.moduleKey(),
+                            seed.pageKey(),
+                            seed.title(),
+                            seed.icon(),
+                            HelpPageStatus.PUBLISHED.name(),
+                            true,
+                            null
+                    );
+                    created.setVersion(1);
+                    return pageRepository.save(created);
+                });
+        if (!seed.title().equals(page.getTitle()) || !seed.icon().equals(page.getIcon()) || !seed.moduleKey().equals(page.getModuleKey()) || !page.isActive() || !HelpPageStatus.PUBLISHED.name().equals(page.getStatus())) {
+            page.update(seed.moduleKey(), seed.title(), seed.icon(), HelpPageStatus.PUBLISHED.name(), true, null);
+            pageRepository.save(page);
+        }
+        for (HelpSectionSeed sectionSeed : seed.sections()) {
+            if (sectionRepository.findByPage_IdAndSectionKeyIgnoreCase(page.getId(), sectionSeed.sectionKey()).isPresent()) {
+                continue;
+            }
+            HelpSectionEntity section = HelpSectionEntity.create(
+                    page,
+                    sectionSeed.sectionKey(),
+                    sectionSeed.sectionType(),
+                    sectionSeed.displayOrder(),
+                    sectionSeed.collapsible(),
+                    sectionSeed.active()
+            );
+            section = sectionRepository.save(section);
+            contentRepository.save(HelpContentEntity.create(
+                    section,
+                    "en",
+                    json(sectionSeed.content()),
+                    1,
+                    HelpContentStatus.PUBLISHED.name(),
+                    null
+            ));
+        }
+        if ("BILLING".equalsIgnoreCase(seed.pageKey())) {
+            deactivateObsoleteBillingSections(page, seed);
+        }
+        if ("PHARMACY_INVENTORY".equalsIgnoreCase(seed.pageKey()) || "PHARMACY_DISPENSING".equalsIgnoreCase(seed.pageKey()) || "PHARMACY_DASHBOARD".equalsIgnoreCase(seed.pageKey()) || "REPORTS".equalsIgnoreCase(seed.pageKey()) || "BILLING".equalsIgnoreCase(seed.pageKey()) || "LABORATORY".equalsIgnoreCase(seed.pageKey())) {
+            boolean refreshed = refreshSeedContent(page, seed);
+            if (refreshed) {
+                page.setVersion(page.getVersion() + 1);
+                pageRepository.save(page);
             }
         }
     }

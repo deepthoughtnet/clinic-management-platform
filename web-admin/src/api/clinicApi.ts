@@ -1535,6 +1535,69 @@ export type MedicationSafetyEvaluationResult = {
   };
 };
 
+export type MedicationSafetyReviewDecisionStatus =
+  | "NOT_REVIEWED"
+  | "REVIEWED_NO_BLOCKING_FINDINGS"
+  | "WARNINGS_ACKNOWLEDGED"
+  | "CRITICAL_OVERRIDE_APPROVED"
+  | "STALE"
+  | "INVALIDATED"
+  | "FINALIZED";
+
+export type MedicationSafetyFindingReviewDecision = {
+  findingId: string;
+  ruleCode: string | null;
+  acknowledged: boolean;
+  overrideApplied: boolean;
+  reasonCode: string | null;
+  reasonText: string | null;
+};
+
+export type MedicationSafetyFindingReviewStatus = {
+  findingId: string;
+  ruleCode: string | null;
+  title: string;
+  category: string | null;
+  severity: string | null;
+  acknowledgementRequired: boolean;
+  overrideRequired: boolean;
+  acknowledged: boolean;
+  overrideApplied: boolean;
+  reasonCode: string | null;
+  reasonText: string | null;
+};
+
+export type MedicationSafetyReviewResponse = {
+  reviewId: string | null;
+  consultationId: string | null;
+  prescriptionId: string | null;
+  patientId: string | null;
+  evaluationId: string | null;
+  prescriptionHash: string | null;
+  patientContextHash: string | null;
+  rulesVersion: string | null;
+  decisionStatus: MedicationSafetyReviewDecisionStatus;
+  stale: boolean;
+  readyForFinalization: boolean;
+  requiredAction: string | null;
+  reviewedAt: string | null;
+  reviewedByAppUserId: string | null;
+  evaluationOverallSeverity: MedicationSafetySeverity | null;
+  actionableFindingCount: number;
+  warningFindingCount: number;
+  criticalFindingCount: number;
+  findingReviews: MedicationSafetyFindingReviewStatus[];
+  dataQualityWarnings: string[];
+};
+
+export type MedicationSafetyReviewRequest = {
+  evaluationId: string | null;
+  prescriptionHash: string | null;
+  patientContextHash: string | null;
+  rulesVersion: string | null;
+  findings: MedicationSafetyFindingReviewDecision[];
+};
+
 export type BillStatus = "DRAFT" | "UNPAID" | "ISSUED" | "PARTIALLY_PAID" | "PAID" | "REFUND_PENDING" | "PARTIALLY_REFUNDED" | "REFUNDED" | "CANCELLED" | "CANCELLED_REFUNDED";
 export type BillItemType = "CONSULTATION" | "MEDICINE" | "TEST" | "VACCINATION" | "PROCEDURE" | "OTHER";
 export type PaymentMode = "CASH" | "CARD" | "UPI" | "INSURANCE" | "PAYTM" | "PHONEPE" | "GOOGLE_PAY" | "BANK_TRANSFER" | "CHEQUE" | "OTHER";
@@ -3610,6 +3673,14 @@ export async function getConsultationPrescription(token: string, tenantId: strin
 
 export async function getMedicationSafetyEvaluation(token: string, tenantId: string, consultationId: string) {
   return httpGet<MedicationSafetyEvaluationResult>(`/api/consultations/${consultationId}/prescription/safety`, { token, tenantId });
+}
+
+export async function getMedicationSafetyReview(token: string, tenantId: string, consultationId: string) {
+  return httpGet<MedicationSafetyReviewResponse>(`/api/consultations/${consultationId}/prescription/safety/review`, { token, tenantId });
+}
+
+export async function submitMedicationSafetyReview(token: string, tenantId: string, consultationId: string, body: MedicationSafetyReviewRequest) {
+  return httpPost<MedicationSafetyReviewResponse>(`/api/consultations/${consultationId}/prescription/safety/review`, body, { token, tenantId });
 }
 
 export async function getPrescriptionHistory(token: string, tenantId: string, prescriptionId: string) {

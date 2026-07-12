@@ -13,12 +13,15 @@ If the local Postgres volume has partial migration state:
 
 ```bash
 cd /home/iadmin/code/clinic-management-platform/local
-docker compose down
-sudo rm -rf ./data/postgres
-sudo rm -rf ./data/redis
-sudo rm -rf ./data/minio
+FORCE_RESET_LOCAL_POSTGRES=1 ./scripts/reset.sh
 docker compose up -d
-docker exec -it clinic-postgres psql -U clinic -d clinic_management -c "CREATE DATABASE keycloak;"
 ```
 
-The repository also provides `local/scripts/reset.sh`, which performs the same destructive local reset for development use.
+The local Postgres data now lives in the explicit Docker volume `jeevanam_dev_postgres_data`.
+Use the recovery scripts before any reset:
+
+- `./scripts/db-backup.sh`
+- `./scripts/db-restore.sh`
+- `./scripts/db-verify.sh`
+
+The repository also provides `local/scripts/reset.sh`, which requires `FORCE_RESET_LOCAL_POSTGRES=1` before it will remove the stable volume.

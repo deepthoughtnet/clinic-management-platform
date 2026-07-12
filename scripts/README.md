@@ -16,6 +16,9 @@ Each script resolves the repository root dynamically, so you can run it from any
 - `logs-uat-api.sh` - tails Arogia UAT API logs.
 - `logs-uat-aiva.sh` - tails Arogia UAT AIVA and voice-stack logs.
 - `smoke-test.sh` - checks that the key containers are running and that the API health endpoint responds.
+- `db-backup.sh` - creates a timestamped custom-format PostgreSQL backup.
+- `db-restore.sh` - restores a backup into an explicit target database.
+- `db-verify.sh` - checks critical tables, Flyway history, and schema columns.
 
 ## Usage
 
@@ -30,6 +33,9 @@ Each script resolves the repository root dynamically, so you can run it from any
 ./scripts/logs-api.sh
 ./scripts/logs-careai.sh
 ./scripts/smoke-test.sh
+./scripts/db-backup.sh
+./scripts/db-restore.sh backups/postgres/clinic_management_YYYYMMDD_HHMMSS.dump clinic_management_test
+./scripts/db-verify.sh
 ```
 
 ## Expected Prerequisites

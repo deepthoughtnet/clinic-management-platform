@@ -3,6 +3,8 @@ package com.deepthoughtnet.clinic.api.errors;
 import com.deepthoughtnet.clinic.platform.core.errors.BadRequestException;
 import com.deepthoughtnet.clinic.platform.core.errors.ForbiddenException;
 import com.deepthoughtnet.clinic.platform.core.errors.UnauthorizedException;
+import com.deepthoughtnet.clinic.api.medicationsafety.MedicationSafetyGuardErrorResponse;
+import com.deepthoughtnet.clinic.api.medicationsafety.MedicationSafetyGuardException;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityConflictException;
 import com.deepthoughtnet.clinic.patient.service.model.PatientConflictException;
 import com.fasterxml.jackson.databind.JsonMappingException;
@@ -174,6 +176,25 @@ public class GlobalRestExceptionHandler {
     @ExceptionHandler(PatientConflictException.class)
     public ResponseEntity<?> handlePatientConflict(PatientConflictException ex, HttpServletRequest req) {
         return build(HttpStatus.CONFLICT, "conflict", userMessage(ex.getMessage(), "Patient already exists. Select existing patient."), req);
+    }
+
+    @ExceptionHandler(MedicationSafetyGuardException.class)
+    public ResponseEntity<?> handleMedicationSafetyGuard(MedicationSafetyGuardException ex, HttpServletRequest req) {
+        String correlationId = correlationId(req);
+        MedicationSafetyGuardErrorResponse body = new MedicationSafetyGuardErrorResponse(
+                java.time.OffsetDateTime.now(),
+                path(req),
+                ex.getStatus().value(),
+                ex.getCode(),
+                userMessage(ex.getMessage(), "Medication safety review required"),
+                correlationId,
+                correlationId,
+                ex.getPrescriptionId(),
+                ex.getEvaluationStatus(),
+                ex.getRequiredAction(),
+                ex.getFindingIds()
+        );
+        return ResponseEntity.status(ex.getStatus()).body(body);
     }
 
     @ExceptionHandler(Exception.class)

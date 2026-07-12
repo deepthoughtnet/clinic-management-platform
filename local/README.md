@@ -13,7 +13,7 @@ cd /home/iadmin/code/clinic-management-platform/local
 
 ```bash
 cd /home/iadmin/code/clinic-management-platform/local
-./scripts/reset.sh
+FORCE_RESET_LOCAL_POSTGRES=1 ./scripts/reset.sh
 ```
 
 The local Postgres container now auto-creates the `keycloak` database on first initialization through `local/init-sql/001_create_keycloak_db.sql`, so no manual `psql` step is needed after a reset.
@@ -24,36 +24,36 @@ Create a local backup:
 
 ```bash
 cd /home/iadmin/code/clinic-management-platform
-./local/scripts/backup-postgres.sh
+./scripts/db-backup.sh
 ```
 
 List available backups:
 
 ```bash
 cd /home/iadmin/code/clinic-management-platform
-./local/scripts/list-backups.sh
+ls backups/postgres
 ```
 
 Restore a backup:
 
 ```bash
 cd /home/iadmin/code/clinic-management-platform
-./local/scripts/restore-postgres.sh backups/postgres/clinic_management_YYYYMMDD_HHMMSS.dump
+./scripts/db-restore.sh backups/postgres/clinic_management_YYYYMMDD_HHMMSS.dump clinic_management_test
 ```
 
-The restore script requires an explicit `RESTORE` confirmation and must only be run manually.
+The restore script requires an explicit `RESTORE <database>` confirmation and must only be run manually.
 
 Dangerous commands to avoid:
 
 - Do not run `docker compose down -v` if you need to keep local data.
 - Do not remove the Postgres Docker volume.
-- Do not delete `local/data/postgres` unless you intentionally want to reset local DB state.
+- Do not delete `jeevanam_dev_postgres_data` unless you intentionally want to reset local DB state.
 
 ## Notes
 
 - `clinic_management` remains the primary application database.
 - `keycloak` is created automatically for the Keycloak container.
-- If the local Postgres data directory is partially initialized, reset the local stack before starting it again.
+- If the local Postgres data volume is partially initialized, back it up and reset the local stack before starting it again.
 
 ## AI Runtime Configuration
 

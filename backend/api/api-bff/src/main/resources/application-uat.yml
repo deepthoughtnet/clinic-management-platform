@@ -11,6 +11,7 @@ spring:
     open-in-view: false
   flyway:
     enabled: true
+    clean-disabled: true
     locations: classpath:db/migration
   security:
     oauth2:
@@ -22,6 +23,9 @@ server:
   port: 8089
 
 clinic:
+  database:
+    destructive-seed-enabled: ${CLINIC_DATABASE_DESTRUCTIVE_SEED_ENABLED:false}
+    test-schema-creator-enabled: ${CLINIC_DATABASE_TEST_SCHEMA_CREATOR_ENABLED:false}
   ai:
     enabled: ${CLINIC_AI_ENABLED:false}
     provider: ${CLINIC_AI_PROVIDER:DISABLED}

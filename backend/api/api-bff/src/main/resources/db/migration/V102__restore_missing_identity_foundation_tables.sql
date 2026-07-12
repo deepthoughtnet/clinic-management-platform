@@ -1,0 +1,134 @@
+create table if not exists tenant_plans (
+    id varchar(32) primary key,
+    name varchar(128) not null,
+    max_drivers integer,
+    max_devices integer,
+    max_routes integer,
+    features json not null default '{}'
+);
+
+create table if not exists tenants (
+    id uuid primary key,
+    code varchar(64) not null,
+    name varchar(256) not null,
+    plan_id varchar(32) not null,
+    status varchar(32) not null,
+    module_clinic_automation boolean not null default true,
+    module_clinic_generation boolean not null default false,
+    module_reconciliation boolean not null default false,
+    module_decisioning boolean not null default false,
+    module_ai_copilot boolean not null default false,
+    module_agent_intake boolean not null default false,
+    module_gst_filing boolean not null default false,
+    module_doctor_intelligence boolean not null default false,
+    module_tele_calling boolean not null default false,
+    created_at timestamp with time zone not null,
+    updated_at timestamp with time zone not null,
+    constraint tenants_code_key unique (code),
+    constraint fk_tenants_plan_id foreign key (plan_id) references tenant_plans(id)
+);
+
+create table if not exists app_users (
+    id uuid primary key,
+    tenant_id uuid not null,
+    keycloak_sub varchar(128) not null,
+    email varchar(256),
+    display_name varchar(256),
+    driver_id uuid,
+    status varchar(32) not null,
+    created_at timestamp with time zone not null,
+    updated_at timestamp with time zone not null,
+    constraint uq_users_tenant_sub unique (tenant_id, keycloak_sub),
+    constraint fk_app_users_tenant foreign key (tenant_id) references tenants(id)
+);
+
+create index if not exists ix_app_users_tenant on app_users (tenant_id);
+create index if not exists ix_app_users_sub on app_users (keycloak_sub);
+create index if not exists ix_app_users_driver on app_users (tenant_id, driver_id);
+
+create table if not exists tenant_memberships (
+    id uuid primary key,
+    tenant_id uuid not null,
+    app_user_id uuid not null,
+    role varchar(64) not null,
+    status varchar(32) not null,
+    created_at timestamp with time zone not null,
+    updated_at timestamp with time zone not null,
+    constraint uq_membership_tenant_user unique (tenant_id, app_user_id),
+    constraint fk_tenant_memberships_tenant foreign key (tenant_id) references tenants(id),
+    constraint fk_tenant_memberships_app_user foreign key (app_user_id) references app_users(id)
+);
+
+create index if not exists ix_tenant_memberships_tenant on tenant_memberships (tenant_id);
+create index if not exists ix_tenant_memberships_app_user on tenant_memberships (app_user_id);
+
+create table if not exists audit_events (
+    id uuid primary key,
+    tenant_id uuid not null,
+    entity_type varchar(64) not null,
+    entity_id uuid not null,
+    action varchar(96) not null,
+    actor_app_user_id uuid,
+    occurred_at timestamp with time zone not null,
+    summary text,
+    details_json text,
+    created_at timestamp with time zone not null
+);
+
+create index if not exists ix_audit_events_tenant_entity
+    on audit_events (tenant_id, entity_type, entity_id, occurred_at);
+create index if not exists ix_audit_events_tenant_action
+    on audit_events (tenant_id, action, occurred_at);
+
+create table if not exists notification_outbox (
+    id uuid primary key,
+    tenant_id uuid not null,
+    event_type varchar(128) not null,
+    aggregate_type varchar(64) not null,
+    aggregate_id uuid not null,
+    module varchar(64),
+    entity_type varchar(64),
+    entity_id uuid,
+    deduplication_key varchar(256) not null,
+    payload_json text not null,
+    status varchar(32) not null,
+    attempt_count integer not null default 0,
+    next_attempt_at timestamp with time zone,
+    last_error text,
+    processed_at timestamp with time zone,
+    ignored_at timestamp with time zone,
+    ignored_by_app_user_id uuid,
+    created_at timestamp with time zone not null,
+    updated_at timestamp with time zone not null,
+    version integer not null default 0,
+    constraint uq_notification_outbox_dedup unique (deduplication_key)
+);
+
+create index if not exists ix_notification_outbox_status_next
+    on notification_outbox (status, next_attempt_at);
+create index if not exists ix_notification_outbox_tenant_status
+    on notification_outbox (tenant_id, status);
+create index if not exists ix_notification_outbox_aggregate
+    on notification_outbox (aggregate_type, aggregate_id);
+create index if not exists ix_notification_outbox_tenant_module
+    on notification_outbox (tenant_id, module);
+create index if not exists ix_notification_outbox_tenant_event_type
+    on notification_outbox (tenant_id, event_type);
+create index if not exists ix_notification_outbox_entity
+    on notification_outbox (entity_type, entity_id);
+
+create table if not exists ai_prompt_templates (
+    id uuid primary key,
+    template_key varchar(128) not null,
+    template_group varchar(128),
+    scope varchar(64) not null,
+    title varchar(256) not null,
+    description text,
+    template_text text not null,
+    variables_json text,
+    version integer not null default 1,
+    active boolean not null default true,
+    created_at timestamp with time zone not null,
+    updated_at timestamp with time zone not null,
+    constraint uq_ai_prompt_templates_key_scope unique (template_key, scope)
+);

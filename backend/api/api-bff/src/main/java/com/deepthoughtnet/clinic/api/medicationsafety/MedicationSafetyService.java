@@ -40,6 +40,7 @@ public class MedicationSafetyService {
     private final MedicineRepository medicineRepository;
     private final ClinicalContextService clinicalContextService;
     private final MedicationSafetyEngine medicationSafetyEngine;
+    private final MedicationSafetySnapshotHasher medicationSafetySnapshotHasher;
     private final AuditEventPublisher auditEventPublisher;
 
     public MedicationSafetyService(ConsultationRepository consultationRepository,
@@ -49,6 +50,7 @@ public class MedicationSafetyService {
                                    MedicineRepository medicineRepository,
                                    ClinicalContextService clinicalContextService,
                                    MedicationSafetyEngine medicationSafetyEngine,
+                                   MedicationSafetySnapshotHasher medicationSafetySnapshotHasher,
                                    AuditEventPublisher auditEventPublisher) {
         this.consultationRepository = consultationRepository;
         this.prescriptionRepository = prescriptionRepository;
@@ -57,24 +59,19 @@ public class MedicationSafetyService {
         this.medicineRepository = medicineRepository;
         this.clinicalContextService = clinicalContextService;
         this.medicationSafetyEngine = medicationSafetyEngine;
+        this.medicationSafetySnapshotHasher = medicationSafetySnapshotHasher;
         this.auditEventPublisher = auditEventPublisher;
     }
 
     @Transactional(readOnly = true)
     public MedicationSafetyEvaluationResult evaluateForConsultation(UUID tenantId, UUID consultationId, UUID actorAppUserId) {
-        ConsultationEntity consultation = consultationRepository.findByTenantIdAndId(tenantId, consultationId)
-                .orElseThrow(() -> new IllegalArgumentException("Consultation not found"));
-        PatientEntity patient = patientRepository.findByTenantIdAndId(tenantId, consultation.getPatientId())
-                .orElseThrow(() -> new IllegalArgumentException("Patient not found"));
-        PrescriptionEntity prescription = prescriptionRepository.findFirstByTenantIdAndConsultationIdOrderByVersionNumberDesc(tenantId, consultationId)
-                .orElse(null);
-        ClinicalContextResponse clinicalContext = clinicalContextService.buildClinicalContext(tenantId, patient.getId(), consultationId);
-        MedicationSafetyEvaluationRequest request = buildRequest(tenantId, consultation, patient, prescription, clinicalContext);
+        MedicationSafetyEvaluationContext context = buildEvaluationContext(tenantId, consultationId);
+        MedicationSafetyEvaluationRequest request = context.request();
         MedicationSafetyEvaluationResult result = medicationSafetyEngine.evaluate(request);
         log.info(
                 "[MED-SAFETY-TRACE] tenantId={} patientId={} consultationId={} prescriptionId={} rulesVersion={} ruleCount={} findingCount={} severity={}",
                 tenantId,
-                patient.getId(),
+                context.patient().getId(),
                 consultationId,
                 request.prescriptionId(),
                 result.rulesVersion(),
@@ -97,11 +94,26 @@ public class MedicationSafetyService {
         return result;
     }
 
-    private MedicationSafetyEvaluationRequest buildRequest(UUID tenantId,
-                                                            ConsultationEntity consultation,
-                                                            PatientEntity patient,
-                                                            PrescriptionEntity prescription,
-                                                            ClinicalContextResponse clinicalContext) {
+    MedicationSafetyEvaluationContext buildEvaluationContext(UUID tenantId, UUID consultationId) {
+        ConsultationEntity consultation = consultationRepository.findByTenantIdAndId(tenantId, consultationId)
+                .orElseThrow(() -> new IllegalArgumentException("Consultation not found"));
+        PatientEntity patient = patientRepository.findByTenantIdAndId(tenantId, consultation.getPatientId())
+                .orElseThrow(() -> new IllegalArgumentException("Patient not found"));
+        PrescriptionEntity prescription = prescriptionRepository.findFirstByTenantIdAndConsultationIdOrderByVersionNumberDesc(tenantId, consultationId)
+                .orElse(null);
+        ClinicalContextResponse clinicalContext = clinicalContextService.buildClinicalContext(tenantId, patient.getId(), consultationId);
+        MedicationSafetyEvaluationRequest request = buildRequest(tenantId, consultation, patient, prescription, clinicalContext);
+        String prescriptionHash = medicationSafetySnapshotHasher.prescriptionHash(request, prescription == null ? null : prescription.getVersionNumber());
+        String patientContextHash = medicationSafetySnapshotHasher.patientContextHash(request);
+        String snapshotHash = medicationSafetySnapshotHasher.evaluationHash(prescriptionHash, patientContextHash, medicationSafetyEngine.rulesVersion());
+        return new MedicationSafetyEvaluationContext(consultation, patient, prescription, clinicalContext, request, prescriptionHash, patientContextHash, snapshotHash);
+    }
+
+    MedicationSafetyEvaluationRequest buildRequest(UUID tenantId,
+                                                   ConsultationEntity consultation,
+                                                   PatientEntity patient,
+                                                   PrescriptionEntity prescription,
+                                                   ClinicalContextResponse clinicalContext) {
         List<MedicationSafetyMedicationItem> proposed = loadProposedMedications(tenantId, prescription);
         List<MedicationSafetyMedicationItem> current = filterDraftOverlap(loadCurrentMedications(clinicalContext, patient), proposed);
         MedicationSafetyEvaluationRequest.AllergySnapshot allergies = buildAllergySnapshot(patient);
@@ -142,6 +154,8 @@ public class MedicationSafetyService {
         for (PrescriptionMedicineEntity line : lines) {
             String lookupKey = normalizeProductName(line.getMedicineName());
             MedicineEntity medicine = medicinesByName.get(lookupKey);
+            String exactProductIdentity = exactProductIdentity(line, medicine);
+            String ingredientIdentity = medicine == null ? null : normalizeIngredientIdentity(medicine.getGenericName());
             log.debug(
                     "[MED-SAFETY-IDENTITY-TRACE] prescriptionRowId={} medicineId={} medicineName={} genericName={} strength={} dosageForm={} exactIdentity={} ingredientIdentity={}",
                     line.getId(),
@@ -150,10 +164,10 @@ public class MedicationSafetyService {
                     medicine == null ? null : medicine.getGenericName(),
                     medicine == null ? line.getStrength() : firstNonBlank(line.getStrength(), medicine.getStrength()),
                     medicine == null ? null : medicine.getDosageForm(),
-                    lookupKey,
-                    medicine == null ? null : normalizeIngredientIdentity(medicine.getGenericName())
+                    exactProductIdentity,
+                    ingredientIdentity
             );
-            proposed.add(toMedicationItem(line, medicine, "PRESCRIPTION_DRAFT", prescription.getStatus() == null ? null : prescription.getStatus().name()));
+            proposed.add(toMedicationItem(line, medicine, exactProductIdentity, "PRESCRIPTION_DRAFT", prescription.getStatus() == null ? null : prescription.getStatus().name()));
         }
         return proposed;
     }
@@ -288,11 +302,11 @@ public class MedicationSafetyService {
         return new ArrayList<>(keys);
     }
 
-    private MedicationSafetyMedicationItem toMedicationItem(PrescriptionMedicineEntity line, MedicineEntity medicine, String source, String status) {
+    private MedicationSafetyMedicationItem toMedicationItem(PrescriptionMedicineEntity line, MedicineEntity medicine, String exactProductIdentity, String source, String status) {
         List<String> ingredients = medicine == null || !hasText(medicine.getGenericName()) ? List.of() : List.of(medicine.getGenericName());
         return new MedicationSafetyMedicationItem(
                 line.getId() == null ? null : line.getId().toString(),
-                medicine == null ? null : medicine.getId().toString(),
+                exactProductIdentity,
                 line.getMedicineName(),
                 normalizeMedicineName(line.getMedicineName()),
                 ingredients,
@@ -314,6 +328,31 @@ public class MedicationSafetyService {
                 null,
                 null
         );
+    }
+
+    private String exactProductIdentity(PrescriptionMedicineEntity line, MedicineEntity medicine) {
+        if (medicine != null && hasText(medicine.getId() == null ? null : medicine.getId().toString())) {
+            return medicine.getId().toString();
+        }
+        String sourceName = line == null ? null : line.getMedicineName();
+        String strength = line == null ? null : line.getStrength();
+        String dose = line == null ? null : line.getDosage();
+        String frequency = line == null ? null : line.getFrequency();
+        String duration = line == null ? null : line.getDuration();
+        String timing = line == null || line.getTiming() == null ? null : line.getTiming().name();
+        return String.join("|",
+                "sig",
+                normalizeProductName(sourceName),
+                normalizeExactValue(strength),
+                normalizeExactValue(dose),
+                normalizeExactValue(frequency),
+                normalizeExactValue(duration),
+                normalizeExactValue(timing)
+        );
+    }
+
+    String normalizeExactValue(String value) {
+        return hasText(value) ? value.trim().replaceAll("\\s+", " ") : "";
     }
 
     private MedicationSafetyEvaluationRequest.AllergySnapshot buildAllergySnapshot(PatientEntity patient) {

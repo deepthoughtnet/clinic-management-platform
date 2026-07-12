@@ -395,6 +395,7 @@ services:
 
 volumes:
   clinic_management_postgres_data:
+    name: jeevanam_dev_postgres_data
   clinic_management_redis_data:
   clinic_management_minio_data:
   realtime_voice_model_cache:
