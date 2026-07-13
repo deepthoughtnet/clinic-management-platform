@@ -2973,9 +2973,22 @@ export default function ConsultationWorkspacePage() {
     buildRequest: buildClinicalReasoningRequest,
   });
   const clinicalReasoningResult = clinicalReasoning.clinicalReasoningResult;
+  const clinicalReasoningStatus = clinicalReasoning.reasoningStatus || (clinicalReasoningResult ? "CURRENT" : "NOT_GENERATED");
+  const clinicalReasoningStatusLabel = clinicalReasoningStatus === "CURRENT"
+    ? "Current"
+    : clinicalReasoningStatus === "STALE"
+      ? "Stale"
+      : clinicalReasoningStatus === "FAILED"
+        ? "Failed"
+        : clinicalReasoningStatus === "SUPERSEDED"
+          ? "Superseded"
+          : "Not generated";
   React.useEffect(() => {
-    clinicalReasoning.resetReasoning();
-  }, [consultationId, clinicalReasoning.resetReasoning]);
+    if (!consultationId || !auth.accessToken || !auth.tenantId) {
+      return;
+    }
+    void clinicalReasoning.loadReasoning(consultationId);
+  }, [auth.accessToken, auth.tenantId, clinicalReasoning.loadReasoning, consultationId]);
   React.useEffect(() => {
     if (!clinicalReasoning.loading) {
       return;
@@ -3084,11 +3097,11 @@ export default function ConsultationWorkspacePage() {
     if (!consultation) {
       return;
     }
-    const runner = clinicalReasoning.clinicalReasoningResult
+    const runner = clinicalReasoning.reasoningStatus && clinicalReasoning.reasoningStatus !== "NOT_GENERATED"
       ? clinicalReasoning.refreshReasoning
       : clinicalReasoning.generateReasoning;
     void preserveViewport(() => runner(consultation.id));
-  }, [clinicalReasoning.clinicalReasoningResult, clinicalReasoning.generateReasoning, clinicalReasoning.refreshReasoning, consultation, preserveViewport]);
+  }, [clinicalReasoning.generateReasoning, clinicalReasoning.reasoningStatus, clinicalReasoning.refreshReasoning, consultation, preserveViewport]);
   const acceptClinicalReasoningDiagnosis = React.useCallback(async () => {
     const diagnosisText = clinicalReasoningResult?.primaryDiagnosis?.name?.trim() || clinicalReasoningResult?.reasoningSummary?.trim() || "";
     if (!diagnosisText) {
@@ -4428,6 +4441,7 @@ export default function ConsultationWorkspacePage() {
     setConsultationForm(nextForm);
     consultationFormRef.current = nextForm;
     savedConsultationSnapshotRef.current = serializeConsultationForm(nextForm);
+    void clinicalReasoning.loadReasoning(merged.id);
     if (showInfo) setInfo("Consultation draft saved");
     return saved;
   };
@@ -8181,7 +8195,11 @@ export default function ConsultationWorkspacePage() {
                             <AutoAwesomeRoundedIcon fontSize="small" color="primary" />
                             <Typography variant="subtitle2" sx={{ fontWeight: 950 }}>Clinical Reasoning</Typography>
                           </Stack>
-                          {!clinicalReasoningResult ? <Chip size="small" variant="outlined" label="Not generated" /> : null}
+                          {!clinicalReasoning.hasLoaded ? (
+                            <Chip size="small" variant="outlined" label="Loading saved reasoning..." />
+                          ) : (
+                            <Chip size="small" variant="outlined" label={clinicalReasoningStatusLabel} />
+                          )}
                         </Stack>
                         <Alert severity="warning" sx={{ py: 0.5 }}>
                           AI suggestions are assistive only. Doctor must verify before use.
@@ -8195,12 +8213,12 @@ export default function ConsultationWorkspacePage() {
                             disabled={!consultation || !hasClinicalReasoningContext || clinicalReasoning.loading || aiBusy}
                             onClick={() => triggerClinicalReasoning()}
                           >
-                            {clinicalReasoning.clinicalReasoningResult ? "Refresh AI Reasoning" : "Generate Clinical Reasoning"}
+                            {clinicalReasoning.reasoningStatus && clinicalReasoning.reasoningStatus !== "NOT_GENERATED" ? "Regenerate Clinical Reasoning" : "Generate Clinical Reasoning"}
                           </Button>
                         </Stack>
                         {clinicalReasoning.loading ? (
                           <Alert severity="info" sx={{ py: 0.5 }}>
-                            {clinicalReasoningLoadingMessages[clinicalReasoningLoadingStepIndex]}
+                            {!clinicalReasoning.hasLoaded ? "Loading saved reasoning..." : clinicalReasoningLoadingMessages[clinicalReasoningLoadingStepIndex]}
                           </Alert>
                         ) : null}
                         {clinicalReasoning.warning ? (
@@ -8224,13 +8242,15 @@ export default function ConsultationWorkspacePage() {
                         {clinicalReasoningResult ? (
                           <Stack spacing={1}>
                             <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
-                              <Stack direction="row" spacing={0.75} alignItems="center" flexWrap="wrap">
-                                <AutoAwesomeRoundedIcon fontSize="small" color="primary" />
-                                <Typography variant="subtitle2" sx={{ fontWeight: 950 }}>Reasoning details</Typography>
-                                <Chip size="small" variant="outlined" label={`Provider: ${clinicalReasoningProviderLabel}`} />
-                                <Chip size="small" variant="outlined" label={`Generated: ${compactDateTime(clinicalReasoning.lastGeneratedAt || clinicalReasoningResult.generatedAt)}`} />
-                                <Chip size="small" color="primary" variant="outlined" label={`Confidence: ${clinicalReasoningSummaryConfidenceLabel}`} />
-                              </Stack>
+                            <Stack direction="row" spacing={0.75} alignItems="center" flexWrap="wrap">
+                              <AutoAwesomeRoundedIcon fontSize="small" color="primary" />
+                              <Typography variant="subtitle2" sx={{ fontWeight: 950 }}>Reasoning details</Typography>
+                              {clinicalReasoning.generatedByDisplayName ? <Chip size="small" variant="outlined" label={`Generated by: ${clinicalReasoning.generatedByDisplayName}`} /> : null}
+                              <Chip size="small" variant="outlined" label={`Status: ${clinicalReasoningStatusLabel}`} />
+                              <Chip size="small" variant="outlined" label={`Provider: ${clinicalReasoningProviderLabel}`} />
+                              <Chip size="small" variant="outlined" label={`Generated: ${compactDateTime(clinicalReasoning.lastGeneratedAt || clinicalReasoningResult.generatedAt)}`} />
+                              <Chip size="small" color="primary" variant="outlined" label={`Confidence: ${clinicalReasoningSummaryConfidenceLabel}`} />
+                            </Stack>
                               <Stack direction="row" spacing={0.75} alignItems="center" useFlexGap flexWrap="wrap">
                                 <Tooltip title="Refresh clinical reasoning">
                                   <span>

@@ -732,6 +732,13 @@ export type ClinicalReasoningResponse = {
   reasoningResult: ClinicalReasoningResult | null;
   metadata: ClinicalReasoningResult["metadata"] | null;
   debug?: Record<string, unknown> | null;
+  reasoningId?: string | null;
+  reasoningVersion?: number | null;
+  reasoningStatus?: string | null;
+  contextHash?: string | null;
+  staleReason?: string | null;
+  generatedByAppUserId?: string | null;
+  generatedByDisplayName?: string | null;
 };
 
 export type ClinicalIntakeResponse = {
@@ -4627,6 +4634,10 @@ export async function generateClinicalReasoning(token: string, tenantId: string,
 }, options?: { debug?: boolean }) {
   const debugQuery = options?.debug ? "?debug=true" : "";
   return httpPost<ClinicalReasoningResponse>(`/api/consultations/${consultationId}/clinical-reasoning/generate${debugQuery}`, body, { token, tenantId });
+}
+
+export async function getClinicalReasoning(token: string, tenantId: string, consultationId: string) {
+  return httpGet<ClinicalReasoningResponse>(`/api/consultations/${consultationId}/clinical-reasoning`, { token, tenantId });
 }
 
 export async function aiSuggestPrescriptionTemplate(token: string, tenantId: string, body: {

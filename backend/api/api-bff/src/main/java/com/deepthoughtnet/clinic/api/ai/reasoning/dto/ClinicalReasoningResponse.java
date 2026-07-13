@@ -8,7 +8,14 @@ public record ClinicalReasoningResponse(
         ClinicalContextSummary clinicalContextSummary,
         ClinicalReasoningResult reasoningResult,
         ReasoningMetadata metadata,
-        Map<String, Object> debug
+        Map<String, Object> debug,
+        String reasoningId,
+        Integer reasoningVersion,
+        String reasoningStatus,
+        String contextHash,
+        String staleReason,
+        java.util.UUID generatedByAppUserId,
+        String generatedByDisplayName
 ) {
     public record ConsultationSummary(
             java.util.UUID consultationId,
