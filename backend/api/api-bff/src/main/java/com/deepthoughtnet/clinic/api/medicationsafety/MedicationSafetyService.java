@@ -303,7 +303,7 @@ public class MedicationSafetyService {
     }
 
     private MedicationSafetyMedicationItem toMedicationItem(PrescriptionMedicineEntity line, MedicineEntity medicine, String exactProductIdentity, String source, String status) {
-        List<String> ingredients = medicine == null || !hasText(medicine.getGenericName()) ? List.of() : List.of(medicine.getGenericName());
+        List<String> ingredients = deriveActiveIngredients(line, medicine);
         return new MedicationSafetyMedicationItem(
                 line.getId() == null ? null : line.getId().toString(),
                 exactProductIdentity,
@@ -328,6 +328,25 @@ public class MedicationSafetyService {
                 null,
                 null
         );
+    }
+
+    private List<String> deriveActiveIngredients(PrescriptionMedicineEntity line, MedicineEntity medicine) {
+        if (medicine != null && hasText(medicine.getGenericName())) {
+            return List.of(medicine.getGenericName());
+        }
+        String fallback = normalizeMedicineName(line == null ? null : line.getMedicineName());
+        if (!hasText(fallback) || !looksLikeStructuredMedicineName(line == null ? null : line.getMedicineName())) {
+            return List.of();
+        }
+        return List.of(fallback);
+    }
+
+    private boolean looksLikeStructuredMedicineName(String value) {
+        if (!hasText(value)) {
+            return false;
+        }
+        String normalized = value.toLowerCase();
+        return normalized.matches(".*\\d.*") || normalized.matches(".*\\b(mg|mcg|g|ml|tablet|tab|capsule|cap|syrup|suspension|drop|drops|ointment|cream|injection|inj)\\b.*");
     }
 
     private String exactProductIdentity(PrescriptionMedicineEntity line, MedicineEntity medicine) {
@@ -382,6 +401,7 @@ public class MedicationSafetyService {
             return null;
         }
         ClinicalContextResponse.RenalContext renalContext = clinicalContext.longitudinalClinicalContext().renalContext();
+        List<String> sourceDocumentIds = renalContext.sourceDocumentIds();
         return new MedicationSafetyEvaluationRequest.RenalSnapshot(
                 renalContext.creatinine(),
                 renalContext.creatinineDate(),
@@ -389,7 +409,8 @@ public class MedicationSafetyService {
                 renalContext.egfrDate(),
                 renalContext.verificationStatus(),
                 renalContext.stalenessDays(),
-                renalContext.sourceDocumentIds()
+                sourceReferences(clinicalContext, sourceDocumentIds),
+                sourceDocumentIds
         );
     }
 
@@ -505,5 +526,54 @@ public class MedicationSafetyService {
             }
         }
         return new ArrayList<>(ids);
+    }
+
+    private List<String> sourceReferences(ClinicalContextResponse clinicalContext, List<String> sourceDocumentIds) {
+        if (sourceDocumentIds == null || sourceDocumentIds.isEmpty()) {
+            return List.of();
+        }
+        Map<String, ClinicalContextResponse.LongitudinalConcept> conceptBySourceId = new LinkedHashMap<>();
+        if (clinicalContext != null
+                && clinicalContext.longitudinalMemory() != null
+                && clinicalContext.longitudinalMemory().history() != null) {
+            for (ClinicalContextResponse.LongitudinalConcept concept : clinicalContext.longitudinalMemory().history()) {
+                if (concept == null || concept.sourceDocumentId() == null || conceptBySourceId.containsKey(concept.sourceDocumentId().toString())) {
+                    continue;
+                }
+                conceptBySourceId.put(concept.sourceDocumentId().toString(), concept);
+            }
+        }
+        LinkedHashSet<String> refs = new LinkedHashSet<>();
+        for (String sourceDocumentId : sourceDocumentIds) {
+            if (!hasText(sourceDocumentId)) {
+                continue;
+            }
+            ClinicalContextResponse.LongitudinalConcept concept = conceptBySourceId.get(sourceDocumentId);
+            refs.add(firstNonBlank(
+                    concept == null ? null : concept.sourceDocumentTitle(),
+                    humanizeSourceType(concept == null ? null : concept.sourceDocumentType()),
+                    "Longitudinal memory"
+            ));
+        }
+        return new ArrayList<>(refs);
+    }
+
+    private String humanizeSourceType(String value) {
+        if (!hasText(value)) {
+            return null;
+        }
+        String normalized = value.trim().replace('_', ' ');
+        StringBuilder builder = new StringBuilder(normalized.length());
+        boolean capitalizeNext = true;
+        for (char c : normalized.toCharArray()) {
+            if (Character.isWhitespace(c)) {
+                builder.append(c);
+                capitalizeNext = true;
+                continue;
+            }
+            builder.append(capitalizeNext ? Character.toUpperCase(c) : Character.toLowerCase(c));
+            capitalizeNext = false;
+        }
+        return builder.toString().trim();
     }
 }

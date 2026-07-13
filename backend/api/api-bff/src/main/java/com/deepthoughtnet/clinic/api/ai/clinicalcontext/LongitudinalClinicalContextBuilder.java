@@ -112,7 +112,7 @@ final class LongitudinalClinicalContextBuilder {
                 analyteKey,
                 definition.displayName(),
                 numericValue,
-                formatNumeric(numericValue),
+                compactText(snapshot.valueText(), 48),
                 unit,
                 snapshot.observedOn(),
                 normalizeVerificationStatus(snapshot.verificationStatus()),
@@ -863,7 +863,7 @@ final class LongitudinalClinicalContextBuilder {
         }
         return Math.abs(value - Math.rint(value)) < 0.001d
                 ? String.format(Locale.ROOT, "%.0f", value)
-                : String.format(Locale.ROOT, "%.1f", value);
+                : BigDecimal.valueOf(value).stripTrailingZeros().toPlainString();
     }
 
     private String normalizeUnit(String value) {

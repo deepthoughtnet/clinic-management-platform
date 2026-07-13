@@ -26,7 +26,6 @@ final class MedicationSafetySnapshotHasher {
                 stringValue(request == null ? null : request.consultationId()),
                 stringValue(request == null ? null : request.prescriptionId()),
                 stringValue(versionNumber),
-                stringValue(request == null ? null : request.prescriptionStatus()),
                 canonicalMedicationList(request == null ? List.of() : request.proposedMedications())
         ));
     }
@@ -77,7 +76,6 @@ final class MedicationSafetySnapshotHasher {
 
     private String canonicalMedication(MedicationSafetyMedicationItem item) {
         return String.join("|",
-                stringValue(item.prescriptionItemId()),
                 stringValue(item.medicineId()),
                 stringValue(item.medicineName()),
                 stringValue(item.normalizedMedicineName()),
@@ -93,7 +91,6 @@ final class MedicationSafetySnapshotHasher {
                 stringValue(item.indication()),
                 Boolean.toString(item.prn()),
                 stringValue(item.source()),
-                stringValue(item.status()),
                 stringValue(item.verificationStatus()),
                 stringValue(item.confidence()),
                 stringValue(item.sourceDocumentId()),

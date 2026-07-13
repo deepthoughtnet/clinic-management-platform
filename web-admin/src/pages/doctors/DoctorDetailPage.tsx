@@ -2,15 +2,16 @@ import * as React from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Alert, Autocomplete, Box, Button, Card, CardContent, Chip, CircularProgress, FormControlLabel, Grid, Stack, Switch, TextField, Typography } from "@mui/material";
 
-import { doctorUpdateSchema, normalizeIndianMobileInput } from "@deepthoughtnet/form-validation-kit";
+import { doctorUpdateSchema } from "@deepthoughtnet/form-validation-kit";
 import { useAuth } from "../../auth/useAuth";
-import { getDoctorProfile, updateDoctorProfile, updateDoctorProfileWithPhoto, type DoctorProfile } from "../../api/clinicApi";
+import { getDoctorProfile, updateDoctorProfile, updateDoctorProfileWithPhoto, type DoctorProfile, type DoctorProfileInput } from "../../api/clinicApi";
 import DoctorAvatar from "../../components/doctor/DoctorAvatar";
 import { formatFileSize, ImageUploadError, optimizeAvatarUpload } from "../../utils/imageUpload";
 
 type FormState = {
   mobile: string;
   specializations: string[];
+  specializationsInput: string;
   qualification: string;
   registrationNumber: string;
   consultationRoom: string;
@@ -25,6 +26,29 @@ type FormState = {
   slug: string;
 };
 
+function normalizeText(value: string): string | null {
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeNumber(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const parsed = Number(trimmed);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function normalizeSpecializations(values: string[], draft: string): string[] {
+  const committed = values.map((value) => value.trim()).filter(Boolean);
+  if (committed.length > 0) {
+    return committed;
+  }
+  const trimmedDraft = draft.trim();
+  return trimmedDraft ? [trimmedDraft] : [];
+}
+
 function toForm(profile: DoctorProfile): FormState {
   const specializations = profile.specializations?.length
     ? profile.specializations
@@ -33,6 +57,7 @@ function toForm(profile: DoctorProfile): FormState {
   return {
     mobile: profile.mobile || "",
     specializations,
+    specializationsInput: "",
     qualification: profile.qualification || "",
     registrationNumber: profile.registrationNumber || "",
     consultationRoom: profile.consultationRoom || "",
@@ -136,22 +161,26 @@ export default function DoctorDetailPage() {
 
   const save = async () => {
     if (!auth.accessToken || !auth.tenantId) return;
-    const parsed = doctorUpdateSchema.safeParse({
-      mobile: form.mobile,
-      specialization: form.specializations[0] || null,
-      specializations: form.specializations,
-      qualification: form.qualification,
-      registrationNumber: form.registrationNumber,
-      consultationRoom: form.consultationRoom,
-      consultationFee: form.opdFee,
-      opdFee: form.opdFee,
-      followUpFee: form.followUpFee,
-      emergencyFee: form.emergencyFee,
-      yearsOfExperience: form.yearsOfExperience,
-      age: form.age,
+    const specializations = normalizeSpecializations(form.specializations, form.specializationsInput);
+    const payload: DoctorProfileInput = {
+      mobile: normalizeText(form.mobile),
+      specialization: specializations[0] || normalizeText(profile.specialization || ""),
+      specializations,
+      qualification: normalizeText(form.qualification),
+      registrationNumber: normalizeText(form.registrationNumber),
+      consultationRoom: normalizeText(form.consultationRoom),
+      consultationFee: normalizeNumber(form.opdFee),
+      opdFee: normalizeNumber(form.opdFee),
+      followUpFee: normalizeNumber(form.followUpFee),
+      emergencyFee: normalizeNumber(form.emergencyFee),
+      yearsOfExperience: normalizeNumber(form.yearsOfExperience),
+      age: normalizeNumber(form.age),
       active: form.active,
       publicListingEnabled: form.publicListingEnabled,
-      slug: form.slug,
+      slug: normalizeText(form.slug),
+    };
+    const parsed = doctorUpdateSchema.safeParse({
+      ...payload,
     });
     if (!parsed.success) {
       const fieldMessages = parsed.error.issues.map((issue) => {
@@ -164,23 +193,6 @@ export default function DoctorDetailPage() {
     setSaving(true);
     setError(null);
     try {
-      const payload = {
-        mobile: parsed.data.mobile ? (normalizeIndianMobileInput(parsed.data.mobile) as string) : null,
-        specialization: parsed.data.specialization?.trim() || null,
-        specializations: parsed.data.specializations?.map((value) => value.trim()).filter(Boolean) || [],
-        qualification: parsed.data.qualification?.trim() || null,
-        registrationNumber: parsed.data.registrationNumber?.trim() || null,
-        consultationRoom: parsed.data.consultationRoom?.trim() || null,
-        consultationFee: parsed.data.opdFee == null ? null : Number(parsed.data.opdFee),
-        opdFee: parsed.data.opdFee == null ? null : Number(parsed.data.opdFee),
-        followUpFee: parsed.data.followUpFee == null ? null : Number(parsed.data.followUpFee),
-        emergencyFee: parsed.data.emergencyFee == null ? null : Number(parsed.data.emergencyFee),
-        yearsOfExperience: parsed.data.yearsOfExperience == null ? null : Number(parsed.data.yearsOfExperience),
-        age: parsed.data.age == null ? null : Number(parsed.data.age),
-        active: parsed.data.active ?? form.active,
-        publicListingEnabled: parsed.data.publicListingEnabled ?? form.publicListingEnabled,
-        slug: parsed.data.slug?.trim() || null,
-      };
       const nextProfile = photoFile
         ? await updateDoctorProfileWithPhoto(auth.accessToken, auth.tenantId, profile.doctorUserId, payload, photoFile)
         : await updateDoctorProfile(auth.accessToken, auth.tenantId, profile.doctorUserId, payload);
@@ -277,7 +289,13 @@ export default function DoctorDetailPage() {
                 freeSolo
                 options={[] as string[]}
                 value={form.specializations}
-                onChange={(_, value) => setForm((c) => c ? { ...c, specializations: value.map((item) => String(item).trim()).filter(Boolean) } : c)}
+                inputValue={form.specializationsInput}
+                onInputChange={(_, value) => setForm((c) => c ? { ...c, specializationsInput: value } : c)}
+                onChange={(_, value) => setForm((c) => c ? {
+                  ...c,
+                  specializations: value.map((item) => String(item).trim()).filter(Boolean),
+                  specializationsInput: "",
+                } : c)}
                 renderInput={(params) => (
                   <TextField
                     {...params}

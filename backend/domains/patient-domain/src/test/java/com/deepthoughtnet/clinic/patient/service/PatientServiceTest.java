@@ -227,6 +227,42 @@ class PatientServiceTest {
     }
 
     @Test
+    void createPersistsExistingConditionsAndLongTermMedications() {
+        UUID tenantId = UUID.randomUUID();
+        PatientUpsertCommand command = new PatientUpsertCommand(
+                "Rohan",
+                "Sharma",
+                PatientGender.MALE,
+                null,
+                42,
+                "9876501234",
+                "rohan@example.com",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                "B+",
+                "Penicillin",
+                "Type 2 Diabetes Mellitus",
+                "Metformin 500 mg twice daily",
+                null,
+                "Routine follow-up",
+                true
+        );
+
+        var saved = service.create(tenantId, command, UUID.randomUUID());
+
+        assertThat(saved.existingConditions()).isEqualTo("Type 2 Diabetes Mellitus");
+        assertThat(saved.longTermMedications()).isEqualTo("Metformin 500 mg twice daily");
+        assertThat(saved.bloodGroup()).isEqualTo("B+");
+        assertThat(saved.allergies()).isEqualTo("Penicillin");
+    }
+
+    @Test
     void receptionistCanUpdateSameDayPatientAndLogsFieldLevelAudit() {
         UUID tenantId = UUID.randomUUID();
         UUID patientId = UUID.randomUUID();

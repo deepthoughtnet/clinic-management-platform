@@ -263,7 +263,7 @@ class MedicationSafetyEngineTest {
                 List.of(item("rx-1", UUID.randomUUID().toString(), "Metformin", List.of(), null, "DRAFT", "PENDING_REVIEW")),
                 List.of(item("current-1", UUID.randomUUID().toString(), "Amlodipine", List.of(), null, "PRESCRIPTION", "VERIFIED")),
                 new MedicationSafetyEvaluationRequest.AllergySnapshot(null, List.of(), true, false, "UNKNOWN"),
-                new MedicationSafetyEvaluationRequest.RenalSnapshot("1.8 mg/dL", "2026-05-20", "45 mL/min/1.73m2", "2026-05-20", "VERIFIED", 52, List.of(UUID.randomUUID().toString()))
+                new MedicationSafetyEvaluationRequest.RenalSnapshot("1.8 mg/dL", "2026-05-20", "45 mL/min/1.73m2", "2026-05-20", "VERIFIED", 52, List.of("Kidney Function Report"), List.of(UUID.randomUUID().toString()))
         ));
 
         MedicationSafetyFinding finding = finding(result, "MED_RENAL_EGFR_REVIEW");
@@ -275,6 +275,7 @@ class MedicationSafetyEngineTest {
         assertThat(transparency).isNotNull();
         assertThat(transparency.severity()).isEqualTo(MedicationSafetySeverity.INFO);
         assertThat(transparency.summary()).contains("Previous creatinine was 1.8 mg/dL");
+        assertThat(transparency.sourceReferences()).contains("Kidney Function Report");
     }
 
     @Test
@@ -305,7 +306,7 @@ class MedicationSafetyEngineTest {
                 List.of(item("rx-1", UUID.randomUUID().toString(), "Amlodipine", List.of(), null, "DRAFT", "PENDING_REVIEW")),
                 List.of(),
                 new MedicationSafetyEvaluationRequest.AllergySnapshot(null, List.of(), true, false, "UNKNOWN"),
-                new MedicationSafetyEvaluationRequest.RenalSnapshot("1.08 mg/dL", "2026-05-20", "84 mL/min/1.73m2", "2026-05-20", "PENDING_VERIFICATION", 52, List.of("doc-renal-1"))
+                new MedicationSafetyEvaluationRequest.RenalSnapshot("1.08 mg/dL", "2026-05-20", "84 mL/min/1.73m2", "2026-05-20", "PENDING_VERIFICATION", 52, List.of("03_Kidney_Function_Report"), List.of("doc-renal-1"))
         ));
 
         assertThat(result.evaluationCoverage().renalCoverageStatus()).isEqualTo("PARTIAL");
@@ -316,6 +317,7 @@ class MedicationSafetyEngineTest {
         assertThat(finding.summary()).contains("Previous creatinine was 1.08 mg/dL");
         assertThat(finding.summary()).contains("eGFR was 84 mL/min/1.73m2");
         assertThat(finding.summary()).contains("20-May-2026");
+        assertThat(finding.sourceReferences()).contains("03_Kidney_Function_Report");
     }
 
     @Test
@@ -397,6 +399,9 @@ class MedicationSafetyEngineTest {
         MedicationSafetyFinding finding = finding(result, "MED_ALLERGY_EXACT");
         assertThat(finding).isNotNull();
         assertThat(finding.summary()).contains("Paracetamol");
+        assertThat(finding.evidence()).contains("Recorded allergy: Paracetamol");
+        assertThat(finding.sourceReferences()).contains("Patient clinical profile");
+        assertThat(finding.sourceReferences()).contains("Prescription draft: Paracetamol");
     }
 
     @Test
@@ -410,7 +415,7 @@ class MedicationSafetyEngineTest {
                 ),
                 List.of(),
                 new MedicationSafetyEvaluationRequest.AllergySnapshot("Penicillin", List.of("Penicillin"), false, false, "VERIFIED"),
-                new MedicationSafetyEvaluationRequest.RenalSnapshot("1.8 mg/dL", "2026-05-20", "45 mL/min/1.73m2", "2026-05-20", "VERIFIED", 52, List.of(UUID.randomUUID().toString()))
+                new MedicationSafetyEvaluationRequest.RenalSnapshot("1.8 mg/dL", "2026-05-20", "45 mL/min/1.73m2", "2026-05-20", "VERIFIED", 52, List.of("Kidney Function Report"), List.of(UUID.randomUUID().toString()))
         ));
 
         assertThat(result.overallSeverity()).isEqualTo(MedicationSafetySeverity.CRITICAL);

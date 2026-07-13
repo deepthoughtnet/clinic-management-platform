@@ -19,6 +19,8 @@ public record MedicationSafetyReviewResponse(
         String requiredAction,
         OffsetDateTime reviewedAt,
         UUID reviewedByAppUserId,
+        String reviewedByDisplayName,
+        OffsetDateTime finalizedAt,
         String evaluationOverallSeverity,
         int actionableFindingCount,
         int warningFindingCount,

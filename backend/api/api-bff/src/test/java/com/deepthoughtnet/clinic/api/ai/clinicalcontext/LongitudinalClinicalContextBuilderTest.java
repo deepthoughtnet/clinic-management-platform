@@ -234,16 +234,42 @@ class LongitudinalClinicalContextBuilderTest {
         ClinicalContextResponse.LongitudinalClinicalContext context = builder.build(profile, List.of(kidneyDocument));
 
         assertThat(context.renalContext()).isNotNull();
-        assertThat(context.renalContext().creatinine()).isEqualTo("1.1 mg/dL");
+        assertThat(context.renalContext().creatinine()).isEqualTo("1.08 mg/dL");
         assertThat(context.renalContext().egfr()).isEqualTo("84 mL/min/1.73m2");
         assertThat(context.renalContext().verificationStatus()).isEqualTo("PENDING_VERIFICATION");
         assertThat(context.importantHistoricalFindings()).extracting(ClinicalContextResponse.HistoricalFinding::title)
                 .contains("Previous renal function");
         assertThat(context.importantHistoricalFindings()).extracting(ClinicalContextResponse.HistoricalFinding::summary)
                 .anyMatch(summary -> summary != null
-                        && summary.contains("Creatinine 1.1 mg/dL")
+                        && summary.contains("Creatinine 1.08 mg/dL")
                         && summary.contains("eGFR 84 mL/min/1.73m2"));
         assertThat(context.dataQualityWarnings()).isEmpty();
+    }
+
+    @Test
+    void preservesOneDecimalAndIntegerRenalSourceValues() {
+        UUID documentId = UUID.randomUUID();
+        PatientLongitudinalMemoryProfile profile = new PatientLongitudinalMemoryProfile(
+                List.of(),
+                List.of(),
+                null,
+                null,
+                List.of(),
+                null,
+                null,
+                List.of(),
+                List.of(
+                        new LongitudinalConceptSnapshot("LAB_RESULT", "creatinine", "Creatinine", "1.1", "mg/dL", "Kidney Function Report", "EXTERNAL_LAB_REPORT", documentId, LocalDate.of(2026, 5, 20), BigDecimal.valueOf(0.18), "PENDING_REVIEW", "Creatinine 1.1 mg/dL"),
+                        new LongitudinalConceptSnapshot("LAB_RESULT", "egfr", "eGFR", "84", "mL/min/1.73m2", "Kidney Function Report", "EXTERNAL_LAB_REPORT", documentId, LocalDate.of(2026, 5, 20), BigDecimal.valueOf(0.18), "PENDING_REVIEW", "eGFR 84 mL/min/1.73m2")
+                ),
+                "Kidney Function Report"
+        );
+
+        ClinicalContextResponse.LongitudinalClinicalContext context = builder.build(profile, List.of());
+
+        assertThat(context.renalContext()).isNotNull();
+        assertThat(context.renalContext().creatinine()).isEqualTo("1.1 mg/dL");
+        assertThat(context.renalContext().egfr()).isEqualTo("84 mL/min/1.73m2");
     }
 
     @Test

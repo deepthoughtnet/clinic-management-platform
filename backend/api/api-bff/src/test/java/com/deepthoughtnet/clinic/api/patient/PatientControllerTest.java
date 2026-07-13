@@ -136,7 +136,41 @@ class PatientControllerTest {
         assertThat(commandCaptor.getValue().allergies()).isEqualTo("Penicillin");
     }
 
+    @Test
+    void clinicAdminCanPersistExistingConditionsAndLongTermMedicationsOnUpdate() throws Exception {
+        when(patientService.findById(tenantId, patientId)).thenReturn(Optional.of(patientRecord("Paracetamol", OffsetDateTime.parse("2026-05-20T10:00:00Z"))));
+        when(patientService.update(any(), any(), any(), any(), any(), any(), any())).thenReturn(patientRecord("Penicillin", "Type 2 Diabetes Mellitus", "Metformin 500 mg twice daily", OffsetDateTime.parse("2026-05-20T10:00:00Z")));
+
+        ArgumentCaptor<PatientUpsertCommand> commandCaptor = ArgumentCaptor.forClass(PatientUpsertCommand.class);
+        mockMvc.perform(put("/api/patients/{id}", patientId)
+                        .contentType("application/json")
+                        .content("""
+                                {
+                                  "firstName": "Rohan",
+                                  "lastName": "Sharma",
+                                  "gender": "MALE",
+                                  "mobile": "9876501234",
+                                  "bloodGroup": "B+",
+                                  "allergies": "Penicillin",
+                                  "existingConditions": "Type 2 Diabetes Mellitus",
+                                  "longTermMedications": "Metformin 500 mg twice daily",
+                                  "active": true
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.existingConditions").value("Type 2 Diabetes Mellitus"))
+                .andExpect(jsonPath("$.longTermMedications").value("Metformin 500 mg twice daily"));
+
+        verify(patientService).update(eq(tenantId), eq(patientId), commandCaptor.capture(), eq(actorId), eq("CLINIC_ADMIN"), eq(UTC), isNull());
+        assertThat(commandCaptor.getValue().existingConditions()).isEqualTo("Type 2 Diabetes Mellitus");
+        assertThat(commandCaptor.getValue().longTermMedications()).isEqualTo("Metformin 500 mg twice daily");
+    }
+
     private PatientRecord patientRecord(String allergies, OffsetDateTime timestamp) {
+        return patientRecord(allergies, "Diabetes", "Metformin", timestamp);
+    }
+
+    private PatientRecord patientRecord(String allergies, String existingConditions, String longTermMedications, OffsetDateTime timestamp) {
         return new PatientRecord(
                 patientId,
                 tenantId,
@@ -158,8 +192,8 @@ class PatientControllerTest {
                 null,
                 "O+",
                 allergies,
-                "Diabetes",
-                null,
+                existingConditions,
+                longTermMedications,
                 "Appendectomy",
                 null,
                 true,

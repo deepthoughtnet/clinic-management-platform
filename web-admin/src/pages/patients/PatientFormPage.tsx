@@ -229,6 +229,8 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
   const [fieldErrors, setFieldErrors] = React.useState<Record<string, string>>({});
   const [loadedPatient, setLoadedPatient] = React.useState<Patient | null>(null);
   const [allergiesInput, setAllergiesInput] = React.useState("");
+  const [existingConditionsInput, setExistingConditionsInput] = React.useState("");
+  const [longTermMedicationsInput, setLongTermMedicationsInput] = React.useState("");
   const [dobEstimatedFromAge, setDobEstimatedFromAge] = React.useState(false);
   const mobileInputRef = React.useRef<HTMLInputElement | null>(null);
   const firstNameInputRef = React.useRef<HTMLInputElement | null>(null);
@@ -281,6 +283,8 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
           setLoadedPatient(detail.patient);
           setForm(patientToForm(detail.patient));
           setAllergiesInput("");
+          setExistingConditionsInput("");
+          setLongTermMedicationsInput("");
           setDobEstimatedFromAge(false);
         }
       } catch (err) {
@@ -351,6 +355,26 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
     setAllergiesInput("");
   };
 
+  const commitExistingConditionsInput = () => {
+    const pending = existingConditionsInput.trim();
+    if (!pending) {
+      setExistingConditionsInput("");
+      return;
+    }
+    setForm((current) => ({ ...current, existingConditions: mergeAllergiesValue(current.existingConditions, pending, false) }));
+    setExistingConditionsInput("");
+  };
+
+  const commitLongTermMedicationsInput = () => {
+    const pending = longTermMedicationsInput.trim();
+    if (!pending) {
+      setLongTermMedicationsInput("");
+      return;
+    }
+    setForm((current) => ({ ...current, longTermMedications: mergeAllergiesValue(current.longTermMedications, pending, false) }));
+    setLongTermMedicationsInput("");
+  };
+
   const focusFirstInvalidField = () => {
     const invalidFieldOrder = ["mobile", "firstName", "lastName", "gender", "ageYears", "dateOfBirth"];
     const errorFields = [...invalidFieldOrder, ...Object.keys(fieldErrors), ...Object.keys(liveFieldErrors)];
@@ -393,11 +417,15 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
   const savePatient = async (next: "detail" | "appointment" | "queue" = "detail") => {
     if (!auth.accessToken || !auth.tenantId) return;
     const allergies = mergeAllergiesValue(form.allergies, allergiesInput, true);
-    const nextForm = { ...form, allergies };
-    if (allergies !== form.allergies) {
+    const existingConditions = mergeAllergiesValue(form.existingConditions, existingConditionsInput, false);
+    const longTermMedications = mergeAllergiesValue(form.longTermMedications, longTermMedicationsInput, false);
+    const nextForm = { ...form, allergies, existingConditions, longTermMedications };
+    if (allergies !== form.allergies || existingConditions !== form.existingConditions || longTermMedications !== form.longTermMedications) {
       setForm(nextForm);
     }
     setAllergiesInput("");
+    setExistingConditionsInput("");
+    setLongTermMedicationsInput("");
     const payload = formToInput({ ...nextForm, mobile: normalizeIndianMobileInput(nextForm.mobile) as string });
     const parsed = validationSchema.safeParse(payload);
     if (!parsed.success) {
@@ -756,9 +784,25 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
                     freeSolo
                     options={commonConditions}
                     value={fromCsv(form.existingConditions)}
-                    onChange={(_, values) => setForm((current) => ({ ...current, existingConditions: toCsv(values) }))}
+                    inputValue={existingConditionsInput}
+                    onChange={(_, values) => {
+                      setForm((current) => ({ ...current, existingConditions: toCsv(values) }));
+                      setExistingConditionsInput("");
+                    }}
+                    onInputChange={(_, inputValue, reason) => {
+                      if (reason === "reset") {
+                        return;
+                      }
+                      setExistingConditionsInput(inputValue);
+                    }}
                     disabled={disabled}
-                    renderInput={(params) => <TextField {...params} label="Chronic conditions" />}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Chronic conditions"
+                        onBlur={commitExistingConditionsInput}
+                      />
+                    )}
                   />
                 </Grid>
                 <Grid size={{ xs: 12, md: 6 }}>
@@ -767,9 +811,25 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
                     freeSolo
                     options={commonMedications}
                     value={fromCsv(form.longTermMedications)}
-                    onChange={(_, values) => setForm((current) => ({ ...current, longTermMedications: toCsv(values) }))}
+                    inputValue={longTermMedicationsInput}
+                    onChange={(_, values) => {
+                      setForm((current) => ({ ...current, longTermMedications: toCsv(values) }));
+                      setLongTermMedicationsInput("");
+                    }}
+                    onInputChange={(_, inputValue, reason) => {
+                      if (reason === "reset") {
+                        return;
+                      }
+                      setLongTermMedicationsInput(inputValue);
+                    }}
                     disabled={disabled}
-                    renderInput={(params) => <TextField {...params} label="Long-term medications" />}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Long-term medications"
+                        onBlur={commitLongTermMedicationsInput}
+                      />
+                    )}
                   />
                 </Grid>
                 <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth multiline minRows={2} label="Surgeries / history" value={form.surgicalHistory} onChange={updateField("surgicalHistory")} disabled={disabled} /></Grid>

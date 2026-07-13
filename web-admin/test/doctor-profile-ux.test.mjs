@@ -61,3 +61,26 @@ test("doctor avatar rendering uses authenticated image loading", () => {
   assert.ok(dayBoardSource.includes("getDoctorProfile"));
   assert.ok(dayBoardSource.includes("photoUrl: selectedDoctorProfile?.photoUrl || undefined"));
 });
+
+test("doctor profile edit payload keeps live form values and specialization draft", () => {
+  const detailSource = readWebAdminSource("pages/doctors/DoctorDetailPage.tsx");
+
+  assert.ok(detailSource.includes("specializationsInput: \"\""));
+  assert.ok(detailSource.includes("inputValue={form.specializationsInput}"));
+  assert.ok(detailSource.includes("onInputChange={(_, value) => setForm"));
+  assert.ok(detailSource.includes("normalizeSpecializations(form.specializations, form.specializationsInput)"));
+  assert.ok(detailSource.includes("normalizeText(form.mobile)"));
+  assert.ok(detailSource.includes("normalizeText(form.qualification)"));
+  assert.ok(detailSource.includes("normalizeText(form.registrationNumber)"));
+  assert.ok(detailSource.includes("normalizeText(form.consultationRoom)"));
+  assert.ok(detailSource.includes("normalizeNumber(form.opdFee)"));
+  assert.ok(detailSource.includes("normalizeNumber(form.followUpFee)"));
+  assert.ok(detailSource.includes("normalizeNumber(form.emergencyFee)"));
+  assert.ok(detailSource.includes("normalizeNumber(form.yearsOfExperience)"));
+  assert.ok(detailSource.includes("normalizeNumber(form.age)"));
+  assert.ok(detailSource.includes("specialization: specializations[0] || normalizeText(profile.specialization || \"\")"));
+  assert.ok(detailSource.includes("publicListingEnabled: form.publicListingEnabled"));
+  assert.ok(detailSource.includes("slug: normalizeText(form.slug)"));
+  assert.ok(detailSource.includes("updateDoctorProfileWithPhoto"));
+  assert.ok(detailSource.includes("updateDoctorProfile("));
+});

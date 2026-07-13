@@ -119,6 +119,8 @@ import {
   saveConsultationAiSummary,
   repairClinicalMemory as repairClinicalMemoryApi,
   reprocessClinicalDocumentExtraction,
+  getMedicationSafetyEvaluationForPrescription,
+  getMedicationSafetyReviewForPrescription,
   sendPrescription,
   startConsultationFromAppointment,
   updateConsultation,
@@ -247,6 +249,44 @@ type ConsultationDocumentDraftState = {
 type MedicationSafetyReviewDraftState = {
   findings: Record<string, MedicationSafetyFindingReviewDecision>;
 };
+type CoverageDisplayState = "Evaluated" | "Partial" | "Unavailable";
+
+function normalizeMedicationSafetyCoverageLabel(
+  evaluated: boolean,
+  warnings: string[],
+  partialHints: string[],
+): CoverageDisplayState {
+  if (evaluated) {
+    return "Evaluated";
+  }
+  const loweredWarnings = (warnings || []).map((warning) => warning.toLowerCase());
+  if (loweredWarnings.some((warning) => partialHints.some((hint) => warning.includes(hint)))) {
+    return "Partial";
+  }
+  return "Unavailable";
+}
+
+function normalizeMedicationSafetyReview(
+  review: MedicationSafetyReviewResponse | null,
+  evaluation: MedicationSafetyEvaluationResult | null,
+): MedicationSafetyReviewResponse | null {
+  if (!review || !evaluation) {
+    return null;
+  }
+  return review.evaluationId === evaluation.evaluationId ? review : null;
+}
+
+function formatMedicationSafetyReviewDecisionStatus(value: string | null | undefined) {
+  const normalized = String(value || "").trim().toUpperCase();
+  if (!normalized) return "Not reviewed";
+  if (normalized === "NOT_REVIEWED") return "Not reviewed";
+  if (normalized === "WARNINGS_ACKNOWLEDGED") return "Warnings acknowledged";
+  if (normalized === "CRITICAL_OVERRIDE_APPROVED") return "Critical override approved";
+  if (normalized === "REVIEWED_NO_BLOCKING_FINDINGS") return "Reviewed";
+  if (normalized === "FINALIZED") return "Finalized";
+  if (normalized === "STALE") return "Stale";
+  return String(value).replaceAll("_", " ").toLowerCase().replace(/^\w/, (letter) => letter.toUpperCase());
+}
 type ClinicalDraftGenerationStep = ClinicalAiDraftKind | "prescriptionSuggestion" | "clinicalReasoning";
 type ClinicalDraftStepStatus = "pending" | "generating" | "done" | "failed";
 type ClinicalDraftGenerationStepState = {
@@ -1026,6 +1066,31 @@ function formatClinicalReasoningVerificationLabel(value: string | null | undefin
   if (["PENDING_REVIEW", "PENDING_VERIFICATION", "UNVERIFIED", "NOT_REVIEWED", "REVIEW_REQUIRED", "AI_REVIEW_REQUIRED"].includes(normalized)) return "Pending verification";
   if (normalized === "REJECTED") return "Rejected";
   return null;
+}
+
+function formatCoverageStateLabel(value: string | null | undefined) {
+  const normalized = String(value || "").trim().toUpperCase();
+  if (!normalized) return "Unavailable";
+  if (normalized === "EVALUATED" || normalized === "PARTIAL" || normalized === "UNAVAILABLE") {
+    return normalized.charAt(0) + normalized.slice(1).toLowerCase();
+  }
+  return String(value);
+}
+
+function isUuidLike(value: string | null | undefined) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[089ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || "").trim());
+}
+
+function formatRenalFindingText(value: string | null | undefined) {
+  if (!value) return "";
+  return String(value).replaceAll("mL/min/1.73m2", "mL/min/1.73m²");
+}
+
+function formatRenalSourceLabels(sourceReferences: string[]) {
+  const visible = (sourceReferences || []).filter((ref) => Boolean(ref) && !isUuidLike(ref));
+  const source = visible.find((ref) => String(ref).trim().toLowerCase() !== "longitudinal memory") || visible[0] || "Longitudinal memory";
+  const origin = visible.some((ref) => String(ref).trim().toLowerCase() === "longitudinal memory") ? "Longitudinal memory" : "Longitudinal memory";
+  return { source, origin };
 }
 
 function clinicalReasoningHistoricalLabel(sourceDate: string | null | undefined) {
@@ -1990,6 +2055,7 @@ export default function ConsultationWorkspacePage() {
 
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
+  const [openingCorrectionDraft, setOpeningCorrectionDraft] = React.useState(false);
   const [autosaveStatus, setAutosaveStatus] = React.useState<AutosaveStatus>("idle");
   const [aiBusy, setAiBusy] = React.useState(false);
   const [aiActiveAction, setAiActiveAction] = React.useState<AiAssistAction | null>(null);
@@ -2055,6 +2121,11 @@ export default function ConsultationWorkspacePage() {
   const [medicationSafetyReviewError, setMedicationSafetyReviewError] = React.useState<string | null>(null);
   const [medicationSafetyReviewSubmitting, setMedicationSafetyReviewSubmitting] = React.useState(false);
   const [medicationSafetyReviewDraft, setMedicationSafetyReviewDraft] = React.useState<MedicationSafetyReviewDraftState>({ findings: {} });
+  const activeMedicationSafetyReview = React.useMemo(
+    () => normalizeMedicationSafetyReview(medicationSafetyReview, medicationSafetyEvaluation),
+    [medicationSafetyEvaluation, medicationSafetyReview],
+  );
+  const medicationSafetyReviewFinalized = activeMedicationSafetyReview?.decisionStatus === "FINALIZED" || prescription?.status === "FINALIZED";
   const [clinicalReasoningAskedMissingInfo, setClinicalReasoningAskedMissingInfo] = React.useState<Record<string, boolean>>({});
   const [clinicalReasoningLoadingStepIndex, setClinicalReasoningLoadingStepIndex] = React.useState(0);
   const [clinicalReasoningSectionsOpen, setClinicalReasoningSectionsOpen] = React.useState<Record<ClinicalReasoningSectionKey, boolean>>({
@@ -2138,22 +2209,32 @@ export default function ConsultationWorkspacePage() {
     setMedicationSafetyLoading(true);
     setMedicationSafetyReviewLoading(true);
     try {
-      const result = await getMedicationSafetyEvaluation(auth.accessToken, auth.tenantId, consultation.id);
+      const selectedHistoricalPrescriptionId = selectedPrescriptionVersionId && prescription?.id && selectedPrescriptionVersionId !== prescription.id
+        ? selectedPrescriptionVersionId
+        : null;
+      const result = selectedHistoricalPrescriptionId
+        ? await getMedicationSafetyEvaluationForPrescription(auth.accessToken, auth.tenantId, consultation.id, selectedHistoricalPrescriptionId)
+        : await getMedicationSafetyEvaluation(auth.accessToken, auth.tenantId, consultation.id);
       setMedicationSafetyEvaluation(result);
       setMedicationSafetyError(null);
       try {
-        const review = await getMedicationSafetyReview(auth.accessToken, auth.tenantId, consultation.id);
-        setMedicationSafetyReview(review);
+        const review = selectedHistoricalPrescriptionId
+          ? await getMedicationSafetyReviewForPrescription(auth.accessToken, auth.tenantId, consultation.id, selectedHistoricalPrescriptionId)
+          : await getMedicationSafetyReview(auth.accessToken, auth.tenantId, consultation.id);
+        const activeReview = normalizeMedicationSafetyReview(review, result);
+        setMedicationSafetyReview(activeReview);
         setMedicationSafetyReviewError(null);
         setMedicationSafetyReviewDraft({
-          findings: Object.fromEntries((review.findingReviews || []).map((finding) => [finding.findingId, {
-            findingId: finding.findingId,
-            ruleCode: finding.ruleCode,
-            acknowledged: finding.acknowledged,
-            overrideApplied: finding.overrideApplied,
-            reasonCode: finding.reasonCode,
-            reasonText: finding.reasonText,
-          }])),
+          findings: activeReview
+            ? Object.fromEntries((activeReview.findingReviews || []).map((finding) => [finding.findingId, {
+                findingId: finding.findingId,
+                ruleCode: finding.ruleCode,
+                acknowledged: finding.acknowledged,
+                overrideApplied: finding.overrideApplied,
+                reasonCode: finding.reasonCode,
+                reasonText: finding.reasonText,
+              }]))
+            : {},
         });
       } catch (reviewErr) {
         setMedicationSafetyReview(null);
@@ -2170,7 +2251,7 @@ export default function ConsultationWorkspacePage() {
       setMedicationSafetyLoading(false);
       setMedicationSafetyReviewLoading(false);
     }
-  }, [auth.accessToken, auth.tenantId, consultation?.id]);
+  }, [auth.accessToken, auth.tenantId, consultation?.id, prescription?.id, selectedPrescriptionVersionId]);
 
   React.useEffect(() => {
     if (!consultation?.id || !prescription) {
@@ -2182,9 +2263,12 @@ export default function ConsultationWorkspacePage() {
       return;
     }
     void refreshMedicationSafety();
-  }, [consultation?.id, prescription?.id, prescription?.updatedAt, refreshMedicationSafety]);
+  }, [consultation?.id, prescription?.id, prescription?.updatedAt, selectedPrescriptionVersionId, refreshMedicationSafety]);
 
   const updateMedicationSafetyFindingReview = React.useCallback((findingId: string, patch: Partial<MedicationSafetyFindingReviewDecision>) => {
+    if (medicationSafetyReviewFinalized) {
+      return;
+    }
     setMedicationSafetyReviewDraft((current) => {
       const existing = current.findings[findingId] || {
         findingId,
@@ -2204,10 +2288,10 @@ export default function ConsultationWorkspacePage() {
         },
       };
     });
-  }, []);
+  }, [medicationSafetyReviewFinalized]);
 
   const saveMedicationSafetyReview = React.useCallback(async () => {
-    if (!auth.accessToken || !auth.tenantId || !consultation?.id || !medicationSafetyEvaluation) {
+    if (!auth.accessToken || !auth.tenantId || !consultation?.id || !medicationSafetyEvaluation || medicationSafetyReviewFinalized) {
       return;
     }
     setMedicationSafetyReviewSubmitting(true);
@@ -2224,10 +2308,10 @@ export default function ConsultationWorkspacePage() {
         };
       });
       const review = await submitMedicationSafetyReview(auth.accessToken, auth.tenantId, consultation.id, {
-        evaluationId: medicationSafetyReview?.evaluationId ?? medicationSafetyEvaluation.evaluationId,
-        prescriptionHash: medicationSafetyReview?.prescriptionHash ?? null,
-        patientContextHash: medicationSafetyReview?.patientContextHash ?? null,
-        rulesVersion: medicationSafetyReview?.rulesVersion ?? medicationSafetyEvaluation.rulesVersion,
+        evaluationId: medicationSafetyEvaluation.evaluationId,
+        prescriptionHash: activeMedicationSafetyReview?.prescriptionHash ?? null,
+        patientContextHash: activeMedicationSafetyReview?.patientContextHash ?? null,
+        rulesVersion: activeMedicationSafetyReview?.rulesVersion ?? medicationSafetyEvaluation.rulesVersion,
         findings: requestFindings,
       });
       setMedicationSafetyReview(review);
@@ -2247,7 +2331,7 @@ export default function ConsultationWorkspacePage() {
     } finally {
       setMedicationSafetyReviewSubmitting(false);
     }
-  }, [auth.accessToken, auth.tenantId, consultation?.id, medicationSafetyEvaluation, medicationSafetyReview, medicationSafetyReviewDraft.findings]);
+  }, [activeMedicationSafetyReview, auth.accessToken, auth.tenantId, consultation?.id, medicationSafetyEvaluation, medicationSafetyReviewDraft.findings, medicationSafetyReviewFinalized]);
 
   const refreshClinicalArtifacts = React.useCallback(async (
     patientId: string,
@@ -4501,13 +4585,27 @@ export default function ConsultationWorkspacePage() {
     }
   };
 
-  const continueActivePrescriptionDraft = () => {
-    if (!prescription) return;
-    const activeForm = emptyPrescriptionForm(prescription, consultation || undefined);
-    setSelectedPrescriptionVersionId(prescription.id);
-    setPrescriptionForm(activeForm);
-    savedPrescriptionSnapshotRef.current = serializePrescriptionForm(activeForm);
-    setInfo("Continuing the active correction draft");
+  const continueActivePrescriptionDraft = async () => {
+    if (!prescription || openingCorrectionDraft || saving) return;
+    setError(null);
+    setOpeningCorrectionDraft(true);
+    try {
+      setInfo("Opening correction draft...");
+      await Promise.resolve();
+      if (selectedPrescriptionVersionId === prescription.id) {
+        setInfo("Correction draft is already open");
+        return;
+      }
+      const activeForm = emptyPrescriptionForm(prescription, consultation || undefined);
+      setSelectedPrescriptionVersionId(prescription.id);
+      setPrescriptionForm(activeForm);
+      savedPrescriptionSnapshotRef.current = serializePrescriptionForm(activeForm);
+      setInfo("Correction draft opened");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to open correction draft");
+    } finally {
+      setOpeningCorrectionDraft(false);
+    }
   };
 
   const discardCurrentPrescriptionDraft = async () => {
@@ -4570,6 +4668,14 @@ export default function ConsultationWorkspacePage() {
     if (!currentPrescription && currentConsultation.status !== "DRAFT") return null;
     if (currentPrescription && currentPrescription.status !== "DRAFT" && currentPrescription.status !== "PREVIEWED") return currentPrescription;
     if (!currentPrescription && !hasPrescriptionContent(currentForm)) return null;
+    const serializedForm = serializePrescriptionForm(currentForm);
+    const prescriptionDirty = currentPrescription != null
+      && isEditablePrescriptionStatus(currentPrescription.status)
+      && serializedForm !== savedPrescriptionSnapshotRef.current;
+    if (currentPrescription && !prescriptionDirty) {
+      if (showInfo) setInfo("Prescription draft saved");
+      return currentPrescription;
+    }
     const body = buildPrescriptionInput(currentForm, currentConsultation);
     const saved = currentPrescription
       ? await updatePrescription(auth.accessToken, auth.tenantId, currentPrescription.id, body)
@@ -4577,7 +4683,7 @@ export default function ConsultationWorkspacePage() {
     const merged = currentPrescription ? { ...currentPrescription, ...saved } : saved;
     setPrescription(merged);
     prescriptionRef.current = merged;
-    savedPrescriptionSnapshotRef.current = serializePrescriptionForm(currentForm);
+    savedPrescriptionSnapshotRef.current = serializedForm;
     setInvalidMedicineRowIds([]);
     if (options?.refreshHistory !== false) {
       const historyRows = await getPrescriptionHistory(auth.accessToken, auth.tenantId, saved.id).catch(() => [saved]);
@@ -4744,7 +4850,13 @@ export default function ConsultationWorkspacePage() {
         return;
       }
     }
-    const saved = await preserveViewport(() => persistPrescription());
+    const currentPrescription = prescriptionRef.current;
+    const prescriptionDirty = currentPrescription != null
+      && isEditablePrescriptionStatus(currentPrescription.status)
+      && serializePrescriptionForm(prescriptionFormRef.current) !== savedPrescriptionSnapshotRef.current;
+    const saved = prescriptionDirty
+      ? await preserveViewport(() => persistPrescription())
+      : currentPrescription;
     if (!saved) return;
     setSaving(true);
     try {
@@ -9679,7 +9791,9 @@ export default function ConsultationWorkspacePage() {
                       <Alert severity="warning">
                         Active correction draft in progress. You can continue editing, finalize the draft, or discard it before starting a new correction.
                         <Stack direction={{ xs: "column", md: "row" }} spacing={1} sx={{ mt: 1 }}>
-                          <Button type="button" size="small" variant="outlined" onClick={continueActivePrescriptionDraft}>Continue Draft</Button>
+                          <Button type="button" size="small" variant="outlined" disabled={saving || openingCorrectionDraft} onClick={() => void continueActivePrescriptionDraft()}>
+                            {openingCorrectionDraft ? "Opening..." : "Continue Draft"}
+                          </Button>
                           <Button type="button" size="small" color="secondary" variant="outlined" disabled={saving || !hasPrescriptionContent(prescriptionForm)} onClick={() => void finalizeCurrentPrescription()}>Finalize Draft</Button>
                           <Button type="button" size="small" variant="outlined" color="error" disabled={saving} onClick={() => void discardCurrentPrescriptionDraft()}>Discard Draft</Button>
                         </Stack>
@@ -9966,17 +10080,32 @@ export default function ConsultationWorkspacePage() {
                                         <Stack spacing={0.7}>
                                           <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
                                             <Chip size="small" label={`Overall: ${medicationSafetyEvaluation.overallSeverity.replaceAll("_", " ")}`} color={medicationSafetyEvaluation.overallSeverity === "CRITICAL" ? "error" : medicationSafetyEvaluation.overallSeverity === "WARNING" ? "warning" : medicationSafetyEvaluation.overallSeverity === "INFO" ? "info" : "default"} variant="outlined" />
-                                            <Chip size="small" label={`Exact duplicate: ${medicationSafetyEvaluation.evaluationCoverage.exactDuplicateEvaluated ? "checked" : "not evaluated"}`} variant="outlined" />
-                                            <Chip size="small" label={`Ingredient: ${medicationSafetyEvaluation.evaluationCoverage.ingredientDuplicateEvaluated ? "checked" : "not evaluated"}`} variant="outlined" />
-                                            <Chip size="small" label={`Class: ${medicationSafetyEvaluation.evaluationCoverage.classDuplicateEvaluated ? "checked" : "not evaluated"}`} variant="outlined" />
-                                            <Chip size="small" label={`Allergy: ${medicationSafetyEvaluation.evaluationCoverage.allergyEvaluated ? "checked" : "not evaluated"}`} variant="outlined" />
                                             <Chip
                                               size="small"
-                                              label={`Renal: ${(
+                                              label={`Exact duplicate: ${normalizeMedicationSafetyCoverageLabel(medicationSafetyEvaluation.evaluationCoverage.exactDuplicateEvaluated, medicationSafetyEvaluation.dataQualityWarnings, [])}`}
+                                              variant="outlined"
+                                            />
+                                            <Chip
+                                              size="small"
+                                              label={`Ingredient: ${normalizeMedicationSafetyCoverageLabel(medicationSafetyEvaluation.evaluationCoverage.ingredientDuplicateEvaluated, medicationSafetyEvaluation.dataQualityWarnings, ["active ingredient metadata is unavailable"])}`}
+                                              variant="outlined"
+                                            />
+                                            <Chip
+                                              size="small"
+                                              label={`Class: ${normalizeMedicationSafetyCoverageLabel(medicationSafetyEvaluation.evaluationCoverage.classDuplicateEvaluated, medicationSafetyEvaluation.dataQualityWarnings, ["therapeutic class metadata is too broad or unavailable"])}`}
+                                              variant="outlined"
+                                            />
+                                            <Chip
+                                              size="small"
+                                              label={`Allergy: ${normalizeMedicationSafetyCoverageLabel(medicationSafetyEvaluation.evaluationCoverage.allergyEvaluated, medicationSafetyEvaluation.dataQualityWarnings, ["allergy text is present but could not be structured"])}`}
+                                              variant="outlined"
+                                            />
+                                            <Chip
+                                              size="small"
+                                              label={`Renal: ${formatCoverageStateLabel(
                                                 medicationSafetyEvaluation.evaluationCoverage.renalCoverageStatus ||
                                                 (medicationSafetyEvaluation.evaluationCoverage.renalEvaluated ? "EVALUATED" : "UNAVAILABLE")
-                                              )
-                                                .toLowerCase()}`}
+                                              )}`}
                                               variant="outlined"
                                             />
                                           </Stack>
@@ -9990,10 +10119,34 @@ export default function ConsultationWorkspacePage() {
                                                         <Typography variant="body2" sx={{ fontWeight: 900 }}>{finding.title}</Typography>
                                                         <Chip size="small" variant="outlined" color={finding.severity === "CRITICAL" ? "error" : finding.severity === "WARNING" ? "warning" : finding.severity === "INFO" ? "info" : "default"} label={finding.severity.replaceAll("_", " ").toLowerCase()} />
                                                       </Stack>
-                                                      <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", lineHeight: 1.45 }}>{finding.summary}</Typography>
+                                                      <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", lineHeight: 1.45 }}>
+                                                        {finding.ruleCode?.startsWith("MED_RENAL") ? formatRenalFindingText(finding.summary) : finding.summary}
+                                                      </Typography>
                                                       {finding.clinicalRationale ? <Typography variant="caption" color="text.secondary">{finding.clinicalRationale}</Typography> : null}
-                                                      {finding.evidence.length ? <Typography variant="caption" color="text.secondary">Evidence: {finding.evidence.join(" • ")}</Typography> : null}
-                                                      {finding.sourceReferences.length ? <Typography variant="caption" color="text.secondary">Sources: {finding.sourceReferences.join(" • ")}</Typography> : null}
+                                                      {finding.ruleCode?.startsWith("MED_RENAL") && finding.verificationStatus ? (
+                                                        <Typography variant="caption" color="text.secondary">
+                                                          Verification: {formatClinicalReasoningVerificationLabel(finding.verificationStatus) || finding.verificationStatus}
+                                                        </Typography>
+                                                      ) : null}
+                                                      {finding.evidence.length ? (
+                                                        <Typography variant="caption" color="text.secondary">
+                                                          Evidence: {finding.ruleCode?.startsWith("MED_RENAL") ? finding.evidence.map((item) => formatRenalFindingText(item)).join(" • ") : finding.evidence.join(" • ")}
+                                                        </Typography>
+                                                      ) : null}
+                                                      {finding.sourceReferences.length ? (
+                                                        finding.ruleCode?.startsWith("MED_RENAL") ? (
+                                                          (() => {
+                                                            const renalSource = formatRenalSourceLabels(finding.sourceReferences);
+                                                            return (
+                                                              <Typography variant="caption" color="text.secondary">
+                                                                Source: {renalSource.source} / Origin: {renalSource.origin}
+                                                              </Typography>
+                                                            );
+                                                          })()
+                                                        ) : (
+                                                          <Typography variant="caption" color="text.secondary">Sources: {finding.sourceReferences.join(" • ")}</Typography>
+                                                        )
+                                                      ) : null}
                                                     </Stack>
                                                   </CardContent>
                                                 </Card>
@@ -10015,14 +10168,26 @@ export default function ConsultationWorkspacePage() {
                                               <Chip
                                                 size="small"
                                                 variant="outlined"
-                                                color={medicationSafetyReview?.stale ? "warning" : medicationSafetyReview?.readyForFinalization ? "success" : "default"}
-                                                label={`Review: ${medicationSafetyReview?.decisionStatus || "NOT_REVIEWED"}`}
+                                                color={medicationSafetyReviewFinalized ? "success" : (activeMedicationSafetyReview?.stale ? "warning" : activeMedicationSafetyReview?.readyForFinalization ? "success" : "default")}
+                                                label={`Review: ${formatMedicationSafetyReviewDecisionStatus(activeMedicationSafetyReview?.decisionStatus)}`}
                                               />
-                                              <Chip size="small" variant="outlined" label={medicationSafetyReview?.stale ? "Stale" : "Current"} color={medicationSafetyReview?.stale ? "warning" : "default"} />
-                                              <Chip size="small" variant="outlined" label={medicationSafetyReview?.readyForFinalization ? "Ready for finalization" : "Review required"} color={medicationSafetyReview?.readyForFinalization ? "success" : "warning"} />
+                                              <Chip
+                                                size="small"
+                                                variant="outlined"
+                                                label={medicationSafetyReviewFinalized ? "Finalized" : (activeMedicationSafetyReview?.stale ? "Stale" : "Current")}
+                                                color={medicationSafetyReviewFinalized ? "success" : (activeMedicationSafetyReview?.stale ? "warning" : "default")}
+                                              />
+                                              {medicationSafetyReviewFinalized ? (
+                                                <Chip size="small" variant="outlined" label="Safety snapshot: Current at finalization" color="success" />
+                                              ) : (
+                                                <Chip size="small" variant="outlined" label={activeMedicationSafetyReview?.readyForFinalization ? "Ready for finalization" : "Review required"} color={activeMedicationSafetyReview?.readyForFinalization ? "success" : "warning"} />
+                                              )}
                                             </Stack>
-                                            {medicationSafetyReview?.stale ? (
+                                            {activeMedicationSafetyReview?.stale ? (
                                               <Alert severity="warning">Prescription changed after safety review. Run the safety check again.</Alert>
+                                            ) : null}
+                                            {medicationSafetyReviewFinalized ? (
+                                              <Alert severity="info">Finalized safety review is read-only.</Alert>
                                             ) : null}
                                             {medicationSafetyReviewError ? <Alert severity="warning">{medicationSafetyReviewError}</Alert> : null}
                                             {medicationSafetyReviewLoading ? <LinearProgress /> : null}
@@ -10040,6 +10205,7 @@ export default function ConsultationWorkspacePage() {
                                                       reasonCode: null,
                                                       reasonText: null,
                                                     };
+                                                    const savedFindingReview = activeMedicationSafetyReview?.findingReviews?.find((reviewFinding) => reviewFinding.findingId === finding.findingId) || null;
                                                     const isCritical = finding.severity === "CRITICAL";
                                                     return (
                                                       <Card key={finding.findingId} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5 }}>
@@ -10052,55 +10218,87 @@ export default function ConsultationWorkspacePage() {
                                                             <Typography variant="caption" color="text.secondary">{finding.summary}</Typography>
                                                             {finding.evidence.length ? <Typography variant="caption" color="text.secondary">Evidence: {finding.evidence.join(" • ")}</Typography> : null}
                                                             {finding.sourceReferences.length ? <Typography variant="caption" color="text.secondary">Sources: {finding.sourceReferences.join(" • ")}</Typography> : null}
-                                                            <FormControlLabel
-                                                              control={
-                                                                <Checkbox
-                                                                  checked={isCritical ? draft.overrideApplied : draft.acknowledged}
-                                                                  onChange={(_, checked) => updateMedicationSafetyFindingReview(finding.findingId, isCritical ? { overrideApplied: checked } : { acknowledged: checked })}
-                                                                  size="small"
+                                                            {medicationSafetyReviewFinalized ? (
+                                                              <Stack spacing={0.25}>
+                                                                <Typography variant="caption" color="text.secondary">
+                                                                  Acknowledged: {savedFindingReview?.acknowledged || savedFindingReview?.overrideApplied ? "Yes" : "No"}
+                                                                </Typography>
+                                                                {savedFindingReview?.reasonCode ? (
+                                                                  <Typography variant="caption" color="text.secondary">
+                                                                    Reason: {savedFindingReview.reasonCode.replaceAll("_", " ").toLowerCase()}
+                                                                  </Typography>
+                                                                ) : null}
+                                                                {savedFindingReview?.reasonText ? (
+                                                                  <Typography variant="caption" color="text.secondary">
+                                                                    Review note: {savedFindingReview.reasonText}
+                                                                  </Typography>
+                                                                ) : null}
+                                                                <Typography variant="caption" color="text.secondary">
+                                                                  Reviewed by: {activeMedicationSafetyReview?.reviewedByDisplayName || "User unavailable"}
+                                                                </Typography>
+                                                                <Typography variant="caption" color="text.secondary">
+                                                                  Reviewed at: {compactDateTime(activeMedicationSafetyReview?.reviewedAt || null)}
+                                                                </Typography>
+                                                              </Stack>
+                                                            ) : (
+                                                              <>
+                                                                <FormControlLabel
+                                                                  control={
+                                                                    <Checkbox
+                                                                      checked={isCritical ? draft.overrideApplied : draft.acknowledged}
+                                                                      onChange={(_, checked) => updateMedicationSafetyFindingReview(finding.findingId, isCritical ? { overrideApplied: checked } : { acknowledged: checked })}
+                                                                      size="small"
+                                                                    />
+                                                                  }
+                                                                  label={isCritical ? "Override with clinical reason" : "Acknowledge reviewed"}
                                                                 />
-                                                              }
-                                                              label={isCritical ? "Override with clinical reason" : "Acknowledge reviewed"}
-                                                            />
-                                                            <FormControl size="small" fullWidth>
-                                                              <InputLabel id={`med-safety-reason-${finding.findingId}`}>Reason code</InputLabel>
-                                                              <Select
-                                                                labelId={`med-safety-reason-${finding.findingId}`}
-                                                                label="Reason code"
-                                                                value={draft.reasonCode || ""}
-                                                                onChange={(event) => updateMedicationSafetyFindingReview(finding.findingId, { reasonCode: String(event.target.value) })}
-                                                              >
-                                                                <MenuItem value="">Select reason</MenuItem>
-                                                                <MenuItem value="BENEFIT_OUTWEIGHS_RISK">Benefit outweighs risk</MenuItem>
-                                                                <MenuItem value="CONTINUATION_CONFIRMED">Continuation confirmed</MenuItem>
-                                                                <MenuItem value="DUPLICATE_INTENTIONAL">Duplicate intentional</MenuItem>
-                                                                <MenuItem value="PATIENT_HISTORY_VERIFIED">Patient history verified</MenuItem>
-                                                                <MenuItem value="OTHER">Other</MenuItem>
-                                                              </Select>
-                                                            </FormControl>
-                                                            <TextField
-                                                              label={isCritical ? "Override reason" : "Review note"}
-                                                              size="small"
-                                                              fullWidth
-                                                              multiline
-                                                              minRows={2}
-                                                              value={draft.reasonText || ""}
-                                                              onChange={(event) => updateMedicationSafetyFindingReview(finding.findingId, { reasonText: event.target.value })}
-                                                            />
+                                                                <FormControl size="small" fullWidth>
+                                                                  <InputLabel id={`med-safety-reason-${finding.findingId}`}>Reason code</InputLabel>
+                                                                  <Select
+                                                                    labelId={`med-safety-reason-${finding.findingId}`}
+                                                                    label="Reason code"
+                                                                    value={draft.reasonCode || ""}
+                                                                    onChange={(event) => updateMedicationSafetyFindingReview(finding.findingId, { reasonCode: String(event.target.value) })}
+                                                                  >
+                                                                    <MenuItem value="">Select reason</MenuItem>
+                                                                    <MenuItem value="BENEFIT_OUTWEIGHS_RISK">Benefit outweighs risk</MenuItem>
+                                                                    <MenuItem value="CONTINUATION_CONFIRMED">Continuation confirmed</MenuItem>
+                                                                    <MenuItem value="DUPLICATE_INTENTIONAL">Duplicate intentional</MenuItem>
+                                                                    <MenuItem value="PATIENT_HISTORY_VERIFIED">Patient history verified</MenuItem>
+                                                                    <MenuItem value="OTHER">Other</MenuItem>
+                                                                  </Select>
+                                                                </FormControl>
+                                                                <TextField
+                                                                  label={isCritical ? "Override reason" : "Review note"}
+                                                                  size="small"
+                                                                  fullWidth
+                                                                  multiline
+                                                                  minRows={2}
+                                                                  value={draft.reasonText || ""}
+                                                                  onChange={(event) => updateMedicationSafetyFindingReview(finding.findingId, { reasonText: event.target.value })}
+                                                                />
+                                                              </>
+                                                            )}
                                                           </Stack>
                                                         </CardContent>
                                                       </Card>
                                                     );
                                                   })}
-                                                <Stack direction="row" spacing={0.5} justifyContent="flex-end">
-                                                  <Button type="button" size="small" variant="outlined" onClick={() => void saveMedicationSafetyReview()} disabled={medicationSafetyReviewSubmitting || medicationSafetyLoading || !medicationSafetyEvaluation}>
-                                                    Save review
-                                                  </Button>
-                                                </Stack>
+                                                {medicationSafetyReviewFinalized ? null : (
+                                                  <Stack direction="row" spacing={0.5} justifyContent="flex-end">
+                                                    <Button type="button" size="small" variant="outlined" onClick={() => void saveMedicationSafetyReview()} disabled={medicationSafetyReviewSubmitting || medicationSafetyLoading || !medicationSafetyEvaluation}>
+                                                      Save review
+                                                    </Button>
+                                                  </Stack>
+                                                )}
                                               </Stack>
                                             ) : null}
                                           </Stack>
-                                          {medicationSafetyEvaluation.sourceSnapshotMetadata.prescriptionStatus ? (
+                                          {medicationSafetyReviewFinalized ? (
+                                            <Typography variant="caption" color="text.secondary">
+                                              Safety snapshot: Current at finalization
+                                            </Typography>
+                                          ) : medicationSafetyEvaluation.sourceSnapshotMetadata.prescriptionStatus ? (
                                             <Typography variant="caption" color="text.secondary">
                                               Source status: {medicationSafetyEvaluation.sourceSnapshotMetadata.prescriptionStatus.replaceAll("_", " ").toLowerCase()}
                                             </Typography>

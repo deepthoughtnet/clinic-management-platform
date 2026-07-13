@@ -312,8 +312,8 @@ public class MedicationSafetyEngine {
                             "Use the recorded allergy list as a hard safety screen and verify the product identity before prescribing.",
                             List.of(item),
                             List.of(item.medicineName()),
-                            List.of("Allergy term: " + allergyTerm),
-                            sourceRefs(List.of(item)),
+                            List.of("Recorded allergy: " + allergyTerm.trim()),
+                            sourceRefs(List.of("Patient clinical profile", "Prescription draft: " + item.medicineName()), item.sourceDocumentTitle() == null ? List.of() : List.of(item.sourceDocumentTitle())),
                             parseVerification(allergies.verificationStatus(), item.verificationStatus()),
                             false,
                             false,
@@ -471,7 +471,7 @@ public class MedicationSafetyEngine {
                 List.of(),
                 List.of(),
                 evidence,
-                sourceRefs(List.of(), renal.sourceDocumentIds()),
+                sourceRefs(renal.sourceReferences(), renal.sourceDocumentIds()),
                 parseVerification(renal.verificationStatus()),
                 false,
                 false,
@@ -672,6 +672,17 @@ public class MedicationSafetyEngine {
 
     private List<String> sourceRefs(Collection<MedicationSafetyMedicationItem> items) {
         return sourceRefs(items, List.of());
+    }
+
+    private List<String> sourceRefs(List<String> preferred, Collection<String> extra) {
+        LinkedHashSet<String> refs = new LinkedHashSet<>();
+        if (preferred != null) {
+            preferred.stream().filter(this::hasText).forEach(refs::add);
+        }
+        if (extra != null) {
+            extra.stream().filter(this::hasText).forEach(refs::add);
+        }
+        return new ArrayList<>(refs);
     }
 
     private List<String> sourceRefs(Collection<MedicationSafetyMedicationItem> items, Collection<String> extra) {

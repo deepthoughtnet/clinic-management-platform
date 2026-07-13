@@ -82,6 +82,7 @@ class MedicationSafetyServiceTest {
         when(prescriptionRepository.findFirstByTenantIdAndConsultationIdOrderByVersionNumberDesc(tenantId, consultationId)).thenReturn(java.util.Optional.of(prescription));
         when(prescriptionMedicineRepository.findByTenantIdAndPrescriptionIdOrderBySortOrderAsc(tenantId, prescription.getId())).thenReturn(List.of(line));
         when(medicineRepository.findByTenantIdOrderByMedicineNameAsc(tenantId)).thenReturn(List.of(medicine));
+        UUID renalDocumentId = UUID.randomUUID();
         when(clinicalContextService.buildClinicalContext(tenantId, patient.getId(), consultationId)).thenReturn(new ClinicalContextResponse(
                 tenantId,
                 patient.getId(),
@@ -127,7 +128,7 @@ class MedicationSafetyServiceTest {
     }
 
     @Test
-    void passesLongitudinalRenalContextIntoMedicationSafetyRequest() {
+    void derivesConservativeIngredientFallbackFromStructuredMedicineName() {
         UUID tenantId = UUID.randomUUID();
         UUID consultationId = UUID.randomUUID();
         UUID patientId = UUID.randomUUID();
@@ -137,9 +138,9 @@ class MedicationSafetyServiceTest {
         PatientEntity patient = PatientEntity.create(tenantId, "PAT-1");
         PrescriptionEntity prescription = PrescriptionEntity.create(tenantId, patientId, doctorUserId, consultationId, null, "RX-1");
         prescription.update("Diagnosis", "Advice", null);
-        MedicineEntity medicine = MedicineEntity.create(tenantId, "Amlodipine", "TABLET");
-        medicine.update("Amlodipine", "TABLET", null, null, null, "Amlodipine", null, "ANTIHYPERTENSIVE", "Tablet", "5 mg", "mg", null, "1 tab", "1-0-0", 30, "AFTER_FOOD", null, BigDecimal.ONE, BigDecimal.ZERO, true);
-        PrescriptionMedicineEntity line = PrescriptionMedicineEntity.create(tenantId, prescription.getId(), "Amlodipine", MedicineType.TABLET, "5 mg", "1 tab", "1-0-0", "30 days", Timing.AFTER_FOOD, null, 1);
+        MedicineEntity medicine = MedicineEntity.create(tenantId, "Paracetamol 500 mg", "TABLET");
+        medicine.update("Paracetamol 500 mg", "TABLET", null, null, null, null, null, "ANALGESIC", "Tablet", "500 mg", "mg", null, "1 tab", "1-0-1", 5, "AFTER_FOOD", null, BigDecimal.ONE, BigDecimal.ZERO, true);
+        PrescriptionMedicineEntity line = PrescriptionMedicineEntity.create(tenantId, prescription.getId(), "Paracetamol 500 mg", MedicineType.TABLET, "500 mg", "1 tab", "1-0-1", "5 days", Timing.AFTER_FOOD, null, 1);
 
         when(consultationRepository.findByTenantIdAndId(tenantId, consultationId)).thenReturn(java.util.Optional.of(consultation));
         when(patientRepository.findByTenantIdAndId(tenantId, patientId)).thenReturn(java.util.Optional.of(patient));
@@ -159,10 +160,86 @@ class MedicationSafetyServiceTest {
                 null,
                 null,
                 null,
+                null,
+                null,
+                null,
+                null,
+                OffsetDateTime.now()
+        ));
+        when(medicationSafetyEngine.evaluate(any())).thenAnswer(invocation -> new MedicationSafetyEvaluationResult(
+                "eval-ingredient-fallback",
+                OffsetDateTime.now(),
+                prescription.getId(),
+                MedicationSafetySeverity.NONE,
+                List.of(),
+                List.of(),
+                new MedicationSafetyCoverage(true, true, true, true, true, true, true, true, false, true, "UNAVAILABLE"),
+                "med-safety-v1",
+                new MedicationSafetyEvaluationResult.SourceSnapshotMetadata(tenantId, patientId, consultationId, prescription.getId(), PrescriptionStatus.DRAFT.name())
+        ));
+
+        medicationSafetyService.evaluateForConsultation(tenantId, consultationId, UUID.randomUUID());
+
+        ArgumentCaptor<MedicationSafetyEvaluationRequest> captor = ArgumentCaptor.forClass(MedicationSafetyEvaluationRequest.class);
+        verify(medicationSafetyEngine).evaluate(captor.capture());
+        MedicationSafetyEvaluationRequest request = captor.getValue();
+        assertThat(request.proposedMedications()).hasSize(1);
+        assertThat(request.proposedMedications().get(0).activeIngredients()).containsExactly("paracetamol");
+        assertThat(request.proposedMedications().get(0).normalizedMedicineName()).isEqualTo("paracetamol");
+    }
+
+    @Test
+    void passesLongitudinalRenalContextIntoMedicationSafetyRequest() {
+        UUID tenantId = UUID.randomUUID();
+        UUID consultationId = UUID.randomUUID();
+        UUID patientId = UUID.randomUUID();
+        UUID doctorUserId = UUID.randomUUID();
+
+        ConsultationEntity consultation = ConsultationEntity.create(tenantId, patientId, doctorUserId, null);
+        PatientEntity patient = PatientEntity.create(tenantId, "PAT-1");
+        PrescriptionEntity prescription = PrescriptionEntity.create(tenantId, patientId, doctorUserId, consultationId, null, "RX-1");
+        prescription.update("Diagnosis", "Advice", null);
+        MedicineEntity medicine = MedicineEntity.create(tenantId, "Amlodipine", "TABLET");
+        medicine.update("Amlodipine", "TABLET", null, null, null, "Amlodipine", null, "ANTIHYPERTENSIVE", "Tablet", "5 mg", "mg", null, "1 tab", "1-0-0", 30, "AFTER_FOOD", null, BigDecimal.ONE, BigDecimal.ZERO, true);
+        PrescriptionMedicineEntity line = PrescriptionMedicineEntity.create(tenantId, prescription.getId(), "Amlodipine", MedicineType.TABLET, "5 mg", "1 tab", "1-0-0", "30 days", Timing.AFTER_FOOD, null, 1);
+
+        when(consultationRepository.findByTenantIdAndId(tenantId, consultationId)).thenReturn(java.util.Optional.of(consultation));
+        when(patientRepository.findByTenantIdAndId(tenantId, patientId)).thenReturn(java.util.Optional.of(patient));
+        when(prescriptionRepository.findFirstByTenantIdAndConsultationIdOrderByVersionNumberDesc(tenantId, consultationId)).thenReturn(java.util.Optional.of(prescription));
+        when(prescriptionMedicineRepository.findByTenantIdAndPrescriptionIdOrderBySortOrderAsc(tenantId, prescription.getId())).thenReturn(List.of(line));
+        when(medicineRepository.findByTenantIdOrderByMedicineNameAsc(tenantId)).thenReturn(List.of(medicine));
+        UUID renalDocumentId = UUID.randomUUID();
+        when(clinicalContextService.buildClinicalContext(tenantId, patient.getId(), consultationId)).thenReturn(new ClinicalContextResponse(
+                tenantId,
+                patient.getId(),
+                consultationId,
+                null,
+                List.of(),
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                new ClinicalContextResponse.LongitudinalMemory(
+                        List.of(),
+                        List.of(),
+                        null,
+                        null,
+                        List.of(),
+                        null,
+                        null,
+                        List.of(),
+                        List.of(
+                                new ClinicalContextResponse.LongitudinalConcept("LAB_RESULT", "creatinine", "Creatinine", "1.08", "mg/dL", "03_Kidney_Function_Report", "EXTERNAL_LAB_REPORT", renalDocumentId.toString(), "2026-05-20", new BigDecimal("0.18"), "PENDING_REVIEW", "Creatinine 1.08 mg/dL"),
+                                new ClinicalContextResponse.LongitudinalConcept("LAB_RESULT", "egfr", "eGFR", "84", "mL/min/1.73m2", "03_Kidney_Function_Report", "EXTERNAL_LAB_REPORT", renalDocumentId.toString(), "2026-05-20", new BigDecimal("0.18"), "PENDING_REVIEW", "eGFR 84 mL/min/1.73m2")
+                        ),
+                        "Kidney Function Report"
+                ),
                 new ClinicalContextResponse.LongitudinalClinicalContext(
                         List.of(),
                         List.of(),
-                        new ClinicalContextResponse.RenalContext("1.08 mg/dL", "2026-05-20", "84 mL/min/1.73m2", "2026-05-20", "Historical renal function preserved.", 52, "PENDING_VERIFICATION", List.of("doc-renal-1")),
+                        new ClinicalContextResponse.RenalContext("1.08 mg/dL", "2026-05-20", "84 mL/min/1.73m2", "2026-05-20", "Historical renal function preserved.", 52, "PENDING_VERIFICATION", List.of(renalDocumentId.toString())),
                         List.of(),
                         List.of()
                 ),
@@ -192,7 +269,87 @@ class MedicationSafetyServiceTest {
         assertThat(request.renalContext().creatinine()).isEqualTo("1.08 mg/dL");
         assertThat(request.renalContext().egfr()).isEqualTo("84 mL/min/1.73m2");
         assertThat(request.renalContext().verificationStatus()).isEqualTo("PENDING_VERIFICATION");
-        assertThat(request.renalContext().sourceDocumentIds()).containsExactly("doc-renal-1");
+        assertThat(request.renalContext().sourceReferences()).containsExactly("03_Kidney_Function_Report");
+        assertThat(request.renalContext().sourceDocumentIds()).containsExactly(renalDocumentId.toString());
+    }
+
+    @Test
+    void fallsBackToHumanizedSourceTypeWhenRenalTitleIsMissing() {
+        UUID tenantId = UUID.randomUUID();
+        UUID consultationId = UUID.randomUUID();
+        UUID patientId = UUID.randomUUID();
+        UUID doctorUserId = UUID.randomUUID();
+        UUID renalDocumentId = UUID.randomUUID();
+
+        ConsultationEntity consultation = ConsultationEntity.create(tenantId, patientId, doctorUserId, null);
+        PatientEntity patient = PatientEntity.create(tenantId, "PAT-1");
+        PrescriptionEntity prescription = PrescriptionEntity.create(tenantId, patientId, doctorUserId, consultationId, null, "RX-1");
+        prescription.update("Diagnosis", "Advice", null);
+        MedicineEntity medicine = MedicineEntity.create(tenantId, "Amlodipine", "TABLET");
+        medicine.update("Amlodipine", "TABLET", null, null, null, "Amlodipine", null, "ANTIHYPERTENSIVE", "Tablet", "5 mg", "mg", null, "1 tab", "1-0-0", 30, "AFTER_FOOD", null, BigDecimal.ONE, BigDecimal.ZERO, true);
+        PrescriptionMedicineEntity line = PrescriptionMedicineEntity.create(tenantId, prescription.getId(), "Amlodipine", MedicineType.TABLET, "5 mg", "1 tab", "1-0-0", "30 days", Timing.AFTER_FOOD, null, 1);
+
+        when(consultationRepository.findByTenantIdAndId(tenantId, consultationId)).thenReturn(java.util.Optional.of(consultation));
+        when(patientRepository.findByTenantIdAndId(tenantId, patientId)).thenReturn(java.util.Optional.of(patient));
+        when(prescriptionRepository.findFirstByTenantIdAndConsultationIdOrderByVersionNumberDesc(tenantId, consultationId)).thenReturn(java.util.Optional.of(prescription));
+        when(prescriptionMedicineRepository.findByTenantIdAndPrescriptionIdOrderBySortOrderAsc(tenantId, prescription.getId())).thenReturn(List.of(line));
+        when(medicineRepository.findByTenantIdOrderByMedicineNameAsc(tenantId)).thenReturn(List.of(medicine));
+        when(clinicalContextService.buildClinicalContext(tenantId, patient.getId(), consultationId)).thenReturn(new ClinicalContextResponse(
+                tenantId,
+                patient.getId(),
+                consultationId,
+                null,
+                List.of(),
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                new ClinicalContextResponse.LongitudinalMemory(
+                        List.of(),
+                        List.of(),
+                        null,
+                        null,
+                        List.of(),
+                        null,
+                        null,
+                        List.of(),
+                        List.of(
+                                new ClinicalContextResponse.LongitudinalConcept("LAB_RESULT", "creatinine", "Creatinine", "1.08", "mg/dL", "", "LONGITUDINAL_MEMORY", renalDocumentId.toString(), "2026-05-20", new BigDecimal("0.18"), "PENDING_REVIEW", "Creatinine 1.08 mg/dL")
+                        ),
+                        "Kidney Function Report"
+                ),
+                new ClinicalContextResponse.LongitudinalClinicalContext(
+                        List.of(),
+                        List.of(),
+                        new ClinicalContextResponse.RenalContext("1.08 mg/dL", "2026-05-20", null, null, "Historical renal function preserved.", 52, "PENDING_VERIFICATION", List.of(renalDocumentId.toString())),
+                        List.of(),
+                        List.of()
+                ),
+                null,
+                null,
+                null,
+                OffsetDateTime.now()
+        ));
+        when(medicationSafetyEngine.evaluate(any())).thenAnswer(invocation -> new MedicationSafetyEvaluationResult(
+                "eval-renal-2",
+                OffsetDateTime.now(),
+                prescription.getId(),
+                MedicationSafetySeverity.NONE,
+                List.of(),
+                List.of(),
+                new MedicationSafetyCoverage(true, true, true, true, true, true, true, true, false, true, "PARTIAL"),
+                "med-safety-v1",
+                new MedicationSafetyEvaluationResult.SourceSnapshotMetadata(tenantId, patientId, consultationId, prescription.getId(), PrescriptionStatus.DRAFT.name())
+        ));
+
+        medicationSafetyService.evaluateForConsultation(tenantId, consultationId, UUID.randomUUID());
+
+        ArgumentCaptor<MedicationSafetyEvaluationRequest> captor = ArgumentCaptor.forClass(MedicationSafetyEvaluationRequest.class);
+        verify(medicationSafetyEngine).evaluate(captor.capture());
+        MedicationSafetyEvaluationRequest request = captor.getValue();
+        assertThat(request.renalContext().sourceReferences()).containsExactly("Longitudinal Memory");
     }
 
     @Test

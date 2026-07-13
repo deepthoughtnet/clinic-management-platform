@@ -1582,6 +1582,8 @@ export type MedicationSafetyReviewResponse = {
   requiredAction: string | null;
   reviewedAt: string | null;
   reviewedByAppUserId: string | null;
+  reviewedByDisplayName: string | null;
+  finalizedAt: string | null;
   evaluationOverallSeverity: MedicationSafetySeverity | null;
   actionableFindingCount: number;
   warningFindingCount: number;
@@ -3677,6 +3679,14 @@ export async function getMedicationSafetyEvaluation(token: string, tenantId: str
 
 export async function getMedicationSafetyReview(token: string, tenantId: string, consultationId: string) {
   return httpGet<MedicationSafetyReviewResponse>(`/api/consultations/${consultationId}/prescription/safety/review`, { token, tenantId });
+}
+
+export async function getMedicationSafetyEvaluationForPrescription(token: string, tenantId: string, consultationId: string, prescriptionId: string) {
+  return httpGet<MedicationSafetyEvaluationResult>(`/api/consultations/${consultationId}/prescription/safety/evaluation?prescriptionId=${encodeURIComponent(prescriptionId)}`, { token, tenantId });
+}
+
+export async function getMedicationSafetyReviewForPrescription(token: string, tenantId: string, consultationId: string, prescriptionId: string) {
+  return httpGet<MedicationSafetyReviewResponse>(`/api/consultations/${consultationId}/prescription/safety/review?prescriptionId=${encodeURIComponent(prescriptionId)}`, { token, tenantId });
 }
 
 export async function submitMedicationSafetyReview(token: string, tenantId: string, consultationId: string, body: MedicationSafetyReviewRequest) {

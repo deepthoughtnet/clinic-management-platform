@@ -7,6 +7,8 @@ import com.deepthoughtnet.clinic.consultation.db.ConsultationEntity;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventCommand;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
 import com.deepthoughtnet.clinic.platform.security.Roles;
+import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
+import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.OffsetDateTime;
@@ -30,6 +32,7 @@ public class MedicationSafetyReviewService {
     private final PrescriptionSafetyReviewRepository reviewRepository;
     private final AuditEventPublisher auditEventPublisher;
     private final PermissionChecker permissionChecker;
+    private final TenantUserManagementService tenantUserManagementService;
     private final ObjectMapper objectMapper;
 
     public MedicationSafetyReviewService(MedicationSafetyService medicationSafetyService,
@@ -37,22 +40,42 @@ public class MedicationSafetyReviewService {
                                          PrescriptionSafetyReviewRepository reviewRepository,
                                          AuditEventPublisher auditEventPublisher,
                                          PermissionChecker permissionChecker,
+                                         TenantUserManagementService tenantUserManagementService,
                                          ObjectMapper objectMapper) {
         this.medicationSafetyService = medicationSafetyService;
         this.medicationSafetyEngine = medicationSafetyEngine;
         this.reviewRepository = reviewRepository;
         this.auditEventPublisher = auditEventPublisher;
         this.permissionChecker = permissionChecker;
+        this.tenantUserManagementService = tenantUserManagementService;
         this.objectMapper = objectMapper;
     }
 
     @Transactional(readOnly = true)
     public MedicationSafetyReviewResponse getReview(UUID tenantId, UUID consultationId) {
+        return getReview(tenantId, consultationId, null);
+    }
+
+    @Transactional(readOnly = true)
+    public MedicationSafetyReviewResponse getReview(UUID tenantId, UUID consultationId, UUID prescriptionId) {
         MedicationSafetyEvaluationContext context = medicationSafetyService.buildEvaluationContext(tenantId, consultationId);
-        MedicationSafetyEvaluationResult current = medicationSafetyEngine.evaluate(context.request());
-        PrescriptionSafetyReviewEntity review = latestReview(tenantId, context.prescription() == null ? null : context.prescription().getId());
-        boolean stale = isStale(review, context);
-        return toResponse(review, context, current, stale);
+        PrescriptionSafetyReviewEntity review = latestReview(tenantId, context, prescriptionId);
+        boolean useStoredSnapshot = review != null && (prescriptionId != null || MedicationSafetyReviewDecisionStatus.FINALIZED.name().equals(review.getDecisionStatus()));
+        MedicationSafetyEvaluationResult current = useStoredSnapshot ? loadEvaluationSnapshot(review) : medicationSafetyEngine.evaluate(context.request());
+        if (current == null) {
+            current = medicationSafetyEngine.evaluate(context.request());
+        }
+        boolean stale = review != null && !useStoredSnapshot && isStale(review, context);
+        return toResponse(review, context, current, stale, useStoredSnapshot);
+    }
+
+    @Transactional(readOnly = true)
+    public MedicationSafetyEvaluationResult getEvaluation(UUID tenantId, UUID consultationId, UUID prescriptionId) {
+        MedicationSafetyEvaluationContext context = medicationSafetyService.buildEvaluationContext(tenantId, consultationId);
+        PrescriptionSafetyReviewEntity review = latestReview(tenantId, context, prescriptionId);
+        boolean useStoredSnapshot = review != null && (prescriptionId != null || MedicationSafetyReviewDecisionStatus.FINALIZED.name().equals(review.getDecisionStatus()));
+        MedicationSafetyEvaluationResult current = useStoredSnapshot ? loadEvaluationSnapshot(review) : medicationSafetyEngine.evaluate(context.request());
+        return current == null ? medicationSafetyEngine.evaluate(context.request()) : current;
     }
 
     @Transactional
@@ -86,7 +109,7 @@ public class MedicationSafetyReviewService {
             );
         }
         PrescriptionSafetyReviewEntity review = saveReviewEntity(tenantId, context, current, decisions, actorAppUserId, policyOutcome);
-        MedicationSafetyReviewResponse response = toResponse(review, context, current, false);
+        MedicationSafetyReviewResponse response = toResponse(review, context, current, false, false);
         audit(tenantId, context.consultation().getId(), context.prescription() == null ? null : context.prescription().getId(), actorAppUserId, "prescription.safety.reviewed",
                 "Medication safety review saved", Map.of(
                         "rulesVersion", current.rulesVersion(),
@@ -103,7 +126,7 @@ public class MedicationSafetyReviewService {
         MedicationSafetyEvaluationContext context = medicationSafetyService.buildEvaluationContext(tenantId, consultationId);
         MedicationSafetyEvaluationResult current = medicationSafetyEngine.evaluate(context.request());
         List<MedicationSafetyFinding> actionableFindings = actionableFindings(current);
-        PrescriptionSafetyReviewEntity review = latestReview(tenantId, context.prescription() == null ? null : context.prescription().getId());
+        PrescriptionSafetyReviewEntity review = latestReview(tenantId, context, null);
 
         if (actionableFindings.isEmpty()) {
             return;
@@ -170,7 +193,7 @@ public class MedicationSafetyReviewService {
     public void markFinalized(UUID tenantId, UUID consultationId, UUID actorAppUserId) {
         MedicationSafetyEvaluationContext context = medicationSafetyService.buildEvaluationContext(tenantId, consultationId);
         MedicationSafetyEvaluationResult current = medicationSafetyEngine.evaluate(context.request());
-        PrescriptionSafetyReviewEntity review = latestReview(tenantId, context.prescription() == null ? null : context.prescription().getId());
+        PrescriptionSafetyReviewEntity review = latestReview(tenantId, context, null);
         if (review == null || isStale(review, context)) {
             review = ensureSummaryReview(tenantId, context, current, actorAppUserId);
         }
@@ -188,7 +211,7 @@ public class MedicationSafetyReviewService {
                                                                MedicationSafetyEvaluationContext context,
                                                                MedicationSafetyEvaluationResult current,
                                                                UUID actorAppUserId) {
-        PrescriptionSafetyReviewEntity review = latestReview(tenantId, context.prescription() == null ? null : context.prescription().getId());
+        PrescriptionSafetyReviewEntity review = latestReview(tenantId, context, null);
         if (review != null && !isStale(review, context)) {
             return review;
         }
@@ -231,7 +254,7 @@ public class MedicationSafetyReviewService {
         String overrideReasonCode = policyOutcome.firstCriticalOverrideReasonCode;
         String overrideReasonText = policyOutcome.firstCriticalOverrideReasonText;
         String overrideCategory = policyOutcome.firstCriticalOverrideCategory;
-        PrescriptionSafetyReviewEntity entity = latestReview(tenantId, context.prescription() == null ? null : context.prescription().getId());
+        PrescriptionSafetyReviewEntity entity = latestReview(tenantId, context, null);
         if (entity == null || isStale(entity, context)) {
             entity = PrescriptionSafetyReviewEntity.create(
                     tenantId,
@@ -392,7 +415,7 @@ public class MedicationSafetyReviewService {
 
     private boolean isStale(PrescriptionSafetyReviewEntity review, MedicationSafetyEvaluationContext context) {
         if (review == null || context == null) {
-            return true;
+            return false;
         }
         return !review.getPrescriptionHash().equals(context.prescriptionHash())
                 || !review.getPatientContextHash().equals(context.patientContextHash())
@@ -402,7 +425,8 @@ public class MedicationSafetyReviewService {
     private MedicationSafetyReviewResponse toResponse(PrescriptionSafetyReviewEntity review,
                                                       MedicationSafetyEvaluationContext context,
                                                       MedicationSafetyEvaluationResult current,
-                                                      boolean stale) {
+                                                      boolean stale,
+                                                      boolean useStoredSnapshot) {
         List<MedicationSafetyFindingReviewStatus> statuses = new ArrayList<>();
         List<MedicationSafetyFinding> findings = current == null || current.findings() == null ? List.of() : current.findings();
         Map<String, MedicationSafetyFindingReviewDecision> decisions = new LinkedHashMap<>();
@@ -415,6 +439,7 @@ public class MedicationSafetyReviewService {
         }
         int warningCount = 0;
         int criticalCount = 0;
+        boolean finalized = review != null && MedicationSafetyReviewDecisionStatus.FINALIZED.name().equals(review.getDecisionStatus());
         for (MedicationSafetyFinding finding : findings) {
             if (finding == null) {
                 continue;
@@ -443,11 +468,14 @@ public class MedicationSafetyReviewService {
             ));
         }
         boolean noActionableFindings = warningCount + criticalCount == 0;
-        boolean ready = !stale && (noActionableFindings
+        boolean ready = !stale && !finalized && !useStoredSnapshot && (noActionableFindings
                 || (review != null && review.getDecisionStatus() != null && !MedicationSafetyReviewDecisionStatus.NOT_REVIEWED.name().equals(review.getDecisionStatus())));
-        String requiredAction = ready
+        String requiredAction = finalized
+                ? "FINALIZED"
+                : ready
                 ? "NONE"
                 : (criticalCount > 0 ? "OVERRIDE_CRITICAL" : (warningCount > 0 ? "ACKNOWLEDGE_WARNINGS" : "RUN_SAFETY_REVIEW"));
+        String reviewedByDisplayName = review == null ? null : reviewedByDisplayName(review.getReviewedByAppUserId(), review.getTenantId());
         return new MedicationSafetyReviewResponse(
                 review == null ? null : review.getId(),
                 context == null ? null : context.consultation().getId(),
@@ -463,6 +491,8 @@ public class MedicationSafetyReviewService {
                 requiredAction,
                 review == null ? null : review.getReviewedAt(),
                 review == null ? null : review.getReviewedByAppUserId(),
+                reviewedByDisplayName,
+                review == null ? null : review.getFinalizedAt(),
                 current == null || current.overallSeverity() == null ? null : current.overallSeverity().name(),
                 warningCount + criticalCount,
                 warningCount,
@@ -506,6 +536,30 @@ public class MedicationSafetyReviewService {
             return null;
         }
         return reviewRepository.findFirstByTenantIdAndPrescriptionIdOrderByUpdatedAtDesc(tenantId, prescriptionId).orElse(null);
+    }
+
+    private PrescriptionSafetyReviewEntity latestReview(UUID tenantId, MedicationSafetyEvaluationContext context, UUID prescriptionId) {
+        UUID resolvedPrescriptionId = prescriptionId != null
+                ? prescriptionId
+                : context == null || context.prescription() == null ? null : context.prescription().getId();
+        if (resolvedPrescriptionId == null) {
+            return null;
+        }
+        if (context != null && hasText(context.prescriptionHash()) && hasText(context.patientContextHash()) && hasText(context.snapshotHash())) {
+            PrescriptionSafetyReviewEntity exact = reviewRepository
+                    .findFirstByTenantIdAndPrescriptionIdAndPrescriptionHashAndPatientContextHashAndRulesVersionOrderByUpdatedAtDesc(
+                            tenantId,
+                            resolvedPrescriptionId,
+                            context.prescriptionHash(),
+                            context.patientContextHash(),
+                            medicationSafetyEngine.rulesVersion()
+                    )
+                    .orElse(null);
+            if (exact != null) {
+                return exact;
+            }
+        }
+        return latestReview(tenantId, resolvedPrescriptionId);
     }
 
     private boolean canOverrideCritical() {
@@ -553,6 +607,45 @@ public class MedicationSafetyReviewService {
 
     private boolean hasText(String value) {
         return value != null && !value.trim().isEmpty();
+    }
+
+    private MedicationSafetyEvaluationResult loadEvaluationSnapshot(PrescriptionSafetyReviewEntity review) {
+        if (review == null || !hasText(review.getEvaluationSnapshotJson())) {
+            return null;
+        }
+        try {
+            return objectMapper.readValue(review.getEvaluationSnapshotJson(), MedicationSafetyEvaluationResult.class);
+        } catch (Exception ex) {
+            log.warn("Unable to parse finalized medication safety evaluation snapshot", ex);
+            return null;
+        }
+    }
+
+    private String reviewedByDisplayName(UUID reviewedByAppUserId, UUID tenantId) {
+        if (reviewedByAppUserId == null || tenantId == null) {
+            return "User unavailable";
+        }
+        return tenantUserManagementService.list(tenantId).stream()
+                .filter(user -> reviewedByAppUserId.equals(user.appUserId()))
+                .map(this::displayName)
+                .findFirst()
+                .orElse("User unavailable");
+    }
+
+    private String displayName(TenantUserRecord user) {
+        if (user == null) {
+            return "User unavailable";
+        }
+        if (hasText(user.displayName())) {
+            return user.displayName().trim();
+        }
+        if (hasText(user.username())) {
+            return user.username().trim();
+        }
+        if (hasText(user.email())) {
+            return user.email().trim();
+        }
+        return "User unavailable";
     }
 
     private record ReviewPolicyOutcome(

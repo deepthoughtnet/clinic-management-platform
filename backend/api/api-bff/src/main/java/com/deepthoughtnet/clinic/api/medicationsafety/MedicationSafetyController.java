@@ -7,6 +7,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -38,10 +39,18 @@ public class MedicationSafetyController {
 
     @GetMapping("/review")
     @PreAuthorize("@permissionChecker.hasPermission('consultation.read')")
-    public MedicationSafetyReviewResponse review(@PathVariable UUID consultationId) {
+    public MedicationSafetyReviewResponse review(@PathVariable UUID consultationId, @RequestParam(required = false) UUID prescriptionId) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         doctorAssignmentSecurityService.requireConsultationAccess(tenantId, consultationId);
-        return medicationSafetyReviewService.getReview(tenantId, consultationId);
+        return medicationSafetyReviewService.getReview(tenantId, consultationId, prescriptionId);
+    }
+
+    @GetMapping("/evaluation")
+    @PreAuthorize("@permissionChecker.hasPermission('consultation.read')")
+    public MedicationSafetyEvaluationResult evaluation(@PathVariable UUID consultationId, @RequestParam(required = false) UUID prescriptionId) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        doctorAssignmentSecurityService.requireConsultationAccess(tenantId, consultationId);
+        return medicationSafetyReviewService.getEvaluation(tenantId, consultationId, prescriptionId);
     }
 
     @PostMapping("/review")

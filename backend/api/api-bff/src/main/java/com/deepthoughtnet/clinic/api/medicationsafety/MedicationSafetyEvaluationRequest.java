@@ -37,6 +37,7 @@ public record MedicationSafetyEvaluationRequest(
             String egfrDate,
             String verificationStatus,
             Integer stalenessDays,
+            List<String> sourceReferences,
             List<String> sourceDocumentIds
     ) {
     }

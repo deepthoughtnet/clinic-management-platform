@@ -16,6 +16,8 @@ import com.deepthoughtnet.clinic.api.ai.dto.ClinicalContextResponse;
 import com.deepthoughtnet.clinic.consultation.db.ConsultationEntity;
 import com.deepthoughtnet.clinic.patient.db.PatientEntity;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
+import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
+import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
 import com.deepthoughtnet.clinic.prescription.db.PrescriptionEntity;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionStatus;
 import java.time.OffsetDateTime;
@@ -37,6 +39,7 @@ class MedicationSafetyReviewServiceTest {
     @Mock PrescriptionSafetyReviewRepository reviewRepository;
     @Mock AuditEventPublisher auditEventPublisher;
     @Mock PermissionChecker permissionChecker;
+    @Mock TenantUserManagementService tenantUserManagementService;
 
     MedicationSafetyReviewService medicationSafetyReviewService;
     ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
@@ -50,6 +53,7 @@ class MedicationSafetyReviewServiceTest {
                 reviewRepository,
                 auditEventPublisher,
                 permissionChecker,
+                tenantUserManagementService,
                 objectMapper
         );
     }
@@ -237,6 +241,205 @@ class MedicationSafetyReviewServiceTest {
         assertThat(response.stale()).isTrue();
         assertThat(response.readyForFinalization()).isFalse();
         assertThat(response.requiredAction()).isEqualTo("ACKNOWLEDGE_WARNINGS");
+    }
+
+    @Test
+    void doesNotMarkMissingReviewAsStale() {
+        SafetyFixture fixture = fixtureWithWarningFinding();
+        when(medicationSafetyService.buildEvaluationContext(fixture.tenantId, fixture.consultationId)).thenReturn(fixture.context);
+        when(medicationSafetyEngine.evaluate(any())).thenReturn(fixture.current);
+        when(reviewRepository.findFirstByTenantIdAndPrescriptionIdOrderByUpdatedAtDesc(fixture.tenantId, fixture.prescription.getId())).thenReturn(java.util.Optional.empty());
+
+        MedicationSafetyReviewResponse response = medicationSafetyReviewService.getReview(fixture.tenantId, fixture.consultationId);
+
+        assertThat(response.stale()).isFalse();
+        assertThat(response.decisionStatus()).isEqualTo(MedicationSafetyReviewDecisionStatus.NOT_REVIEWED.name());
+        assertThat(response.readyForFinalization()).isFalse();
+    }
+
+    @Test
+    void finalizedReviewRetainsAcknowledgementsAndIsNotMarkedReadyForFinalization() throws Exception {
+        SafetyFixture fixture = fixtureWithWarningFinding();
+        when(medicationSafetyService.buildEvaluationContext(fixture.tenantId, fixture.consultationId)).thenReturn(fixture.context);
+        PrescriptionSafetyReviewEntity review = PrescriptionSafetyReviewEntity.create(
+                fixture.tenantId,
+                fixture.patientId,
+                fixture.consultationId,
+                fixture.prescription.getId(),
+                fixture.prescription.getVersionNumber(),
+                fixture.context.prescriptionHash(),
+                fixture.context.patientContextHash(),
+                fixture.current.rulesVersion(),
+                fixture.current.evaluationId(),
+                fixture.current.overallSeverity(),
+                objectMapper.writeValueAsString(fixture.current),
+                MedicationSafetyReviewDecisionStatus.WARNINGS_ACKNOWLEDGED.name(),
+                fixture.actorAppUserId,
+                objectMapper.writeValueAsString(List.of(new MedicationSafetyFindingReviewDecision(
+                        fixture.finding.findingId(), fixture.finding.ruleCode(), true, false, "DUPLICATE_INTENTIONAL", "Duplicate intentional"
+                ))),
+                null,
+                null,
+                null
+        );
+        review.markFinalized();
+        when(reviewRepository.findFirstByTenantIdAndPrescriptionIdOrderByUpdatedAtDesc(fixture.tenantId, fixture.prescription.getId())).thenReturn(java.util.Optional.of(review));
+
+        MedicationSafetyReviewResponse response = medicationSafetyReviewService.getReview(fixture.tenantId, fixture.consultationId);
+
+        assertThat(response.decisionStatus()).isEqualTo(MedicationSafetyReviewDecisionStatus.FINALIZED.name());
+        assertThat(response.readyForFinalization()).isFalse();
+        assertThat(response.stale()).isFalse();
+        assertThat(response.findingReviews()).hasSize(1);
+        assertThat(response.findingReviews().get(0).acknowledged()).isTrue();
+        assertThat(response.findingReviews().get(0).reasonCode()).isEqualTo("DUPLICATE_INTENTIONAL");
+        assertThat(response.findingReviews().get(0).reasonText()).isEqualTo("Duplicate intentional");
+        assertThat(response.reviewedByDisplayName()).isEqualTo("User unavailable");
+    }
+
+    @Test
+    void markFinalizedPreservesAcknowledgementSnapshot() throws Exception {
+        SafetyFixture fixture = fixtureWithWarningFinding();
+        when(medicationSafetyService.buildEvaluationContext(fixture.tenantId, fixture.consultationId)).thenReturn(fixture.context);
+        when(medicationSafetyEngine.evaluate(any())).thenReturn(fixture.current);
+        PrescriptionSafetyReviewEntity review = PrescriptionSafetyReviewEntity.create(
+                fixture.tenantId,
+                fixture.patientId,
+                fixture.consultationId,
+                fixture.prescription.getId(),
+                fixture.prescription.getVersionNumber(),
+                fixture.context.prescriptionHash(),
+                fixture.context.patientContextHash(),
+                fixture.current.rulesVersion(),
+                fixture.current.evaluationId(),
+                fixture.current.overallSeverity(),
+                objectMapper.writeValueAsString(fixture.current),
+                MedicationSafetyReviewDecisionStatus.WARNINGS_ACKNOWLEDGED.name(),
+                fixture.actorAppUserId,
+                objectMapper.writeValueAsString(List.of(new MedicationSafetyFindingReviewDecision(
+                        fixture.finding.findingId(), fixture.finding.ruleCode(), true, false, "DUPLICATE_INTENTIONAL", "Duplicate intentional"
+                ))),
+                null,
+                null,
+                null
+        );
+        when(reviewRepository.findFirstByTenantIdAndPrescriptionIdOrderByUpdatedAtDesc(fixture.tenantId, fixture.prescription.getId())).thenReturn(java.util.Optional.of(review));
+        when(reviewRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        medicationSafetyReviewService.markFinalized(fixture.tenantId, fixture.consultationId, fixture.actorAppUserId);
+
+        ArgumentCaptor<PrescriptionSafetyReviewEntity> captor = ArgumentCaptor.forClass(PrescriptionSafetyReviewEntity.class);
+        verify(reviewRepository).save(captor.capture());
+        PrescriptionSafetyReviewEntity saved = captor.getValue();
+        assertThat(saved.getDecisionStatus()).isEqualTo(MedicationSafetyReviewDecisionStatus.FINALIZED.name());
+        assertThat(saved.getAcknowledgementJson()).isNotBlank();
+        assertThat(saved.getAcknowledgementJson()).contains("DUPLICATE_INTENTIONAL");
+        assertThat(saved.getFinalizedAt()).isNotNull();
+    }
+
+    @Test
+    void finalizedReviewUsesPersistedSnapshotForVersionSpecificLookup() throws Exception {
+        SafetyFixture fixture = fixtureWithWarningFinding();
+        when(medicationSafetyService.buildEvaluationContext(fixture.tenantId, fixture.consultationId)).thenReturn(fixture.context);
+        when(tenantUserManagementService.list(fixture.tenantId)).thenReturn(List.of(
+                new TenantUserRecord(
+                        fixture.actorAppUserId,
+                        fixture.tenantId,
+                        null,
+                        "doctor@example.com",
+                        "dr.verma",
+                        null,
+                        "Dr Amit Verma",
+                        "ACTIVE",
+                        "DOCTOR",
+                        "ACTIVE",
+                        OffsetDateTime.now(),
+                        OffsetDateTime.now(),
+                        "ACTIVE"
+                )
+        ));
+        PrescriptionSafetyReviewEntity review = PrescriptionSafetyReviewEntity.create(
+                fixture.tenantId,
+                fixture.patientId,
+                fixture.consultationId,
+                fixture.prescription.getId(),
+                fixture.prescription.getVersionNumber(),
+                fixture.context.prescriptionHash(),
+                fixture.context.patientContextHash(),
+                fixture.current.rulesVersion(),
+                fixture.current.evaluationId(),
+                fixture.current.overallSeverity(),
+                objectMapper.writeValueAsString(fixture.current),
+                MedicationSafetyReviewDecisionStatus.WARNINGS_ACKNOWLEDGED.name(),
+                fixture.actorAppUserId,
+                objectMapper.writeValueAsString(List.of(new MedicationSafetyFindingReviewDecision(
+                        fixture.finding.findingId(), fixture.finding.ruleCode(), true, false, "DUPLICATE_INTENTIONAL", "Duplicate intentional"
+                ))),
+                null,
+                null,
+                null
+        );
+        review.markFinalized();
+        when(reviewRepository.findFirstByTenantIdAndPrescriptionIdOrderByUpdatedAtDesc(fixture.tenantId, fixture.prescription.getId())).thenReturn(java.util.Optional.of(review));
+
+        MedicationSafetyReviewResponse response = medicationSafetyReviewService.getReview(fixture.tenantId, fixture.consultationId, fixture.prescription.getId());
+        MedicationSafetyEvaluationResult evaluation = medicationSafetyReviewService.getEvaluation(fixture.tenantId, fixture.consultationId, fixture.prescription.getId());
+
+        assertThat(response.decisionStatus()).isEqualTo(MedicationSafetyReviewDecisionStatus.FINALIZED.name());
+        assertThat(response.reviewedByDisplayName()).isEqualTo("Dr Amit Verma");
+        assertThat(response.reviewedByAppUserId()).isEqualTo(fixture.actorAppUserId);
+        assertThat(response.findingReviews()).hasSize(1);
+        assertThat(response.findingReviews().get(0).acknowledged()).isTrue();
+        assertThat(response.findingReviews().get(0).reasonCode()).isEqualTo("DUPLICATE_INTENTIONAL");
+        assertThat(response.findingReviews().get(0).reasonText()).isEqualTo("Duplicate intentional");
+        assertThat(evaluation.evaluationId()).isEqualTo(fixture.current.evaluationId());
+        assertThat(evaluation.findings()).hasSize(1);
+        assertThat(evaluation.findings().get(0).findingId()).isEqualTo(fixture.finding.findingId());
+    }
+
+    @Test
+    void finalizedReviewPrefersExactSnapshotOverNewerShadowRow() throws Exception {
+        SafetyFixture fixture = fixtureWithWarningFinding();
+        when(medicationSafetyService.buildEvaluationContext(fixture.tenantId, fixture.consultationId)).thenReturn(fixture.context);
+        PrescriptionSafetyReviewEntity acknowledgedReview = PrescriptionSafetyReviewEntity.create(
+                fixture.tenantId,
+                fixture.patientId,
+                fixture.consultationId,
+                fixture.prescription.getId(),
+                fixture.prescription.getVersionNumber(),
+                fixture.context.prescriptionHash(),
+                fixture.context.patientContextHash(),
+                fixture.current.rulesVersion(),
+                fixture.current.evaluationId(),
+                fixture.current.overallSeverity(),
+                objectMapper.writeValueAsString(fixture.current),
+                MedicationSafetyReviewDecisionStatus.WARNINGS_ACKNOWLEDGED.name(),
+                fixture.actorAppUserId,
+                objectMapper.writeValueAsString(List.of(new MedicationSafetyFindingReviewDecision(
+                        fixture.finding.findingId(), fixture.finding.ruleCode(), true, false, "DUPLICATE_INTENTIONAL", "Duplicate intentional"
+                ))),
+                null,
+                null,
+                null
+        );
+        acknowledgedReview.markFinalized();
+
+        when(reviewRepository.findFirstByTenantIdAndPrescriptionIdAndPrescriptionHashAndPatientContextHashAndRulesVersionOrderByUpdatedAtDesc(
+                fixture.tenantId,
+                fixture.prescription.getId(),
+                fixture.context.prescriptionHash(),
+                fixture.context.patientContextHash(),
+                fixture.current.rulesVersion()
+        )).thenReturn(java.util.Optional.of(acknowledgedReview));
+
+        MedicationSafetyReviewResponse response = medicationSafetyReviewService.getReview(fixture.tenantId, fixture.consultationId, fixture.prescription.getId());
+
+        assertThat(response.reviewId()).isEqualTo(acknowledgedReview.getId());
+        assertThat(response.decisionStatus()).isEqualTo(MedicationSafetyReviewDecisionStatus.FINALIZED.name());
+        assertThat(response.findingReviews()).hasSize(1);
+        assertThat(response.findingReviews().get(0).acknowledged()).isTrue();
+        assertThat(response.findingReviews().get(0).reasonCode()).isEqualTo("DUPLICATE_INTENTIONAL");
+        assertThat(response.findingReviews().get(0).reasonText()).isEqualTo("Duplicate intentional");
     }
 
     private SafetyFixture fixtureWithWarningFinding() {
