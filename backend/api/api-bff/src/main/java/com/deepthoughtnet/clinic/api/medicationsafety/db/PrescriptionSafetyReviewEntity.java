@@ -17,7 +17,8 @@ import java.util.UUID;
         indexes = {
                 @Index(name = "ix_prescription_safety_reviews_tenant_prescription", columnList = "tenant_id,prescription_id,updated_at"),
                 @Index(name = "ix_prescription_safety_reviews_tenant_consultation", columnList = "tenant_id,consultation_id,updated_at"),
-                @Index(name = "ix_prescription_safety_reviews_tenant_patient", columnList = "tenant_id,patient_id,updated_at")
+                @Index(name = "ix_prescription_safety_reviews_tenant_patient", columnList = "tenant_id,patient_id,updated_at"),
+                @Index(name = "ix_prescription_safety_reviews_tenant_prescription_generation", columnList = "tenant_id,prescription_id,snapshot_generation")
         }
 )
 public class PrescriptionSafetyReviewEntity {
@@ -39,6 +40,9 @@ public class PrescriptionSafetyReviewEntity {
 
     @Column(name = "prescription_version", nullable = false)
     private Integer prescriptionVersion;
+
+    @Column(name = "snapshot_generation", nullable = false)
+    private Integer snapshotGeneration;
 
     @Column(name = "prescription_hash", nullable = false, length = 128)
     private String prescriptionHash;
@@ -112,6 +116,29 @@ public class PrescriptionSafetyReviewEntity {
                                                          String overrideReasonCode,
                                                          String overrideReasonText,
                                                          String overrideCategory) {
+        return create(tenantId, patientId, consultationId, prescriptionId, prescriptionVersion, prescriptionHash, patientContextHash,
+                rulesVersion, evaluationId, overallSeverity, evaluationSnapshotJson, decisionStatus, reviewedByAppUserId,
+                acknowledgementJson, overrideReasonCode, overrideReasonText, overrideCategory, 1);
+    }
+
+    public static PrescriptionSafetyReviewEntity create(UUID tenantId,
+                                                         UUID patientId,
+                                                         UUID consultationId,
+                                                         UUID prescriptionId,
+                                                         Integer prescriptionVersion,
+                                                         String prescriptionHash,
+                                                         String patientContextHash,
+                                                         String rulesVersion,
+                                                         String evaluationId,
+                                                         MedicationSafetySeverity overallSeverity,
+                                                         String evaluationSnapshotJson,
+                                                         String decisionStatus,
+                                                         UUID reviewedByAppUserId,
+                                                         String acknowledgementJson,
+                                                         String overrideReasonCode,
+                                                         String overrideReasonText,
+                                                         String overrideCategory,
+                                                         Integer snapshotGeneration) {
         PrescriptionSafetyReviewEntity entity = new PrescriptionSafetyReviewEntity();
         entity.id = UUID.randomUUID();
         entity.tenantId = tenantId;
@@ -119,6 +146,7 @@ public class PrescriptionSafetyReviewEntity {
         entity.consultationId = consultationId;
         entity.prescriptionId = prescriptionId;
         entity.prescriptionVersion = prescriptionVersion;
+        entity.snapshotGeneration = snapshotGeneration == null ? 1 : snapshotGeneration;
         entity.prescriptionHash = prescriptionHash;
         entity.patientContextHash = patientContextHash;
         entity.rulesVersion = rulesVersion;
@@ -172,6 +200,7 @@ public class PrescriptionSafetyReviewEntity {
     public UUID getConsultationId() { return consultationId; }
     public UUID getPrescriptionId() { return prescriptionId; }
     public Integer getPrescriptionVersion() { return prescriptionVersion; }
+    public Integer getSnapshotGeneration() { return snapshotGeneration; }
     public String getPrescriptionHash() { return prescriptionHash; }
     public String getPatientContextHash() { return patientContextHash; }
     public String getRulesVersion() { return rulesVersion; }

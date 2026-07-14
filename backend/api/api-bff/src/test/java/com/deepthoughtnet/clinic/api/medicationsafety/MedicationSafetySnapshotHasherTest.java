@@ -106,6 +106,52 @@ class MedicationSafetySnapshotHasherTest {
     }
 
     @Test
+    void prescriptionHashChangesForFrequencyChanges() {
+        UUID tenantId = UUID.randomUUID();
+        UUID patientId = UUID.randomUUID();
+        UUID consultationId = UUID.randomUUID();
+        UUID prescriptionId = UUID.randomUUID();
+        String medicineId = UUID.randomUUID().toString();
+
+        MedicationSafetyEvaluationRequest base = new MedicationSafetyEvaluationRequest(
+                tenantId,
+                patientId,
+                consultationId,
+                prescriptionId,
+                "DRAFT",
+                List.of(medication("row-1", medicineId, "Cetirizine 10 mg", "Cetirizine", "10 mg", "1 tab", "0-1-0")),
+                List.of(),
+                null,
+                List.of(),
+                null,
+                null,
+                42,
+                "MALE",
+                null,
+                Map.of()
+        );
+        MedicationSafetyEvaluationRequest frequencyChanged = new MedicationSafetyEvaluationRequest(
+                tenantId,
+                patientId,
+                consultationId,
+                prescriptionId,
+                "DRAFT",
+                List.of(medication("row-1", medicineId, "Cetirizine 10 mg", "Cetirizine", "10 mg", "1 tab", "0-0-1")),
+                List.of(),
+                null,
+                List.of(),
+                null,
+                null,
+                42,
+                "MALE",
+                null,
+                Map.of()
+        );
+
+        assertThat(hasher.prescriptionHash(base, 7)).isNotEqualTo(hasher.prescriptionHash(frequencyChanged, 7));
+    }
+
+    @Test
     void prescriptionHashIgnoresLifecycleOnlyMedicationItemStatus() {
         UUID tenantId = UUID.randomUUID();
         UUID patientId = UUID.randomUUID();

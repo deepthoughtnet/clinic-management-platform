@@ -19,8 +19,13 @@ test("consultation medication safety UI separates freshness from review state", 
   assert.ok(source.includes("activeMedicationSafetyReview?.stale"));
   assert.ok(source.includes("activeMedicationSafetyReview?.readyForFinalization"));
   assert.ok(source.includes("Prescription changed after safety review. Run the safety check again."));
+  assert.ok(source.includes("runMedicationSafetyCheck"));
+  assert.ok(source.includes("medicationSafetyCheckRunning"));
   assert.ok(source.includes("serializePrescriptionForm(prescriptionFormRef.current) !== savedPrescriptionSnapshotRef.current"));
   assert.ok(source.includes("? await preserveViewport(() => persistPrescription())"));
+  assert.ok(source.includes("React.useLayoutEffect(() => {"));
+  assert.ok(source.includes("!isEditablePrescriptionStatus(prescription.status)"));
+  assert.ok(source.includes("setSelectedPrescriptionVersionId(saved.id);"));
   assert.ok(source.includes(": currentPrescription;"));
 });
 
@@ -58,6 +63,13 @@ test("consultation medication safety finalized reviews render read-only persiste
   assert.ok(source.includes("getMedicationSafetyEvaluationForPrescription"));
   assert.ok(source.includes("getMedicationSafetyReviewForPrescription"));
   assert.ok(source.includes("reviewedByDisplayName"));
+});
+
+test("consultation medication safety run safety button is wired to the POST action", () => {
+  const source = readSource("pages/consultations/ConsultationWorkspacePage.tsx");
+  assert.ok(source.includes('onClick={() => void runMedicationSafety()}'));
+  assert.ok(source.includes("disabled={medicationSafetyCheckRunning || !consultation}"));
+  assert.ok(!source.includes('onClick={() => void refreshMedicationSafety()} disabled={medicationSafetyLoading || !consultation}'));
 });
 
 test("consultation medication safety continue draft shows explicit feedback", () => {

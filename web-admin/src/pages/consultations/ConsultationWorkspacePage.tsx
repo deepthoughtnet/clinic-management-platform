@@ -100,6 +100,7 @@ import {
   getConsultationPrescription,
   getMedicationSafetyEvaluation,
   getMedicationSafetyReview,
+  runMedicationSafetyCheck,
   submitMedicationSafetyReview,
   getClinicalContext,
   getMedicines,
@@ -270,10 +271,10 @@ function normalizeMedicationSafetyReview(
   review: MedicationSafetyReviewResponse | null,
   evaluation: MedicationSafetyEvaluationResult | null,
 ): MedicationSafetyReviewResponse | null {
-  if (!review || !evaluation) {
+  if (!review) {
     return null;
   }
-  return review.evaluationId === evaluation.evaluationId ? review : null;
+  return review;
 }
 
 function formatMedicationSafetyReviewDecisionStatus(value: string | null | undefined) {
@@ -2120,6 +2121,7 @@ export default function ConsultationWorkspacePage() {
   const [medicationSafetyReviewLoading, setMedicationSafetyReviewLoading] = React.useState(false);
   const [medicationSafetyReviewError, setMedicationSafetyReviewError] = React.useState<string | null>(null);
   const [medicationSafetyReviewSubmitting, setMedicationSafetyReviewSubmitting] = React.useState(false);
+  const [medicationSafetyCheckRunning, setMedicationSafetyCheckRunning] = React.useState(false);
   const [medicationSafetyReviewDraft, setMedicationSafetyReviewDraft] = React.useState<MedicationSafetyReviewDraftState>({ findings: {} });
   const activeMedicationSafetyReview = React.useMemo(
     () => normalizeMedicationSafetyReview(medicationSafetyReview, medicationSafetyEvaluation),
@@ -2209,7 +2211,8 @@ export default function ConsultationWorkspacePage() {
     setMedicationSafetyLoading(true);
     setMedicationSafetyReviewLoading(true);
     try {
-      const selectedHistoricalPrescriptionId = selectedPrescriptionVersionId && prescription?.id && selectedPrescriptionVersionId !== prescription.id
+      const selectedHistoricalPrescriptionId = prescription && !isEditablePrescriptionStatus(prescription.status)
+        && selectedPrescriptionVersionId && prescription?.id && selectedPrescriptionVersionId !== prescription.id
         ? selectedPrescriptionVersionId
         : null;
       const result = selectedHistoricalPrescriptionId
@@ -2332,6 +2335,23 @@ export default function ConsultationWorkspacePage() {
       setMedicationSafetyReviewSubmitting(false);
     }
   }, [activeMedicationSafetyReview, auth.accessToken, auth.tenantId, consultation?.id, medicationSafetyEvaluation, medicationSafetyReviewDraft.findings, medicationSafetyReviewFinalized]);
+
+  const runMedicationSafety = React.useCallback(async () => {
+    if (!auth.accessToken || !auth.tenantId || !consultation?.id || medicationSafetyCheckRunning) {
+      return;
+    }
+    setMedicationSafetyCheckRunning(true);
+    setInfo(null);
+    try {
+      await runMedicationSafetyCheck(auth.accessToken, auth.tenantId, consultation.id);
+      await refreshMedicationSafety();
+      setInfo("Medication safety check completed");
+    } catch (err) {
+      setMedicationSafetyError(err instanceof Error ? err.message : "Medication safety check could not be run");
+    } finally {
+      setMedicationSafetyCheckRunning(false);
+    }
+  }, [auth.accessToken, auth.tenantId, consultation?.id, medicationSafetyCheckRunning, refreshMedicationSafety]);
 
   const refreshClinicalArtifacts = React.useCallback(async (
     patientId: string,
@@ -2503,7 +2523,7 @@ export default function ConsultationWorkspacePage() {
     consultationFormRef.current = consultationForm;
   }, [consultationForm]);
 
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     prescriptionFormRef.current = prescriptionForm;
   }, [prescriptionForm]);
 
@@ -4697,6 +4717,7 @@ export default function ConsultationWorkspacePage() {
     const merged = currentPrescription ? { ...currentPrescription, ...saved } : saved;
     setPrescription(merged);
     prescriptionRef.current = merged;
+    setSelectedPrescriptionVersionId(saved.id);
     savedPrescriptionSnapshotRef.current = serializedForm;
     setInvalidMedicineRowIds([]);
     if (options?.refreshHistory !== false) {
@@ -10082,7 +10103,7 @@ export default function ConsultationWorkspacePage() {
                                       </Typography>
                                     </Stack>
                                     <Stack direction="row" spacing={0.5} alignItems="center">
-                                      <Button type="button" size="small" variant="outlined" onClick={() => void refreshMedicationSafety()} disabled={medicationSafetyLoading || !consultation}>
+                                      <Button type="button" size="small" variant="outlined" onClick={() => void runMedicationSafety()} disabled={medicationSafetyCheckRunning || !consultation}>
                                         Run safety check
                                       </Button>
                                       <Button type="button" size="small" variant="text" aria-label={prescriptionSafetyDetailsOpen ? "Hide medication safety details" : "View medication safety details"} onClick={() => setPrescriptionSafetyDetailsOpen((current) => !current)}>
@@ -10194,8 +10215,8 @@ export default function ConsultationWorkspacePage() {
                                               <Chip
                                                 size="small"
                                                 variant="outlined"
-                                                label={medicationSafetyReviewFinalized ? "Finalized" : (activeMedicationSafetyReview?.stale ? "Stale" : "Current")}
-                                                color={medicationSafetyReviewFinalized ? "success" : (activeMedicationSafetyReview?.stale ? "warning" : "default")}
+                                                label={medicationSafetyReviewFinalized ? "Finalized" : (activeMedicationSafetyReview ? (activeMedicationSafetyReview.stale ? "Stale" : "Current") : "Not reviewed")}
+                                                color={medicationSafetyReviewFinalized ? "success" : (activeMedicationSafetyReview?.stale ? "warning" : activeMedicationSafetyReview ? "default" : "default")}
                                               />
                                               {medicationSafetyReviewFinalized ? (
                                                 <Chip size="small" variant="outlined" label="Safety snapshot: Current at finalization" color="success" />

@@ -9,12 +9,4 @@ public interface PrescriptionSafetyReviewRepository extends JpaRepository<Prescr
     Optional<PrescriptionSafetyReviewEntity> findFirstByTenantIdAndPrescriptionIdOrderByUpdatedAtDesc(UUID tenantId, UUID prescriptionId);
 
     List<PrescriptionSafetyReviewEntity> findByTenantIdAndPrescriptionIdOrderByUpdatedAtDesc(UUID tenantId, UUID prescriptionId);
-
-    Optional<PrescriptionSafetyReviewEntity> findFirstByTenantIdAndPrescriptionIdAndPrescriptionHashAndPatientContextHashAndRulesVersionOrderByUpdatedAtDesc(
-            UUID tenantId,
-            UUID prescriptionId,
-            String prescriptionHash,
-            String patientContextHash,
-            String rulesVersion
-    );
 }

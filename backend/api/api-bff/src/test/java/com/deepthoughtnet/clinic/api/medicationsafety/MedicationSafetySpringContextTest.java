@@ -7,6 +7,7 @@ import com.deepthoughtnet.clinic.api.medicationsafety.db.PrescriptionSafetyRevie
 import com.deepthoughtnet.clinic.api.medicationsafety.db.PrescriptionSafetyReviewRepository;
 import com.deepthoughtnet.clinic.api.security.DoctorAssignmentSecurityService;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
+import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -31,6 +32,7 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 class MedicationSafetySpringContextTest extends com.deepthoughtnet.clinic.api.support.AbstractPostgresDataJpaTest {
     @MockBean MedicationSafetyService medicationSafetyService;
     @MockBean AuditEventPublisher auditEventPublisher;
+    @MockBean TenantUserManagementService tenantUserManagementService;
     @MockBean com.deepthoughtnet.clinic.api.security.PermissionChecker permissionChecker;
     @MockBean DoctorAssignmentSecurityService doctorAssignmentSecurityService;
 

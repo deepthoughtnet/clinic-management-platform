@@ -109,6 +109,14 @@ public class MedicationSafetyService {
         return new MedicationSafetyEvaluationContext(consultation, patient, prescription, clinicalContext, request, prescriptionHash, patientContextHash, snapshotHash);
     }
 
+    void lockPrescriptionForSafety(UUID tenantId, UUID prescriptionId) {
+        if (tenantId == null || prescriptionId == null) {
+            return;
+        }
+        prescriptionRepository.findByTenantIdAndIdForUpdate(tenantId, prescriptionId)
+                .orElseThrow(() -> new IllegalArgumentException("Prescription not found"));
+    }
+
     MedicationSafetyEvaluationRequest buildRequest(UUID tenantId,
                                                    ConsultationEntity consultation,
                                                    PatientEntity patient,

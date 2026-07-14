@@ -3,10 +3,18 @@ package com.deepthoughtnet.clinic.prescription.db;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import jakarta.persistence.LockModeType;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 public interface PrescriptionRepository extends JpaRepository<PrescriptionEntity, UUID> {
     Optional<PrescriptionEntity> findByTenantIdAndId(UUID tenantId, UUID id);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select prescription from PrescriptionEntity prescription where prescription.tenantId = :tenantId and prescription.id = :id")
+    Optional<PrescriptionEntity> findByTenantIdAndIdForUpdate(@Param("tenantId") UUID tenantId, @Param("id") UUID id);
 
     Optional<PrescriptionEntity> findFirstByTenantIdAndConsultationIdOrderByVersionNumberDesc(UUID tenantId, UUID consultationId);
 

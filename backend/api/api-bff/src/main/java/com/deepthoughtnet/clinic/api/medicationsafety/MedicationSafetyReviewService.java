@@ -60,7 +60,10 @@ public class MedicationSafetyReviewService {
     public MedicationSafetyReviewResponse getReview(UUID tenantId, UUID consultationId, UUID prescriptionId) {
         MedicationSafetyEvaluationContext context = medicationSafetyService.buildEvaluationContext(tenantId, consultationId);
         PrescriptionSafetyReviewEntity review = latestReview(tenantId, context, prescriptionId);
-        boolean useStoredSnapshot = review != null && (prescriptionId != null || MedicationSafetyReviewDecisionStatus.FINALIZED.name().equals(review.getDecisionStatus()));
+        boolean useStoredSnapshot = review != null && (
+                MedicationSafetyReviewDecisionStatus.FINALIZED.name().equals(review.getDecisionStatus())
+                        || isHistoricalPrescriptionQuery(context, prescriptionId)
+        );
         MedicationSafetyEvaluationResult current = useStoredSnapshot ? loadEvaluationSnapshot(review) : medicationSafetyEngine.evaluate(context.request());
         if (current == null) {
             current = medicationSafetyEngine.evaluate(context.request());
@@ -73,9 +76,70 @@ public class MedicationSafetyReviewService {
     public MedicationSafetyEvaluationResult getEvaluation(UUID tenantId, UUID consultationId, UUID prescriptionId) {
         MedicationSafetyEvaluationContext context = medicationSafetyService.buildEvaluationContext(tenantId, consultationId);
         PrescriptionSafetyReviewEntity review = latestReview(tenantId, context, prescriptionId);
-        boolean useStoredSnapshot = review != null && (prescriptionId != null || MedicationSafetyReviewDecisionStatus.FINALIZED.name().equals(review.getDecisionStatus()));
+        boolean useStoredSnapshot = review != null && (
+                MedicationSafetyReviewDecisionStatus.FINALIZED.name().equals(review.getDecisionStatus())
+                        || isHistoricalPrescriptionQuery(context, prescriptionId)
+        );
         MedicationSafetyEvaluationResult current = useStoredSnapshot ? loadEvaluationSnapshot(review) : medicationSafetyEngine.evaluate(context.request());
         return current == null ? medicationSafetyEngine.evaluate(context.request()) : current;
+    }
+
+    @Transactional
+    public MedicationSafetyReviewResponse captureSnapshot(UUID tenantId, UUID consultationId, UUID actorAppUserId, MedicationSafetyEvaluationResult current) {
+        MedicationSafetyEvaluationContext context = medicationSafetyService.buildEvaluationContext(tenantId, consultationId);
+        MedicationSafetyEvaluationResult effectiveCurrent = current == null ? medicationSafetyEngine.evaluate(context.request()) : current;
+        lockActivePrescription(tenantId, context);
+        PrescriptionSafetyReviewEntity existing = latestReview(tenantId, context.prescription() == null ? null : context.prescription().getId());
+        if (existing != null && snapshotMatches(existing, context) && !isStale(existing, context)) {
+            return toResponse(existing, context, effectiveCurrent, false, false);
+        }
+
+        String evaluationJson = serialize(effectiveCurrent);
+        boolean noActionableFindings = effectiveCurrent.findings() == null || effectiveCurrent.findings().stream().noneMatch(finding -> finding != null && (finding.severity() == MedicationSafetySeverity.WARNING || finding.severity() == MedicationSafetySeverity.CRITICAL));
+        Integer snapshotGeneration = nextSnapshotGeneration(existing);
+        PrescriptionSafetyReviewEntity entity = PrescriptionSafetyReviewEntity.create(
+                tenantId,
+                context.patient().getId(),
+                context.consultation().getId(),
+                context.prescription().getId(),
+                context.prescription().getVersionNumber(),
+                context.prescriptionHash(),
+                context.patientContextHash(),
+                effectiveCurrent.rulesVersion(),
+                effectiveCurrent.evaluationId(),
+                effectiveCurrent.overallSeverity(),
+                evaluationJson,
+                noActionableFindings ? MedicationSafetyReviewDecisionStatus.REVIEWED_NO_BLOCKING_FINDINGS.name() : MedicationSafetyReviewDecisionStatus.NOT_REVIEWED.name(),
+                null,
+                null,
+                null,
+                null,
+                null,
+                snapshotGeneration
+        );
+        PrescriptionSafetyReviewEntity saved = reviewRepository.save(entity);
+        audit(tenantId, context.consultation().getId(), context.prescription() == null ? null : context.prescription().getId(), actorAppUserId,
+                "prescription.safety.snapshot",
+                "Medication safety snapshot captured",
+                Map.of(
+                        "rulesVersion", effectiveCurrent.rulesVersion(),
+                        "findings", effectiveCurrent.findings() == null ? 0 : effectiveCurrent.findings().size(),
+                        "decisionStatus", saved.getDecisionStatus()
+                ));
+        return toResponse(saved, context, effectiveCurrent, false, false);
+    }
+
+    @Transactional
+    public MedicationSafetyEvaluationResult evaluateAndPersist(UUID tenantId, UUID consultationId, UUID actorAppUserId) {
+        MedicationSafetyEvaluationResult current = medicationSafetyService.evaluateForConsultation(tenantId, consultationId, actorAppUserId);
+        captureSnapshot(tenantId, consultationId, actorAppUserId, current);
+        return current;
+    }
+
+    @Transactional
+    public MedicationSafetyReviewResponse runSafetyCheck(UUID tenantId, UUID consultationId, UUID actorAppUserId) {
+        MedicationSafetyEvaluationResult current = medicationSafetyService.evaluateForConsultation(tenantId, consultationId, actorAppUserId);
+        return captureSnapshot(tenantId, consultationId, actorAppUserId, current);
     }
 
     @Transactional
@@ -126,7 +190,7 @@ public class MedicationSafetyReviewService {
         MedicationSafetyEvaluationContext context = medicationSafetyService.buildEvaluationContext(tenantId, consultationId);
         MedicationSafetyEvaluationResult current = medicationSafetyEngine.evaluate(context.request());
         List<MedicationSafetyFinding> actionableFindings = actionableFindings(current);
-        PrescriptionSafetyReviewEntity review = latestReview(tenantId, context, null);
+        PrescriptionSafetyReviewEntity review = latestReview(tenantId, context.prescription() == null ? null : context.prescription().getId());
 
         if (actionableFindings.isEmpty()) {
             return;
@@ -193,7 +257,8 @@ public class MedicationSafetyReviewService {
     public void markFinalized(UUID tenantId, UUID consultationId, UUID actorAppUserId) {
         MedicationSafetyEvaluationContext context = medicationSafetyService.buildEvaluationContext(tenantId, consultationId);
         MedicationSafetyEvaluationResult current = medicationSafetyEngine.evaluate(context.request());
-        PrescriptionSafetyReviewEntity review = latestReview(tenantId, context, null);
+        lockActivePrescription(tenantId, context);
+        PrescriptionSafetyReviewEntity review = latestReview(tenantId, context.prescription() == null ? null : context.prescription().getId());
         if (review == null || isStale(review, context)) {
             review = ensureSummaryReview(tenantId, context, current, actorAppUserId);
         }
@@ -211,11 +276,11 @@ public class MedicationSafetyReviewService {
                                                                MedicationSafetyEvaluationContext context,
                                                                MedicationSafetyEvaluationResult current,
                                                                UUID actorAppUserId) {
-        PrescriptionSafetyReviewEntity review = latestReview(tenantId, context, null);
+        lockActivePrescription(tenantId, context);
+        PrescriptionSafetyReviewEntity review = latestReview(tenantId, context.prescription() == null ? null : context.prescription().getId());
         if (review != null && !isStale(review, context)) {
             return review;
         }
-        review = null;
         String evaluationJson = serialize(current);
         String decisionStatus = current.findings() == null || current.findings().isEmpty()
                 ? MedicationSafetyReviewDecisionStatus.REVIEWED_NO_BLOCKING_FINDINGS.name()
@@ -237,7 +302,8 @@ public class MedicationSafetyReviewService {
                 null,
                 null,
                 null,
-                null
+                null,
+                nextSnapshotGeneration(review)
         );
         return reviewRepository.save(entity);
     }
@@ -248,13 +314,14 @@ public class MedicationSafetyReviewService {
                                                             List<MedicationSafetyFindingReviewDecision> decisions,
                                                             UUID actorAppUserId,
                                                             ReviewPolicyOutcome policyOutcome) {
+        lockActivePrescription(tenantId, context);
         String evaluationJson = serialize(current);
         String acknowledgementJson = serialize(decisions);
         String decisionStatus = policyOutcome.decisionStatus.name();
         String overrideReasonCode = policyOutcome.firstCriticalOverrideReasonCode;
         String overrideReasonText = policyOutcome.firstCriticalOverrideReasonText;
         String overrideCategory = policyOutcome.firstCriticalOverrideCategory;
-        PrescriptionSafetyReviewEntity entity = latestReview(tenantId, context, null);
+        PrescriptionSafetyReviewEntity entity = latestReview(tenantId, context.prescription() == null ? null : context.prescription().getId());
         if (entity == null || isStale(entity, context)) {
             entity = PrescriptionSafetyReviewEntity.create(
                     tenantId,
@@ -273,7 +340,8 @@ public class MedicationSafetyReviewService {
                     acknowledgementJson,
                     overrideReasonCode,
                     overrideReasonText,
-                    overrideCategory
+                    overrideCategory,
+                    nextSnapshotGeneration(entity)
             );
         } else {
             entity.update(evaluationJson, decisionStatus, actorAppUserId, acknowledgementJson, overrideReasonCode, overrideReasonText, overrideCategory);
@@ -422,6 +490,13 @@ public class MedicationSafetyReviewService {
                 || !review.getRulesVersion().equals(medicationSafetyEngine.rulesVersion());
     }
 
+    private boolean isHistoricalPrescriptionQuery(MedicationSafetyEvaluationContext context, UUID prescriptionId) {
+        return prescriptionId != null
+                && context != null
+                && context.prescription() != null
+                && !prescriptionId.equals(context.prescription().getId());
+    }
+
     private MedicationSafetyReviewResponse toResponse(PrescriptionSafetyReviewEntity review,
                                                       MedicationSafetyEvaluationContext context,
                                                       MedicationSafetyEvaluationResult current,
@@ -468,10 +543,13 @@ public class MedicationSafetyReviewService {
             ));
         }
         boolean noActionableFindings = warningCount + criticalCount == 0;
-        boolean ready = !stale && !finalized && !useStoredSnapshot && (noActionableFindings
+        boolean hasPersistedReview = review != null;
+        boolean ready = hasPersistedReview && !stale && !finalized && !useStoredSnapshot && (noActionableFindings
                 || (review != null && review.getDecisionStatus() != null && !MedicationSafetyReviewDecisionStatus.NOT_REVIEWED.name().equals(review.getDecisionStatus())));
         String requiredAction = finalized
                 ? "FINALIZED"
+                : stale
+                ? "RERUN_SAFETY_CHECK"
                 : ready
                 ? "NONE"
                 : (criticalCount > 0 ? "OVERRIDE_CRITICAL" : (warningCount > 0 ? "ACKNOWLEDGE_WARNINGS" : "RUN_SAFETY_REVIEW"));
@@ -545,21 +623,33 @@ public class MedicationSafetyReviewService {
         if (resolvedPrescriptionId == null) {
             return null;
         }
-        if (context != null && hasText(context.prescriptionHash()) && hasText(context.patientContextHash()) && hasText(context.snapshotHash())) {
-            PrescriptionSafetyReviewEntity exact = reviewRepository
-                    .findFirstByTenantIdAndPrescriptionIdAndPrescriptionHashAndPatientContextHashAndRulesVersionOrderByUpdatedAtDesc(
-                            tenantId,
-                            resolvedPrescriptionId,
-                            context.prescriptionHash(),
-                            context.patientContextHash(),
-                            medicationSafetyEngine.rulesVersion()
-                    )
-                    .orElse(null);
-            if (exact != null) {
-                return exact;
-            }
-        }
         return latestReview(tenantId, resolvedPrescriptionId);
+    }
+
+    private void lockActivePrescription(UUID tenantId, MedicationSafetyEvaluationContext context) {
+        if (context == null || context.prescription() == null) {
+            return;
+        }
+        medicationSafetyService.lockPrescriptionForSafety(tenantId, context.prescription().getId());
+    }
+
+    private boolean snapshotMatches(PrescriptionSafetyReviewEntity review, MedicationSafetyEvaluationContext context) {
+        if (review == null || context == null) {
+            return false;
+        }
+        return hasText(review.getPrescriptionHash())
+                && hasText(review.getPatientContextHash())
+                && hasText(review.getRulesVersion())
+                && review.getPrescriptionHash().equals(context.prescriptionHash())
+                && review.getPatientContextHash().equals(context.patientContextHash())
+                && review.getRulesVersion().equals(medicationSafetyEngine.rulesVersion());
+    }
+
+    private Integer nextSnapshotGeneration(PrescriptionSafetyReviewEntity review) {
+        if (review == null || review.getSnapshotGeneration() == null) {
+            return 1;
+        }
+        return review.getSnapshotGeneration() + 1;
     }
 
     private boolean canOverrideCritical() {

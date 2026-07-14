@@ -3688,6 +3688,10 @@ export async function getMedicationSafetyReview(token: string, tenantId: string,
   return httpGet<MedicationSafetyReviewResponse>(`/api/consultations/${consultationId}/prescription/safety/review`, { token, tenantId });
 }
 
+export async function runMedicationSafetyCheck(token: string, tenantId: string, consultationId: string) {
+  return httpPost<MedicationSafetyReviewResponse>(`/api/consultations/${consultationId}/prescription/safety/run`, undefined, { token, tenantId });
+}
+
 export async function getMedicationSafetyEvaluationForPrescription(token: string, tenantId: string, consultationId: string, prescriptionId: string) {
   return httpGet<MedicationSafetyEvaluationResult>(`/api/consultations/${consultationId}/prescription/safety/evaluation?prescriptionId=${encodeURIComponent(prescriptionId)}`, { token, tenantId });
 }

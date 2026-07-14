@@ -128,7 +128,11 @@ class PrescriptionServiceTest {
 
         lenient().when(medicineRepository.save(any(PrescriptionMedicineEntity.class))).thenAnswer(invocation -> {
             PrescriptionMedicineEntity entity = invocation.getArgument(0);
-            medicines.computeIfAbsent(entity.getPrescriptionId(), ignored -> new ArrayList<>()).add(entity);
+            medicines.compute(entity.getPrescriptionId(), (key, existing) -> {
+                ArrayList<PrescriptionMedicineEntity> next = new ArrayList<>(existing == null ? List.of() : existing);
+                next.add(entity);
+                return next;
+            });
             return entity;
         });
         lenient().when(medicineRepository.findByTenantIdAndPrescriptionIdOrderBySortOrderAsc(any(), any())).thenAnswer(invocation -> {
@@ -141,7 +145,11 @@ class PrescriptionServiceTest {
 
         lenient().when(testRepository.save(any(PrescriptionTestEntity.class))).thenAnswer(invocation -> {
             PrescriptionTestEntity entity = invocation.getArgument(0);
-            tests.computeIfAbsent(entity.getPrescriptionId(), ignored -> new ArrayList<>()).add(entity);
+            tests.compute(entity.getPrescriptionId(), (key, existing) -> {
+                ArrayList<PrescriptionTestEntity> next = new ArrayList<>(existing == null ? List.of() : existing);
+                next.add(entity);
+                return next;
+            });
             return entity;
         });
         lenient().when(testRepository.findByTenantIdAndPrescriptionIdOrderBySortOrderAsc(any(), any())).thenAnswer(invocation -> {
@@ -317,6 +325,61 @@ class PrescriptionServiceTest {
 
         assertThat(updated.status()).isEqualTo(PrescriptionStatus.PREVIEWED);
         assertThat(updated.diagnosisSnapshot()).isEqualTo("Updated Dx");
+    }
+
+    @Test
+    void updateDraftPersistsChangedMedicineFrequencyForEditableDrafts() {
+        PrescriptionEntity entity = PrescriptionEntity.create(TENANT_ID, PATIENT_ID, DOCTOR_ID, CONSULTATION_ID, APPOINTMENT_ID, "RX-FREQ");
+        entity.update("Dx", "Advice", LocalDate.now().plusDays(2));
+        prescriptions.put(entity.getId(), entity);
+        medicines.put(entity.getId(), List.of(PrescriptionMedicineEntity.create(
+                TENANT_ID,
+                entity.getId(),
+                "Cetirizine",
+                MedicineType.TABLET,
+                "10 mg",
+                "1 tablet",
+                "0-1-0",
+                "5 days",
+                Timing.ANYTIME,
+                null,
+                1
+        )));
+        tests.put(entity.getId(), List.of(PrescriptionTestEntity.create(
+                TENANT_ID,
+                entity.getId(),
+                "CBC",
+                "Check baseline",
+                1
+        )));
+
+        PrescriptionUpsertCommand command = new PrescriptionUpsertCommand(
+                PATIENT_ID,
+                DOCTOR_ID,
+                CONSULTATION_ID,
+                APPOINTMENT_ID,
+                "Dx",
+                "Advice",
+                LocalDate.now().plusDays(2),
+                List.of(new PrescriptionMedicineCommand(
+                        "Cetirizine",
+                        MedicineType.TABLET,
+                        "10 mg",
+                        "1 tablet",
+                        "0-0-1",
+                        "5 days",
+                        Timing.ANYTIME,
+                        null,
+                        1
+                )),
+                List.of(new PrescriptionTestCommand("CBC", "Check baseline", 1))
+        );
+
+        PrescriptionRecord updated = service.updateDraft(TENANT_ID, entity.getId(), command, ACTOR_ID);
+
+        assertThat(updated.status()).isEqualTo(PrescriptionStatus.DRAFT);
+        assertThat(updated.medicines()).extracting(PrescriptionMedicineRecord::frequency).contains("0-0-1");
+        verify(medicineRepository).save(argThat(saved -> "0-0-1".equals(saved.getFrequency()) && "Cetirizine".equals(saved.getMedicineName())));
     }
 
     @Test

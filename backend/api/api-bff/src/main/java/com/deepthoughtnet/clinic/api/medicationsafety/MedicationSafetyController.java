@@ -37,6 +37,15 @@ public class MedicationSafetyController {
         return medicationSafetyService.evaluateForConsultation(tenantId, consultationId, actorAppUserId);
     }
 
+    @PostMapping("/run")
+    @PreAuthorize("@permissionChecker.hasPermission('prescription.create')")
+    public MedicationSafetyReviewResponse runSafetyCheck(@PathVariable UUID consultationId) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        doctorAssignmentSecurityService.requireConsultationAccess(tenantId, consultationId);
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        return medicationSafetyReviewService.runSafetyCheck(tenantId, consultationId, actorAppUserId);
+    }
+
     @GetMapping("/review")
     @PreAuthorize("@permissionChecker.hasPermission('consultation.read')")
     public MedicationSafetyReviewResponse review(@PathVariable UUID consultationId, @RequestParam(required = false) UUID prescriptionId) {
