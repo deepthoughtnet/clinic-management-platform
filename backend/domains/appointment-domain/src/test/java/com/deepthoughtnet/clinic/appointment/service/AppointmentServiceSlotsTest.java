@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 
 import com.deepthoughtnet.clinic.appointment.db.AppointmentEntity;
 import com.deepthoughtnet.clinic.appointment.db.AppointmentRepository;
@@ -33,6 +34,7 @@ import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.DayOfWeek;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
@@ -179,6 +181,115 @@ class AppointmentServiceSlotsTest {
         assertThat(slots.get(1).status()).isEqualTo(DoctorAvailabilitySlotStatus.FULL);
         assertThat(slots.get(1).bookedCount()).isEqualTo(2);
         assertThat(slots.get(1).maxPatientsPerSlot()).isEqualTo(2);
+    }
+
+    @Test
+    void listSlotsGeneratesMorningSlotsWithoutOverflow() {
+        DoctorAvailabilityEntity availability = availability(LocalTime.of(9, 0), LocalTime.of(12, 0), 30, 1);
+        when(doctorAvailabilityRepository.findByTenantIdOrderByDoctorUserIdAscDayOfWeekAscStartTimeAsc(TENANT_ID)).thenReturn(List.of(availability));
+        when(appointmentRepository.findByTenantIdAndDoctorUserIdAndAppointmentDateOrderByTokenNumberAscAppointmentTimeAscCreatedAtAsc(TENANT_ID, DOCTOR_ID, APPOINTMENT_DATE))
+                .thenReturn(List.of());
+
+        var slots = assertTimeoutPreemptively(Duration.ofSeconds(1), () -> service.listSlots(TENANT_ID, DOCTOR_ID, APPOINTMENT_DATE));
+
+        assertThat(slots).hasSize(6);
+        assertThat(slots).extracting("slotTime").containsExactly(
+                LocalTime.of(9, 0),
+                LocalTime.of(9, 30),
+                LocalTime.of(10, 0),
+                LocalTime.of(10, 30),
+                LocalTime.of(11, 0),
+                LocalTime.of(11, 30)
+        );
+    }
+
+    @Test
+    void listSlotsGeneratesEveningSlotsWithoutWrappingPastMidnight() {
+        DoctorAvailabilityEntity availability = availability(LocalTime.of(17, 0), LocalTime.of(23, 30), 30, 1);
+        when(doctorAvailabilityRepository.findByTenantIdOrderByDoctorUserIdAscDayOfWeekAscStartTimeAsc(TENANT_ID)).thenReturn(List.of(availability));
+        when(appointmentRepository.findByTenantIdAndDoctorUserIdAndAppointmentDateOrderByTokenNumberAscAppointmentTimeAscCreatedAtAsc(TENANT_ID, DOCTOR_ID, APPOINTMENT_DATE))
+                .thenReturn(List.of());
+
+        var slots = assertTimeoutPreemptively(Duration.ofSeconds(1), () -> service.listSlots(TENANT_ID, DOCTOR_ID, APPOINTMENT_DATE));
+
+        assertThat(slots).hasSize(13);
+        assertThat(slots.get(slots.size() - 1).slotTime()).isEqualTo(LocalTime.of(23, 0));
+        assertThat(slots.get(slots.size() - 1).slotEndTime()).isEqualTo(LocalTime.of(23, 30));
+        assertThat(slots).extracting("slotTime").doesNotContain(LocalTime.of(23, 30));
+    }
+
+    @Test
+    void listSlotsReturnsOneSlotForExactFitWindow() {
+        DoctorAvailabilityEntity availability = availability(LocalTime.of(9, 0), LocalTime.of(9, 30), 30, 1);
+        when(doctorAvailabilityRepository.findByTenantIdOrderByDoctorUserIdAscDayOfWeekAscStartTimeAsc(TENANT_ID)).thenReturn(List.of(availability));
+        when(appointmentRepository.findByTenantIdAndDoctorUserIdAndAppointmentDateOrderByTokenNumberAscAppointmentTimeAscCreatedAtAsc(TENANT_ID, DOCTOR_ID, APPOINTMENT_DATE))
+                .thenReturn(List.of());
+
+        var slots = service.listSlots(TENANT_ID, DOCTOR_ID, APPOINTMENT_DATE);
+
+        assertThat(slots).hasSize(1);
+        assertThat(slots.get(0).slotTime()).isEqualTo(LocalTime.of(9, 0));
+        assertThat(slots.get(0).slotEndTime()).isEqualTo(LocalTime.of(9, 30));
+    }
+
+    @Test
+    void listSlotsReturnsNoSlotsWhenDurationExceedsWindow() {
+        DoctorAvailabilityEntity availability = availability(LocalTime.of(9, 0), LocalTime.of(9, 20), 30, 1);
+        when(doctorAvailabilityRepository.findByTenantIdOrderByDoctorUserIdAscDayOfWeekAscStartTimeAsc(TENANT_ID)).thenReturn(List.of(availability));
+        when(appointmentRepository.findByTenantIdAndDoctorUserIdAndAppointmentDateOrderByTokenNumberAscAppointmentTimeAscCreatedAtAsc(TENANT_ID, DOCTOR_ID, APPOINTMENT_DATE))
+                .thenReturn(List.of());
+
+        var slots = service.listSlots(TENANT_ID, DOCTOR_ID, APPOINTMENT_DATE);
+
+        assertThat(slots).isEmpty();
+    }
+
+    @Test
+    void listSlotsSkipsInvalidPersistedZeroDurationAndTerminates() {
+        DoctorAvailabilityEntity availability = availability(LocalTime.of(9, 0), LocalTime.of(12, 0), 0, 1);
+        when(doctorAvailabilityRepository.findByTenantIdOrderByDoctorUserIdAscDayOfWeekAscStartTimeAsc(TENANT_ID)).thenReturn(List.of(availability));
+        when(appointmentRepository.findByTenantIdAndDoctorUserIdAndAppointmentDateOrderByTokenNumberAscAppointmentTimeAscCreatedAtAsc(TENANT_ID, DOCTOR_ID, APPOINTMENT_DATE))
+                .thenReturn(List.of());
+
+        var slots = assertTimeoutPreemptively(Duration.ofSeconds(1), () -> service.listSlots(TENANT_ID, DOCTOR_ID, APPOINTMENT_DATE));
+
+        assertThat(slots).isEmpty();
+    }
+
+    @Test
+    void listSlotsSkipsInvalidPersistedNegativeDurationAndTerminates() {
+        DoctorAvailabilityEntity availability = availability(LocalTime.of(9, 0), LocalTime.of(12, 0), -15, 1);
+        when(doctorAvailabilityRepository.findByTenantIdOrderByDoctorUserIdAscDayOfWeekAscStartTimeAsc(TENANT_ID)).thenReturn(List.of(availability));
+        when(appointmentRepository.findByTenantIdAndDoctorUserIdAndAppointmentDateOrderByTokenNumberAscAppointmentTimeAscCreatedAtAsc(TENANT_ID, DOCTOR_ID, APPOINTMENT_DATE))
+                .thenReturn(List.of());
+
+        var slots = assertTimeoutPreemptively(Duration.ofSeconds(1), () -> service.listSlots(TENANT_ID, DOCTOR_ID, APPOINTMENT_DATE));
+
+        assertThat(slots).isEmpty();
+    }
+
+    @Test
+    void listSlotsSkipsInvalidPersistedStartEqualsEndAndTerminates() {
+        DoctorAvailabilityEntity availability = availability(LocalTime.of(9, 0), LocalTime.of(9, 0), 30, 1);
+        when(doctorAvailabilityRepository.findByTenantIdOrderByDoctorUserIdAscDayOfWeekAscStartTimeAsc(TENANT_ID)).thenReturn(List.of(availability));
+        when(appointmentRepository.findByTenantIdAndDoctorUserIdAndAppointmentDateOrderByTokenNumberAscAppointmentTimeAscCreatedAtAsc(TENANT_ID, DOCTOR_ID, APPOINTMENT_DATE))
+                .thenReturn(List.of());
+
+        var slots = assertTimeoutPreemptively(Duration.ofSeconds(1), () -> service.listSlots(TENANT_ID, DOCTOR_ID, APPOINTMENT_DATE));
+
+        assertThat(slots).isEmpty();
+    }
+
+    @Test
+    void listSlotsSkipsInvalidPersistedStartAfterEndAndTerminates() {
+        DoctorAvailabilityEntity availability = availability(LocalTime.of(12, 0), LocalTime.of(9, 0), 30, 1);
+        when(doctorAvailabilityRepository.findByTenantIdOrderByDoctorUserIdAscDayOfWeekAscStartTimeAsc(TENANT_ID)).thenReturn(List.of(availability));
+        when(appointmentRepository.findByTenantIdAndDoctorUserIdAndAppointmentDateOrderByTokenNumberAscAppointmentTimeAscCreatedAtAsc(TENANT_ID, DOCTOR_ID, APPOINTMENT_DATE))
+                .thenReturn(List.of());
+
+        var slots = assertTimeoutPreemptively(Duration.ofSeconds(1), () -> service.listSlots(TENANT_ID, DOCTOR_ID, APPOINTMENT_DATE));
+
+        assertThat(slots).isEmpty();
     }
 
     @Test
@@ -494,6 +605,10 @@ class AppointmentServiceSlotsTest {
     }
 
     private DoctorAvailabilityEntity availability(LocalTime start, LocalTime end, int durationMinutes, int maxPatientsPerSlot) {
+        return availability(start, end, Integer.valueOf(durationMinutes), maxPatientsPerSlot);
+    }
+
+    private DoctorAvailabilityEntity availability(LocalTime start, LocalTime end, Integer durationMinutes, int maxPatientsPerSlot) {
         DoctorAvailabilityEntity entity = DoctorAvailabilityEntity.create(TENANT_ID, DOCTOR_ID);
         entity.update(DayOfWeek.MONDAY, start, end, LocalTime.of(10, 20), LocalTime.of(10, 30), durationMinutes, maxPatientsPerSlot, true);
         return entity;

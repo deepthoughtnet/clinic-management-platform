@@ -73,7 +73,11 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
         long started = System.currentTimeMillis();
         UUID requestId = UUID.randomUUID();
         AiPromptTemplateDefinition template = templateRegistry.resolve(request);
-        AiTaskGenerationConfigService.GenerationConfig generationConfig = taskGenerationConfigService.resolve(request.taskType());
+        AiTaskGenerationConfigService.GenerationConfig generationConfig = taskGenerationConfigService.resolve(
+                request.taskType(),
+                request.promptTemplateCode(),
+                request.useCaseCode()
+        );
         AiOrchestrationRequest requestWithTaskDefaults = applyGenerationConfig(request, generationConfig);
         Map<String, Object> renderedVariables = renderVariables(requestWithTaskDefaults, template);
         String evidenceSummary = summarizeEvidence(request.evidence());

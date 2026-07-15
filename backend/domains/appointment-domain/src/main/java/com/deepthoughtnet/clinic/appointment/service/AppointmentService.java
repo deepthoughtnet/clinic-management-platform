@@ -41,6 +41,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
@@ -175,10 +176,43 @@ public class AppointmentService {
         LocalTime now = clinicNow.toLocalTime().truncatedTo(ChronoUnit.MINUTES);
         for (DoctorAvailabilityEntity availability : availabilities) {
             int capacity = Math.max(1, availability.getMaxPatientsPerSlot() == null ? 1 : availability.getMaxPatientsPerSlot());
-            LocalTime slotStart = availability.getStartTime();
-            LocalTime slotEnd = availability.getEndTime();
-            while (!slotStart.plusMinutes(availability.getConsultationDurationMinutes()).isAfter(slotEnd)) {
-                LocalTime candidateEnd = slotStart.plusMinutes(availability.getConsultationDurationMinutes());
+            int consultationDurationMinutes = availability.getConsultationDurationMinutes() == null ? 0 : availability.getConsultationDurationMinutes();
+            if (!isValidAvailabilityWindow(availability.getStartTime(), availability.getEndTime(), consultationDurationMinutes)) {
+                log.warn("Skipping invalid doctor availability row during slot generation tenantId={} doctorUserId={} availabilityId={} startTime={} endTime={} consultationDurationMinutes={}",
+                        tenantId,
+                        doctorUserId,
+                        availability.getId(),
+                        availability.getStartTime(),
+                        availability.getEndTime(),
+                        availability.getConsultationDurationMinutes());
+                continue;
+            }
+
+            LocalDateTime windowStart = LocalDateTime.of(appointmentDate, availability.getStartTime());
+            LocalDateTime windowEnd = LocalDateTime.of(appointmentDate, availability.getEndTime());
+            long maxIterations = java.time.Duration.between(windowStart, windowEnd).toMinutes() / consultationDurationMinutes;
+            if (maxIterations <= 0) {
+                continue;
+            }
+
+            LocalDateTime cursor = windowStart;
+            for (long iteration = 0; iteration < maxIterations; iteration++) {
+                LocalDateTime candidateEndDateTime = cursor.plusMinutes(consultationDurationMinutes);
+                if (!candidateEndDateTime.isAfter(cursor)) {
+                    log.warn("Stopping slot generation because cursor did not advance tenantId={} doctorUserId={} availabilityId={} cursor={} candidateEnd={}",
+                            tenantId,
+                            doctorUserId,
+                            availability.getId(),
+                            cursor,
+                            candidateEndDateTime);
+                    break;
+                }
+                if (candidateEndDateTime.isAfter(windowEnd)) {
+                    break;
+                }
+
+                LocalTime slotStart = cursor.toLocalTime();
+                LocalTime candidateEnd = candidateEndDateTime.toLocalTime();
                 boolean inBreak = isWithinBreak(slotStart, availability.getBreakStartTime(), availability.getBreakEndTime());
                 boolean inLeave = isWithinUnavailability(appointmentDate, slotStart, candidateEnd, unavailabilityBlocks, zone);
                 List<AppointmentEntity> booked = bookingsByTime.getOrDefault(slotStart, List.of());
@@ -262,7 +296,7 @@ public class AppointmentService {
                         firstBooking == null ? null : firstBooking.getStatus(),
                         firstBooking == null ? null : firstBooking.getReason()
                 ));
-                slotStart = candidateEnd;
+                cursor = candidateEndDateTime;
             }
         }
         return slots;
@@ -1242,11 +1276,9 @@ public class AppointmentService {
         requireTime(command.startTime(), "startTime");
         requireTime(command.endTime(), "endTime");
         if (command.consultationDurationMinutes() == null || command.consultationDurationMinutes() <= 0) {
-            throw new IllegalArgumentException("consultationDurationMinutes is required");
+            throw new IllegalArgumentException("consultationDurationMinutes must be greater than zero");
         }
-        if (!command.startTime().isBefore(command.endTime())) {
-            throw new IllegalArgumentException("startTime must be before endTime");
-        }
+        validateSameDayAvailabilityWindow(command.startTime(), command.endTime());
         if (command.breakStartTime() != null || command.breakEndTime() != null) {
             if (command.breakStartTime() == null || command.breakEndTime() == null) {
                 throw new IllegalArgumentException("breakStartTime and breakEndTime must both be provided");
@@ -1261,6 +1293,19 @@ public class AppointmentService {
         if (command.maxPatientsPerSlot() != null && command.maxPatientsPerSlot() <= 0) {
             throw new IllegalArgumentException("maxPatientsPerSlot must be greater than zero");
         }
+    }
+
+    private void validateSameDayAvailabilityWindow(LocalTime startTime, LocalTime endTime) {
+        if (!startTime.isBefore(endTime)) {
+            throw new IllegalArgumentException("startTime must be before endTime");
+        }
+    }
+
+    private boolean isValidAvailabilityWindow(LocalTime startTime, LocalTime endTime, int consultationDurationMinutes) {
+        return startTime != null
+                && endTime != null
+                && consultationDurationMinutes > 0
+                && startTime.isBefore(endTime);
     }
 
     private boolean isDuplicateAvailabilityConstraint(Throwable ex) {

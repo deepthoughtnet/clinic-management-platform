@@ -29,6 +29,7 @@ import java.util.regex.Pattern;
 final class LongitudinalClinicalContextBuilder {
     private static final Map<String, AnalyteDefinition> ANALYTES = Map.ofEntries(
             Map.entry("hba1c", new AnalyteDefinition("hba1c", "HbA1c", Set.of("hba1c", "hb a1c", "a1c", "glycated hemoglobin"), "%", TrendSemantics.WORSE_WHEN_INCREASING)),
+            Map.entry("estimated_average_glucose", new AnalyteDefinition("estimated_average_glucose", "Estimated Average Glucose", Set.of("estimated average glucose", "estimated avg glucose", "average glucose", "eag"), "mg/dL", TrendSemantics.WORSE_WHEN_INCREASING)),
             Map.entry("blood_sugar", new AnalyteDefinition("blood_sugar", "Blood Sugar", Set.of("blood sugar", "random blood sugar", "glucose", "rbs", "fbs"), "mg/dL", TrendSemantics.WORSE_WHEN_INCREASING)),
             Map.entry("creatinine", new AnalyteDefinition("creatinine", "Creatinine", Set.of("creatinine", "serum creatinine"), "mg/dL", TrendSemantics.WORSE_WHEN_INCREASING)),
             Map.entry("egfr", new AnalyteDefinition("egfr", "eGFR", Set.of("egfr", "e gfr", "estimated glomerular filtration rate", "estimated gfr"), "mL/min/1.73m2", TrendSemantics.WORSE_WHEN_DECREASING)),
@@ -474,6 +475,9 @@ final class LongitudinalClinicalContextBuilder {
             return null;
         }
         String normalized = haystack.toLowerCase(Locale.ROOT);
+        if (containsAny(normalized, "estimated_average_glucose", "estimated average glucose", "estimated avg glucose", "average glucose", "eag")) {
+            return "estimated_average_glucose";
+        }
         for (AnalyteDefinition definition : ANALYTES.values()) {
             if (definition.aliases().stream().anyMatch(alias -> normalized.contains(alias.toLowerCase(Locale.ROOT)))) {
                 return definition.key();

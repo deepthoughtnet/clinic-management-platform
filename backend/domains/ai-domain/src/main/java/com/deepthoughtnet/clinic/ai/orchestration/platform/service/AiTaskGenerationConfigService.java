@@ -6,6 +6,8 @@ import org.springframework.stereotype.Service;
 
 @Service
 public class AiTaskGenerationConfigService {
+    private static final String CONSULTATION_ASK_TEMPLATE_CODE = "clinic.consultation.ask.v1";
+    private static final String CONSULTATION_ASK_USE_CASE = "consultation.ask";
     private final String clinicalReasoningModelOverride;
     private final String geminiDefaultModel;
     private final Integer clinicalReasoningThinkingBudget;
@@ -27,6 +29,18 @@ public class AiTaskGenerationConfigService {
     }
 
     public GenerationConfig resolve(AiTaskType taskType) {
+        return resolve(taskType, null, null);
+    }
+
+    public GenerationConfig resolve(AiTaskType taskType, String templateCode, String useCaseCode) {
+        if (isConsultationAsk(templateCode, useCaseCode)) {
+            return new GenerationConfig(
+                    null,
+                    0,
+                    false,
+                    1024
+            );
+        }
         if (taskType == AiTaskType.CLINICAL_REASONING) {
             return new GenerationConfig(
                     firstNonBlank(clinicalReasoningModelOverride, geminiDefaultModel),
@@ -38,11 +52,23 @@ public class AiTaskGenerationConfigService {
         return new GenerationConfig(null, null, false, null);
     }
 
+    private boolean isConsultationAsk(String templateCode, String useCaseCode) {
+        return CONSULTATION_ASK_TEMPLATE_CODE.equalsIgnoreCase(normalize(templateCode))
+                || CONSULTATION_ASK_USE_CASE.equalsIgnoreCase(normalize(useCaseCode));
+    }
+
     private String normalizeModel(String model) {
         if (model == null || model.isBlank()) {
             return null;
         }
         return model.trim();
+    }
+
+    private String normalize(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return value.trim();
     }
 
     private String firstNonBlank(String... values) {

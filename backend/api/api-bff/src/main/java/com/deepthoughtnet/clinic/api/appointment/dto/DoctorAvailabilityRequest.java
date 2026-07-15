@@ -16,10 +16,10 @@ public record DoctorAvailabilityRequest(
         LocalTime breakStartTime,
         LocalTime breakEndTime,
         @NotNull
-        @Positive
+        @Positive(message = "consultationDurationMinutes must be greater than zero.")
         Integer consultationDurationMinutes,
         @NotNull
-        @Positive
+        @Positive(message = "maxPatientsPerSlot must be greater than zero.")
         Integer maxPatientsPerSlot,
         boolean active
 ) {

@@ -21,6 +21,7 @@ import HealingRoundedIcon from "@mui/icons-material/HealingRounded";
 import { type ClinicalContextResponse } from "../../api/clinicApi";
 
 type LongitudinalConcept = ClinicalContextResponse["longitudinalMemory"]["knownConditions"][number];
+type StructuredLabTrend = NonNullable<NonNullable<ClinicalContextResponse["longitudinalClinicalContext"]>["labTrends"]>[number];
 
 function compactText(value: string | null | undefined, max = 110) {
   const normalized = (value || "").trim();
@@ -45,6 +46,16 @@ function formatObservedOn(value: string | null | undefined) {
     return acc;
   }, {});
   return [parts.day, parts.month, parts.year].filter(Boolean).join("-");
+}
+
+function formatTrendValue(value: string | null | undefined, unit: string | null | undefined) {
+  return [value, unit].filter(Boolean).join(value && unit ? " " : "");
+}
+
+function formatTrendVerificationLabel(value: string | null | undefined) {
+  const normalized = (value || "").trim().replaceAll("_", " ").toLowerCase();
+  if (!normalized) return null;
+  return normalized.split(/\s+/).map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`).join(" ");
 }
 
 function normalizeConceptLabel(value: string | null | undefined) {
@@ -109,6 +120,73 @@ function LongitudinalConceptLine({
         </Typography>
       ) : null}
     </Stack>
+  );
+}
+
+function StructuredTrendLine({
+  trend,
+  onViewSourceDocument,
+}: {
+  trend: StructuredLabTrend;
+  onViewSourceDocument?: (sourceDocumentId: string) => void;
+}) {
+  const sourceDocumentId = trend.sourceDocumentIds?.[0] || null;
+  const sourceCount = trend.sourceDocumentIds?.length || 0;
+  const directionLabel = (trend.direction || "").trim().replaceAll("_", " ");
+  const verificationLabel = formatTrendVerificationLabel(trend.verificationStatus);
+
+  return (
+    <Box
+      sx={{
+        px: 0.75,
+        py: 0.55,
+        borderRadius: 1.25,
+        border: 1,
+        borderColor: "divider",
+        bgcolor: "background.paper",
+      }}
+    >
+      <Stack spacing={0.35}>
+        <Stack direction="row" spacing={0.5} alignItems="center" justifyContent="space-between" useFlexGap flexWrap="wrap">
+          <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 800 }}>
+            {trend.analyteName || trend.analyteCode || "Trend"}
+          </Typography>
+          <Stack direction="row" spacing={0.4} useFlexGap flexWrap="wrap">
+            {directionLabel ? <Chip size="small" variant="outlined" color="primary" label={directionLabel} sx={{ height: 18, "& .MuiChip-label": { px: 0.6, fontSize: 10.5 } }} /> : null}
+            {verificationLabel ? <Chip size="small" variant="outlined" color="warning" label={verificationLabel} sx={{ height: 18, "& .MuiChip-label": { px: 0.6, fontSize: 10.5 } }} /> : null}
+            {sourceDocumentId && onViewSourceDocument ? (
+              <Chip
+                size="small"
+                variant="outlined"
+                color="default"
+                label={sourceCount > 1 ? `${sourceCount} sources` : "Source"}
+                onClick={() => onViewSourceDocument(sourceDocumentId)}
+                clickable
+                sx={{ height: 18, "& .MuiChip-label": { px: 0.6, fontSize: 10.5 } }}
+              />
+            ) : null}
+          </Stack>
+        </Stack>
+        <Typography variant="body2" sx={{ fontWeight: 900, lineHeight: 1.2 }}>
+          {formatTrendValue(trend.olderValue, trend.olderUnit)}{" "}
+          <Box component="span" sx={{ color: "text.secondary", fontWeight: 700 }}>
+            →
+          </Box>{" "}
+          {formatTrendValue(trend.newerValue, trend.newerUnit)}
+        </Typography>
+        <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.2 }}>
+          {formatObservedOn(trend.olderDate) || "-"} • {formatObservedOn(trend.newerDate) || "-"}
+        </Typography>
+        <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.2 }}>
+          {trend.direction || "Not recorded"}{trend.absoluteChange || trend.interval ? ` · ${[trend.absoluteChange, trend.interval || null].filter(Boolean).join(" ")}` : ""}
+        </Typography>
+        {trend.clinicalInterpretation ? (
+          <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.25 }}>
+            {trend.clinicalInterpretation}
+          </Typography>
+        ) : null}
+      </Stack>
+    </Box>
   );
 }
 
@@ -487,6 +565,7 @@ export function PatientIntelligenceCard({
   const radiologyReports = context?.documentIntelligence.radiology || [];
   const referrals = context?.documentIntelligence.referrals || [];
   const dischargeSummaries = context?.documentIntelligence.dischargeSummaries || [];
+  const structuredLabTrends = context?.longitudinalClinicalContext?.labTrends || [];
 
   const conditions = React.useMemo(
     () =>
@@ -844,7 +923,22 @@ export function PatientIntelligenceCard({
                   limit={5}
                   emptyLabel="No recent trend markers."
                 />
-                {context?.labIntelligence.previousTrends?.length ? (
+                {structuredLabTrends.length ? (
+                  <Stack spacing={0.45}>
+                    <Typography variant="caption" color="text.secondary" sx={{ textTransform: "uppercase", letterSpacing: 0.4 }}>
+                      Trends
+                    </Typography>
+                    <Stack spacing={0.45}>
+                      {structuredLabTrends.map((trend, index) => (
+                        <StructuredTrendLine
+                          key={`${trend.analyteCode || trend.analyteName || "trend"}-${trend.newerDate || trend.olderDate || index}`}
+                          trend={trend}
+                          onViewSourceDocument={onViewSourceDocument}
+                        />
+                      ))}
+                    </Stack>
+                  </Stack>
+                ) : context?.labIntelligence.previousTrends?.length ? (
                   <Typography variant="caption" color="text.secondary">
                     Trends: {context.labIntelligence.previousTrends.slice(0, 3).join(" • ")}
                   </Typography>

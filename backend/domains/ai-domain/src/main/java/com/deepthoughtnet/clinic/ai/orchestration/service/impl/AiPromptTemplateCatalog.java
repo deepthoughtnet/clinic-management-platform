@@ -78,6 +78,31 @@ public class AiPromptTemplateCatalog {
             Return only the final spoken text.
             """;
 
+    private static final String CONSULTATION_ASK_USER_PROMPT = """
+            Product: {{productCode}}
+            Task: {{taskType}}
+            Use case: {{useCaseCode}}
+            Prompt template: {{promptTemplateCode}}
+            Tenant: {{tenantId}}
+            Actor: {{actorUserId}}
+            Correlation: {{correlationId}}
+
+            User question:
+            {{input.prompt}}
+
+            Canonical consultation context:
+            {{input.aiPromptContext}}
+
+            Answer the doctor's exact question using only the canonical consultation context.
+            Be concise and clinically useful.
+            Prefer 3-5 key points when summarizing trends.
+            Do not restate the full patient context or every report.
+            Distinguish verified clinical data from pending-review AI extracted data.
+            Do not invent missing information.
+            Be advisory only. Do not mutate workflow state.
+            Return plain text only. Do not include JSON, markdown, or code fences.
+            """;
+
     private final Map<String, AiPromptTemplateDefinition> defaults = Map.ofEntries(
             entry("clinic.clinic.extraction.v1", AiProductCode.CLINIC, AiTaskType.CLINIC_EXTRACTION,
                     "Extract clinic details from the supplied document context. Return structured JSON when possible.",
@@ -276,7 +301,13 @@ public class AiPromptTemplateCatalog {
             entry("generic.copilot.v1", AiProductCode.GENERIC, AiTaskType.GENERIC_COPILOT,
                     "Act as a generic copilot for the supplied business context.",
                     List.of("Explain the situation clearly", "Offer concrete next steps", "Do not take irreversible action"),
-                    List.of("AI output is advisory only"))
+                    List.of("AI output is advisory only")),
+            entry("clinic.consultation.ask.v1", AiProductCode.CLINIC, AiTaskType.GENERIC_COPILOT,
+                    "Act as a consultation chat assistant using the supplied canonical consultation context.",
+                    CONSULTATION_ASK_USER_PROMPT,
+                    "Clinical chat answer using canonical consultation context.",
+                    List.of("Explain the answer clearly", "Summarize relevant longitudinal trends", "Do not mutate workflow state"),
+                    List.of("Consultation chat output is advisory only"))
     );
 
     public AiPromptTemplateDefinition defaultDefinition(AiTaskType taskType, String templateCode) {

@@ -27,6 +27,10 @@ test("patient intelligence card groups longitudinal findings and exposes review/
   assert.ok(card.includes("High"));
   assert.ok(card.includes("Medium"));
   assert.ok(card.includes("Low"));
+  assert.ok(card.includes("structuredLabTrends"));
+  assert.ok(card.includes("longitudinalClinicalContext?.labTrends"));
+  assert.ok(card.includes("StructuredTrendLine"));
+  assert.ok(card.includes("sourceDocumentIds"));
   assert.ok(card.includes("join(\"-\")"));
   assert.ok(consultationPage.includes("onViewSourceDocument={(documentId) => void openClinicalDocumentById(documentId)}"));
 });

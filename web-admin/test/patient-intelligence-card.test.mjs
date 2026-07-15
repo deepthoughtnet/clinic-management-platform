@@ -22,6 +22,12 @@ test("patient intelligence card exposes grouped longitudinal sections", () => {
   assert.ok(source.includes("View Source"));
   assert.ok(source.includes("Doctor verification required before becoming permanent patient history."));
   assert.ok(source.includes("Longitudinal patient context. Not AI generated."));
+  assert.ok(source.includes("structuredLabTrends"));
+  assert.ok(source.includes("longitudinalClinicalContext?.labTrends"));
+  assert.ok(source.includes("StructuredTrendLine"));
+  assert.ok(source.includes("sourceDocumentIds"));
+  assert.ok(source.includes("clinicalInterpretation"));
+  assert.ok(source.includes("previousTrends"));
   assert.ok(source.includes("join(\"-\")"));
   assert.ok(source.includes("Very High"));
   assert.ok(source.includes("High"));

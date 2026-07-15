@@ -9,6 +9,7 @@ import com.deepthoughtnet.clinic.api.clinicalmemory.model.LongitudinalConceptSna
 import com.deepthoughtnet.clinic.api.clinicalmemory.model.PatientLongitudinalMemoryProfile;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
@@ -137,6 +138,78 @@ class LongitudinalClinicalContextBuilderTest {
     }
 
     @Test
+    void keepsEstimatedAverageGlucoseSeparateFromBloodSugarTrendSelection() {
+        UUID bloodSugarOlderDocumentId = UUID.randomUUID();
+        UUID estimatedAverageGlucoseDocumentId = UUID.randomUUID();
+        UUID bloodSugarNewerDocumentId = UUID.randomUUID();
+        PatientLongitudinalMemoryProfile profile = new PatientLongitudinalMemoryProfile(
+                List.of(),
+                List.of(),
+                null,
+                null,
+                null,
+                null,
+                null,
+                List.of(),
+                List.of(
+                        new LongitudinalConceptSnapshot("LAB_RESULT", "blood_sugar", "Random Blood Sugar", "140", "mg/dL", "Baseline glucose", "EXTERNAL_LAB_REPORT", bloodSugarOlderDocumentId, LocalDate.of(2026, 1, 1), BigDecimal.valueOf(0.95), "VERIFIED", "Random Blood Sugar 140 mg/dL"),
+                        new LongitudinalConceptSnapshot("LAB_RESULT", "estimated_average_glucose", "Estimated Average Glucose", "163", "mg/dL", "Estimated Average Glucose report", "EXTERNAL_LAB_REPORT", estimatedAverageGlucoseDocumentId, LocalDate.of(2026, 1, 15), BigDecimal.valueOf(0.95), "PENDING_REVIEW", "Estimated Average Glucose 163 mg/dL"),
+                        new LongitudinalConceptSnapshot("LAB_RESULT", "blood_sugar", "Blood Glucose", "198", "mg/dL", "Follow-up glucose", "EXTERNAL_LAB_REPORT", bloodSugarNewerDocumentId, LocalDate.of(2026, 7, 8), BigDecimal.valueOf(0.95), "PENDING_REVIEW", "Blood Glucose 198 mg/dL")
+                ),
+                null
+        );
+
+        ClinicalContextResponse.LongitudinalClinicalContext context = builder.build(profile, List.of());
+
+        assertThat(context.labTrends()).hasSize(1);
+        assertThat(context.labTrends().getFirst().analyteCode()).isEqualTo("blood_sugar");
+        assertThat(context.labTrends().getFirst().olderValue()).isEqualTo("140");
+        assertThat(context.labTrends().getFirst().olderDate()).isEqualTo("2026-01-01");
+        assertThat(context.labTrends().getFirst().newerValue()).isEqualTo("198");
+        assertThat(context.labTrends().getFirst().newerDate()).isEqualTo("2026-07-08");
+        assertThat(context.labTrends().getFirst().direction()).isEqualTo("WORSENING");
+    }
+
+    @Test
+    void normalizesEstimatedAverageGlucoseAliasesWithoutCollidingWithBloodSugarAliases() throws Exception {
+        assertThat(invokeNormalizeAnalyteKey("estimated_average_glucose", null, null)).isEqualTo("estimated_average_glucose");
+        assertThat(invokeNormalizeAnalyteKey(null, "Estimated Average Glucose", null)).isEqualTo("estimated_average_glucose");
+        assertThat(invokeNormalizeAnalyteKey(null, "Estimated Avg Glucose", null)).isEqualTo("estimated_average_glucose");
+        assertThat(invokeNormalizeAnalyteKey(null, "eAG", null)).isEqualTo("estimated_average_glucose");
+        assertThat(invokeNormalizeAnalyteKey(null, "Random Blood Sugar", null)).isEqualTo("blood_sugar");
+        assertThat(invokeNormalizeAnalyteKey(null, "Blood Glucose", null)).isEqualTo("blood_sugar");
+    }
+
+    @Test
+    void preservesValidBloodSugarAliasTrendSelection() {
+        UUID firstDocumentId = UUID.randomUUID();
+        UUID secondDocumentId = UUID.randomUUID();
+        PatientLongitudinalMemoryProfile profile = new PatientLongitudinalMemoryProfile(
+                List.of(),
+                List.of(),
+                null,
+                null,
+                null,
+                null,
+                null,
+                List.of(),
+                List.of(
+                        new LongitudinalConceptSnapshot("LAB_RESULT", "blood_sugar", "Random Blood Sugar", "140", "mg/dL", "Baseline glucose", "EXTERNAL_LAB_REPORT", firstDocumentId, LocalDate.of(2026, 1, 1), BigDecimal.valueOf(0.95), "VERIFIED", "Random Blood Sugar 140 mg/dL"),
+                        new LongitudinalConceptSnapshot("LAB_RESULT", "blood_sugar", "Blood Glucose", "198", "mg/dL", "Follow-up glucose", "EXTERNAL_LAB_REPORT", secondDocumentId, LocalDate.of(2026, 7, 8), BigDecimal.valueOf(0.95), "PENDING_REVIEW", "Blood Glucose 198 mg/dL")
+                ),
+                null
+        );
+
+        ClinicalContextResponse.LongitudinalClinicalContext context = builder.build(profile, List.of());
+
+        assertThat(context.labTrends()).hasSize(1);
+        assertThat(context.labTrends().getFirst().analyteCode()).isEqualTo("blood_sugar");
+        assertThat(context.labTrends().getFirst().olderValue()).isEqualTo("140");
+        assertThat(context.labTrends().getFirst().newerValue()).isEqualTo("198");
+        assertThat(context.labTrends().getFirst().direction()).isEqualTo("WORSENING");
+    }
+
+    @Test
     void preservesGenericAnalyteTrendSelectionForEgfr() {
         UUID documentId = UUID.randomUUID();
         PatientLongitudinalMemoryProfile profile = new PatientLongitudinalMemoryProfile(
@@ -166,6 +239,12 @@ class LongitudinalClinicalContextBuilderTest {
                     assertThat(trend.newerDate()).isEqualTo("2026-07-08");
                     assertThat(trend.direction()).isEqualTo("WORSENING");
                 });
+    }
+
+    private String invokeNormalizeAnalyteKey(String conceptKey, String label, String evidenceText) throws Exception {
+        Method method = LongitudinalClinicalContextBuilder.class.getDeclaredMethod("normalizeAnalyteKey", String.class, String.class, String.class);
+        method.setAccessible(true);
+        return (String) method.invoke(builder, conceptKey, label, evidenceText);
     }
 
     @Test

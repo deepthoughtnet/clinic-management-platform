@@ -23,6 +23,9 @@ import org.springframework.stereotype.Service;
 public class AiDoctorCopilotService {
     private static final Logger log = LoggerFactory.getLogger(AiDoctorCopilotService.class);
     private static final String SAFETY_NOTICE = "This is an AI-generated draft. Doctor must verify before use.";
+    private static final String CONSULTATION_ASK_TEMPLATE_CODE = "clinic.consultation.ask.v1";
+    private static final String CONSULTATION_ASK_USE_CASE = "consultation.ask";
+    private static final Integer CONSULTATION_ASK_MAX_OUTPUT_TOKENS = 1024;
 
     private final AiOrchestrationService aiOrchestrationService;
     private final ObjectMapper objectMapper;
@@ -48,6 +51,7 @@ public class AiDoctorCopilotService {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorUserId = RequestContextHolder.require().appUserId();
         String correlationId = RequestContextHolder.require().correlationId();
+        Integer maxTokens = isConsultationAsk(promptTemplateCode, useCaseCode) ? CONSULTATION_ASK_MAX_OUTPUT_TOKENS : null;
 
         AiOrchestrationResponse response = aiOrchestrationService.complete(new AiOrchestrationRequest(
                 AiProductCode.CLINIC,
@@ -57,7 +61,7 @@ public class AiDoctorCopilotService {
                 promptTemplateCode,
                 input,
                 evidence,
-                null,
+                maxTokens,
                 0.1d,
                 correlationId,
                 useCaseCode
@@ -86,6 +90,16 @@ public class AiDoctorCopilotService {
                 response.parseStatus(),
                 previewStart(rawText),
                 previewEnd(rawText));
+        log.info("[AI-RESPONSE-TOKENS] taskType={} provider={} model={} promptTokens={} completionTokens={} totalTokens={} estimatedCost={} finishReason={} normalizedFinishReason={}",
+                taskType,
+                response.provider(),
+                response.model(),
+                response.tokenUsage() == null ? null : response.tokenUsage().promptTokens(),
+                response.tokenUsage() == null ? null : response.tokenUsage().completionTokens(),
+                response.tokenUsage() == null ? null : response.tokenUsage().totalTokens(),
+                response.tokenUsage() == null ? null : response.tokenUsage().estimatedCost(),
+                response.finishReason(),
+                response.normalizedFinishReason());
         log.debug("{} requestId={} provider={} model={} draftChars={} structuredKeys={} fallbackUsed={}",
                 responsePrefix(taskType),
                 response.requestId(),
@@ -111,6 +125,18 @@ public class AiDoctorCopilotService {
                 response.rawText(),
                 response.parseStatus()
         );
+    }
+
+    private boolean isConsultationAsk(String promptTemplateCode, String useCaseCode) {
+        return CONSULTATION_ASK_TEMPLATE_CODE.equalsIgnoreCase(normalize(promptTemplateCode))
+                || CONSULTATION_ASK_USE_CASE.equalsIgnoreCase(normalize(useCaseCode));
+    }
+
+    private String normalize(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return value.trim();
     }
 
     private String previewStart(String value) {

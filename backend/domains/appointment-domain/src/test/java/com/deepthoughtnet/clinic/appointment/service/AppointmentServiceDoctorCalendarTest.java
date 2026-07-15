@@ -247,4 +247,62 @@ class AppointmentServiceDoctorCalendarTest {
         )).isInstanceOf(DoctorAvailabilityConflictException.class)
                 .hasMessageContaining("Availability already exists for this doctor, day, and time range.");
     }
+
+    @Test
+    void createAvailabilityRejectsZeroDuration() {
+        assertThatThrownBy(() -> service.createAvailability(
+                TENANT_ID,
+                DOCTOR_ID,
+                new DoctorAvailabilityUpsertCommand(DayOfWeek.MONDAY, LocalTime.of(9, 0), LocalTime.of(10, 0), null, null, 0, 1, true),
+                ACTOR_ID
+        )).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("consultationDurationMinutes must be greater than zero");
+    }
+
+    @Test
+    void createAvailabilityRejectsNegativeDuration() {
+        assertThatThrownBy(() -> service.createAvailability(
+                TENANT_ID,
+                DOCTOR_ID,
+                new DoctorAvailabilityUpsertCommand(DayOfWeek.MONDAY, LocalTime.of(9, 0), LocalTime.of(10, 0), null, null, -15, 1, true),
+                ACTOR_ID
+        )).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("consultationDurationMinutes must be greater than zero");
+    }
+
+    @Test
+    void createAvailabilityRejectsStartEqualEnd() {
+        assertThatThrownBy(() -> service.createAvailability(
+                TENANT_ID,
+                DOCTOR_ID,
+                new DoctorAvailabilityUpsertCommand(DayOfWeek.MONDAY, LocalTime.of(9, 0), LocalTime.of(9, 0), null, null, 15, 1, true),
+                ACTOR_ID
+        )).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("startTime must be before endTime");
+    }
+
+    @Test
+    void createAvailabilityRejectsStartAfterEnd() {
+        assertThatThrownBy(() -> service.createAvailability(
+                TENANT_ID,
+                DOCTOR_ID,
+                new DoctorAvailabilityUpsertCommand(DayOfWeek.MONDAY, LocalTime.of(10, 0), LocalTime.of(9, 0), null, null, 15, 1, true),
+                ACTOR_ID
+        )).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("startTime must be before endTime");
+    }
+
+    @Test
+    void updateAvailabilityRejectsZeroDuration() {
+        DoctorAvailabilityEntity availability = DoctorAvailabilityEntity.create(TENANT_ID, DOCTOR_ID);
+        availability.update(DayOfWeek.MONDAY, LocalTime.of(9, 0), LocalTime.of(10, 0), null, null, 15, 1, true);
+
+        assertThatThrownBy(() -> service.updateAvailability(
+                TENANT_ID,
+                availability.getId(),
+                new DoctorAvailabilityUpsertCommand(DayOfWeek.MONDAY, LocalTime.of(9, 0), LocalTime.of(10, 0), null, null, 0, 1, true),
+                ACTOR_ID
+        )).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("consultationDurationMinutes must be greater than zero");
+    }
 }

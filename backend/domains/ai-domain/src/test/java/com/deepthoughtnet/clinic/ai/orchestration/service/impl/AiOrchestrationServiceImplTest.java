@@ -40,7 +40,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -176,6 +175,102 @@ class AiOrchestrationServiceImplTest {
         assertEquals(0, observedThinkingBudget.get());
         assertTrue(observedStrictJson.get());
         verify(guardrailService, times(1)).resolveExecutionSettings(any(), anyString(), any(), eq(null));
+    }
+
+    @Test
+    void consultationAskTemplateKeepsPromptBoundedWithoutDuplicatingFullContext() {
+        AiPromptTemplateRegistryService registry = mock(AiPromptTemplateRegistryService.class);
+        AiProviderRouter router = mock(AiProviderRouter.class);
+        AiRequestAuditService auditService = mock(AiRequestAuditService.class);
+        AiOrchestrationServiceImpl service = newService(registry, router, auditService);
+
+        String compactContext = "Patient snapshot: Sample Patient\nKnown conditions: Hypertension\nLatest HbA1c: 8.4";
+        String hugeContextMarker = "FULL_CONTEXT_BLOCK";
+        String hugeContext = hugeContextMarker.repeat(3000);
+        AiOrchestrationRequest request = new AiOrchestrationRequest(
+                AiProductCode.CLINIC,
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                AiTaskType.GENERIC_COPILOT,
+                "clinic.consultation.ask.v1",
+                Map.of(
+                        "prompt", "Summarize the longitudinal history",
+                        "aiPromptContext", compactContext,
+                        "clinicalContextJson", hugeContext,
+                        "clinicalContext", Map.of("raw", hugeContext)
+                ),
+                List.of(),
+                1024,
+                0.1d,
+                "corr-ask",
+                "consultation.ask"
+        );
+        AiPromptTemplateDefinition template = new AiPromptTemplateDefinition(
+                "clinic.consultation.ask.v1",
+                "v1",
+                AiProductCode.CLINIC,
+                AiTaskType.GENERIC_COPILOT,
+                "system prompt",
+                """
+                        Question:
+                        {{input.prompt}}
+
+                        Context:
+                        {{input.aiPromptContext}}
+                        """,
+                com.deepthoughtnet.clinic.platform.contracts.ai.AiPromptTemplateStatus.ACTIVE,
+                "fallback summary",
+                List.of("Review manually"),
+                List.of("Advisory only")
+        );
+        when(registry.resolve(request)).thenReturn(template);
+        AtomicReference<String> observedPrompt = new AtomicReference<>();
+        AtomicReference<Boolean> observedStrictJson = new AtomicReference<>();
+        AtomicReference<Integer> observedThinkingBudget = new AtomicReference<>();
+        AiProvider provider = new AiProvider() {
+            @Override
+            public String providerName() {
+                return "GEMINI";
+            }
+
+            @Override
+            public boolean supports(AiTaskType taskType) {
+                return true;
+            }
+
+            @Override
+            public AiProviderResponse complete(AiProviderRequest providerRequest) {
+                observedPrompt.set(providerRequest.userPrompt());
+                observedStrictJson.set(providerRequest.strictJsonMode());
+                observedThinkingBudget.set(providerRequest.thinkingBudget());
+                return new AiProviderResponse(
+                        "GEMINI",
+                        "gemini-2.5-flash",
+                        "{\"answer\":\"ok\"}",
+                        null,
+                        BigDecimal.ONE,
+                        new AiTokenUsage(1L, 1L, 2L, BigDecimal.ONE),
+                        "STOP"
+                );
+            }
+
+            @Override
+            public AiProviderStatus status() {
+                return AiProviderStatus.AVAILABLE;
+            }
+        };
+        when(router.resolveCandidates(AiTaskType.GENERIC_COPILOT)).thenReturn(List.of(provider));
+
+        AiOrchestrationResponse response = service.complete(request);
+
+        assertEquals("GEMINI", response.provider());
+        assertNotNull(observedPrompt.get());
+        assertTrue(observedPrompt.get().contains("Summarize the longitudinal history"));
+        assertTrue(observedPrompt.get().contains(compactContext));
+        assertFalse(observedPrompt.get().contains(hugeContextMarker));
+        assertTrue(observedPrompt.get().length() < 6000);
+        assertEquals(false, observedStrictJson.get());
+        assertEquals(Integer.valueOf(0), observedThinkingBudget.get());
     }
 
     @Test

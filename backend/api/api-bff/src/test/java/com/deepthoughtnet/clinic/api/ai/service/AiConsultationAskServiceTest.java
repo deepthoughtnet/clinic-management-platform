@@ -11,9 +11,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.deepthoughtnet.clinic.api.ai.clinicalcontext.ClinicalContextService;
-import com.deepthoughtnet.clinic.api.ai.dto.ClinicalContextResponse;
 import com.deepthoughtnet.clinic.api.ai.dto.AiConsultationAskRequest;
 import com.deepthoughtnet.clinic.api.ai.dto.AiDraftResponse;
+import com.deepthoughtnet.clinic.api.ai.dto.ClinicalContextResponse;
 import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
 import com.deepthoughtnet.clinic.platform.core.context.TenantId;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiTaskType;
@@ -27,10 +27,9 @@ import org.mockito.ArgumentCaptor;
 
 class AiConsultationAskServiceTest {
     @Test
-    void askUsesGenericCopilotAndForwardsPromptContext() {
+    void askUsesCompactConsultationPromptContext() {
         AiDoctorCopilotService copilotService = mock(AiDoctorCopilotService.class);
         ClinicalContextService clinicalContextService = mock(ClinicalContextService.class);
-        org.mockito.Mockito.doCallRealMethod().when(clinicalContextService).enrichPromptInput(anyMap(), any(ClinicalContextResponse.class));
         when(clinicalContextService.buildClinicalContext(any(UUID.class), any(UUID.class), any(UUID.class))).thenReturn(sampleContext());
         when(copilotService.draft(any(), anyString(), anyString(), any(), any())).thenReturn(new AiDraftResponse(
                 true,
@@ -76,18 +75,17 @@ class AiConsultationAskServiceTest {
             ArgumentCaptor<Map<String, Object>> inputCaptor = ArgumentCaptor.forClass((Class<Map<String, Object>>) (Class<?>) Map.class);
             verify(copilotService).draft(
                     eq(AiTaskType.GENERIC_COPILOT),
-                    eq("generic.copilot.v1"),
+                    eq("clinic.consultation.ask.v1"),
                     eq("consultation.ask"),
                     inputCaptor.capture(),
                     eq(List.of())
             );
             Map<String, Object> input = inputCaptor.getValue();
             assertThat(input.get("prompt")).isEqualTo("What should I watch for?");
-            assertThat(input.get("patientAgeGender")).isEqualTo("30Y / FEMALE");
-            assertThat(input.get("currentPrescriptionDraft")).isEqualTo("Paracetamol 500 mg");
-            assertThat(input.get("chiefComplaints")).isEqualTo("Fever");
-            assertThat(input.get("diagnosis")).isEqualTo("Viral syndrome");
-            assertThat(input).containsKeys("clinicalContextSummary", "clinicalContextJson", "aiPromptContext");
+            assertThat(input.get("aiPromptContext")).isEqualTo("Patient snapshot: Sample Patient");
+            assertThat(input).containsKeys("clinicalContextSummary", "aiPromptContext");
+            assertThat(input).doesNotContainKey("clinicalContextJson");
+            assertThat(input).doesNotContainKey("clinicalContext");
         } finally {
             com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder.clear();
         }

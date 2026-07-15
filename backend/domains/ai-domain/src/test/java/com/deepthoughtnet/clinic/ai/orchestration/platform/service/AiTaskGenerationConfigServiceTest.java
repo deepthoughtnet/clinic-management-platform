@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.ai.orchestration.platform.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiTaskType;
@@ -26,5 +27,20 @@ class AiTaskGenerationConfigServiceTest {
         AiTaskGenerationConfigService.GenerationConfig config = service.resolve(AiTaskType.CLINICAL_REASONING);
 
         assertEquals("gemini-2.5-flash-lite", config.modelOverride());
+    }
+
+    @Test
+    void consultationAskUsesFreeformBoundedChatConfig() {
+        AiTaskGenerationConfigService service = new AiTaskGenerationConfigService(null, "gemini-2.5-flash", 0, true, 2048);
+
+        AiTaskGenerationConfigService.GenerationConfig config = service.resolve(
+                AiTaskType.GENERIC_COPILOT,
+                "clinic.consultation.ask.v1",
+                "consultation.ask"
+        );
+
+        assertEquals(1024, config.maxOutputTokens());
+        assertEquals(0, config.thinkingBudget());
+        assertFalse(config.strictJsonMode());
     }
 }
