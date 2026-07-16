@@ -1,0 +1,122 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const testDir = path.dirname(fileURLToPath(import.meta.url));
+const webAdminRoot = path.resolve(testDir, "..");
+const repoRoot = path.resolve(testDir, "../..");
+
+function readSource(relPath) {
+  return fs.readFileSync(path.join(webAdminRoot, "src", ...relPath.split("/")), "utf8");
+}
+
+function readRepoSource(relPath) {
+  return fs.readFileSync(path.join(repoRoot, relPath), "utf8");
+}
+
+test("consultation workspace soap draft uses resolved vitals, includes diagnosis context, and rejects placeholder-only output", () => {
+  const source = readSource("pages/consultations/ConsultationWorkspacePage.tsx");
+  const helperStart = source.indexOf("function formatSoapVitalsSummary(");
+  const helperEnd = source.indexOf("function extractClinicalFollowUpDraft(", helperStart);
+  const helperSource = source.slice(helperStart, helperEnd);
+  const soapStart = source.indexOf('if (kind === "soap") {');
+  const soapEnd = source.indexOf('if (kind === "advice") {', soapStart);
+  const soapSource = source.slice(soapStart, soapEnd);
+  const soapValidationStart = source.indexOf("if (!hasMeaningfulSoapDraft(parsed)) {", soapStart);
+  const soapValidationEnd = source.indexOf("const combined = normalizeDraftedTextWithSections", soapValidationStart);
+  const soapValidationSource = source.slice(soapValidationStart, soapValidationEnd);
+  const soapLoadingStart = source.indexOf("if (loading) {", soapStart);
+  const soapLoadingSource = source.slice(soapLoadingStart, source.indexOf("if (!hasMeaningfulSoapDraft(parsed)) {", soapLoadingStart));
+
+  assert.ok(source.includes("const soapVitalsSummary = formatSoapVitalsSummary(latestVitals);"));
+  assert.ok(source.includes("const [consultationSoap, setConsultationSoap] = React.useState<ConsultationSoapNote | null>(null);"));
+  assert.ok(source.includes("const [consultationSoapForm, setConsultationSoapForm] = React.useState<ConsultationSoapFormState>(emptyConsultationSoapForm());"));
+  assert.ok(source.includes("getConsultationSoap(auth.accessToken, auth.tenantId, consult.id)"));
+  assert.ok(source.includes("saveConsultationSoap(auth.accessToken, auth.tenantId, currentConsultation.id, body)"));
+  assert.ok(source.includes("acceptConsultationSoapAiDraft(accessToken, tenantId, consultationId, {"));
+  assert.ok(source.includes("const SOAP_TRACE_ENABLED = import.meta.env.DEV || import.meta.env.VITE_JEEVANAM_AI_SOAP_TRACE_ENABLED === \"true\";"));
+  assert.ok(source.includes("const soapHasPersistedRecord = Boolean(consultationSoap?.id);"));
+  assert.ok(source.includes("const soapStale = consultationSoap?.status === \"ACCEPTED\" && consultationSoap.stale;"));
+  assert.ok(source.includes("if (kind === \"soap\" && draft.status === \"ACCEPTED\") {"));
+  assert.ok(source.includes("sourceSummaryLabel: kind === \"soap\" ? \"Generated using\" : \"Context\""));
+  assert.ok(source.includes("Generated using"));
+  assert.ok(source.includes("AI Provider:"));
+  assert.ok(source.includes("Edit SOAP"));
+  assert.ok(source.includes("Version History"));
+  assert.ok(source.includes("Generate New SOAP Draft"));
+  assert.ok(source.includes("SOAP status:"));
+  assert.ok(source.includes("Review recommended"));
+  assert.ok(source.includes("Clinical information has changed since this SOAP note was accepted."));
+  assert.ok(source.includes("temperatureUnit: consultationForm.temperatureUnit || intakeVitals?.temperatureUnit || null"));
+  assert.ok(source.includes("randomBloodSugar: intakeVitals?.randomBloodSugar ?? null"));
+  assert.ok(source.includes("painScore: intakeVitals?.painScore ?? null"));
+  assert.ok(source.includes("chiefComplaint: consultationForm.chiefComplaints"));
+  assert.ok(source.includes("diagnosis: consultationForm.diagnosis"));
+  assert.ok(source.includes("advice: consultationForm.advice"));
+  assert.ok(source.includes("vitals: soapVitalsSummary"));
+  assert.ok(source.includes("const soapSourceSummary = kind === \"soap\""));
+  assert.ok(source.includes("vitals: soapVitalsSummary"));
+  assert.ok(source.includes("sourceSummary: soapSourceSummary"));
+  assert.ok(source.includes("SOAP-DRAFT-TRACE-FE stage=REQUEST"));
+  assert.ok(source.includes("SOAP-DRAFT-TRACE-FE stage=RESPONSE"));
+  assert.ok(source.includes("SOAP-DRAFT-TRACE-FE stage=RENDER"));
+  assert.ok(source.includes("Save SOAP"));
+  assert.ok(source.includes("disabled={readOnly || !soapDirty}"));
+  assert.ok(source.includes("value={consultationSoapForm.subjective}"));
+  assert.ok(source.includes("value={consultationSoapForm.objective}"));
+  assert.ok(source.includes("value={consultationSoapForm.assessment}"));
+  assert.ok(source.includes("value={consultationSoapForm.plan}"));
+  assert.ok(source.includes("inputRef={soapSubjectiveInputRef}"));
+  assert.ok(soapLoadingStart > -1);
+  assert.ok(soapLoadingSource.includes("Generating SOAP draft..."));
+  assert.ok(soapLoadingSource.includes("if (loading) {"));
+  assert.ok(source.includes("if (!hasMeaningfulSoapDraft(parsed))"));
+  assert.ok(source.includes("Unable to generate a meaningful SOAP draft from the available consultation context. Add or verify clinical details and retry."));
+  assert.ok(source.includes('status: "REJECTED"'));
+  assert.ok(source.includes('<Alert severity="warning">'));
+  assert.ok(source.includes('{error ? <Alert severity="error" onClose={() => setError(null)}>{error}</Alert> : null}'));
+  assert.ok(source.includes("No consultation draft generated yet. Use Generate AI Consultation Draft or a section action to start a review."));
+  assert.ok(helperSource.includes("BP ${vitals.bloodPressureSystolic}/${vitals.bloodPressureDiastolic}"));
+  assert.ok(helperSource.includes("RBS ${vitals.randomBloodSugar}"));
+  assert.ok(helperSource.includes("Pain ${vitals.painScore}/10"));
+  assert.ok(!helperSource.includes("BP:/, Pulse:, Resp:, Temp:, BMI:-"));
+  assert.ok(!soapValidationSource.includes("setError(message);"));
+  assert.ok(!soapSource.includes("sourceSummary: baseSourceSummary"));
+  assert.ok(soapSource.includes("structuredData: null"));
+  assert.ok(soapSource.includes("updateClinicalAiDraft(kind, {"));
+  assert.ok(soapSource.includes("return;"));
+  assert.ok(!soapSource.includes("setError(message);"));
+  assert.ok(soapSource.includes("const updateSoapFailure = (message: string, draft: AiDraftResponse | null = null) => {"));
+  assert.ok(soapValidationSource.includes("updateSoapFailure(message, draft);"));
+  assert.ok(source.includes("dedupeSoapSectionText(nextSoapForm.subjective)"));
+  assert.ok(source.includes("dedupeSoapSectionText(nextSoapForm.objective)"));
+  assert.ok(source.includes("dedupeSoapSectionText(nextSoapForm.assessment)"));
+  assert.ok(source.includes("dedupeSoapSectionText(nextSoapForm.plan)"));
+  assert.ok(source.includes("soapHasPersistedRecord ? ("));
+  assert.ok(source.includes("Copy"));
+
+  const serviceSource = readRepoSource("backend/api/api-bff/src/main/java/com/deepthoughtnet/clinic/api/ai/service/AiConsultationDraftService.java");
+  const copilotSource = readRepoSource("backend/api/api-bff/src/main/java/com/deepthoughtnet/clinic/api/ai/service/AiDoctorCopilotService.java");
+  const consultationSoapResponseSource = readRepoSource("backend/api/api-bff/src/main/java/com/deepthoughtnet/clinic/api/consultation/dto/ConsultationSoapResponse.java");
+  const consultationSoapServiceSource = readRepoSource("backend/api/api-bff/src/main/java/com/deepthoughtnet/clinic/api/consultation/service/ConsultationSoapService.java");
+  const orchestrationSource = readRepoSource("backend/domains/ai-domain/src/main/java/com/deepthoughtnet/clinic/ai/orchestration/service/impl/AiOrchestrationServiceImpl.java");
+  const restClientSource = readRepoSource("web-admin/src/api/restClient.ts");
+  assert.ok(restClientSource.includes("X-Correlation-Id"));
+  assert.ok(consultationSoapServiceSource.includes("sourceHash"));
+  assert.ok(consultationSoapServiceSource.includes("currentSourceHash"));
+  assert.ok(consultationSoapResponseSource.includes("sourceHash"));
+  assert.ok(consultationSoapResponseSource.includes("currentSourceHash"));
+  assert.ok(consultationSoapResponseSource.includes("stale"));
+  assert.ok(serviceSource.includes("SOAP-DRAFT-TRACE stage=START"));
+  assert.ok(serviceSource.includes("SOAP-DRAFT-TRACE stage=CONTEXT_ENRICHED"));
+  assert.ok(serviceSource.includes("SOAP-DRAFT-TRACE stage=SERVICE_RESPONSE"));
+  assert.ok(serviceSource.includes("SOAP-DRAFT-TRACE stage=VALIDATION"));
+  assert.ok(copilotSource.includes("SOAP-DRAFT-TRACE stage=RESPONSE_SOURCE"));
+  assert.ok(copilotSource.includes("SOAP-DRAFT-TRACE stage=SOAP_EXTRACTED"));
+  assert.ok(orchestrationSource.includes("SOAP-DRAFT-TRACE stage=PROMPT_RENDERED"));
+  assert.ok(orchestrationSource.includes("SOAP-DRAFT-TRACE stage=PROVIDER_REQUEST"));
+  assert.ok(orchestrationSource.includes("SOAP-DRAFT-TRACE stage=PROVIDER_RESPONSE"));
+  assert.ok(orchestrationSource.includes("SOAP-DRAFT-TRACE stage=RAW_RESPONSE_DEBUG"));
+});

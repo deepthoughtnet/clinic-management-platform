@@ -4,7 +4,8 @@ import fs from "node:fs";
 import path from "node:path";
 
 function readSource(relPath) {
-  return fs.readFileSync(path.join(process.cwd(), "src", ...relPath.split("/")), "utf8");
+  const root = fs.existsSync(path.join(process.cwd(), "src")) ? process.cwd() : path.join(process.cwd(), "web-admin");
+  return fs.readFileSync(path.join(root, "src", ...relPath.split("/")), "utf8");
 }
 
 test("consultation workspace Ask AIVA enables only for consultation, patient, prompt, and busy state", () => {

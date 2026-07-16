@@ -133,4 +133,43 @@ class AiGuardrailServiceImplTest {
         assertThat(settings.compactMode()).isTrue();
         assertThat(settings.effectiveMaxTokens()).isEqualTo(2048);
     }
+
+    @Test
+    void consultationSoapKeepsRequestedOutputBudgetAndAvoidsCompactHalving() {
+        AiGuardrailProfileRepository repository = mock(AiGuardrailProfileRepository.class);
+        UUID tenantId = UUID.randomUUID();
+        when(repository.findByTenantIdAndProfileKey(tenantId, "default"))
+                .thenReturn(Optional.of(AiGuardrailProfileEntity.create(
+                        tenantId,
+                        "default",
+                        "Default",
+                        "Default profile",
+                        true,
+                        null,
+                        false,
+                        false,
+                        2048
+                )));
+        AiGuardrailServiceImpl service = new AiGuardrailServiceImpl(repository, 2048);
+
+        AiOrchestrationRequest request = new AiOrchestrationRequest(
+                AiProductCode.CLINIC,
+                tenantId,
+                UUID.randomUUID(),
+                AiTaskType.CONSULTATION_NOTE_STRUCTURING,
+                "clinic.consultation.structure-notes.v1",
+                Map.of("chiefComplaint", "Fever"),
+                List.of(),
+                4096,
+                0.1d,
+                "corr-3",
+                "consultation_structure_notes"
+        );
+
+        AiGuardrailService.ExecutionSettings settings = service.resolveExecutionSettings(tenantId, "prompt text", request, null);
+
+        assertThat(settings.guardrailLimit()).isEqualTo(4096);
+        assertThat(settings.effectiveMaxTokens()).isEqualTo(4096);
+        assertThat(settings.compactMode()).isFalse();
+    }
 }

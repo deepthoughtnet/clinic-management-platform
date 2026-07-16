@@ -207,7 +207,82 @@ public class AiPromptTemplateCatalog {
                     List.of("Check for emergency red flags before suggesting urgent diagnoses", "Use longitudinal memory and reports as evidence", "Always mention uncertainty and missing information"),
                     List.of("This is an AI-generated draft. Doctor must verify before use.")),
             entry("clinic.consultation.structure-notes.v1", AiProductCode.CLINIC, AiTaskType.CONSULTATION_NOTE_STRUCTURING,
-                    "Structure consultation notes into standardized medical sections using the supplied clinical context summary and JSON as the primary source of truth.",
+                    """
+                    You structure consultation notes into SOAP notes.
+                    Return ONLY valid JSON. No markdown. No prose outside JSON.
+                    Use the supplied canonical clinical context as the primary source of truth.
+                    Prefer current visit evidence first, then longitudinal history, labs, and verified context.
+                    Do not invent facts. Do not return placeholder-only sections.
+                    If a section genuinely lacks evidence, use "Not documented" only when necessary.
+                    Keep each section clinically meaningful, concise, and clinician-facing.
+                    Write like an experienced physician documenting the visit.
+                    Do not repeat the same complaint, symptom, diagnosis, or plan item multiple times.
+                    Do not include conversational language, AI disclaimers, or internal reasoning.
+                    """,
+                    """
+                    Product: {{productCode}}
+                    Task: {{taskType}}
+                    Use case: {{useCaseCode}}
+                    Prompt template: {{promptTemplateCode}}
+                    Tenant: {{tenantId}}
+                    Actor: {{actorUserId}}
+                    Correlation: {{correlationId}}
+
+                    Chief complaint:
+                    {{input.chiefComplaint}}
+
+                    Symptoms:
+                    {{input.symptoms}}
+
+                    Diagnosis:
+                    {{input.diagnosis}}
+
+                    Advice / plan:
+                    {{input.advice}}
+
+                    Clinical notes / observations:
+                    {{input.observations}}
+
+                    Vitals:
+                    {{input.vitals}}
+
+                    Allergies:
+                    {{input.allergies}}
+
+                    Chronic conditions:
+                    {{input.chronicConditions}}
+
+                    Lab orders summary:
+                    {{input.labOrdersSummary}}
+
+                    Current prescription draft:
+                    {{input.currentPrescriptionDraft}}
+
+                    SOAP clinical context:
+                    {{input.soapClinicalContext}}
+
+                    Write SOAP sections with exactly these keys:
+                    {"subjective":"...","objective":"...","assessment":"...","plan":"..."}
+
+                    SOAP content style:
+                    - Subjective: one coherent paragraph with concise history, no duplicated complaint sentences, no AI wording.
+                    - Objective: observable findings only, especially vitals and exam/lab findings; do not add invented negatives or explanations.
+                    - Assessment: short, diagnosis-oriented clinical assessment; do not write explanatory paragraphs.
+                    - Plan: action-oriented bullet points using short lines or bullet-style sentences.
+                    - Do not include clinical reasoning narratives, medication safety reasoning, duplicate-medication commentary, or investigation recommendation narratives.
+
+                    Requirements:
+                    - Return ONLY valid JSON. No markdown. No prose outside JSON.
+                    - Subjective, Objective, Assessment, and Plan must be present.
+                    - Each section should be meaningful when supporting information exists.
+                    - Use current complaint, symptoms, vitals, diagnosis, notes, advice, history, labs, and relevant longitudinal findings.
+                    - Do not use "-" or placeholder-only content.
+                    - Do not invent treatment decisions or diagnosis details not supported by the context.
+                    - Use "Not documented" only if a section truly has no evidence.
+                    - Preserve the distinction between current visit evidence and historical context.
+                    - Keep the output concise and ready for doctor review.
+                    """,
+                    "Structure consultation notes into SOAP sections using canonical context.",
                     List.of("Review SOAP formatting and missing sections", "Confirm clinically relevant negatives"),
                     List.of("This is an AI-generated draft. Doctor must verify before use.")),
             entry("clinic.consultation.copilot.v1", AiProductCode.CLINIC, AiTaskType.CONSULTATION_COPILOT,

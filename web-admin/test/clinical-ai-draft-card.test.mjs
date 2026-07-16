@@ -4,12 +4,15 @@ import fs from "node:fs";
 import path from "node:path";
 
 function readSource(relPath) {
-  return fs.readFileSync(path.join(process.cwd(), "src", ...relPath.split("/")), "utf8");
+  const root = fs.existsSync(path.join(process.cwd(), "src")) ? process.cwd() : path.join(process.cwd(), "web-admin");
+  return fs.readFileSync(path.join(root, "src", ...relPath.split("/")), "utf8");
 }
 
 test("clinical ai draft card exposes consistent status and disclaimer copy", () => {
   const source = readSource("components/clinical/ClinicalAiDraftCard.tsx");
   assert.ok(source.includes("AI-generated draft. Doctor must verify before use."));
+  assert.ok(source.includes("sourceSummaryLabel?: string;"));
+  assert.ok(source.includes("sourceSummaryLabel = \"Context\""));
   assert.ok(source.includes("Pending"));
   assert.ok(source.includes("Accepted"));
   assert.ok(source.includes("Edited"));

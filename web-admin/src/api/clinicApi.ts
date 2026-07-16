@@ -1398,6 +1398,32 @@ export type ConsultationAiSummary = {
   updatedAt: string;
 };
 
+export type ConsultationSoapStatus = "DRAFT" | "ACCEPTED" | "SUPERSEDED" | null;
+export type ConsultationSoapSource = "MANUAL" | "AI_DRAFT" | "AI_ACCEPTED" | null;
+
+export type ConsultationSoapNote = {
+  id: string | null;
+  consultationId: string;
+  versionNumber: number;
+  status: ConsultationSoapStatus;
+  source: ConsultationSoapSource;
+  subjective: string | null;
+  objective: string | null;
+  assessment: string | null;
+  plan: string | null;
+  aiProvider: string | null;
+  aiModel: string | null;
+  generatedByAppUserId: string | null;
+  acceptedByAppUserId: string | null;
+  sourceHash: string | null;
+  currentSourceHash: string | null;
+  stale: boolean;
+  generatedAt: string | null;
+  acceptedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type ConsultationInput = {
   patientId: string;
   doctorUserId: string;
@@ -1424,6 +1450,16 @@ export type ConsultationAiSummaryInput = {
   provider: string | null;
   model: string | null;
   generatedAt: string | null;
+};
+
+export type ConsultationSoapInput = {
+  subjective: string | null;
+  objective: string | null;
+  assessment: string | null;
+  plan: string | null;
+  aiProvider?: string | null;
+  aiModel?: string | null;
+  generatedAt?: string | null;
 };
 
 export type PrescriptionMedicine = {
@@ -3664,6 +3700,18 @@ export async function saveConsultationAiSummary(token: string, tenantId: string,
   return httpPatch<ConsultationAiSummary>(`/api/consultations/${id}/ai-summary`, body, { token, tenantId });
 }
 
+export async function getConsultationSoap(token: string, tenantId: string, id: string) {
+  return httpGet<ConsultationSoapNote>(`/api/consultations/${id}/soap`, { token, tenantId });
+}
+
+export async function saveConsultationSoap(token: string, tenantId: string, id: string, body: ConsultationSoapInput) {
+  return httpPut<ConsultationSoapNote>(`/api/consultations/${id}/soap`, body, { token, tenantId });
+}
+
+export async function acceptConsultationSoapAiDraft(token: string, tenantId: string, id: string, body: ConsultationSoapInput) {
+  return httpPost<ConsultationSoapNote>(`/api/consultations/${id}/soap/accept-ai-draft`, body, { token, tenantId });
+}
+
 export async function startConsultationFromAppointment(token: string, tenantId: string, appointmentId: string) {
   return httpPost<Consultation>(`/api/appointments/${appointmentId}/start-consultation`, undefined, { token, tenantId });
 }
@@ -4577,16 +4625,19 @@ export async function aiStructureConsultationNotes(token: string, tenantId: stri
   consultationId: string;
   patientId: string;
   patientAgeGender?: string | null;
+  chiefComplaint?: string | null;
   allergies?: string | null;
   chronicConditions?: string | null;
   currentPrescriptionDraft?: string | null;
   labOrdersSummary?: string | null;
   doctorNotes?: string | null;
   symptoms?: string | null;
+  diagnosis?: string | null;
+  advice?: string | null;
   vitals?: string | null;
   observations?: string | null;
-}) {
-  return httpPost<AiDraftResponse>("/api/ai/consultation/structure-notes", body, { token, tenantId });
+}, opts?: { correlationId?: string | null }) {
+  return httpPost<AiDraftResponse>("/api/ai/consultation/structure-notes", body, { token, tenantId, correlationId: opts?.correlationId ?? null });
 }
 
 export async function aiConsultationAsk(token: string, tenantId: string, body: {

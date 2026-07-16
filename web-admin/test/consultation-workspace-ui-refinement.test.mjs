@@ -25,4 +25,11 @@ test("consultation workspace ui refinement keeps advice discoverable and removes
   assert.ok(source.includes('label="Advice"'));
   assert.ok(source.includes("consultationForm.advice"));
   assert.ok(source.includes("Add to Advice"));
+  assert.ok(source.includes("Patient timeline · ${timelinePreview.length} recent"));
+  assert.ok(source.includes("const [timelinePreviewExpanded, setTimelinePreviewExpanded] = React.useState(false);"));
+  assert.ok(source.includes("{timelinePreviewExpanded ? \"Hide timeline\" : \"Show timeline\"}"));
+  assert.ok(source.includes("View Full History"));
+  assert.ok(source.includes("Generate AI Consultation Draft"));
+  assert.ok(source.includes("title=\"Generate reviewable AI drafts for multiple consultation sections.\""));
+  assert.ok(source.includes("onClick={() => void generateConsultationDraft(false)}"));
 });

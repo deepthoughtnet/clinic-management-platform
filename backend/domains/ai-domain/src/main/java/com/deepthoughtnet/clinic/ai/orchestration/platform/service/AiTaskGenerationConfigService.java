@@ -13,19 +13,22 @@ public class AiTaskGenerationConfigService {
     private final Integer clinicalReasoningThinkingBudget;
     private final boolean clinicalReasoningStrictJson;
     private final Integer clinicalReasoningMaxOutputTokens;
+    private final Integer consultationSoapMaxOutputTokens;
 
     public AiTaskGenerationConfigService(
             @Value("${clinic.ai.gemini.clinical-reasoning-model:${CLINIC_GEMINI_REASONING_MODEL:}}") String clinicalReasoningModelOverride,
             @Value("${clinic.ai.gemini.model:${CLINIC_GEMINI_MODEL:}}") String geminiDefaultModel,
             @Value("${clinic.ai.gemini.clinical-reasoning-thinking-budget:0}") Integer clinicalReasoningThinkingBudget,
             @Value("${clinic.ai.clinical-reasoning.strict-json:true}") boolean clinicalReasoningStrictJson,
-            @Value("${clinic.ai.clinical-reasoning.max-output-tokens:2048}") Integer clinicalReasoningMaxOutputTokens
+            @Value("${clinic.ai.clinical-reasoning.max-output-tokens:2048}") Integer clinicalReasoningMaxOutputTokens,
+            @Value("${clinic.ai.soap-note.max-output-tokens:${CLINIC_SOAP_NOTE_MAX_OUTPUT_TOKENS:4096}}") Integer consultationSoapMaxOutputTokens
     ) {
         this.clinicalReasoningModelOverride = normalizeModel(clinicalReasoningModelOverride);
         this.geminiDefaultModel = normalizeModel(geminiDefaultModel);
         this.clinicalReasoningThinkingBudget = clinicalReasoningThinkingBudget == null ? 0 : Math.max(0, clinicalReasoningThinkingBudget);
         this.clinicalReasoningStrictJson = clinicalReasoningStrictJson;
         this.clinicalReasoningMaxOutputTokens = clinicalReasoningMaxOutputTokens == null ? null : Math.max(256, clinicalReasoningMaxOutputTokens);
+        this.consultationSoapMaxOutputTokens = consultationSoapMaxOutputTokens == null ? 4096 : Math.max(512, consultationSoapMaxOutputTokens);
     }
 
     public GenerationConfig resolve(AiTaskType taskType) {
@@ -47,6 +50,14 @@ public class AiTaskGenerationConfigService {
                     clinicalReasoningThinkingBudget,
                     clinicalReasoningStrictJson,
                     clinicalReasoningMaxOutputTokens
+            );
+        }
+        if (taskType == AiTaskType.CONSULTATION_NOTE_STRUCTURING) {
+            return new GenerationConfig(
+                    null,
+                    null,
+                    true,
+                    consultationSoapMaxOutputTokens
             );
         }
         return new GenerationConfig(null, null, false, null);

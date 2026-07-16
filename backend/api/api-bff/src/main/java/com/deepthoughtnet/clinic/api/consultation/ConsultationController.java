@@ -1,11 +1,14 @@
 package com.deepthoughtnet.clinic.api.consultation;
 
 import com.deepthoughtnet.clinic.api.consultation.dto.ConsultationRequest;
+import com.deepthoughtnet.clinic.api.consultation.dto.ConsultationSoapRequest;
+import com.deepthoughtnet.clinic.api.consultation.dto.ConsultationSoapResponse;
 import com.deepthoughtnet.clinic.api.consultation.dto.ConsultationResponse;
 import com.deepthoughtnet.clinic.api.consultation.dto.ConsultationAiSummaryRequest;
 import com.deepthoughtnet.clinic.api.consultation.dto.ConsultationAiSummaryResponse;
 import com.deepthoughtnet.clinic.api.consultation.service.ConsultationCompletionGuard;
 import com.deepthoughtnet.clinic.api.consultation.service.ConsultationAiSummaryService;
+import com.deepthoughtnet.clinic.api.consultation.service.ConsultationSoapService;
 import com.deepthoughtnet.clinic.api.security.DoctorAssignmentSecurityService;
 import com.deepthoughtnet.clinic.consultation.service.ConsultationService;
 import com.deepthoughtnet.clinic.consultation.service.model.ConsultationRecord;
@@ -33,15 +36,18 @@ import jakarta.validation.Valid;
 public class ConsultationController {
     private final ConsultationService consultationService;
     private final ConsultationAiSummaryService consultationAiSummaryService;
+    private final ConsultationSoapService consultationSoapService;
     private final ConsultationCompletionGuard consultationCompletionGuard;
     private final DoctorAssignmentSecurityService doctorAssignmentSecurityService;
 
     public ConsultationController(ConsultationService consultationService,
                                    ConsultationAiSummaryService consultationAiSummaryService,
+                                   ConsultationSoapService consultationSoapService,
                                    ConsultationCompletionGuard consultationCompletionGuard,
                                    DoctorAssignmentSecurityService doctorAssignmentSecurityService) {
         this.consultationService = consultationService;
         this.consultationAiSummaryService = consultationAiSummaryService;
+        this.consultationSoapService = consultationSoapService;
         this.consultationCompletionGuard = consultationCompletionGuard;
         this.doctorAssignmentSecurityService = doctorAssignmentSecurityService;
     }
@@ -118,6 +124,30 @@ public class ConsultationController {
         UUID tenantId = RequestContextHolder.requireTenantId();
         doctorAssignmentSecurityService.requireConsultationAccess(tenantId, id);
         return consultationAiSummaryService.save(tenantId, id, request);
+    }
+
+    @GetMapping("/{id}/soap")
+    @PreAuthorize("@permissionChecker.hasPermission('consultation.read')")
+    public ConsultationSoapResponse getSoap(@PathVariable UUID id) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        doctorAssignmentSecurityService.requireConsultationAccess(tenantId, id);
+        return consultationSoapService.get(tenantId, id);
+    }
+
+    @PutMapping("/{id}/soap")
+    @PreAuthorize("@permissionChecker.hasPermission('consultation.update')")
+    public ConsultationSoapResponse saveSoap(@PathVariable UUID id, @Valid @RequestBody ConsultationSoapRequest request) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        doctorAssignmentSecurityService.requireConsultationAccess(tenantId, id);
+        return consultationSoapService.saveManual(tenantId, id, request);
+    }
+
+    @PostMapping("/{id}/soap/accept-ai-draft")
+    @PreAuthorize("@permissionChecker.hasPermission('consultation.update')")
+    public ConsultationSoapResponse acceptSoapAiDraft(@PathVariable UUID id, @Valid @RequestBody ConsultationSoapRequest request) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        doctorAssignmentSecurityService.requireConsultationAccess(tenantId, id);
+        return consultationSoapService.acceptAiDraft(tenantId, id, request);
     }
 
     private ConsultationUpsertCommand toCommand(ConsultationRequest request) {

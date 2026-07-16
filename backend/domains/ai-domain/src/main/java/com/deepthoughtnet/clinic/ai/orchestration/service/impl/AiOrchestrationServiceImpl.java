@@ -36,6 +36,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -50,6 +51,8 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
     private final AiInvocationLogService invocationLogService;
     private final AiTaskGenerationConfigService taskGenerationConfigService;
     private final ObjectMapper objectMapper;
+    private boolean soapTraceEnabled;
+    private boolean soapTraceRawResponseEnabled;
 
     public AiOrchestrationServiceImpl(AiPromptTemplateRegistryService templateRegistry,
                                       AiProviderRouter providerRouter,
@@ -65,6 +68,16 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
         this.invocationLogService = invocationLogService;
         this.taskGenerationConfigService = taskGenerationConfigService;
         this.objectMapper = objectMapper;
+    }
+
+    @Value("${JEEVANAM_AI_SOAP_TRACE_ENABLED:false}")
+    void setSoapTraceEnabled(boolean soapTraceEnabled) {
+        this.soapTraceEnabled = soapTraceEnabled;
+    }
+
+    @Value("${JEEVANAM_AI_SOAP_TRACE_RAW_RESPONSE_ENABLED:false}")
+    void setSoapTraceRawResponseEnabled(boolean soapTraceRawResponseEnabled) {
+        this.soapTraceRawResponseEnabled = soapTraceRawResponseEnabled;
     }
 
     @Override
@@ -89,6 +102,26 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                 : (strictJson ? "STRICT_JSON" : "FREEFORM");
         List<AiProvider> candidates = providerRouter.resolveCandidates(request.taskType());
         AiProvider candidateForLog = candidates.isEmpty() ? null : candidates.get(0);
+        if (isSoapTrace(request) && soapTraceEnabled) {
+            log.info("SOAP-DRAFT-TRACE stage=PROMPT_RENDERED traceId={} tenantId={} consultationId={} patientId={} templateKey={} provider={} renderedPromptChars={} estimatedPromptTokens={} outputTokenLimit={} retryCount={} inputKeyNames={} aiPromptContextChars={} clinicalContextSummaryChars={} clinicalContextJsonChars={} strictJsonMode={} expectedResponseFieldNames={} promptHash={}",
+                    request.correlationId(),
+                    request.tenantId(),
+                    consultationIdFromRequest(request),
+                    patientIdFromRequest(request),
+                    template.templateCode(),
+                    candidateForLog == null ? null : candidateForLog.providerName(),
+                    userPrompt == null ? 0 : userPrompt.length(),
+                    executionSettings.estimatedPromptTokens(),
+                    executionSettings.effectiveMaxTokens(),
+                    0,
+                    renderedVariables.keySet(),
+                    inputSize(renderedVariables.get("input.aiPromptContext")),
+                    inputSize(renderedVariables.get("input.clinicalContextSummary")),
+                    inputSize(renderedVariables.get("input.clinicalContextJson")),
+                    strictJson,
+                    List.of("subjective", "objective", "assessment", "plan"),
+                    sha256Hex(userPrompt));
+        }
         String fallbackOrder = buildFallbackOrder(candidates);
         log.info("[AI-REQUEST] taskType={} provider={} resolvedModel={} requestedMaxTokens={} effectiveMaxTokens={} guardrailLimit={} temperature={} topP={} schemaMode={} compactMode={} promptChars={} estimatedPromptTokens={} thinkingBudget={} strictJsonMode={} fallbackOrder={}",
                 request.taskType(),
@@ -116,7 +149,10 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
         AiProviderException lastRetryableFailure = null;
         AiProviderException lastFailure = null;
         boolean fallbackUsed = false;
+        boolean soapTask = isSoapTrace(request) && soapTraceEnabled;
+        int soapRetryCount = 0;
         AiOrchestrationResponse response = null;
+        String soapStage = "PROMPT_RENDERED";
         for (int i = 0; i < candidates.size(); i++) {
             AiProvider candidate = candidates.get(i);
             AiProviderRequest providerRequest = new AiProviderRequest(
@@ -132,6 +168,25 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                     generationConfig.strictJsonMode()
             );
             long providerStarted = System.currentTimeMillis();
+            soapStage = "PROVIDER_REQUEST";
+            if (isSoapTrace(request) && soapTraceEnabled) {
+                log.info("SOAP-DRAFT-TRACE stage=PROVIDER_REQUEST traceId={} tenantId={} consultationId={} patientId={} templateKey={} provider={} model={} temperature={} maxOutputTokens={} timeoutMs={} promptChars={} estimatedPromptTokens={} retryCount={} attempt={} fallbackChainPosition={}",
+                        request.correlationId(),
+                        request.tenantId(),
+                        consultationIdFromRequest(request),
+                        patientIdFromRequest(request),
+                        template.templateCode(),
+                        candidate.providerName(),
+                        providerRequest.modelOverride() == null ? generationConfig.modelOverride() : providerRequest.modelOverride(),
+                        providerRequest.request() == null ? null : providerRequest.request().temperature(),
+                        providerRequest.request() == null ? null : providerRequest.request().maxTokens(),
+                        null,
+                        userPrompt == null ? 0 : userPrompt.length(),
+                        executionSettings.estimatedPromptTokens(),
+                        soapRetryCount,
+                        i + 1,
+                        i + 1);
+            }
             log.info("AI provider attempt. requestId={}, provider={}, attempt={}, taskType={}",
                     requestId, candidate.providerName(), i + 1, request.taskType());
             try {
@@ -145,6 +200,7 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                     log.info("AI provider fallback selected. requestId={}, provider={}, attempt={}, taskType={}",
                             requestId, candidate.providerName(), i + 1, request.taskType());
                 }
+                soapStage = "PROVIDER_RESPONSE";
                 log.info("AI provider completed. requestId={}, provider={}, latencyMs={}, responseChars={}, finishReason={}, normalizedFinishReason={}",
                         requestId,
                         candidate.providerName(),
@@ -152,6 +208,166 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                         providerResponse == null || providerResponse.responseChars() == null ? 0 : providerResponse.responseChars(),
                         providerResponse == null ? null : providerResponse.finishReason(),
                         providerResponse == null ? null : providerResponse.normalizedFinishReason());
+                if (isSoapTrace(request) && soapTraceEnabled) {
+                    log.info("SOAP-DRAFT-TRACE stage=PROVIDER_RESPONSE traceId={} tenantId={} consultationId={} patientId={} templateKey={} provider={} model={} latencyMs={} finishReason={} providerStatus={} responseTextPresent={} responseTextChars={} structuredJsonPresent={} structuredJsonChars={} promptTokens={} completionTokens={} outputTokenLimit={} retryCount={} truncationFlag={} providerErrorCategory={} finalCompletionStatus={}",
+                            request.correlationId(),
+                            request.tenantId(),
+                            consultationIdFromRequest(request),
+                            patientIdFromRequest(request),
+                            template.templateCode(),
+                            candidate.providerName(),
+                            providerResponse.model(),
+                            System.currentTimeMillis() - providerStarted,
+                            providerResponse.finishReason(),
+                            isSoapTruncated(providerResponse) ? "TRUNCATED" : "SUCCESS",
+                            providerResponse.outputText() != null && !providerResponse.outputText().isBlank(),
+                            providerResponse.outputText() == null ? 0 : providerResponse.outputText().length(),
+                            providerResponse.structuredJson() != null && !providerResponse.structuredJson().isBlank(),
+                            providerResponse.structuredJson() == null ? 0 : providerResponse.structuredJson().length(),
+                            providerResponse.tokenUsage() == null ? null : providerResponse.tokenUsage().promptTokens(),
+                            providerResponse.tokenUsage() == null ? null : providerResponse.tokenUsage().completionTokens(),
+                            providerRequest.request() == null ? null : providerRequest.request().maxTokens(),
+                            soapRetryCount,
+                            providerResponse.normalizedFinishReason() != null && providerResponse.normalizedFinishReason().equalsIgnoreCase("TRUNCATED"),
+                            null,
+                            isSoapTruncated(providerResponse) ? "INCOMPLETE" : "COMPLETE");
+                    if (soapTraceRawResponseEnabled) {
+                        log.info("SOAP-DRAFT-TRACE stage=RAW_RESPONSE_DEBUG traceId={} tenantId={} consultationId={} patientId={} templateKey={} provider={} rawResponseChars={} rawResponsePreview=\"{}\"",
+                                request.correlationId(),
+                                request.tenantId(),
+                                consultationIdFromRequest(request),
+                                patientIdFromRequest(request),
+                                template.templateCode(),
+                                candidate.providerName(),
+                                firstNonBlank(providerResponse.rawText(), providerResponse.outputText()) == null ? 0 : firstNonBlank(providerResponse.rawText(), providerResponse.outputText()).length(),
+                                redactSoapTraceText(trimTo(firstNonBlank(providerResponse.rawText(), providerResponse.outputText()), 8000)));
+                    }
+                }
+                if (soapTask && isSoapTruncated(providerResponse) && soapRetryCount == 0) {
+                    log.warn("SOAP-DRAFT-TRACE stage=TRUNCATION traceId={} tenantId={} consultationId={} patientId={} templateKey={} provider={} finishReason={} normalizedFinishReason={} promptTokens={} completionTokens={} outputTokenLimit={} retryCount={} action=RETRY",
+                            request.correlationId(),
+                            request.tenantId(),
+                            consultationIdFromRequest(request),
+                            patientIdFromRequest(request),
+                            template.templateCode(),
+                            candidate.providerName(),
+                            providerResponse.finishReason(),
+                            providerResponse.normalizedFinishReason(),
+                            providerResponse.tokenUsage() == null ? null : providerResponse.tokenUsage().promptTokens(),
+                            providerResponse.tokenUsage() == null ? null : providerResponse.tokenUsage().completionTokens(),
+                            providerRequest.request() == null ? null : providerRequest.request().maxTokens(),
+                            soapRetryCount);
+                    soapRetryCount = 1;
+                    Integer retryMaxTokens = increaseSoapMaxTokens(executionRequest == null ? null : executionRequest.maxTokens());
+                    AiOrchestrationRequest retryRequest = applyMaxTokens(requestWithTaskDefaults, retryMaxTokens);
+                    Map<String, Object> retryRenderedVariables = renderVariables(retryRequest, template);
+                    String retryPrompt = render(template.userPromptTemplate(), retryRenderedVariables, evidenceSummary);
+                    guardrailService.validatePreExecution(request.tenantId(), retryPrompt, retryRequest, null);
+                    AiProviderRequest retryProviderRequest = new AiProviderRequest(
+                            retryRequest,
+                            template.version(),
+                            template.systemPrompt(),
+                            retryPrompt,
+                            retryRenderedVariables,
+                            request.evidence(),
+                            requestId,
+                            "GEMINI".equalsIgnoreCase(candidate.providerName()) ? generationConfig.modelOverride() : null,
+                            "GEMINI".equalsIgnoreCase(candidate.providerName()) ? generationConfig.thinkingBudget() : null,
+                            generationConfig.strictJsonMode()
+                    );
+                    long retryStarted = System.currentTimeMillis();
+                    soapStage = "PROVIDER_REQUEST";
+                    if (isSoapTrace(request) && soapTraceEnabled) {
+                        log.info("SOAP-DRAFT-TRACE stage=PROVIDER_REQUEST traceId={} tenantId={} consultationId={} patientId={} templateKey={} provider={} model={} temperature={} maxOutputTokens={} timeoutMs={} promptChars={} estimatedPromptTokens={} retryCount={} attempt={} fallbackChainPosition={}",
+                                request.correlationId(),
+                                request.tenantId(),
+                                consultationIdFromRequest(request),
+                                patientIdFromRequest(request),
+                                template.templateCode(),
+                                candidate.providerName(),
+                                retryProviderRequest.modelOverride() == null ? generationConfig.modelOverride() : retryProviderRequest.modelOverride(),
+                                retryProviderRequest.request() == null ? null : retryProviderRequest.request().temperature(),
+                                retryProviderRequest.request() == null ? null : retryProviderRequest.request().maxTokens(),
+                                null,
+                                retryPrompt == null ? 0 : retryPrompt.length(),
+                                Math.max(1, (retryPrompt == null ? 0 : retryPrompt.length() + 3) / 4),
+                                soapRetryCount,
+                                i + 1,
+                                i + 1);
+                    }
+                    log.info("AI provider retry attempt. requestId={}, provider={}, retryCount={}, taskType={}",
+                            requestId, candidate.providerName(), soapRetryCount, request.taskType());
+                    providerResponse = candidate.complete(retryProviderRequest);
+                    if (providerResponse == null) {
+                        throw new IllegalStateException("Provider returned null response");
+                    }
+                    soapStage = "PROVIDER_RESPONSE";
+                    log.info("AI provider retry completed. requestId={}, provider={}, latencyMs={}, responseChars={}, finishReason={}, normalizedFinishReason={}",
+                            requestId,
+                            candidate.providerName(),
+                            System.currentTimeMillis() - retryStarted,
+                            providerResponse.responseChars() == null ? 0 : providerResponse.responseChars(),
+                            providerResponse.finishReason(),
+                            providerResponse.normalizedFinishReason());
+                    if (isSoapTrace(request) && soapTraceEnabled) {
+                        log.info("SOAP-DRAFT-TRACE stage=PROVIDER_RESPONSE traceId={} tenantId={} consultationId={} patientId={} templateKey={} provider={} model={} latencyMs={} finishReason={} providerStatus={} responseTextPresent={} responseTextChars={} structuredJsonPresent={} structuredJsonChars={} promptTokens={} completionTokens={} outputTokenLimit={} retryCount={} truncationFlag={} providerErrorCategory={} finalCompletionStatus={}",
+                                request.correlationId(),
+                                request.tenantId(),
+                                consultationIdFromRequest(request),
+                                patientIdFromRequest(request),
+                                template.templateCode(),
+                                candidate.providerName(),
+                                providerResponse.model(),
+                                System.currentTimeMillis() - retryStarted,
+                                providerResponse.finishReason(),
+                                isSoapTruncated(providerResponse) ? "TRUNCATED" : "SUCCESS",
+                                providerResponse.outputText() != null && !providerResponse.outputText().isBlank(),
+                                providerResponse.outputText() == null ? 0 : providerResponse.outputText().length(),
+                                providerResponse.structuredJson() != null && !providerResponse.structuredJson().isBlank(),
+                                providerResponse.structuredJson() == null ? 0 : providerResponse.structuredJson().length(),
+                                providerResponse.tokenUsage() == null ? null : providerResponse.tokenUsage().promptTokens(),
+                                providerResponse.tokenUsage() == null ? null : providerResponse.tokenUsage().completionTokens(),
+                                retryProviderRequest.request() == null ? null : retryProviderRequest.request().maxTokens(),
+                                soapRetryCount,
+                                providerResponse.normalizedFinishReason() != null && providerResponse.normalizedFinishReason().equalsIgnoreCase("TRUNCATED"),
+                                null,
+                                isSoapTruncated(providerResponse) ? "INCOMPLETE" : "COMPLETE");
+                        if (soapTraceRawResponseEnabled) {
+                            log.info("SOAP-DRAFT-TRACE stage=RAW_RESPONSE_DEBUG traceId={} tenantId={} consultationId={} patientId={} templateKey={} provider={} rawResponseChars={} rawResponsePreview=\"{}\"",
+                                    request.correlationId(),
+                                    request.tenantId(),
+                                    consultationIdFromRequest(request),
+                                    patientIdFromRequest(request),
+                                    template.templateCode(),
+                                    candidate.providerName(),
+                                    firstNonBlank(providerResponse.rawText(), providerResponse.outputText()) == null ? 0 : firstNonBlank(providerResponse.rawText(), providerResponse.outputText()).length(),
+                                    redactSoapTraceText(trimTo(firstNonBlank(providerResponse.rawText(), providerResponse.outputText()), 8000)));
+                        }
+                    }
+                    if (isSoapTruncated(providerResponse)) {
+                        log.warn("SOAP-DRAFT-TRACE stage=TRUNCATION traceId={} tenantId={} consultationId={} patientId={} templateKey={} provider={} finishReason={} normalizedFinishReason={} promptTokens={} completionTokens={} outputTokenLimit={} retryCount={} action=FAILED",
+                                request.correlationId(),
+                                request.tenantId(),
+                                consultationIdFromRequest(request),
+                                patientIdFromRequest(request),
+                                template.templateCode(),
+                                candidate.providerName(),
+                                providerResponse.finishReason(),
+                                providerResponse.normalizedFinishReason(),
+                                providerResponse.tokenUsage() == null ? null : providerResponse.tokenUsage().promptTokens(),
+                                providerResponse.tokenUsage() == null ? null : providerResponse.tokenUsage().completionTokens(),
+                                retryProviderRequest.request() == null ? null : retryProviderRequest.request().maxTokens(),
+                                soapRetryCount);
+                        response = truncatedSoapResponse(providerResponse, request, requestId, candidate, fallbackUsed, started);
+                        provider = candidate;
+                        fallbackUsed = i > 0;
+                        break;
+                    }
+                    executionRequest = retryRequest;
+                    renderedVariables = retryRenderedVariables;
+                    userPrompt = retryPrompt;
+                }
+                soapStage = "SOAP_PARSE";
                 ParsedOutput parsed = parseProviderOutput(providerResponse, template);
                 if (shouldAdvanceToNextProvider(executionRequest, parsed)) {
                     log.warn("AI provider returned incomplete structured output. requestId={}, provider={}, attempt={}, taskType={}, parseStatus={}, finishReason={}, useCaseCode={}",
@@ -174,10 +390,23 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                     provider = candidate;
                     continue;
                 }
-                response = toResponse(executionRequest, requestId, provider, providerResponse, template, request.evidence(),
+                    response = toResponse(executionRequest, requestId, provider, providerResponse, template, request.evidence(),
                         started, fallbackUsed, fallbackUsed ? "Fallback provider was used. Please verify before acting." : null, parsed);
                 break;
             } catch (AiProviderException ex) {
+                if (isSoapTrace(request) && soapTraceEnabled) {
+                    log.warn("SOAP-DRAFT-TRACE stage=ERROR traceId={} tenantId={} consultationId={} patientId={} templateKey={} provider={} currentStage={} exceptionClass={} message={} providerErrorCategory={}",
+                            request.correlationId(),
+                            request.tenantId(),
+                            consultationIdFromRequest(request),
+                            patientIdFromRequest(request),
+                            template.templateCode(),
+                            candidate.providerName(),
+                            soapStage,
+                            ex.getClass().getName(),
+                            safeMessage(ex),
+                            ex.retryable() ? "RETRYABLE_PROVIDER_FAILURE" : "FATAL_PROVIDER_FAILURE");
+                }
                 lastFailure = ex;
                 log.warn("AI provider failed. requestId={}, provider={}, retryable={}, status={}, latencyMs={}, error={}",
                         requestId,
@@ -191,6 +420,19 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                 }
                 lastRetryableFailure = ex;
             } catch (RuntimeException ex) {
+                if (isSoapTrace(request) && soapTraceEnabled) {
+                    log.warn("SOAP-DRAFT-TRACE stage=ERROR traceId={} tenantId={} consultationId={} patientId={} templateKey={} provider={} currentStage={} exceptionClass={} message={} providerErrorCategory={}",
+                            request.correlationId(),
+                            request.tenantId(),
+                            consultationIdFromRequest(request),
+                            patientIdFromRequest(request),
+                            template.templateCode(),
+                            candidate.providerName(),
+                            soapStage,
+                            ex.getClass().getName(),
+                            safeMessage(ex),
+                            "PROVIDER_FAILURE");
+                }
                 log.warn("AI provider failed. requestId={}, provider={}, latencyMs={}, error={}",
                         requestId,
                         candidate.providerName(),
@@ -262,6 +504,97 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                 requestWithTaskDefaults.actorUserId()
         ));
         return response;
+    }
+
+    private boolean isSoapTrace(AiOrchestrationRequest request) {
+        return request != null && request.taskType() == AiTaskType.CONSULTATION_NOTE_STRUCTURING;
+    }
+
+    private Object consultationIdFromRequest(AiOrchestrationRequest request) {
+        return request == null || request.inputVariables() == null ? null : request.inputVariables().get("consultationId");
+    }
+
+    private Object patientIdFromRequest(AiOrchestrationRequest request) {
+        return request == null || request.inputVariables() == null ? null : request.inputVariables().get("patientId");
+    }
+
+    private boolean isSoapTruncated(AiProviderResponse response) {
+        return response != null
+                && response.normalizedFinishReason() != null
+                && response.normalizedFinishReason().equalsIgnoreCase("TRUNCATED");
+    }
+
+    private Integer increaseSoapMaxTokens(Integer currentMaxTokens) {
+        if (currentMaxTokens == null || currentMaxTokens <= 0) {
+            return 5120;
+        }
+        return Math.max(currentMaxTokens + 1024, currentMaxTokens * 2);
+    }
+
+    private int inputSize(Object value) {
+        if (value == null) {
+            return 0;
+        }
+        String text = String.valueOf(value).trim();
+        return text.length();
+    }
+
+    private String sha256Hex(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hashed = digest.digest(value.getBytes(StandardCharsets.UTF_8));
+            StringBuilder builder = new StringBuilder();
+            for (byte b : hashed) {
+                builder.append(String.format("%02x", b & 0xff));
+            }
+            return builder.toString();
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
+    private String redactSoapTraceText(String value) {
+        if (value == null || value.isBlank()) {
+            return value;
+        }
+        return value
+                .replaceAll("\\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}\\b", "[uuid]")
+                .replaceAll("(?i)bearer\\s+[a-z0-9._\\-]+", "Bearer [redacted]");
+    }
+
+    private AiOrchestrationResponse truncatedSoapResponse(AiProviderResponse providerResponse,
+                                                          AiOrchestrationRequest request,
+                                                          UUID requestId,
+                                                          AiProvider provider,
+                                                          boolean fallbackUsed,
+                                                          long started) {
+        String errorMessage = "AI response was incomplete. Please retry.";
+        return new AiOrchestrationResponse(
+                requestId,
+                requestId,
+                request.productCode(),
+                request.taskType(),
+                provider == null ? null : provider.providerName(),
+                providerResponse == null ? null : providerResponse.model(),
+                errorMessage,
+                null,
+                providerResponse == null ? BigDecimal.valueOf(0.35) : providerResponse.confidence(),
+                request.evidence() == null ? List.of() : List.copyOf(request.evidence()),
+                List.of("Retry SOAP generation after reducing context."),
+                List.of(errorMessage),
+                providerResponse == null ? null : providerResponse.tokenUsage(),
+                System.currentTimeMillis() - started,
+                fallbackUsed,
+                errorMessage,
+                providerResponse == null ? null : providerResponse.finishReason(),
+                providerResponse == null ? null : providerResponse.normalizedFinishReason(),
+                providerResponse == null ? null : providerResponse.responseChars(),
+                providerResponse == null ? errorMessage : providerResponse.rawText(),
+                "FAILED"
+        );
     }
 
     private AiOrchestrationRequest applyMaxTokens(AiOrchestrationRequest request, Integer maxTokens) {

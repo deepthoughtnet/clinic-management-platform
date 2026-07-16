@@ -118,12 +118,15 @@ import {
   previewPrescription,
   uploadPatientDocument,
   saveConsultationAiSummary,
+  acceptConsultationSoapAiDraft,
   repairClinicalMemory as repairClinicalMemoryApi,
   reprocessClinicalDocumentExtraction,
   getMedicationSafetyEvaluationForPrescription,
   getMedicationSafetyReviewForPrescription,
   sendPrescription,
+  getConsultationSoap,
   startConsultationFromAppointment,
+  saveConsultationSoap,
   updateConsultation,
   updatePrescription,
   type AiStatus,
@@ -131,7 +134,9 @@ import {
   type Appointment,
   type Consultation,
   type ConsultationAiSummary,
+  type ConsultationSoapNote,
   type ConsultationInput,
+  type ConsultationSoapInput,
   type LabOrder,
   type LabOrderStatus,
   type LabTest,
@@ -179,6 +184,13 @@ type ConsultationFormState = {
   respiratoryRate: string;
 };
 
+type ConsultationSoapFormState = {
+  subjective: string;
+  objective: string;
+  assessment: string;
+  plan: string;
+};
+
 type MedicineRow = PrescriptionMedicine & { localId: string; route?: string | null };
 type TestRow = PrescriptionTest & { localId: string };
 type AiSuggestionItem = {
@@ -224,12 +236,15 @@ type ClinicalAiDraftState = {
   title: string;
   status: ClinicalAiDraftStatus;
   generatedAt: string | null;
+  provider: string | null;
+  model: string | null;
   sourceSummary: string | null;
   draftText: string;
   structuredData: Record<string, unknown> | null;
   error: string | null;
   selectedItems: string[];
   selectedItem: string | null;
+  traceId: string | null;
 };
 type ConsultationDocumentationKind = "visitSummary" | "referral" | "certificate";
 type ConsultationDocumentPriority = "ROUTINE" | "URGENT" | "EMERGENCY";
@@ -409,6 +424,7 @@ const MEDICINE_ROUTE_LABELS: Record<(typeof MEDICINE_ROUTE_OPTIONS)[number], str
 };
 const AI_DISABLED_MESSAGE = "AI assistance is not enabled or configured for this clinic.";
 const AI_PROVIDER_NOT_CONFIGURED_MESSAGE = "AI module is enabled for this clinic, but AI provider is not configured.";
+const SOAP_TRACE_ENABLED = import.meta.env.DEV || import.meta.env.VITE_JEEVANAM_AI_SOAP_TRACE_ENABLED === "true";
 const AIVA_DISABLED_TITLE = "AIVA Clinical Assistant is not enabled";
 const AIVA_DISABLED_DESCRIPTION = "AI-powered suggestions, clinical chat, report interpretation and summaries are currently disabled for this clinic.";
 const AIVA_DISABLED_NOTE = "Ask the clinic administrator to enable AI features from clinic settings.";
@@ -618,6 +634,61 @@ function emptyConsultationForm(record?: Consultation | null): ConsultationFormSt
   };
 }
 
+function emptyConsultationSoapForm(record?: ConsultationSoapNote | null): ConsultationSoapFormState {
+  return {
+    subjective: record?.subjective || "",
+    objective: record?.objective || "",
+    assessment: record?.assessment || "",
+    plan: record?.plan || "",
+  };
+}
+
+function normalizeSoapWhitespace(text: string) {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function splitSoapSentences(text: string): string[] {
+  if (typeof Intl !== "undefined" && "Segmenter" in Intl) {
+    const segmenter = new Intl.Segmenter("en", { granularity: "sentence" });
+    return Array.from(segmenter.segment(text), (segment) => segment.segment.trim()).filter(Boolean);
+  }
+  return text.split(/(?<=[.!?])\s+/).map((segment) => segment.trim()).filter(Boolean);
+}
+
+function dedupeSoapSectionText(text: string | null | undefined) {
+  const normalized = normalizeSoapWhitespace(String(text || ""));
+  if (!normalized) return "";
+  const sentences = splitSoapSentences(normalized);
+  const seen = new Set<string>();
+  const deduped: string[] = [];
+  for (const sentence of sentences.length ? sentences : [normalized]) {
+    const cleaned = normalizeSoapWhitespace(sentence);
+    if (!cleaned) continue;
+    const key = cleaned.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(cleaned);
+  }
+  return deduped.join(" ");
+}
+
+function buildSoapContextSummary(params: {
+  generatedAt?: string | null;
+  provider?: string | null;
+}) {
+  const lines = [
+    "Generated using",
+    "• Chief Complaint",
+    "• Symptoms",
+    "• Diagnosis",
+    "• Vitals",
+    "• Longitudinal History",
+    params.generatedAt ? `Generated: ${compactDateTime(params.generatedAt)}` : null,
+    params.provider ? `AI Provider: ${params.provider}` : null,
+  ].filter(Boolean);
+  return lines.join("\n");
+}
+
 function newMedicineRow(index: number): MedicineRow {
   return {
     localId: `${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`,
@@ -819,6 +890,10 @@ function serializeConsultationForm(form: ConsultationFormState): string {
   return JSON.stringify(form);
 }
 
+function serializeConsultationSoapForm(form: ConsultationSoapFormState): string {
+  return JSON.stringify(form);
+}
+
 function serializePrescriptionForm(form: PrescriptionFormState): string {
   return JSON.stringify({
     diagnosisSnapshot: form.diagnosisSnapshot,
@@ -867,6 +942,15 @@ function appendTokenLine(base: string, token: string): string {
   if (!current) return token;
   if (current.toLowerCase().includes(token.toLowerCase())) return base;
   return `${current}, ${token}`;
+}
+
+function appendSoapSectionText(base: string, addition: string): string {
+  const current = base.trim();
+  const next = addition.trim();
+  if (!next) return base;
+  if (!current) return next;
+  if (current.toLowerCase().includes(next.toLowerCase())) return base;
+  return `${current}\n${next}`;
 }
 
 function normalizeClinicalToken(value: string): string {
@@ -1711,12 +1795,15 @@ function createClinicalAiDraftState(kind: ClinicalAiDraftKind, title: string): C
     title,
     status: "DRAFTED",
     generatedAt: null,
+    provider: null,
+    model: null,
     sourceSummary: null,
     draftText: "",
     structuredData: null,
     error: null,
     selectedItems: [],
     selectedItem: null,
+    traceId: null,
   };
 }
 
@@ -1836,6 +1923,76 @@ function extractClinicalSoapDraft(response: AiDraftResponse) {
     plan: plan || null,
     rawText,
   };
+}
+
+function isPlaceholderSoapValue(value: string | null | undefined) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return !normalized || ["-", "--", "n/a", "na", "not available", "not documented"].includes(normalized);
+}
+
+function hasMeaningfulSoapDraft(sections: { subjective: string | null; objective: string | null; assessment: string | null; plan: string | null }) {
+  return [sections.subjective, sections.objective, sections.assessment, sections.plan].some((section) => !isPlaceholderSoapValue(section));
+}
+
+function hasAnySoapDraftSection(sections: { subjective: string | null; objective: string | null; assessment: string | null; plan: string | null }) {
+  return [sections.subjective, sections.objective, sections.assessment, sections.plan].some((section) => Boolean(String(section || "").trim()));
+}
+
+function summarizeSoapDraftSections(sections: { subjective: string | null; objective: string | null; assessment: string | null; plan: string | null }) {
+  return {
+    subjectivePresent: Boolean(String(sections.subjective || "").trim()),
+    objectivePresent: Boolean(String(sections.objective || "").trim()),
+    assessmentPresent: Boolean(String(sections.assessment || "").trim()),
+    planPresent: Boolean(String(sections.plan || "").trim()),
+  };
+}
+
+function formatSoapVitalsSummary(vitals: {
+  bloodPressureSystolic: number | null;
+  bloodPressureDiastolic: number | null;
+  pulseRate: number | null;
+  respiratoryRate: number | null;
+  temperature: number | null;
+  temperatureUnit?: string | null;
+  spo2: number | null;
+  bmi: number | null;
+  randomBloodSugar?: number | null;
+  painScore?: number | null;
+}) {
+  const parts: string[] = [];
+  if (vitals.bloodPressureSystolic != null && vitals.bloodPressureDiastolic != null) {
+    parts.push(`BP ${vitals.bloodPressureSystolic}/${vitals.bloodPressureDiastolic}`);
+  }
+  if (vitals.pulseRate != null) {
+    parts.push(`Pulse ${vitals.pulseRate}`);
+  }
+  if (vitals.respiratoryRate != null) {
+    parts.push(`Resp ${vitals.respiratoryRate}`);
+  }
+  if (vitals.temperature != null) {
+    parts.push(`Temp ${vitals.temperature}${vitals.temperatureUnit ? ` ${vitals.temperatureUnit}` : ""}`);
+  }
+  if (vitals.spo2 != null) {
+    parts.push(`SpO2 ${vitals.spo2}`);
+  }
+  if (vitals.bmi != null) {
+    parts.push(`BMI ${vitals.bmi.toFixed(1)}`);
+  }
+  if (vitals.randomBloodSugar != null) {
+    parts.push(`RBS ${vitals.randomBloodSugar}`);
+  }
+  if (vitals.painScore != null) {
+    parts.push(`Pain ${vitals.painScore}/10`);
+  }
+  return parts.length ? parts.join(", ") : null;
+}
+
+function soapFieldCharCount(value: string | null | undefined) {
+  return value ? value.length : 0;
+}
+
+function soapFieldPresent(value: string | null | undefined) {
+  return Boolean(String(value || "").trim());
 }
 
 function extractClinicalFollowUpDraft(response: AiDraftResponse) {
@@ -2147,6 +2304,8 @@ export default function ConsultationWorkspacePage() {
   const [labOrders, setLabOrders] = React.useState<LabOrder[]>([]);
 
   const [consultationForm, setConsultationForm] = React.useState<ConsultationFormState>(emptyConsultationForm());
+  const [consultationSoap, setConsultationSoap] = React.useState<ConsultationSoapNote | null>(null);
+  const [consultationSoapForm, setConsultationSoapForm] = React.useState<ConsultationSoapFormState>(emptyConsultationSoapForm());
   const [prescriptionForm, setPrescriptionForm] = React.useState<PrescriptionFormState>(emptyPrescriptionForm());
 
   const [customSymptom, setCustomSymptom] = React.useState("");
@@ -2230,6 +2389,7 @@ export default function ConsultationWorkspacePage() {
   const [selectedRxTemplateKey, setSelectedRxTemplateKey] = React.useState<string | null>(null);
   const [completeConsultationDialogOpen, setCompleteConsultationDialogOpen] = React.useState(false);
   const [readinessDetailsOpen, setReadinessDetailsOpen] = React.useState(false);
+  const [timelinePreviewExpanded, setTimelinePreviewExpanded] = React.useState(false);
   const [diagnosisReasoningOpen, setDiagnosisReasoningOpen] = React.useState(false);
   const [diagnosisItemsExpanded, setDiagnosisItemsExpanded] = React.useState(false);
   const [showStickyConsultationProgress, setShowStickyConsultationProgress] = React.useState(false);
@@ -2283,6 +2443,7 @@ export default function ConsultationWorkspacePage() {
   const consultationRef = React.useRef<Consultation | null>(null);
   const prescriptionRef = React.useRef<Prescription | null>(null);
   const consultationFormRef = React.useRef(consultationForm);
+  const consultationSoapFormRef = React.useRef(consultationSoapForm);
   const prescriptionFormRef = React.useRef(prescriptionForm);
   const clinicalAiDraftsRef = React.useRef(clinicalAiDrafts);
   const consultationDocumentDraftsRef = React.useRef(consultationDocumentDrafts);
@@ -2296,6 +2457,7 @@ export default function ConsultationWorkspacePage() {
   const labOrderWorkflowRef = React.useRef<HTMLDivElement | null>(null);
   const adviceSectionRef = React.useRef<HTMLDivElement | null>(null);
   const adviceInputRef = React.useRef<HTMLTextAreaElement | HTMLInputElement | null>(null);
+  const soapSubjectiveInputRef = React.useRef<HTMLTextAreaElement | HTMLInputElement | null>(null);
   const clinicalReasoningSectionRefs = React.useRef<Record<Exclude<ClinicalReasoningSectionKey, "debug">, HTMLDivElement | null>>({
     longitudinalContext: null,
     primaryDiagnosis: null,
@@ -2307,6 +2469,7 @@ export default function ConsultationWorkspacePage() {
     safetyNotes: null,
   });
   const savedConsultationSnapshotRef = React.useRef(serializeConsultationForm(emptyConsultationForm()));
+  const savedConsultationSoapSnapshotRef = React.useRef(serializeConsultationSoapForm(emptyConsultationSoapForm()));
   const savedPrescriptionSnapshotRef = React.useRef(serializePrescriptionForm(emptyPrescriptionForm()));
   const autosaveTimerRef = React.useRef<number | null>(null);
   const autosaveRetryTimerRef = React.useRef<number | null>(null);
@@ -2649,6 +2812,10 @@ export default function ConsultationWorkspacePage() {
     consultationFormRef.current = consultationForm;
   }, [consultationForm]);
 
+  React.useEffect(() => {
+    consultationSoapFormRef.current = consultationSoapForm;
+  }, [consultationSoapForm]);
+
   React.useLayoutEffect(() => {
     prescriptionFormRef.current = prescriptionForm;
   }, [prescriptionForm]);
@@ -2908,6 +3075,13 @@ export default function ConsultationWorkspacePage() {
         savedConsultationSnapshotRef.current = serializeConsultationForm(initialConsultationForm);
         hydratedConsultationIdRef.current = consult.id;
 
+        const persistedSoap = await getConsultationSoap(auth.accessToken, auth.tenantId, consult.id).catch(() => null);
+        if (cancelled) return;
+        setConsultationSoap(persistedSoap);
+        const initialSoapForm = emptyConsultationSoapForm(persistedSoap);
+        setConsultationSoapForm(initialSoapForm);
+        savedConsultationSoapSnapshotRef.current = serializeConsultationSoapForm(initialSoapForm);
+
         setClinicalContextLoading(true);
         const [detail, previousRx, documents, timelineRows, context] = await Promise.all([
           getPatient(auth.accessToken, auth.tenantId, consult.patientId),
@@ -3047,8 +3221,9 @@ export default function ConsultationWorkspacePage() {
         return;
       }
       const consultationDirty = serializeConsultationForm(consultationFormRef.current) !== savedConsultationSnapshotRef.current;
+      const soapDirty = serializeConsultationSoapForm(consultationSoapFormRef.current) !== savedConsultationSoapSnapshotRef.current;
       const prescriptionDirty = serializePrescriptionForm(prescriptionFormRef.current) !== savedPrescriptionSnapshotRef.current;
-      if (consultationDirty || prescriptionDirty) {
+      if (consultationDirty || soapDirty || prescriptionDirty) {
         event.preventDefault();
         event.returnValue = "";
       }
@@ -3928,10 +4103,13 @@ export default function ConsultationWorkspacePage() {
     bloodPressureDiastolic: consultationForm.bloodPressureDiastolic.trim() ? Number(consultationForm.bloodPressureDiastolic) : intakeVitals?.bloodPressureDiastolic ?? null,
     pulseRate: consultationForm.pulseRate.trim() ? Number(consultationForm.pulseRate) : intakeVitals?.pulseRate ?? null,
     temperature: consultationForm.temperature.trim() ? Number(consultationForm.temperature) : intakeVitals?.temperature ?? null,
+    temperatureUnit: consultationForm.temperatureUnit || intakeVitals?.temperatureUnit || null,
     spo2: consultationForm.spo2.trim() ? Number(consultationForm.spo2) : intakeVitals?.spo2 ?? null,
     respiratoryRate: consultationForm.respiratoryRate.trim() ? Number(consultationForm.respiratoryRate) : intakeVitals?.respiratoryRate ?? null,
     weightKg: consultationForm.weightKg.trim() ? Number(consultationForm.weightKg) : intakeVitals?.weightKg ?? null,
     bmi: currentBmi ?? intakeVitals?.bmi ?? null,
+    randomBloodSugar: intakeVitals?.randomBloodSugar ?? null,
+    painScore: intakeVitals?.painScore ?? null,
   };
   const medicineUsageCounts = React.useMemo(() => {
     const counts = new Map<string, number>();
@@ -3965,6 +4143,7 @@ export default function ConsultationWorkspacePage() {
     [previousPrescriptions],
   );
   const aiVitalsSummary = `BP:${consultationForm.bloodPressureSystolic}/${consultationForm.bloodPressureDiastolic}, Pulse:${consultationForm.pulseRate}, Resp:${consultationForm.respiratoryRate}, Temp:${consultationForm.temperature}, BMI:${currentBmi ? currentBmi.toFixed(1) : "-"}`;
+  const soapVitalsSummary = formatSoapVitalsSummary(latestVitals);
   const aiAllergiesSummary = patientRow?.allergies?.trim() || null;
   const aiChronicConditionsSummary = clinicalContext?.patientSummary.chronicConditions?.trim() || patientRow?.existingConditions?.trim() || null;
   const verifiedClinicalConditions = clinicalContext?.longitudinalMemory?.knownConditions || [];
@@ -4433,7 +4612,12 @@ export default function ConsultationWorkspacePage() {
     ) || Boolean(clinicalContext?.intakeSummary?.latestVitals);
     const diagnosisNeedsReview = clinicalDraftEntries.some((draft) => draft.kind === "diagnosis" && draft.status === "DRAFTED");
     const hasDiagnosis = Boolean(consultationForm.diagnosis.trim());
-    const hasSoap = Boolean(consultationForm.clinicalNotes.trim() || consultationForm.diagnosis.trim() || consultationForm.advice.trim());
+    const hasSoap = Boolean(
+      consultationSoapForm.subjective.trim()
+      || consultationSoapForm.objective.trim()
+      || consultationSoapForm.assessment.trim()
+      || consultationSoapForm.plan.trim()
+    );
     const hasAdvice = Boolean(consultationForm.advice.trim());
     const hasFollowUp = Boolean(consultationForm.followUpDate.trim());
     const items: ConsultationCompletionItem[] = [
@@ -4449,7 +4633,7 @@ export default function ConsultationWorkspacePage() {
         tone: hasDiagnosis ? (diagnosisNeedsReview ? "warning" : "success") : "default",
         prepared: hasDiagnosis && !diagnosisNeedsReview,
       },
-      { label: "SOAP", stateLabel: hasSoap ? "Recorded" : "Not recorded", detail: hasSoap ? "SOAP assessment is present." : "Document the SOAP summary.", tone: hasSoap ? "success" : "default", prepared: hasSoap },
+      { label: "SOAP", stateLabel: hasSoap ? "Recorded" : "Not recorded", detail: hasSoap ? "SOAP note is present." : "Document the SOAP summary.", tone: hasSoap ? "success" : "default", prepared: hasSoap },
       { label: "Advice", stateLabel: hasAdvice ? "Recorded" : "Not recorded", detail: hasAdvice ? "Advice is recorded." : "Document advice when provided.", tone: hasAdvice ? "success" : "default", prepared: hasAdvice },
       { label: "Follow-up", stateLabel: hasFollowUp ? "Recorded" : "Not recorded", detail: hasFollowUp ? "Follow-up is recorded." : "Record follow-up when planned.", tone: hasFollowUp ? "success" : "default", prepared: hasFollowUp },
     ];
@@ -4477,6 +4661,22 @@ export default function ConsultationWorkspacePage() {
     consultationForm.temperature,
     consultationForm.weightKg,
   ]);
+  const soapDirty = React.useMemo(
+    () => serializeConsultationSoapForm(consultationSoapForm) !== savedConsultationSoapSnapshotRef.current,
+    [consultationSoapForm],
+  );
+  const soapHasPersistedRecord = Boolean(consultationSoap?.id);
+  const soapStale = consultationSoap?.status === "ACCEPTED" && consultationSoap.stale;
+  const soapStatusLabel = consultationSoap?.status === "ACCEPTED"
+    ? (soapStale ? "Review recommended" : "Current")
+    : consultationSoap?.status === "DRAFT"
+      ? "Draft"
+      : null;
+  const soapStatusSeverity = consultationSoap?.status === "ACCEPTED"
+    ? (soapStale ? "warning" : "info")
+    : consultationSoap?.status === "DRAFT"
+      ? "info"
+      : "info";
 
   const consultationCompletionSummary = React.useMemo(() => {
     const hasVisitSummary = consultationDocumentDrafts.visitSummary.status === "ACCEPTED" || consultationDocumentDrafts.visitSummary.status === "EDITED";
@@ -4608,7 +4808,7 @@ export default function ConsultationWorkspacePage() {
       ? CONSULTATION_COMPLETION_BLOCKED_MESSAGE
       : reviewRecommended
         ? "Documentation gaps are advisory only."
-        : "Actual completion requirements are satisfied.";
+        : "Consultation is ready for completion.";
     return {
       groups: [
         {
@@ -4705,6 +4905,50 @@ export default function ConsultationWorkspacePage() {
     if (showInfo) setInfo("Consultation draft saved");
     return saved;
   };
+
+  const saveConsultationSoapDraft = async (showInfo = false): Promise<ConsultationSoapNote | null> => {
+    const currentConsultation = consultationRef.current;
+    const currentForm = consultationSoapFormRef.current;
+    const currentSoap = consultationSoap;
+    if (!auth.accessToken || !auth.tenantId || !currentConsultation) return currentSoap;
+    const serializedForm = serializeConsultationSoapForm(currentForm);
+    const soapDirty = serializedForm !== savedConsultationSoapSnapshotRef.current;
+    if (!soapDirty && currentSoap) {
+      if (showInfo) setInfo("SOAP saved");
+      return currentSoap;
+    }
+    const body: ConsultationSoapInput = {
+      subjective: currentForm.subjective.trim() || null,
+      objective: currentForm.objective.trim() || null,
+      assessment: currentForm.assessment.trim() || null,
+      plan: currentForm.plan.trim() || null,
+      aiProvider: currentSoap?.aiProvider || null,
+      aiModel: currentSoap?.aiModel || null,
+      generatedAt: currentSoap?.generatedAt || null,
+    };
+    const saved = await saveConsultationSoap(auth.accessToken, auth.tenantId, currentConsultation.id, body);
+    setConsultationSoap(saved);
+    const nextForm = emptyConsultationSoapForm(saved);
+    setConsultationSoapForm(nextForm);
+    consultationSoapFormRef.current = nextForm;
+    savedConsultationSoapSnapshotRef.current = serializeConsultationSoapForm(nextForm);
+    if (showInfo) setInfo("SOAP saved");
+    return saved;
+  };
+
+  const copyConsultationSoapDraft = React.useCallback(async () => {
+    const text = serializeConsultationSoapForm(consultationSoapFormRef.current).trim();
+    if (!text) return;
+    await navigator.clipboard.writeText(text);
+    setInfo("SOAP copied to clipboard");
+  }, []);
+
+  const focusConsultationSoapEditor = React.useCallback(() => {
+    setExpanded((current) => ({ ...current, notes: true }));
+    window.requestAnimationFrame(() => {
+      soapSubjectiveInputRef.current?.focus();
+    });
+  }, []);
 
   const runAutosave = async (): Promise<Consultation | null> => {
     if (autosavePromiseRef.current) return autosavePromiseRef.current;
@@ -5489,6 +5733,7 @@ export default function ConsultationWorkspacePage() {
     if (!auth.accessToken || !auth.tenantId || !consultation || !patient) return;
     const entryId = makeAiAssistEntryId();
     const generatedAt = new Date().toISOString();
+    let soapTraceId: string | null = null;
     const baseSourceSummary = makeClinicalDraftSourceSummary({
       patientAgeGender,
       chiefComplaints: consultationForm.chiefComplaints,
@@ -5500,6 +5745,12 @@ export default function ConsultationWorkspacePage() {
       prescription: currentPrescriptionDraftSummary || null,
       investigations: labOrdersSummary || null,
     });
+  const soapSourceSummary = kind === "soap"
+      ? buildSoapContextSummary({
+          generatedAt,
+          provider: null,
+        })
+      : baseSourceSummary;
     appendAiAssistEntry({
       id: entryId,
       action: kind === "diagnosis" ? "diagnosis" : kind === "advice" ? "instructions" : kind === "soap" ? "notes" : "ask",
@@ -5519,12 +5770,14 @@ export default function ConsultationWorkspacePage() {
     updateClinicalAiDraft(kind, {
       status: "DRAFTED",
       generatedAt,
-      sourceSummary: baseSourceSummary,
+      sourceSummary: kind === "soap" ? soapSourceSummary : baseSourceSummary,
       draftText: "",
       structuredData: null,
       error: null,
       selectedItems: [],
       selectedItem: null,
+      provider: null,
+      model: null,
     });
     setAiBusy(true);
     setClinicalAiActiveDraft(kind);
@@ -5698,49 +5951,126 @@ export default function ConsultationWorkspacePage() {
       }
 
       if (kind === "soap") {
+        soapTraceId = crypto.randomUUID();
+        const updateSoapFailure = (message: string, draft: AiDraftResponse | null = null) => {
+          updateClinicalAiDraft(kind, {
+            status: "REJECTED",
+            generatedAt: new Date().toISOString(),
+            sourceSummary: buildSoapContextSummary({
+              generatedAt: new Date().toISOString(),
+              provider: draft?.provider || null,
+            }),
+            draftText: "",
+            structuredData: null,
+            error: message,
+            selectedItems: [],
+            selectedItem: null,
+            traceId: soapTraceId,
+            provider: draft?.provider || null,
+            model: draft?.model || null,
+          });
+          updateAiAssistEntry(entryId, { status: "error", response: draft, error: message });
+        };
+        if (SOAP_TRACE_ENABLED) {
+          console.debug("SOAP-DRAFT-TRACE-FE stage=REQUEST", {
+            traceId: soapTraceId,
+            consultationId: consultation.id,
+            patientId: consultation.patientId,
+            chiefComplaintPresent: soapFieldPresent(consultationForm.chiefComplaints),
+            symptomsPresent: soapFieldPresent(consultationForm.symptoms),
+            doctorNotesPresent: soapFieldPresent(consultationForm.chiefComplaints),
+            diagnosisPresent: soapFieldPresent(consultationForm.diagnosis),
+            advicePresent: soapFieldPresent(consultationForm.advice),
+            vitalsPresent: Boolean(soapVitalsSummary),
+            observationsPresent: soapFieldPresent(consultationForm.clinicalNotes),
+            chiefComplaintChars: soapFieldCharCount(consultationForm.chiefComplaints),
+            symptomsChars: soapFieldCharCount(consultationForm.symptoms),
+            doctorNotesChars: soapFieldCharCount(consultationForm.chiefComplaints),
+            diagnosisChars: soapFieldCharCount(consultationForm.diagnosis),
+            adviceChars: soapFieldCharCount(consultationForm.advice),
+            vitalsChars: soapFieldCharCount(soapVitalsSummary),
+            observationsChars: soapFieldCharCount(consultationForm.clinicalNotes),
+            soapVitalsSummary,
+            sourceSummary: soapSourceSummary,
+          });
+        }
         const draft = await aiStructureConsultationNotes(auth.accessToken, auth.tenantId, {
           consultationId: consultation.id,
           patientId: consultation.patientId,
           patientAgeGender,
+          chiefComplaint: consultationForm.chiefComplaints,
           allergies: aiAllergiesSummary,
           chronicConditions: aiChronicConditionsSummary,
           currentPrescriptionDraft: currentPrescriptionDraftSummary || null,
           labOrdersSummary: labOrdersSummary || null,
           doctorNotes: consultationForm.chiefComplaints,
           symptoms: consultationForm.symptoms,
-          vitals: aiVitalsSummary,
+          diagnosis: consultationForm.diagnosis,
+          advice: consultationForm.advice,
+          vitals: soapVitalsSummary,
           observations: consultationForm.clinicalNotes,
-        });
+        }, { correlationId: soapTraceId });
+        if (SOAP_TRACE_ENABLED) {
+          const parsed = extractClinicalSoapDraft(draft);
+          const soapSectionFlags = summarizeSoapDraftSections(parsed);
+          console.debug("SOAP-DRAFT-TRACE-FE stage=RESPONSE", {
+            traceId: soapTraceId,
+            consultationId: consultation.id,
+            patientId: consultation.patientId,
+            httpStatus: draft.enabled ? "SUCCESS" : "FAILURE",
+            structuredDataPresent: Boolean(draft.structuredData && Object.keys(draft.structuredData).length),
+            returnedKeys: draft.structuredData ? Object.keys(draft.structuredData) : [],
+            ...soapSectionFlags,
+            localValidationOutcome: hasMeaningfulSoapDraft(parsed) ? "ACCEPTED" : "REJECTED",
+            rejectedDraftReason: hasMeaningfulSoapDraft(parsed)
+              ? null
+              : (draft.message || "ALL_PLACEHOLDER"),
+            validationMessagePresent: Boolean(draft.message),
+          });
+        }
         if (!draft.enabled) {
           const message = aiStatusMessage || AI_DISABLED_MESSAGE;
-          updateAiAssistEntry(entryId, { status: "error", response: draft, error: message });
-          updateClinicalAiDraft(kind, { error: message });
-          setError(message);
+          updateSoapFailure(message, draft);
           return;
         }
         if (!draft.provider && draft.fallbackUsed) {
           const message = draft.message || "AI providers are temporarily unavailable. Please retry.";
-          updateAiAssistEntry(entryId, { status: "error", response: draft, error: message });
-          updateClinicalAiDraft(kind, { error: message });
-          setError(message);
+          updateSoapFailure(message, draft);
           return;
         }
         const parsed = extractClinicalSoapDraft(draft);
+        if (!hasMeaningfulSoapDraft(parsed)) {
+          const message = draft.message || "Unable to generate a meaningful SOAP draft from the available consultation context. Add or verify clinical details and retry.";
+          updateSoapFailure(message, draft);
+          return;
+        }
+        const cleanedParsed = {
+          subjective: dedupeSoapSectionText(parsed.subjective),
+          objective: dedupeSoapSectionText(parsed.objective),
+          assessment: dedupeSoapSectionText(parsed.assessment),
+          plan: dedupeSoapSectionText(parsed.plan),
+        };
         const combined = normalizeDraftedTextWithSections("", [
-          ["Subjective", parsed.subjective],
-          ["Objective", parsed.objective],
-          ["Assessment", parsed.assessment],
-          ["Plan", parsed.plan],
+          ["Subjective", cleanedParsed.subjective],
+          ["Objective", cleanedParsed.objective],
+          ["Assessment", cleanedParsed.assessment],
+          ["Plan", cleanedParsed.plan],
         ]) || extractClinicalDraftText(draft);
         updateClinicalAiDraft(kind, {
           status: "DRAFTED",
           generatedAt: new Date().toISOString(),
-          sourceSummary: baseSourceSummary,
+          sourceSummary: buildSoapContextSummary({
+            generatedAt: new Date().toISOString(),
+            provider: draft.provider || null,
+          }),
           draftText: combined,
           structuredData: draft.structuredData,
           error: null,
           selectedItems: [],
           selectedItem: null,
+          traceId: soapTraceId,
+          provider: draft.provider || null,
+          model: draft.model || null,
         });
         updateAiAssistEntry(entryId, { status: "success", response: draft, error: null });
       }
@@ -5840,9 +6170,24 @@ export default function ConsultationWorkspacePage() {
     } catch (err) {
       const message = err instanceof Error ? err.message : "AI action failed";
       const friendly = normalizeError(message);
-      updateClinicalAiDraft(kind, { error: friendly });
-      updateAiAssistEntry(entryId, { status: "error", error: friendly });
-      setError(friendly);
+      if (kind === "soap") {
+        updateClinicalAiDraft(kind, {
+          status: "REJECTED",
+          generatedAt: new Date().toISOString(),
+          sourceSummary: soapSourceSummary,
+          draftText: "",
+          structuredData: null,
+          error: friendly,
+          selectedItems: [],
+          selectedItem: null,
+          traceId: soapTraceId,
+        });
+        updateAiAssistEntry(entryId, { status: "error", error: friendly });
+      } else {
+        updateClinicalAiDraft(kind, { error: friendly });
+        updateAiAssistEntry(entryId, { status: "error", error: friendly });
+        setError(friendly);
+      }
       console.error("Clinical AI draft failed", err);
     } finally {
       setAiBusy(false);
@@ -6365,7 +6710,13 @@ export default function ConsultationWorkspacePage() {
     }
 
     if (kind === "soap") {
-      const choice = await requestOverwriteChoice("SOAP notes", `${consultationForm.chiefComplaints}\n${consultationForm.clinicalNotes}\n${consultationForm.diagnosis}\n${consultationForm.advice}`.trim(), true);
+      const currentSoapText = [
+        consultationSoapForm.subjective,
+        consultationSoapForm.objective,
+        consultationSoapForm.assessment,
+        consultationSoapForm.plan,
+      ].filter((value) => Boolean(value.trim())).join("\n");
+      const choice = await requestOverwriteChoice("SOAP notes", currentSoapText, true);
       if (choice === "cancel") return;
       const parsed = extractClinicalSoapDraft({
         enabled: true,
@@ -6379,14 +6730,43 @@ export default function ConsultationWorkspacePage() {
         suggestedActions: [],
         warnings: [],
       });
-      setConsultationForm((current) => ({
-        ...current,
-        chiefComplaints: choice === "replace" ? (parsed.subjective || current.chiefComplaints) : appendTokenLine(current.chiefComplaints, parsed.subjective || ""),
-        clinicalNotes: choice === "replace" ? (parsed.objective || current.clinicalNotes) : appendTokenLine(current.clinicalNotes, parsed.objective || ""),
-        diagnosis: choice === "replace" ? (parsed.assessment || current.diagnosis) : appendTokenLine(current.diagnosis, parsed.assessment || ""),
-        advice: choice === "replace" ? (parsed.plan || current.advice) : appendTokenLine(current.advice, parsed.plan || ""),
-      }));
-      updateClinicalAiDraft(kind, { status: "ACCEPTED" });
+      const nextSoapForm: ConsultationSoapFormState = {
+        subjective: choice === "replace" ? (parsed.subjective || consultationSoapForm.subjective) : appendSoapSectionText(consultationSoapForm.subjective, parsed.subjective || ""),
+        objective: choice === "replace" ? (parsed.objective || consultationSoapForm.objective) : appendSoapSectionText(consultationSoapForm.objective, parsed.objective || ""),
+        assessment: choice === "replace" ? (parsed.assessment || consultationSoapForm.assessment) : appendSoapSectionText(consultationSoapForm.assessment, parsed.assessment || ""),
+        plan: choice === "replace" ? (parsed.plan || consultationSoapForm.plan) : appendSoapSectionText(consultationSoapForm.plan, parsed.plan || ""),
+      };
+      const cleanedSoapForm: ConsultationSoapFormState = {
+        subjective: dedupeSoapSectionText(nextSoapForm.subjective),
+        objective: dedupeSoapSectionText(nextSoapForm.objective),
+        assessment: dedupeSoapSectionText(nextSoapForm.assessment),
+        plan: dedupeSoapSectionText(nextSoapForm.plan),
+      };
+      setConsultationSoapForm(cleanedSoapForm);
+      consultationSoapFormRef.current = cleanedSoapForm;
+      try {
+        const accessToken = auth.accessToken;
+        const tenantId = auth.tenantId;
+        const consultationId = consultation?.id ?? "";
+        if (!accessToken || !tenantId || !consultationId) return;
+        const saved = await acceptConsultationSoapAiDraft(accessToken, tenantId, consultationId, {
+          subjective: cleanedSoapForm.subjective,
+          objective: cleanedSoapForm.objective,
+          assessment: cleanedSoapForm.assessment,
+          plan: cleanedSoapForm.plan,
+          aiProvider: null,
+          aiModel: null,
+          generatedAt: draft.generatedAt || null,
+        });
+        setConsultationSoap(saved);
+        const syncedSoapForm = emptyConsultationSoapForm(saved);
+        setConsultationSoapForm(syncedSoapForm);
+        consultationSoapFormRef.current = syncedSoapForm;
+        savedConsultationSoapSnapshotRef.current = serializeConsultationSoapForm(syncedSoapForm);
+        updateClinicalAiDraft(kind, { status: "ACCEPTED", error: null, provider: null, model: null });
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to save SOAP draft");
+      }
       return;
     }
 
@@ -6721,6 +7101,7 @@ export default function ConsultationWorkspacePage() {
       status: draft.status,
       generatedAt: draft.generatedAt,
       sourceSummary: draft.sourceSummary,
+      sourceSummaryLabel: kind === "soap" ? "Generated using" : "Context",
       draftText: draft.draftText,
       error: draft.error,
       loading,
@@ -6733,6 +7114,10 @@ export default function ConsultationWorkspacePage() {
       onReject: () => rejectClinicalDraft(kind),
       onCopy: () => void copyClinicalDraft(kind),
     };
+
+    if (kind === "soap" && draft.status === "ACCEPTED") {
+      return null;
+    }
 
     if (kind === "symptoms") {
       const items = draft.selectedItems.length
@@ -6843,6 +7228,42 @@ export default function ConsultationWorkspacePage() {
         warnings: [],
       };
       const parsed = extractClinicalSoapDraft(response);
+      const soapDraftVisible = draft.status === "DRAFTED" || draft.status === "EDITED" || draft.status === "REJECTED";
+      if (!soapDraftVisible) {
+        return null;
+      }
+      if (SOAP_TRACE_ENABLED) {
+        console.debug("SOAP-DRAFT-TRACE-FE stage=RENDER", {
+          traceId: draft.traceId,
+          consultationId: consultation?.id || null,
+          patientId: consultation?.patientId || null,
+          draftStatus: draft.status,
+          validationMessagePresent: Boolean(draft.error),
+          subjectivePresent: soapFieldPresent(parsed.subjective),
+          objectivePresent: soapFieldPresent(parsed.objective),
+          assessmentPresent: soapFieldPresent(parsed.assessment),
+          planPresent: soapFieldPresent(parsed.plan),
+          sourceSummaryVitalsPresent: Boolean(draft.sourceSummary && draft.sourceSummary.includes("Vitals")),
+        });
+      }
+      if (loading) {
+        return (
+          <ClinicalAiDraftCard {...commonProps} acceptLabel="Accept SOAP draft">
+            <Typography variant="body2" color="text.secondary">
+              Generating SOAP draft...
+            </Typography>
+          </ClinicalAiDraftCard>
+        );
+      }
+      if (!hasMeaningfulSoapDraft(parsed)) {
+        return (
+          <ClinicalAiDraftCard {...commonProps} acceptLabel="Accept SOAP draft">
+            <Alert severity="warning">
+              {draft.error || "Unable to generate a meaningful SOAP draft from the available consultation context. Add or verify clinical details and retry."}
+            </Alert>
+          </ClinicalAiDraftCard>
+        );
+      }
       return (
         <ClinicalAiDraftCard {...commonProps} acceptLabel="Accept SOAP draft">
           <Stack spacing={0.75}>
@@ -7648,7 +8069,7 @@ export default function ConsultationWorkspacePage() {
             <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" justifyContent="flex-end" sx={{ maxWidth: { xs: "100%", md: 520 } }}>
               <Button type="button" size="small" variant="outlined" onClick={() => void backToQueue()}>Back to Queue</Button>
               {canEditConsultation && !readOnly ? <Button type="button" size="small" disabled={saving} onClick={() => void manualSaveDraft()}>Save Draft</Button> : null}
-              {aiAssistantEnabled ? <Button type="button" size="small" variant="contained" startIcon={<AutoAwesomeRoundedIcon fontSize="small" />} disabled={!canGenerateClinicalDraft} onClick={() => void generateConsultationDraft(false)}>Generate Consultation Draft</Button> : null}
+              {aiAssistantEnabled ? <Button type="button" size="small" variant="contained" title="Generate reviewable AI drafts for multiple consultation sections." startIcon={<AutoAwesomeRoundedIcon fontSize="small" />} disabled={!canGenerateClinicalDraft} onClick={() => void generateConsultationDraft(false)}>Generate AI Consultation Draft</Button> : null}
               {canRunAi && Object.values(clinicalAiDrafts).some((draft) => draft.status === "ACCEPTED" || draft.status === "EDITED") ? (
                 <Button
                   type="button"
@@ -7710,17 +8131,17 @@ export default function ConsultationWorkspacePage() {
                       Guidance only. This does not change completion rules.
                     </Typography>
                   </Box>
-                <Stack direction="row" spacing={0.5} alignItems="center">
-                  <Button
-                    type="button"
-                    size="small"
-                    variant="text"
-                    aria-label="View guide"
-                    onClick={() => setReadinessDetailsOpen((current) => !current)}
-                  >
-                    {readinessDetailsOpen ? "Hide" : "View guide"}
-                  </Button>
-                </Stack>
+                  <Stack direction="row" spacing={0.5} alignItems="center">
+                    <Button
+                      type="button"
+                      size="small"
+                      variant="text"
+                      aria-label="View guide"
+                      onClick={() => setReadinessDetailsOpen((current) => !current)}
+                    >
+                      {readinessDetailsOpen ? "Hide" : "View guide"}
+                    </Button>
+                  </Stack>
                 </Stack>
                 <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
                   {consultationDocumentationGuide.items.slice(0, 4).map((item) => (
@@ -7754,11 +8175,6 @@ export default function ConsultationWorkspacePage() {
               </Stack>
             </CardContent>
           </Card>
-          {canCompleteConsultation && !readOnly ? (
-            <Typography variant="caption" color={prescriptionReadyForCompletion ? "success.main" : "warning.main"} sx={{ display: "block" }}>
-              {prescriptionReadyForCompletion ? "Consultation is ready for completion." : CONSULTATION_COMPLETION_BLOCKED_MESSAGE}
-            </Typography>
-          ) : null}
         </Stack>
       </CardContent>
     </Card>
@@ -7810,18 +8226,30 @@ export default function ConsultationWorkspacePage() {
                 <Box>
                   <Stack direction="row" spacing={0.5} alignItems="center">
                     <TimelineRoundedIcon fontSize="small" color="primary" />
-                    <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Patient timeline</Typography>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>
+                      {`Patient timeline · ${timelinePreview.length} recent`}
+                    </Typography>
                     <Chip size="small" variant="outlined" label={`${timelinePreview.length} recent`} sx={{ height: 20 }} />
                   </Stack>
                   <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.2 }}>
                     Recent visits, prescriptions, and documents
                   </Typography>
                 </Box>
-                <Button type="button" size="small" variant="outlined" startIcon={<HistoryRoundedIcon fontSize="small" />} onClick={openHistoryTab}>
-                  View Full History
-                </Button>
+                <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" justifyContent="flex-end">
+                  <Button
+                    type="button"
+                    size="small"
+                    variant="outlined"
+                    onClick={() => setTimelinePreviewExpanded((current) => !current)}
+                  >
+                    {timelinePreviewExpanded ? "Hide timeline" : "Show timeline"}
+                  </Button>
+                  <Button type="button" size="small" variant="outlined" startIcon={<HistoryRoundedIcon fontSize="small" />} onClick={openHistoryTab}>
+                    View Full History
+                  </Button>
+                </Stack>
               </Stack>
-              {timelinePreview.length ? (
+              {timelinePreviewExpanded ? (
                 <Stack direction="row" spacing={0.65} sx={{ overflowX: "auto", pb: 0.2, minHeight: 74, maxHeight: 88 }}>
                   {timelinePreview.map((item) => (
                     <Card
@@ -9045,26 +9473,62 @@ export default function ConsultationWorkspacePage() {
                 title="Clinical Notes / SOAP"
                 subtitle="Subjective, objective, assessment, and plan"
                 icon={<DescriptionRoundedIcon fontSize="small" />}
-                expanded={expanded.notes}
-                onToggle={toggleSection}
-                primaryAction={(
-                  <Button type="button" size="small" variant="outlined" startIcon={<AutoAwesomeRoundedIcon fontSize="small" />} disabled={!canGenerateClinicalDraft} onClick={() => void runClinicalDraftAction("soap")}>
-                    Draft SOAP
-                  </Button>
+              expanded={expanded.notes}
+              onToggle={toggleSection}
+              primaryAction={(
+                soapHasPersistedRecord ? (
+                  <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
+                    <Button type="button" size="small" variant="outlined" startIcon={<AutoAwesomeRoundedIcon fontSize="small" />} disabled={!canGenerateClinicalDraft} onClick={() => void runClinicalDraftAction("soap")}>
+                      Generate New SOAP Draft
+                    </Button>
+                    <Button type="button" size="small" variant="outlined" disabled={readOnly} onClick={focusConsultationSoapEditor}>
+                      Edit SOAP
+                    </Button>
+                    <Button type="button" size="small" variant="outlined" disabled={!serializeConsultationSoapForm(consultationSoapFormRef.current).trim()} onClick={() => void copyConsultationSoapDraft()}>
+                      Copy
+                    </Button>
+                    <Button type="button" size="small" variant="outlined" disabled>
+                      Version History
+                    </Button>
+                  </Stack>
+                ) : (
+                  <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
+                    <Button type="button" size="small" variant="outlined" startIcon={<AutoAwesomeRoundedIcon fontSize="small" />} disabled={!canGenerateClinicalDraft} onClick={() => void runClinicalDraftAction("soap")}>
+                      Draft SOAP
+                    </Button>
+                    <Button type="button" size="small" variant="outlined" disabled={readOnly || !soapDirty} onClick={() => void saveConsultationSoapDraft(true)}>
+                      Save SOAP
+                    </Button>
+                  </Stack>
+                )
                 )}
               >
                 <Stack spacing={1}>
+                  {soapStatusLabel ? (
+                    <Alert severity={soapStatusSeverity} variant="outlined" sx={{ py: 0.5 }}>
+                      <Stack spacing={0.2}>
+                        <Typography variant="body2" sx={{ fontWeight: 800, lineHeight: 1.35 }}>
+                          SOAP status: {soapStatusLabel}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {consultationSoap?.status === "ACCEPTED"
+                            ? (soapStale ? "Clinical information has changed since this SOAP note was accepted." : "Clinical information matches the accepted SOAP note.")
+                            : "Manual SOAP changes are stored independently."}
+                        </Typography>
+                      </Stack>
+                    </Alert>
+                  ) : null}
                   {clinicalAiDrafts.soap.generatedAt || clinicalAiDrafts.soap.error || clinicalAiDrafts.soap.status !== "DRAFTED" || clinicalAiDrafts.soap.draftText.trim() ? renderClinicalAiDraftCard("soap") : null}
-                  {!(consultationForm.chiefComplaints.trim() || consultationForm.clinicalNotes.trim() || consultationForm.diagnosis.trim() || consultationForm.advice.trim()) ? (
+                  {!(consultationSoapForm.subjective.trim() || consultationSoapForm.objective.trim() || consultationSoapForm.assessment.trim() || consultationSoapForm.plan.trim()) ? (
                     <Typography variant="caption" color="text.secondary">
                       Generate SOAP using AIVA or complete manually.
                     </Typography>
                   ) : null}
                   <Grid container spacing={0.75}>
-                    <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth size="small" label="Subjective" value={consultationForm.chiefComplaints} onChange={(e) => setConsultationForm((c) => ({ ...c, chiefComplaints: e.target.value }))} multiline minRows={2} disabled={readOnly} /></Grid>
-                    <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth size="small" label="Objective" value={consultationForm.clinicalNotes} onChange={(e) => setConsultationForm((c) => ({ ...c, clinicalNotes: e.target.value }))} multiline minRows={2} disabled={readOnly} /></Grid>
-                    <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth size="small" label="Assessment" value={consultationForm.diagnosis} onChange={(e) => setConsultationForm((c) => ({ ...c, diagnosis: e.target.value }))} multiline minRows={2} disabled={readOnly} /></Grid>
-                    <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth size="small" label="Plan" value={consultationForm.advice} onChange={(e) => setConsultationForm((c) => ({ ...c, advice: e.target.value }))} multiline minRows={2} disabled={readOnly} /></Grid>
+                    <Grid size={{ xs: 12, md: 6 }}><TextField inputRef={soapSubjectiveInputRef} fullWidth size="small" label="Subjective" value={consultationSoapForm.subjective} onChange={(e) => setConsultationSoapForm((c) => ({ ...c, subjective: e.target.value }))} multiline minRows={2} disabled={readOnly} /></Grid>
+                    <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth size="small" label="Objective" value={consultationSoapForm.objective} onChange={(e) => setConsultationSoapForm((c) => ({ ...c, objective: e.target.value }))} multiline minRows={2} disabled={readOnly} /></Grid>
+                    <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth size="small" label="Assessment" value={consultationSoapForm.assessment} onChange={(e) => setConsultationSoapForm((c) => ({ ...c, assessment: e.target.value }))} multiline minRows={2} disabled={readOnly} /></Grid>
+                    <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth size="small" label="Plan" value={consultationSoapForm.plan} onChange={(e) => setConsultationSoapForm((c) => ({ ...c, plan: e.target.value }))} multiline minRows={2} disabled={readOnly} /></Grid>
                   </Grid>
                 </Stack>
               </SectionCard>
@@ -11398,7 +11862,7 @@ export default function ConsultationWorkspacePage() {
                         ) : (
                           <Box sx={{ p: 1.2, border: 1, borderStyle: "dashed", borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
                             <Typography variant="body2" color="text.secondary">
-                              No consultation draft generated yet. Use Generate Consultation Draft or a section action to start a review.
+                              No consultation draft generated yet. Use Generate AI Consultation Draft or a section action to start a review.
                             </Typography>
                           </Box>
                         )}

@@ -17,7 +17,13 @@ test("consultation workspace freeze keeps AI surfaces compact and reviewable", (
   assert.ok(source.includes("Ready to complete"));
   assert.ok(source.includes("Review reasoning"));
   assert.ok(source.includes("Generate SOAP using AIVA or complete manually."));
-  assert.ok(source.includes("Generate Consultation Draft"));
+  assert.ok(source.includes("Generate AI Consultation Draft"));
+  assert.ok(source.includes("Generate reviewable AI drafts for multiple consultation sections."));
+  assert.ok(source.includes("Use Generate AI Consultation Draft or a section action to start a review."));
+  assert.ok(!source.includes("Use Generate Consultation Draft or a section action to start a review."));
+  assert.ok(source.includes("aiAssistantEnabled ? <Button type=\"button\" size=\"small\" variant=\"contained\""));
+  assert.ok(source.includes("onClick={() => void generateConsultationDraft(false)}"));
+  assert.ok(source.includes("Manual diagnosis entry"));
   assert.ok(source.includes("AIVA Draft Review"));
   assert.ok(source.includes("StructuredTrendSummary"));
   assert.ok(source.includes("longitudinalClinicalContext?.labTrends"));

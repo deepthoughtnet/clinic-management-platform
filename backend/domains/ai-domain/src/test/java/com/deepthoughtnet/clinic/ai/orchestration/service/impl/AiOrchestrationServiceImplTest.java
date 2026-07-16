@@ -40,10 +40,270 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.slf4j.LoggerFactory;
 
 class AiOrchestrationServiceImplTest {
+    @Test
+    void soapTraceLogsUseHashesAndLengthsWithoutRawResponseByDefault() {
+        AiPromptTemplateRegistryService registry = mock(AiPromptTemplateRegistryService.class);
+        AiProviderRouter router = mock(AiProviderRouter.class);
+        AiRequestAuditService auditService = mock(AiRequestAuditService.class);
+        AiOrchestrationServiceImpl service = newService(registry, router, auditService);
+        service.setSoapTraceEnabled(true);
+
+        AiOrchestrationRequest request = new AiOrchestrationRequest(
+                AiProductCode.CLINIC,
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                AiTaskType.CONSULTATION_NOTE_STRUCTURING,
+                "clinic.consultation.structure-notes.v1",
+                Map.of(
+                        "consultationId", UUID.randomUUID().toString(),
+                        "patientId", UUID.randomUUID().toString(),
+                        "chiefComplaint", "Fever, cough, body ache and weakness",
+                        "clinicalContextSummary", "Patient snapshot",
+                        "clinicalContextJson", "{\"intakeSummary\":{\"latestVitals\":{\"bloodPressureSystolic\":138}}}"
+                ),
+                List.of(),
+                1024,
+                0.1d,
+                "trace-orch-1",
+                "consultation_structure_notes"
+        );
+        AiPromptTemplateDefinition template = new AiPromptTemplateDefinition(
+                "clinic.consultation.structure-notes.v1",
+                "v1",
+                AiProductCode.CLINIC,
+                AiTaskType.CONSULTATION_NOTE_STRUCTURING,
+                "system prompt",
+                "{\"subjective\":\"{{input.chiefComplaint}}\",\"objective\":\"Vitals\"}",
+                com.deepthoughtnet.clinic.platform.contracts.ai.AiPromptTemplateStatus.ACTIVE,
+                "fallback summary",
+                List.of("Review manually"),
+                List.of("Advisory only")
+        );
+        when(registry.resolve(request)).thenReturn(template);
+        when(router.resolveCandidates(AiTaskType.CONSULTATION_NOTE_STRUCTURING)).thenReturn(List.of(provider(
+                "GEMINI",
+                "{\"subjective\":\"Fever\",\"objective\":\"Temp 38.1 C\",\"assessment\":\"Viral syndrome\",\"plan\":\"Hydration\"}",
+                AiProviderStatus.AVAILABLE
+        )));
+
+        Logger logger = (Logger) LoggerFactory.getLogger(AiOrchestrationServiceImpl.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            AiOrchestrationResponse response = service.complete(request);
+
+            assertEquals("GEMINI", response.provider());
+            assertTrue(response.outputText().contains("Fever"));
+            String messages = appender.list.stream().map(ILoggingEvent::getFormattedMessage).reduce("", (left, right) -> left + "\n" + right);
+            assertTrue(messages.contains("SOAP-DRAFT-TRACE stage=PROMPT_RENDERED"));
+            assertTrue(messages.contains("SOAP-DRAFT-TRACE stage=PROVIDER_REQUEST"));
+            assertTrue(messages.contains("SOAP-DRAFT-TRACE stage=PROVIDER_RESPONSE"));
+            assertTrue(messages.contains("traceId=trace-orch-1"));
+            assertTrue(messages.contains("promptHash="));
+            assertTrue(messages.contains("renderedPromptChars="));
+            assertFalse(messages.contains("RAW_RESPONSE_DEBUG"));
+            assertFalse(messages.contains("Fever, cough, body ache and weakness"));
+            assertFalse(messages.contains("Authorization"));
+            assertFalse(messages.contains("api-key"));
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
+    @Test
+    void soapTraceRawResponseLoggingRequiresExplicitFlag() {
+        AiPromptTemplateRegistryService registry = mock(AiPromptTemplateRegistryService.class);
+        AiProviderRouter router = mock(AiProviderRouter.class);
+        AiRequestAuditService auditService = mock(AiRequestAuditService.class);
+        AiOrchestrationServiceImpl service = newService(registry, router, auditService);
+        service.setSoapTraceEnabled(true);
+        service.setSoapTraceRawResponseEnabled(true);
+
+        AiOrchestrationRequest request = new AiOrchestrationRequest(
+                AiProductCode.CLINIC,
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                AiTaskType.CONSULTATION_NOTE_STRUCTURING,
+                "clinic.consultation.structure-notes.v1",
+                Map.of("consultationId", UUID.randomUUID().toString(), "patientId", UUID.randomUUID().toString(), "chiefComplaint", "Fever"),
+                List.of(),
+                1024,
+                0.1d,
+                "trace-orch-2",
+                "consultation_structure_notes"
+        );
+        AiPromptTemplateDefinition template = new AiPromptTemplateDefinition(
+                "clinic.consultation.structure-notes.v1",
+                "v1",
+                AiProductCode.CLINIC,
+                AiTaskType.CONSULTATION_NOTE_STRUCTURING,
+                "system prompt",
+                "{\"subjective\":\"{{input.chiefComplaint}}\"}",
+                com.deepthoughtnet.clinic.platform.contracts.ai.AiPromptTemplateStatus.ACTIVE,
+                "fallback summary",
+                List.of("Review manually"),
+                List.of("Advisory only")
+        );
+        when(registry.resolve(request)).thenReturn(template);
+        when(router.resolveCandidates(AiTaskType.CONSULTATION_NOTE_STRUCTURING)).thenReturn(List.of(provider(
+                "GEMINI",
+                "{\"subjective\":\"Fever\",\"objective\":\"Temp 38.1 C\",\"assessment\":\"Viral syndrome\",\"plan\":\"Hydration\"}",
+                AiProviderStatus.AVAILABLE
+        )));
+
+        Logger logger = (Logger) LoggerFactory.getLogger(AiOrchestrationServiceImpl.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            service.complete(request);
+
+            String messages = appender.list.stream().map(ILoggingEvent::getFormattedMessage).reduce("", (left, right) -> left + "\n" + right);
+            assertTrue(messages.contains("SOAP-DRAFT-TRACE stage=RAW_RESPONSE_DEBUG"));
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
+    @Test
+    void soapTruncationRetriesOnceBeforeParsing() {
+        AiPromptTemplateRegistryService registry = mock(AiPromptTemplateRegistryService.class);
+        AiProviderRouter router = mock(AiProviderRouter.class);
+        AiRequestAuditService auditService = mock(AiRequestAuditService.class);
+        AiOrchestrationServiceImpl service = newService(registry, router, auditService);
+        service.setSoapTraceEnabled(true);
+
+        AiOrchestrationRequest request = new AiOrchestrationRequest(
+                AiProductCode.CLINIC,
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                AiTaskType.CONSULTATION_NOTE_STRUCTURING,
+                "clinic.consultation.structure-notes.v1",
+                Map.of(
+                        "consultationId", UUID.randomUUID().toString(),
+                        "patientId", UUID.randomUUID().toString(),
+                        "chiefComplaint", "Fever and cough",
+                        "soapClinicalContext", "Patient profile: 44y MALE\nCurrent visit: Fever, cough, body ache and weakness for 4 days\nLatest labs: HbA1c 8.4%"
+                ),
+                List.of(),
+                1024,
+                0.1d,
+                "trace-orch-trunc",
+                "consultation_structure_notes"
+        );
+        AiPromptTemplateDefinition template = new AiPromptTemplateDefinition(
+                "clinic.consultation.structure-notes.v1",
+                "v1",
+                AiProductCode.CLINIC,
+                AiTaskType.CONSULTATION_NOTE_STRUCTURING,
+                "system prompt",
+                """
+                        SOAP context:
+                        {{input.soapClinicalContext}}
+
+                        Return ONLY valid JSON with subjective, objective, assessment, plan.
+                        """,
+                com.deepthoughtnet.clinic.platform.contracts.ai.AiPromptTemplateStatus.ACTIVE,
+                "fallback summary",
+                List.of("Review manually"),
+                List.of("Advisory only")
+        );
+        when(registry.resolve(request)).thenReturn(template);
+
+        AtomicReference<Integer> callCount = new AtomicReference<>(0);
+        AtomicReference<Integer> firstAttemptMaxTokens = new AtomicReference<>();
+        AtomicReference<Integer> retryAttemptMaxTokens = new AtomicReference<>();
+        AtomicReference<Boolean> firstAttemptStrictJsonMode = new AtomicReference<>();
+        AtomicReference<Boolean> retryAttemptStrictJsonMode = new AtomicReference<>();
+        AiProvider provider = new AiProvider() {
+            @Override
+            public String providerName() {
+                return "GEMINI";
+            }
+
+            @Override
+            public boolean supports(AiTaskType taskType) {
+                return true;
+            }
+
+            @Override
+            public AiProviderResponse complete(AiProviderRequest providerRequest) {
+                int nextCount = callCount.updateAndGet(current -> current + 1);
+                Integer maxTokens = providerRequest.request() == null ? null : providerRequest.request().maxTokens();
+                boolean strictJsonMode = providerRequest.strictJsonMode();
+                if (nextCount == 1) {
+                    firstAttemptMaxTokens.set(maxTokens);
+                    firstAttemptStrictJsonMode.set(strictJsonMode);
+                    return new AiProviderResponse(
+                            "GEMINI",
+                            "model",
+                            "{\"subjective\":\"Fever\",\"objective\":\"Temp 38.1 C\"",
+                            null,
+                            BigDecimal.valueOf(0.91),
+                            new AiTokenUsage(25478L, 40L, 25518L, BigDecimal.valueOf(0.12)),
+                            "MAX_TOKENS",
+                            "TRUNCATED",
+                            48,
+                            "{\"subjective\":\"Fever\",\"objective\":\"Temp 38.1 C\"",
+                            "TRUNCATED"
+                    );
+                }
+                retryAttemptMaxTokens.set(maxTokens);
+                retryAttemptStrictJsonMode.set(strictJsonMode);
+                return new AiProviderResponse(
+                        "GEMINI",
+                        "model",
+                        "{\"subjective\":\"Fever for 4 days\",\"objective\":\"Temp 38.1 C\",\"assessment\":\"Viral syndrome\",\"plan\":\"Hydration and rest\"}",
+                        null,
+                        BigDecimal.valueOf(0.91),
+                        new AiTokenUsage(128L, 96L, 224L, BigDecimal.valueOf(0.12)),
+                        "STOP",
+                        "COMPLETE",
+                        124,
+                        "{\"subjective\":\"Fever for 4 days\",\"objective\":\"Temp 38.1 C\",\"assessment\":\"Viral syndrome\",\"plan\":\"Hydration and rest\"}",
+                        "VALID"
+                );
+            }
+
+            @Override
+            public AiProviderStatus status() {
+                return AiProviderStatus.AVAILABLE;
+            }
+        };
+        when(router.resolveCandidates(AiTaskType.CONSULTATION_NOTE_STRUCTURING)).thenReturn(List.of(provider));
+
+        Logger logger = (Logger) LoggerFactory.getLogger(AiOrchestrationServiceImpl.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            AiOrchestrationResponse response = service.complete(request);
+
+            assertEquals("GEMINI", response.provider());
+            assertTrue(response.outputText().contains("Fever for 4 days"));
+            assertEquals(2, callCount.get());
+            assertEquals(Integer.valueOf(1024), firstAttemptMaxTokens.get());
+            assertEquals(Integer.valueOf(2048), retryAttemptMaxTokens.get());
+            assertTrue(firstAttemptStrictJsonMode.get());
+            assertTrue(retryAttemptStrictJsonMode.get());
+            String messages = appender.list.stream().map(ILoggingEvent::getFormattedMessage).reduce("", (left, right) -> left + "\n" + right);
+            assertTrue(messages.contains("SOAP-DRAFT-TRACE stage=TRUNCATION"));
+            assertTrue(messages.contains("retryCount=1"));
+            assertTrue(messages.contains("finalCompletionStatus=COMPLETE"));
+            assertFalse(messages.contains("AI response was incomplete. Please retry."));
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
     @Test
     void successPathRoutesThroughProviderAndAuditsRequest() {
         AiPromptTemplateRegistryService registry = mock(AiPromptTemplateRegistryService.class);
@@ -89,7 +349,7 @@ class AiOrchestrationServiceImplTest {
         AiRequestAuditService auditService = mock(AiRequestAuditService.class);
         AiGuardrailService guardrailService = mock(AiGuardrailService.class);
         AiInvocationLogService invocationLogService = mock(AiInvocationLogService.class);
-        AiTaskGenerationConfigService taskGenerationConfigService = new AiTaskGenerationConfigService(null, "gemini-2.5-flash", 0, true, 2048);
+        AiTaskGenerationConfigService taskGenerationConfigService = new AiTaskGenerationConfigService(null, "gemini-2.5-flash", 0, true, 2048, 4096);
         AiOrchestrationServiceImpl service = new AiOrchestrationServiceImpl(
                 registry,
                 router,
@@ -874,7 +1134,7 @@ class AiOrchestrationServiceImplTest {
                 auditService,
                 guardrailService,
                 mock(AiInvocationLogService.class),
-                new AiTaskGenerationConfigService(null, "gemini-2.5-flash", 0, true, 2048),
+                new AiTaskGenerationConfigService(null, "gemini-2.5-flash", 0, true, 2048, 4096),
                 new ObjectMapper()
         );
     }
@@ -889,7 +1149,7 @@ class AiOrchestrationServiceImplTest {
                 auditService,
                 guardrailService,
                 mock(AiInvocationLogService.class),
-                new AiTaskGenerationConfigService(null, "gemini-2.5-flash", 0, true, 2048),
+                new AiTaskGenerationConfigService(null, "gemini-2.5-flash", 0, true, 2048, 4096),
                 new ObjectMapper()
         );
     }

@@ -61,7 +61,9 @@ test("consultation completion groups treat optional outputs as neutral and advis
 test("consultation completion CTA shows the exact blocker and the ready-to-complete message", () => {
   const source = readSource("pages/consultations/ConsultationWorkspacePage.tsx");
 
-  assert.ok(source.includes("Finalize the prescription before completing this consultation."));
+  assert.equal((source.match(/Finalize the prescription before completing this consultation\./g) || []).length, 1);
+  assert.ok(source.includes("Clinical Documentation Guide"));
+  assert.ok(source.includes("Guidance only. This does not change completion rules."));
   assert.ok(source.includes("Consultation is ready for completion."));
   assert.ok(source.includes("disabled={saving || !prescriptionReadyForCompletion}"));
   assert.ok(source.includes("prescriptionReadyForCompletion ? \"Ready\" : \"Not finalized\""));

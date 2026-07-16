@@ -19,6 +19,7 @@ export type ClinicalAiDraftCardProps = {
   status: ClinicalAiDraftStatus;
   generatedAt?: string | null;
   sourceSummary?: string | null;
+  sourceSummaryLabel?: string;
   draftText?: string | null;
   disclaimer?: string;
   error?: string | null;
@@ -56,6 +57,7 @@ export function ClinicalAiDraftCard({
   status,
   generatedAt,
   sourceSummary,
+  sourceSummaryLabel = "Context",
   draftText,
   disclaimer = "AI-generated draft. Doctor must verify before use.",
   error,
@@ -103,7 +105,7 @@ export function ClinicalAiDraftCard({
               </Stack>
               {sourceSummary ? (
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, whiteSpace: "pre-wrap" }}>
-                  Context: {sourceSummary}
+                  {sourceSummaryLabel}: {sourceSummary}
                 </Typography>
               ) : null}
             </Box>
