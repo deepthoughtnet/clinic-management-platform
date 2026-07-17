@@ -68,7 +68,10 @@ test("consultation medication safety finalized reviews render read-only persiste
 test("consultation medication safety run safety button is wired to the POST action", () => {
   const source = readSource("pages/consultations/ConsultationWorkspacePage.tsx");
   assert.ok(source.includes('onClick={() => void runMedicationSafety()}'));
-  assert.ok(source.includes("disabled={medicationSafetyCheckRunning || !consultation}"));
+  assert.ok(source.includes("disabled={medicationSafetyCheckRunning || !consultation || !prescription?.id}"));
+  assert.ok(source.includes("Medication Safety requires a saved prescription."));
+  assert.ok(source.includes("Save the prescription before running Medication Safety."));
+  assert.ok(source.includes("PRESCRIPTION_NOT_SAVED"));
   assert.ok(!source.includes('onClick={() => void refreshMedicationSafety()} disabled={medicationSafetyLoading || !consultation}'));
 });
 

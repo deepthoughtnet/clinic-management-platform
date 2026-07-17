@@ -12,12 +12,15 @@ test("consultation workspace lab workflow stays compact and review driven", () =
   const source = readSource("pages/consultations/ConsultationWorkspacePage.tsx");
 
   assert.ok(source.includes("documentBusinessStatusLabel"));
-  assert.ok(source.includes("Review History → Select Tests → Check Duplicates → Confirm Order → Track Report"));
+  assert.ok(source.includes("Review history → Select tests → Check duplicates → Confirm order → Track report"));
   assert.ok(source.includes("Create Order → Payment → Sample → Result → Publish"));
   assert.ok(source.includes("Recommended Tests"));
   assert.ok(source.includes("Review &amp; Create Lab Order"));
   assert.ok(source.includes("Duplicate / recent warnings"));
   assert.ok(source.includes("Report / Test History"));
+  assert.ok(source.includes('aria-label="Report and test history"'));
+  assert.ok(source.includes('overflowY: "auto"'));
+  assert.ok(source.includes('maxHeight: { xs: "60vh", sm: "52vh", md: "min(46vh, 480px)" }'));
   assert.ok(source.includes('label={isPublishedLabDocument(row) ? "Published" : row.visibility}'));
   assert.ok(source.includes('isPublishedLabDocument(row) ? null : <Chip size="small" variant="outlined" label={row.verificationStatus} />'));
   assert.ok(source.includes("AI-assisted trend summary"));

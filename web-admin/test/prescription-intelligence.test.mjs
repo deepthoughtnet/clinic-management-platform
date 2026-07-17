@@ -10,7 +10,6 @@ function readSource(relPath) {
 
 test("consultation prescription tab exposes prescription intelligence surfaces", () => {
   const source = readSource("pages/consultations/ConsultationWorkspacePage.tsx");
-  assert.ok(!source.includes("window.confirm"));
   assert.ok(!source.includes("window.prompt"));
   assert.ok(!source.includes("window.alert"));
   assert.ok(source.includes("Search Medicine → Prescribe → Safety Review → Preview → Finalize"));

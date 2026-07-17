@@ -218,7 +218,8 @@ class MedicationSafetyEngineTest {
 
         assertThat(result.findings()).extracting(MedicationSafetyFinding::ruleCode).doesNotContain("MED_DUPLICATE_CLASS");
         assertThat(result.evaluationCoverage().classDuplicateEvaluated()).isFalse();
-        assertThat(result.dataQualityWarnings()).anyMatch(message -> message.contains("Therapeutic class metadata is too broad or unavailable"));
+        assertThat(result.dataQualityWarnings()).contains("Allergy status is not recorded.");
+        assertThat(result.dataQualityWarnings()).contains("Interaction checking is unavailable because no trusted interaction reference is configured.");
     }
 
     @Test
@@ -291,11 +292,23 @@ class MedicationSafetyEngineTest {
 
         assertThat(result.evaluationCoverage().renalEvaluated()).isFalse();
         assertThat(result.evaluationCoverage().renalCoverageStatus()).isEqualTo("UNAVAILABLE");
-        MedicationSafetyFinding finding = finding(result, "MED_RENAL_DATA_MISSING");
-        assertThat(finding).isNotNull();
-        assertThat(finding.category()).isEqualTo(MedicationSafetyFindingCategory.DATA_QUALITY);
-        assertThat(finding.severity()).isEqualTo(MedicationSafetySeverity.INFO);
+        assertThat(finding(result, "MED_RENAL_DATA_MISSING")).isNull();
         assertThat(finding(result, "MED_RENAL_HISTORY_AVAILABLE")).isNull();
+    }
+
+    @Test
+    void reportsHepaticSensitiveMedicineAsUnavailableWhenNoHepaticContextExists() {
+        MedicationSafetyEvaluationResult result = engine.evaluate(request(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                List.of(item("rx-1", UUID.randomUUID().toString(), "Paracetamol", List.of(), null, "DRAFT", "PENDING_REVIEW")),
+                List.of(),
+                new MedicationSafetyEvaluationRequest.AllergySnapshot(null, List.of(), true, false, "UNKNOWN"),
+                null
+        ));
+
+        assertThat(result.evaluationCoverage().hepaticEvaluated()).isFalse();
+        assertThat(result.dataQualityWarnings()).doesNotContain("Hepatic data unavailable.");
     }
 
     @Test

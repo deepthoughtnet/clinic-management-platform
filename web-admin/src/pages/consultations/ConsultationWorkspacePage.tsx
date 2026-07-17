@@ -431,6 +431,7 @@ const AIVA_DISABLED_NOTE = "Ask the clinic administrator to enable AI features f
 
 const FREQUENCIES = ["1-0-0", "0-1-0", "0-0-1", "1-0-1", "1-1-1"];
 const DURATIONS = ["3 days", "5 days", "7 days", "10 days", "15 days"];
+const PRESCRIPTION_FOLLOWUP_SHORTCUTS = ["3 days", "5 days", "7 days", "14 days"];
 const TIMINGS: { label: string; value: Timing }[] = [
   { label: "Before food", value: "BEFORE_FOOD" },
   { label: "After food", value: "AFTER_FOOD" },
@@ -1696,6 +1697,104 @@ function prescriptionVersionTitle(row: Prescription) {
   return parts.filter(Boolean).join(" • ");
 }
 
+const HISTORY_VIEW_KEYS = ["timeline", "consultations", "prescriptions", "documents", "trends"] as const;
+type HistoryViewKey = typeof HISTORY_VIEW_KEYS[number];
+const HISTORY_TIMELINE_FILTER_KEYS = ["ALL", "CONSULTATIONS", "PRESCRIPTIONS", "REPORTS", "SOAP", "LAB_ORDERS"] as const;
+type HistoryTimelineFilterKey = typeof HISTORY_TIMELINE_FILTER_KEYS[number];
+
+function normalizeHistoryViewKey(value: string | null | undefined): HistoryViewKey {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "consultation") return "consultations";
+  if (normalized === "report") return "documents";
+  if (normalized === "reports") return "documents";
+  if (normalized === "document") return "documents";
+  if (normalized === "documents") return "documents";
+  if (normalized === "trend") return "trends";
+  if (HISTORY_VIEW_KEYS.includes(normalized as HistoryViewKey)) return normalized as HistoryViewKey;
+  return "timeline";
+}
+
+function documentReviewStatusKey(document: ClinicalDocument): "PENDING_REVIEW" | "VERIFIED" | "NEEDS_ATTENTION" | null {
+  const aiStatus = String(document.aiExtractionStatus || "").trim().toUpperCase();
+  const verificationStatus = String(document.verificationStatus || "").trim().toUpperCase();
+  const ocrStatus = String(document.ocrStatus || "").trim().toUpperCase();
+  if (aiStatus === "FAILED" || ocrStatus === "FAILED") return "NEEDS_ATTENTION";
+  if (verificationStatus === "VERIFIED" || aiStatus === "APPROVED" || aiStatus === "AI_COMPLETED") return "VERIFIED";
+  if (!aiStatus || aiStatus === "PENDING" || aiStatus === "QUEUED" || aiStatus === "PROCESSING" || aiStatus === "REVIEW_REQUIRED" || verificationStatus === "UNVERIFIED") {
+    return "PENDING_REVIEW";
+  }
+  return null;
+}
+
+function documentReviewStatusLabel(value: "PENDING_REVIEW" | "VERIFIED" | "NEEDS_ATTENTION") {
+  switch (value) {
+    case "PENDING_REVIEW":
+      return "Pending Review";
+    case "VERIFIED":
+      return "Verified";
+    case "NEEDS_ATTENTION":
+      return "Needs Attention";
+    default:
+      return value;
+  }
+}
+
+function documentReviewStatusColor(value: "PENDING_REVIEW" | "VERIFIED" | "NEEDS_ATTENTION"): "warning" | "success" | "error" {
+  switch (value) {
+    case "VERIFIED":
+      return "success";
+    case "NEEDS_ATTENTION":
+      return "error";
+    default:
+      return "warning";
+  }
+}
+
+function collectDocumentHighlights(document: ClinicalDocument): string[] {
+  const candidates = [
+    document.aiExtractionSummary,
+    document.aiExtractionReviewNotes,
+    document.description,
+  ]
+    .flatMap((value) => splitCompactList(value))
+    .map((value) => compactText(value, 120))
+    .filter((value) => value && !["-", "--", "N/A", "NA", "UNKNOWN", "NOT AVAILABLE"].includes(value.toUpperCase()));
+  return Array.from(new Set(candidates)).slice(0, 4);
+}
+
+function buildPrescriptionGroupKey(row: Prescription) {
+  return row.consultationId || row.parentPrescriptionId || row.id;
+}
+
+function timelineFilterKey(item: PatientTimelineItem): HistoryTimelineFilterKey {
+  const itemType = String(item.itemType || "").trim().toUpperCase();
+  const title = String(item.title || "").trim().toUpperCase();
+  const subtitle = String(item.subtitle || "").trim().toUpperCase();
+  if (itemType === "CONSULTATION") return "CONSULTATIONS";
+  if (itemType === "PRESCRIPTION") return "PRESCRIPTIONS";
+  if (itemType === "SOAP" || title.includes("SOAP") || subtitle.includes("SOAP")) return "SOAP";
+  if (itemType === "LAB_ORDER" || title.includes("LAB ORDER") || subtitle.includes("LAB ORDER")) return "LAB_ORDERS";
+  if (itemType === "DOCUMENT" || title.includes("REPORT") || subtitle.includes("REPORT") || title.includes("DOCUMENT") || subtitle.includes("DOCUMENT")) return "REPORTS";
+  return "ALL";
+}
+
+function timelineFilterLabel(value: HistoryTimelineFilterKey) {
+  switch (value) {
+    case "CONSULTATIONS":
+      return "Consultations";
+    case "PRESCRIPTIONS":
+      return "Prescriptions";
+    case "REPORTS":
+      return "Reports";
+    case "SOAP":
+      return "SOAP";
+    case "LAB_ORDERS":
+      return "Lab Orders";
+    default:
+      return "All";
+  }
+}
+
 function compactText(value: string | null | undefined, max = 120) {
   const normalized = (value || "").trim();
   if (!normalized) return "";
@@ -2240,15 +2339,15 @@ function PrescriptionSuggestionDraftCard({
       }}
       onCopy={() => void navigator.clipboard.writeText(viewText)}
     >
-      <Stack spacing={0.45}>
+      <Stack spacing={0.35}>
         <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
           {item.dose ? <Chip size="small" variant="outlined" label={`Dose ${item.dose}`} /> : null}
           {item.frequency ? <Chip size="small" variant="outlined" label={item.frequency} /> : null}
           {item.duration ? <Chip size="small" variant="outlined" label={item.duration} /> : null}
           {item.safetyNote ? <Chip size="small" color="warning" variant="outlined" label="Safety note" /> : null}
         </Stack>
-        {item.reason ? <Typography variant="caption" color="text.secondary">Reason: {item.reason}</Typography> : null}
-        {item.safetyNote ? <Typography variant="caption" color="warning.main">Safety: {item.safetyNote}</Typography> : null}
+        {item.reason ? <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.25 }}>Reason: {item.reason}</Typography> : null}
+        {item.safetyNote ? <Typography variant="caption" color="warning.main" sx={{ lineHeight: 1.25 }}>Safety: {item.safetyNote}</Typography> : null}
       </Stack>
     </ClinicalAiDraftCard>
   );
@@ -2262,6 +2361,25 @@ const AIVA_QUICK_PROMPTS = [
   "Suggest tests",
   "Draft referral",
   "Drug safety",
+];
+
+const AI_ASSIST_PROMPT_GROUPS: Array<{ label: string; prompts: string[] }> = [
+  {
+    label: "Clinical reasoning",
+    prompts: ["What else should I ask?", "Explain diagnosis"],
+  },
+  {
+    label: "Investigations",
+    prompts: ["Suggest tests"],
+  },
+  {
+    label: "Prescription and safety",
+    prompts: ["Drug safety"],
+  },
+  {
+    label: "Patient communication",
+    prompts: ["Simplify for patient", "Draft referral"],
+  },
 ];
 
 // Final UX polish for R2 Consultation Workspace. Keep layout stable unless a functional defect requires change.
@@ -2292,6 +2410,7 @@ export default function ConsultationWorkspacePage() {
   const [previousPrescriptions, setPreviousPrescriptions] = React.useState<Prescription[]>([]);
   const [clinicalDocuments, setClinicalDocuments] = React.useState<ClinicalDocument[]>([]);
   const [documentFilter, setDocumentFilter] = React.useState<"ALL" | "LAB" | "RADIOLOGY" | "REFERRAL" | "PRESCRIPTION" | "DISCHARGE" | "OTHER">("ALL");
+  const [documentReviewFilter, setDocumentReviewFilter] = React.useState<"ALL" | "PENDING_REVIEW" | "VERIFIED" | "NEEDS_ATTENTION">("ALL");
   const [uploadDialogOpen, setUploadDialogOpen] = React.useState(false);
   const [clinicalContext, setClinicalContext] = React.useState<ClinicalContextResponse | null>(null);
   const [clinicalContextLoading, setClinicalContextLoading] = React.useState(false);
@@ -2325,6 +2444,8 @@ export default function ConsultationWorkspacePage() {
   const [medicineSearch, setMedicineSearch] = React.useState("");
   const [correctionReason, setCorrectionReason] = React.useState("Same-day correction");
   const [activeTab, setActiveTab] = React.useState(() => consultationTabKeyToIndex(searchParams.get("tab")));
+  const historyView = normalizeHistoryViewKey(searchParams.get("historyView"));
+  const [historyTimelineFilter, setHistoryTimelineFilter] = React.useState<HistoryTimelineFilterKey>("ALL");
   const [expanded, setExpanded] = React.useState<Record<string, boolean>>({
     complaint: true,
     symptoms: true,
@@ -2335,6 +2456,10 @@ export default function ConsultationWorkspacePage() {
     history: false,
     "patient-history-summary": false,
   });
+  const [historyTimelineLimit, setHistoryTimelineLimit] = React.useState(6);
+  const [historyConsultationLimit, setHistoryConsultationLimit] = React.useState(3);
+  const [historyPrescriptionLimit, setHistoryPrescriptionLimit] = React.useState(3);
+  const [historyDocumentLimit, setHistoryDocumentLimit] = React.useState(6);
 
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
@@ -2346,6 +2471,10 @@ export default function ConsultationWorkspacePage() {
   const selectedDiagnosisEntries = React.useMemo(
     () => splitClinicalTokenEntries(consultationForm.diagnosis),
     [consultationForm.diagnosis]
+  );
+  const prescriptionDiagnosisSnapshotEntries = React.useMemo(
+    () => splitClinicalTokenEntries(prescriptionForm.diagnosisSnapshot),
+    [prescriptionForm.diagnosisSnapshot]
   );
   const handleRemoveDiagnosisEntry = React.useCallback((diagnosisEntry: string) => {
     setConsultationForm((current) => ({
@@ -2375,12 +2504,12 @@ export default function ConsultationWorkspacePage() {
   const [alternativeMedicineRowId, setAlternativeMedicineRowId] = React.useState<string | null>(null);
   const [clinicalAiDrafts, setClinicalAiDrafts] = React.useState<Record<ClinicalAiDraftKind, ClinicalAiDraftState>>(() => createEmptyClinicalAiDrafts());
   const [clinicalDraftGenerationSteps, setClinicalDraftGenerationSteps] = React.useState<Record<ClinicalDraftGenerationStep, ClinicalDraftGenerationStepState>>(() => createEmptyClinicalDraftGenerationSteps());
-  const [aivaDraftsExpanded, setAivaDraftsExpanded] = React.useState(true);
   const [savedAiSummary, setSavedAiSummary] = React.useState<ConsultationAiSummary | null>(null);
   const [aivaClinicalQuestion, setAivaClinicalQuestion] = React.useState("");
   const [aivaChatMessages, setAivaChatMessages] = React.useState<AivaChatMessage[]>([]);
   const [aivaQuestionSubmitting, setAivaQuestionSubmitting] = React.useState(false);
   const [aivaChatDetailsOpen, setAivaChatDetailsOpen] = React.useState(false);
+  const [aiClinicalSummaryExpanded, setAiClinicalSummaryExpanded] = React.useState(true);
   const [medicineCatalogWarning, setMedicineCatalogWarning] = React.useState<string | null>(null);
   const [viewerDocument, setViewerDocument] = React.useState<ClinicalDocument | null>(null);
   const [viewerUrl, setViewerUrl] = React.useState<string | null>(null);
@@ -2458,6 +2587,7 @@ export default function ConsultationWorkspacePage() {
   const adviceSectionRef = React.useRef<HTMLDivElement | null>(null);
   const adviceInputRef = React.useRef<HTMLTextAreaElement | HTMLInputElement | null>(null);
   const soapSubjectiveInputRef = React.useRef<HTMLTextAreaElement | HTMLInputElement | null>(null);
+  const prescriptionFollowUpInputRef = React.useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
   const clinicalReasoningSectionRefs = React.useRef<Record<Exclude<ClinicalReasoningSectionKey, "debug">, HTMLDivElement | null>>({
     longitudinalContext: null,
     primaryDiagnosis: null,
@@ -2629,18 +2759,29 @@ export default function ConsultationWorkspacePage() {
     if (!auth.accessToken || !auth.tenantId || !consultation?.id || medicationSafetyCheckRunning) {
       return;
     }
+    if (!prescription?.id) {
+      setMedicationSafetyError("Save the prescription before running Medication Safety.");
+      setPrescriptionSafetyDetailsOpen(true);
+      return;
+    }
     setMedicationSafetyCheckRunning(true);
     setInfo(null);
+    setMedicationSafetyError(null);
     try {
       await runMedicationSafetyCheck(auth.accessToken, auth.tenantId, consultation.id);
       await refreshMedicationSafety();
       setInfo("Medication safety check completed");
     } catch (err) {
-      setMedicationSafetyError(err instanceof Error ? err.message : "Medication safety check could not be run");
+      if (err instanceof ApiClientError && err.code === "PRESCRIPTION_NOT_SAVED") {
+        setMedicationSafetyError("Please save the prescription before running Medication Safety.");
+        setPrescriptionSafetyDetailsOpen(true);
+      } else {
+        setMedicationSafetyError(err instanceof Error ? err.message : "Medication safety check could not be run");
+      }
     } finally {
       setMedicationSafetyCheckRunning(false);
     }
-  }, [auth.accessToken, auth.tenantId, consultation?.id, medicationSafetyCheckRunning, refreshMedicationSafety]);
+  }, [auth.accessToken, auth.tenantId, consultation?.id, medicationSafetyCheckRunning, prescription?.id, refreshMedicationSafety]);
 
   const refreshClinicalArtifacts = React.useCallback(async (
     patientId: string,
@@ -2849,6 +2990,16 @@ export default function ConsultationWorkspacePage() {
   }, [searchParams]);
 
   React.useEffect(() => {
+    setHistoryTimelineFilter("ALL");
+    setHistoryTimelineLimit(6);
+    setHistoryConsultationLimit(3);
+    setHistoryPrescriptionLimit(3);
+    setHistoryDocumentLimit(6);
+    setDocumentFilter("ALL");
+    setDocumentReviewFilter("ALL");
+  }, [consultationId]);
+
+  React.useEffect(() => {
     if (activeTab === 0) {
       setExpanded((current) => ({
         ...current,
@@ -3025,7 +3176,7 @@ export default function ConsultationWorkspacePage() {
       setAlternativeMedicineRowId(null);
       setClinicalAiDrafts(createEmptyClinicalAiDrafts());
       setClinicalDraftGenerationSteps(createEmptyClinicalDraftGenerationSteps());
-      setAivaDraftsExpanded(true);
+      setAiClinicalSummaryExpanded(true);
       setClinicalAiActiveDraft(null);
       setSavedAiSummary(null);
       setAivaChatMessages([]);
@@ -3352,16 +3503,6 @@ export default function ConsultationWorkspacePage() {
     () => (Object.values(clinicalAiDrafts) as ClinicalAiDraftState[]).filter((draft) => draft.generatedAt || draft.error || draft.status !== "DRAFTED" || draft.draftText.trim()),
     [clinicalAiDrafts],
   );
-  const clinicalDraftStats = React.useMemo(() => {
-    const values = Object.values(clinicalAiDrafts);
-    return {
-      total: values.filter((draft) => draft.generatedAt || draft.error || draft.status !== "DRAFTED" || draft.draftText.trim()).length,
-      pending: values.filter((draft) => draft.status === "DRAFTED" || draft.status === "EDITED").length,
-      accepted: values.filter((draft) => draft.status === "ACCEPTED").length,
-      rejected: values.filter((draft) => draft.status === "REJECTED").length,
-    };
-  }, [clinicalAiDrafts]);
-  const pendingAiDraftCount = clinicalDraftStats.pending;
   const latestClinicalReasoningEntry = React.useMemo(
     () => {
       const reversed = [...aiAssistEntries].reverse();
@@ -4160,6 +4301,120 @@ export default function ConsultationWorkspacePage() {
   const latestPreviousMedicineNames = latestPreviousMedicineRows.map((row) => row.medicineName).filter(Boolean);
   const activeTimeline = patientTimeline.length ? patientTimeline : [];
   const visiblePrescriptionHistory = prescriptionHistory.filter((row) => row.status !== "CANCELLED");
+  const historyConsultationEntries = React.useMemo(() => {
+    const consultations = (patient?.previousConsultations || [])
+      .filter((row) => row.id && row.id !== consultation?.id)
+      .slice()
+      .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+    return consultations;
+  }, [consultation?.id, patient?.previousConsultations]);
+  const historyOverviewConsultations = React.useMemo(() => {
+    const consultations = historyConsultationEntries;
+    return consultations.slice(0, 3);
+  }, [historyConsultationEntries]);
+  const historyOverviewPrescriptionGroups = React.useMemo(() => {
+    const groups = new Map<string, Prescription[]>();
+    visiblePrescriptionHistory
+      .slice()
+      .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime() || (right.versionNumber || 0) - (left.versionNumber || 0))
+      .forEach((row) => {
+        const key = buildPrescriptionGroupKey(row);
+        const bucket = groups.get(key);
+        if (bucket) {
+          bucket.push(row);
+        } else {
+          groups.set(key, [row]);
+        }
+      });
+    return Array.from(groups.entries())
+      .map(([key, rows]) => {
+        const versions = rows
+          .slice()
+          .sort((left, right) => (right.versionNumber || 0) - (left.versionNumber || 0) || new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+        const current = versions[0] || rows[0];
+        return {
+          key,
+          current,
+          versions,
+          versionCount: versions.length,
+        };
+      })
+      .slice(0, 3);
+  }, [visiblePrescriptionHistory]);
+  const historyPrescriptionGroups = React.useMemo(() => {
+    const groups = new Map<string, Prescription[]>();
+    visiblePrescriptionHistory
+      .slice()
+      .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime() || (right.versionNumber || 0) - (left.versionNumber || 0))
+      .forEach((row) => {
+        const key = buildPrescriptionGroupKey(row);
+        const bucket = groups.get(key);
+        if (bucket) {
+          bucket.push(row);
+        } else {
+          groups.set(key, [row]);
+        }
+      });
+    return Array.from(groups.entries()).map(([key, rows]) => {
+      const versions = rows
+        .slice()
+        .sort((left, right) => (right.versionNumber || 0) - (left.versionNumber || 0) || new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+      const current = versions[0] || rows[0];
+      return {
+        key,
+        current,
+        versions,
+        versionCount: versions.length,
+      };
+    });
+  }, [visiblePrescriptionHistory]);
+  const historyTimelineEntries = React.useMemo(() => {
+    const filtered = activeTimeline.filter((item) => historyTimelineFilter === "ALL" || timelineFilterKey(item) === historyTimelineFilter);
+    return filtered.slice().sort((left, right) => new Date(right.occurredAt).getTime() - new Date(left.occurredAt).getTime());
+  }, [activeTimeline, historyTimelineFilter]);
+  const historyTimelineGroups = React.useMemo(() => {
+    const groups = new Map<string, PatientTimelineItem[]>();
+    historyTimelineEntries.forEach((item) => {
+      const key = compactDate(item.occurredAt);
+      const bucket = groups.get(key);
+      if (bucket) {
+        bucket.push(item);
+      } else {
+        groups.set(key, [item]);
+      }
+    });
+    return Array.from(groups.entries()).map(([dateLabel, items]) => ({
+      dateLabel,
+      items: items.slice().sort((left, right) => new Date(right.occurredAt).getTime() - new Date(left.occurredAt).getTime()),
+    }));
+  }, [historyTimelineEntries]);
+  const historyDocumentEntries = React.useMemo(() => {
+    const filtered = clinicalDocuments.filter((row) => {
+      if (documentFilter !== "ALL" && documentFilterKey(row.documentType) !== documentFilter) {
+        return false;
+      }
+      const reviewStatus = documentReviewStatusKey(row);
+      if (documentReviewFilter !== "ALL" && reviewStatus !== documentReviewFilter) {
+        return false;
+      }
+      return true;
+    });
+    return filtered.slice().sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+  }, [clinicalDocuments, documentFilter, documentReviewFilter]);
+  const availableDocumentReviewFilters = React.useMemo(() => {
+    const statuses = new Set<"PENDING_REVIEW" | "VERIFIED" | "NEEDS_ATTENTION">();
+    clinicalDocuments.forEach((row) => {
+      const status = documentReviewStatusKey(row);
+      if (status) statuses.add(status);
+    });
+    return Array.from(statuses);
+  }, [clinicalDocuments]);
+  const historyDocumentGroups = React.useMemo(() => historyDocumentEntries.slice(0, historyDocumentLimit), [historyDocumentEntries, historyDocumentLimit]);
+  const historyConsultationRows = React.useMemo(() => historyConsultationEntries.slice(0, historyConsultationLimit), [historyConsultationEntries, historyConsultationLimit]);
+  const historyPrescriptionOverviewRows = React.useMemo(() => historyOverviewPrescriptionGroups.slice(0, historyPrescriptionLimit), [historyOverviewPrescriptionGroups, historyPrescriptionLimit]);
+  const historyTimelineVisibleGroups = React.useMemo(() => historyTimelineGroups.slice(0, historyTimelineLimit), [historyTimelineGroups, historyTimelineLimit]);
+  const historyTrendEntries = React.useMemo(() => (clinicalContext?.longitudinalClinicalContext?.labTrends || []).slice(0, 3), [clinicalContext?.longitudinalClinicalContext?.labTrends]);
+  const historySnapshotVitals = formatSoapVitalsSummary(latestVitals);
   const latestPrescriptionVersion = visiblePrescriptionHistory[visiblePrescriptionHistory.length - 1] || null;
   const selectedPrescriptionVersion = prescriptionHistory.find((row) => row.id === selectedPrescriptionVersionId) || latestPrescriptionVersion || null;
   const currentPrescriptionIsEditableDraft = Boolean(prescription && isEditablePrescriptionStatus(prescription.status));
@@ -4429,8 +4684,17 @@ export default function ConsultationWorkspacePage() {
     setActiveTab(2);
     const nextParams = new URLSearchParams(searchParams);
     nextParams.set("tab", consultationTabIndexToKey(2));
+    nextParams.set("historyView", "timeline");
     setSearchParams(nextParams, { replace: true });
   };
+
+  const setHistoryView = React.useCallback((nextView: HistoryViewKey) => {
+    setActiveTab(2);
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set("tab", consultationTabIndexToKey(2));
+    nextParams.set("historyView", nextView);
+    setSearchParams(nextParams, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   const toggleSection = (id: string) => setExpanded((current) => ({ ...current, [id]: !current[id] }));
 
@@ -4526,6 +4790,19 @@ export default function ConsultationWorkspacePage() {
     setConsultationForm((current) => ({ ...current, followUpDate: date }));
     setPrescriptionForm((current) => ({ ...current, followUpDate: date }));
   };
+  const applyPrescriptionFollowUpShortcut = React.useCallback((chip: string) => {
+    setPrescriptionForm((current) => ({ ...current, followUpDate: followUpChipToDate(chip) }));
+  }, []);
+  const focusPrescriptionFollowUpInput = React.useCallback(() => {
+    const input = prescriptionFollowUpInputRef.current;
+    if (!input) return;
+    const maybeInput = input as HTMLInputElement & { showPicker?: () => void };
+    if (typeof maybeInput.showPicker === "function") {
+      maybeInput.showPicker();
+      return;
+    }
+    input.focus();
+  }, []);
 
   const getAlternativeMedicineSuggestions = React.useCallback((row: MedicineRow) => {
     const normalizedCurrent = normalizeMedicationKey(row.medicineName);
@@ -4596,6 +4873,30 @@ export default function ConsultationWorkspacePage() {
   const aiSummaryGeneratedAtLabel = clinicalSummary
     ? (savedAiSummary?.generatedAt || new Date().toISOString())
     : (savedAiSummary?.generatedAt || null);
+  const lastAiActivityLabel = React.useMemo(() => {
+    const timestamps = [
+      aivaChatMessages[aivaChatMessages.length - 1]?.createdAt || null,
+      clinicalSummary ? (savedAiSummary?.createdAt || savedAiSummary?.updatedAt || savedAiSummary?.generatedAt || null) : null,
+      savedAiSummary?.generatedAt || savedAiSummary?.createdAt || savedAiSummary?.updatedAt || null,
+      clinicalReasoningResult?.generatedAt || null,
+      consultationSoap?.generatedAt || null,
+      prescriptionSuggestionGeneratedAt || null,
+      prescriptionInstructionsGeneratedAt || null,
+      labOrderAiPreparation?.generatedAt || null,
+    ].filter((value): value is string => Boolean(value));
+    return timestamps.reduce<string | null>((latest, current) => (!latest || current > latest ? current : latest), null);
+  }, [
+    aivaChatMessages,
+    clinicalReasoningResult?.generatedAt,
+    clinicalSummary,
+    consultationSoap?.generatedAt,
+    labOrderAiPreparation?.generatedAt,
+    prescriptionInstructionsGeneratedAt,
+    prescriptionSuggestionGeneratedAt,
+    savedAiSummary?.createdAt,
+    savedAiSummary?.generatedAt,
+    savedAiSummary?.updatedAt,
+  ]);
 
   const consultationDocumentationGuide = React.useMemo(() => {
     const hasChiefComplaint = Boolean(consultationForm.chiefComplaints.trim());
@@ -7022,7 +7323,6 @@ export default function ConsultationWorkspacePage() {
       const ok = await generateClinicalDraftStep(step, forceAll);
       if (ok) successCount += 1;
     }
-    setAivaDraftsExpanded(true);
     if (successCount > 0) {
       setInfo(`AIVA generated ${successCount} draft suggestions. Doctor must verify before use.`);
     }
@@ -7053,44 +7353,6 @@ export default function ConsultationWorkspacePage() {
     if (kind === "advice") return !consultationFormRef.current.advice.trim();
     if (kind === "followUp") return !consultationFormRef.current.followUpDate.trim();
     return false;
-  }, []);
-
-  const acceptAllPendingClinicalDrafts = React.useCallback(() => {
-    const pendingKinds = (Object.entries(clinicalAiDraftsRef.current) as Array<[ClinicalAiDraftKind, ClinicalAiDraftState]>)
-      .filter(([, draft]) => draft.status === "DRAFTED" || draft.status === "EDITED")
-      .map(([kind]) => kind);
-    pendingKinds.forEach((kind) => {
-      if (canAutoAcceptClinicalDraft(kind)) {
-        acceptClinicalDraft(kind);
-      }
-    });
-  }, [acceptClinicalDraft, canAutoAcceptClinicalDraft]);
-
-  const rejectAllPendingClinicalDrafts = React.useCallback(() => {
-    setClinicalAiDrafts((current) => {
-      const next = { ...current };
-      (Object.keys(next) as ClinicalAiDraftKind[]).forEach((kind) => {
-        if (next[kind].status === "DRAFTED" || next[kind].status === "EDITED") {
-          next[kind] = {
-            ...next[kind],
-            status: "REJECTED",
-          };
-        }
-      });
-      return next;
-    });
-  }, []);
-
-  const clearRejectedClinicalDrafts = React.useCallback(() => {
-    setClinicalAiDrafts((current) => {
-      const next = { ...current };
-      (Object.keys(next) as ClinicalAiDraftKind[]).forEach((kind) => {
-        if (next[kind].status === "REJECTED") {
-          next[kind] = createClinicalAiDraftState(kind, next[kind].title);
-        }
-      });
-      return next;
-    });
   }, []);
 
   const renderClinicalAiDraftCard = React.useCallback((kind: ClinicalAiDraftKind) => {
@@ -8348,6 +8610,11 @@ export default function ConsultationWorkspacePage() {
               setActiveTab(value);
               const nextParams = new URLSearchParams(searchParams);
               nextParams.set("tab", consultationTabIndexToKey(value));
+              if (value === 2) {
+                nextParams.set("historyView", "timeline");
+              } else {
+                nextParams.delete("historyView");
+              }
               setSearchParams(nextParams, { replace: true });
             }}
             variant="scrollable"
@@ -10363,13 +10630,22 @@ export default function ConsultationWorkspacePage() {
                             <Chip size="small" variant="outlined" color={prescriptionQualityChecklist.some((item) => item.state === "needs_review") ? "warning" : "success"} label={`${prescriptionQualityChecklist.filter((item) => item.state === "complete").length}/${prescriptionQualityChecklist.length} complete`} />
                           </Stack>
                           <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" alignItems="center">
-                            {prescriptionQualityChecklist.slice(0, 4).map((item) => (
+                            {prescriptionQualityChecklist.filter((item) => item.state === "complete").slice(0, 4).map((item) => (
                               <Chip
                                 key={item.label}
                                 size="small"
                                 variant="outlined"
-                                color={item.state === "complete" ? "success" : item.state === "needs_review" ? "warning" : "default"}
-                                label={`${item.label}: ${item.state === "complete" ? "Complete" : item.state === "needs_review" ? "Needs review" : "Missing"}`}
+                                color="success"
+                                label={`${item.label}: Complete`}
+                              />
+                            ))}
+                            {prescriptionQualityChecklist.filter((item) => item.state !== "complete").slice(0, 4).map((item) => (
+                              <Chip
+                                key={item.label}
+                                size="small"
+                                variant="outlined"
+                                color={item.state === "needs_review" ? "warning" : "default"}
+                                label={`${item.label}: ${item.state === "needs_review" ? "Needs review" : "Missing"}`}
                               />
                             ))}
                             {prescriptionQualityChecklist.length > 4 ? (
@@ -10383,9 +10659,80 @@ export default function ConsultationWorkspacePage() {
                     </Card>
 
                     <Grid container spacing={1}>
-                      <Grid size={{ xs: 12, md: 4 }}><TextField size="small" fullWidth label="Diagnosis snapshot" value={prescriptionForm.diagnosisSnapshot} disabled={prescriptionReadOnly} onChange={(e) => setPrescriptionForm((c) => ({ ...c, diagnosisSnapshot: e.target.value }))} /></Grid>
-                      <Grid size={{ xs: 12, md: 5 }}><TextField size="small" fullWidth label="Advice" value={prescriptionForm.advice} disabled={prescriptionReadOnly} onChange={(e) => setPrescriptionForm((c) => ({ ...c, advice: e.target.value }))} /></Grid>
-                      <Grid size={{ xs: 12, md: 3 }}><TextField size="small" fullWidth label="Follow-up" type="date" value={prescriptionForm.followUpDate} disabled={prescriptionReadOnly} onChange={(e) => setPrescriptionForm((c) => ({ ...c, followUpDate: e.target.value }))} InputLabelProps={{ shrink: true }} /></Grid>
+                      <Grid size={{ xs: 12, md: 4 }}>
+                        <Stack spacing={0.5}>
+                          <TextField size="small" fullWidth label="Diagnosis snapshot" value={prescriptionForm.diagnosisSnapshot} disabled={prescriptionReadOnly} onChange={(e) => setPrescriptionForm((c) => ({ ...c, diagnosisSnapshot: e.target.value }))} />
+                          <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" aria-label="Diagnosis snapshot chips">
+                            {prescriptionDiagnosisSnapshotEntries.length ? (
+                              prescriptionDiagnosisSnapshotEntries.map((diagnosis) => (
+                                <Chip key={diagnosis} size="small" variant="outlined" label={diagnosis} />
+                              ))
+                            ) : (
+                              <Typography variant="caption" color="text.secondary">
+                                No diagnosis recorded.
+                              </Typography>
+                            )}
+                          </Stack>
+                        </Stack>
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 5 }}>
+                        <TextField
+                          size="small"
+                          fullWidth
+                          label="Advice"
+                          value={prescriptionForm.advice}
+                          disabled={prescriptionReadOnly}
+                          onChange={(e) => setPrescriptionForm((c) => ({ ...c, advice: e.target.value }))}
+                          multiline
+                          minRows={3}
+                          helperText="Clinical advice carried from consultation. Edit before finalizing if needed."
+                          sx={{
+                            "& .MuiInputBase-root": {
+                              alignItems: "flex-start",
+                            },
+                            "& .MuiInputBase-inputMultiline": {
+                              lineHeight: 1.45,
+                            },
+                          }}
+                        />
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 3 }}>
+                        <Stack spacing={0.5}>
+                          <TextField
+                            size="small"
+                            fullWidth
+                            label="Follow-up"
+                            type="date"
+                            value={prescriptionForm.followUpDate}
+                            disabled={prescriptionReadOnly}
+                            onChange={(e) => setPrescriptionForm((c) => ({ ...c, followUpDate: e.target.value }))}
+                            InputLabelProps={{ shrink: true }}
+                            inputRef={prescriptionFollowUpInputRef}
+                          />
+                          <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" aria-label="Follow-up shortcuts">
+                            {PRESCRIPTION_FOLLOWUP_SHORTCUTS.map((chip) => (
+                              <Chip
+                                key={chip}
+                                size="small"
+                                clickable={!prescriptionReadOnly}
+                                disabled={prescriptionReadOnly}
+                                variant="outlined"
+                                color="secondary"
+                                label={chip}
+                                onClick={() => applyPrescriptionFollowUpShortcut(chip)}
+                              />
+                            ))}
+                            <Chip
+                              size="small"
+                              clickable={!prescriptionReadOnly}
+                              disabled={prescriptionReadOnly}
+                              variant="outlined"
+                              label="Custom"
+                              onClick={focusPrescriptionFollowUpInput}
+                            />
+                          </Stack>
+                        </Stack>
+                      </Grid>
                     </Grid>
 
                     <Stack spacing={1}>
@@ -10393,14 +10740,14 @@ export default function ConsultationWorkspacePage() {
                         <Card key={row.localId} variant="outlined" sx={{ boxShadow: "none", borderRadius: 2, borderColor: invalidMedicineRowIds.includes(row.localId) ? "error.main" : undefined }}>
                           <CardContent sx={{ p: 1.25, "&:last-child": { pb: 1.25 } }}>
                             <Stack spacing={1}>
-                              <Grid container spacing={1} alignItems="center">
-                                <Grid size={{ xs: 12, md: 4 }}>
+                              <Grid container spacing={1} alignItems="end">
+                                <Grid size={{ xs: 12, md: 4.5 }}>
                                   <TextField size="small" fullWidth error={invalidMedicineRowIds.includes(row.localId)} helperText={invalidMedicineRowIds.includes(row.localId) ? "Medicine name, dosage, frequency, and duration are required." : " "} label={`Medicine ${index + 1}`} value={row.medicineName} disabled={prescriptionReadOnly} onChange={(e) => updateMedicine(row.localId, { medicineName: e.target.value })} />
                                 </Grid>
-                                <Grid size={{ xs: 6, md: 1.5 }}>
+                                <Grid size={{ xs: 6, md: 1 }}>
                                   <TextField size="small" fullWidth label="Strength" value={row.strength || ""} disabled={prescriptionReadOnly} onChange={(e) => updateMedicine(row.localId, { strength: e.target.value })} />
                                 </Grid>
-                                <Grid size={{ xs: 6, md: 1.5 }}>
+                                <Grid size={{ xs: 6, md: 1 }}>
                                   <FormControl size="small" fullWidth disabled={prescriptionReadOnly}>
                                     <InputLabel id={`route-label-${row.localId}`}>Route</InputLabel>
                                     <Select
@@ -10416,16 +10763,16 @@ export default function ConsultationWorkspacePage() {
                                     </Select>
                                   </FormControl>
                                 </Grid>
-                                <Grid size={{ xs: 6, md: 1.5 }}>
+                                <Grid size={{ xs: 6, md: 1.25 }}>
                                   <TextField size="small" fullWidth error={invalidMedicineRowIds.includes(row.localId)} label="Dosage" value={row.dosage} disabled={prescriptionReadOnly} onChange={(e) => updateMedicine(row.localId, { dosage: e.target.value })} />
                                 </Grid>
-                                <Grid size={{ xs: 6, md: 1.5 }}>
+                                <Grid size={{ xs: 6, md: 1.25 }}>
                                   <TextField size="small" fullWidth error={invalidMedicineRowIds.includes(row.localId)} label="Frequency" value={row.frequency} disabled={prescriptionReadOnly} onChange={(e) => updateMedicine(row.localId, { frequency: e.target.value })} />
                                 </Grid>
-                                <Grid size={{ xs: 6, md: 1.25 }}>
+                                <Grid size={{ xs: 6, md: 1 }}>
                                   <TextField size="small" fullWidth error={invalidMedicineRowIds.includes(row.localId)} label="Duration" value={row.duration} disabled={prescriptionReadOnly} onChange={(e) => updateMedicine(row.localId, { duration: e.target.value })} />
                                 </Grid>
-                                <Grid size={{ xs: 12, md: 0.75 }} sx={{ display: "flex", justifyContent: { xs: "flex-end", md: "center" } }}>
+                                <Grid size={{ xs: 12, md: 0.75 }} sx={{ display: "flex", alignItems: "center", justifyContent: { xs: "flex-end", md: "center" } }}>
                                   <IconButton size="small" disabled={prescriptionReadOnly} aria-label={`Delete medicine row ${index + 1}`} onClick={() => { setInvalidMedicineRowIds((current) => current.filter((id) => id !== row.localId)); setPrescriptionForm((c) => ({ ...c, medicines: c.medicines.filter((item) => item.localId !== row.localId) })); }}>
                                     <DeleteOutlineRoundedIcon fontSize="small" />
                                   </IconButton>
@@ -10558,9 +10905,14 @@ export default function ConsultationWorkspacePage() {
                                           ? `Rules version ${medicationSafetyEvaluation.rulesVersion} · ${medicationSafetyEvaluation.findings.length} findings · ${medicationSafetyEvaluation.dataQualityWarnings.length} data-quality warnings`
                                           : "Fallback checks use available structured data; unsupported rules remain unavailable."}
                                       </Typography>
+                                      {!prescription?.id ? (
+                                        <Typography variant="caption" color="text.secondary">
+                                          Medication Safety requires a saved prescription.
+                                        </Typography>
+                                      ) : null}
                                     </Stack>
                                     <Stack direction="row" spacing={0.5} alignItems="center">
-                                      <Button type="button" size="small" variant="outlined" onClick={() => void runMedicationSafety()} disabled={medicationSafetyCheckRunning || !consultation}>
+                                      <Button type="button" size="small" variant="outlined" onClick={() => void runMedicationSafety()} disabled={medicationSafetyCheckRunning || !consultation || !prescription?.id}>
                                         Run safety check
                                       </Button>
                                       <Button type="button" size="small" variant="text" aria-label={prescriptionSafetyDetailsOpen ? "Hide medication safety details" : "View medication safety details"} onClick={() => setPrescriptionSafetyDetailsOpen((current) => !current)}>
@@ -10570,6 +10922,9 @@ export default function ConsultationWorkspacePage() {
                                   </Stack>
                                   <Collapse in={prescriptionSafetyDetailsOpen} timeout={200} easing={{ enter: "ease-in-out", exit: "ease-in-out" }} unmountOnExit>
                                     <Stack spacing={0.55}>
+                                      {!prescription?.id ? (
+                                        <Alert severity="info">Medication Safety requires a saved prescription.</Alert>
+                                      ) : null}
                                       {medicationSafetyLoading ? <LinearProgress /> : null}
                                       {medicationSafetyError ? (
                                         <Alert severity="warning">{medicationSafetyError}</Alert>
@@ -11076,7 +11431,570 @@ export default function ConsultationWorkspacePage() {
         </Grid>
       ) : null}
 
-      {activeTab === 2 ? (
+      {/*
+        <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
+          <WorkflowStrip text="Timeline → Consultations → Prescriptions → Reports → Trends" />
+
+          <Grid container spacing={1.25}>
+            <Grid size={{ xs: 12, md: 3 }}>
+              <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
+                <CardContent sx={{ p: 1.25, "&:last-child": { pb: 1.25 } }}>
+                  <Stack spacing={0.75}>
+                    <Stack direction="row" spacing={0.75} alignItems="center">
+                      <InsightsRoundedIcon fontSize="small" color="primary" />
+                      <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>Clinical Snapshot</Typography>
+                    </Stack>
+                    <Typography variant="body2"><b>Latest diagnosis:</b> {lastConsultation?.diagnosis || consultation?.diagnosis || "Not recorded"}</Typography>
+                    <Typography variant="body2"><b>Latest vitals:</b> {historySnapshotVitals || "Not recorded"}</Typography>
+                    <Typography variant="body2"><b>Active chronic conditions:</b> {clinicalSnapshotConditions}</Typography>
+                    <Typography variant="body2" color={patientRow?.allergies ? "error" : "text.primary"}><b>Allergies:</b> {patientRow?.allergies || "Not recorded"}</Typography>
+                    <Typography variant="body2"><b>Long-term meds:</b> {clinicalSnapshotMedications}</Typography>
+                    <Typography variant="body2"><b>Last note:</b> {compactText(lastConsultation?.clinicalNotes || lastConsultation?.advice || lastConsultation?.diagnosis || consultation?.clinicalNotes || consultation?.advice, 140) || "Not recorded"}</Typography>
+                  </Stack>
+                </CardContent>
+              </Card>
+            </Grid>
+
+            <Grid size={{ xs: 12, md: 3 }}>
+              <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
+                <CardContent sx={{ p: 1.25, "&:last-child": { pb: 1.25 } }}>
+                  <Stack spacing={0.85}>
+                    <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                      <Stack direction="row" spacing={0.75} alignItems="center">
+                        <HistoryEduRoundedIcon fontSize="small" color="primary" />
+                        <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>Recent Consultations</Typography>
+                      </Stack>
+                      <Button type="button" size="small" variant="text" onClick={() => setHistoryView("consultations")}>View all</Button>
+                    </Stack>
+                    {historyOverviewConsultations.length ? (
+                      <Stack spacing={0.65}>
+                        {historyOverviewConsultations.map((row) => (
+                          <Card key={row.id} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5 }}>
+                            <CardContent sx={{ p: 0.85, "&:last-child": { pb: 0.85 } }}>
+                              <Stack spacing={0.45}>
+                                <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                  <Chip size="small" variant="outlined" label={compactDate(row.createdAt)} />
+                                  <Chip size="small" variant="outlined" label={row.status || "Unknown"} color={row.status === "COMPLETED" ? "success" : row.status === "DRAFT" ? "warning" : "default"} />
+                                </Stack>
+                                <Typography variant="body2" sx={{ fontWeight: 800 }} noWrap title={row.diagnosis || "No diagnosis"}>
+                                  {row.diagnosis || "No diagnosis"}
+                                </Typography>
+                                <Typography variant="caption" color="text.secondary" noWrap title={compactText(row.clinicalNotes || row.advice || row.symptoms, 140) || "Not recorded"}>
+                                  {compactText(row.clinicalNotes || row.advice || row.symptoms, 96) || "Not recorded"}
+                                </Typography>
+                                <Typography variant="caption" color="text.secondary" noWrap>
+                                  Doctor: {row.doctorName || consultation?.doctorName || "Not recorded"}
+                                </Typography>
+                                <Button type="button" size="small" variant="outlined" onClick={() => navigate(`/consultations/${row.id}`)}>
+                                  Open consultation
+                                </Button>
+                              </Stack>
+                            </CardContent>
+                          </Card>
+                        ))}
+                        {historyConsultationEntries.length > historyOverviewConsultations.length ? (
+                          <Button type="button" size="small" variant="outlined" onClick={() => setHistoryView("consultations")}>
+                            View all {historyConsultationEntries.length} consultations
+                          </Button>
+                        ) : null}
+                      </Stack>
+                    ) : (
+                      <Alert severity="info">No previous consultations.</Alert>
+                    )}
+                  </Stack>
+                </CardContent>
+              </Card>
+            </Grid>
+
+            <Grid size={{ xs: 12, md: 3 }}>
+              <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
+                <CardContent sx={{ p: 1.25, "&:last-child": { pb: 1.25 } }}>
+                  <Stack spacing={0.85}>
+                    <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                      <Stack direction="row" spacing={0.75} alignItems="center">
+                        <MedicationRoundedIcon fontSize="small" color="primary" />
+                        <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>Recent Prescriptions</Typography>
+                      </Stack>
+                      <Button type="button" size="small" variant="text" onClick={() => setHistoryView("prescriptions")}>View all</Button>
+                    </Stack>
+                    {historyOverviewPrescriptionGroups.length ? (
+                      <Stack spacing={0.65}>
+                        {historyOverviewPrescriptionGroups.map((group) => {
+                          const current = group.current;
+                          const statusColor = current.status === "FINALIZED" || current.status === "PRINTED" ? "success" : current.status === "CORRECTED" ? "warning" : current.status === "SUPERSEDED" ? "default" : current.status === "CANCELLED" ? "error" : "primary";
+                          return (
+                            <Card key={group.key} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5 }}>
+                              <CardContent sx={{ p: 0.85, "&:last-child": { pb: 0.85 } }}>
+                                <Stack spacing={0.45}>
+                                  <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" alignItems="center" justifyContent="space-between">
+                                    <Typography variant="body2" sx={{ fontWeight: 800 }} noWrap title={current.diagnosisSnapshot || current.prescriptionNumber}>
+                                      {current.diagnosisSnapshot || current.prescriptionNumber}
+                                    </Typography>
+                                    <Chip size="small" variant="outlined" color={statusColor} label={current.status.replaceAll("_", " ")} />
+                                  </Stack>
+                                  <Typography variant="caption" color="text.secondary" noWrap>
+                                    {compactDate(current.createdAt)} • {current.doctorName || consultation?.doctorName || "Doctor"}
+                                  </Typography>
+                                  <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                    <Chip size="small" variant="outlined" label={`Current ${current.versionNumber ? `v${current.versionNumber}` : "version"}`} />
+                                    {group.versionCount > 1 ? <Chip size="small" variant="outlined" label={`${group.versionCount - 1} earlier version${group.versionCount - 1 === 1 ? "" : "s"}`} /> : null}
+                                  </Stack>
+                                </Stack>
+                              </CardContent>
+                            </Card>
+                          );
+                        })}
+                      </Stack>
+                    ) : (
+                      <Alert severity="info">No previous prescriptions.</Alert>
+                    )}
+                  </Stack>
+                </CardContent>
+              </Card>
+            </Grid>
+
+            <Grid size={{ xs: 12, md: 3 }}>
+              <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
+                <CardContent sx={{ p: 1.25, "&:last-child": { pb: 1.25 } }}>
+                  <Stack spacing={0.85}>
+                    <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                      <Stack direction="row" spacing={0.75} alignItems="center">
+                        <InsightsRoundedIcon fontSize="small" color="primary" />
+                        <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>Important Trends</Typography>
+                      </Stack>
+                      <Button type="button" size="small" variant="text" onClick={() => setHistoryView("trends")}>View all</Button>
+                    </Stack>
+                    <StructuredTrendSummary
+                      structuredTrends={historyTrendEntries}
+                      legacyTrends={[]}
+                      latestReport={null}
+                      summary={null}
+                      fallbackMode="legacyOnly"
+                      emptyStateLabel="No comparable trends yet"
+                      emptyStateDetail="Structured longitudinal trends appear here when repeated numeric results are available."
+                    />
+                  </Stack>
+                </CardContent>
+              </Card>
+            </Grid>
+          </Grid>
+
+          <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
+            <CardContent sx={{ p: 1.1, "&:last-child": { pb: 1.1 } }}>
+              <Stack spacing={0.85}>
+                <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                  <Box>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 900, lineHeight: 1.15 }}>History subviews</Typography>
+                    <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.2 }}>
+                      Timeline is the default; use the subviews for focused review.
+                    </Typography>
+                  </Box>
+                </Stack>
+                <Tabs
+                  value={historyView}
+                  onChange={(_, value) => setHistoryView(value as HistoryViewKey)}
+                  variant="scrollable"
+                  scrollButtons="auto"
+                  sx={{
+                    minHeight: 44,
+                    "& .MuiTabs-indicator": {
+                      height: 3,
+                      borderRadius: 999,
+                    },
+                  }}
+                >
+                  {HISTORY_VIEW_KEYS.map((view) => (
+                    <Tab key={view} value={view} label={view === "timeline" ? "Timeline" : view === "consultations" ? "Consultations" : view === "prescriptions" ? "Prescriptions" : view === "documents" ? "Reports & Documents" : "Trends"} />
+                  ))}
+                </Tabs>
+              </Stack>
+            </CardContent>
+          </Card>
+
+          {historyView === "timeline" ? (
+            <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
+              <CardContent sx={{ p: 1.25, "&:last-child": { pb: 1.25 } }}>
+                <Stack spacing={0.9}>
+                  <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                    <Box>
+                      <Stack direction="row" spacing={0.75} alignItems="center">
+                        <TimelineRoundedIcon fontSize="small" color="primary" />
+                        <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>Unified Timeline</Typography>
+                      </Stack>
+                      <Typography variant="caption" color="text.secondary">
+                        Grouped by date, with consultations, prescriptions, reports, SOAP and lab orders kept in one place.
+                      </Typography>
+                    </Box>
+                    <Typography variant="caption" color="text.secondary">
+                      {historyTimelineEntries.length} item{historyTimelineEntries.length === 1 ? "" : "s"}
+                    </Typography>
+                  </Stack>
+                  <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                    {HISTORY_TIMELINE_FILTER_KEYS.map((filterKey) => (
+                      <Chip
+                        key={filterKey}
+                        size="small"
+                        clickable
+                        variant={historyTimelineFilter === filterKey ? "filled" : "outlined"}
+                        color={historyTimelineFilter === filterKey ? "primary" : "default"}
+                        label={timelineFilterLabel(filterKey)}
+                        onClick={() => setHistoryTimelineFilter(filterKey)}
+                      />
+                    ))}
+                  </Stack>
+                  {!historyTimelineVisibleGroups.length ? (
+                    <Alert severity="info">No timeline events yet.</Alert>
+                  ) : (
+                    <Stack spacing={1}>
+                      {historyTimelineVisibleGroups.map((group) => (
+                        <Card key={group.dateLabel} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5 }}>
+                          <CardContent sx={{ p: 0.9, "&:last-child": { pb: 0.9 } }}>
+                            <Stack spacing={0.7}>
+                              <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>{group.dateLabel}</Typography>
+                              <Stack spacing={0.65}>
+                                {group.items.map((item) => (
+                                  <Card
+                                    key={item.id}
+                                    variant="outlined"
+                                    sx={{ boxShadow: "none", borderRadius: 1.25, cursor: item.itemType === "DOCUMENT" || item.consultationId || item.prescriptionId ? "pointer" : "default" }}
+                                    onClick={() => {
+                                      if (item.itemType === "DOCUMENT" && item.documentId) {
+                                        const document = clinicalDocuments.find((row) => row.id === item.documentId);
+                                        if (document) void openClinicalDocument(document);
+                                        return;
+                                      }
+                                      if (item.consultationId && item.consultationId !== consultation.id) {
+                                        navigate(`/consultations/${item.consultationId}`);
+                                      }
+                                    }}
+                                  >
+                                    <CardContent sx={{ p: 0.8, "&:last-child": { pb: 0.8 } }}>
+                                      <Stack spacing={0.4}>
+                                        <Stack direction="row" spacing={0.5} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                                          <Stack direction="row" spacing={0.5} alignItems="center" flexWrap="wrap">
+                                            <Chip size="small" variant="outlined" color={timelineColor(item.itemType)} label={timelineTypeLabel(item.itemType)} />
+                                            {item.status ? <Chip size="small" variant="outlined" label={item.status.replaceAll("_", " ")} /> : null}
+                                          </Stack>
+                                          <Typography variant="caption" color="text.secondary">{compactDateTime(item.occurredAt)}</Typography>
+                                        </Stack>
+                                        <Typography variant="body2" sx={{ fontWeight: 800 }} noWrap title={compactTimelineTitle(item.title)}>
+                                          {compactTimelineTitle(item.title)}
+                                        </Typography>
+                                        <Typography variant="caption" color="text.secondary" noWrap title={item.subtitle || "-"}>
+                                          {item.subtitle || "Not recorded"}
+                                        </Typography>
+                                      </Stack>
+                                    </CardContent>
+                                  </Card>
+                                ))}
+                              </Stack>
+                            </Stack>
+                          </CardContent>
+                        </Card>
+                      ))}
+                      {historyTimelineVisibleGroups.length < historyTimelineGroups.length ? (
+                        <Button type="button" size="small" variant="outlined" onClick={() => setHistoryTimelineLimit((current) => Math.min(current + 6, historyTimelineGroups.length))}>
+                          Show older entries
+                        </Button>
+                      ) : null}
+                    </Stack>
+                  )}
+                </Stack>
+              </CardContent>
+            </Card>
+          ) : historyView === "consultations" ? (
+            <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
+              <CardContent sx={{ p: 1.25, "&:last-child": { pb: 1.25 } }}>
+                <Stack spacing={0.9}>
+                  <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                    <Box>
+                      <Stack direction="row" spacing={0.75} alignItems="center">
+                        <HistoryEduRoundedIcon fontSize="small" color="primary" />
+                        <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>Consultation History</Typography>
+                      </Stack>
+                      <Typography variant="caption" color="text.secondary">Recent consultations first. Empty clinical fields are omitted.</Typography>
+                    </Box>
+                    <Typography variant="caption" color="text.secondary">{historyConsultationEntries.length} consultation{historyConsultationEntries.length === 1 ? "" : "s"}</Typography>
+                  </Stack>
+                  {!historyConsultationRows.length ? (
+                    <Alert severity="info">No previous consultations.</Alert>
+                  ) : (
+                    <Stack spacing={0.65}>
+                      {historyConsultationRows.map((row) => (
+                        <Card key={row.id} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5 }}>
+                          <CardContent sx={{ p: 0.85, "&:last-child": { pb: 0.85 } }}>
+                            <Stack spacing={0.45}>
+                              <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                <Chip size="small" variant="outlined" label={compactDate(row.createdAt)} />
+                                <Chip size="small" variant="outlined" label={row.status || "Unknown"} color={row.status === "COMPLETED" ? "success" : row.status === "DRAFT" ? "warning" : "default"} />
+                              </Stack>
+                              <Typography variant="body2" sx={{ fontWeight: 800 }} noWrap title={row.diagnosis || "No diagnosis"}>
+                                {row.diagnosis || "No diagnosis"}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary" noWrap title={compactText(row.clinicalNotes || row.advice || row.symptoms, 140) || "Not recorded"}>
+                                {compactText(row.clinicalNotes || row.advice || row.symptoms, 96) || "Not recorded"}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary" noWrap>
+                                Doctor: {row.doctorName || consultation?.doctorName || "Not recorded"}
+                              </Typography>
+                              <Button type="button" size="small" variant="outlined" onClick={() => navigate(`/consultations/${row.id}`)}>
+                                Open consultation
+                              </Button>
+                            </Stack>
+                          </CardContent>
+                        </Card>
+                      ))}
+                      {historyConsultationRows.length < historyConsultationEntries.length ? (
+                        <Button type="button" size="small" variant="outlined" onClick={() => setHistoryConsultationLimit((current) => Math.min(current + 3, historyConsultationEntries.length))}>
+                          Show older consultations
+                        </Button>
+                      ) : null}
+                    </Stack>
+                  )}
+                </Stack>
+              </CardContent>
+            </Card>
+          ) : historyView === "prescriptions" ? (
+            <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
+              <CardContent sx={{ p: 1.25, "&:last-child": { pb: 1.25 } }}>
+                <Stack spacing={0.9}>
+                  <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                    <Box>
+                      <Stack direction="row" spacing={0.75} alignItems="center">
+                        <MedicationRoundedIcon fontSize="small" color="primary" />
+                        <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>Prescription History</Typography>
+                      </Stack>
+                      <Typography variant="caption" color="text.secondary">Grouped by encounter. Earlier versions stay available on demand.</Typography>
+                    </Box>
+                    <Typography variant="caption" color="text.secondary">{historyPrescriptionGroups.length} encounter{historyPrescriptionGroups.length === 1 ? "" : "s"}</Typography>
+                  </Stack>
+                  {!historyPrescriptionGroups.length ? (
+                    <Alert severity="info">No previous prescriptions.</Alert>
+                  ) : (
+                    <Stack spacing={0.75}>
+                      {historyPrescriptionGroups.slice(0, historyPrescriptionLimit).map((group) => {
+                        const current = group.current;
+                        const expandedGroup = Boolean(expanded[`history-prescription-${group.key}`]);
+                        const statusColor = current.status === "FINALIZED" || current.status === "PRINTED" ? "success" : current.status === "CORRECTED" ? "warning" : current.status === "SUPERSEDED" ? "default" : current.status === "CANCELLED" ? "error" : "primary";
+                        return (
+                          <Card key={group.key} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5 }}>
+                            <CardContent sx={{ p: 0.9, "&:last-child": { pb: 0.9 } }}>
+                              <Stack spacing={0.6}>
+                                <Stack direction="row" spacing={0.75} justifyContent="space-between" alignItems="flex-start" flexWrap="wrap">
+                                  <Box sx={{ minWidth: 0 }}>
+                                    <Typography variant="body2" sx={{ fontWeight: 800 }} noWrap title={current.diagnosisSnapshot || current.prescriptionNumber}>
+                                      {current.diagnosisSnapshot || current.prescriptionNumber}
+                                    </Typography>
+                                    <Typography variant="caption" color="text.secondary" noWrap>
+                                      {compactDate(current.createdAt)} • {current.doctorName || consultation?.doctorName || "Doctor"}
+                                    </Typography>
+                                  </Box>
+                                  <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                    <Chip size="small" variant="outlined" color={statusColor} label={current.status.replaceAll("_", " ")} />
+                                    <Chip size="small" variant="outlined" label={`Current ${current.versionNumber ? `v${current.versionNumber}` : ""}`.trim()} />
+                                    {group.versionCount > 1 ? <Chip size="small" variant="outlined" label={`${group.versionCount - 1} earlier version${group.versionCount - 1 === 1 ? "" : "s"}`} /> : null}
+                                  </Stack>
+                                </Stack>
+                                <Typography variant="caption" color="text.secondary" noWrap title={compactText(current.advice || current.diagnosisSnapshot || "", 120) || "Not recorded"}>
+                                  {compactText(current.advice || current.diagnosisSnapshot || "", 96) || "Not recorded"}
+                                </Typography>
+                                {group.versions.length > 1 ? (
+                                  <>
+                                    <Button type="button" size="small" variant="text" onClick={() => toggleSection(`history-prescription-${group.key}`)}>
+                                      {expandedGroup ? "Hide earlier versions" : `View ${group.versions.length - 1} earlier version${group.versions.length - 1 === 1 ? "" : "s"}`}
+                                    </Button>
+                                    <Collapse in={expandedGroup} timeout={200} easing={{ enter: "ease-in-out", exit: "ease-in-out" }} unmountOnExit>
+                                      <Stack spacing={0.65} sx={{ pt: 0.5 }}>
+                                        {group.versions.map((version) => {
+                                          const versionStatusColor = version.status === "FINALIZED" || version.status === "PRINTED" ? "success" : version.status === "CORRECTED" ? "warning" : version.status === "SUPERSEDED" ? "default" : version.status === "CANCELLED" ? "error" : "primary";
+                                          return (
+                                            <Card key={version.id} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.25 }}>
+                                              <CardContent sx={{ p: 0.75, "&:last-child": { pb: 0.75 } }}>
+                                                <Stack spacing={0.45}>
+                                                  <Stack direction="row" spacing={0.5} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                                                    <Typography variant="body2" sx={{ fontWeight: 800 }}>v{version.versionNumber || 1}</Typography>
+                                                    <Chip size="small" variant="outlined" color={versionStatusColor} label={version.status.replaceAll("_", " ")} />
+                                                  </Stack>
+                                                  <Typography variant="caption" color="text.secondary" noWrap>
+                                                    {compactDateTime(version.createdAt)}{version.correctionReason ? ` • ${version.correctionReason}` : ""}{version.doctorName || version.finalizedByDoctorUserId ? ` • ${version.doctorName || version.finalizedByDoctorUserId}` : ""}
+                                                  </Typography>
+                                                </Stack>
+                                              </CardContent>
+                                            </Card>
+                                          );
+                                        })}
+                                      </Stack>
+                                    </Collapse>
+                                  </>
+                                ) : null}
+                              </Stack>
+                            </CardContent>
+                          </Card>
+                        );
+                      })}
+                      {historyPrescriptionLimit < historyPrescriptionGroups.length ? (
+                        <Button type="button" size="small" variant="outlined" onClick={() => setHistoryPrescriptionLimit((current) => Math.min(current + 3, historyPrescriptionGroups.length))}>
+                          Show older prescriptions
+                        </Button>
+                      ) : null}
+                    </Stack>
+                  )}
+                </Stack>
+              </CardContent>
+            </Card>
+          ) : historyView === "documents" ? (
+            <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
+              <CardContent sx={{ p: 1.25, "&:last-child": { pb: 1.25 } }}>
+                <Stack spacing={0.9}>
+                  <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                    <Box>
+                      <Stack direction="row" spacing={0.75} alignItems="center">
+                        <InsightsRoundedIcon fontSize="small" color="primary" />
+                        <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>Reports &amp; Documents</Typography>
+                      </Stack>
+                      <Typography variant="caption" color="text.secondary">Compact document cards hide raw payloads by default. Use View for the viewer and More for technical details.</Typography>
+                    </Box>
+                    <Stack direction="row" spacing={0.75} alignItems="center">
+                      <Chip size="small" label={`${historyDocumentEntries.length} document${historyDocumentEntries.length === 1 ? "" : "s"}`} color="info" variant="outlined" />
+                      <Button size="small" variant="contained" onClick={() => setUploadDialogOpen(true)}>Upload Report / Referral</Button>
+                    </Stack>
+                  </Stack>
+                  <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                    {DOCUMENT_FILTERS.map((filter) => (
+                      <Chip
+                        key={filter.key}
+                        size="small"
+                        label={filter.label}
+                        color={documentFilter === filter.key ? "primary" : "default"}
+                        variant={documentFilter === filter.key ? "filled" : "outlined"}
+                        onClick={() => setDocumentFilter(filter.key)}
+                        clickable
+                      />
+                    ))}
+                    {availableDocumentReviewFilters.length ? (
+                      availableDocumentReviewFilters.map((filterKey) => (
+                        <Chip
+                          key={filterKey}
+                          size="small"
+                          label={documentReviewStatusLabel(filterKey)}
+                          color={documentReviewFilter === filterKey ? documentReviewStatusColor(filterKey) : "default"}
+                          variant={documentReviewFilter === filterKey ? "filled" : "outlined"}
+                          onClick={() => setDocumentReviewFilter(filterKey)}
+                          clickable
+                        />
+                      ))
+                    ) : null}
+                  </Stack>
+                  {!historyDocumentGroups.length ? (
+                    <Alert severity="info">No documents match the selected filter.</Alert>
+                  ) : (
+                    <Stack spacing={0.75}>
+                      {historyDocumentGroups.map((row) => {
+                        const reviewStatus = documentReviewStatusKey(row);
+                        const technicalOpen = Boolean(expanded[`history-document-${row.id}`]);
+                        const highlights = collectDocumentHighlights(row);
+                        return (
+                          <Card key={row.id} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5 }}>
+                            <CardContent sx={{ p: 0.9, "&:last-child": { pb: 0.9 } }}>
+                              <Stack spacing={0.65}>
+                                <Stack direction="row" spacing={0.75} alignItems="flex-start" justifyContent="space-between" flexWrap="wrap">
+                                  <Box sx={{ minWidth: 0 }}>
+                                    <Typography variant="body2" sx={{ fontWeight: 800 }} noWrap title={row.title || row.originalFilename}>
+                                      {row.title || row.originalFilename}
+                                    </Typography>
+                                    <Typography variant="caption" color="text.secondary" noWrap>
+                                      {documentTypeLabel(row.documentType)} • {row.reportDate || compactDate(row.createdAt)} • {isPublishedLabDocument(row) ? "Published" : row.uploadSource}
+                                    </Typography>
+                                  </Box>
+                                  <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                    <Chip size="small" variant="outlined" label={row.verificationStatus} />
+                                    {reviewStatus ? <Chip size="small" variant="outlined" color={documentReviewStatusColor(reviewStatus)} label={documentReviewStatusLabel(reviewStatus)} /> : null}
+                                  </Stack>
+                                </Stack>
+                                <Stack spacing={0.25}>
+                                  {highlights.length ? highlights.map((item) => (
+                                    <Typography key={item} variant="caption" color="text.secondary" sx={{ lineHeight: 1.3 }}>
+                                      {item}
+                                    </Typography>
+                                  )) : (
+                                    <Typography variant="caption" color="text.secondary">No extraction highlights available.</Typography>
+                                  )}
+                                </Stack>
+                                <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                  <Button size="small" variant="outlined" onClick={() => void openClinicalDocument(row)}>View</Button>
+                                  <Button size="small" variant="outlined" onClick={() => void openClinicalDocument(row)}>Review extraction</Button>
+                                  <Button size="small" variant="outlined" onClick={() => toggleSection(`history-document-${row.id}`)}>
+                                    {technicalOpen ? "Hide" : "More"}
+                                  </Button>
+                                </Stack>
+                                <Collapse in={technicalOpen} timeout={200} easing={{ enter: "ease-in-out", exit: "ease-in-out" }} unmountOnExit>
+                                  <Stack spacing={0.55} sx={{ pt: 0.5 }}>
+                                    <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Technical details</Typography>
+                                    <Typography variant="caption" color="text.secondary">Source module: {row.sourceModule || "Not recorded"}</Typography>
+                                    <Typography variant="caption" color="text.secondary">Source entity: {row.sourceEntityId || "Not recorded"}</Typography>
+                                    <Typography variant="caption" color="text.secondary">Uploaded by: {row.uploadedByName || row.uploadedByUserId || "Not recorded"}</Typography>
+                                    <Typography variant="caption" color="text.secondary">AI summary: {row.aiExtractionSummary || "Not recorded"}</Typography>
+                                    <Typography variant="caption" color="text.secondary">AI review notes: {row.aiExtractionReviewNotes || "Not recorded"}</Typography>
+                                    <Typography variant="caption" color="text.secondary">OCR status: {row.ocrStatus || "Not recorded"}</Typography>
+                                    <Typography variant="caption" color="text.secondary">AI status: {row.aiExtractionStatus || "Not recorded"}</Typography>
+                                    <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                      {canEditConsultation && canRepairClinicalMemory(row) ? (
+                                        <Button size="small" variant="outlined" onClick={() => void repairClinicalMemoryRow(row.id)} disabled={documentRowBusyId === row.id}>
+                                          Repair Memory
+                                        </Button>
+                                      ) : null}
+                                      {canEditConsultation ? (
+                                        <Button size="small" variant="outlined" onClick={() => void reprocessClinicalDocumentRow(row.id)} disabled={documentRowBusyId === row.id}>
+                                          Retry AI
+                                        </Button>
+                                      ) : null}
+                                    </Stack>
+                                  </Stack>
+                                </Collapse>
+                              </Stack>
+                            </CardContent>
+                          </Card>
+                        );
+                      })}
+                      {historyDocumentLimit < historyDocumentEntries.length ? (
+                        <Button type="button" size="small" variant="outlined" onClick={() => setHistoryDocumentLimit((current) => Math.min(current + 6, historyDocumentEntries.length))}>
+                          Show older documents
+                        </Button>
+                      ) : null}
+                    </Stack>
+                  )}
+                </Stack>
+              </CardContent>
+            </Card>
+          ) : (
+            <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
+              <CardContent sx={{ p: 1.25, "&:last-child": { pb: 1.25 } }}>
+                <Stack spacing={0.9}>
+                  <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                    <Box>
+                      <Stack direction="row" spacing={0.75} alignItems="center">
+                        <TrendingUpRoundedIcon fontSize="small" color="primary" />
+                        <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>Trends</Typography>
+                      </Stack>
+                      <Typography variant="caption" color="text.secondary">Structured longitudinal trend data appears here without recalculation in React.</Typography>
+                    </Box>
+                    <Button type="button" size="small" variant="text" onClick={() => setHistoryView("trends")}>View all</Button>
+                  </Stack>
+                  <StructuredTrendSummary
+                    structuredTrends={clinicalContext?.longitudinalClinicalContext?.labTrends || []}
+                    legacyTrends={[]}
+                    latestReport={null}
+                    summary={null}
+                    fallbackMode="legacyOnly"
+                    emptyStateLabel="No comparable trends yet"
+                    emptyStateDetail="Structured comparison is available when previous numeric results exist."
+                  />
+                </Stack>
+              </CardContent>
+            </Card>
+          )}
+
+      {false ? (
         <Grid container spacing={1.5}>
           <Grid size={{ xs: 12 }}>
             <WorkflowStrip text="Timeline → Previous Visits → Reports → Documents" />
@@ -11173,21 +12091,47 @@ export default function ConsultationWorkspacePage() {
             </Card>
           </Grid>
           <Grid size={{ xs: 12 }}>
-            <Card><CardContent><Stack spacing={0.75}><Stack direction="row" spacing={0.75} alignItems="center"><TimelineRoundedIcon fontSize="small" color="primary" /><Typography variant="h6" sx={{ fontWeight: 900 }}>Unified Patient Timeline</Typography></Stack>{!activeTimeline.length ? <Alert severity="info">No timeline events yet.</Alert> : <List dense>{activeTimeline.slice(0, 12).map((item) => <ListItemButton key={item.id} onClick={() => {
-              if (item.itemType === "DOCUMENT" && item.documentId) {
-                const document = clinicalDocuments.find((row) => row.id === item.documentId);
-                if (document) void openClinicalDocument(document);
-                return;
-              }
-              if (item.consultationId && item.consultationId !== consultation.id) {
-                navigate(`/consultations/${item.consultationId}`);
-              }
-            }}><ListItemText primary={`${timelineTypeLabel(item.itemType)} • ${item.title}`} secondary={`${item.subtitle || "-"} • ${compactDateTime(item.occurredAt)}`} /></ListItemButton>)}</List>}</Stack></CardContent></Card>
+            <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
+              <CardContent sx={{ p: 1.25, "&:last-child": { pb: 1.25 } }}>
+                <Stack spacing={0.75}>
+                  <Stack direction="row" spacing={0.75} alignItems="center">
+                    <TimelineRoundedIcon fontSize="small" color="primary" />
+                    <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>Unified Patient Timeline</Typography>
+                  </Stack>
+                  {!activeTimeline.length ? (
+                    <Alert severity="info">No timeline events yet.</Alert>
+                  ) : (
+                    <List dense>
+                      {activeTimeline.slice(0, 12).map((item) => (
+                        <ListItemButton
+                          key={item.id}
+                          onClick={() => {
+                            if (item.itemType === "DOCUMENT" && item.documentId) {
+                              const document = clinicalDocuments.find((row) => row.id === item.documentId);
+                              if (document) void openClinicalDocument(document);
+                              return;
+                            }
+                            if (item.consultationId && item.consultationId !== consultation.id) {
+                              navigate(`/consultations/${item.consultationId}`);
+                            }
+                          }}
+                        >
+                          <ListItemText
+                            primary={`${timelineTypeLabel(item.itemType)} • ${item.title}`}
+                            secondary={`${item.subtitle || "-"} • ${compactDateTime(item.occurredAt)}`}
+                          />
+                        </ListItemButton>
+                      ))}
+                    </List>
+                  )}
+                </Stack>
+              </CardContent>
+            </Card>
           </Grid>
         </Grid>
-      ) : null}
+      */}
 
-      {activeTab === 2 ? (
+      {false ? (
         <Grid container spacing={1.5} sx={{ mt: 0.5 }}>
           <Grid size={{ xs: 12, md: 6 }}>
             {reportComparisonPlaceholder}
@@ -11208,6 +12152,425 @@ export default function ConsultationWorkspacePage() {
             </Card>
           </Grid>
         </Grid>
+      ) : null}
+
+      {activeTab === 2 ? (
+        <Stack spacing={1.25}>
+          <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
+            <CardContent sx={{ p: 1.1, "&:last-child": { pb: 1.1 } }}>
+              <Stack spacing={0.85}>
+                <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                  <Box>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 900, lineHeight: 1.15 }}>History subviews</Typography>
+                    <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.2 }}>
+                      Timeline is the default; use the subviews for focused review.
+                    </Typography>
+                  </Box>
+                </Stack>
+                <Tabs
+                  value={historyView}
+                  onChange={(_, value) => setHistoryView(value as HistoryViewKey)}
+                  variant="scrollable"
+                  scrollButtons="auto"
+                  sx={{
+                    minHeight: 44,
+                    "& .MuiTabs-indicator": {
+                      height: 3,
+                      borderRadius: 999,
+                    },
+                  }}
+                >
+                  {HISTORY_VIEW_KEYS.map((view) => (
+                    <Tab key={view} value={view} label={view === "timeline" ? "Timeline" : view === "consultations" ? "Consultations" : view === "prescriptions" ? "Prescriptions" : view === "documents" ? "Reports & Documents" : "Trends"} />
+                  ))}
+                </Tabs>
+              </Stack>
+            </CardContent>
+          </Card>
+
+          {historyView === "timeline" ? (
+            <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
+              <CardContent sx={{ p: 1.25, "&:last-child": { pb: 1.25 } }}>
+                <Stack spacing={0.9}>
+                  <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                    <Box>
+                      <Stack direction="row" spacing={0.75} alignItems="center">
+                        <TimelineRoundedIcon fontSize="small" color="primary" />
+                        <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>Unified Timeline</Typography>
+                      </Stack>
+                      <Typography variant="caption" color="text.secondary">
+                        Grouped by date, with consultations, prescriptions, reports, SOAP and lab orders kept in one place.
+                      </Typography>
+                    </Box>
+                    <Typography variant="caption" color="text.secondary">
+                      {historyTimelineEntries.length} item{historyTimelineEntries.length === 1 ? "" : "s"}
+                    </Typography>
+                  </Stack>
+                  <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                    {HISTORY_TIMELINE_FILTER_KEYS.map((filterKey) => (
+                      <Chip
+                        key={filterKey}
+                        size="small"
+                        clickable
+                        variant={historyTimelineFilter === filterKey ? "filled" : "outlined"}
+                        color={historyTimelineFilter === filterKey ? "primary" : "default"}
+                        label={timelineFilterLabel(filterKey)}
+                        onClick={() => setHistoryTimelineFilter(filterKey)}
+                      />
+                    ))}
+                  </Stack>
+                  {!historyTimelineVisibleGroups.length ? (
+                    <Alert severity="info">No timeline events yet.</Alert>
+                  ) : (
+                    <Stack spacing={1}>
+                      {historyTimelineVisibleGroups.map((group) => (
+                        <Card key={group.dateLabel} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5 }}>
+                          <CardContent sx={{ p: 0.9, "&:last-child": { pb: 0.9 } }}>
+                            <Stack spacing={0.7}>
+                              <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>{group.dateLabel}</Typography>
+                              <Stack spacing={0.65}>
+                                {group.items.map((item) => (
+                                  <Card
+                                    key={item.id}
+                                    variant="outlined"
+                                    sx={{ boxShadow: "none", borderRadius: 1.25, cursor: item.itemType === "DOCUMENT" || item.consultationId || item.prescriptionId ? "pointer" : "default" }}
+                                    onClick={() => {
+                                      if (item.itemType === "DOCUMENT" && item.documentId) {
+                                        const document = clinicalDocuments.find((row) => row.id === item.documentId);
+                                        if (document) void openClinicalDocument(document);
+                                        return;
+                                      }
+                                      if (item.consultationId && item.consultationId !== consultation.id) {
+                                        navigate(`/consultations/${item.consultationId}`);
+                                      }
+                                    }}
+                                  >
+                                    <CardContent sx={{ p: 0.8, "&:last-child": { pb: 0.8 } }}>
+                                      <Stack spacing={0.4}>
+                                        <Stack direction="row" spacing={0.5} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                                          <Stack direction="row" spacing={0.5} alignItems="center" flexWrap="wrap">
+                                            <Chip size="small" variant="outlined" color={timelineColor(item.itemType)} label={timelineTypeLabel(item.itemType)} />
+                                            {item.status ? <Chip size="small" variant="outlined" label={item.status.replaceAll("_", " ")} /> : null}
+                                          </Stack>
+                                          <Typography variant="caption" color="text.secondary">{compactDateTime(item.occurredAt)}</Typography>
+                                        </Stack>
+                                        <Typography variant="body2" sx={{ fontWeight: 800 }} noWrap title={compactTimelineTitle(item.title)}>
+                                          {compactTimelineTitle(item.title)}
+                                        </Typography>
+                                        <Typography variant="caption" color="text.secondary" noWrap title={item.subtitle || "-"}>
+                                          {item.subtitle || "Not recorded"}
+                                        </Typography>
+                                      </Stack>
+                                    </CardContent>
+                                  </Card>
+                                ))}
+                              </Stack>
+                            </Stack>
+                          </CardContent>
+                        </Card>
+                      ))}
+                      {historyTimelineVisibleGroups.length < historyTimelineGroups.length ? (
+                        <Button type="button" size="small" variant="outlined" onClick={() => setHistoryTimelineLimit((current) => Math.min(current + 6, historyTimelineGroups.length))}>
+                          Show older entries
+                        </Button>
+                      ) : null}
+                    </Stack>
+                  )}
+                </Stack>
+              </CardContent>
+            </Card>
+          ) : historyView === "consultations" ? (
+            <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
+              <CardContent sx={{ p: 1.25, "&:last-child": { pb: 1.25 } }}>
+                <Stack spacing={0.9}>
+                  <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                    <Box>
+                      <Stack direction="row" spacing={0.75} alignItems="center">
+                        <HistoryEduRoundedIcon fontSize="small" color="primary" />
+                        <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>Consultation History</Typography>
+                      </Stack>
+                      <Typography variant="caption" color="text.secondary">Recent consultations first. Empty clinical fields are omitted.</Typography>
+                    </Box>
+                    <Typography variant="caption" color="text.secondary">{historyConsultationEntries.length} consultation{historyConsultationEntries.length === 1 ? "" : "s"}</Typography>
+                  </Stack>
+                  {!historyConsultationRows.length ? (
+                    <Alert severity="info">No previous consultations.</Alert>
+                  ) : (
+                    <Stack spacing={0.65}>
+                      {historyConsultationRows.map((row) => (
+                        <Card key={row.id} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5 }}>
+                          <CardContent sx={{ p: 0.85, "&:last-child": { pb: 0.85 } }}>
+                            <Stack spacing={0.45}>
+                              <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                <Chip size="small" variant="outlined" label={compactDate(row.createdAt)} />
+                                <Chip size="small" variant="outlined" label={row.status || "Unknown"} color={row.status === "COMPLETED" ? "success" : row.status === "DRAFT" ? "warning" : "default"} />
+                              </Stack>
+                              <Typography variant="body2" sx={{ fontWeight: 800 }} noWrap title={row.diagnosis || "No diagnosis"}>
+                                {row.diagnosis || "No diagnosis"}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary" noWrap title={compactText(row.clinicalNotes || row.advice || row.symptoms, 140) || "Not recorded"}>
+                                {compactText(row.clinicalNotes || row.advice || row.symptoms, 96) || "Not recorded"}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary" noWrap>
+                                Doctor: {row.doctorName || consultation?.doctorName || "Not recorded"}
+                              </Typography>
+                              <Button type="button" size="small" variant="outlined" onClick={() => navigate(`/consultations/${row.id}`)}>
+                                Open consultation
+                              </Button>
+                            </Stack>
+                          </CardContent>
+                        </Card>
+                      ))}
+                      {historyConsultationRows.length < historyConsultationEntries.length ? (
+                        <Button type="button" size="small" variant="outlined" onClick={() => setHistoryConsultationLimit((current) => Math.min(current + 3, historyConsultationEntries.length))}>
+                          Show older consultations
+                        </Button>
+                      ) : null}
+                    </Stack>
+                  )}
+                </Stack>
+              </CardContent>
+            </Card>
+          ) : historyView === "prescriptions" ? (
+            <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
+              <CardContent sx={{ p: 1.25, "&:last-child": { pb: 1.25 } }}>
+                <Stack spacing={0.9}>
+                  <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                    <Box>
+                      <Stack direction="row" spacing={0.75} alignItems="center">
+                        <MedicationRoundedIcon fontSize="small" color="primary" />
+                        <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>Prescription History</Typography>
+                      </Stack>
+                      <Typography variant="caption" color="text.secondary">Grouped by encounter. Earlier versions stay available on demand.</Typography>
+                    </Box>
+                    <Typography variant="caption" color="text.secondary">{historyPrescriptionGroups.length} encounter{historyPrescriptionGroups.length === 1 ? "" : "s"}</Typography>
+                  </Stack>
+                  {!historyPrescriptionGroups.length ? (
+                    <Alert severity="info">No previous prescriptions.</Alert>
+                  ) : (
+                    <Stack spacing={0.75}>
+                      {historyPrescriptionGroups.slice(0, historyPrescriptionLimit).map((group) => {
+                        const current = group.current;
+                        const expandedGroup = Boolean(expanded[`history-prescription-${group.key}`]);
+                        const statusColor = current.status === "FINALIZED" || current.status === "PRINTED" ? "success" : current.status === "CORRECTED" ? "warning" : current.status === "SUPERSEDED" ? "default" : current.status === "CANCELLED" ? "error" : "primary";
+                        return (
+                          <Card key={group.key} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5 }}>
+                            <CardContent sx={{ p: 0.9, "&:last-child": { pb: 0.9 } }}>
+                              <Stack spacing={0.6}>
+                                <Stack direction="row" spacing={0.75} justifyContent="space-between" alignItems="flex-start" flexWrap="wrap">
+                                  <Box sx={{ minWidth: 0 }}>
+                                    <Typography variant="body2" sx={{ fontWeight: 800 }} noWrap title={current.diagnosisSnapshot || current.prescriptionNumber}>
+                                      {current.diagnosisSnapshot || current.prescriptionNumber}
+                                    </Typography>
+                                    <Typography variant="caption" color="text.secondary" noWrap>
+                                      {compactDate(current.createdAt)} • {current.doctorName || consultation?.doctorName || "Doctor"}
+                                    </Typography>
+                                  </Box>
+                                  <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                    <Chip size="small" variant="outlined" color={statusColor} label={current.status.replaceAll("_", " ")} />
+                                    <Chip size="small" variant="outlined" label={`Current ${current.versionNumber ? `v${current.versionNumber}` : ""}`.trim()} />
+                                    {group.versionCount > 1 ? <Chip size="small" variant="outlined" label={`${group.versionCount - 1} earlier version${group.versionCount - 1 === 1 ? "" : "s"}`} /> : null}
+                                  </Stack>
+                                </Stack>
+                                <Typography variant="caption" color="text.secondary" noWrap title={compactText(current.advice || current.diagnosisSnapshot || "", 120) || "Not recorded"}>
+                                  {compactText(current.advice || current.diagnosisSnapshot || "", 96) || "Not recorded"}
+                                </Typography>
+                                {group.versions.length > 1 ? (
+                                  <>
+                                    <Button type="button" size="small" variant="text" onClick={() => toggleSection(`history-prescription-${group.key}`)}>
+                                      {expandedGroup ? "Hide earlier versions" : `View ${group.versions.length - 1} earlier version${group.versions.length - 1 === 1 ? "" : "s"}`}
+                                    </Button>
+                                    <Collapse in={expandedGroup} timeout={200} easing={{ enter: "ease-in-out", exit: "ease-in-out" }} unmountOnExit>
+                                      <Stack spacing={0.65} sx={{ pt: 0.5 }}>
+                                        {group.versions.map((version) => {
+                                          const versionStatusColor = version.status === "FINALIZED" || version.status === "PRINTED" ? "success" : version.status === "CORRECTED" ? "warning" : version.status === "SUPERSEDED" ? "default" : version.status === "CANCELLED" ? "error" : "primary";
+                                          return (
+                                            <Card key={version.id} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.25 }}>
+                                              <CardContent sx={{ p: 0.75, "&:last-child": { pb: 0.75 } }}>
+                                                <Stack spacing={0.45}>
+                                                  <Stack direction="row" spacing={0.5} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                                                    <Typography variant="body2" sx={{ fontWeight: 800 }}>v{version.versionNumber || 1}</Typography>
+                                                    <Chip size="small" variant="outlined" color={versionStatusColor} label={version.status.replaceAll("_", " ")} />
+                                                  </Stack>
+                                                  <Typography variant="caption" color="text.secondary" noWrap>
+                                                    {compactDateTime(version.createdAt)}{version.correctionReason ? ` • ${version.correctionReason}` : ""}{version.doctorName || version.finalizedByDoctorUserId ? ` • ${version.doctorName || version.finalizedByDoctorUserId}` : ""}
+                                                  </Typography>
+                                                </Stack>
+                                              </CardContent>
+                                            </Card>
+                                          );
+                                        })}
+                                      </Stack>
+                                    </Collapse>
+                                  </>
+                                ) : null}
+                              </Stack>
+                            </CardContent>
+                          </Card>
+                        );
+                      })}
+                      {historyPrescriptionLimit < historyPrescriptionGroups.length ? (
+                        <Button type="button" size="small" variant="outlined" onClick={() => setHistoryPrescriptionLimit((current) => Math.min(current + 3, historyPrescriptionGroups.length))}>
+                          Show older prescriptions
+                        </Button>
+                      ) : null}
+                    </Stack>
+                  )}
+                </Stack>
+              </CardContent>
+            </Card>
+          ) : historyView === "documents" ? (
+            <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
+              <CardContent sx={{ p: 1.25, "&:last-child": { pb: 1.25 } }}>
+                <Stack spacing={0.9}>
+                  <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                    <Box>
+                      <Stack direction="row" spacing={0.75} alignItems="center">
+                        <InsightsRoundedIcon fontSize="small" color="primary" />
+                        <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>Reports &amp; Documents</Typography>
+                      </Stack>
+                      <Typography variant="caption" color="text.secondary">Compact document cards hide raw payloads by default. Use View for the viewer and More for technical details.</Typography>
+                    </Box>
+                    <Stack direction="row" spacing={0.75} alignItems="center">
+                      <Chip size="small" label={`${historyDocumentEntries.length} document${historyDocumentEntries.length === 1 ? "" : "s"}`} color="info" variant="outlined" />
+                      <Button size="small" variant="contained" onClick={() => setUploadDialogOpen(true)}>Upload Report / Referral</Button>
+                    </Stack>
+                  </Stack>
+                  <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                    {DOCUMENT_FILTERS.map((filter) => (
+                      <Chip
+                        key={filter.key}
+                        size="small"
+                        label={filter.label}
+                        color={documentFilter === filter.key ? "primary" : "default"}
+                        variant={documentFilter === filter.key ? "filled" : "outlined"}
+                        onClick={() => setDocumentFilter(filter.key)}
+                        clickable
+                      />
+                    ))}
+                    {availableDocumentReviewFilters.length ? (
+                      availableDocumentReviewFilters.map((filterKey) => (
+                        <Chip
+                          key={filterKey}
+                          size="small"
+                          label={documentReviewStatusLabel(filterKey)}
+                          color={documentReviewFilter === filterKey ? documentReviewStatusColor(filterKey) : "default"}
+                          variant={documentReviewFilter === filterKey ? "filled" : "outlined"}
+                          onClick={() => setDocumentReviewFilter(filterKey)}
+                          clickable
+                        />
+                      ))
+                    ) : null}
+                  </Stack>
+                  {!historyDocumentGroups.length ? (
+                    <Alert severity="info">No documents match the selected filter.</Alert>
+                  ) : (
+                    <Stack spacing={0.75}>
+                      {historyDocumentGroups.map((row) => {
+                        const reviewStatus = documentReviewStatusKey(row);
+                        const technicalOpen = Boolean(expanded[`history-document-${row.id}`]);
+                        const highlights = collectDocumentHighlights(row);
+                        return (
+                          <Card key={row.id} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5 }}>
+                            <CardContent sx={{ p: 0.9, "&:last-child": { pb: 0.9 } }}>
+                              <Stack spacing={0.65}>
+                                <Stack direction="row" spacing={0.75} alignItems="flex-start" justifyContent="space-between" flexWrap="wrap">
+                                  <Box sx={{ minWidth: 0 }}>
+                                    <Typography variant="body2" sx={{ fontWeight: 800 }} noWrap title={row.title || row.originalFilename}>
+                                      {row.title || row.originalFilename}
+                                    </Typography>
+                                    <Typography variant="caption" color="text.secondary" noWrap>
+                                      {documentTypeLabel(row.documentType)} • {row.reportDate || compactDate(row.createdAt)} • {isPublishedLabDocument(row) ? "Published" : row.uploadSource}
+                                    </Typography>
+                                  </Box>
+                                  <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                    <Chip size="small" variant="outlined" label={row.verificationStatus} />
+                                    {reviewStatus ? <Chip size="small" variant="outlined" color={documentReviewStatusColor(reviewStatus)} label={documentReviewStatusLabel(reviewStatus)} /> : null}
+                                  </Stack>
+                                </Stack>
+                                <Stack spacing={0.25}>
+                                  {highlights.length ? highlights.map((item) => (
+                                    <Typography key={item} variant="caption" color="text.secondary" sx={{ lineHeight: 1.3 }}>
+                                      {item}
+                                    </Typography>
+                                  )) : (
+                                    <Typography variant="caption" color="text.secondary">No extraction highlights available.</Typography>
+                                  )}
+                                </Stack>
+                                <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                  <Button size="small" variant="outlined" onClick={() => void openClinicalDocument(row)}>View</Button>
+                                  <Button size="small" variant="outlined" onClick={() => void openClinicalDocument(row)}>Review extraction</Button>
+                                  <Button size="small" variant="outlined" onClick={() => toggleSection(`history-document-${row.id}`)}>
+                                    {technicalOpen ? "Hide" : "More"}
+                                  </Button>
+                                </Stack>
+                                <Collapse in={technicalOpen} timeout={200} easing={{ enter: "ease-in-out", exit: "ease-in-out" }} unmountOnExit>
+                                  <Stack spacing={0.55} sx={{ pt: 0.5 }}>
+                                    <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Technical details</Typography>
+                                    <Typography variant="caption" color="text.secondary">Source module: {row.sourceModule || "Not recorded"}</Typography>
+                                    <Typography variant="caption" color="text.secondary">Source entity: {row.sourceEntityId || "Not recorded"}</Typography>
+                                    <Typography variant="caption" color="text.secondary">Uploaded by: {row.uploadedByName || row.uploadedByUserId || "Not recorded"}</Typography>
+                                    <Typography variant="caption" color="text.secondary">AI summary: {row.aiExtractionSummary || "Not recorded"}</Typography>
+                                    <Typography variant="caption" color="text.secondary">AI review notes: {row.aiExtractionReviewNotes || "Not recorded"}</Typography>
+                                    <Typography variant="caption" color="text.secondary">OCR status: {row.ocrStatus || "Not recorded"}</Typography>
+                                    <Typography variant="caption" color="text.secondary">AI status: {row.aiExtractionStatus || "Not recorded"}</Typography>
+                                    <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                      {canEditConsultation && canRepairClinicalMemory(row) ? (
+                                        <Button size="small" variant="outlined" onClick={() => void repairClinicalMemoryRow(row.id)} disabled={documentRowBusyId === row.id}>
+                                          Repair Memory
+                                        </Button>
+                                      ) : null}
+                                      {canEditConsultation ? (
+                                        <Button size="small" variant="outlined" onClick={() => void reprocessClinicalDocumentRow(row.id)} disabled={documentRowBusyId === row.id}>
+                                          Retry AI
+                                        </Button>
+                                      ) : null}
+                                    </Stack>
+                                  </Stack>
+                                </Collapse>
+                              </Stack>
+                            </CardContent>
+                          </Card>
+                        );
+                      })}
+                      {historyDocumentLimit < historyDocumentEntries.length ? (
+                        <Button type="button" size="small" variant="outlined" onClick={() => setHistoryDocumentLimit((current) => Math.min(current + 6, historyDocumentEntries.length))}>
+                          Show older documents
+                        </Button>
+                      ) : null}
+                    </Stack>
+                  )}
+                </Stack>
+              </CardContent>
+            </Card>
+          ) : (
+            <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
+              <CardContent sx={{ p: 1.25, "&:last-child": { pb: 1.25 } }}>
+                <Stack spacing={0.9}>
+                  <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                    <Box>
+                      <Stack direction="row" spacing={0.75} alignItems="center">
+                        <TrendingUpRoundedIcon fontSize="small" color="primary" />
+                        <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>Trends</Typography>
+                      </Stack>
+                      <Typography variant="caption" color="text.secondary">Structured longitudinal trend data appears here without recalculation in React.</Typography>
+                    </Box>
+                    <Button type="button" size="small" variant="text" onClick={() => setHistoryView("trends")}>View all</Button>
+                  </Stack>
+                  <StructuredTrendSummary
+                    structuredTrends={clinicalContext?.longitudinalClinicalContext?.labTrends || []}
+                    legacyTrends={[]}
+                    latestReport={null}
+                    summary={null}
+                    fallbackMode="legacyOnly"
+                    emptyStateLabel="No comparable trends yet"
+                    emptyStateDetail="Structured comparison is available when previous numeric results exist."
+                  />
+                </Stack>
+              </CardContent>
+            </Card>
+          )}
+        </Stack>
       ) : null}
 
       {activeTab === 3 ? (
@@ -11432,7 +12795,7 @@ export default function ConsultationWorkspacePage() {
                   <CardContent sx={{ p: 1.35 }}>
                     <Stack spacing={0.9}>
                       <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
-                        <Stack direction="row" spacing={0.75} alignItems="center">
+                      <Stack direction="row" spacing={0.75} alignItems="center">
                           <CompareArrowsRoundedIcon fontSize="small" color="primary" />
                           <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>Report Comparison</Typography>
                         </Stack>
@@ -11440,135 +12803,84 @@ export default function ConsultationWorkspacePage() {
                           View order
                         </Button>
                       </Stack>
-                      {reportComparisonPlaceholder}
+                      <StructuredTrendSummary
+                        structuredTrends={clinicalContext?.longitudinalClinicalContext?.labTrends || []}
+                        legacyTrends={[]}
+                        latestReport={null}
+                        summary={null}
+                        emptyStateLabel="No comparable reports are available yet."
+                        emptyStateDetail="Structured comparison is available when previous numeric results exist."
+                      />
                     </Stack>
                   </CardContent>
                 </Card>
               </Stack>
             </Grid>
           </Grid>
-
           <Grid container spacing={1.25}>
-            <Grid size={{ xs: 12, md: 6 }}>
+            <Grid size={{ xs: 12 }}>
               <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
-                <CardContent sx={{ p: 1.35 }}>
-                  <Stack spacing={0.9}>
+                <CardContent sx={{ p: 1.35, display: "flex", flexDirection: "column", minHeight: 0 }}>
+                  <Stack spacing={0.9} sx={{ minHeight: 0 }}>
                     <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
                       <Stack direction="row" spacing={0.75} alignItems="center">
                         <ReceiptLongRoundedIcon fontSize="small" color="primary" />
                         <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>Report / Test History</Typography>
+                        <Chip size="small" variant="outlined" label={`${reportHistoryRows.length} report${reportHistoryRows.length === 1 ? "" : "s"}`} />
                       </Stack>
                       <Button size="small" variant="outlined" onClick={() => setUploadDialogOpen(true)}>Upload report / referral</Button>
                     </Stack>
-                    {!reportHistoryRows.length ? (
-                      <Alert severity="info">No previous reports available. Upload an external report or order investigations to begin tracking trends.</Alert>
-                    ) : (
-                      <Stack spacing={0.75}>
-                        {reportHistoryRows.slice(0, 8).map((row) => (
-                          <Card key={row.id} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5 }}>
-                            <CardContent sx={{ p: 0.85, "&:last-child": { pb: 0.85 } }}>
-                              <Stack spacing={0.4}>
-                                <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
-                                  <Box sx={{ minWidth: 0 }}>
-                                    <Typography variant="body2" sx={{ fontWeight: 800 }} noWrap title={row.title || row.originalFilename}>
-                                      {row.title || row.originalFilename}
-                                    </Typography>
-                                    <Typography variant="caption" color="text.secondary" noWrap>
-                                      {documentTypeLabel(row.documentType)} • {row.reportDate || compactDate(row.createdAt)} • {isPublishedLabDocument(row) ? (documentBusinessStatusLabel(row) || "Published") : row.uploadSource}
-                                    </Typography>
-                                  </Box>
+                    <Box
+                      role="region"
+                      aria-label="Report and test history"
+                      sx={{
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 0.75,
+                        minHeight: 260,
+                        maxHeight: { xs: "60vh", sm: "52vh", md: "min(46vh, 480px)" },
+                        overflowY: "auto",
+                        overflowX: "hidden",
+                        overscrollBehavior: "contain",
+                        pr: 0.5,
+                      }}
+                    >
+                      {!reportHistoryRows.length ? (
+                        <Alert severity="info">No previous reports available. Upload an external report or order investigations to begin tracking trends.</Alert>
+                      ) : (
+                        <Stack spacing={0.75}>
+                          {reportHistoryRows.map((row) => (
+                            <Card key={row.id} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5 }}>
+                              <CardContent sx={{ p: 0.85, "&:last-child": { pb: 0.85 } }}>
+                                <Stack spacing={0.4}>
+                                  <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                                    <Box sx={{ minWidth: 0 }}>
+                                      <Typography variant="body2" sx={{ fontWeight: 800 }} noWrap title={row.title || row.originalFilename}>
+                                        {row.title || row.originalFilename}
+                                      </Typography>
+                                      <Typography variant="caption" color="text.secondary" noWrap>
+                                        {documentTypeLabel(row.documentType)} • {row.reportDate || compactDate(row.createdAt)} • {isPublishedLabDocument(row) ? (documentBusinessStatusLabel(row) || "Published") : row.uploadSource}
+                                      </Typography>
+                                    </Box>
+                                    <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                      <Chip size="small" variant="outlined" label={isPublishedLabDocument(row) ? "Published" : row.visibility} />
+                                      {isPublishedLabDocument(row) ? null : <Chip size="small" variant="outlined" label={row.verificationStatus} />}
+                                    </Stack>
+                                  </Stack>
+                                  <Typography variant="caption" color="text.secondary" noWrap title={row.description || row.originalFilename}>
+                                    {row.description || "No notes"}
+                                    {isPublishedLabDocument(row) ? "" : (row.aiExtractionSummary ? ` • AI: ${compactText(row.aiExtractionSummary, 42)}` : "")}
+                                  </Typography>
                                   <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
-                                    <Chip size="small" variant="outlined" label={isPublishedLabDocument(row) ? "Published" : row.visibility} />
-                                    {isPublishedLabDocument(row) ? null : <Chip size="small" variant="outlined" label={row.verificationStatus} />}
+                                    <Button size="small" variant="outlined" onClick={() => void openClinicalDocument(row)}>View report</Button>
                                   </Stack>
                                 </Stack>
-                                <Typography variant="caption" color="text.secondary" noWrap title={row.description || row.originalFilename}>
-                                  {row.description || "No notes"}
-                                  {isPublishedLabDocument(row) ? "" : (row.aiExtractionSummary ? ` • AI: ${compactText(row.aiExtractionSummary, 42)}` : "")}
-                                </Typography>
-                                <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
-                                  <Button size="small" variant="outlined" onClick={() => void openClinicalDocument(row)}>View report</Button>
-                                </Stack>
-                              </Stack>
-                            </CardContent>
-                          </Card>
-                        ))}
-                      </Stack>
-                    )}
-                  </Stack>
-                </CardContent>
-              </Card>
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
-                <CardContent sx={{ p: 1.35 }}>
-                  <Stack spacing={0.9}>
-                    <Stack direction="row" spacing={0.75} alignItems="center">
-                      <AutoAwesomeRoundedIcon fontSize="small" color="primary" />
-                      <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>AI-assisted summary</Typography>
-                    </Stack>
-                    <StructuredTrendSummary
-                      structuredTrends={clinicalContext?.longitudinalClinicalContext?.labTrends || []}
-                      legacyTrends={clinicalContext?.labIntelligence.previousTrends || []}
-                      latestReport={clinicalContext?.labIntelligence.latestLabReport || null}
-                      summary={clinicalContext?.aiSummary || null}
-                    />
-                    <Typography variant="caption" color="text.secondary">
-                      Structured comparison is available when previous numeric results exist.
-                    </Typography>
-                  </Stack>
-                </CardContent>
-              </Card>
-            </Grid>
-          </Grid>
-        </Stack>
-      ) : null}
-
-      {activeTab === 3 ? (
-        <Stack spacing={1.5} sx={{ mt: 1.5 }}>
-          <WorkflowStrip text="Review History → Select Tests → Check Duplicates → Confirm Order → Track Report" />
-          <Grid container spacing={1.5}>
-            <Grid size={{ xs: 12, md: 4 }}>
-              <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
-                <CardContent sx={{ p: 1.5 }}>
-                  <Stack spacing={0.75}>
-                    <Stack direction="row" spacing={0.75} alignItems="center">
-                      <TrendingUpRoundedIcon fontSize="small" color="primary" />
-                      <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>Report comparison</Typography>
-                    </Stack>
-                    <Typography variant="body2" color="text.secondary">
-                      Report comparison will appear here once two or more reports are available.
-                    </Typography>
-                  </Stack>
-                </CardContent>
-              </Card>
-            </Grid>
-            <Grid size={{ xs: 12, md: 4 }}>
-              <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
-                <CardContent sx={{ p: 1.5 }}>
-                  <Stack spacing={0.75}>
-                    <Stack direction="row" spacing={0.75} alignItems="center">
-                      <AutoAwesomeRoundedIcon fontSize="small" color="primary" />
-                      <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>AI interpretation</Typography>
-                    </Stack>
-                    <Typography variant="body2" color="text.secondary">
-                      AIVA will interpret report trends and highlight noteworthy changes when results are available.
-                    </Typography>
-                  </Stack>
-                </CardContent>
-              </Card>
-            </Grid>
-            <Grid size={{ xs: 12, md: 4 }}>
-              <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
-                <CardContent sx={{ p: 1.5 }}>
-                  <Stack spacing={0.75}>
-                    <Stack direction="row" spacing={0.75} alignItems="center">
-                      <InsightsRoundedIcon fontSize="small" color="primary" />
-                      <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>Trend summary</Typography>
-                    </Stack>
-                    <Typography variant="body2" color="text.secondary">
-                      The report trend summary remains compact so the investigation workflow stays above the fold.
-                    </Typography>
+                              </CardContent>
+                            </Card>
+                          ))}
+                        </Stack>
+                      )}
+                    </Box>
                   </Stack>
                 </CardContent>
               </Card>
@@ -11696,431 +13008,337 @@ export default function ConsultationWorkspacePage() {
       ) : null}
 
       {activeTab === 5 ? (
-        <Grid container spacing={1.5}>
-          {!aiAssistantEnabled ? (
-            <Grid size={{ xs: 12 }}>
-              <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
-                <CardContent sx={{ p: 1.5 }}>
-                  <Stack spacing={1.25}>
-                    <Stack direction="row" spacing={0.75} alignItems="center">
-                      <AutoAwesomeRoundedIcon fontSize="small" color="primary" />
-                      <Typography variant="h6" sx={{ fontWeight: 900 }}>AI Assist</Typography>
-                    </Stack>
-                    {aiUnavailableCard}
-                  </Stack>
-                </CardContent>
-              </Card>
-            </Grid>
-          ) : (
-            <>
+        <Grid container spacing={1.5} alignItems="stretch">
           <Grid size={{ xs: 12 }}>
             <WorkflowStrip text="Review Context → Ask AI → Review Draft → Accept" />
           </Grid>
-          <Grid size={{ xs: 12, md: 6 }}>
+          <Grid size={{ xs: 12, md: 7 }}>
+            <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2, height: "100%" }}>
+              <CardContent sx={{ p: 1.5 }}>
+                <Stack spacing={1.25}>
+                  <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                    <Stack direction="row" spacing={0.75} alignItems="center">
+                      <AutoAwesomeRoundedIcon fontSize="small" color="primary" />
+                      <Typography variant="h6" sx={{ fontWeight: 900 }}>Clinical Chat</Typography>
+                    </Stack>
+                    <Chip size="small" variant="outlined" color={aiAssistantEnabled ? "success" : "warning"} label={aiAssistantEnabled ? "AI ready" : "AI unavailable"} />
+                  </Stack>
+                  <Typography variant="body2" color="text.secondary">
+                    Ask AIVA about this consultation. Review every response before using it.
+                  </Typography>
+                  {!aiAssistantEnabled ? aiUnavailableCard : null}
+                  <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
+                    <CardContent sx={{ p: 1 }}>
+                      <Stack spacing={1}>
+                        <Stack spacing={0.75} sx={{ maxHeight: 260, overflow: "auto" }}>
+                          {aivaChatMessages.length ? (
+                            aivaChatMessages.map((message) => (
+                              <Box
+                                key={message.id}
+                                sx={{
+                                  display: "flex",
+                                  justifyContent: message.role === "DOCTOR" ? "flex-end" : "flex-start",
+                                }}
+                              >
+                                <Box
+                                  sx={{
+                                    maxWidth: "88%",
+                                    p: 1,
+                                    borderRadius: 2,
+                                    border: 1,
+                                    borderColor: message.role === "DOCTOR" ? "primary.light" : "divider",
+                                    bgcolor: message.role === "DOCTOR" ? "primary.50" : "background.paper",
+                                  }}
+                                >
+                                  <Stack spacing={0.5}>
+                                    <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                                      <Typography variant="caption" sx={{ fontWeight: 900 }}>
+                                        {message.role === "DOCTOR" ? "Doctor" : "AIVA"}
+                                      </Typography>
+                                      <Typography variant="caption" color="text.secondary">
+                                        {compactDateTime(message.createdAt)}
+                                      </Typography>
+                                    </Stack>
+                                    <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", lineHeight: 1.5 }}>
+                                      {message.text}
+                                    </Typography>
+                                    {message.role === "AIVA" && message.text.trim() ? (
+                                      <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
+                                        <Button type="button" size="small" variant="outlined" disabled={!message.text.trim()} onClick={() => void navigator.clipboard.writeText(message.text)}>
+                                          Copy
+                                        </Button>
+                                        <Button type="button" size="small" variant="outlined" disabled={readOnly || !message.text.trim()} onClick={() => setConsultationForm((current) => ({ ...current, clinicalNotes: appendTokenLine(current.clinicalNotes, message.text) }))}>
+                                          Add to SOAP
+                                        </Button>
+                                        <Button type="button" size="small" variant="outlined" disabled={readOnly || !message.text.trim()} onClick={() => appendAdviceAndReveal(message.text)}>
+                                          Add to Advice
+                                        </Button>
+                                      </Stack>
+                                    ) : null}
+                                  </Stack>
+                                </Box>
+                              </Box>
+                            ))
+                          ) : (
+                            <Box sx={{ p: 1.2, border: 1, borderStyle: "dashed", borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
+                              <Typography variant="body2" color="text.secondary">
+                                Ask anything about this consultation. Use the prompt shortcuts below for common questions.
+                              </Typography>
+                            </Box>
+                          )}
+                        </Stack>
+                        <Stack spacing={0.75}>
+                          <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Prompt shortcuts</Typography>
+                          <Stack spacing={0.75}>
+                            {AI_ASSIST_PROMPT_GROUPS.map((group) => (
+                              <Stack key={group.label} spacing={0.5}>
+                                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.3 }}>
+                                  {group.label}
+                                </Typography>
+                                <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                  {group.prompts.map((prompt) => (
+                                    <Chip
+                                      key={prompt}
+                                      size="small"
+                                      variant="outlined"
+                                      clickable={!aiBusy && !aivaQuestionSubmitting && aiAssistantEnabled}
+                                      disabled={aiBusy || aivaQuestionSubmitting || !aiAssistantEnabled}
+                                      label={prompt}
+                                      onClick={() => setAivaClinicalQuestion(prompt)}
+                                    />
+                                  ))}
+                                </Stack>
+                              </Stack>
+                            ))}
+                            <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                              <Chip size="small" icon={<PsychologyRoundedIcon fontSize="small" />} clickable={!aiBusy && aiAssistantEnabled} disabled={aiBusy || !aiAssistantEnabled} variant="outlined" label="Suggest diagnosis" onClick={() => void runAiAction("diagnosis")} />
+                              <Chip size="small" icon={<DescriptionRoundedIcon fontSize="small" />} clickable={!aiBusy && aiAssistantEnabled} disabled={aiBusy || !aiAssistantEnabled} variant="outlined" label="Structure SOAP notes" onClick={() => void runAiAction("notes")} />
+                              <Chip size="small" icon={<MedicationRoundedIcon fontSize="small" />} clickable={!aiBusy && aiAssistantEnabled} disabled={aiBusy || !aiAssistantEnabled} variant="outlined" label="Prescription template" onClick={() => void applyAiPrescriptionTemplate()} />
+                              <Chip size="small" icon={<TipsAndUpdatesRoundedIcon fontSize="small" />} clickable={!aiBusy && aiAssistantEnabled} disabled={aiBusy || !aiAssistantEnabled} variant="outlined" label="Patient instructions" onClick={() => void runAiAction("instructions")} />
+                            </Stack>
+                          </Stack>
+                        </Stack>
+                        <TextField
+                          size="small"
+                          fullWidth
+                          label="Ask anything about this consultation"
+                          placeholder="Ask anything about this consultation..."
+                          value={aivaClinicalQuestion}
+                          disabled={aiBusy || aivaQuestionSubmitting || readOnly || !aiAssistantEnabled}
+                          multiline
+                          minRows={2}
+                          onChange={(event) => setAivaClinicalQuestion(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" && !event.shiftKey) {
+                              event.preventDefault();
+                              void submitAivaQuestion();
+                            }
+                          }}
+                        />
+                        <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
+                          <Button type="button" size="small" variant="contained" disabled={!aiAssistantEnabled || !canAskAiva || aivaQuestionSubmitting || aiBusy} onClick={() => void submitAivaQuestion()}>
+                            Ask
+                          </Button>
+                          <Button type="button" size="small" variant="outlined" disabled={!aivaChatMessages.length} onClick={() => setAivaChatDetailsOpen((current) => !current)}>
+                            {aivaChatDetailsOpen ? "Hide Transcript" : "Show Transcript"}
+                          </Button>
+                        </Stack>
+                        <Collapse in={aivaChatDetailsOpen && aivaChatMessages.length > 0} timeout={200} easing={{ enter: "ease-in-out", exit: "ease-in-out" }} unmountOnExit>
+                          <Stack spacing={0.75}>
+                            <Typography variant="caption" color="text.secondary">
+                              Doctor and AIVA messages stay in this session until the consultation is closed.
+                            </Typography>
+                          </Stack>
+                        </Collapse>
+                        {aiBusy ? <Typography variant="caption" color="text.secondary">AI assistance is preparing suggestions...</Typography> : null}
+                      </Stack>
+                    </CardContent>
+                  </Card>
+                </Stack>
+              </CardContent>
+            </Card>
+          </Grid>
+          <Grid size={{ xs: 12, md: 5 }}>
             <Stack spacing={1.5}>
+              <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2, height: "100%" }}>
+                <CardContent sx={{ p: 1.5 }}>
+                  <Stack spacing={1.25}>
+                    <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                      <Stack direction="row" spacing={0.75} alignItems="center">
+                        <InsightsRoundedIcon fontSize="small" color="primary" />
+                        <Typography variant="h6" sx={{ fontWeight: 900 }}>Consultation Snapshot</Typography>
+                      </Stack>
+                      <Chip size="small" variant="outlined" label={aiAssistantEnabled ? "Consultation context" : "AI unavailable"} />
+                    </Stack>
+                    <Typography variant="body2" color="text.secondary">
+                      Deterministic read-only summary from the current consultation and patient context.
+                    </Typography>
+                    <Stack spacing={1}>
+                      <Stack spacing={0.5}>
+                        <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Current visit</Typography>
+                        <Typography variant="body2"><b>Chief complaint:</b> {consultationForm.chiefComplaints.trim() || consultation?.chiefComplaints || "Not recorded"}</Typography>
+                        <Typography variant="body2"><b>Symptoms:</b> {consultationForm.symptoms.trim() || consultation?.symptoms || "Not recorded"}</Typography>
+                        <Typography variant="body2"><b>Status:</b> {consultation?.status || "Not recorded"}</Typography>
+                        <Typography variant="body2"><b>Visit date:</b> {consultation?.createdAt ? compactDateTime(consultation.createdAt) : "Not recorded"}</Typography>
+                      </Stack>
+                      <Stack spacing={0.5}>
+                        <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Diagnoses</Typography>
+                        {selectedDiagnosisEntries.length ? (
+                          <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                            {selectedDiagnosisEntries.map((item) => <Chip key={item} size="small" variant="outlined" label={item} />)}
+                          </Stack>
+                        ) : (
+                          <Typography variant="body2" color="text.secondary">Not recorded yet</Typography>
+                        )}
+                      </Stack>
+                      <Stack spacing={0.5}>
+                        <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Prescription</Typography>
+                        <Typography variant="body2"><b>Status:</b> {prescription?.status || "Not recorded"}</Typography>
+                        <Typography variant="body2"><b>Medicines:</b> {(prescription?.medicines?.length ?? prescriptionForm.medicines.filter((row) => medicineRowHasAnyContent(row)).length) || 0}</Typography>
+                        <Typography variant="body2"><b>Medication safety:</b> {medicationSafetyReview?.decisionStatus || (medicationSafetyEvaluation ? "Evaluated" : "Not run")}</Typography>
+                      </Stack>
+                      <Stack spacing={0.5}>
+                        <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Investigations</Typography>
+                        <Typography variant="body2"><b>Orders:</b> {labOrders.length || 0}</Typography>
+                        <Typography variant="body2"><b>Reports:</b> {clinicalDocuments.length || 0}</Typography>
+                      </Stack>
+                      <Stack spacing={0.5}>
+                        <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>SOAP</Typography>
+                        <Typography variant="body2"><b>Status:</b> {consultationSoap ? (consultationSoap.stale ? "Review recommended" : consultationSoap.status === "ACCEPTED" ? "Accepted/current" : consultationSoap.status === "SUPERSEDED" ? "Superseded" : "Saved") : clinicalAiDrafts.soap.generatedAt ? "Pending draft" : "Not recorded"}</Typography>
+                        <Typography variant="body2"><b>Source:</b> {consultationSoap?.source || (clinicalAiDrafts.soap.generatedAt ? "AI_DRAFT" : "Not recorded")}</Typography>
+                      </Stack>
+                      <Stack spacing={0.5}>
+                        <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Clinical reasoning</Typography>
+                        <Typography variant="body2"><b>Status:</b> {clinicalReasoningStatusLabel}</Typography>
+                        <Typography variant="body2"><b>Provider:</b> {clinicalReasoningResult?.provider || "Not available"}</Typography>
+                      </Stack>
+                      <Stack spacing={0.5}>
+                        <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Important context</Typography>
+                        <Typography variant="body2"><b>Allergies:</b> {aiAllergiesSummary || "Not recorded"}</Typography>
+                        <Typography variant="body2"><b>Chronic conditions:</b> {aiChronicConditionsSummary || clinicalSnapshotConditions || "Not recorded"}</Typography>
+                        <Typography variant="body2"><b>Vitals:</b> {soapVitalsSummary || "Not recorded"}</Typography>
+                        <Typography variant="body2"><b>Longitudinal trends:</b> {clinicalContext?.longitudinalClinicalContext?.labTrends?.length ? `${clinicalContext.longitudinalClinicalContext.labTrends.length} available` : "Not recorded"}</Typography>
+                        <Typography variant="body2"><b>Last AI activity:</b> {lastAiActivityLabel || "Not recorded"}</Typography>
+                      </Stack>
+                      <Stack spacing={0.75}>
+                        <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Context available to AIVA</Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          AIVA only assists with clinician-entered and available patient context. Doctor verification is required before use.
+                        </Typography>
+                        <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                          {[
+                            consultationForm.chiefComplaints.trim() || consultation?.chiefComplaints ? "Chief complaint" : null,
+                            consultationForm.symptoms.trim() || consultation?.symptoms ? "Symptoms" : null,
+                            soapVitalsSummary ? "Vitals" : null,
+                            selectedDiagnosisEntries.length ? "Diagnoses" : null,
+                            aiAllergiesSummary ? "Allergies" : null,
+                            aiChronicConditionsSummary ? "Chronic conditions" : null,
+                            clinicalContext?.longitudinalClinicalContext?.labTrends?.length ? "Longitudinal trends" : null,
+                            prescription?.medicines?.length || prescriptionForm.medicines.some((row) => medicineRowHasAnyContent(row)) ? "Current prescription" : null,
+                            clinicalDocuments.length || labOrders.length ? "Existing reports" : null,
+                          ].filter(Boolean).map((label) => (
+                            <Chip key={String(label)} size="small" variant="outlined" label={String(label)} />
+                          ))}
+                        </Stack>
+                      </Stack>
+                    </Stack>
+                  </Stack>
+                </CardContent>
+              </Card>
               <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
                 <CardContent sx={{ p: 1.5 }}>
                   <Stack spacing={1.25}>
                     <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
                       <Stack direction="row" spacing={0.75} alignItems="center">
-                        <AutoAwesomeRoundedIcon fontSize="small" color="primary" />
-                        <Typography variant="h6" sx={{ fontWeight: 900 }}>AIVA Draft Review</Typography>
+                        <InsightsRoundedIcon fontSize="small" color="primary" />
+                        <Typography variant="h6" sx={{ fontWeight: 900 }}>AI Clinical Summary</Typography>
                       </Stack>
-                      <Stack direction="row" spacing={0.75} alignItems="center">
-                        <Chip size="small" color={clinicalDraftStats.total ? "primary" : "default"} variant="outlined" label={`Total ${clinicalDraftStats.total}`} />
-                        <Chip size="small" color={pendingAiDraftCount ? "warning" : "default"} variant="outlined" label={`AIVA Drafts: ${pendingAiDraftCount} pending`} />
-                        <Chip size="small" color={pendingAiDraftCount ? "warning" : "default"} variant="outlined" label={`Pending ${pendingAiDraftCount}`} />
-                        <Chip size="small" color={clinicalDraftStats.accepted ? "success" : "default"} variant="outlined" label={`Accepted ${clinicalDraftStats.accepted}`} />
-                        <Chip size="small" color={clinicalDraftStats.rejected ? "default" : "default"} variant="outlined" label={`Rejected ${clinicalDraftStats.rejected}`} />
-                        <Button type="button" size="small" variant="outlined" onClick={() => setAivaDraftsExpanded((current) => !current)}>
-                          {aivaDraftsExpanded ? "Collapse" : "Expand"}
-                        </Button>
-                      </Stack>
+                      <Button type="button" size="small" variant="outlined" disabled={aiBusy || !aiAssistantEnabled} onClick={() => void generateClinicalSummary()}>
+                        Generate summary
+                      </Button>
                     </Stack>
                     <Typography variant="body2" color="text.secondary">
-                      Review all AI-drafted clinical content here before you accept, edit, or reject it.
+                      Generated summary is assistive only. The consultation snapshot above remains the deterministic source of truth.
                     </Typography>
-                    <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
-                      <Button type="button" size="small" variant="contained" disabled={!pendingAiDraftCount || aiBusy} onClick={() => void acceptAllPendingClinicalDrafts()}>
-                        Accept All Pending
-                      </Button>
-                      <Button type="button" size="small" variant="outlined" disabled={!pendingAiDraftCount || aiBusy} onClick={() => void rejectAllPendingClinicalDrafts()}>
-                        Reject All Pending
-                      </Button>
-                      <Button type="button" size="small" variant="outlined" disabled={!clinicalDraftStats.rejected || aiBusy} onClick={() => void clearRejectedClinicalDrafts()}>
-                        Clear Rejected
-                      </Button>
-                      <Chip size="small" variant="outlined" color={pendingAiDraftCount ? "warning" : "default"} label={`Needs review ${Object.values(clinicalAiDrafts).filter((draft) => (draft.status === "DRAFTED" || draft.status === "EDITED") && !canAutoAcceptClinicalDraft(draft.kind)).length}`} />
-                    </Stack>
-                    {(Object.values(clinicalDraftGenerationSteps).some((step) => step.status !== "pending")) ? (
-                      <Card variant="outlined" sx={{ boxShadow: "none" }}>
-                        <CardContent sx={{ p: 1 }}>
-                          <Stack spacing={0.75}>
-                            <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Generation progress</Typography>
-                            <Stack spacing={0.6}>
-                              {(Object.entries(clinicalDraftGenerationSteps) as Array<[ClinicalDraftGenerationStep, ClinicalDraftGenerationStepState]>).map(([step, state]) => (
-                                <Stack key={step} direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
-                                  <Stack direction="row" spacing={0.75} alignItems="center">
-                                    <Typography variant="body2" sx={{ fontWeight: 700 }}>{clinicalDraftGenerationStepLabel(step)}</Typography>
-                                    <Chip
-                                      size="small"
-                                      variant="outlined"
-                                      color={state.status === "done" ? "success" : state.status === "failed" ? "error" : state.status === "generating" ? "warning" : "default"}
-                                      label={state.status}
-                                    />
-                                  </Stack>
-                                  {state.status === "failed" ? (
-                                    <Button type="button" size="small" variant="text" disabled={aiBusy} onClick={() => void generateClinicalDraftStep(step, false)}>
-                                      Retry
-                                    </Button>
-                                  ) : state.message ? (
-                                    <Typography variant="caption" color="text.secondary">{state.message}</Typography>
-                                  ) : null}
-                                </Stack>
-                              ))}
-                            </Stack>
-                          </Stack>
-                        </CardContent>
-                      </Card>
-                    ) : null}
-                    <Collapse in={aivaDraftsExpanded} timeout={200} easing={{ enter: "ease-in-out", exit: "ease-in-out" }} unmountOnExit>
-                      <Stack spacing={1}>
-                        {clinicalDraftEntries.length || latestClinicalReasoningEntry || latestPrescriptionEntry || recommendedTestSuggestions.length ? (
-                          <>
-                            <Typography variant="caption" color="text.secondary">
-                              AI suggestions are assistive. Doctor must verify before use.
-                            </Typography>
-                            <Stack spacing={0.75}>
-                              <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Chief Complaint</Typography>
-                            {renderClinicalAiDraftCard("chiefComplaint")}
-                            </Stack>
-                            <Stack spacing={0.75}>
-                              <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Symptoms</Typography>
-                            {renderClinicalAiDraftCard("symptoms")}
-                            </Stack>
-                            <Stack spacing={0.75}>
-                              <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Diagnosis</Typography>
-                            {renderClinicalAiDraftCard("diagnosis")}
-                            </Stack>
-                            <Stack spacing={0.75}>
-                              <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>SOAP</Typography>
-                            {renderClinicalAiDraftCard("soap")}
-                            </Stack>
-                            <Stack spacing={0.75}>
-                              <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Advice</Typography>
-                            {renderClinicalAiDraftCard("advice")}
-                            </Stack>
-                            <Stack spacing={0.75}>
-                              <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Follow-up</Typography>
-                            {renderClinicalAiDraftCard("followUp")}
-                            </Stack>
-                            <Stack spacing={0.75}>
-                              <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Clinical Reasoning</Typography>
-                              {latestClinicalReasoningEntry ? renderAiAssistEntry(latestClinicalReasoningEntry) : (
-                                <Box sx={{ p: 1.2, border: 1, borderStyle: "dashed", borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
-                                  <Typography variant="body2" color="text.secondary">Generate clinical reasoning to review likely assessment, differentials, red flags, and suggested tests.</Typography>
-                                </Box>
-                              )}
-                            </Stack>
-                            <Stack spacing={0.75}>
-                              <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Prescription Suggestion</Typography>
-                              {latestPrescriptionEntry ? renderAiAssistEntry(latestPrescriptionEntry) : (
-                                <Box sx={{ p: 1.2, border: 1, borderStyle: "dashed", borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
-                                  <Typography variant="body2" color="text.secondary">No prescription suggestion generated yet.</Typography>
-                                </Box>
-                              )}
-                            </Stack>
-                            <Stack spacing={0.75}>
-                              <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Recommended Tests</Typography>
-                              {recommendedTestSuggestions.length ? (
-                                <Card variant="outlined" sx={{ boxShadow: "none" }}>
-                                  <CardContent sx={{ p: 1 }}>
-                                    <Stack spacing={0.75}>
-                                      <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
-                                        {recommendedTestSuggestions.map((test) => (
-                                          <Chip key={test} size="small" variant="outlined" label={test} />
-                                        ))}
-                                      </Stack>
-                                      <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
-                                        <Button type="button" size="small" variant="outlined" disabled={prescriptionReadOnly || !recommendedTestSuggestions.length} onClick={() => setPrescriptionForm((current) => ({ ...current, recommendedTests: [...current.recommendedTests, ...recommendedTestSuggestions.map((test, index) => ({ ...newTestRow(current.recommendedTests.length + index), testName: test }))] }))}>
-                                          Add to recommended tests
-                                        </Button>
-                                        <Button type="button" size="small" variant="outlined" disabled={!recommendedTestSuggestions.length} onClick={() => void navigator.clipboard.writeText(recommendedTestSuggestions.join("\n"))}>
-                                          Copy
-                                        </Button>
-                                      </Stack>
-                                    </Stack>
-                                  </CardContent>
-                                </Card>
-                              ) : (
-                                <Box sx={{ p: 1.2, border: 1, borderStyle: "dashed", borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
-                                  <Typography variant="body2" color="text.secondary">No recommended tests returned yet.</Typography>
-                                </Box>
-                              )}
-                            </Stack>
-                          </>
-                        ) : (
-                          <Box sx={{ p: 1.2, border: 1, borderStyle: "dashed", borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
-                            <Typography variant="body2" color="text.secondary">
-                              No consultation draft generated yet. Use Generate AI Consultation Draft or a section action to start a review.
-                            </Typography>
-                          </Box>
-                        )}
-                      </Stack>
-                    </Collapse>
-                  </Stack>
-                </CardContent>
-              </Card>
-              <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
-                <CardContent sx={{ p: 1.5 }}>
-                  <Stack spacing={1.25}>
-                    <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" alignItems="center">
-                      <Stack direction="row" spacing={0.75} alignItems="center">
-                        <AutoAwesomeRoundedIcon fontSize="small" color="primary" />
-                        <Typography variant="h6" sx={{ fontWeight: 900 }}>Clinical Chat</Typography>
-                      </Stack>
-                      <Chip size="small" variant="outlined" color={aiAssistantEnabled ? "success" : "warning"} label={aiAssistantEnabled ? "AI ready" : "AI unavailable"} />
-                    </Stack>
-                    <Typography variant="body2" color="text.secondary">
-                      Ask anything about this consultation...
-                    </Typography>
-                    {!aiAssistantEnabled ? (
-                      <Box sx={{ p: 1.5, border: 1, borderStyle: "dashed", borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
-                        <Stack spacing={0.35}>
-                          <Typography variant="body2" sx={{ fontWeight: 800 }}>
-                            AI assistant is not enabled for this clinic.
-                          </Typography>
-                          <Typography variant="body2" color="text.secondary">
-                            Ask clinic administrator to enable AIVA clinical assistance.
-                          </Typography>
-                        </Stack>
-                      </Box>
-                    ) : null}
-                    <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
-                      <CardContent sx={{ p: 1 }}>
-                        <Stack spacing={1}>
-                          <Stack spacing={0.75} sx={{ maxHeight: 260, overflow: "auto" }}>
-                            {aivaChatMessages.length ? (
-                              aivaChatMessages.map((message) => (
-                                <Box
-                                  key={message.id}
-                                  sx={{
-                                    display: "flex",
-                                    justifyContent: message.role === "DOCTOR" ? "flex-end" : "flex-start",
-                                  }}
-                                >
-                                  <Box
-                                    sx={{
-                                      maxWidth: "88%",
-                                      p: 1,
-                                      borderRadius: 2,
-                                      border: 1,
-                                      borderColor: message.role === "DOCTOR" ? "primary.light" : "divider",
-                                      bgcolor: message.role === "DOCTOR" ? "primary.50" : "background.paper",
-                                    }}
-                                  >
-                                    <Stack spacing={0.5}>
-                                      <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
-                                        <Typography variant="caption" sx={{ fontWeight: 900 }}>
-                                          {message.role === "DOCTOR" ? "Doctor" : "AIVA"}
-                                        </Typography>
-                                        <Typography variant="caption" color="text.secondary">
-                                          {compactDateTime(message.createdAt)}
-                                        </Typography>
-                                      </Stack>
-                                      <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", lineHeight: 1.5 }}>
-                                        {message.text}
-                                      </Typography>
-                                      {message.role === "AIVA" && message.text.trim() ? (
-                                        <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
-                                          <Button type="button" size="small" variant="outlined" disabled={!message.text.trim()} onClick={() => void navigator.clipboard.writeText(message.text)}>
-                                            Copy
-                                          </Button>
-                                          <Button type="button" size="small" variant="outlined" disabled={readOnly || !message.text.trim()} onClick={() => setConsultationForm((current) => ({ ...current, clinicalNotes: appendTokenLine(current.clinicalNotes, message.text) }))}>
-                                            Add to SOAP
-                                          </Button>
-                                          <Button type="button" size="small" variant="outlined" disabled={readOnly || !message.text.trim()} onClick={() => appendAdviceAndReveal(message.text)}>
-                                            Add to Advice
-                                          </Button>
-                                        </Stack>
-                                      ) : null}
-                                    </Stack>
-                                  </Box>
-                                </Box>
-                              ))
-                            ) : (
-                              <Box sx={{ p: 1.2, border: 1, borderStyle: "dashed", borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
-                                <Stack spacing={0.75}>
-                                  <Typography variant="body2" color="text.secondary">
-                                    Ask anything about this consultation...
-                                  </Typography>
-                                  <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
-                                    {AIVA_QUICK_PROMPTS.map((prompt) => (
-                                      <Chip
-                                        key={prompt}
-                                        size="small"
-                                        variant="outlined"
-                                        clickable={!aiBusy && !aivaQuestionSubmitting}
-                                        label={prompt}
-                                        onClick={() => setAivaClinicalQuestion(prompt)}
-                                      />
-                                    ))}
-                                  </Stack>
-                                </Stack>
-                              </Box>
-                            )}
-                          </Stack>
-                          <TextField
-                            size="small"
-                            fullWidth
-                            label="Ask anything about this consultation"
-                            placeholder="Ask anything about this consultation..."
-                            value={aivaClinicalQuestion}
-                            disabled={aiBusy || aivaQuestionSubmitting || readOnly || !aiAssistantEnabled}
-                            multiline
-                            minRows={2}
-                            onChange={(event) => setAivaClinicalQuestion(event.target.value)}
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter" && !event.shiftKey) {
-                                event.preventDefault();
-                                void submitAivaQuestion();
-                              }
-                            }}
-                          />
-                          <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
-                            <Button type="button" size="small" variant="contained" disabled={!aiAssistantEnabled || !canAskAiva || aivaQuestionSubmitting || aiBusy} onClick={() => void submitAivaQuestion()}>
-                              Ask
-                            </Button>
-                            <Button type="button" size="small" variant="outlined" disabled={!aivaChatMessages.length} onClick={() => setAivaChatDetailsOpen((current) => !current)}>
-                              {aivaChatDetailsOpen ? "Hide Transcript" : "Show Transcript"}
-                            </Button>
-                          </Stack>
-                          <Collapse in={aivaChatDetailsOpen && aivaChatMessages.length > 0} timeout={200} easing={{ enter: "ease-in-out", exit: "ease-in-out" }} unmountOnExit>
-                            <Stack spacing={0.75}>
-                              <Typography variant="caption" color="text.secondary">
-                                Doctor and AIVA messages stay in this session until the consultation is closed.
-                              </Typography>
-                            </Stack>
-                          </Collapse>
-                          <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
-                            <Chip size="small" icon={<PsychologyRoundedIcon fontSize="small" />} clickable={!aiBusy && aiAssistantEnabled} disabled={aiBusy || !aiAssistantEnabled} variant="outlined" label="Suggest diagnosis" onClick={() => void runAiAction("diagnosis")} />
-                            <Chip size="small" icon={<DescriptionRoundedIcon fontSize="small" />} clickable={!aiBusy && aiAssistantEnabled} disabled={aiBusy || !aiAssistantEnabled} variant="outlined" label="Structure SOAP notes" onClick={() => void runAiAction("notes")} />
-                            <Chip size="small" icon={<MedicationRoundedIcon fontSize="small" />} clickable={!aiBusy && aiAssistantEnabled} disabled={aiBusy || !aiAssistantEnabled} variant="outlined" label="Prescription template" onClick={() => void applyAiPrescriptionTemplate()} />
-                            <Chip size="small" icon={<TipsAndUpdatesRoundedIcon fontSize="small" />} clickable={!aiBusy && aiAssistantEnabled} disabled={aiBusy || !aiAssistantEnabled} variant="outlined" label="Patient instructions" onClick={() => void runAiAction("instructions")} />
-                          </Stack>
-                          {aiBusy ? <Typography variant="caption" color="text.secondary">AI assistance is preparing suggestions...</Typography> : null}
-                        </Stack>
-                      </CardContent>
-                    </Card>
-                  </Stack>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent>
-                  <Stack spacing={1.25}>
-                    <Stack direction="row" spacing={0.75} alignItems="center">
-                      <InsightsRoundedIcon fontSize="small" color="primary" />
-                      <Typography variant="h6" sx={{ fontWeight: 900 }}>Clinical Summary</Typography>
-                    </Stack>
-                    <Typography variant="body2" color="text.secondary">
-                      Previous visit summary, chronic history, and recent consultation summary are generated as assistive context only.
-                    </Typography>
-                    <Button type="button" variant="contained" disabled={aiBusy || !aiAssistantEnabled} onClick={() => void generateClinicalSummary()}>Generate summary</Button>
                     {aiSummaryHasState ? (
                       <Stack spacing={1}>
-                        <Card variant="outlined" sx={{ boxShadow: "none" }}>
-                          <CardContent sx={{ p: 1 }}>
-                            <Stack spacing={1}>
-                              <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" alignItems="center">
-                                <Typography variant="subtitle2">Clinical Summary Draft</Typography>
-                                {aiSummaryProviderLabel ? <Chip size="small" variant="outlined" label={`Provider: ${aiSummaryProviderLabel}`} /> : null}
-                                {aiSummaryModelLabel ? <Chip size="small" variant="outlined" label={`Model: ${aiSummaryModelLabel}`} /> : null}
-                                {aiSummaryGeneratedAtLabel ? <Chip size="small" variant="outlined" label={`Generated: ${compactDateTime(aiSummaryGeneratedAtLabel)}`} /> : null}
-                                {clinicalSummary ? <Chip size="small" color={clinicalSummary.fallbackUsed ? "warning" : "success"} label={clinicalSummary.fallbackUsed ? "Fallback used" : "AI ready"} /> : null}
-                              </Stack>
-                              <Alert severity="info">
-                                AI suggestions are assistive only. Doctor must verify before use.
+                        <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" alignItems="center">
+                          <Button size="small" variant="text" onClick={() => setAiClinicalSummaryExpanded((current) => !current)}>
+                            {aiClinicalSummaryExpanded ? "Hide AI Clinical Summary" : "Show AI Clinical Summary"}
+                          </Button>
+                          {aiSummaryProviderLabel ? <Chip size="small" variant="outlined" label={`Provider: ${aiSummaryProviderLabel}`} /> : null}
+                          {aiSummaryModelLabel ? <Chip size="small" variant="outlined" label={`Model: ${aiSummaryModelLabel}`} /> : null}
+                          {aiSummaryGeneratedAtLabel ? <Chip size="small" variant="outlined" label={`Generated: ${compactDateTime(aiSummaryGeneratedAtLabel)}`} /> : null}
+                          {clinicalSummary ? <Chip size="small" color={clinicalSummary.fallbackUsed ? "warning" : "success"} label={clinicalSummary.fallbackUsed ? "Fallback used" : "AI ready"} /> : null}
+                        </Stack>
+                        <Collapse in={aiClinicalSummaryExpanded} timeout={200} easing={{ enter: "ease-in-out", exit: "ease-in-out" }}>
+                          <Stack spacing={1}>
+                            <Alert severity="info">
+                              AI suggestions are assistive only. Doctor must verify before use.
+                            </Alert>
+                            {aiSummaryHasContent ? (
+                              <Box sx={{ p: 1, border: 1, borderColor: "divider", borderRadius: 1, bgcolor: "background.paper", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                                <Typography variant="body2" sx={{ lineHeight: 1.55 }}>{aiSummaryText}</Typography>
+                              </Box>
+                            ) : (
+                              <Alert severity="info" sx={{ py: 0.5 }}>
+                                No AI summary available yet.
                               </Alert>
-                              {aiSummaryHasContent ? (
-                                <Box sx={{ p: 1, border: 1, borderColor: "divider", borderRadius: 1, bgcolor: "background.paper", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-                                  <Typography variant="body2" sx={{ lineHeight: 1.55 }}>{aiSummaryText}</Typography>
-                                </Box>
-                              ) : (
-                                <Alert severity="info" sx={{ py: 0.5 }}>
-                                  No AI summary available yet.
-                                </Alert>
-                              )}
-                              <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
-                                <Button type="button" size="small" variant="outlined" disabled={!aiSummaryText} onClick={() => void copyAiSummaryToClipboard()}>Copy to Summary</Button>
-                                <Button type="button" size="small" variant="outlined" disabled={!aiSummaryText || readOnly} onClick={applyAiSummaryToConsultationNotes}>Apply to Consultation Notes</Button>
-                              </Stack>
-                              {clinicalSummary ? (
-                                <Stack spacing={1}>
-                                  {Array.isArray(clinicalSummary.structuredData["possibleDiagnosisCategories"]) && (clinicalSummary.structuredData["possibleDiagnosisCategories"] as Array<unknown>).length ? (
-                                    <Card variant="outlined" sx={{ boxShadow: "none" }}>
-                                      <CardContent sx={{ p: 1 }}>
-                                        <Typography variant="subtitle2">Possible Diagnosis Categories</Typography>
-                                        {(clinicalSummary.structuredData["possibleDiagnosisCategories"] as Array<Record<string, unknown>>).map((row, idx) => (
-                                          <Typography key={idx} variant="caption" display="block">
-                                            {String(row.name || "Category")} - {String(row.reason || "")} {row.confidence ? `(${String(row.confidence)})` : ""}
-                                          </Typography>
-                                        ))}
-                                      </CardContent>
-                                    </Card>
-                                  ) : null}
-                                  {Array.isArray(clinicalSummary.structuredData["recommendedInvestigations"]) && (clinicalSummary.structuredData["recommendedInvestigations"] as Array<unknown>).length ? (
-                                    <Card variant="outlined" sx={{ boxShadow: "none" }}>
-                                      <CardContent sx={{ p: 1 }}>
-                                        <Typography variant="subtitle2">Recommended Investigations</Typography>
-                                        <Typography variant="caption">{(clinicalSummary.structuredData["recommendedInvestigations"] as Array<unknown>).map((v) => String(v)).join(" • ")}</Typography>
-                                      </CardContent>
-                                    </Card>
-                                  ) : null}
-                                  {Array.isArray(clinicalSummary.structuredData["followUpSuggestions"]) && (clinicalSummary.structuredData["followUpSuggestions"] as Array<unknown>).length ? (
-                                    <Card variant="outlined" sx={{ boxShadow: "none" }}>
-                                      <CardContent sx={{ p: 1 }}>
-                                        <Typography variant="subtitle2">Follow-up Suggestions</Typography>
-                                        <Typography variant="caption">{(clinicalSummary.structuredData["followUpSuggestions"] as Array<unknown>).map((v) => String(v)).join(" • ")}</Typography>
-                                      </CardContent>
-                                    </Card>
-                                  ) : null}
-                                  {Array.isArray(clinicalSummary.structuredData["safetyNotes"]) && (clinicalSummary.structuredData["safetyNotes"] as Array<unknown>).some((v) => String(v).includes("unstructured")) ? (
-                                    <Alert severity="warning">AI returned unstructured text. Review before use.</Alert>
-                                  ) : null}
-                                  {clinicalSummary.suggestedActions?.length ? <Typography variant="caption" color="text.secondary">{clinicalSummary.suggestedActions.join(" · ")}</Typography> : null}
-                                  {clinicalSummary.warnings?.length ? <Typography variant="caption" color="text.secondary">{clinicalSummary.warnings.join(" · ")}</Typography> : null}
-                                </Stack>
-                              ) : null}
+                            )}
+                            <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                              <Button type="button" size="small" variant="outlined" disabled={!aiSummaryText} onClick={() => void copyAiSummaryToClipboard()}>Copy to Summary</Button>
+                              <Button type="button" size="small" variant="outlined" disabled={!aiSummaryText || readOnly} onClick={applyAiSummaryToConsultationNotes}>Apply to Consultation Notes</Button>
                             </Stack>
-                          </CardContent>
-                        </Card>
+                            {clinicalSummary ? (
+                              <Stack spacing={1}>
+                                {Array.isArray(clinicalSummary.structuredData["possibleDiagnosisCategories"]) && (clinicalSummary.structuredData["possibleDiagnosisCategories"] as Array<unknown>).length ? (
+                                  <Card variant="outlined" sx={{ boxShadow: "none" }}>
+                                    <CardContent sx={{ p: 1 }}>
+                                      <Typography variant="subtitle2">Possible Diagnosis Categories</Typography>
+                                      {(clinicalSummary.structuredData["possibleDiagnosisCategories"] as Array<Record<string, unknown>>).map((row, idx) => (
+                                        <Typography key={idx} variant="caption" display="block">
+                                          {String(row.name || "Category")} - {String(row.reason || "")} {row.confidence ? `(${String(row.confidence)})` : ""}
+                                        </Typography>
+                                      ))}
+                                    </CardContent>
+                                  </Card>
+                                ) : null}
+                                {Array.isArray(clinicalSummary.structuredData["recommendedInvestigations"]) && (clinicalSummary.structuredData["recommendedInvestigations"] as Array<unknown>).length ? (
+                                  <Card variant="outlined" sx={{ boxShadow: "none" }}>
+                                    <CardContent sx={{ p: 1 }}>
+                                      <Typography variant="subtitle2">Recommended Investigations</Typography>
+                                      <Typography variant="caption">{(clinicalSummary.structuredData["recommendedInvestigations"] as Array<unknown>).map((v) => String(v)).join(" • ")}</Typography>
+                                    </CardContent>
+                                  </Card>
+                                ) : null}
+                                {Array.isArray(clinicalSummary.structuredData["followUpSuggestions"]) && (clinicalSummary.structuredData["followUpSuggestions"] as Array<unknown>).length ? (
+                                  <Card variant="outlined" sx={{ boxShadow: "none" }}>
+                                    <CardContent sx={{ p: 1 }}>
+                                      <Typography variant="subtitle2">Follow-up Suggestions</Typography>
+                                      <Typography variant="caption">{(clinicalSummary.structuredData["followUpSuggestions"] as Array<unknown>).map((v) => String(v)).join(" • ")}</Typography>
+                                    </CardContent>
+                                  </Card>
+                                ) : null}
+                                {Array.isArray(clinicalSummary.structuredData["safetyNotes"]) && (clinicalSummary.structuredData["safetyNotes"] as Array<unknown>).some((v) => String(v).includes("unstructured")) ? (
+                                  <Alert severity="warning">AI returned unstructured text. Review before use.</Alert>
+                                ) : null}
+                                {clinicalSummary.suggestedActions?.length ? <Typography variant="caption" color="text.secondary">{clinicalSummary.suggestedActions.join(" · ")}</Typography> : null}
+                                {clinicalSummary.warnings?.length ? <Typography variant="caption" color="text.secondary">{clinicalSummary.warnings.join(" · ")}</Typography> : null}
+                              </Stack>
+                            ) : null}
+                          </Stack>
+                        </Collapse>
                       </Stack>
-                    ) : null}
+                    ) : (
+                      <Alert severity="info" sx={{ py: 0.5 }}>
+                        No AI clinical summary available yet.
+                      </Alert>
+                    )}
                   </Stack>
                 </CardContent>
               </Card>
             </Stack>
           </Grid>
-          <Grid size={{ xs: 12, md: 6 }}>
-            <Card>
-              <CardContent>
-                <Stack spacing={0.75}>
-                  <Stack direction="row" spacing={0.75} alignItems="center">
-                    <AutoAwesomeRoundedIcon fontSize="small" color="primary" />
-                    <Typography variant="h6" sx={{ fontWeight: 900 }}>Context Sent to AI</Typography>
-                  </Stack>
-                  <Typography variant="body2" color="text.secondary">
-                    Symptoms, diagnosis, vitals, allergies, chronic conditions, notes, and draft prescription are used contextually. Doctor verification is required before use.
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    AIVA only rewrites and summarizes clinician-entered context.
-                  </Typography>
-                </Stack>
-              </CardContent>
-            </Card>
-          </Grid>
-            </>
-          )}
         </Grid>
       ) : null}
 

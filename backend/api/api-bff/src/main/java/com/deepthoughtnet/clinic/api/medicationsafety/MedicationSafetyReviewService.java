@@ -87,6 +87,10 @@ public class MedicationSafetyReviewService {
     @Transactional
     public MedicationSafetyReviewResponse captureSnapshot(UUID tenantId, UUID consultationId, UUID actorAppUserId, MedicationSafetyEvaluationResult current) {
         MedicationSafetyEvaluationContext context = medicationSafetyService.buildEvaluationContext(tenantId, consultationId);
+        return captureSnapshot(tenantId, context, actorAppUserId, current);
+    }
+
+    private MedicationSafetyReviewResponse captureSnapshot(UUID tenantId, MedicationSafetyEvaluationContext context, UUID actorAppUserId, MedicationSafetyEvaluationResult current) {
         MedicationSafetyEvaluationResult effectiveCurrent = current == null ? medicationSafetyEngine.evaluate(context.request()) : current;
         lockActivePrescription(tenantId, context);
         PrescriptionSafetyReviewEntity existing = latestReview(tenantId, context.prescription() == null ? null : context.prescription().getId());
@@ -125,7 +129,7 @@ public class MedicationSafetyReviewService {
                         "rulesVersion", effectiveCurrent.rulesVersion(),
                         "findings", effectiveCurrent.findings() == null ? 0 : effectiveCurrent.findings().size(),
                         "decisionStatus", saved.getDecisionStatus()
-                ));
+        ));
         return toResponse(saved, context, effectiveCurrent, false, false);
     }
 
@@ -138,8 +142,20 @@ public class MedicationSafetyReviewService {
 
     @Transactional
     public MedicationSafetyReviewResponse runSafetyCheck(UUID tenantId, UUID consultationId, UUID actorAppUserId) {
-        MedicationSafetyEvaluationResult current = medicationSafetyService.evaluateForConsultation(tenantId, consultationId, actorAppUserId);
-        return captureSnapshot(tenantId, consultationId, actorAppUserId, current);
+        MedicationSafetyEvaluationContext context = medicationSafetyService.buildEvaluationContext(tenantId, consultationId);
+        if (context.prescription() == null || context.prescription().getId() == null) {
+            throw new MedicationSafetyGuardException(
+                    HttpStatus.BAD_REQUEST,
+                    "PRESCRIPTION_NOT_SAVED",
+                    "Save the prescription before running Medication Safety.",
+                    null,
+                    null,
+                    null,
+                    List.of()
+            );
+        }
+        MedicationSafetyEvaluationResult current = medicationSafetyEngine.evaluate(context.request());
+        return captureSnapshot(tenantId, context, actorAppUserId, current);
     }
 
     @Transactional

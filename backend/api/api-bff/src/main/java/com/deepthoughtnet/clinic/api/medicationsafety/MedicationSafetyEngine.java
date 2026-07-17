@@ -23,11 +23,15 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 @Component
 public class MedicationSafetyEngine {
+    private static final Logger log = LoggerFactory.getLogger(MedicationSafetyEngine.class);
     private static final String RULES_VERSION = "med-safety-v1";
     private static final DateTimeFormatter HUMAN_DATE_FORMAT = DateTimeFormatter.ofPattern("dd-MMM-yyyy", java.util.Locale.ENGLISH);
     private static final Set<String> RENEAL_SENSITIVE_INGREDIENTS = Set.of("metformin", "diclofenac", "ibuprofen", "naproxen", "ketorolac", "indomethacin", "aceclofenac");
@@ -65,32 +69,36 @@ public class MedicationSafetyEngine {
         List<MedicationSafetyMedicationItem> current = dedupeMedications(request == null ? List.of() : request.currentMedications());
         List<MedicationSafetyFinding> findings = new ArrayList<>();
         List<String> warnings = new ArrayList<>();
-
-        boolean exactDuplicateEvaluated = !proposed.isEmpty();
-        boolean ingredientDuplicateEvaluated = hasAnyIngredientMetadata(proposed);
-        boolean classDuplicateEvaluated = hasAnyClassMetadata(proposed);
-        boolean allergyEvaluated = request != null && request.allergies() != null;
-        boolean conditionRulesEvaluated = request != null;
-        boolean renalEvaluated = request != null && request.renalContext() != null;
-        boolean hepaticEvaluated = request != null && request.hepaticContext() != null;
-        boolean doseEvaluated = !proposed.isEmpty();
+        String traceId = traceId();
+        String evaluationId = deterministicEvaluationId(request, proposed, current);
         boolean interactionEvaluated = false;
-        boolean currentMedicationOverlapEvaluated = !current.isEmpty();
+        log.info(
+                "MED-SAFETY-TRACE stage=EVALUATE_START traceId={} tenantId={} consultationId={} patientId={} prescriptionId={} evaluationId={} medicineCount={} allergyCount={} renalContext={} hepaticContext={}",
+                traceId,
+                request == null ? null : request.tenantId(),
+                request == null ? null : request.consultationId(),
+                request == null ? null : request.patientId(),
+                request == null ? null : request.prescriptionId(),
+                evaluationId,
+                proposed.size(),
+                allergyCount(request),
+                formatRenalContext(request),
+                formatHepaticContext(request)
+        );
 
-        evaluateExactDuplicates(request, proposed, findings, warnings);
-        evaluateIngredientDuplicates(request, proposed, findings, warnings);
-        evaluateClassDuplicates(request, proposed, findings, warnings);
-        evaluateAllergies(request, proposed, findings, warnings);
-        evaluateConditionRules(request, proposed, findings, warnings);
-        evaluateRenalRules(request, proposed, findings, warnings);
-        evaluateHepaticRules(request, proposed, findings, warnings);
-        evaluateDoseAndFrequency(request, proposed, findings, warnings);
-        evaluateInteractionFoundation(request, proposed, findings, warnings);
-        evaluateCurrentMedicationOverlap(request, proposed, current, findings, warnings);
-        evaluateRenalContextTransparency(request, findings);
+        boolean exactDuplicateEvaluated = !proposed.isEmpty() && executeRule("ALLERGY_DUPLICATE_EXACT", traceId, evaluationId, request, proposed, current, findings, warnings, () -> evaluateExactDuplicates(request, proposed, findings, warnings));
+        boolean ingredientDuplicateEvaluated = hasAnyIngredientMetadata(proposed) && executeRule("ALLERGY_DUPLICATE_INGREDIENT", traceId, evaluationId, request, proposed, current, findings, warnings, () -> evaluateIngredientDuplicates(request, proposed, findings, warnings));
+        boolean classDuplicateEvaluated = hasAnyClassMetadata(proposed) && executeRule("ALLERGY_DUPLICATE_CLASS", traceId, evaluationId, request, proposed, current, findings, warnings, () -> evaluateClassDuplicates(request, proposed, findings, warnings));
+        boolean allergyEvaluated = request != null && request.allergies() != null && executeRule("ALLERGY_CONFLICT", traceId, evaluationId, request, proposed, current, findings, warnings, () -> evaluateAllergies(request, proposed, findings, warnings));
+        boolean conditionRulesEvaluated = request != null && executeRule("CONDITION_RULES", traceId, evaluationId, request, proposed, current, findings, warnings, () -> evaluateConditionRules(request, proposed, findings, warnings));
+        boolean renalEvaluated = request != null && request.renalContext() != null && executeRule("RENAL_DOSING", traceId, evaluationId, request, proposed, current, findings, warnings, () -> evaluateRenalRules(request, proposed, findings, warnings));
+        boolean hepaticEvaluated = request != null && request.hepaticContext() != null && executeRule("HEPATIC_DOSING", traceId, evaluationId, request, proposed, current, findings, warnings, () -> evaluateHepaticRules(request, proposed, findings, warnings));
+        boolean doseEvaluated = !proposed.isEmpty() && executeRule("MAX_DOSE", traceId, evaluationId, request, proposed, current, findings, warnings, () -> evaluateDoseAndFrequency(request, proposed, findings, warnings));
+        executeRule("DRUG_INTERACTION", traceId, evaluationId, request, proposed, current, findings, warnings, () -> evaluateInteractionFoundation(request, proposed, findings, warnings));
+        boolean currentMedicationOverlapEvaluated = !current.isEmpty() && executeRule("CURRENT_MEDICATION_OVERLAP", traceId, evaluationId, request, proposed, current, findings, warnings, () -> evaluateCurrentMedicationOverlap(request, proposed, current, findings, warnings));
+        executeRule("RENAL_CONTEXT_TRANSPARENCY", traceId, evaluationId, request, proposed, current, findings, warnings, () -> evaluateRenalContextTransparency(request, findings));
 
         MedicationSafetySeverity overallSeverity = overallSeverity(findings, warnings);
-        String evaluationId = deterministicEvaluationId(request, proposed, current);
         return new MedicationSafetyEvaluationResult(
                 evaluationId,
                 OffsetDateTime.now(),
@@ -581,6 +589,122 @@ public class MedicationSafetyEngine {
             return MedicationSafetySeverity.NOT_EVALUATED;
         }
         return MedicationSafetySeverity.NONE;
+    }
+
+    private boolean executeRule(String ruleName,
+                                String traceId,
+                                String evaluationId,
+                                MedicationSafetyEvaluationRequest request,
+                                List<MedicationSafetyMedicationItem> proposed,
+                                List<MedicationSafetyMedicationItem> current,
+                                List<MedicationSafetyFinding> findings,
+                                List<String> warnings,
+                                Runnable rule) {
+        log.info(
+                "MED-SAFETY-TRACE stage=RULE_START traceId={} evaluationId={} rule={} consultationId={} prescriptionId={} patientId={} medicineCount={} allergyCount={} renalContext={} hepaticContext={}",
+                traceId,
+                evaluationId,
+                ruleName,
+                request == null ? null : request.consultationId(),
+                request == null ? null : request.prescriptionId(),
+                request == null ? null : request.patientId(),
+                proposed == null ? 0 : proposed.size(),
+                allergyCount(request),
+                formatRenalContext(request),
+                formatHepaticContext(request)
+        );
+        try {
+            rule.run();
+            log.info(
+                    "MED-SAFETY-TRACE stage=RULE_DONE traceId={} evaluationId={} rule={} consultationId={} prescriptionId={} patientId={} medicineCount={} allergyCount={} renalContext={} hepaticContext={}",
+                    traceId,
+                    evaluationId,
+                    ruleName,
+                    request == null ? null : request.consultationId(),
+                    request == null ? null : request.prescriptionId(),
+                    request == null ? null : request.patientId(),
+                    proposed == null ? 0 : proposed.size(),
+                    allergyCount(request),
+                    formatRenalContext(request),
+                    formatHepaticContext(request)
+            );
+            return true;
+        } catch (RuntimeException ex) {
+            Throwable root = rootCause(ex);
+            log.error(
+                    "MED-SAFETY-TRACE stage=RULE_ERROR traceId={} evaluationId={} rule={} consultationId={} prescriptionId={} patientId={} exceptionClass={} message={} rootCauseClass={} rootCauseMessage={} medicineCount={} allergyCount={} renalContext={} hepaticContext={}",
+                    traceId,
+                    evaluationId,
+                    ruleName,
+                    request == null ? null : request.consultationId(),
+                    request == null ? null : request.prescriptionId(),
+                    request == null ? null : request.patientId(),
+                    ex.getClass().getName(),
+                    ex.getMessage(),
+                    root == null ? null : root.getClass().getName(),
+                    root == null ? null : root.getMessage(),
+                    proposed == null ? 0 : proposed.size(),
+                    allergyCount(request),
+                    formatRenalContext(request),
+                    formatHepaticContext(request),
+                    ex
+            );
+            String reason = "Missing reference dataset";
+            warnings.add(ruleName + " status=UNAVAILABLE reason=" + reason);
+            findings.add(dataQualityFinding(
+                    request,
+                    "MED_RULE_UNAVAILABLE_" + ruleName,
+                    ruleName + " unavailable",
+                    reason,
+                    "This rule could not be evaluated safely and was marked unavailable.",
+                    MedicationSafetySeverity.NOT_EVALUATED
+            ));
+            return false;
+        }
+    }
+
+    private int allergyCount(MedicationSafetyEvaluationRequest request) {
+        if (request == null || request.allergies() == null || request.allergies().terms() == null) {
+            return 0;
+        }
+        return (int) request.allergies().terms().stream().filter(this::hasText).count();
+    }
+
+    private String formatRenalContext(MedicationSafetyEvaluationRequest request) {
+        MedicationSafetyEvaluationRequest.RenalSnapshot renal = request == null ? null : request.renalContext();
+        if (renal == null) {
+            return "absent";
+        }
+        return "present creatinine=" + firstNonBlank(renal.creatinine(), "-")
+                + " egfr=" + firstNonBlank(renal.egfr(), "-")
+                + " status=" + firstNonBlank(renal.verificationStatus(), "-");
+    }
+
+    private String formatHepaticContext(MedicationSafetyEvaluationRequest request) {
+        MedicationSafetyEvaluationRequest.HepaticSnapshot hepatic = request == null ? null : request.hepaticContext();
+        if (hepatic == null) {
+            return "absent";
+        }
+        return "present alt=" + firstNonBlank(hepatic.alt(), "-")
+                + " ast=" + firstNonBlank(hepatic.ast(), "-")
+                + " bilirubin=" + firstNonBlank(hepatic.bilirubin(), "-")
+                + " status=" + firstNonBlank(hepatic.verificationStatus(), "-");
+    }
+
+    private Throwable rootCause(Throwable throwable) {
+        if (throwable == null) {
+            return null;
+        }
+        Throwable current = throwable;
+        while (current.getCause() != null && current.getCause() != current) {
+            current = current.getCause();
+        }
+        return current;
+    }
+
+    private String traceId() {
+        String traceId = MDC.get("medSafetyTraceId");
+        return hasText(traceId) ? traceId : UUID.randomUUID().toString();
     }
 
     private MedicationSafetyFinding dataQualityFinding(MedicationSafetyEvaluationRequest request,

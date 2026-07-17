@@ -7,8 +7,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.deepthoughtnet.clinic.api.errors.GlobalRestExceptionHandler;
 import com.deepthoughtnet.clinic.api.security.DoctorAssignmentSecurityService;
 import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
 import com.deepthoughtnet.clinic.platform.core.context.TenantId;
@@ -93,6 +95,32 @@ class MedicationSafetyControllerTest {
 
         verify(medicationSafetyReviewService).runSafetyCheck(tenantId, consultationId, actorAppUserId);
         verify(medicationSafetyService, never()).evaluateForConsultation(tenantId, consultationId, actorAppUserId);
+    }
+
+    @Test
+    void runSafetyCheckReturnsControlledValidationWhenPrescriptionNotSaved() throws Exception {
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(
+                new MedicationSafetyController(medicationSafetyService, medicationSafetyReviewService, doctorAssignmentSecurityService)
+        ).setControllerAdvice(new GlobalRestExceptionHandler()).build();
+
+        UUID tenantId = UUID.randomUUID();
+        UUID consultationId = UUID.randomUUID();
+        UUID actorAppUserId = UUID.randomUUID();
+        RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), actorAppUserId, "sub", Set.of("DOCTOR"), "DOCTOR", "cid"));
+        when(medicationSafetyReviewService.runSafetyCheck(tenantId, consultationId, actorAppUserId)).thenThrow(new MedicationSafetyGuardException(
+                org.springframework.http.HttpStatus.BAD_REQUEST,
+                "PRESCRIPTION_NOT_SAVED",
+                "Save the prescription before running Medication Safety.",
+                null,
+                null,
+                null,
+                List.of()
+        ));
+
+        mockMvc.perform(post("/api/consultations/{consultationId}/prescription/safety/run", consultationId))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("PRESCRIPTION_NOT_SAVED"))
+                .andExpect(jsonPath("$.message").value("Save the prescription before running Medication Safety."));
     }
 
     private MedicationSafetyEvaluationResult sampleEvaluation() {

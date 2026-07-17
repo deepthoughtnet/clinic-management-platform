@@ -189,6 +189,94 @@ class MedicationSafetyServiceTest {
     }
 
     @Test
+    void handlesMissingMetadataAndNullCollectionsWithoutThrowing() {
+        UUID tenantId = UUID.randomUUID();
+        UUID consultationId = UUID.randomUUID();
+        UUID patientId = UUID.randomUUID();
+        UUID doctorUserId = UUID.randomUUID();
+
+        ConsultationEntity consultation = ConsultationEntity.create(tenantId, patientId, doctorUserId, null);
+        PatientEntity patient = PatientEntity.create(tenantId, null);
+        patient.update(
+                "Rohan",
+                "Sharma",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                true
+        );
+        PrescriptionEntity prescription = PrescriptionEntity.create(tenantId, patientId, doctorUserId, consultationId, null, "RX-1");
+        prescription.update("Diagnosis", "Advice", null);
+
+        when(consultationRepository.findByTenantIdAndId(tenantId, consultationId)).thenReturn(java.util.Optional.of(consultation));
+        when(patientRepository.findByTenantIdAndId(tenantId, patientId)).thenReturn(java.util.Optional.of(patient));
+        when(prescriptionRepository.findFirstByTenantIdAndConsultationIdOrderByVersionNumberDesc(tenantId, consultationId)).thenReturn(java.util.Optional.of(prescription));
+        when(medicineRepository.findByTenantIdOrderByMedicineNameAsc(tenantId)).thenReturn(null);
+        when(prescriptionMedicineRepository.findByTenantIdAndPrescriptionIdOrderBySortOrderAsc(tenantId, prescription.getId())).thenReturn(null);
+        when(clinicalContextService.buildClinicalContext(tenantId, patient.getId(), consultationId)).thenReturn(new ClinicalContextResponse(
+                tenantId,
+                patient.getId(),
+                consultationId,
+                null,
+                List.of(),
+                null,
+                null,
+                new ClinicalContextResponse.IntakeSummary(
+                        true,
+                        "Fever",
+                        new ClinicalContextResponse.VitalsSnapshot(null, null, null, null, null, null, null, null, null, null, null, null, null),
+                        null,
+                        List.of(),
+                        null,
+                        null,
+                        null,
+                        null
+                ),
+                null,
+                null,
+                null,
+                new ClinicalContextResponse.LongitudinalMemory(null, null, null, null, null, null, null, null, null, null),
+                new ClinicalContextResponse.LongitudinalClinicalContext(null, null, null, null, null),
+                null,
+                null,
+                null,
+                OffsetDateTime.now()
+        ));
+        when(medicationSafetyEngine.evaluate(any())).thenAnswer(invocation -> new MedicationSafetyEvaluationResult(
+                "eval-null-meta",
+                OffsetDateTime.now(),
+                prescription.getId(),
+                MedicationSafetySeverity.NONE,
+                List.of(),
+                List.of("Missing reference dataset"),
+                new MedicationSafetyCoverage(true, true, true, true, true, true, true, true, false, true, "UNAVAILABLE"),
+                "med-safety-v1",
+                new MedicationSafetyEvaluationResult.SourceSnapshotMetadata(tenantId, patientId, consultationId, prescription.getId(), PrescriptionStatus.DRAFT.name())
+        ));
+
+        MedicationSafetyEvaluationResult result = medicationSafetyService.evaluateForConsultation(tenantId, consultationId, UUID.randomUUID());
+
+        assertThat(result.evaluationId()).isEqualTo("eval-null-meta");
+        verify(medicationSafetyEngine).evaluate(any());
+    }
+
+    @Test
     void passesLongitudinalRenalContextIntoMedicationSafetyRequest() {
         UUID tenantId = UUID.randomUUID();
         UUID consultationId = UUID.randomUUID();

@@ -108,7 +108,7 @@ class MedicationSafetyReviewServiceTest {
     void blocksWarningFinalizationWhenNotAcknowledged() throws Exception {
         SafetyFixture fixture = fixtureWithWarningFinding();
         when(medicationSafetyService.buildEvaluationContext(fixture.tenantId, fixture.consultationId)).thenReturn(fixture.context);
-        when(medicationSafetyEngine.evaluate(any())).thenReturn(fixture.current);
+        when(medicationSafetyService.evaluateForConsultation(fixture.tenantId, fixture.consultationId, fixture.actorAppUserId)).thenReturn(fixture.current);
         PrescriptionSafetyReviewEntity review = PrescriptionSafetyReviewEntity.create(
                 fixture.tenantId,
                 fixture.patientId,
@@ -326,7 +326,7 @@ class MedicationSafetyReviewServiceTest {
     @Test
     void evaluateAndPersistCreatesSnapshotForActiveDraft() throws Exception {
         SafetyFixture fixture = new SafetyFixture("f-info", MedicationSafetySeverity.INFO, MedicationSafetyFindingCategory.DUPLICATE_MEDICATION);
-        when(medicationSafetyService.evaluateForConsultation(fixture.tenantId, fixture.consultationId, fixture.actorAppUserId)).thenReturn(fixture.current);
+        when(medicationSafetyEngine.evaluate(any())).thenReturn(fixture.current);
         when(medicationSafetyService.buildEvaluationContext(fixture.tenantId, fixture.consultationId)).thenReturn(fixture.context);
         when(reviewRepository.findFirstByTenantIdAndPrescriptionIdOrderByUpdatedAtDesc(fixture.tenantId, fixture.prescription.getId()))
                 .thenReturn(java.util.Optional.empty(), java.util.Optional.empty());
@@ -352,6 +352,30 @@ class MedicationSafetyReviewServiceTest {
     }
 
     @Test
+    void runSafetyCheckRejectsUnsavedPrescriptionBeforeInvokingEngine() {
+        SafetyFixture fixture = fixtureWithWarningFinding();
+        MedicationSafetyEvaluationContext noPrescriptionContext = new MedicationSafetyEvaluationContext(
+                fixture.context.consultation(),
+                fixture.context.patient(),
+                null,
+                fixture.context.clinicalContext(),
+                fixture.context.request(),
+                fixture.context.prescriptionHash(),
+                fixture.context.patientContextHash(),
+                fixture.context.snapshotHash()
+        );
+        when(medicationSafetyService.buildEvaluationContext(fixture.tenantId, fixture.consultationId)).thenReturn(noPrescriptionContext);
+
+        assertThatThrownBy(() -> medicationSafetyReviewService.runSafetyCheck(fixture.tenantId, fixture.consultationId, fixture.actorAppUserId))
+                .isInstanceOf(MedicationSafetyGuardException.class)
+                .extracting(ex -> ((MedicationSafetyGuardException) ex).getCode())
+                .isEqualTo("PRESCRIPTION_NOT_SAVED");
+
+        verify(medicationSafetyService, never()).evaluateForConsultation(fixture.tenantId, fixture.consultationId, fixture.actorAppUserId);
+        verify(reviewRepository, never()).save(any());
+    }
+
+    @Test
     void runSafetyCheckPersistsSnapshotForCurrentDraftAndReadPathMarksItStaleAfterChange() throws Exception {
         SafetyFixture fixture = fixtureWithWarningFinding();
         MedicationSafetyEvaluationContext changedContext = new MedicationSafetyEvaluationContext(
@@ -365,7 +389,7 @@ class MedicationSafetyReviewServiceTest {
                 fixture.context.snapshotHash()
         );
 
-        when(medicationSafetyService.evaluateForConsultation(fixture.tenantId, fixture.consultationId, fixture.actorAppUserId)).thenReturn(fixture.current);
+        when(medicationSafetyEngine.evaluate(any())).thenReturn(fixture.current);
         when(medicationSafetyService.buildEvaluationContext(fixture.tenantId, fixture.consultationId)).thenReturn(fixture.context, changedContext);
         when(reviewRepository.findFirstByTenantIdAndPrescriptionIdOrderByUpdatedAtDesc(fixture.tenantId, fixture.prescription.getId()))
                 .thenReturn(java.util.Optional.empty(), java.util.Optional.empty());
@@ -393,7 +417,7 @@ class MedicationSafetyReviewServiceTest {
     @Test
     void runSafetyCheckPersistsInfoOnlySnapshotForActiveDraft() throws Exception {
         SafetyFixture fixture = new SafetyFixture("f-info", MedicationSafetySeverity.INFO, MedicationSafetyFindingCategory.DUPLICATE_MEDICATION);
-        when(medicationSafetyService.evaluateForConsultation(fixture.tenantId, fixture.consultationId, fixture.actorAppUserId)).thenReturn(fixture.current);
+        when(medicationSafetyEngine.evaluate(any())).thenReturn(fixture.current);
         when(medicationSafetyService.buildEvaluationContext(fixture.tenantId, fixture.consultationId)).thenReturn(fixture.context);
         when(reviewRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -431,7 +455,7 @@ class MedicationSafetyReviewServiceTest {
                 null,
                 null
         );
-        when(medicationSafetyService.evaluateForConsultation(fixture.tenantId, fixture.consultationId, fixture.actorAppUserId)).thenReturn(fixture.current);
+        when(medicationSafetyEngine.evaluate(any())).thenReturn(fixture.current);
         when(medicationSafetyService.buildEvaluationContext(fixture.tenantId, fixture.consultationId)).thenReturn(fixture.context);
         when(reviewRepository.findFirstByTenantIdAndPrescriptionIdOrderByUpdatedAtDesc(fixture.tenantId, fixture.prescription.getId()))
                 .thenReturn(java.util.Optional.of(currentReview));
@@ -468,7 +492,7 @@ class MedicationSafetyReviewServiceTest {
         );
         staleLatest.markStale();
 
-        when(medicationSafetyService.evaluateForConsultation(fixture.tenantId, fixture.consultationId, fixture.actorAppUserId)).thenReturn(fixture.current);
+        when(medicationSafetyEngine.evaluate(any())).thenReturn(fixture.current);
         when(medicationSafetyService.buildEvaluationContext(fixture.tenantId, fixture.consultationId)).thenReturn(fixture.context);
         when(reviewRepository.findFirstByTenantIdAndPrescriptionIdOrderByUpdatedAtDesc(fixture.tenantId, fixture.prescription.getId()))
                 .thenReturn(java.util.Optional.of(staleLatest));

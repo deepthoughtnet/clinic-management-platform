@@ -25,6 +25,7 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -65,36 +66,63 @@ public class MedicationSafetyService {
 
     @Transactional(readOnly = true)
     public MedicationSafetyEvaluationResult evaluateForConsultation(UUID tenantId, UUID consultationId, UUID actorAppUserId) {
-        MedicationSafetyEvaluationContext context = buildEvaluationContext(tenantId, consultationId);
-        MedicationSafetyEvaluationRequest request = context.request();
-        MedicationSafetyEvaluationResult result = medicationSafetyEngine.evaluate(request);
-        log.info(
-                "[MED-SAFETY-TRACE] tenantId={} patientId={} consultationId={} prescriptionId={} rulesVersion={} ruleCount={} findingCount={} severity={}",
-                tenantId,
-                context.patient().getId(),
-                consultationId,
-                request.prescriptionId(),
-                result.rulesVersion(),
-                10,
-                result.findings() == null ? 0 : result.findings().size(),
-                result.overallSeverity()
-        );
-        log.info(
-                "[MED-SAFETY-RENAL-TRACE] consultationId={} renalContextPresent={} creatininePresent={} egfrPresent={} observedOn={} verificationStatus={} renalRulesEvaluated={} renalFindings={} renalSourceDocumentIds={}",
-                consultationId,
-                request.renalContext() != null,
-                request.renalContext() != null && hasText(request.renalContext().creatinine()),
-                request.renalContext() != null && hasText(request.renalContext().egfr()),
-                request.renalContext() == null ? null : firstNonBlank(request.renalContext().creatinineDate(), request.renalContext().egfrDate()),
-                request.renalContext() == null ? null : request.renalContext().verificationStatus(),
-                result.evaluationCoverage() != null && "EVALUATED".equalsIgnoreCase(result.evaluationCoverage().renalCoverageStatus()),
-                result.findings() == null ? 0 : result.findings().stream().filter(finding -> finding != null && finding.ruleCode() != null && finding.ruleCode().startsWith("MED_RENAL")).count(),
-                request.renalContext() == null ? List.of() : request.renalContext().sourceDocumentIds()
-        );
-        return result;
+        String traceId = traceId();
+        boolean injected = !traceId.equals(MDC.get("medSafetyTraceId"));
+        if (injected) {
+            MDC.put("medSafetyTraceId", traceId);
+        }
+        try {
+            log.info(
+                    "MED-SAFETY-TRACE stage=START traceId={} tenantId={} consultationId={} patientId={} prescriptionId={} actorAppUserId={}",
+                    traceId,
+                    tenantId,
+                    consultationId,
+                    null,
+                    null,
+                    actorAppUserId
+            );
+            MedicationSafetyEvaluationContext context = buildEvaluationContext(tenantId, consultationId);
+            MedicationSafetyEvaluationRequest request = context.request();
+            MedicationSafetyEvaluationResult result = medicationSafetyEngine.evaluate(request);
+            log.info(
+                    "MED-SAFETY-TRACE stage=SERVICE_RESPONSE traceId={} tenantId={} patientId={} consultationId={} prescriptionId={} evaluationId={} rulesVersion={} findingCount={} severity={}",
+                    traceId,
+                    tenantId,
+                    context.patient().getId(),
+                    consultationId,
+                    request.prescriptionId(),
+                    result.evaluationId(),
+                    result.rulesVersion(),
+                    result.findings() == null ? 0 : result.findings().size(),
+                    result.overallSeverity()
+            );
+            log.info(
+                    "MED-SAFETY-TRACE stage=SERVICE_RENAL traceId={} tenantId={} consultationId={} patientId={} prescriptionId={} evaluationId={} renalContextPresent={} creatininePresent={} egfrPresent={} observedOn={} verificationStatus={} renalRulesEvaluated={} renalFindings={} renalSourceDocumentIds={}",
+                    traceId,
+                    tenantId,
+                    consultationId,
+                    context.patient().getId(),
+                    request.prescriptionId(),
+                    result.evaluationId(),
+                    request.renalContext() != null,
+                    request.renalContext() != null && hasText(request.renalContext().creatinine()),
+                    request.renalContext() != null && hasText(request.renalContext().egfr()),
+                    request.renalContext() == null ? null : firstNonBlank(request.renalContext().creatinineDate(), request.renalContext().egfrDate()),
+                    request.renalContext() == null ? null : request.renalContext().verificationStatus(),
+                    result.evaluationCoverage() != null && "EVALUATED".equalsIgnoreCase(result.evaluationCoverage().renalCoverageStatus()),
+                    result.findings() == null ? 0 : result.findings().stream().filter(finding -> finding != null && finding.ruleCode() != null && finding.ruleCode().startsWith("MED_RENAL")).count(),
+                    request.renalContext() == null ? List.of() : request.renalContext().sourceDocumentIds()
+            );
+            return result;
+        } finally {
+            if (injected) {
+                MDC.remove("medSafetyTraceId");
+            }
+        }
     }
 
     MedicationSafetyEvaluationContext buildEvaluationContext(UUID tenantId, UUID consultationId) {
+        String traceId = traceId();
         ConsultationEntity consultation = consultationRepository.findByTenantIdAndId(tenantId, consultationId)
                 .orElseThrow(() -> new IllegalArgumentException("Consultation not found"));
         PatientEntity patient = patientRepository.findByTenantIdAndId(tenantId, consultation.getPatientId())
@@ -106,6 +134,35 @@ public class MedicationSafetyService {
         String prescriptionHash = medicationSafetySnapshotHasher.prescriptionHash(request, prescription == null ? null : prescription.getVersionNumber());
         String patientContextHash = medicationSafetySnapshotHasher.patientContextHash(request);
         String snapshotHash = medicationSafetySnapshotHasher.evaluationHash(prescriptionHash, patientContextHash, medicationSafetyEngine.rulesVersion());
+        log.info(
+                "MED-SAFETY-TRACE stage=CONTEXT_ENRICHED traceId={} tenantId={} consultationId={} patientId={} prescriptionId={} clinicalContextPresent={} clinicalContextChars={} aiPromptContextChars={} latestVitalsPresent={} conditionCount={} labCount={} reportCount={} longitudinalFindingCount={} requestMedicationCount={} allergyCount={} renalContextPresent={} hepaticContextPresent={}",
+                traceId,
+                tenantId,
+                consultationId,
+                patient.getId(),
+                prescription == null ? null : prescription.getId(),
+                clinicalContext != null,
+                clinicalContext == null ? 0 : safeStringLength(clinicalContext.clinicalContextJson()),
+                clinicalContext == null ? 0 : safeStringLength(clinicalContext.aiPromptContext()),
+                clinicalContext != null && clinicalContext.intakeSummary() != null && clinicalContext.intakeSummary().latestVitals() != null,
+                clinicalContext == null || clinicalContext.longitudinalMemory() == null || clinicalContext.longitudinalMemory().knownConditions() == null ? 0 : clinicalContext.longitudinalMemory().knownConditions().size(),
+                clinicalContext == null || clinicalContext.labIntelligence() == null ? 0 : countNonBlankStrings(
+                        clinicalContext.labIntelligence().abnormalValues(),
+                        clinicalContext.labIntelligence().previousTrends(),
+                        clinicalContext.labIntelligence().pendingInvestigations()
+                ),
+                clinicalContext == null || clinicalContext.documentIntelligence() == null ? 0 : countNonBlankStrings(
+                        clinicalContext.documentIntelligence().recentReports(),
+                        clinicalContext.documentIntelligence().radiology(),
+                        clinicalContext.documentIntelligence().referrals(),
+                        clinicalContext.documentIntelligence().dischargeSummaries()
+                ),
+                clinicalContext == null || clinicalContext.longitudinalClinicalContext() == null || clinicalContext.longitudinalClinicalContext().importantHistoricalFindings() == null ? 0 : clinicalContext.longitudinalClinicalContext().importantHistoricalFindings().size(),
+                request.proposedMedications() == null ? 0 : request.proposedMedications().size(),
+                request.allergies() == null || request.allergies().terms() == null ? 0 : request.allergies().terms().size(),
+                request.renalContext() != null,
+                request.hepaticContext() != null
+        );
         return new MedicationSafetyEvaluationContext(consultation, patient, prescription, clinicalContext, request, prescriptionHash, patientContextHash, snapshotHash);
     }
 
@@ -143,10 +200,7 @@ public class MedicationSafetyService {
                 patient.getAgeYears(),
                 patient.getGender() == null ? null : patient.getGender().name(),
                 null,
-                Map.of(
-                        "patientNumber", patient.getPatientNumber(),
-                        "consultationStatus", consultation.getStatus() == null ? null : consultation.getStatus().name()
-                )
+                buildSourceVerificationMetadata(patient, consultation)
         );
     }
 
@@ -154,10 +208,14 @@ public class MedicationSafetyService {
         if (prescription == null) {
             return List.of();
         }
-        Map<String, MedicineEntity> medicinesByName = medicineRepository.findByTenantIdOrderByMedicineNameAsc(tenantId).stream()
+        List<MedicineEntity> medicines = medicineRepository.findByTenantIdOrderByMedicineNameAsc(tenantId);
+        Map<String, MedicineEntity> medicinesByName = (medicines == null ? List.<MedicineEntity>of() : medicines).stream()
                 .filter(medicine -> medicine != null && hasText(medicine.getMedicineName()))
                 .collect(Collectors.toMap(medicine -> normalizeProductName(medicine.getMedicineName()), medicine -> medicine, (left, right) -> left, LinkedHashMap::new));
         List<PrescriptionMedicineEntity> lines = prescriptionMedicineRepository.findByTenantIdAndPrescriptionIdOrderBySortOrderAsc(tenantId, prescription.getId());
+        if (lines == null) {
+            return List.of();
+        }
         List<MedicationSafetyMedicationItem> proposed = new ArrayList<>();
         for (PrescriptionMedicineEntity line : lines) {
             String lookupKey = normalizeProductName(line.getMedicineName());
@@ -182,8 +240,11 @@ public class MedicationSafetyService {
 
     private List<MedicationSafetyMedicationItem> loadCurrentMedications(ClinicalContextResponse clinicalContext, PatientEntity patient) {
         LinkedHashMap<String, MedicationSafetyMedicationItem> current = new LinkedHashMap<>();
-        if (clinicalContext != null && clinicalContext.longitudinalMemory() != null && clinicalContext.longitudinalMemory().longTermMedications() != null) {
-            clinicalContext.longitudinalMemory().longTermMedications().stream()
+        List<ClinicalContextResponse.LongitudinalConcept> longTermMedications = clinicalContext == null || clinicalContext.longitudinalMemory() == null
+                ? null
+                : clinicalContext.longitudinalMemory().longTermMedications();
+        if (longTermMedications != null) {
+            longTermMedications.stream()
                     .filter(item -> item != null && StringUtils.hasText(item.label()))
                     .forEach(item -> {
                         String key = normalizeMedicineName(item.label());
@@ -213,8 +274,11 @@ public class MedicationSafetyService {
                         ));
                     });
         }
-        if (clinicalContext != null && clinicalContext.patientSummary() != null && clinicalContext.patientSummary().currentMedications() != null) {
-            clinicalContext.patientSummary().currentMedications().stream()
+        List<String> currentMedications = clinicalContext == null || clinicalContext.patientSummary() == null
+                ? null
+                : clinicalContext.patientSummary().currentMedications();
+        if (currentMedications != null) {
+            currentMedications.stream()
                     .filter(this::hasText)
                     .forEach(name -> current.putIfAbsent(normalizeMedicineName(name), new MedicationSafetyMedicationItem(
                             null,
@@ -395,8 +459,11 @@ public class MedicationSafetyService {
         if (patient != null && hasText(patient.getExistingConditions())) {
             values.addAll(splitFreeText(patient.getExistingConditions()));
         }
-        if (clinicalContext != null && clinicalContext.longitudinalMemory() != null && clinicalContext.longitudinalMemory().knownConditions() != null) {
-            clinicalContext.longitudinalMemory().knownConditions().stream()
+        List<ClinicalContextResponse.LongitudinalConcept> knownConditions = clinicalContext == null || clinicalContext.longitudinalMemory() == null
+                ? null
+                : clinicalContext.longitudinalMemory().knownConditions();
+        if (knownConditions != null) {
+            knownConditions.stream()
                     .map(item -> item == null ? null : item.label())
                     .filter(this::hasText)
                     .forEach(values::add);
@@ -583,5 +650,44 @@ public class MedicationSafetyService {
             capitalizeNext = false;
         }
         return builder.toString().trim();
+    }
+
+    private Map<String, Object> buildSourceVerificationMetadata(PatientEntity patient, ConsultationEntity consultation) {
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        if (patient != null && hasText(patient.getPatientNumber())) {
+            metadata.put("patientNumber", patient.getPatientNumber());
+        }
+        if (consultation != null && consultation.getStatus() != null) {
+            metadata.put("consultationStatus", consultation.getStatus().name());
+        }
+        return metadata;
+    }
+
+    private int safeStringLength(String value) {
+        return value == null ? 0 : value.length();
+    }
+
+    @SafeVarargs
+    private final int countNonBlankStrings(List<String>... groups) {
+        if (groups == null || groups.length == 0) {
+            return 0;
+        }
+        int count = 0;
+        for (List<String> group : groups) {
+            if (group == null) {
+                continue;
+            }
+            for (String value : group) {
+                if (hasText(value)) {
+                    count++;
+                }
+            }
+        }
+        return count;
+    }
+
+    private String traceId() {
+        String traceId = MDC.get("medSafetyTraceId");
+        return hasText(traceId) ? traceId : UUID.randomUUID().toString();
     }
 }

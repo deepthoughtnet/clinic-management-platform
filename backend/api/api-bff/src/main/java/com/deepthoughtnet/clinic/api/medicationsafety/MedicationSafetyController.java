@@ -3,6 +3,9 @@ package com.deepthoughtnet.clinic.api.medicationsafety;
 import com.deepthoughtnet.clinic.api.security.DoctorAssignmentSecurityService;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -16,6 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
 @Validated
 @RequestMapping("/api/consultations/{consultationId}/prescription/safety")
 public class MedicationSafetyController {
+    private static final Logger log = LoggerFactory.getLogger(MedicationSafetyController.class);
     private final MedicationSafetyService medicationSafetyService;
     private final MedicationSafetyReviewService medicationSafetyReviewService;
     private final DoctorAssignmentSecurityService doctorAssignmentSecurityService;
@@ -43,7 +47,32 @@ public class MedicationSafetyController {
         UUID tenantId = RequestContextHolder.requireTenantId();
         doctorAssignmentSecurityService.requireConsultationAccess(tenantId, consultationId);
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
-        return medicationSafetyReviewService.runSafetyCheck(tenantId, consultationId, actorAppUserId);
+        String traceId = UUID.randomUUID().toString();
+        MDC.put("medSafetyTraceId", traceId);
+        try {
+            log.info(
+                    "MED-SAFETY-TRACE stage=CONTROLLER_START traceId={} tenantId={} consultationId={} actorAppUserId={}",
+                    traceId,
+                    tenantId,
+                    consultationId,
+                    actorAppUserId
+            );
+            MedicationSafetyReviewResponse response = medicationSafetyReviewService.runSafetyCheck(tenantId, consultationId, actorAppUserId);
+            log.info(
+                    "MED-SAFETY-TRACE stage=CONTROLLER_RESPONSE traceId={} tenantId={} consultationId={} prescriptionId={} reviewId={} decisionStatus={} requiredAction={} actionableFindingCount={}",
+                    traceId,
+                    tenantId,
+                    consultationId,
+                    response.prescriptionId(),
+                    response.reviewId(),
+                    response.decisionStatus(),
+                    response.requiredAction(),
+                    response.actionableFindingCount()
+            );
+            return response;
+        } finally {
+            MDC.remove("medSafetyTraceId");
+        }
     }
 
     @GetMapping("/review")
