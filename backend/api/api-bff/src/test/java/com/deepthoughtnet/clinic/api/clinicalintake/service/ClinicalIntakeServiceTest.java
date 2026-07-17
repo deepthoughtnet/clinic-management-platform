@@ -68,8 +68,8 @@ class ClinicalIntakeServiceTest {
         assertThat(saved.bmi()).isNotNull();
         assertThat(saved.recordedByName()).isEqualTo("Reception Desk");
 
-        when(intakeRepository.findByTenantIdAndPatientIdAndAppointmentIdOrderByCreatedAtDesc(tenantId, patientId, appointmentId))
-                .thenReturn(List.of(PatientClinicalIntakeEntity.create(
+        when(intakeRepository.findFirstByTenantIdAndPatientIdAndAppointmentIdOrderByCreatedAtDesc(tenantId, patientId, appointmentId))
+                .thenReturn(Optional.of(PatientClinicalIntakeEntity.create(
                         UUID.randomUUID(),
                         tenantId,
                         patientId,
@@ -96,7 +96,50 @@ class ClinicalIntakeServiceTest {
                         actorAppUserId
                 )));
 
-        assertThat(service.latest(tenantId, patientId, appointmentId)).isPresent();
-        assertThat(service.latest(tenantId, patientId, appointmentId).orElseThrow().status()).isEqualTo("INTAKE_COMPLETE");
+        assertThat(service.latest(tenantId, patientId, appointmentId, null)).isPresent();
+        assertThat(service.latest(tenantId, patientId, appointmentId, null).orElseThrow().status()).isEqualTo("INTAKE_COMPLETE");
+    }
+
+    @Test
+    void latestFallsBackToConsultationLinkedIntakeWhenAppointmentMismatch() {
+        UUID tenantId = UUID.randomUUID();
+        UUID patientId = UUID.randomUUID();
+        UUID consultationId = UUID.randomUUID();
+        UUID appointmentId = UUID.randomUUID();
+        PatientClinicalIntakeRepository intakeRepository = mock(PatientClinicalIntakeRepository.class);
+        PatientRepository patientRepository = mock(PatientRepository.class);
+        AppUserRepository appUserRepository = mock(AppUserRepository.class);
+        ClinicalIntakeService service = new ClinicalIntakeService(patientRepository, intakeRepository, appUserRepository);
+
+        when(intakeRepository.findFirstByTenantIdAndPatientIdAndAppointmentIdOrderByCreatedAtDesc(tenantId, patientId, appointmentId)).thenReturn(Optional.empty());
+        when(intakeRepository.findFirstByTenantIdAndPatientIdAndConsultationIdOrderByCreatedAtDesc(tenantId, patientId, consultationId)).thenReturn(Optional.of(PatientClinicalIntakeEntity.create(
+                UUID.randomUUID(),
+                tenantId,
+                patientId,
+                null,
+                consultationId,
+                "Follow-up",
+                175.0,
+                82.0,
+                26.8,
+                138,
+                86,
+                96,
+                38.4,
+                TemperatureUnit.CELSIUS,
+                97,
+                18,
+                186.0,
+                4,
+                "Linked to consultation",
+                UUID.randomUUID(),
+                "Doctor",
+                true,
+                UUID.randomUUID(),
+                UUID.randomUUID()
+        )));
+
+        assertThat(service.latest(tenantId, patientId, appointmentId, consultationId)).isPresent();
+        assertThat(service.latest(tenantId, patientId, appointmentId, consultationId).orElseThrow().consultationId()).isEqualTo(consultationId);
     }
 }

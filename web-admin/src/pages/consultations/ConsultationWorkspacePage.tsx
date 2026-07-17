@@ -50,6 +50,7 @@ import HistoryRoundedIcon from "@mui/icons-material/HistoryRounded";
 import ChatBubbleOutlineRoundedIcon from "@mui/icons-material/ChatBubbleOutlineRounded";
 import HealingRoundedIcon from "@mui/icons-material/HealingRounded";
 import PsychologyRoundedIcon from "@mui/icons-material/PsychologyRounded";
+import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import FavoriteRoundedIcon from "@mui/icons-material/FavoriteRounded";
 import CallRoundedIcon from "@mui/icons-material/CallRounded";
 import EventRoundedIcon from "@mui/icons-material/EventRounded";
@@ -95,6 +96,7 @@ import {
   getConsultation,
   getConsultationAiSummary,
   getClinicalDocument,
+  getClinicalIntake,
   getLabOrders,
   getLabTests,
   getConsultationPrescription,
@@ -145,6 +147,7 @@ import {
   type PatientDetail,
   type ClinicalDocument,
   type ClinicalContextResponse,
+  type ClinicalIntakeResponse,
   type ClinicalReasoningResult,
   type ClinicalDocumentType,
   type PatientTimelineItem,
@@ -165,6 +168,7 @@ import { PatientIntelligenceCard } from "../../components/clinical/PatientIntell
 import { PatientDocumentUploadDialog } from "../../components/clinical/PatientDocumentUploadDialog";
 import { useClinicalReasoning } from "../../hooks/useClinicalReasoning";
 import { formatRelativeBookingTime } from "../../components/workflow/workflowHelpers";
+import { clinicalIntakeToVitalsSnapshot, mergeConsultationVitalsFromIntake } from "./vitalsHydration";
 
 type ConsultationFormState = {
   chiefComplaints: string;
@@ -425,9 +429,9 @@ const MEDICINE_ROUTE_LABELS: Record<(typeof MEDICINE_ROUTE_OPTIONS)[number], str
 const AI_DISABLED_MESSAGE = "AI assistance is not enabled or configured for this clinic.";
 const AI_PROVIDER_NOT_CONFIGURED_MESSAGE = "AI module is enabled for this clinic, but AI provider is not configured.";
 const SOAP_TRACE_ENABLED = import.meta.env.DEV || import.meta.env.VITE_JEEVANAM_AI_SOAP_TRACE_ENABLED === "true";
-const AIVA_DISABLED_TITLE = "AIVA Clinical Assistant is not enabled";
-const AIVA_DISABLED_DESCRIPTION = "AI-powered suggestions, clinical chat, report interpretation and summaries are currently disabled for this clinic.";
-const AIVA_DISABLED_NOTE = "Ask the clinic administrator to enable AI features from clinic settings.";
+const AIVA_DISABLED_TITLE = "AI Clinical Assistance Unavailable";
+const AIVA_DISABLED_DESCRIPTION = "AI-assisted patient insights are currently disabled by your organization.";
+const AIVA_DISABLED_NOTE = "You can continue documenting the consultation, diagnoses, prescriptions, investigations and laboratory orders normally.";
 
 const FREQUENCIES = ["1-0-0", "0-1-0", "0-0-1", "1-0-1", "1-1-1"];
 const DURATIONS = ["3 days", "5 days", "7 days", "10 days", "15 days"];
@@ -2396,6 +2400,18 @@ function formatContextValue(value: string | number | null | undefined) {
   return String(value);
 }
 
+function normalizeAiStatusMessage(message: string | null | undefined) {
+  const normalized = String(message || "").trim();
+  if (!normalized) {
+    return null;
+  }
+  const lowered = normalized.toLowerCase();
+  if (lowered.includes("ai_copilot") || lowered.includes("module is disabled") || lowered.includes("not enabled for this clinic") || lowered.includes("disabled for this clinic")) {
+    return AIVA_DISABLED_DESCRIPTION;
+  }
+  return normalized;
+}
+
 export default function ConsultationWorkspacePage() {
   const auth = useAuth();
   const navigate = useNavigate();
@@ -2413,6 +2429,7 @@ export default function ConsultationWorkspacePage() {
   const [documentReviewFilter, setDocumentReviewFilter] = React.useState<"ALL" | "PENDING_REVIEW" | "VERIFIED" | "NEEDS_ATTENTION">("ALL");
   const [uploadDialogOpen, setUploadDialogOpen] = React.useState(false);
   const [clinicalContext, setClinicalContext] = React.useState<ClinicalContextResponse | null>(null);
+  const [clinicalIntake, setClinicalIntake] = React.useState<ClinicalIntakeResponse | null>(null);
   const [clinicalContextLoading, setClinicalContextLoading] = React.useState(false);
   const [clinicalContextError, setClinicalContextError] = React.useState<string | null>(null);
   const [patientTimeline, setPatientTimeline] = React.useState<PatientTimelineItem[]>([]);
@@ -2786,17 +2803,18 @@ export default function ConsultationWorkspacePage() {
   const refreshClinicalArtifacts = React.useCallback(async (
     patientId: string,
     consultationValue: Consultation | null,
-    options?: { includeContext?: boolean; keepLoadingState?: boolean },
+    options?: { includeContext?: boolean; includeIntake?: boolean; keepLoadingState?: boolean },
   ) => {
     if (!auth.accessToken || !auth.tenantId || !patientId) {
       return;
     }
     const includeContext = options?.includeContext ?? true;
+    const includeIntake = options?.includeIntake ?? true;
     if (options?.keepLoadingState !== false) {
       setClinicalContextLoading(true);
     }
     try {
-      const [documents, timelineRows, context] = await Promise.all([
+      const [documents, timelineRows, context, intake] = await Promise.all([
         getPatientDocuments(auth.accessToken, auth.tenantId, patientId),
         getPatientTimeline(auth.accessToken, auth.tenantId, patientId),
         includeContext
@@ -2805,9 +2823,21 @@ export default function ConsultationWorkspacePage() {
               return null;
             })
           : Promise.resolve(null),
+        includeIntake
+          ? getClinicalIntake(
+              auth.accessToken,
+              auth.tenantId,
+              patientId,
+              consultationValue?.appointmentId || null,
+              consultationValue?.id || null,
+            ).catch(() => null)
+          : Promise.resolve(null),
       ]);
       setClinicalDocuments(documents);
       setPatientTimeline(timelineRows);
+      if (includeIntake) {
+        setClinicalIntake(intake);
+      }
       if (includeContext) {
         setClinicalContext(context);
         if (context) {
@@ -2847,7 +2877,7 @@ export default function ConsultationWorkspacePage() {
     try {
       const updated = await reprocessClinicalDocumentExtraction(auth.accessToken, auth.tenantId, documentId);
       upsertClinicalDocumentRow(updated);
-      void refreshClinicalArtifacts(consultation.patientId, consultation, { includeContext: true, keepLoadingState: false });
+      void refreshClinicalArtifacts(consultation.patientId, consultation, { includeContext: true, includeIntake: true, keepLoadingState: false });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to reprocess AI extraction");
       setDocumentRowBusyId((current) => (current === documentId ? null : current));
@@ -2871,7 +2901,7 @@ export default function ConsultationWorkspacePage() {
           ? `Memory repaired: ${result.insertedConceptCount} concepts inserted, ${result.filteredPollutedConceptCount} polluted concepts filtered${correctedText}`
           : `Memory repair failed: ${result.message}`
       );
-      await refreshClinicalArtifacts(consultation.patientId, consultation, { includeContext: true, keepLoadingState: false });
+      await refreshClinicalArtifacts(consultation.patientId, consultation, { includeContext: true, includeIntake: true, keepLoadingState: false });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to repair clinical memory");
     } finally {
@@ -3108,7 +3138,7 @@ export default function ConsultationWorkspacePage() {
       return;
     }
     const intervalId = window.setInterval(() => {
-      void refreshClinicalArtifacts(consultation.patientId, consultation, { includeContext: true, keepLoadingState: false });
+      void refreshClinicalArtifacts(consultation.patientId, consultation, { includeContext: false, includeIntake: false, keepLoadingState: false });
     }, 6000);
     return () => {
       window.clearInterval(intervalId);
@@ -3142,6 +3172,7 @@ export default function ConsultationWorkspacePage() {
       setError(null);
       setMedicineCatalogWarning(null);
       setClinicalContext(null);
+      setClinicalIntake(null);
       setClinicalContextError(null);
       setClinicalContextLoading(false);
       setClinicalSummary(null);
@@ -3234,7 +3265,7 @@ export default function ConsultationWorkspacePage() {
         savedConsultationSoapSnapshotRef.current = serializeConsultationSoapForm(initialSoapForm);
 
         setClinicalContextLoading(true);
-        const [detail, previousRx, documents, timelineRows, context] = await Promise.all([
+        const [detail, previousRx, documents, timelineRows, context, intake] = await Promise.all([
           getPatient(auth.accessToken, auth.tenantId, consult.patientId),
           getPatientPrescriptions(auth.accessToken, auth.tenantId, consult.patientId),
           getPatientDocuments(auth.accessToken, auth.tenantId, consult.patientId),
@@ -3246,6 +3277,7 @@ export default function ConsultationWorkspacePage() {
             }
             return null;
           }),
+          getClinicalIntake(auth.accessToken, auth.tenantId, consult.patientId, consult.appointmentId, consult.id).catch(() => null),
         ]);
         if (cancelled) return;
 
@@ -3254,9 +3286,18 @@ export default function ConsultationWorkspacePage() {
         setClinicalDocuments(documents);
         setPatientTimeline(timelineRows);
         setClinicalContext(context);
+        setClinicalIntake(intake);
         if (context) {
           setClinicalContextError(null);
         }
+        const intakeVitals = context?.intakeSummary?.latestVitals || null;
+        const hydratedConsultationForm = mergeConsultationVitalsFromIntake(
+          emptyConsultationForm(consult),
+          intakeVitals,
+        );
+        setConsultationForm(hydratedConsultationForm);
+        consultationFormRef.current = hydratedConsultationForm;
+        savedConsultationSnapshotRef.current = serializeConsultationForm(hydratedConsultationForm);
 
         try {
           const rx = await getConsultationPrescription(auth.accessToken, auth.tenantId, consult.id);
@@ -3314,7 +3355,7 @@ export default function ConsultationWorkspacePage() {
         if (cancelled) return;
         const ready = status.effectiveStatus === "READY";
         setAiAvailable(ready);
-        setAiStatusMessage(ready ? null : (status.message || AI_DISABLED_MESSAGE));
+        setAiStatusMessage(ready ? null : (normalizeAiStatusMessage(status.message) || AI_DISABLED_MESSAGE));
       } catch {
         if (!cancelled) {
           setAiAvailable(false);
@@ -3498,6 +3539,34 @@ export default function ConsultationWorkspacePage() {
   );
   const canGenerateClinicalDraft = Boolean(auth.accessToken && auth.tenantId && consultation && patient && aiAvailable && !aiBusy);
   const aiAssistantEnabled = Boolean(aiAvailable && canRunAi);
+  const patientSnapshotFallback = React.useMemo(() => {
+    const patientName = [patientRow?.firstName, patientRow?.lastName].filter(Boolean).join(" ").trim() || patientRow?.patientNumber || consultation?.patientName || null;
+    return {
+      patientName,
+      ageYears: patientRow?.ageYears ?? null,
+      gender: patientRow?.gender ?? null,
+      bloodGroup: patientRow?.bloodGroup ?? null,
+      allergies: patientRow?.allergies ?? null,
+      existingConditions: patientRow?.existingConditions ?? null,
+      longTermMedications: patientRow?.longTermMedications ?? null,
+      lastConsultationDate: patient?.previousConsultations?.find((row) => row.id !== consultation?.id)?.createdAt || consultation?.createdAt || null,
+    };
+  }, [
+    consultation?.createdAt,
+    consultation?.patientName,
+    consultation?.id,
+    patient?.previousConsultations,
+    patientRow?.ageYears,
+    patientRow?.allergies,
+    patientRow?.bloodGroup,
+    patientRow?.existingConditions,
+    patientRow?.firstName,
+    patientRow?.gender,
+    patientRow?.lastName,
+    patientRow?.longTermMedications,
+    patientRow?.patientNumber,
+  ]);
+  const intakeVitals = clinicalContext?.intakeSummary?.latestVitals || clinicalIntakeToVitalsSnapshot(clinicalIntake);
   const diagnosisSectionSubtitle = aiAssistantEnabled ? "Suggestions with inline AI" : "Manual diagnosis entry";
   const clinicalDraftEntries = React.useMemo(
     () => (Object.values(clinicalAiDrafts) as ClinicalAiDraftState[]).filter((draft) => draft.generatedAt || draft.error || draft.status !== "DRAFTED" || draft.draftText.trim()),
@@ -3778,7 +3847,7 @@ export default function ConsultationWorkspacePage() {
     openLabOrderPreparation([row]);
   }, [openLabOrderPreparation]);
   const aiUnavailableCard = (
-    <Box sx={{ p: 1.35, border: 1, borderStyle: "dashed", borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
+    <Alert severity="info" role="status" icon={<InfoOutlinedIcon fontSize="inherit" />} sx={{ alignItems: "flex-start" }}>
       <Stack spacing={0.45}>
         <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>
           {AIVA_DISABLED_TITLE}
@@ -3790,7 +3859,7 @@ export default function ConsultationWorkspacePage() {
           {AIVA_DISABLED_NOTE}
         </Typography>
       </Stack>
-    </Box>
+    </Alert>
   );
   const selectedLabOrder = React.useMemo(
     () => (selectedLabOrderId ? labOrders.find((order) => order.id === selectedLabOrderId) || null : null),
@@ -4228,7 +4297,6 @@ export default function ConsultationWorkspacePage() {
   const currentBmiCategory = bmiCategory(currentBmi);
   const lastBmi = calculateBmi(lastConsultation?.weightKg?.toString() || "", lastConsultation?.heightCm?.toString() || "");
   const lastBmiCategory = bmiCategory(lastBmi);
-  const intakeVitals = clinicalContext?.intakeSummary?.latestVitals || null;
   const previousVitals = {
     bloodPressureSystolic: lastConsultation?.bloodPressureSystolic ?? null,
     bloodPressureDiastolic: lastConsultation?.bloodPressureDiastolic ?? null,
@@ -8657,14 +8725,12 @@ export default function ConsultationWorkspacePage() {
               iconPosition="start"
               sx={workspaceTabSx}
             />
-            {aiAssistantEnabled ? (
-              <Tab
-                label="AI Assist"
-                icon={<AutoAwesomeRoundedIcon fontSize="small" />}
-                iconPosition="start"
-                sx={workspaceTabSx}
-              />
-            ) : null}
+            <Tab
+              label="AI Assist"
+              icon={<AutoAwesomeRoundedIcon fontSize="small" />}
+              iconPosition="start"
+              sx={workspaceTabSx}
+            />
           </Tabs>
         </CardContent>
       </Card>
@@ -8672,7 +8738,7 @@ export default function ConsultationWorkspacePage() {
       {activeTab === 0 ? (
         <Card sx={{ boxShadow: "none", overflow: "visible", borderColor: "divider" }}>
           <CardContent sx={{ p: 0.75, "&:last-child": { pb: 0.75 } }}>
-            <Grid container spacing={0.65} alignItems="stretch" sx={{ minHeight: 0 }}>
+            <Grid container spacing={0.65} alignItems="flex-start" sx={{ minHeight: 0 }}>
               <Grid size={{ xs: 12 }}>
                 <WorkflowStrip text="Patient Review → Clinical Assessment → Diagnosis → Treatment → Complete" />
               </Grid>
@@ -9807,9 +9873,7 @@ export default function ConsultationWorkspacePage() {
                 sx={{
                   minWidth: 0,
                   minHeight: 0,
-                  position: { xl: "sticky" },
-                  top: { xl: 16 },
-                  alignSelf: { xl: "flex-start" },
+                  alignSelf: "flex-start",
                 }}
               >
                 <Stack
@@ -9821,10 +9885,8 @@ export default function ConsultationWorkspacePage() {
                     gap: 0.85,
                     minWidth: 0,
                     minHeight: 0,
-                    overflowX: "hidden",
-                    overflowY: { xl: "auto" },
+                    overflow: "visible",
                     pr: 0,
-                    maxHeight: { xl: "calc(100vh - 32px)" },
                   }}
                 >
                   <Box ref={patientIntelligenceRef}>
@@ -9833,6 +9895,8 @@ export default function ConsultationWorkspacePage() {
                     loading={clinicalContextLoading}
                     error={clinicalContextError}
                     highlightLabLabel={clinicalReasoningInvestigationHighlightKey}
+                    aiEnabled={aiAssistantEnabled}
+                    patientSnapshotFallback={patientSnapshotFallback}
                     onViewSourceDocument={(documentId) => void openClinicalDocumentById(documentId)}
                   />
                   </Box>
@@ -9915,7 +9979,16 @@ export default function ConsultationWorkspacePage() {
                             SOAP notes
                           </Button>
                         </Box>
-                        {aiStatusMessage ? <Alert severity="warning">{aiStatusMessage}</Alert> : null}
+                        {aiStatusMessage ? (
+                          <Alert
+                            severity={aiStatusMessage === AIVA_DISABLED_DESCRIPTION ? "info" : "warning"}
+                            role={aiStatusMessage === AIVA_DISABLED_DESCRIPTION ? "status" : undefined}
+                            icon={aiStatusMessage === AIVA_DISABLED_DESCRIPTION ? <InfoOutlinedIcon fontSize="inherit" /> : undefined}
+                            sx={aiStatusMessage === AIVA_DISABLED_DESCRIPTION ? { alignItems: "flex-start" } : undefined}
+                          >
+                            {aiStatusMessage}
+                          </Alert>
+                        ) : null}
                         <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
                           <CardContent sx={{ p: 1 }}>
                             <Stack spacing={1}>
@@ -10026,7 +10099,7 @@ export default function ConsultationWorkspacePage() {
                       <Box
                         sx={{
                           display: "grid",
-                          gridTemplateColumns: { xs: "1fr", md: "repeat(2, minmax(0, 1fr))", xl: "repeat(2, minmax(0, 1fr))" },
+                          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
                           gap: 0.75,
                           alignItems: "stretch",
                           minHeight: 0,
@@ -10136,7 +10209,7 @@ export default function ConsultationWorkspacePage() {
                       <Box
                         sx={{
                           display: "grid",
-                          gridTemplateColumns: { xs: "1fr", md: "repeat(2, minmax(0, 1fr))" },
+                          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
                           gap: 0.75,
                           alignItems: "stretch",
                           minHeight: 0,
@@ -13016,144 +13089,158 @@ export default function ConsultationWorkspacePage() {
             <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2, height: "100%" }}>
               <CardContent sx={{ p: 1.5 }}>
                 <Stack spacing={1.25}>
-                  <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
-                    <Stack direction="row" spacing={0.75} alignItems="center">
-                      <AutoAwesomeRoundedIcon fontSize="small" color="primary" />
-                      <Typography variant="h6" sx={{ fontWeight: 900 }}>Clinical Chat</Typography>
-                    </Stack>
-                    <Chip size="small" variant="outlined" color={aiAssistantEnabled ? "success" : "warning"} label={aiAssistantEnabled ? "AI ready" : "AI unavailable"} />
-                  </Stack>
-                  <Typography variant="body2" color="text.secondary">
-                    Ask AIVA about this consultation. Review every response before using it.
-                  </Typography>
-                  {!aiAssistantEnabled ? aiUnavailableCard : null}
-                  <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
-                    <CardContent sx={{ p: 1 }}>
-                      <Stack spacing={1}>
-                        <Stack spacing={0.75} sx={{ maxHeight: 260, overflow: "auto" }}>
-                          {aivaChatMessages.length ? (
-                            aivaChatMessages.map((message) => (
-                              <Box
-                                key={message.id}
-                                sx={{
-                                  display: "flex",
-                                  justifyContent: message.role === "DOCTOR" ? "flex-end" : "flex-start",
-                                }}
-                              >
+                  {aiAssistantEnabled ? (
+                    <>
+                      <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                        <Stack direction="row" spacing={0.75} alignItems="center">
+                          <AutoAwesomeRoundedIcon fontSize="small" color="primary" />
+                          <Typography variant="h6" sx={{ fontWeight: 900 }}>Clinical Chat</Typography>
+                        </Stack>
+                        <Chip size="small" variant="outlined" color="success" label="AI ready" />
+                      </Stack>
+                      <Typography variant="body2" color="text.secondary">
+                        Ask AIVA about this consultation. Review every response before using it.
+                      </Typography>
+                    </>
+                  ) : null}
+                  {aiAssistantEnabled ? (
+                    <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
+                      <CardContent sx={{ p: 1 }}>
+                        <Stack spacing={1}>
+                          <Stack spacing={0.75} sx={{ maxHeight: 260, overflow: "auto" }}>
+                            {aivaChatMessages.length ? (
+                              aivaChatMessages.map((message) => (
                                 <Box
+                                  key={message.id}
                                   sx={{
-                                    maxWidth: "88%",
-                                    p: 1,
-                                    borderRadius: 2,
-                                    border: 1,
-                                    borderColor: message.role === "DOCTOR" ? "primary.light" : "divider",
-                                    bgcolor: message.role === "DOCTOR" ? "primary.50" : "background.paper",
+                                    display: "flex",
+                                    justifyContent: message.role === "DOCTOR" ? "flex-end" : "flex-start",
                                   }}
                                 >
-                                  <Stack spacing={0.5}>
-                                    <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
-                                      <Typography variant="caption" sx={{ fontWeight: 900 }}>
-                                        {message.role === "DOCTOR" ? "Doctor" : "AIVA"}
-                                      </Typography>
-                                      <Typography variant="caption" color="text.secondary">
-                                        {compactDateTime(message.createdAt)}
-                                      </Typography>
-                                    </Stack>
-                                    <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", lineHeight: 1.5 }}>
-                                      {message.text}
-                                    </Typography>
-                                    {message.role === "AIVA" && message.text.trim() ? (
-                                      <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
-                                        <Button type="button" size="small" variant="outlined" disabled={!message.text.trim()} onClick={() => void navigator.clipboard.writeText(message.text)}>
-                                          Copy
-                                        </Button>
-                                        <Button type="button" size="small" variant="outlined" disabled={readOnly || !message.text.trim()} onClick={() => setConsultationForm((current) => ({ ...current, clinicalNotes: appendTokenLine(current.clinicalNotes, message.text) }))}>
-                                          Add to SOAP
-                                        </Button>
-                                        <Button type="button" size="small" variant="outlined" disabled={readOnly || !message.text.trim()} onClick={() => appendAdviceAndReveal(message.text)}>
-                                          Add to Advice
-                                        </Button>
+                                  <Box
+                                    sx={{
+                                      maxWidth: "88%",
+                                      p: 1,
+                                      borderRadius: 2,
+                                      border: 1,
+                                      borderColor: message.role === "DOCTOR" ? "primary.light" : "divider",
+                                      bgcolor: message.role === "DOCTOR" ? "primary.50" : "background.paper",
+                                    }}
+                                  >
+                                    <Stack spacing={0.5}>
+                                      <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                                        <Typography variant="caption" sx={{ fontWeight: 900 }}>
+                                          {message.role === "DOCTOR" ? "Doctor" : "AIVA"}
+                                        </Typography>
+                                        <Typography variant="caption" color="text.secondary">
+                                          {compactDateTime(message.createdAt)}
+                                        </Typography>
                                       </Stack>
-                                    ) : null}
-                                  </Stack>
+                                      <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", lineHeight: 1.5 }}>
+                                        {message.text}
+                                      </Typography>
+                                      {message.role === "AIVA" && message.text.trim() ? (
+                                        <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
+                                          <Button type="button" size="small" variant="outlined" disabled={!message.text.trim()} onClick={() => void navigator.clipboard.writeText(message.text)}>
+                                            Copy
+                                          </Button>
+                                          <Button type="button" size="small" variant="outlined" disabled={readOnly || !message.text.trim()} onClick={() => setConsultationForm((current) => ({ ...current, clinicalNotes: appendTokenLine(current.clinicalNotes, message.text) }))}>
+                                            Add to SOAP
+                                          </Button>
+                                          <Button type="button" size="small" variant="outlined" disabled={readOnly || !message.text.trim()} onClick={() => appendAdviceAndReveal(message.text)}>
+                                            Add to Advice
+                                          </Button>
+                                        </Stack>
+                                      ) : null}
+                                    </Stack>
+                                  </Box>
                                 </Box>
-                              </Box>
-                            ))
-                          ) : (
-                            <Box sx={{ p: 1.2, border: 1, borderStyle: "dashed", borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
-                              <Typography variant="body2" color="text.secondary">
-                                Ask anything about this consultation. Use the prompt shortcuts below for common questions.
-                              </Typography>
-                            </Box>
-                          )}
-                        </Stack>
-                        <Stack spacing={0.75}>
-                          <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Prompt shortcuts</Typography>
-                          <Stack spacing={0.75}>
-                            {AI_ASSIST_PROMPT_GROUPS.map((group) => (
-                              <Stack key={group.label} spacing={0.5}>
-                                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.3 }}>
-                                  {group.label}
+                              ))
+                            ) : (
+                              <Box sx={{ p: 1.2, border: 1, borderStyle: "dashed", borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
+                                <Typography variant="body2" color="text.secondary">
+                                  Ask anything about this consultation. Use the prompt shortcuts below for common questions.
                                 </Typography>
-                                <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
-                                  {group.prompts.map((prompt) => (
-                                    <Chip
-                                      key={prompt}
-                                      size="small"
-                                      variant="outlined"
-                                      clickable={!aiBusy && !aivaQuestionSubmitting && aiAssistantEnabled}
-                                      disabled={aiBusy || aivaQuestionSubmitting || !aiAssistantEnabled}
-                                      label={prompt}
-                                      onClick={() => setAivaClinicalQuestion(prompt)}
-                                    />
-                                  ))}
+                              </Box>
+                            )}
+                          </Stack>
+                          <Stack spacing={0.75}>
+                            <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Prompt shortcuts</Typography>
+                            <Stack spacing={0.75}>
+                              {AI_ASSIST_PROMPT_GROUPS.map((group) => (
+                                <Stack key={group.label} spacing={0.5}>
+                                  <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.3 }}>
+                                    {group.label}
+                                  </Typography>
+                                  <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                    {group.prompts.map((prompt) => (
+                                      <Chip
+                                        key={prompt}
+                                        size="small"
+                                        variant="outlined"
+                                        clickable={!aiBusy && !aivaQuestionSubmitting && aiAssistantEnabled}
+                                        disabled={aiBusy || aivaQuestionSubmitting || !aiAssistantEnabled}
+                                        label={prompt}
+                                        onClick={() => setAivaClinicalQuestion(prompt)}
+                                      />
+                                    ))}
+                                  </Stack>
                                 </Stack>
+                              ))}
+                              <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                <Chip size="small" icon={<PsychologyRoundedIcon fontSize="small" />} clickable={!aiBusy && aiAssistantEnabled} disabled={aiBusy || !aiAssistantEnabled} variant="outlined" label="Suggest diagnosis" onClick={() => void runAiAction("diagnosis")} />
+                                <Chip size="small" icon={<DescriptionRoundedIcon fontSize="small" />} clickable={!aiBusy && aiAssistantEnabled} disabled={aiBusy || !aiAssistantEnabled} variant="outlined" label="Structure SOAP notes" onClick={() => void runAiAction("notes")} />
+                                <Chip size="small" icon={<MedicationRoundedIcon fontSize="small" />} clickable={!aiBusy && aiAssistantEnabled} disabled={aiBusy || !aiAssistantEnabled} variant="outlined" label="Prescription template" onClick={() => void applyAiPrescriptionTemplate()} />
+                                <Chip size="small" icon={<TipsAndUpdatesRoundedIcon fontSize="small" />} clickable={!aiBusy && aiAssistantEnabled} disabled={aiBusy || !aiAssistantEnabled} variant="outlined" label="Patient instructions" onClick={() => void runAiAction("instructions")} />
                               </Stack>
-                            ))}
-                            <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
-                              <Chip size="small" icon={<PsychologyRoundedIcon fontSize="small" />} clickable={!aiBusy && aiAssistantEnabled} disabled={aiBusy || !aiAssistantEnabled} variant="outlined" label="Suggest diagnosis" onClick={() => void runAiAction("diagnosis")} />
-                              <Chip size="small" icon={<DescriptionRoundedIcon fontSize="small" />} clickable={!aiBusy && aiAssistantEnabled} disabled={aiBusy || !aiAssistantEnabled} variant="outlined" label="Structure SOAP notes" onClick={() => void runAiAction("notes")} />
-                              <Chip size="small" icon={<MedicationRoundedIcon fontSize="small" />} clickable={!aiBusy && aiAssistantEnabled} disabled={aiBusy || !aiAssistantEnabled} variant="outlined" label="Prescription template" onClick={() => void applyAiPrescriptionTemplate()} />
-                              <Chip size="small" icon={<TipsAndUpdatesRoundedIcon fontSize="small" />} clickable={!aiBusy && aiAssistantEnabled} disabled={aiBusy || !aiAssistantEnabled} variant="outlined" label="Patient instructions" onClick={() => void runAiAction("instructions")} />
                             </Stack>
                           </Stack>
-                        </Stack>
-                        <TextField
-                          size="small"
-                          fullWidth
-                          label="Ask anything about this consultation"
-                          placeholder="Ask anything about this consultation..."
-                          value={aivaClinicalQuestion}
-                          disabled={aiBusy || aivaQuestionSubmitting || readOnly || !aiAssistantEnabled}
-                          multiline
-                          minRows={2}
-                          onChange={(event) => setAivaClinicalQuestion(event.target.value)}
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter" && !event.shiftKey) {
-                              event.preventDefault();
-                              void submitAivaQuestion();
-                            }
-                          }}
-                        />
-                        <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
-                          <Button type="button" size="small" variant="contained" disabled={!aiAssistantEnabled || !canAskAiva || aivaQuestionSubmitting || aiBusy} onClick={() => void submitAivaQuestion()}>
-                            Ask
-                          </Button>
-                          <Button type="button" size="small" variant="outlined" disabled={!aivaChatMessages.length} onClick={() => setAivaChatDetailsOpen((current) => !current)}>
-                            {aivaChatDetailsOpen ? "Hide Transcript" : "Show Transcript"}
-                          </Button>
-                        </Stack>
-                        <Collapse in={aivaChatDetailsOpen && aivaChatMessages.length > 0} timeout={200} easing={{ enter: "ease-in-out", exit: "ease-in-out" }} unmountOnExit>
-                          <Stack spacing={0.75}>
-                            <Typography variant="caption" color="text.secondary">
-                              Doctor and AIVA messages stay in this session until the consultation is closed.
-                            </Typography>
+                          <TextField
+                            size="small"
+                            fullWidth
+                            label="Ask anything about this consultation"
+                            placeholder="Ask anything about this consultation..."
+                            value={aivaClinicalQuestion}
+                            disabled={aiBusy || aivaQuestionSubmitting || readOnly || !aiAssistantEnabled}
+                            multiline
+                            minRows={2}
+                            onChange={(event) => setAivaClinicalQuestion(event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" && !event.shiftKey) {
+                                event.preventDefault();
+                                void submitAivaQuestion();
+                              }
+                            }}
+                          />
+                          <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
+                            <Button type="button" size="small" variant="contained" disabled={!aiAssistantEnabled || !canAskAiva || aivaQuestionSubmitting || aiBusy} onClick={() => void submitAivaQuestion()}>
+                              Ask
+                            </Button>
+                            <Button type="button" size="small" variant="outlined" disabled={!aivaChatMessages.length} onClick={() => setAivaChatDetailsOpen((current) => !current)}>
+                              {aivaChatDetailsOpen ? "Hide Transcript" : "Show Transcript"}
+                            </Button>
                           </Stack>
-                        </Collapse>
-                        {aiBusy ? <Typography variant="caption" color="text.secondary">AI assistance is preparing suggestions...</Typography> : null}
-                      </Stack>
-                    </CardContent>
-                  </Card>
+                          <Collapse in={aivaChatDetailsOpen && aivaChatMessages.length > 0} timeout={200} easing={{ enter: "ease-in-out", exit: "ease-in-out" }} unmountOnExit>
+                            <Stack spacing={0.75}>
+                              <Typography variant="caption" color="text.secondary">
+                                Doctor and AIVA messages stay in this session until the consultation is closed.
+                              </Typography>
+                            </Stack>
+                          </Collapse>
+                          {aiBusy ? <Typography variant="caption" color="text.secondary">AI assistance is preparing suggestions...</Typography> : null}
+                        </Stack>
+                      </CardContent>
+                    </Card>
+                  ) : (
+                    <Stack spacing={1.25}>
+                      {aiUnavailableCard}
+                      <Alert severity="info" role="status">
+                        <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                          Clinical documentation, prescriptions, investigations and completion workflows remain available in the other consultation tabs.
+                        </Typography>
+                      </Alert>
+                    </Stack>
+                  )}
                 </Stack>
               </CardContent>
             </Card>
@@ -13168,7 +13255,7 @@ export default function ConsultationWorkspacePage() {
                         <InsightsRoundedIcon fontSize="small" color="primary" />
                         <Typography variant="h6" sx={{ fontWeight: 900 }}>Consultation Snapshot</Typography>
                       </Stack>
-                      <Chip size="small" variant="outlined" label={aiAssistantEnabled ? "Consultation context" : "AI unavailable"} />
+                      {aiAssistantEnabled ? <Chip size="small" variant="outlined" label="Consultation context" /> : null}
                     </Stack>
                     <Typography variant="body2" color="text.secondary">
                       Deterministic read-only summary from the current consultation and patient context.
@@ -13210,7 +13297,7 @@ export default function ConsultationWorkspacePage() {
                       <Stack spacing={0.5}>
                         <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Clinical reasoning</Typography>
                         <Typography variant="body2"><b>Status:</b> {clinicalReasoningStatusLabel}</Typography>
-                        <Typography variant="body2"><b>Provider:</b> {clinicalReasoningResult?.provider || "Not available"}</Typography>
+                        {aiAssistantEnabled ? <Typography variant="body2"><b>Provider:</b> {clinicalReasoningResult?.provider || "Not available"}</Typography> : null}
                       </Stack>
                       <Stack spacing={0.5}>
                         <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Important context</Typography>
@@ -13218,35 +13305,38 @@ export default function ConsultationWorkspacePage() {
                         <Typography variant="body2"><b>Chronic conditions:</b> {aiChronicConditionsSummary || clinicalSnapshotConditions || "Not recorded"}</Typography>
                         <Typography variant="body2"><b>Vitals:</b> {soapVitalsSummary || "Not recorded"}</Typography>
                         <Typography variant="body2"><b>Longitudinal trends:</b> {clinicalContext?.longitudinalClinicalContext?.labTrends?.length ? `${clinicalContext.longitudinalClinicalContext.labTrends.length} available` : "Not recorded"}</Typography>
-                        <Typography variant="body2"><b>Last AI activity:</b> {lastAiActivityLabel || "Not recorded"}</Typography>
+                        {aiAssistantEnabled ? <Typography variant="body2"><b>Last AI activity:</b> {lastAiActivityLabel || "Not recorded"}</Typography> : null}
                       </Stack>
-                      <Stack spacing={0.75}>
-                        <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Context available to AIVA</Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          AIVA only assists with clinician-entered and available patient context. Doctor verification is required before use.
-                        </Typography>
-                        <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
-                          {[
-                            consultationForm.chiefComplaints.trim() || consultation?.chiefComplaints ? "Chief complaint" : null,
-                            consultationForm.symptoms.trim() || consultation?.symptoms ? "Symptoms" : null,
-                            soapVitalsSummary ? "Vitals" : null,
-                            selectedDiagnosisEntries.length ? "Diagnoses" : null,
-                            aiAllergiesSummary ? "Allergies" : null,
-                            aiChronicConditionsSummary ? "Chronic conditions" : null,
-                            clinicalContext?.longitudinalClinicalContext?.labTrends?.length ? "Longitudinal trends" : null,
-                            prescription?.medicines?.length || prescriptionForm.medicines.some((row) => medicineRowHasAnyContent(row)) ? "Current prescription" : null,
-                            clinicalDocuments.length || labOrders.length ? "Existing reports" : null,
-                          ].filter(Boolean).map((label) => (
-                            <Chip key={String(label)} size="small" variant="outlined" label={String(label)} />
-                          ))}
+                      {aiAssistantEnabled ? (
+                        <Stack spacing={0.75}>
+                          <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Context available to AIVA</Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            AIVA only assists with clinician-entered and available patient context. Doctor verification is required before use.
+                          </Typography>
+                          <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                            {[
+                              consultationForm.chiefComplaints.trim() || consultation?.chiefComplaints ? "Chief complaint" : null,
+                              consultationForm.symptoms.trim() || consultation?.symptoms ? "Symptoms" : null,
+                              soapVitalsSummary ? "Vitals" : null,
+                              selectedDiagnosisEntries.length ? "Diagnoses" : null,
+                              aiAllergiesSummary ? "Allergies" : null,
+                              aiChronicConditionsSummary ? "Chronic conditions" : null,
+                              clinicalContext?.longitudinalClinicalContext?.labTrends?.length ? "Longitudinal trends" : null,
+                              prescription?.medicines?.length || prescriptionForm.medicines.some((row) => medicineRowHasAnyContent(row)) ? "Current prescription" : null,
+                              clinicalDocuments.length || labOrders.length ? "Existing reports" : null,
+                            ].filter(Boolean).map((label) => (
+                              <Chip key={String(label)} size="small" variant="outlined" label={String(label)} />
+                            ))}
+                          </Stack>
                         </Stack>
-                      </Stack>
+                      ) : null}
                     </Stack>
                   </Stack>
                 </CardContent>
               </Card>
-              <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
-                <CardContent sx={{ p: 1.5 }}>
+              {aiAssistantEnabled ? (
+                <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
+                  <CardContent sx={{ p: 1.5 }}>
                   <Stack spacing={1.25}>
                     <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
                       <Stack direction="row" spacing={0.75} alignItems="center">
@@ -13335,8 +13425,9 @@ export default function ConsultationWorkspacePage() {
                       </Alert>
                     )}
                   </Stack>
-                </CardContent>
-              </Card>
+                  </CardContent>
+                </Card>
+              ) : null}
             </Stack>
           </Grid>
         </Grid>

@@ -85,6 +85,36 @@ class AiStatusServiceTest {
     }
 
     @Test
+    void returnsModuleDisabledStateWhenTenantFeatureIsOff() {
+        TenantModuleEntitlementService moduleService = mock(TenantModuleEntitlementService.class);
+        PermissionChecker permissionChecker = mock(PermissionChecker.class);
+        UUID tenantId = UUID.randomUUID();
+
+        when(moduleService.isModuleEnabled(tenantId, ModuleKeys.AI_COPILOT)).thenReturn(false);
+        when(permissionChecker.hasAnyPermission("ai_copilot.run", "ai_copilot.clinic.run")).thenReturn(true);
+        Environment environment = mock(Environment.class);
+        when(environment.getActiveProfiles()).thenReturn(new String[] {"test"});
+
+        AiStatusService service = new AiStatusService(
+                moduleService,
+                permissionChecker,
+                List.of(new StubProvider("GEMINI", AiProviderStatus.AVAILABLE)),
+                true,
+                "GEMINI",
+                "GEMINI,GROQ,MOCK",
+                true,
+                "test-key",
+                true,
+                "TESSERACT",
+                environment
+        );
+
+        var status = service.status(tenantId);
+        assertThat(status.effectiveStatus()).isEqualTo("MODULE_DISABLED");
+        assertThat(status.message()).isEqualTo("AI module is not enabled for this clinic.");
+    }
+
+    @Test
     void returnsReadyForGroqWhenGeminiUnavailable() {
         TenantModuleEntitlementService moduleService = mock(TenantModuleEntitlementService.class);
         PermissionChecker permissionChecker = mock(PermissionChecker.class);

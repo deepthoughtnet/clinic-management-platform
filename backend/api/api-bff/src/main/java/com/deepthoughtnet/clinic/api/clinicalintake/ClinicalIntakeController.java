@@ -7,6 +7,7 @@ import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import com.deepthoughtnet.clinic.api.security.DoctorAssignmentSecurityService;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -32,12 +33,14 @@ public class ClinicalIntakeController {
 
     @GetMapping("/latest")
     @PreAuthorize("@permissionChecker.hasPermission('clinical.intake.read') or @permissionChecker.hasPermission('patient.read') or @permissionChecker.hasPermission('consultation.read')")
-    public ClinicalIntakeResponse latest(@PathVariable UUID patientId,
-                                         @RequestParam(required = false) UUID appointmentId) {
+    public ResponseEntity<ClinicalIntakeResponse> latest(@PathVariable UUID patientId,
+                                                         @RequestParam(required = false) UUID appointmentId,
+                                                         @RequestParam(required = false) UUID consultationId) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         doctorAssignmentSecurityService.requirePatientAccess(tenantId, patientId);
-        return clinicalIntakeService.latest(tenantId, patientId, appointmentId)
-                .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(HttpStatus.NOT_FOUND, "Clinical intake not found"));
+        return clinicalIntakeService.latest(tenantId, patientId, appointmentId, consultationId)
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.noContent().build());
     }
 
     @PostMapping

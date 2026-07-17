@@ -29,10 +29,17 @@ public class ClinicalIntakeService {
     }
 
     @Transactional(readOnly = true)
-    public Optional<ClinicalIntakeResponse> latest(UUID tenantId, UUID patientId, UUID appointmentId) {
-        PatientClinicalIntakeEntity intake = appointmentId == null
-                ? intakeRepository.findByTenantIdAndPatientIdOrderByCreatedAtDesc(tenantId, patientId).stream().findFirst().orElse(null)
-                : intakeRepository.findByTenantIdAndPatientIdAndAppointmentIdOrderByCreatedAtDesc(tenantId, patientId, appointmentId).stream().findFirst().orElse(null);
+    public Optional<ClinicalIntakeResponse> latest(UUID tenantId, UUID patientId, UUID appointmentId, UUID consultationId) {
+        PatientClinicalIntakeEntity intake = null;
+        if (appointmentId != null) {
+            intake = intakeRepository.findFirstByTenantIdAndPatientIdAndAppointmentIdOrderByCreatedAtDesc(tenantId, patientId, appointmentId).orElse(null);
+        }
+        if (intake == null && consultationId != null) {
+            intake = intakeRepository.findFirstByTenantIdAndPatientIdAndConsultationIdOrderByCreatedAtDesc(tenantId, patientId, consultationId).orElse(null);
+        }
+        if (intake == null && appointmentId == null && consultationId == null) {
+            intake = intakeRepository.findByTenantIdAndPatientIdOrderByCreatedAtDesc(tenantId, patientId).stream().findFirst().orElse(null);
+        }
         return Optional.ofNullable(intake).map(this::toResponse);
     }
 

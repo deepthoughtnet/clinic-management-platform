@@ -16,11 +16,16 @@ test("patient intelligence card groups longitudinal findings and exposes review/
   const consultationPage = readSource("pages/consultations/ConsultationWorkspacePage.tsx");
 
   assert.ok(card.includes("AI Extracted Summary"));
+  assert.ok(card.includes("aiEnabled = true"));
+  assert.ok(card.includes("patientSnapshotFallback"));
   assert.ok(card.includes("Conditions"));
   assert.ok(card.includes("Latest Labs"));
   assert.ok(card.includes("Risk Flags"));
   assert.ok(card.includes("Document"));
   assert.ok(card.includes("Doctor verification required before becoming permanent patient history."));
+  assert.ok(card.includes("Patient intelligence becomes available after clinical documents or investigation results are added. AI-assisted summaries are currently unavailable."));
+  assert.ok(card.includes("aiEnabled ? ("));
+  assert.ok(card.includes("SectionBox title=\"Lab intelligence\""));
   assert.ok(card.includes("Review"));
   assert.ok(card.includes("View Source"));
   assert.ok(card.includes("Very High"));
@@ -33,4 +38,6 @@ test("patient intelligence card groups longitudinal findings and exposes review/
   assert.ok(card.includes("sourceDocumentIds"));
   assert.ok(card.includes("join(\"-\")"));
   assert.ok(consultationPage.includes("onViewSourceDocument={(documentId) => void openClinicalDocumentById(documentId)}"));
+  assert.ok(consultationPage.includes("AI Clinical Assistance Unavailable"));
+  assert.ok(consultationPage.includes("role=\"status\""));
 });

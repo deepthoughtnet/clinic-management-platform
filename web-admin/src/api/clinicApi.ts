@@ -5383,10 +5383,13 @@ export async function getPatientTimeline(token: string, tenantId: string, patien
   return httpGet<PatientTimelineItem[]>(`/api/patients/${patientId}/timeline`, { token, tenantId });
 }
 
-export async function getClinicalIntake(token: string, tenantId: string, patientId: string, appointmentId?: string | null) {
+export async function getClinicalIntake(token: string, tenantId: string, patientId: string, appointmentId?: string | null, consultationId?: string | null) {
   const query = new URLSearchParams();
   if (appointmentId) {
     query.set("appointmentId", appointmentId);
+  }
+  if (consultationId) {
+    query.set("consultationId", consultationId);
   }
   const suffix = query.toString() ? `?${query.toString()}` : "";
   return httpGet<ClinicalIntakeResponse | null>(`/api/patients/${patientId}/clinical-intake/latest${suffix}`, { token, tenantId });

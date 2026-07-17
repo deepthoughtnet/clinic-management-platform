@@ -11,4 +11,6 @@ public interface PatientClinicalIntakeRepository extends JpaRepository<PatientCl
     List<PatientClinicalIntakeEntity> findByTenantIdAndPatientIdAndAppointmentIdOrderByCreatedAtDesc(UUID tenantId, UUID patientId, UUID appointmentId);
 
     Optional<PatientClinicalIntakeEntity> findFirstByTenantIdAndPatientIdAndAppointmentIdOrderByCreatedAtDesc(UUID tenantId, UUID patientId, UUID appointmentId);
+
+    Optional<PatientClinicalIntakeEntity> findFirstByTenantIdAndPatientIdAndConsultationIdOrderByCreatedAtDesc(UUID tenantId, UUID patientId, UUID consultationId);
 }

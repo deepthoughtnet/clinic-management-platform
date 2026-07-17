@@ -349,7 +349,7 @@ public class AppointmentController {
         if (record.patientId() == null) {
             return java.util.Optional.empty();
         }
-        return clinicalIntakeService.latest(tenantId, record.patientId(), record.id());
+        return clinicalIntakeService.latest(tenantId, record.patientId(), record.id(), null);
     }
 
     private void requirePaymentBypassPermission() {

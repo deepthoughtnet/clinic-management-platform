@@ -32,4 +32,13 @@ test("consultation workspace ui refinement keeps advice discoverable and removes
   assert.ok(source.includes("Generate AI Consultation Draft"));
   assert.ok(source.includes("title=\"Generate reviewable AI drafts for multiple consultation sections.\""));
   assert.ok(source.includes("onClick={() => void generateConsultationDraft(false)}"));
+  assert.ok(source.includes('label="AI Assist"'));
+  assert.ok(source.includes("patientSnapshotFallback={patientSnapshotFallback}"));
+  const rightRailStart = source.indexOf("ref={labOrderWorkflowRef}");
+  const rightRailSnippet = source.slice(Math.max(0, rightRailStart - 260), rightRailStart + 520);
+  assert.ok(rightRailSnippet.includes('alignSelf: "flex-start"'));
+  assert.ok(rightRailSnippet.includes('overflow: "visible"'));
+  assert.ok(!rightRailSnippet.includes('position: { xl: "sticky" }'));
+  assert.ok(!rightRailSnippet.includes('overflowY: { xl: "auto" }'));
+  assert.ok(source.includes('gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))"'));
 });

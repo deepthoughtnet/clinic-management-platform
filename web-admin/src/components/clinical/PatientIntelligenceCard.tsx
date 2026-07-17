@@ -29,6 +29,20 @@ function compactText(value: string | null | undefined, max = 110) {
   return normalized.length > max ? `${normalized.slice(0, max - 1)}…` : normalized;
 }
 
+function formatDisplayDate(value: string | null | undefined) {
+  const normalized = (value || "").trim();
+  if (!normalized) return null;
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) return normalized;
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
 function splitCompactList(value: string | null | undefined) {
   return (value || "")
     .split(/[\n,•;|]/)
@@ -545,12 +559,25 @@ export function PatientIntelligenceCard({
   error = null,
   onViewSourceDocument,
   highlightLabLabel = null,
+  aiEnabled = true,
+  patientSnapshotFallback = null,
 }: {
   context: ClinicalContextResponse | null;
   loading?: boolean;
   error?: string | null;
   onViewSourceDocument?: (documentId: string) => void;
   highlightLabLabel?: string | null;
+  aiEnabled?: boolean;
+  patientSnapshotFallback?: {
+    patientName?: string | null;
+    ageYears?: number | null;
+    gender?: string | null;
+    bloodGroup?: string | null;
+    allergies?: string | null;
+    existingConditions?: string | null;
+    longTermMedications?: string | null;
+    lastConsultationDate?: string | null;
+  } | null;
 }) {
   const [detailsOpen, setDetailsOpen] = React.useState(false);
 
@@ -616,9 +643,6 @@ export function PatientIntelligenceCard({
   );
 
   const intakeLabel = intakeSummary?.complete ? "Complete" : intakeSummary ? "Pending" : "Not recorded";
-  const snapshotAgeGender = snapshot?.ageYears != null || snapshot?.gender
-    ? `${snapshot?.ageYears != null ? `${snapshot.ageYears}y` : ""}${snapshot?.ageYears != null && snapshot?.gender ? " • " : ""}${snapshot?.gender || ""}`
-    : null;
   const confidence = confidenceBand(sourceConcept?.confidence);
   const sourceDocumentTitle = sourceConcept?.sourceDocumentTitle || recentReports[0] || null;
   const sourceDocumentId = sourceConcept?.sourceDocumentId || null;
@@ -626,53 +650,73 @@ export function PatientIntelligenceCard({
     ? () => onViewSourceDocument(sourceDocumentId)
     : undefined;
   const hasData = React.useMemo(() => hasLongitudinalData(conditions, labItems, riskFlags), [conditions, labItems, riskFlags]);
+  const emptyLongitudinalMessage = aiEnabled
+    ? "No longitudinal findings yet. Upload a report or complete intake to build patient intelligence."
+    : "Patient intelligence becomes available after clinical documents or investigation results are added. AI-assisted summaries are currently unavailable.";
+  const fallbackAgeYears = patientSnapshotFallback?.ageYears ?? null;
+  const fallbackGender = patientSnapshotFallback?.gender || null;
+  const snapshotAgeGender = snapshot?.ageYears != null || snapshot?.gender || fallbackAgeYears != null || fallbackGender
+    ? `${snapshot?.ageYears ?? fallbackAgeYears ?? ""}${(snapshot?.ageYears ?? fallbackAgeYears) != null ? "y" : ""}${(snapshot?.ageYears ?? fallbackAgeYears) != null && (snapshot?.gender || fallbackGender) ? " • " : ""}${snapshot?.gender || fallbackGender || ""}`
+    : null;
+  const snapshotPatientName = snapshot?.patientName || patientSnapshotFallback?.patientName || null;
+  const snapshotAllergies = splitCompactList(snapshot?.allergies || patientSnapshotFallback?.allergies);
+  const snapshotChronicConditions = splitCompactList(snapshot?.chronicConditions || patientSnapshotFallback?.existingConditions);
+  const snapshotCurrentMedications = snapshot?.currentMedications?.length
+    ? snapshot.currentMedications
+    : splitCompactList(patientSnapshotFallback?.longTermMedications);
+  const snapshotLastVisitDate = formatDisplayDate(snapshot?.lastConsultationDate || patientSnapshotFallback?.lastConsultationDate || null);
+  const snapshotBloodGroup = patientSnapshotFallback?.bloodGroup || null;
 
   const highlightSections = (
     <>
-      <ClinicalCardSection
-        title="AI Extracted Summary"
-        icon={<AutoAwesomeRoundedIcon fontSize="inherit" />}
-        action={sourceDocumentAction ? (
-          <Button type="button" size="small" variant="text" onClick={sourceDocumentAction}>
-            View Source
-          </Button>
-        ) : null}
-      >
-        <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))" }, gap: 0.85 }}>
-          <SummaryField label="Source" value={<Typography variant="body2" sx={{ fontWeight: 800 }} noWrap title={sourceDocumentTitle || "Not recorded"}>{sourceDocumentTitle || "Not recorded"}</Typography>} />
-          <SummaryField
-            label="AI Status"
-            value={<StatusBadge label={hasPendingReview ? "Pending Review" : "Verified"} tone={hasPendingReview ? "warning" : "success"} />}
-          />
-          <SummaryField
-            label="Observation Date"
-            value={<Typography variant="body2" sx={{ fontWeight: 800 }}>{formatObservedOn(sourceConcept?.observedOn) || "Not recorded"}</Typography>}
-          />
-          <SummaryField
-            label="Confidence"
-            value={
-              <Stack direction="row" spacing={0.5} alignItems="baseline" useFlexGap flexWrap="wrap">
-                <Typography variant="body2" sx={{ fontWeight: 900 }}>
-                  {confidence.label}
-                </Typography>
-                <Typography variant="caption" color="text.secondary">
-                  {confidence.percent != null ? `${confidence.percent}%` : "Not recorded"}
-                </Typography>
-              </Stack>
-            }
-          />
-        </Box>
-      </ClinicalCardSection>
+      {aiEnabled ? (
+        <>
+          <ClinicalCardSection
+            title="AI Extracted Summary"
+            icon={<AutoAwesomeRoundedIcon fontSize="inherit" />}
+            action={sourceDocumentAction ? (
+              <Button type="button" size="small" variant="text" onClick={sourceDocumentAction}>
+                View Source
+              </Button>
+            ) : null}
+          >
+            <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))" }, gap: 0.85 }}>
+              <SummaryField label="Source" value={<Typography variant="body2" sx={{ fontWeight: 800 }} noWrap title={sourceDocumentTitle || "Not recorded"}>{sourceDocumentTitle || "Not recorded"}</Typography>} />
+              <SummaryField
+                label="AI Status"
+                value={<StatusBadge label={hasPendingReview ? "Pending Review" : "Verified"} tone={hasPendingReview ? "warning" : "success"} />}
+              />
+              <SummaryField
+                label="Observation Date"
+                value={<Typography variant="body2" sx={{ fontWeight: 800 }}>{formatObservedOn(sourceConcept?.observedOn) || "Not recorded"}</Typography>}
+              />
+              <SummaryField
+                label="Confidence"
+                value={
+                  <Stack direction="row" spacing={0.5} alignItems="baseline" useFlexGap flexWrap="wrap">
+                    <Typography variant="body2" sx={{ fontWeight: 900 }}>
+                      {confidence.label}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {confidence.percent != null ? `${confidence.percent}%` : "Not recorded"}
+                    </Typography>
+                  </Stack>
+                }
+              />
+            </Box>
+          </ClinicalCardSection>
 
-      {hasPendingReview ? (
-        <Alert severity="info" sx={{ py: 0.45, "& .MuiAlert-message": { py: 0.1 } }}>
-          <Typography variant="body2" sx={{ fontWeight: 800, lineHeight: 1.35 }}>
-            AI extracted information
-          </Typography>
-          <Typography variant="caption" color="text.secondary">
-            Doctor verification required before becoming permanent patient history.
-          </Typography>
-        </Alert>
+          {hasPendingReview ? (
+            <Alert severity="info" sx={{ py: 0.45, "& .MuiAlert-message": { py: 0.1 } }}>
+              <Typography variant="body2" sx={{ fontWeight: 800, lineHeight: 1.35 }}>
+                AI extracted information
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                Doctor verification required before becoming permanent patient history.
+              </Typography>
+            </Alert>
+          ) : null}
+        </>
       ) : null}
 
       <ClinicalCardSection
@@ -750,7 +794,7 @@ export function PatientIntelligenceCard({
               <Stack spacing={0.55}>
                 {hasData ? highlightSections : (
                   <Alert severity="info" sx={{ py: 0.45 }}>
-                    No longitudinal findings yet. Upload a report or complete intake to build patient intelligence.
+                    {emptyLongitudinalMessage}
                   </Alert>
                 )}
               </Stack>
@@ -758,7 +802,9 @@ export function PatientIntelligenceCard({
 
             <SectionBox title="Patient Snapshot" icon={<HealingRoundedIcon fontSize="inherit" />}>
               <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))" }, gap: 0.7 }}>
+                <CompactRow label="Patient" value={snapshotPatientName} />
                 <CompactRow label="Age / Gender" value={snapshotAgeGender} />
+                <CompactRow label="Blood group" value={snapshotBloodGroup} />
                 <Stack spacing={0.2}>
                   <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.3 }}>
                     Existing Conditions
@@ -766,14 +812,16 @@ export function PatientIntelligenceCard({
                   <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" alignItems="center">
                     {conditions.length ? (
                       conditions.slice(0, 3).map((concept) => <CompactTag key={conceptKey(concept)} label={normalizeConditionLabel(concept.label)} color="primary" />)
+                    ) : snapshotChronicConditions.length ? (
+                      snapshotChronicConditions.slice(0, 3).map((label) => <CompactTag key={label} label={label} color="primary" />)
                     ) : (
                       <Typography variant="body2" sx={{ fontWeight: 700 }}>Not recorded</Typography>
                     )}
                   </Stack>
                 </Stack>
-                <CompactRow label="Allergies" value={compactText(allergies.slice(0, 3).join(", "), 72)} />
-                <CompactRow label="Long-term Medications" value={compactText(currentMedications.slice(0, 3).join(", "), 72) || compactText(medications.map((item) => item.label).join(", "), 72)} />
-                <CompactRow label="Last visit" value={snapshot?.lastConsultationDate || null} />
+                <CompactRow label="Allergies" value={compactText(allergies.slice(0, 3).join(", "), 72) || compactText(snapshotAllergies.slice(0, 3).join(", "), 72)} />
+                <CompactRow label="Long-term Medications" value={compactText(currentMedications.slice(0, 3).join(", "), 72) || compactText(medications.map((item) => item.label).join(", "), 72) || compactText(snapshotCurrentMedications.slice(0, 3).join(", "), 72)} />
+                <CompactRow label="Last visit" value={snapshotLastVisitDate} />
                 <CompactRow label="Intake status" value={intakeLabel} />
               </Box>
             </SectionBox>
@@ -804,7 +852,7 @@ export function PatientIntelligenceCard({
               <Stack spacing={0.55}>
                 {hasData ? highlightSections : (
                   <Alert severity="info" sx={{ py: 0.45 }}>
-                    No longitudinal findings yet. Upload a report or complete intake to build patient intelligence.
+                    {emptyLongitudinalMessage}
                   </Alert>
                 )}
               </Stack>
@@ -812,8 +860,9 @@ export function PatientIntelligenceCard({
 
             <SectionBox title="Patient Snapshot" icon={<HealingRoundedIcon fontSize="inherit" />}>
               <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))" }, gap: 0.7 }}>
-                <CompactRow label="Patient" value={snapshot?.patientName || null} />
+                <CompactRow label="Patient" value={snapshotPatientName} />
                 <CompactRow label="Age / Gender" value={snapshotAgeGender} />
+                <CompactRow label="Blood group" value={snapshotBloodGroup} />
                 <Stack spacing={0.2}>
                   <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.3 }}>
                     Existing Conditions
@@ -821,14 +870,16 @@ export function PatientIntelligenceCard({
                   <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" alignItems="center">
                     {conditions.length ? (
                       conditions.slice(0, 3).map((concept) => <CompactTag key={conceptKey(concept)} label={normalizeConditionLabel(concept.label)} color="primary" />)
+                    ) : snapshotChronicConditions.length ? (
+                      snapshotChronicConditions.slice(0, 3).map((label) => <CompactTag key={label} label={label} color="primary" />)
                     ) : (
                       <Typography variant="body2" sx={{ fontWeight: 700 }}>Not recorded</Typography>
                     )}
                   </Stack>
                 </Stack>
-                <CompactRow label="Allergies" value={allergies.join(", ") || null} />
-                <CompactRow label="Long-term Medications" value={currentMedications.join(", ") || compactText(medications.map((item) => item.label).join(", "), 72) || null} />
-                <CompactRow label="Last visit" value={snapshot?.lastConsultationDate || null} />
+                <CompactRow label="Allergies" value={allergies.join(", ") || snapshotAllergies.join(", ") || null} />
+                <CompactRow label="Long-term Medications" value={currentMedications.join(", ") || compactText(medications.map((item) => item.label).join(", "), 72) || snapshotCurrentMedications.join(", ") || null} />
+                <CompactRow label="Last visit" value={snapshotLastVisitDate} />
               </Box>
             </SectionBox>
 
@@ -899,57 +950,59 @@ export function PatientIntelligenceCard({
               </Stack>
             </SectionBox>
 
-            <SectionBox title="Lab intelligence" icon={<ScienceRoundedIcon fontSize="inherit" />}>
-              <Stack spacing={0.45}>
-                {context?.labIntelligence.latestLabReport ? (
-                  <Typography variant="body2" sx={{ fontWeight: 800 }}>
-                    {context.labIntelligence.latestLabReport}
-                  </Typography>
-                ) : (
-                  <Typography variant="caption" color="text.secondary">
-                    No recent lab report found. Order investigations or upload a report to track trends.
-                  </Typography>
-                )}
-                <CompactChipRow items={context?.labIntelligence.abnormalValues?.slice(0, 6).map((item) => compactText(item, 42)) || []} color="warning" limit={3} emptyLabel="No abnormal values detected yet." />
-                <CompactChipRow
-                  items={[
-                    context?.labIntelligence.lastHbA1c ? `HbA1c ${compactText(context.labIntelligence.lastHbA1c, 24)}` : null,
-                    context?.labIntelligence.lastCbc ? `CBC ${compactText(context.labIntelligence.lastCbc, 24)}` : null,
-                    context?.labIntelligence.lastCreatinine ? `Creatinine ${compactText(context.labIntelligence.lastCreatinine, 24)}` : null,
-                    context?.labIntelligence.latestBloodSugar ? `Blood sugar ${compactText(context.labIntelligence.latestBloodSugar, 24)}` : null,
-                    context?.labIntelligence.latestLipidSummary ? `Lipids ${compactText(context.labIntelligence.latestLipidSummary, 24)}` : null,
-                  ].filter((item): item is string => Boolean(item))}
-                  color="primary"
-                  limit={5}
-                  emptyLabel="No recent trend markers."
-                />
-                {structuredLabTrends.length ? (
-                  <Stack spacing={0.45}>
-                    <Typography variant="caption" color="text.secondary" sx={{ textTransform: "uppercase", letterSpacing: 0.4 }}>
-                      Trends
+            {aiEnabled ? (
+              <SectionBox title="Lab intelligence" icon={<ScienceRoundedIcon fontSize="inherit" />}>
+                <Stack spacing={0.45}>
+                  {context?.labIntelligence.latestLabReport ? (
+                    <Typography variant="body2" sx={{ fontWeight: 800 }}>
+                      {context.labIntelligence.latestLabReport}
                     </Typography>
+                  ) : (
+                    <Typography variant="caption" color="text.secondary">
+                      No recent lab report found. Order investigations or upload a report to track trends.
+                    </Typography>
+                  )}
+                  <CompactChipRow items={context?.labIntelligence.abnormalValues?.slice(0, 6).map((item) => compactText(item, 42)) || []} color="warning" limit={3} emptyLabel="No abnormal values detected yet." />
+                  <CompactChipRow
+                    items={[
+                      context?.labIntelligence.lastHbA1c ? `HbA1c ${compactText(context.labIntelligence.lastHbA1c, 24)}` : null,
+                      context?.labIntelligence.lastCbc ? `CBC ${compactText(context.labIntelligence.lastCbc, 24)}` : null,
+                      context?.labIntelligence.lastCreatinine ? `Creatinine ${compactText(context.labIntelligence.lastCreatinine, 24)}` : null,
+                      context?.labIntelligence.latestBloodSugar ? `Blood sugar ${compactText(context.labIntelligence.latestBloodSugar, 24)}` : null,
+                      context?.labIntelligence.latestLipidSummary ? `Lipids ${compactText(context.labIntelligence.latestLipidSummary, 24)}` : null,
+                    ].filter((item): item is string => Boolean(item))}
+                    color="primary"
+                    limit={5}
+                    emptyLabel="No recent trend markers."
+                  />
+                  {structuredLabTrends.length ? (
                     <Stack spacing={0.45}>
-                      {structuredLabTrends.map((trend, index) => (
-                        <StructuredTrendLine
-                          key={`${trend.analyteCode || trend.analyteName || "trend"}-${trend.newerDate || trend.olderDate || index}`}
-                          trend={trend}
-                          onViewSourceDocument={onViewSourceDocument}
-                        />
-                      ))}
+                      <Typography variant="caption" color="text.secondary" sx={{ textTransform: "uppercase", letterSpacing: 0.4 }}>
+                        Trends
+                      </Typography>
+                      <Stack spacing={0.45}>
+                        {structuredLabTrends.map((trend, index) => (
+                          <StructuredTrendLine
+                            key={`${trend.analyteCode || trend.analyteName || "trend"}-${trend.newerDate || trend.olderDate || index}`}
+                            trend={trend}
+                            onViewSourceDocument={onViewSourceDocument}
+                          />
+                        ))}
+                      </Stack>
                     </Stack>
-                  </Stack>
-                ) : context?.labIntelligence.previousTrends?.length ? (
-                  <Typography variant="caption" color="text.secondary">
-                    Trends: {context.labIntelligence.previousTrends.slice(0, 3).join(" • ")}
-                  </Typography>
-                ) : null}
-                {context?.labIntelligence.pendingInvestigations?.length ? (
-                  <Typography variant="caption" color="text.secondary">
-                    Pending: {context.labIntelligence.pendingInvestigations.slice(0, 3).join(", ")}
-                  </Typography>
-                ) : null}
-              </Stack>
-            </SectionBox>
+                  ) : context?.labIntelligence.previousTrends?.length ? (
+                    <Typography variant="caption" color="text.secondary">
+                      Trends: {context.labIntelligence.previousTrends.slice(0, 3).join(" • ")}
+                    </Typography>
+                  ) : null}
+                  {context?.labIntelligence.pendingInvestigations?.length ? (
+                    <Typography variant="caption" color="text.secondary">
+                      Pending: {context.labIntelligence.pendingInvestigations.slice(0, 3).join(", ")}
+                    </Typography>
+                  ) : null}
+                </Stack>
+              </SectionBox>
+            ) : null}
           </Stack>
         </Box>
       </Drawer>

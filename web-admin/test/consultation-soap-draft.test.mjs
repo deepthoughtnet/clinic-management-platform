@@ -77,7 +77,6 @@ test("consultation workspace soap draft uses resolved vitals, includes diagnosis
   assert.ok(source.includes('status: "REJECTED"'));
   assert.ok(source.includes('<Alert severity="warning">'));
   assert.ok(source.includes('{error ? <Alert severity="error" onClose={() => setError(null)}>{error}</Alert> : null}'));
-  assert.ok(source.includes("No consultation draft generated yet. Use Generate AI Consultation Draft or a section action to start a review."));
   assert.ok(helperSource.includes("BP ${vitals.bloodPressureSystolic}/${vitals.bloodPressureDiastolic}"));
   assert.ok(helperSource.includes("RBS ${vitals.randomBloodSugar}"));
   assert.ok(helperSource.includes("Pain ${vitals.painScore}/10"));

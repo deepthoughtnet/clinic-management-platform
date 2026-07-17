@@ -12,7 +12,9 @@ test("patient intelligence card exposes grouped longitudinal sections", () => {
   const source = readSource("components/clinical/PatientIntelligenceCard.tsx");
   assert.ok(source.includes("Patient Intelligence"));
   assert.ok(source.includes("Patient Snapshot"));
+  assert.ok(source.includes("patientSnapshotFallback"));
   assert.ok(source.includes("Clinical Highlights"));
+  assert.ok(source.includes("aiEnabled = true"));
   assert.ok(source.includes("AI Extracted Summary"));
   assert.ok(source.includes("Conditions"));
   assert.ok(source.includes("Latest Labs"));
@@ -20,8 +22,11 @@ test("patient intelligence card exposes grouped longitudinal sections", () => {
   assert.ok(source.includes("Document"));
   assert.ok(source.includes("Review"));
   assert.ok(source.includes("View Source"));
+  assert.ok(source.includes("aiEnabled ? ("));
+  assert.ok(source.includes("SectionBox title=\"Lab intelligence\""));
   assert.ok(source.includes("Doctor verification required before becoming permanent patient history."));
   assert.ok(source.includes("Longitudinal patient context. Not AI generated."));
+  assert.ok(source.includes("Patient intelligence becomes available after clinical documents or investigation results are added. AI-assisted summaries are currently unavailable."));
   assert.ok(source.includes("structuredLabTrends"));
   assert.ok(source.includes("longitudinalClinicalContext?.labTrends"));
   assert.ok(source.includes("StructuredTrendLine"));
