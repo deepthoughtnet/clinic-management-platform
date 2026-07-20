@@ -247,6 +247,7 @@ public class CarePilotOpsConsoleService {
                     row.failureReason(),
                     row.executedAt(),
                     row.createdAt(),
+                    row.acquiredAt(),
                     row.updatedAt()
             );
         }).toList();

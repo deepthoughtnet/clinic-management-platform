@@ -76,7 +76,7 @@ public class CarePilotAnalyticsController {
                 record.recipientPatientId(), record.scheduledAt(), record.status(), record.attemptCount(), record.deliveryAttemptCount(), record.lastError(),
                 record.executedAt(), record.nextAttemptAt(), record.deliveryStatus(), record.providerName(),
                 record.providerMessageId(), record.sourceType(), record.sourceReferenceId(), record.reminderWindow(),
-                record.referenceDateTime(), record.lastAttemptAt(), record.failureReason(), record.createdAt(), record.updatedAt()
+                record.referenceDateTime(), record.lastAttemptAt(), record.failureReason(), record.createdAt(), record.acquiredAt(), record.updatedAt()
         );
     }
 }

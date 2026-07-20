@@ -24,6 +24,8 @@ test("engage analytics renders delivery buckets and business references", () => 
   assert.ok(shellSource.includes('useNavigationType'));
   assert.ok(shellSource.includes('window.scrollTo({ left: 0, top: 0, behavior: "auto" })'));
   assert.ok(shellSource.includes('scrollPositionsRef.current.set(location.key'));
+  assert.ok(shellSource.includes('window.requestAnimationFrame'));
+  assert.ok(shellSource.includes('window.cancelAnimationFrame'));
   assert.ok(apiSource.includes("queuedExecutions: number;"));
   assert.ok(apiSource.includes("sentExecutions: number;"));
   assert.ok(apiSource.includes("campaignReference: string;"));

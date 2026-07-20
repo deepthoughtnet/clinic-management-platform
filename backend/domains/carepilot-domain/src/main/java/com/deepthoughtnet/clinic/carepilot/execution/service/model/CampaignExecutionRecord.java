@@ -31,5 +31,6 @@ public record CampaignExecutionRecord(
         OffsetDateTime lastAttemptAt,
         String failureReason,
         OffsetDateTime createdAt,
+        OffsetDateTime acquiredAt,
         OffsetDateTime updatedAt
 ) {}

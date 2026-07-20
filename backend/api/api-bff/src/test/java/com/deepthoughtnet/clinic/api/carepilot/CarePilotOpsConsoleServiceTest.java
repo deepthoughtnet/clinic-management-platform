@@ -83,6 +83,7 @@ class CarePilotOpsConsoleServiceTest {
                 null,
                 null,
                 createdAt,
+                createdAt.plusMinutes(1),
                 createdAt.plusMinutes(5)
         );
         CampaignExecutionRecord queued = new CampaignExecutionRecord(
@@ -109,6 +110,7 @@ class CarePilotOpsConsoleServiceTest {
                 null,
                 null,
                 createdAt.minusMinutes(20),
+                null,
                 createdAt.minusMinutes(20)
         );
 

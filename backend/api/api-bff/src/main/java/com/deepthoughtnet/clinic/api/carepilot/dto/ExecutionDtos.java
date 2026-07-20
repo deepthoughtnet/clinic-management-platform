@@ -41,6 +41,7 @@ public final class ExecutionDtos {
             OffsetDateTime lastAttemptAt,
             String failureReason,
             OffsetDateTime createdAt,
+            OffsetDateTime acquiredAt,
             OffsetDateTime updatedAt
     ) {}
 

@@ -53,6 +53,17 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     };
   }, [location.key, navigationType]);
 
+  React.useEffect(() => {
+    const saved = scrollPositionsRef.current.get(location.key);
+    if (navigationType === "POP" && saved) {
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      window.scrollTo({ left: 0, top: 0, behavior: "auto" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [location.key, navigationType]);
+
   return (
     <Box sx={{ display: "flex", minHeight: "100vh", bgcolor: "background.default" }}>
       <CssBaseline />

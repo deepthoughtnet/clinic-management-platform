@@ -163,6 +163,7 @@ export default function RemindersPage() {
   const [detail, setDetail] = React.useState<CarePilotReminderDetail | null>(null);
   const [detailOpen, setDetailOpen] = React.useState(false);
   const viewTimelineButtonRef = React.useRef<HTMLButtonElement | null>(null);
+  const timelineContentRef = React.useRef<HTMLDivElement | null>(null);
 
   const load = React.useCallback(async () => {
     if (!auth.accessToken || !auth.tenantId || !canView) {
@@ -216,6 +217,14 @@ export default function RemindersPage() {
     setDetailOpen(false);
     window.setTimeout(() => viewTimelineButtonRef.current?.focus(), 0);
   }, []);
+
+  React.useEffect(() => {
+    if (!detailOpen) return;
+    const element = timelineContentRef.current;
+    if (!element) return;
+    element.scrollTop = 0;
+    element.scrollLeft = 0;
+  }, [detailOpen, detail?.reminder.executionId]);
 
   const onAction = async (row: CarePilotReminderRow, action: "retry" | "resend" | "cancel" | "suppress") => {
     if (!auth.accessToken || !auth.tenantId || !canMutate) return;
@@ -421,14 +430,14 @@ export default function RemindersPage() {
         </CardContent></Card>
       )}
 
-      <Dialog open={detailOpen} onClose={() => closeDetail()} fullWidth maxWidth="lg" aria-labelledby="reminder-timeline-title" aria-describedby="reminder-timeline-description">
+      <Dialog open={detailOpen} onClose={() => closeDetail()} scroll="paper" fullWidth maxWidth="lg" aria-labelledby="reminder-timeline-title" aria-describedby="reminder-timeline-description">
         <DialogTitle id="reminder-timeline-title" sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 2 }}>
           <span>Reminder Timeline</span>
           <IconButton aria-label="Close reminder timeline" onClick={closeDetail} size="small">
             <CloseRoundedIcon fontSize="small" />
           </IconButton>
         </DialogTitle>
-        <DialogContent id="reminder-timeline-description">
+        <DialogContent id="reminder-timeline-description" ref={timelineContentRef}>
           {!detail ? <Box sx={{ minHeight: 120, display: "grid", placeItems: "center" }}><CircularProgress size={28} /></Box> : (
             <Stack spacing={2}>
               <Card variant="outlined"><CardContent>

@@ -44,16 +44,18 @@ import org.springframework.transaction.annotation.Transactional;
 public class CarePilotAnalyticsService {
     private static final int RECENT_LIMIT = 10;
     private static final Collection<ExecutionStatus> FAILED_STATUSES = List.of(ExecutionStatus.FAILED, ExecutionStatus.DEAD_LETTER);
-    private static final Map<String, Integer> TIMELINE_ORDER = Map.of(
-            "EXECUTION_CREATED", 0,
-            "DISPATCH_STARTED", 1,
-            "DELIVERY_ATTEMPT", 2,
-            "DELIVERY_EVENT", 3,
-            "EXECUTED", 4,
-            "RETRY_SCHEDULED", 5,
-            "RESCHEDULED", 6,
-            "CANCELLED", 7,
-            "SUPPRESSED", 8
+    private static final Map<String, Integer> TIMELINE_ORDER = Map.ofEntries(
+            Map.entry("EXECUTION_CREATED", 10),
+            Map.entry("DISPATCH_STARTED", 20),
+            Map.entry("DELIVERY_ATTEMPT", 30),
+            Map.entry("DELIVERY_EVENT", 35),
+            Map.entry("EXECUTED", 40),
+            Map.entry("FAILED", 45),
+            Map.entry("DEAD_LETTER", 46),
+            Map.entry("RETRY_SCHEDULED", 50),
+            Map.entry("RESCHEDULED", 60),
+            Map.entry("CANCELLED", 70),
+            Map.entry("SUPPRESSED", 80)
     );
 
     private final CampaignRepository campaignRepository;
@@ -445,6 +447,7 @@ public class CarePilotAnalyticsService {
                 e.getLastAttemptAt(),
                 e.getFailureReason(),
                 e.getCreatedAt(),
+                e.getAcquiredAt(),
                 e.getUpdatedAt()
         );
     }

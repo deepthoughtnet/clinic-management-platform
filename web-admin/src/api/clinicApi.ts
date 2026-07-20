@@ -5947,6 +5947,7 @@ export type CarePilotExecution = {
   lastAttemptAt: string | null;
   failureReason: string | null;
   createdAt: string;
+  acquiredAt: string | null;
   updatedAt: string;
 };
 
@@ -5978,6 +5979,7 @@ export type CarePilotOpsExecution = {
   failureReason: string | null;
   executedAt: string | null;
   createdAt: string;
+  acquiredAt: string | null;
   updatedAt: string;
 };
 

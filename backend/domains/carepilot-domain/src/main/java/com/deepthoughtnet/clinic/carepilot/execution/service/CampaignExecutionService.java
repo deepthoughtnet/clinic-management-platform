@@ -527,7 +527,7 @@ public class CampaignExecutionService {
                 deliveryAttemptCount, entity.getLastError(), entity.getExecutedAt(), entity.getNextAttemptAt(), entity.getDeliveryStatus(),
                 entity.getProviderName(), entity.getProviderMessageId(), entity.getSourceType(), entity.getSourceReferenceId(),
                 entity.getReminderWindow(), entity.getReferenceDateTime(), entity.getLastAttemptAt(), entity.getFailureReason(),
-                entity.getCreatedAt(), entity.getUpdatedAt()
+                entity.getCreatedAt(), entity.getAcquiredAt(), entity.getUpdatedAt()
         );
     }
 

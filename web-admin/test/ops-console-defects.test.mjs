@@ -29,6 +29,12 @@ test("ops console uses persisted attempt counts, shared labels, and accessible t
   assert.ok(page.includes('formatCarePilotDateTime(timeline.execution.scheduledAt, clinicTimeZone)'));
   assert.ok(page.includes('formatCarePilotDateTime(timeline.execution.createdAt, clinicTimeZone)'));
   assert.ok(page.includes('formatCarePilotDateTime(timeline.execution.executedAt, clinicTimeZone)'));
+  assert.ok(page.includes('durationLabel(queueWaitMinutes(timeline.execution))'));
+  assert.ok(page.includes('durationLabel(processingDurationMinutes(timeline.execution))'));
+  assert.ok(page.includes('function queueWaitMinutes('));
+  assert.ok(page.includes('durationMinutes(execution.createdAt, execution.acquiredAt)'));
+  assert.ok(page.includes('durationMinutes(execution.acquiredAt, execution.executedAt)'));
+  assert.ok(page.includes('Not recorded'));
   assert.ok(page.includes('Execution Status:'));
   assert.ok(page.includes('Delivery Status:'));
   assert.ok(page.includes('Queue Age'));
@@ -46,8 +52,8 @@ test("ops console uses persisted attempt counts, shared labels, and accessible t
   assert.ok(page.includes('Close execution timeline'));
   assert.ok(page.includes('onClose={closeTimeline}'));
   assert.ok(page.includes('viewAttemptsButtonRef.current?.focus()'));
-  assert.ok(page.includes('formatCarePilotDurationMinutes(queueWaitMinutes(timeline.execution))'));
-  assert.ok(page.includes('formatCarePilotDurationMinutes(processingDurationMinutes(timeline.execution))'));
+  assert.ok(page.includes('durationLabel(queueWaitMinutes(timeline.execution))'));
+  assert.ok(page.includes('durationLabel(processingDurationMinutes(timeline.execution))'));
   assert.ok(page.includes('DialogActions'));
   assert.ok(page.includes('Close</Button>'));
   assert.ok(page.includes('retryCount'));

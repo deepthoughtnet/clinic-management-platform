@@ -27,6 +27,7 @@ import {
   TableCell,
   TableHead,
   TableRow,
+  TableContainer,
   TextField,
   Typography,
 } from "@mui/material";
@@ -1271,7 +1272,7 @@ export default function CampaignsPage() {
                           <Typography variant="caption" color="text.secondary">{campaignReferenceLabel(campaign)}</Typography>
                         </TableCell>
                         <TableCell>
-                          <Typography variant="body2">{campaign.submittedAt ? new Date(campaign.submittedAt).toLocaleString() : "-"}</Typography>
+                          <Typography variant="body2">{formatCarePilotDateTime(campaign.submittedAt, clinicTimeZone)}</Typography>
                           <Typography variant="caption" color="text.secondary">{actorDisplayLine(campaign.submittedByDisplayName, campaign.submittedByRoleLabel, campaign.submittedByEmployeeCode, campaign.submittedByUsername)}</Typography>
                         </TableCell>
                         <TableCell>{campaignTypeLabel(campaign.campaignType)}</TableCell>
@@ -1533,15 +1534,15 @@ export default function CampaignsPage() {
                     {selectedCampaign.status === "CHANGES_REQUESTED" ? (
                       <Alert severity="warning" sx={{ whiteSpace: "pre-line" }}>
                         <b>Review comment:</b> {selectedCampaign.reviewComment || "A reviewer has requested changes."}
-                        {selectedCampaign.reviewedAt ? `\nReviewed ${new Date(selectedCampaign.reviewedAt).toLocaleString()}` : ""}
+                        {selectedCampaign.reviewedAt ? `\nReviewed ${formatCarePilotDateTime(selectedCampaign.reviewedAt, clinicTimeZone)}` : ""}
                         {selectedCampaign.reviewedByDisplayName ? `\nReviewer: ${actorDisplayLine(selectedCampaign.reviewedByDisplayName, selectedCampaign.reviewedByRoleLabel, selectedCampaign.reviewedByEmployeeCode, selectedCampaign.reviewedByUsername)}` : ""}
                         {"\n"}Update the campaign and resubmit it for review.
                       </Alert>
                     ) : null}
-                    <Typography variant="body2"><b>Submitted:</b> {selectedCampaign.submittedAt ? new Date(selectedCampaign.submittedAt).toLocaleString() : "-"} {selectedCampaign.submittedByDisplayName ? `• ${actorDisplayLine(selectedCampaign.submittedByDisplayName, selectedCampaign.submittedByRoleLabel, selectedCampaign.submittedByEmployeeCode, selectedCampaign.submittedByUsername)}` : ""}</Typography>
-                    <Typography variant="body2"><b>Reviewed:</b> {selectedCampaign.reviewedAt ? new Date(selectedCampaign.reviewedAt).toLocaleString() : "-"} {selectedCampaign.reviewedByDisplayName ? `• ${actorDisplayLine(selectedCampaign.reviewedByDisplayName, selectedCampaign.reviewedByRoleLabel, selectedCampaign.reviewedByEmployeeCode, selectedCampaign.reviewedByUsername)}` : ""}</Typography>
+                    <Typography variant="body2"><b>Submitted:</b> {formatCarePilotDateTime(selectedCampaign.submittedAt, clinicTimeZone)} {selectedCampaign.submittedByDisplayName ? `• ${actorDisplayLine(selectedCampaign.submittedByDisplayName, selectedCampaign.submittedByRoleLabel, selectedCampaign.submittedByEmployeeCode, selectedCampaign.submittedByUsername)}` : ""}</Typography>
+                    <Typography variant="body2"><b>Reviewed:</b> {formatCarePilotDateTime(selectedCampaign.reviewedAt, clinicTimeZone)} {selectedCampaign.reviewedByDisplayName ? `• ${actorDisplayLine(selectedCampaign.reviewedByDisplayName, selectedCampaign.reviewedByRoleLabel, selectedCampaign.reviewedByEmployeeCode, selectedCampaign.reviewedByUsername)}` : ""}</Typography>
                     <Typography variant="body2"><b>Approval Comment:</b> {selectedCampaign.reviewComment || "-"}</Typography>
-                    <Typography variant="body2"><b>Approved:</b> {selectedCampaign.approvedAt ? new Date(selectedCampaign.approvedAt).toLocaleString() : "-"} {selectedCampaign.approvedByDisplayName ? `• ${actorDisplayLine(selectedCampaign.approvedByDisplayName, selectedCampaign.approvedByRoleLabel, selectedCampaign.approvedByEmployeeCode, selectedCampaign.approvedByUsername)}` : ""}</Typography>
+                    <Typography variant="body2"><b>Approved:</b> {formatCarePilotDateTime(selectedCampaign.approvedAt, clinicTimeZone)} {selectedCampaign.approvedByDisplayName ? `• ${actorDisplayLine(selectedCampaign.approvedByDisplayName, selectedCampaign.approvedByRoleLabel, selectedCampaign.approvedByEmployeeCode, selectedCampaign.approvedByUsername)}` : ""}</Typography>
                     <Typography variant="body2"><b>Approval Invalidated:</b> {selectedCampaign.approvalInvalidatedReason || "-"}</Typography>
                     <Typography variant="body2"><b>Approved Version:</b> {selectedCampaign.approvedVersion ?? "-"}</Typography>
                     {canManage && isEditableCampaignStatus(selectedCampaign.status) ? (
@@ -1583,7 +1584,7 @@ export default function CampaignsPage() {
                         Resume
                       </Button>
                     ) : null}
-                    <Typography variant="caption" color="text.secondary">Updated {new Date(selectedCampaign.updatedAt).toLocaleString()}</Typography>
+                    <Typography variant="caption" color="text.secondary">Updated {formatCarePilotDateTime(selectedCampaign.updatedAt, clinicTimeZone)}</Typography>
                     <Box sx={{ pt: 1 }}>
                       <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 1 }}>Approval History</Typography>
                       {approvalHistory.length === 0 ? <Alert severity="info">No approval history yet.</Alert> : (
@@ -1622,7 +1623,7 @@ export default function CampaignsPage() {
                                 <CardContent sx={{ py: 1.2 }}>
                                   <Stack spacing={0.5}>
                                     <Typography variant="body2" sx={{ fontWeight: 700 }}>{campaignEventLabel(entry.eventType)}</Typography>
-                                    <Typography variant="caption" color="text.secondary">{entry.createdAt ? new Date(entry.createdAt).toLocaleString() : "-"}</Typography>
+                                    <Typography variant="caption" color="text.secondary">{formatCarePilotDateTime(entry.createdAt, clinicTimeZone)}</Typography>
                                     <Typography variant="caption" color="text.secondary">{actorDisplayLine(entry.actorDisplayName, entry.actorRoleLabel || entry.actorRole, entry.actorEmployeeCode, entry.actorUsername)}</Typography>
                                     <Typography variant="caption" color="text.secondary">From {entry.fromStatus ? campaignStatusLabel(entry.fromStatus) : "-"} to {entry.toStatus ? campaignStatusLabel(entry.toStatus) : "-"}</Typography>
                                     {entry.comment ? <Typography variant="body2">{entry.comment}</Typography> : null}
@@ -1651,10 +1652,10 @@ export default function CampaignsPage() {
                             Trigger: {campaignRuntime.triggerType} • Scheduler: {campaignRuntime.schedulerStatus}
                           </Typography>
                           <Typography variant="caption" color="text.secondary">
-                            Next expected: {campaignRuntime.nextExpectedExecutionAt ? new Date(campaignRuntime.nextExpectedExecutionAt).toLocaleString() : "-"}
+                            Next expected: {formatCarePilotDateTime(campaignRuntime.nextExpectedExecutionAt, clinicTimeZone)}
                           </Typography>
                           <Typography variant="caption" color="text.secondary">
-                            Last scan: {campaignRuntime.lastSchedulerScanAt ? new Date(campaignRuntime.lastSchedulerScanAt).toLocaleString() : "-"}
+                            Last scan: {formatCarePilotDateTime(campaignRuntime.lastSchedulerScanAt, clinicTimeZone)}
                           </Typography>
                           <Stack direction="row" spacing={0.75} flexWrap="wrap">
                             <Chip size="small" label={`Total ${campaignRuntime.summary.totalExecutions}`} />
@@ -2250,6 +2251,7 @@ export default function CampaignsPage() {
       <Dialog
         open={attemptsOpen}
         onClose={closeAttempts}
+        scroll="paper"
         fullWidth
         maxWidth="md"
         aria-labelledby="campaign-delivery-attempts-title"
@@ -2261,7 +2263,7 @@ export default function CampaignsPage() {
             <CloseRoundedIcon fontSize="small" />
           </IconButton>
         </DialogTitle>
-        <DialogContent>
+        <DialogContent sx={{ overflowX: "hidden" }}>
           <Box id="campaign-delivery-attempts-description" sx={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)", whiteSpace: "nowrap" }}>
             Delivery attempt history for the selected campaign execution.
           </Box>
@@ -2270,32 +2272,39 @@ export default function CampaignsPage() {
           ) : attempts.length === 0 ? (
             <Alert severity="info">No delivery attempts recorded.</Alert>
           ) : (
-            <Table size="small">
-              <TableHead>
-                <TableRow>
-                  <TableCell>Attempt</TableCell>
-                  <TableCell>Provider</TableCell>
-                  <TableCell>Channel</TableCell>
-                  <TableCell>Status</TableCell>
-                  <TableCell>Error Code</TableCell>
-                  <TableCell>Error Message</TableCell>
-                  <TableCell>Attempted At</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {attempts.map((attempt) => (
-                  <TableRow key={attempt.id}>
-                    <TableCell>{attempt.attemptNumber}</TableCell>
-                    <TableCell>{providerLabel(attempt.providerName)}</TableCell>
-                    <TableCell>{channelTypeLabel(attempt.channelType)}</TableCell>
-                    <TableCell>{humanizeCarePilotCode(attempt.deliveryStatus)}</TableCell>
-                    <TableCell>{attempt.errorCode || "-"}</TableCell>
-                    <TableCell>{attempt.errorMessage || "-"}</TableCell>
-                    <TableCell>{formatCarePilotDateTime(attempt.attemptedAt, clinicTimeZone)}</TableCell>
+            <TableContainer sx={{ width: "100%", overflowX: "hidden" }}>
+              <Table size="small" sx={{ width: "100%", tableLayout: "fixed" }}>
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Attempt</TableCell>
+                    <TableCell>Provider</TableCell>
+                    <TableCell>Channel</TableCell>
+                    <TableCell>Status</TableCell>
+                    <TableCell>Error Code</TableCell>
+                    <TableCell>Error Message</TableCell>
+                    <TableCell>Attempted At</TableCell>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHead>
+                <TableBody>
+                  {attempts.map((attempt) => {
+                    const provider = providerLabel(attempt.providerName);
+                    const errorCode = attempt.errorCode || "-";
+                    const errorMessage = attempt.errorMessage || "-";
+                    return (
+                      <TableRow key={attempt.id}>
+                        <TableCell>{attempt.attemptNumber}</TableCell>
+                        <TableCell sx={{ minWidth: 0, overflowWrap: "anywhere", wordBreak: "break-word" }} title={provider}>{provider}</TableCell>
+                        <TableCell>{channelTypeLabel(attempt.channelType)}</TableCell>
+                        <TableCell>{humanizeCarePilotCode(attempt.deliveryStatus)}</TableCell>
+                        <TableCell sx={{ minWidth: 0, overflowWrap: "anywhere", wordBreak: "break-word" }} title={errorCode}>{errorCode}</TableCell>
+                        <TableCell sx={{ minWidth: 0, overflowWrap: "anywhere", wordBreak: "break-word" }} title={errorMessage}>{errorMessage}</TableCell>
+                        <TableCell>{formatCarePilotDateTime(attempt.attemptedAt, clinicTimeZone)}</TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </TableContainer>
           )}
         </DialogContent>
         <DialogActions>
@@ -2412,7 +2421,7 @@ export default function CampaignsPage() {
               {editCampaignTarget.status === "CHANGES_REQUESTED" ? (
                 <Alert severity="warning" sx={{ whiteSpace: "pre-line" }}>
                   <b>Review comment:</b> {editCampaignTarget.reviewComment || "A reviewer has requested changes."}
-                  {latestReviewHistoryEntry?.createdAt ? `\nReviewed ${new Date(latestReviewHistoryEntry.createdAt).toLocaleString()}` : editCampaignTarget.reviewedAt ? `\nReviewed ${new Date(editCampaignTarget.reviewedAt).toLocaleString()}` : ""}
+                  {latestReviewHistoryEntry?.createdAt ? `\nReviewed ${formatCarePilotDateTime(latestReviewHistoryEntry.createdAt, clinicTimeZone)}` : editCampaignTarget.reviewedAt ? `\nReviewed ${formatCarePilotDateTime(editCampaignTarget.reviewedAt, clinicTimeZone)}` : ""}
                   {latestReviewHistoryEntry?.actorRoleLabel || latestReviewHistoryEntry?.actorRole ? `\nReviewer role: ${latestReviewHistoryEntry.actorRoleLabel || latestReviewHistoryEntry.actorRole}` : ""}
                   {latestReviewHistoryEntry?.actorDisplayName ? `\nReviewer: ${actorDisplayLine(latestReviewHistoryEntry.actorDisplayName, latestReviewHistoryEntry.actorRoleLabel || latestReviewHistoryEntry.actorRole, latestReviewHistoryEntry.actorEmployeeCode, latestReviewHistoryEntry.actorUsername)}` : editCampaignTarget.reviewedByDisplayName ? `\nReviewer: ${actorDisplayLine(editCampaignTarget.reviewedByDisplayName, editCampaignTarget.reviewedByRoleLabel, editCampaignTarget.reviewedByEmployeeCode, editCampaignTarget.reviewedByUsername)}` : ""}
                   {"\n"}Update the campaign and resubmit it for review.

@@ -92,6 +92,9 @@ public class CampaignExecutionEntity {
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 
+    @Column(name = "acquired_at")
+    private OffsetDateTime acquiredAt;
+
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
 
@@ -131,7 +134,10 @@ public class CampaignExecutionEntity {
 
     public void markProcessing() {
         this.status = ExecutionStatus.PROCESSING;
-        this.updatedAt = OffsetDateTime.now();
+        if (this.acquiredAt == null) {
+            this.acquiredAt = OffsetDateTime.now();
+        }
+        this.updatedAt = this.acquiredAt;
     }
 
     public void markSucceeded(String providerName, String providerMessageId) {
@@ -249,5 +255,6 @@ public class CampaignExecutionEntity {
     public OffsetDateTime getLastAttemptAt() { return lastAttemptAt; }
     public String getFailureReason() { return failureReason; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
+    public OffsetDateTime getAcquiredAt() { return acquiredAt; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
 }

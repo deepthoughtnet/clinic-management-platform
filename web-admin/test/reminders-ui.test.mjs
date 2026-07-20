@@ -33,6 +33,11 @@ test("reminders page renders sent metrics and business labels", () => {
   assert.ok(source.includes('providerLabel(event.providerName)'));
   assert.ok(source.includes('formatCarePilotDateTime(row.scheduledAt, clinicTimeZone)'));
   assert.ok(source.includes('formatCarePilotDateTime(detail.reminder.scheduledAt, clinicTimeZone)'));
+  assert.ok(source.includes('scroll="paper"'));
+  assert.ok(source.includes('timelineContentRef'));
+  assert.ok(source.includes('scrollTop = 0'));
+  assert.ok(source.includes('scrollLeft = 0'));
+  assert.ok(source.includes('detail?.reminder.executionId'));
   assert.ok(source.includes('More reminder actions'));
   assert.ok(source.includes('View Timeline'));
   assert.ok(source.includes('Open Patient'));

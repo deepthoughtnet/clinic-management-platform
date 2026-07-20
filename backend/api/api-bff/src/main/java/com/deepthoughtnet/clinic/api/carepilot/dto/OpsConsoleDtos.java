@@ -39,6 +39,7 @@ public final class OpsConsoleDtos {
             String failureReason,
             OffsetDateTime executedAt,
             OffsetDateTime createdAt,
+            OffsetDateTime acquiredAt,
             OffsetDateTime updatedAt
     ) {}
 

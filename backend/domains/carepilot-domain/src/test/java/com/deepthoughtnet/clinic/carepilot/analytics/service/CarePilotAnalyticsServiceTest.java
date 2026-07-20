@@ -173,6 +173,7 @@ class CarePilotAnalyticsServiceTest {
         var timeline = service.timeline(tenantId, executionId);
 
         assertThat(timeline.execution().tenantId()).isEqualTo(tenantId);
+        assertThat(timeline.execution().acquiredAt()).isNull();
         assertThat(timeline.deliveryAttempts()).isEmpty();
         assertThat(timeline.deliveryEvents()).isEmpty();
     }
@@ -222,6 +223,7 @@ class CarePilotAnalyticsServiceTest {
         OffsetDateTime sameTime = OffsetDateTime.parse("2026-07-19T09:32:12Z");
         CampaignExecutionEntity execution = CampaignExecutionEntity.create(tenantId, UUID.randomUUID(), null, ChannelType.SMS, null, sameTime, null, null, null, null);
         setField(execution, "createdAt", sameTime);
+        setField(execution, "acquiredAt", sameTime);
         setField(execution, "updatedAt", sameTime);
         setField(execution, "executedAt", sameTime);
         setField(execution, "lastAttemptAt", sameTime);
@@ -263,6 +265,7 @@ class CarePilotAnalyticsServiceTest {
         assertThat(timeline.statusEvents())
                 .extracting(com.deepthoughtnet.clinic.carepilot.analytics.service.model.ExecutionTimelineEventRecord::reasonLabel)
                 .containsExactly("Queued", "Dispatch Started/Acquired", "SMS Sent", "Delivered", "Execution Succeeded");
+        assertThat(timeline.execution().acquiredAt()).isEqualTo(sameTime);
         assertThat(timeline.statusEvents())
                 .extracting(com.deepthoughtnet.clinic.carepilot.analytics.service.model.ExecutionTimelineEventRecord::status)
                 .containsExactly("QUEUED", "PROCESSING", "SENT", "DELIVERED", "SUCCEEDED");

@@ -97,13 +97,20 @@ function durationMinutes(startAt: string | null, endAt: string | null) {
 }
 
 function queueWaitMinutes(execution: CarePilotExecutionTimeline["execution"]) {
-  if (execution.status !== "PROCESSING") return null;
-  return durationMinutes(execution.createdAt, execution.updatedAt);
+  if (!execution.acquiredAt) return null;
+  return durationMinutes(execution.createdAt, execution.acquiredAt);
 }
 
 function processingDurationMinutes(execution: CarePilotExecutionTimeline["execution"], now = new Date()) {
-  if (execution.status !== "PROCESSING" || !execution.updatedAt) return null;
-  return durationMinutes(execution.updatedAt, now.toISOString());
+  if (!execution.acquiredAt) return null;
+  if (execution.status === "PROCESSING") {
+    return durationMinutes(execution.acquiredAt, now.toISOString());
+  }
+  return durationMinutes(execution.acquiredAt, execution.executedAt);
+}
+
+function durationLabel(minutes: number | null) {
+  return minutes == null ? "Not recorded" : formatCarePilotDurationMinutes(minutes);
 }
 
 export default function OpsConsolePage() {
@@ -606,6 +613,7 @@ export default function OpsConsolePage() {
       <Dialog
         open={timelineOpen}
         onClose={closeTimeline}
+        scroll="paper"
         fullWidth
         maxWidth="lg"
         aria-labelledby="ops-execution-timeline-title"
@@ -633,8 +641,8 @@ export default function OpsConsolePage() {
                     <Grid size={{ xs: 12, md: 6 }}><Typography variant="body2">Scheduled: {formatCarePilotDateTime(timeline.execution.scheduledAt, clinicTimeZone)}</Typography></Grid>
                     <Grid size={{ xs: 12, md: 6 }}><Typography variant="body2">Queued: {formatCarePilotDateTime(timeline.execution.createdAt, clinicTimeZone)}</Typography></Grid>
                     <Grid size={{ xs: 12, md: 6 }}><Typography variant="body2">Executed: {formatCarePilotDateTime(timeline.execution.executedAt, clinicTimeZone)}</Typography></Grid>
-                    <Grid size={{ xs: 12, md: 6 }}><Typography variant="body2">Queue Wait: {formatCarePilotDurationMinutes(queueWaitMinutes(timeline.execution))}</Typography></Grid>
-                    <Grid size={{ xs: 12, md: 6 }}><Typography variant="body2">Processing Duration: {formatCarePilotDurationMinutes(processingDurationMinutes(timeline.execution))}</Typography></Grid>
+                    <Grid size={{ xs: 12, md: 6 }}><Typography variant="body2">Queue Wait: {durationLabel(queueWaitMinutes(timeline.execution))}</Typography></Grid>
+                    <Grid size={{ xs: 12, md: 6 }}><Typography variant="body2">Processing Duration: {durationLabel(processingDurationMinutes(timeline.execution))}</Typography></Grid>
                     <Grid size={{ xs: 12, md: 6 }}><Typography variant="body2">Delivery Attempt Count: {timeline.deliveryAttempts.length}</Typography></Grid>
                     <Grid size={{ xs: 12, md: 6 }}><Typography variant="body2">Retry Count: {timeline.execution.attemptCount}</Typography></Grid>
                   </Grid>
