@@ -16,6 +16,8 @@ import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.time.OffsetDateTime;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,12 +25,15 @@ import org.springframework.util.StringUtils;
 
 @Service
 public class TenantUserManagementService {
+    private static final Logger log = LoggerFactory.getLogger(TenantUserManagementService.class);
     private static final String INDIAN_MOBILE_PATTERN = "^[0-9]{10}$";
 
     private static final Set<String> ALLOWED_ROLES = Set.of(
             "TENANT_ADMIN",
             "ADMIN",
             "CLINIC_ADMIN",
+            "ENGAGE_MANAGER",
+            "ENGAGE_EXECUTIVE",
             "DOCTOR",
             "RECEPTIONIST",
             "BILLING_USER",
@@ -111,49 +116,102 @@ public class TenantUserManagementService {
         String role = normalizeRole(command.role());
         String email = normalizeNullable(command.email());
         String username = normalizeNullable(command.username());
+        String firstName = normalizeNullable(command.firstName());
+        String lastName = normalizeNullable(command.lastName());
         String displayName = normalizeNullable(command.displayName());
         String employeeCode = normalizeNullable(command.employeeCode());
         String mobile = normalizeMobile(command.mobile());
         String department = normalizeNullable(command.department());
+        String correlationId = correlationId();
+        UUID tenantId = command.tenantId();
 
         UUID existingUserId = null;
         if (StringUtils.hasText(email)) {
-            existingUserId = appUserRepository.findByTenantIdAndEmailIgnoreCase(command.tenantId(), email)
+            existingUserId = appUserRepository.findByTenantIdAndEmailIgnoreCase(tenantId, email)
                     .map(AppUserEntity::getId)
                     .orElse(null);
         }
         if (existingUserId == null && StringUtils.hasText(username)) {
-            existingUserId = appUserRepository.findByTenantIdAndUsernameIgnoreCase(command.tenantId(), username)
+            existingUserId = appUserRepository.findByTenantIdAndUsernameIgnoreCase(tenantId, username)
                     .map(AppUserEntity::getId)
                     .orElse(null);
         }
-        validateSupplementalUniqueness(command.tenantId(), existingUserId, username, employeeCode);
+        validateSupplementalUniqueness(tenantId, existingUserId, username, employeeCode);
 
-        String keycloakSub = keycloakAdminProvisioner.createOrGetTenantUserId(
-                command.tenantId(),
-                email,
-                username,
-                displayName,
-                command.tempPassword(),
-                StringUtils.hasText(email)
-        );
+        try {
+            log.info(
+                    "tenant.user.provision stage=keycloak tenantId={} email={} username={} role={} correlationId={}",
+                    tenantId,
+                    mask(email),
+                    mask(username),
+                    role,
+                    correlationId
+            );
+            String keycloakSub = keycloakAdminProvisioner.createOrGetTenantUserId(
+                    tenantId,
+                    email,
+                    username,
+                    firstName,
+                    lastName,
+                    displayName,
+                    command.tempPassword(),
+                    StringUtils.hasText(email)
+            );
+            keycloakAdminProvisioner.ensureRealmRole(keycloakSub, role);
+            log.info(
+                    "tenant.user.provision stage=keycloak_complete tenantId={} email={} username={} role={} keycloakSub={} correlationId={}",
+                    tenantId,
+                    mask(email),
+                    mask(username),
+                    role,
+                    keycloakSub,
+                    correlationId
+            );
 
-        AppUserEntity user = upsertTenantUser(command.tenantId(), keycloakSub, email, username, displayName, employeeCode, mobile, department);
+            AppUserEntity user = upsertTenantUser(tenantId, keycloakSub, email, username, displayName, employeeCode, mobile, department);
+            log.info(
+                    "tenant.user.provision stage=app_user_persisted tenantId={} appUserId={} email={} username={} correlationId={}",
+                    tenantId,
+                    user.getId(),
+                    mask(email),
+                    mask(username),
+                    correlationId
+            );
 
-        TenantMembershipEntity membership = membershipRepository.findByTenantIdAndAppUserId(
-                        command.tenantId(),
-                        user.getId()
-                )
-                .orElseGet(() -> membershipRepository.save(TenantMembershipEntity.create(
-                        command.tenantId(),
-                        user.getId(),
-                        role
-                )));
+            TenantMembershipEntity membership = membershipRepository.findByTenantIdAndAppUserId(
+                            tenantId,
+                            user.getId()
+                    )
+                    .orElseGet(() -> membershipRepository.save(TenantMembershipEntity.create(
+                            tenantId,
+                            user.getId(),
+                            role
+                    )));
 
-        membership.setRole(role);
-        membership.setStatus("ACTIVE");
+            membership.setRole(role);
+            membership.setStatus("ACTIVE");
 
-        return toRecord(user, membership, "KEYCLOAK_USER_READY");
+            log.info(
+                    "tenant.user.provision stage=membership_persisted tenantId={} appUserId={} role={} correlationId={}",
+                    tenantId,
+                    user.getId(),
+                    role,
+                    correlationId
+            );
+
+            return toRecord(user, membership, "KEYCLOAK_USER_READY");
+        } catch (RuntimeException ex) {
+            log.error(
+                    "tenant.user.provision stage=failed tenantId={} email={} username={} role={} correlationId={}",
+                    tenantId,
+                    mask(email),
+                    mask(username),
+                    role,
+                    correlationId,
+                    ex
+            );
+            throw new TenantProvisioningException("tenant.user.provision", "User provisioning failed at stage '" + failedStage(ex) + "'", ex);
+        }
     }
 
     @Transactional
@@ -414,7 +472,39 @@ public class TenantUserManagementService {
                     .filter(existing -> currentUserId == null || !currentUserId.equals(existing.getId()))
                     .ifPresent(existing -> {
                         throw new IllegalArgumentException("Employee code already exists for this clinic.");
-                    });
+            });
         }
+    }
+
+    private String correlationId() {
+        return org.slf4j.MDC.get("correlationId");
+    }
+
+    private String failedStage(Throwable ex) {
+        String message = ex == null ? null : ex.getMessage();
+        if (message == null) {
+            return "unknown";
+        }
+        String lower = message.toLowerCase(Locale.ROOT);
+        if (lower.contains("keycloak")) {
+            return "keycloak";
+        }
+        if (lower.contains("membership")) {
+            return "membership";
+        }
+        if (lower.contains("employee code") || lower.contains("username") || lower.contains("duplicate")) {
+            return "validation";
+        }
+        if (lower.contains("app user") || lower.contains("app_user")) {
+            return "app_user";
+        }
+        return "persistence";
+    }
+
+    private String mask(String value) {
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
+        return value.trim();
     }
 }

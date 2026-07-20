@@ -5,6 +5,8 @@ import com.deepthoughtnet.clinic.api.carepilot.dto.AnalyticsDtos.DeliveryEventRe
 import com.deepthoughtnet.clinic.api.carepilot.dto.AnalyticsDtos.TimelineEventResponse;
 import com.deepthoughtnet.clinic.api.carepilot.dto.ExecutionDtos.DeliveryAttemptResponse;
 import com.deepthoughtnet.clinic.api.carepilot.dto.ExecutionDtos.ExecutionResponse;
+import com.deepthoughtnet.clinic.api.carepilot.dto.OpsConsoleDtos.OpsExecutionResponse;
+import com.deepthoughtnet.clinic.api.carepilot.dto.OpsConsoleDtos.OpsReadinessResponse;
 import com.deepthoughtnet.clinic.carepilot.analytics.service.CarePilotAnalyticsService;
 import com.deepthoughtnet.clinic.carepilot.analytics.service.model.CarePilotExecutionTimelineRecord;
 import com.deepthoughtnet.clinic.carepilot.execution.model.ExecutionStatus;
@@ -29,16 +31,55 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/carepilot/ops")
 public class CarePilotOpsController {
     private final CarePilotAnalyticsService analyticsService;
+    private final CarePilotOpsConsoleService opsConsoleService;
 
-    public CarePilotOpsController(CarePilotAnalyticsService analyticsService) {
+    public CarePilotOpsController(CarePilotAnalyticsService analyticsService, CarePilotOpsConsoleService opsConsoleService) {
         this.analyticsService = analyticsService;
+        this.opsConsoleService = opsConsoleService;
+    }
+
+    @GetMapping("/executions")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.ops.view')")
+    public List<OpsExecutionResponse> executions(
+            @RequestParam(required = false) String campaignRef,
+            @RequestParam(required = false) ChannelType channel,
+            @RequestParam(required = false) ExecutionStatus status,
+            @RequestParam(required = false) String providerName,
+            @RequestParam(required = false, defaultValue = "false") boolean retryableOnly,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(required = false) String reminderWindow
+    ) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        return opsConsoleService.listExecutions(tenantId, campaignRef, channel, status, providerName, retryableOnly, startDate, endDate, reminderWindow);
+    }
+
+    @GetMapping("/queued-executions")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.ops.view')")
+    public List<OpsExecutionResponse> queuedExecutions(
+            @RequestParam(required = false) String campaignRef,
+            @RequestParam(required = false) ChannelType channel,
+            @RequestParam(required = false) String providerName,
+            @RequestParam(required = false, defaultValue = "false") boolean retryableOnly,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(required = false) String reminderWindow
+    ) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        return opsConsoleService.listQueuedExecutions(tenantId, campaignRef, channel, providerName, retryableOnly, startDate, endDate, reminderWindow);
+    }
+
+    @GetMapping("/readiness")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.ops.view')")
+    public OpsReadinessResponse readiness() {
+        return opsConsoleService.readiness(RequestContextHolder.requireTenantId());
     }
 
     /**
      * Returns filtered failed/dead-letter execution queue for operations triage.
      */
     @GetMapping("/failed-executions")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.ops.view')")
     public List<ExecutionResponse> failedExecutions(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
@@ -59,7 +100,7 @@ public class CarePilotOpsController {
      * Returns execution details, delivery attempts and status events for one execution.
      */
     @GetMapping("/executions/{executionId}/timeline")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.ops.view')")
     public ExecutionTimelineResponse timeline(@PathVariable UUID executionId) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         CarePilotExecutionTimelineRecord record = analyticsService.timeline(tenantId, executionId);
@@ -81,14 +122,14 @@ public class CarePilotOpsController {
                         event.eventTimestamp(),
                         event.receivedAt()
                 )).toList(),
-                record.statusEvents().stream().map(event -> new TimelineEventResponse(event.type(), event.status(), event.detail(), event.at())).toList()
+                record.statusEvents().stream().map(event -> new TimelineEventResponse(event.reasonCode(), event.reasonLabel(), event.status(), event.detail(), event.at())).toList()
         );
     }
 
     private ExecutionResponse toResponse(CampaignExecutionRecord record) {
         return new ExecutionResponse(
                 record.id(), record.tenantId(), record.campaignId(), record.templateId(), record.channelType(),
-                record.recipientPatientId(), record.scheduledAt(), record.status(), record.attemptCount(), record.lastError(),
+                record.recipientPatientId(), record.scheduledAt(), record.status(), record.attemptCount(), record.deliveryAttemptCount(), record.lastError(),
                 record.executedAt(), record.nextAttemptAt(), record.deliveryStatus(), record.providerName(),
                 record.providerMessageId(), record.sourceType(), record.sourceReferenceId(), record.reminderWindow(),
                 record.referenceDateTime(), record.lastAttemptAt(), record.failureReason(), record.createdAt(), record.updatedAt()

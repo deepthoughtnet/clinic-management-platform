@@ -75,7 +75,7 @@ class WebinarRegistrationServiceTest {
         webinar.setScheduledEndAt(OffsetDateTime.now().plusDays(1).plusHours(1));
         webinar.setStatus(WebinarStatus.SCHEDULED);
 
-        campaign = CampaignEntity.create(tenantId, "Campaign A", null, null, null, null, null, actorId);
+        campaign = CampaignEntity.create(tenantId, "CAM-2026-000001", "Campaign A", null, null, null, null, null, actorId);
         webinar.setCampaignId(campaign.getId());
 
         when(webinarRepository.findByTenantIdAndId(tenantId, webinar.getId())).thenReturn(Optional.of(webinar));

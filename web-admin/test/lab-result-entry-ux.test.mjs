@@ -32,5 +32,5 @@ test("lab result entry retains existing approval flow and report generation", ()
   assert.ok(source.includes('openReviewDialog'));
   assert.ok(source.includes('saveReview'));
   assert.ok(source.includes('publishLabOrderReport'));
-  assert.ok(source.includes('generateReport'));
+  assert.ok(source.includes('Verify Results'));
 });

@@ -17,6 +17,7 @@ export function ConfirmationDialog({
   confirmLabel = "Confirm",
   confirmColor = "primary",
   confirmDisabled = false,
+  confirmLoading = false,
   onCancel,
   onConfirm,
 }: {
@@ -28,6 +29,7 @@ export function ConfirmationDialog({
   confirmLabel?: string;
   confirmColor?: "primary" | "secondary" | "error" | "warning" | "info";
   confirmDisabled?: boolean;
+  confirmLoading?: boolean;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
@@ -53,8 +55,8 @@ export function ConfirmationDialog({
         <Button type="button" onClick={onCancel}>
           {cancelLabel}
         </Button>
-        <Button type="button" variant="contained" color={confirmColor} disabled={confirmDisabled} onClick={onConfirm}>
-          {confirmLabel}
+        <Button type="button" variant="contained" color={confirmColor} disabled={confirmDisabled || confirmLoading} onClick={onConfirm}>
+          {confirmLoading ? `${confirmLabel}...` : confirmLabel}
         </Button>
       </DialogActions>
     </Dialog>

@@ -36,7 +36,7 @@ public class CareAiReceptionistTaskController {
     }
 
     @GetMapping
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('RECEPTIONIST') or @permissionChecker.hasRole('AUDITOR') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasAnyPermission('engage.reception.operate','engage.view')")
     public List<CareAiReceptionistTaskResponse> list(
             @RequestParam(required = false) CareAiReceptionistTaskStatus status,
             @RequestParam(required = false) CareAiReceptionistTaskType type,
@@ -54,7 +54,7 @@ public class CareAiReceptionistTaskController {
     }
 
     @GetMapping("/callbacks")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('RECEPTIONIST') or @permissionChecker.hasRole('AUDITOR') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasAnyPermission('engage.reception.operate','engage.view')")
     public List<CareAiReceptionistTaskResponse> callbacks(
             @RequestParam(required = false) CareAiReceptionistTaskStatus status,
             @RequestParam(required = false) CareAiReceptionistTaskPriority priority,
@@ -67,7 +67,7 @@ public class CareAiReceptionistTaskController {
     }
 
     @GetMapping("/escalations")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('RECEPTIONIST') or @permissionChecker.hasRole('AUDITOR') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasAnyPermission('engage.reception.operate','engage.view')")
     public List<CareAiReceptionistTaskResponse> escalations(
             @RequestParam(required = false) CareAiReceptionistTaskStatus status,
             @RequestParam(required = false) CareAiReceptionistTaskPriority priority,
@@ -80,7 +80,7 @@ public class CareAiReceptionistTaskController {
     }
 
     @GetMapping("/handoffs")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('RECEPTIONIST') or @permissionChecker.hasRole('AUDITOR') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasAnyPermission('engage.reception.operate','engage.view')")
     public List<CareAiReceptionistTaskResponse> handoffs(
             @RequestParam(required = false) CareAiReceptionistTaskStatus status,
             @RequestParam(required = false) CareAiReceptionistTaskPriority priority,
@@ -93,7 +93,7 @@ public class CareAiReceptionistTaskController {
     }
 
     @GetMapping("/appointment-handoffs")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('RECEPTIONIST') or @permissionChecker.hasRole('AUDITOR') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasAnyPermission('engage.reception.operate','engage.view')")
     public List<CareAiReceptionistTaskResponse> appointmentHandoffs(
             @RequestParam(required = false) CareAiReceptionistTaskStatus status,
             @RequestParam(required = false) CareAiReceptionistTaskPriority priority,
@@ -132,7 +132,7 @@ public class CareAiReceptionistTaskController {
     }
 
     @PostMapping("/{id}/assign-me")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('RECEPTIONIST') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.reception.operate')")
     public CareAiReceptionistTaskResponse assignMe(@PathVariable UUID id) {
         return toResponse(taskService.assignTask(
                 RequestContextHolder.requireTenantId(),
@@ -142,13 +142,13 @@ public class CareAiReceptionistTaskController {
     }
 
     @PostMapping("/{id}/assignments/claim")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('RECEPTIONIST') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.reception.operate')")
     public CareAiReceptionistTaskResponse claimAssignment(@PathVariable UUID id) {
         return assignMe(id);
     }
 
     @PostMapping("/{id}/in-progress")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('RECEPTIONIST') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.reception.operate')")
     public CareAiReceptionistTaskResponse markInProgress(@PathVariable UUID id) {
         return toResponse(taskService.markInProgress(
                 RequestContextHolder.requireTenantId(),
@@ -158,7 +158,7 @@ public class CareAiReceptionistTaskController {
     }
 
     @PostMapping("/{id}/resume")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('RECEPTIONIST') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.reception.operate')")
     public CareAiReceptionistTaskResponse resume(@PathVariable UUID id) {
         return toResponse(taskService.resumeTask(
                 RequestContextHolder.requireTenantId(),
@@ -168,7 +168,7 @@ public class CareAiReceptionistTaskController {
     }
 
     @PostMapping("/{id}/staff-note")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('RECEPTIONIST') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.reception.operate')")
     public CareAiReceptionistTaskResponse addStaffNote(@PathVariable UUID id, @RequestBody StaffNoteRequest request) {
         return toResponse(taskService.addStaffNote(
                 RequestContextHolder.requireTenantId(),
@@ -179,7 +179,7 @@ public class CareAiReceptionistTaskController {
     }
 
     @PostMapping("/{id}/return-to-ai")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('RECEPTIONIST') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.reception.operate')")
     public CareAiReceptionistTaskResponse returnToAi(@PathVariable UUID id) {
         return toResponse(taskService.returnToAi(
                 RequestContextHolder.requireTenantId(),
@@ -189,7 +189,7 @@ public class CareAiReceptionistTaskController {
     }
 
     @PostMapping("/{id}/schedule-callback")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('RECEPTIONIST') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.reception.operate')")
     public CareAiReceptionistTaskResponse scheduleCallback(@PathVariable UUID id, @RequestBody(required = false) ScheduleCallbackRequest request) {
         return toResponse(taskService.scheduleCallback(
                 RequestContextHolder.requireTenantId(),

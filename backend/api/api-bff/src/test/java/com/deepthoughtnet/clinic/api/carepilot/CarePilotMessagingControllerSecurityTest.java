@@ -14,10 +14,8 @@ class CarePilotMessagingControllerSecurityTest {
         Method status = CarePilotMessagingController.class.getMethod("status");
         String guard = status.getAnnotation(PreAuthorize.class).value();
 
-        assertThat(guard).contains("CLINIC_ADMIN");
-        assertThat(guard).contains("AUDITOR");
-        assertThat(guard).contains("PLATFORM_ADMIN");
-        assertThat(guard).doesNotContain("DOCTOR").doesNotContain("BILLING_USER").doesNotContain("RECEPTIONIST");
+        assertThat(guard).contains("engage.provider.view");
+        assertThat(guard).doesNotContain("engage.provider.admin").doesNotContain("engage.campaign.manage");
     }
 
     @Test
@@ -29,8 +27,7 @@ class CarePilotMessagingControllerSecurityTest {
         );
         String guard = testSend.getAnnotation(PreAuthorize.class).value();
 
-        assertThat(guard).contains("CLINIC_ADMIN");
-        assertThat(guard).contains("PLATFORM_ADMIN");
-        assertThat(guard).doesNotContain("AUDITOR").doesNotContain("DOCTOR").doesNotContain("BILLING_USER").doesNotContain("RECEPTIONIST");
+        assertThat(guard).contains("engage.provider.admin");
+        assertThat(guard).doesNotContain("engage.provider.view").doesNotContain("engage.audit.view");
     }
 }

@@ -8,6 +8,7 @@ export type ApiOpts = {
   accept?: string;
   clientTimeZone?: string | null;
   correlationId?: string | null;
+  idempotencyKey?: string | null;
 };
 
 export type ApiErrorResponse = {
@@ -118,6 +119,7 @@ function buildHeaders(path: string, opts?: ApiOpts, withContentType = true): Hea
     ...(platformOp ? { "X-Platform-Op": "true" } : {}),
     ...(headerTenantId ? { "X-Tenant-Id": headerTenantId } : {}),
     ...(opts?.correlationId ? { "X-Correlation-Id": opts.correlationId } : {}),
+    ...(opts?.idempotencyKey ? { "Idempotency-Key": opts.idempotencyKey } : {}),
     ...(opts?.clientTimeZone ? { "X-Client-Timezone": opts.clientTimeZone } : {}),
     ...(withContentType ? { "Content-Type": "application/json" } : {}),
     Accept: opts?.accept || "application/json",

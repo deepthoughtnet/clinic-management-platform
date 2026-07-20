@@ -72,6 +72,7 @@ public class CarePilotRemindersService {
             ChannelType channel,
             UUID patientId,
             String patientName,
+            String patientQuery,
             LocalDate fromDate,
             LocalDate toDate,
             String providerName,
@@ -132,6 +133,20 @@ public class CarePilotRemindersService {
                         || safe(patient.getLastName()).toLowerCase().contains(normalized);
             });
         }
+        if (StringUtils.hasText(patientQuery)) {
+            String normalized = patientQuery.trim().toLowerCase();
+            predicate = predicate.and(row -> {
+                PatientEntity patient = patients.get(row.getRecipientPatientId());
+                if (patient == null) {
+                    return false;
+                }
+                String full = (safe(patient.getFirstName()) + " " + safe(patient.getLastName())).trim().toLowerCase();
+                return full.contains(normalized)
+                        || safe(patient.getFirstName()).toLowerCase().contains(normalized)
+                        || safe(patient.getLastName()).toLowerCase().contains(normalized)
+                        || safe(patient.getPatientNumber()).toLowerCase().contains(normalized);
+            });
+        }
         if (StringUtils.hasText(providerName)) {
             String normalized = providerName.trim().toLowerCase();
             predicate = predicate.and(row -> row.getProviderName() != null && row.getProviderName().toLowerCase().contains(normalized));
@@ -190,7 +205,7 @@ public class CarePilotRemindersService {
                         event.providerName(), event.providerMessageId(), event.channelType(), event.externalStatus(), event.internalStatus(),
                         event.eventType(), event.eventTimestamp(), event.receivedAt()
                 )).toList(),
-                timelineRecord.statusEvents().stream().map(event -> new TimelineEventResponse(event.type(), event.status(), event.detail(), event.at())).toList()
+                timelineRecord.statusEvents().stream().map(event -> new TimelineEventResponse(event.reasonCode(), event.reasonLabel(), event.status(), event.detail(), event.at())).toList()
         );
 
         return new ReminderDetailResponse(row, timeline);
@@ -211,16 +226,20 @@ public class CarePilotRemindersService {
         OffsetDateTime failedAt = latestFailureEvent(events);
 
         String patientName = patient == null ? null : (safe(patient.getFirstName()) + " " + safe(patient.getLastName())).trim();
+        String patientReference = patient == null ? null : patient.getPatientNumber();
         String relatedType = row.getSourceType();
-        String reminderReason = buildReminderReason(row);
+        String reasonCode = buildReasonCode(row);
+        String reasonLabel = buildReasonLabel(row);
 
         return new ReminderRowResponse(
                 row.getId().toString(),
                 row.getCampaignId().toString(),
+                campaign == null ? null : campaign.getCampaignReference(),
                 campaign == null ? row.getCampaignId().toString() : campaign.getName(),
                 campaign == null ? null : campaign.getCampaignType(),
                 campaign == null ? null : campaign.getTriggerType(),
                 row.getRecipientPatientId() == null ? null : row.getRecipientPatientId().toString(),
+                patientReference,
                 StringUtils.hasText(patientName) ? patientName : null,
                 patient == null ? null : patient.getEmail(),
                 patient == null ? null : patient.getMobile(),
@@ -241,7 +260,8 @@ public class CarePilotRemindersService {
                 relatedType,
                 row.getSourceReferenceId() == null ? null : row.getSourceReferenceId().toString(),
                 buildRelatedLabel(row),
-                reminderReason,
+                reasonCode,
+                reasonLabel,
                 row.getCreatedAt()
         );
     }
@@ -266,14 +286,24 @@ public class CarePilotRemindersService {
                 .orElse(null);
     }
 
-    private String buildReminderReason(CampaignExecutionEntity row) {
-        if (StringUtils.hasText(row.getReminderWindow())) {
-            return row.getReminderWindow();
-        }
+    private String buildReasonCode(CampaignExecutionEntity row) {
         if (StringUtils.hasText(row.getSourceType())) {
-            return row.getSourceType();
+            return row.getSourceType().trim();
         }
-        return "Campaign reminder";
+        if (StringUtils.hasText(row.getReminderWindow())) {
+            return row.getReminderWindow().trim();
+        }
+        return "CAMPAIGN_REMINDER";
+    }
+
+    private String buildReasonLabel(CampaignExecutionEntity row) {
+        if (StringUtils.hasText(row.getSourceType())) {
+            return humanizeReason(row.getSourceType());
+        }
+        if (StringUtils.hasText(row.getReminderWindow())) {
+            return humanizeReason(row.getReminderWindow());
+        }
+        return "Campaign Reminder";
     }
 
     private String buildRelatedLabel(CampaignExecutionEntity row) {
@@ -281,9 +311,32 @@ public class CarePilotRemindersService {
             return null;
         }
         if (StringUtils.hasText(row.getSourceType())) {
-            return row.getSourceType() + " " + row.getSourceReferenceId();
+            return humanizeReason(row.getSourceType()) + " " + row.getSourceReferenceId();
         }
         return row.getSourceReferenceId().toString();
+    }
+
+    private String humanizeReason(String value) {
+        if (!StringUtils.hasText(value)) {
+            return "Campaign Reminder";
+        }
+        if ("CAMPAIGN_MANUAL_TRIGGER".equals(value)) {
+            return "Manual Campaign Run";
+        }
+        StringBuilder builder = new StringBuilder();
+        for (String part : value.replace('-', '_').split("_")) {
+            if (!StringUtils.hasText(part)) {
+                continue;
+            }
+            if (builder.length() > 0) {
+                builder.append(' ');
+            }
+            builder.append(Character.toUpperCase(part.charAt(0)));
+            if (part.length() > 1) {
+                builder.append(part.substring(1).toLowerCase());
+            }
+        }
+        return builder.length() == 0 ? value : builder.toString();
     }
 
     private String safe(String value) {
@@ -293,7 +346,7 @@ public class CarePilotRemindersService {
     private ExecutionResponse toExecutionResponse(com.deepthoughtnet.clinic.carepilot.execution.service.model.CampaignExecutionRecord record) {
         return new ExecutionResponse(
                 record.id(), record.tenantId(), record.campaignId(), record.templateId(), record.channelType(),
-                record.recipientPatientId(), record.scheduledAt(), record.status(), record.attemptCount(), record.lastError(),
+                record.recipientPatientId(), record.scheduledAt(), record.status(), record.attemptCount(), record.deliveryAttemptCount(), record.lastError(),
                 record.executedAt(), record.nextAttemptAt(), record.deliveryStatus(), record.providerName(),
                 record.providerMessageId(), record.sourceType(), record.sourceReferenceId(), record.reminderWindow(),
                 record.referenceDateTime(), record.lastAttemptAt(), record.failureReason(), record.createdAt(), record.updatedAt()

@@ -116,6 +116,8 @@ class PatientEngagementServiceTest {
 
         assertThat(overview.totalActivePatients()).isEqualTo(1);
         assertThat(overview.highRiskPatientsCount()).isEqualTo(1);
+        assertThat(service.cohortCount(tenantId, EngagementCohortType.HIGH_RISK_PATIENTS)).isEqualTo(highRisk.size());
+        assertThat(service.cohortCount(tenantId, EngagementCohortType.INACTIVE_PATIENTS)).isEqualTo(inactive.size());
         assertThat(highRisk).hasSize(1);
         assertThat(inactive).hasSize(1);
         assertThat(highRisk.get(0).engagementLevel()).isIn(EngagementLevel.CRITICAL, EngagementLevel.LOW);

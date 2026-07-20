@@ -18,10 +18,12 @@ public final class RemindersDtos {
     public record ReminderRowResponse(
             String executionId,
             String campaignId,
+            String campaignReference,
             String campaignName,
             CampaignType campaignType,
             TriggerType triggerType,
             String patientId,
+            String patientReference,
             String patientName,
             String patientEmail,
             String patientPhone,
@@ -42,7 +44,8 @@ public final class RemindersDtos {
             String relatedEntityType,
             String relatedEntityId,
             String relatedEntityLabel,
-            String reminderReason,
+            String reasonCode,
+            String reasonLabel,
             OffsetDateTime createdAt
     ) {}
 

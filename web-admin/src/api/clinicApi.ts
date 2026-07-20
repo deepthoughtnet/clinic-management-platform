@@ -5758,7 +5758,7 @@ export type CarePilotCampaignType =
   | "BILLING_REMINDER"
   | "WELLNESS_MESSAGE"
   | "CUSTOM";
-export type CarePilotCampaignStatus = "DRAFT" | "ACTIVE" | "PAUSED" | "ARCHIVED";
+export type CarePilotCampaignStatus = "DRAFT" | "PENDING_APPROVAL" | "CHANGES_REQUESTED" | "APPROVED" | "ACTIVE" | "PAUSED" | "COMPLETED" | "CANCELLED";
 export type CarePilotTriggerType = "MANUAL" | "SCHEDULED" | "EVENT_BASED";
 export type CarePilotAudienceType =
   | "ALL_PATIENTS"
@@ -5787,6 +5787,7 @@ export type CarePilotProviderReadinessStatus = "READY" | "DISABLED" | "NOT_CONFI
 
 export type CarePilotCampaign = {
   id: string;
+  campaignReference: string;
   tenantId: string;
   name: string;
   campaignType: CarePilotCampaignType;
@@ -5797,16 +5798,111 @@ export type CarePilotCampaign = {
   active: boolean;
   notes: string | null;
   createdBy: string | null;
+  submittedBy: string | null;
+  submittedByDisplayName: string | null;
+  submittedByRoleLabel: string | null;
+  submittedByEmployeeCode: string | null;
+  submittedByUsername: string | null;
+  submittedAt: string | null;
+  reviewedBy: string | null;
+  reviewedByDisplayName: string | null;
+  reviewedByRoleLabel: string | null;
+  reviewedByEmployeeCode: string | null;
+  reviewedByUsername: string | null;
+  reviewedAt: string | null;
+  reviewComment: string | null;
+  approvedBy: string | null;
+  approvedByDisplayName: string | null;
+  approvedByRoleLabel: string | null;
+  approvedByEmployeeCode: string | null;
+  approvedByUsername: string | null;
+  approvedAt: string | null;
+  activationBy: string | null;
+  activationByDisplayName: string | null;
+  activationByRoleLabel: string | null;
+  activationByEmployeeCode: string | null;
+  activationByUsername: string | null;
+  activationAt: string | null;
+  approvalInvalidatedReason: string | null;
+  approvedVersion: number | null;
+  approvedConfigurationHash: string | null;
+  version: number;
   createdAt: string;
   updatedAt: string;
 };
 
-export type CarePilotCampaignTriggerResult = {
+export type CarePilotCampaignLookup = {
+  id: string;
+  campaignReference: string;
+  name: string;
+  campaignType: CarePilotCampaignType;
+  status: CarePilotCampaignStatus;
+  templateId: string | null;
+};
+
+export type CarePilotCampaignTriggerPreview = {
+  campaignReference: string;
+  campaignName: string;
+  status: CarePilotCampaignStatus;
+  triggerType: CarePilotTriggerType;
+  channelType: CarePilotChannelType;
+  templateName: string | null;
+  templateActive: boolean;
+  providerName: string;
+  providerMode: string;
+  providerReady: boolean;
+  manualDispatcherEnabled: boolean;
+  eligibleRecipients: number;
+  excludedRecipients: number;
+  missingEmailOrPhoneCount: number;
+  invalidDestinationCount: number;
+  consentOrOptOutCount: number;
+  duplicateRecipientCount: number;
+  inactivePatientCount: number;
+  missingRequiredTemplateDataCount: number;
+  estimatedMessages: number;
+  estimatedBillableCost: number | string | null;
+  environmentWarning: string | null;
+  approvedConfigurationValid: boolean;
+  canTrigger: boolean;
+  blockingReasons: string[];
+};
+
+export type CarePilotCampaignApprovalHistory = {
+  id: string;
   campaignId: string;
+  eventType: string;
+  fromStatus: CarePilotCampaignStatus | null;
+  toStatus: CarePilotCampaignStatus | null;
+  actorId: string | null;
+  actorRole: string | null;
+  actorDisplayName: string | null;
+  actorRoleLabel: string | null;
+  actorEmployeeCode: string | null;
+  actorUsername: string | null;
+  comment: string | null;
+  invalidationReason: string | null;
+  resolutionNote: string | null;
+  previousCampaignVersion: number | null;
+  campaignVersion: number | null;
+  newCampaignVersion: number | null;
+  previousConfigurationHash: string | null;
+  configurationHash: string | null;
+  newConfigurationHash: string | null;
+  createdAt: string;
+};
+
+export type EditAndResubmitCarePilotCampaignInput = UpdateCarePilotCampaignInput & {
+  resolutionNote?: string | null;
+};
+
+export type CarePilotCampaignTriggerResult = {
+  campaignReference: string;
+  executionReference: string;
   campaignName: string;
   audienceType: CarePilotAudienceType;
-  templateId: string | null;
   channelType: CarePilotChannelType;
+  status: CarePilotCampaignStatus;
   queued: boolean;
   eligibleRecipients: number;
   queuedExecutions: number;
@@ -5837,6 +5933,7 @@ export type CarePilotExecution = {
   scheduledAt: string;
   status: CarePilotExecutionStatus;
   attemptCount: number;
+  deliveryAttemptCount: number;
   lastError: string | null;
   executedAt: string | null;
   nextAttemptAt: string | null;
@@ -5851,6 +5948,52 @@ export type CarePilotExecution = {
   failureReason: string | null;
   createdAt: string;
   updatedAt: string;
+};
+
+export type CarePilotOpsExecution = {
+  executionId: string;
+  executionReference: string;
+  campaignReference: string;
+  campaignName: string;
+  campaignType: string | null;
+  patientReference: string | null;
+  patientName: string | null;
+  relatedEntityType: string | null;
+  relatedEntityLabel: string | null;
+  channelType: CarePilotChannelType;
+  status: CarePilotExecutionStatus;
+  deliveryStatus: CarePilotDeliveryStatus | null;
+  providerName: string | null;
+  scheduledAt: string | null;
+  queuedAt: string | null;
+  queueAgeMinutes: number;
+  attemptCount: number;
+  deliveryAttemptCount: number;
+  retryCount: number;
+  blockingReason: string | null;
+  stuck: boolean;
+  reminderWindow: string | null;
+  nextAttemptAt: string | null;
+  lastAttemptAt: string | null;
+  failureReason: string | null;
+  executedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CarePilotOpsReadiness = {
+  manualExecutionDispatcherEnabled: boolean;
+  manualExecutionDispatcherLastAcquiredAt: string | null;
+  manualExecutionDispatcherLastSkippedAt: string | null;
+  reminderSchedulerEnabled: boolean;
+  reminderSchedulerLastScanAt: string | null;
+  queueDepth: number;
+  queuedCount: number;
+  processingCount: number;
+  retryingCount: number;
+  oldestQueuedAgeMinutes: number;
+  lastSuccessfulDispatchAt: string | null;
+  providerStatuses: CarePilotMessagingProviderStatus[];
 };
 
 export type CarePilotDeliveryAttempt = {
@@ -5868,6 +6011,7 @@ export type CarePilotDeliveryAttempt = {
 
 export type CarePilotCampaignExecutionBreakdown = {
   campaignId: string;
+  campaignReference: string;
   campaignName: string;
   totalExecutions: number;
   successfulExecutions: number;
@@ -5892,9 +6036,10 @@ export type CarePilotAnalyticsSummary = {
   failedExecutions: number;
   retryingExecutions: number;
   skippedExecutions: number;
+  queuedExecutions: number;
+  sentExecutions: number;
   deliveredExecutions: number;
   readExecutions: number;
-  bouncedExecutions: number;
   undeliveredExecutions: number;
   successRate: number;
   failureRate: number;
@@ -5908,7 +6053,8 @@ export type CarePilotAnalyticsSummary = {
 };
 
 export type CarePilotTimelineEvent = {
-  type: string;
+  reasonCode: string;
+  reasonLabel: string;
   status: string;
   detail: string | null;
   at: string | null;
@@ -5967,6 +6113,7 @@ export type CarePilotCampaignRuntimeExecution = {
   providerMessageId: string | null;
   status: string | null;
   failureReason: string | null;
+  deliveryAttemptCount: number;
   retryCount: number;
 };
 
@@ -6020,10 +6167,12 @@ export type CarePilotProviderTestSendResult = {
 export type CarePilotReminderRow = {
   executionId: string;
   campaignId: string;
+  campaignReference: string | null;
   campaignName: string;
   campaignType: CarePilotCampaignType | null;
   triggerType: CarePilotTriggerType | null;
   patientId: string | null;
+  patientReference: string | null;
   patientName: string | null;
   patientEmail: string | null;
   patientPhone: string | null;
@@ -6044,7 +6193,8 @@ export type CarePilotReminderRow = {
   relatedEntityType: string | null;
   relatedEntityId: string | null;
   relatedEntityLabel: string | null;
-  reminderReason: string | null;
+  reasonCode: string | null;
+  reasonLabel: string | null;
   createdAt: string;
 };
 
@@ -6061,6 +6211,7 @@ export type CarePilotReminderDetail = {
 };
 
 export type CarePilotEngagementLevel = "HIGH" | "MEDIUM" | "LOW" | "CRITICAL";
+export type CarePilotEngagementSelection = CarePilotEngagementLevel | "ALL";
 export type CarePilotRiskLevel = "LOW" | "MEDIUM" | "HIGH";
 export type CarePilotEngagementCohort =
   | "HIGH_RISK_PATIENTS"
@@ -6122,6 +6273,15 @@ export type CarePilotEngagementOverview = {
 
 export type CarePilotEngagementCohortResponse = {
   cohort: CarePilotEngagementCohort;
+  offset: number;
+  limit: number;
+  count: number;
+  rows: CarePilotEngagementProfile[];
+  generatedAt: string;
+};
+
+export type CarePilotEngagementProfileListResponse = {
+  selectedLevel: CarePilotEngagementSelection;
   offset: number;
   limit: number;
   count: number;
@@ -6439,6 +6599,7 @@ export type CarePilotAiCallEvent = {
 };
 export type CarePilotAiCallSchedulerHealth = {
   enabled: boolean;
+  workerLabel: string;
   lastRunAt: string | null;
   nextEstimatedRunAt: string | null;
   lastProcessedCount: number;
@@ -6497,6 +6658,15 @@ export type CreateCarePilotCampaignInput = {
   audienceType: CarePilotAudienceType;
   templateId?: string | null;
   notes?: string | null;
+};
+
+export type UpdateCarePilotCampaignInput = CreateCarePilotCampaignInput & {
+  expectedVersion?: number | null;
+};
+
+export type CarePilotCampaignReviewInput = {
+  comment?: string | null;
+  expectedVersion?: number | null;
 };
 
 export type CreateCarePilotTemplateInput = {
@@ -6653,8 +6823,24 @@ export async function getCarePilotCampaign(token: string, tenantId: string, camp
   return httpGet<CarePilotCampaign>(`/api/carepilot/campaigns/${campaignId}`, { token, tenantId });
 }
 
+export async function listCarePilotApprovalNeeded(token: string, tenantId: string) {
+  return httpGet<CarePilotCampaign[]>("/api/carepilot/campaigns/approval-needed", { token, tenantId });
+}
+
+export async function lookupCarePilotCampaigns(token: string, tenantId: string, query = "", limit = 20) {
+  const params = new URLSearchParams();
+  if (query.trim()) params.set("q", query.trim());
+  params.set("limit", String(limit));
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return httpGet<CarePilotCampaignLookup[]>(`/api/carepilot/campaigns/lookup${suffix}`, { token, tenantId });
+}
+
 export async function getCarePilotCampaignRuntime(token: string, tenantId: string, campaignId: string) {
   return httpGet<CarePilotCampaignRuntime>(`/api/carepilot/campaigns/${campaignId}/runtime`, { token, tenantId });
+}
+
+export async function getCarePilotCampaignApprovalHistory(token: string, tenantId: string, campaignId: string) {
+  return httpGet<CarePilotCampaignApprovalHistory[]>(`/api/carepilot/campaigns/${campaignId}/approval-history`, { token, tenantId });
 }
 
 export async function getCarePilotLeadImportTemplate(token: string, tenantId: string) {
@@ -6692,6 +6878,30 @@ export async function createCarePilotCampaign(token: string, tenantId: string, b
   return httpPost<CarePilotCampaign>("/api/carepilot/campaigns", body, { token, tenantId });
 }
 
+export async function updateCarePilotCampaign(token: string, tenantId: string, campaignId: string, body: UpdateCarePilotCampaignInput) {
+  return httpPatch<CarePilotCampaign>(`/api/carepilot/campaigns/${campaignId}`, body, { token, tenantId });
+}
+
+export async function editAndResubmitCarePilotCampaign(token: string, tenantId: string, campaignId: string, body: EditAndResubmitCarePilotCampaignInput) {
+  return httpPost<CarePilotCampaign>(`/api/carepilot/campaigns/${campaignId}/edit-and-resubmit`, body, { token, tenantId });
+}
+
+export async function submitCarePilotCampaign(token: string, tenantId: string, campaignId: string, body: CarePilotCampaignReviewInput = {}) {
+  return httpPost<CarePilotCampaign>(`/api/carepilot/campaigns/${campaignId}/submit`, body, { token, tenantId });
+}
+
+export async function withdrawCarePilotCampaign(token: string, tenantId: string, campaignId: string) {
+  return httpPost<CarePilotCampaign>(`/api/carepilot/campaigns/${campaignId}/withdraw`, {}, { token, tenantId });
+}
+
+export async function approveCarePilotCampaign(token: string, tenantId: string, campaignId: string, body: CarePilotCampaignReviewInput) {
+  return httpPost<CarePilotCampaign>(`/api/carepilot/campaigns/${campaignId}/approve`, body, { token, tenantId });
+}
+
+export async function requestChangesCarePilotCampaign(token: string, tenantId: string, campaignId: string, body: CarePilotCampaignReviewInput) {
+  return httpPost<CarePilotCampaign>(`/api/carepilot/campaigns/${campaignId}/request-changes`, body, { token, tenantId });
+}
+
 export async function activateCarePilotCampaign(token: string, tenantId: string, campaignId: string) {
   return httpPatch<CarePilotCampaign>(`/api/carepilot/campaigns/${campaignId}/activate`, undefined, { token, tenantId });
 }
@@ -6700,8 +6910,28 @@ export async function deactivateCarePilotCampaign(token: string, tenantId: strin
   return httpPatch<CarePilotCampaign>(`/api/carepilot/campaigns/${campaignId}/deactivate`, undefined, { token, tenantId });
 }
 
-export async function triggerCarePilotCampaign(token: string, tenantId: string, campaignId: string) {
-  return httpPost<CarePilotCampaignTriggerResult>(`/api/carepilot/campaigns/${campaignId}/trigger`, {}, { token, tenantId });
+export async function resumeCarePilotCampaign(token: string, tenantId: string, campaignId: string) {
+  return httpPatch<CarePilotCampaign>(`/api/carepilot/campaigns/${campaignId}/resume`, undefined, { token, tenantId });
+}
+
+export async function pauseCarePilotCampaign(token: string, tenantId: string, campaignId: string) {
+  return httpPatch<CarePilotCampaign>(`/api/carepilot/campaigns/${campaignId}/pause`, undefined, { token, tenantId });
+}
+
+export async function cancelCarePilotCampaign(token: string, tenantId: string, campaignId: string) {
+  return httpPatch<CarePilotCampaign>(`/api/carepilot/campaigns/${campaignId}/cancel`, undefined, { token, tenantId });
+}
+
+export async function completeCarePilotCampaign(token: string, tenantId: string, campaignId: string) {
+  return httpPatch<CarePilotCampaign>(`/api/carepilot/campaigns/${campaignId}/complete`, undefined, { token, tenantId });
+}
+
+export async function triggerCarePilotCampaign(token: string, tenantId: string, campaignId: string, idempotencyKey?: string | null) {
+  return httpPost<CarePilotCampaignTriggerResult>(`/api/carepilot/campaigns/${campaignId}/trigger`, {}, { token, tenantId, idempotencyKey: idempotencyKey ?? null });
+}
+
+export async function getCarePilotCampaignTriggerPreview(token: string, tenantId: string, campaignId: string) {
+  return httpGet<CarePilotCampaignTriggerPreview>(`/api/carepilot/campaigns/${campaignId}/trigger-preview`, { token, tenantId });
 }
 
 export async function listCarePilotTemplates(token: string, tenantId: string) {
@@ -7059,6 +7289,54 @@ export async function getCarePilotExecutionTimeline(token: string, tenantId: str
   return httpGet<CarePilotExecutionTimeline>(`/api/carepilot/ops/executions/${executionId}/timeline`, { token, tenantId });
 }
 
+export async function listCarePilotOpsExecutions(token: string, tenantId: string, filters?: {
+  campaignRef?: string;
+  channel?: CarePilotChannelType;
+  status?: CarePilotExecutionStatus;
+  providerName?: string;
+  retryableOnly?: boolean;
+  startDate?: string;
+  endDate?: string;
+  reminderWindow?: string;
+}) {
+  const query = new URLSearchParams();
+  if (filters?.campaignRef) query.set("campaignRef", filters.campaignRef);
+  if (filters?.channel) query.set("channel", filters.channel);
+  if (filters?.status) query.set("status", filters.status);
+  if (filters?.providerName) query.set("providerName", filters.providerName);
+  if (filters?.retryableOnly) query.set("retryableOnly", "true");
+  if (filters?.startDate) query.set("startDate", filters.startDate);
+  if (filters?.endDate) query.set("endDate", filters.endDate);
+  if (filters?.reminderWindow) query.set("reminderWindow", filters.reminderWindow);
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return httpGet<CarePilotOpsExecution[]>(`/api/carepilot/ops/executions${suffix}`, { token, tenantId });
+}
+
+export async function listCarePilotQueuedOpsExecutions(token: string, tenantId: string, filters?: {
+  campaignRef?: string;
+  channel?: CarePilotChannelType;
+  providerName?: string;
+  retryableOnly?: boolean;
+  startDate?: string;
+  endDate?: string;
+  reminderWindow?: string;
+}) {
+  const query = new URLSearchParams();
+  if (filters?.campaignRef) query.set("campaignRef", filters.campaignRef);
+  if (filters?.channel) query.set("channel", filters.channel);
+  if (filters?.providerName) query.set("providerName", filters.providerName);
+  if (filters?.retryableOnly) query.set("retryableOnly", "true");
+  if (filters?.startDate) query.set("startDate", filters.startDate);
+  if (filters?.endDate) query.set("endDate", filters.endDate);
+  if (filters?.reminderWindow) query.set("reminderWindow", filters.reminderWindow);
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return httpGet<CarePilotOpsExecution[]>(`/api/carepilot/ops/queued-executions${suffix}`, { token, tenantId });
+}
+
+export async function getCarePilotOpsReadiness(token: string, tenantId: string) {
+  return httpGet<CarePilotOpsReadiness>("/api/carepilot/ops/readiness", { token, tenantId });
+}
+
 export async function listCarePilotMessagingProviderStatuses(token: string, tenantId: string) {
   return httpGet<CarePilotMessagingProviderStatus[]>("/api/carepilot/messaging/providers/status", { token, tenantId });
 }
@@ -7079,6 +7357,7 @@ export async function listCarePilotReminders(token: string, tenantId: string, fi
   channel?: CarePilotChannelType;
   patientId?: string;
   patientName?: string;
+  patientQuery?: string;
   fromDate?: string;
   toDate?: string;
   providerName?: string;
@@ -7092,6 +7371,7 @@ export async function listCarePilotReminders(token: string, tenantId: string, fi
   if (filters?.channel) query.set("channel", filters.channel);
   if (filters?.patientId) query.set("patientId", filters.patientId);
   if (filters?.patientName) query.set("patientName", filters.patientName);
+  if (filters?.patientQuery) query.set("patientQuery", filters.patientQuery);
   if (filters?.fromDate) query.set("fromDate", filters.fromDate);
   if (filters?.toDate) query.set("toDate", filters.toDate);
   if (filters?.providerName) query.set("providerName", filters.providerName);
@@ -7155,6 +7435,19 @@ export async function listCarePilotEngagementCohort(
   if (params?.offset != null) query.set("offset", String(params.offset));
   if (params?.limit != null) query.set("limit", String(params.limit));
   return httpGet<CarePilotEngagementCohortResponse>(`/api/carepilot/engagement/cohorts?${query.toString()}`, { token, tenantId });
+}
+
+export async function listCarePilotEngagementProfiles(
+  token: string,
+  tenantId: string,
+  params?: { level?: CarePilotEngagementSelection; offset?: number; limit?: number }
+) {
+  const query = new URLSearchParams();
+  if (params?.level) query.set("level", params.level);
+  if (params?.offset != null) query.set("offset", String(params.offset));
+  if (params?.limit != null) query.set("limit", String(params.limit));
+  const suffix = query.toString();
+  return httpGet<CarePilotEngagementProfileListResponse>(`/api/carepilot/engagement/profiles${suffix ? `?${suffix}` : ""}`, { token, tenantId });
 }
 
 export async function listCarePilotLeads(token: string, tenantId: string, filters?: {

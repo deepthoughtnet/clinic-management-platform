@@ -32,6 +32,8 @@ public class ClinicSettingsController {
             Roles.TENANT_ADMIN,
             Roles.ADMIN,
             Roles.CLINIC_ADMIN,
+            Roles.ENGAGE_MANAGER,
+            Roles.ENGAGE_EXECUTIVE,
             Roles.DOCTOR,
             Roles.RECEPTIONIST,
             Roles.BILLING_USER,

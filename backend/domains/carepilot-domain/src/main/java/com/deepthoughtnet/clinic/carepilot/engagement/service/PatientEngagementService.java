@@ -40,6 +40,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.springframework.beans.factory.annotation.Value;
@@ -137,6 +138,38 @@ public class PatientEngagementService {
                 .skip(safeOffset)
                 .limit(safeLimit)
                 .toList();
+    }
+
+    /** Returns the total number of patients in one cohort for business-facing count cards. */
+    @Transactional(readOnly = true)
+    public long cohortCount(UUID tenantId, EngagementCohortType cohort) {
+        return profiles(tenantId).stream()
+                .filter(profile -> inCohort(profile, cohort))
+                .count();
+    }
+
+    /** Returns scored patient profiles filtered by engagement level when requested. */
+    @Transactional(readOnly = true)
+    public List<PatientEngagementProfileRecord> profiles(UUID tenantId, EngagementLevel level, int offset, int limit) {
+        int safeOffset = Math.max(0, offset);
+        int safeLimit = Math.max(1, Math.min(2000, limit));
+        Predicate<PatientEngagementProfileRecord> filter = level == null ? profile -> true : profile -> profile.engagementLevel() == level;
+        return profiles(tenantId).stream()
+                .filter(filter)
+                .sorted(Comparator.comparingInt(PatientEngagementProfileRecord::engagementScore)
+                        .reversed()
+                        .thenComparing(PatientEngagementProfileRecord::patientName, String.CASE_INSENSITIVE_ORDER))
+                .skip(safeOffset)
+                .limit(safeLimit)
+                .toList();
+    }
+
+    /** Returns the total number of scored patients for one engagement level or all scored patients. */
+    @Transactional(readOnly = true)
+    public long profileCount(UUID tenantId, EngagementLevel level) {
+        return profiles(tenantId).stream()
+                .filter(level == null ? profile -> true : profile -> profile.engagementLevel() == level)
+                .count();
     }
 
     /** Returns all computed profiles for tenant-scoped operational workflows. */

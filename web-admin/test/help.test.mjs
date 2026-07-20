@@ -203,26 +203,27 @@ test("footer layout keeps version text and centered branding", () => {
 
 test("engage routes resolve to the Engage help pages", () => {
   const expectations = [
-    ["/carepilot/campaigns", "JEEVANAM_ENGAGE_CAMPAIGNS", "CAMPAIGNS"],
-    ["/carepilot/analytics", "ENGAGE_ANALYTICS", "ENGAGE_ANALYTICS"],
-    ["/carepilot/ops", "ENGAGE_OPS_CONSOLE", "ENGAGE_OPS_CONSOLE"],
-    ["/carepilot/messaging", "ENGAGE_MESSAGING", "ENGAGE_MESSAGING"],
-    ["/carepilot/reminders", "ENGAGE_REMINDERS", "ENGAGE_REMINDERS"],
-    ["/carepilot/engagement", "ENGAGE_PATIENT_ENGAGEMENT", "ENGAGE_PATIENT_ENGAGEMENT"],
-    ["/carepilot/leads", "ENGAGE_LEADS", "ENGAGE_LEADS"],
-    ["/carepilot/webinars", "ENGAGE_WEBINAR_AUTOMATION", "ENGAGE_WEBINAR_AUTOMATION"],
-    ["/carepilot/ai-calls", "ENGAGE_AI_CALLS", "ENGAGE_AI_CALLS"],
-    ["/carepilot/ai-receptionist/active-conversations", "ENGAGE_AI_RECEPTIONIST_ACTIVE", "ENGAGE_AI_RECEPTIONIST_ACTIVE"],
-    ["/carepilot/ai-receptionist/callback-queue", "ENGAGE_AI_RECEPTIONIST_CALLBACK", "ENGAGE_AI_RECEPTIONIST_CALLBACK"],
-    ["/carepilot/ai-receptionist/escalation-queue", "ENGAGE_AI_RECEPTIONIST_ESCALATION", "ENGAGE_AI_RECEPTIONIST_ESCALATION"],
-    ["/carepilot/ai-receptionist/appointment-handoffs", "ENGAGE_AI_RECEPTIONIST_APPOINTMENT_HANDOFF", "ENGAGE_AI_RECEPTIONIST_APPOINTMENT_HANDOFF"],
-    ["/carepilot/receptionist-queue", "ENGAGE_RECEPTIONIST_QUEUE", "ENGAGE_RECEPTIONIST_QUEUE"],
+    ["/carepilot/campaigns", "JEEVANAM_ENGAGE_CAMPAIGNS", "CAMPAIGNS", "/carepilot/campaigns"],
+    ["/carepilot/analytics", "ENGAGE_ANALYTICS", "ENGAGE_ANALYTICS", "/carepilot/analytics"],
+    ["/carepilot/ops", "ENGAGE_OPS_CONSOLE", "ENGAGE_OPS_CONSOLE", "/carepilot/ops"],
+    ["/carepilot/messaging", "ENGAGE_MESSAGING", "ENGAGE_MESSAGING", "/carepilot/messaging"],
+    ["/carepilot/reminders", "ENGAGE_REMINDERS", "ENGAGE_REMINDERS", "/carepilot/reminders"],
+    ["/carepilot/engagement", "ENGAGE_PATIENT_ENGAGEMENT", "ENGAGE_PATIENT_ENGAGEMENT", "/carepilot/engagement"],
+    ["/carepilot/leads", "ENGAGE_LEADS", "ENGAGE_LEADS", "/carepilot/leads"],
+    ["/carepilot/webinars", "ENGAGE_WEBINAR_AUTOMATION", "ENGAGE_WEBINAR_AUTOMATION", "/carepilot/webinars"],
+    ["/carepilot/ai-operations", "ENGAGE_AI_OPERATIONS", "ENGAGE_AI_OPERATIONS", "/carepilot/ai-operations"],
+    ["/carepilot/ai-calls", "ENGAGE_AI_CALLS", "ENGAGE_AI_CALLS", "/carepilot/ai-operations?tab=calls"],
+    ["/carepilot/ai-receptionist/active-conversations", "ENGAGE_AI_RECEPTIONIST_ACTIVE", "ENGAGE_AI_RECEPTIONIST_ACTIVE", "/carepilot/ai-operations?tab=conversations"],
+    ["/carepilot/ai-receptionist/callback-queue", "ENGAGE_AI_RECEPTIONIST_CALLBACK", "ENGAGE_AI_RECEPTIONIST_CALLBACK", "/carepilot/ai-operations?tab=work-queue&type=callback"],
+    ["/carepilot/ai-receptionist/escalation-queue", "ENGAGE_AI_RECEPTIONIST_ESCALATION", "ENGAGE_AI_RECEPTIONIST_ESCALATION", "/carepilot/ai-operations?tab=work-queue&type=escalation"],
+    ["/carepilot/ai-receptionist/appointment-handoffs", "ENGAGE_AI_RECEPTIONIST_APPOINTMENT_HANDOFF", "ENGAGE_AI_RECEPTIONIST_APPOINTMENT_HANDOFF", "/carepilot/ai-operations?tab=work-queue&type=appointment-handoff"],
+    ["/carepilot/receptionist-queue", "ENGAGE_RECEPTIONIST_QUEUE", "ENGAGE_RECEPTIONIST_QUEUE", "/carepilot/ai-operations?tab=work-queue"],
   ];
-  for (const [path, pageKey, cmsPageKey] of expectations) {
+  for (const [path, pageKey, cmsPageKey, routePath] of expectations) {
     const meta = resolveHelpPageMeta(path);
     assert.equal(meta.pageKey, pageKey);
     assert.equal(meta.cmsPageKey, cmsPageKey);
-    assert.equal(resolveHelpRouteByPageKey(pageKey)?.path, path);
+    assert.equal(resolveHelpRouteByPageKey(pageKey)?.path, routePath);
   }
 });
 

@@ -27,6 +27,7 @@ public final class ExecutionDtos {
             OffsetDateTime scheduledAt,
             ExecutionStatus status,
             int attemptCount,
+            int deliveryAttemptCount,
             String lastError,
             OffsetDateTime executedAt,
             OffsetDateTime nextAttemptAt,

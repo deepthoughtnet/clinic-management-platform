@@ -8,12 +8,15 @@ import {
   Chip,
   CircularProgress,
   Dialog,
+  DialogActions,
   DialogContent,
   DialogTitle,
+  IconButton,
   FormControl,
   Grid,
   InputLabel,
   MenuItem,
+  Menu,
   Select,
   Stack,
   Tab,
@@ -26,27 +29,32 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
+import MoreVertIcon from "@mui/icons-material/MoreVert";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../../auth/useAuth";
 import { engageAiCallRescheduleSchema, mapZodErrors } from "@deepthoughtnet/form-validation-kit";
+import { ConfirmationDialog } from "../../../components/clinical/ConfirmationDialog";
 import {
   cancelCarePilotReminder,
   getCarePilotReminder,
-  listCarePilotCampaigns,
   listCarePilotReminders,
   rescheduleCarePilotReminder,
   resendCarePilotReminder,
   suppressCarePilotReminder,
   retryCarePilotReminder,
-  type CarePilotCampaign,
   type CarePilotCampaignType,
   type CarePilotChannelType,
   type CarePilotDeliveryStatus,
   type CarePilotReminderDetail,
   type CarePilotReminderRow,
 } from "../../../api/clinicApi";
+import CampaignLookupField from "../components/CampaignLookupField";
+import { campaignTypeLabel, channelTypeLabel, triggerTypeLabel } from "../campaigns/campaignLabels";
+import { formatCarePilotDateTime, humanizeCarePilotCode, providerLabel } from "../shared/carepilotFormatting";
+import { useCarePilotTenantTimezone } from "../shared/useCarePilotTenantTimezone";
 
-const TAB_FILTERS = ["Upcoming", "Pending", "Retrying", "Failed", "Delivered", "Read", "Skipped", "All"] as const;
+const TAB_FILTERS = ["Upcoming", "Pending", "Sent", "Retrying", "Failed", "Delivered", "Read", "Skipped", "All"] as const;
 type ReminderTab = typeof TAB_FILTERS[number];
 
 function deliveryColor(status: CarePilotDeliveryStatus | null) {
@@ -56,6 +64,23 @@ function deliveryColor(status: CarePilotDeliveryStatus | null) {
   if (status === "QUEUED") return "info" as const;
   if (status === "SKIPPED") return "default" as const;
   return "warning" as const;
+}
+
+function humanizeSourceType(value: string | null | undefined) {
+  if (!value) return "-";
+  if (value === "CAMPAIGN_MANUAL_TRIGGER") return "Manual Campaign Run";
+  return value.replace(/_/g, " ").toLowerCase().replace(/(^|\s)\w/g, (m) => m.toUpperCase());
+}
+
+function timelineReasonLabel(event: { reasonLabel: string | null; reasonCode: string | null; status: string | null }) {
+  if (event.reasonLabel) return event.reasonLabel;
+  if (event.reasonCode) return humanizeCarePilotCode(event.reasonCode);
+  return humanizeCarePilotCode(event.status);
+}
+
+function shouldRenderTimelineEvent(event: { reasonCode: string | null; reasonLabel: string | null }) {
+  if (event.reasonCode === "LAST_ATTEMPT") return false;
+  return Boolean(event.reasonLabel || event.reasonCode);
 }
 
 function executionColor(status: string) {
@@ -72,6 +97,7 @@ function mapTabToStatus(tab: ReminderTab): string | undefined {
   if (tab === "Delivered") return "DELIVERED";
   if (tab === "Read") return "READ";
   if (tab === "Skipped") return "SKIPPED";
+  if (tab === "Sent") return "SENT";
   return undefined;
 }
 
@@ -81,6 +107,7 @@ function isRowInTab(row: CarePilotReminderRow, tab: ReminderTab): boolean {
   if (tab === "All") return true;
   if (tab === "Upcoming") return (row.executionStatus === "QUEUED" || row.executionStatus === "PROCESSING") && scheduled > now;
   if (tab === "Pending") return row.executionStatus === "QUEUED" || row.executionStatus === "PROCESSING";
+  if (tab === "Sent") return row.deliveryStatus === "SENT" || row.executionStatus === "SUCCEEDED";
   if (tab === "Retrying") return row.executionStatus === "RETRY_SCHEDULED" || (row.retryCount > 0 && !!row.nextRetryAt);
   if (tab === "Failed") return row.executionStatus === "FAILED" || row.executionStatus === "DEAD_LETTER" || row.deliveryStatus === "FAILED" || row.deliveryStatus === "BOUNCED" || row.deliveryStatus === "UNDELIVERED";
   if (tab === "Delivered") return row.deliveryStatus === "DELIVERED";
@@ -103,12 +130,17 @@ function kpi(title: string, value: number) {
 export default function RemindersPage() {
   const navigate = useNavigate();
   const auth = useAuth();
-  const canView = auth.rolesUpper.includes("CLINIC_ADMIN") || auth.rolesUpper.includes("AUDITOR") || (auth.rolesUpper.includes("PLATFORM_ADMIN") && Boolean(auth.tenantId));
-  const canMutate = auth.rolesUpper.includes("CLINIC_ADMIN") || (auth.rolesUpper.includes("PLATFORM_ADMIN") && Boolean(auth.tenantId));
+  const canView = auth.hasPermission("engage.reminder.view")
+    || auth.hasPermission("engage.reminder.operate")
+    || auth.hasPermission("engage.audit.view");
+  const canMutate = auth.hasPermission("engage.reminder.operate");
+  const canViewCampaigns = auth.hasPermission("engage.campaign.view")
+    || auth.hasPermission("engage.campaign.manage")
+    || auth.hasPermission("engage.audit.view");
+  const { clinicTimeZone } = useCarePilotTenantTimezone(auth.accessToken, auth.tenantId);
 
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
-  const [campaigns, setCampaigns] = React.useState<CarePilotCampaign[]>([]);
   const [rows, setRows] = React.useState<CarePilotReminderRow[]>([]);
   const [tab, setTab] = React.useState<ReminderTab>("All");
 
@@ -118,17 +150,19 @@ export default function RemindersPage() {
   const [campaignType, setCampaignType] = React.useState<CarePilotCampaignType | "">("");
   const [channel, setChannel] = React.useState<CarePilotChannelType | "">("");
   const [statusFilter, setStatusFilter] = React.useState("");
-  const [patientId, setPatientId] = React.useState("");
-  const [patientSearchInput, setPatientSearchInput] = React.useState("");
-  const [patientNameFilter, setPatientNameFilter] = React.useState("");
+  const [patientQuery, setPatientQuery] = React.useState("");
   const [rescheduleTarget, setRescheduleTarget] = React.useState<CarePilotReminderRow | null>(null);
   const [rescheduleAt, setRescheduleAt] = React.useState("");
   const [rescheduleReason, setRescheduleReason] = React.useState("");
   const [filterErrors, setFilterErrors] = React.useState<Record<string, string>>({});
   const [rescheduleErrors, setRescheduleErrors] = React.useState<Record<string, string>>({});
+  const [actionTarget, setActionTarget] = React.useState<{ row: CarePilotReminderRow; action: "retry" | "resend" | "cancel" | "suppress" } | null>(null);
+  const [actionMenuAnchor, setActionMenuAnchor] = React.useState<HTMLElement | null>(null);
+  const [actionMenuRow, setActionMenuRow] = React.useState<CarePilotReminderRow | null>(null);
 
   const [detail, setDetail] = React.useState<CarePilotReminderDetail | null>(null);
   const [detailOpen, setDetailOpen] = React.useState(false);
+  const viewTimelineButtonRef = React.useRef<HTMLButtonElement | null>(null);
 
   const load = React.useCallback(async () => {
     if (!auth.accessToken || !auth.tenantId || !canView) {
@@ -144,33 +178,23 @@ export default function RemindersPage() {
         return;
       }
       setFilterErrors({});
-      const [campaignRows, reminderRes] = await Promise.all([
-        listCarePilotCampaigns(auth.accessToken, auth.tenantId),
-        listCarePilotReminders(auth.accessToken, auth.tenantId, {
-          campaignId: campaignId || undefined,
-          campaignType: campaignType || undefined,
-          channel: channel || undefined,
-          status: statusFilter || mapTabToStatus(tab),
-          patientId: patientId || undefined,
-          patientName: patientNameFilter || undefined,
-          fromDate: startDate || undefined,
-          toDate: endDate || undefined,
-          size: 200,
-        }),
-      ]);
-      setCampaigns(campaignRows);
+      const reminderRes = await listCarePilotReminders(auth.accessToken, auth.tenantId, {
+        campaignId: campaignId || undefined,
+        campaignType: campaignType || undefined,
+        channel: channel || undefined,
+        status: statusFilter || mapTabToStatus(tab),
+        patientQuery: patientQuery || undefined,
+        fromDate: startDate || undefined,
+        toDate: endDate || undefined,
+        size: 200,
+      });
       setRows(reminderRes.rows);
     } catch (e) {
       setError((e as Error).message || "Failed to load reminders");
     } finally {
       setLoading(false);
     }
-  }, [auth.accessToken, auth.tenantId, canView, campaignId, campaignType, channel, statusFilter, patientId, patientNameFilter, startDate, endDate, tab]);
-
-  React.useEffect(() => {
-    const handle = window.setTimeout(() => setPatientNameFilter(patientSearchInput.trim()), 300);
-    return () => window.clearTimeout(handle);
-  }, [patientSearchInput]);
+  }, [auth.accessToken, auth.tenantId, canView, campaignId, campaignType, channel, statusFilter, patientQuery, startDate, endDate, tab]);
 
   React.useEffect(() => {
     void load();
@@ -188,11 +212,29 @@ export default function RemindersPage() {
     }
   };
 
+  const closeDetail = React.useCallback(() => {
+    setDetailOpen(false);
+    window.setTimeout(() => viewTimelineButtonRef.current?.focus(), 0);
+  }, []);
+
   const onAction = async (row: CarePilotReminderRow, action: "retry" | "resend" | "cancel" | "suppress") => {
     if (!auth.accessToken || !auth.tenantId || !canMutate) return;
-    const verb = action === "retry" ? "Retry" : action === "resend" ? "Resend" : action === "cancel" ? "Cancel" : "Suppress";
-    const confirmed = window.confirm(`${verb} this reminder execution?`);
-    if (!confirmed) return;
+    setActionTarget({ row, action });
+  };
+
+  const openActionMenu = (event: React.MouseEvent<HTMLElement>, row: CarePilotReminderRow) => {
+    setActionMenuAnchor(event.currentTarget);
+    setActionMenuRow(row);
+  };
+
+  const closeActionMenu = () => {
+    setActionMenuAnchor(null);
+    setActionMenuRow(null);
+  };
+
+  const submitAction = async () => {
+    if (!auth.accessToken || !auth.tenantId || !canMutate || !actionTarget) return;
+    const { row, action } = actionTarget;
     try {
       if (action === "retry") {
         await retryCarePilotReminder(auth.accessToken, auth.tenantId, row.executionId);
@@ -206,6 +248,8 @@ export default function RemindersPage() {
       await load();
     } catch (e) {
       setError((e as Error).message || `Failed to ${action} reminder`);
+    } finally {
+      setActionTarget(null);
     }
   };
 
@@ -244,6 +288,7 @@ export default function RemindersPage() {
   const counts = React.useMemo(() => ({
     scheduledToday: rows.filter((r) => r.scheduledAt?.slice(0, 10) === new Date().toISOString().slice(0, 10)).length,
     pending: rows.filter((r) => isRowInTab(r, "Pending")).length,
+    sent: rows.filter((r) => isRowInTab(r, "Sent")).length,
     retrying: rows.filter((r) => isRowInTab(r, "Retrying")).length,
     failed: rows.filter((r) => isRowInTab(r, "Failed")).length,
     delivered: rows.filter((r) => isRowInTab(r, "Delivered")).length,
@@ -271,23 +316,32 @@ export default function RemindersPage() {
         <Grid container spacing={1.5}>
           <Grid size={{ xs: 6, md: 2 }}><TextField fullWidth type="date" label="From" value={startDate} onChange={(e) => setStartDate(e.target.value)} InputLabelProps={{ shrink: true }} error={Boolean(filterErrors.startDate)} helperText={filterErrors.startDate || ""} /></Grid>
           <Grid size={{ xs: 6, md: 2 }}><TextField fullWidth type="date" label="To" value={endDate} onChange={(e) => setEndDate(e.target.value)} InputLabelProps={{ shrink: true }} error={Boolean(filterErrors.endDate)} helperText={filterErrors.endDate || ""} /></Grid>
-          <Grid size={{ xs: 12, md: 3 }}><FormControl fullWidth><InputLabel>Campaign</InputLabel><Select value={campaignId} label="Campaign" onChange={(e) => setCampaignId(String(e.target.value))}><MenuItem value="">All</MenuItem>{campaigns.map((c) => <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>)}</Select></FormControl></Grid>
-          <Grid size={{ xs: 6, md: 2 }}><FormControl fullWidth><InputLabel>Campaign Type</InputLabel><Select value={campaignType} label="Campaign Type" onChange={(e) => setCampaignType(String(e.target.value) as CarePilotCampaignType | "")}><MenuItem value="">All</MenuItem>{["APPOINTMENT_REMINDER","MISSED_APPOINTMENT_FOLLOW_UP","FOLLOW_UP_REMINDER","REFILL_REMINDER","VACCINATION_REMINDER","BILLING_REMINDER","WELLNESS_MESSAGE","CUSTOM"].map((s) => <MenuItem key={s} value={s}>{s}</MenuItem>)}</Select></FormControl></Grid>
-          <Grid size={{ xs: 6, md: 1.5 }}><FormControl fullWidth><InputLabel>Channel</InputLabel><Select value={channel} label="Channel" onChange={(e) => setChannel(String(e.target.value) as CarePilotChannelType | "")}><MenuItem value="">All</MenuItem><MenuItem value="EMAIL">EMAIL</MenuItem><MenuItem value="SMS">SMS</MenuItem><MenuItem value="WHATSAPP">WHATSAPP</MenuItem></Select></FormControl></Grid>
-          <Grid size={{ xs: 6, md: 1.5 }}><TextField fullWidth label="Patient ID" value={patientId} onChange={(e) => setPatientId(e.target.value)} /></Grid>
-          <Grid size={{ xs: 12, md: 2 }}><TextField fullWidth label="Search Patient" value={patientSearchInput} onChange={(e) => setPatientSearchInput(e.target.value)} /></Grid>
-          <Grid size={{ xs: 6, md: 2 }}><FormControl fullWidth><InputLabel>Status</InputLabel><Select value={statusFilter} label="Status" onChange={(e) => setStatusFilter(String(e.target.value))}><MenuItem value="">Auto (Tab)</MenuItem>{["QUEUED","PROCESSING","RETRY_SCHEDULED","FAILED","DEAD_LETTER","SUCCEEDED","CANCELLED","SUPPRESSED","DELIVERED","READ","SKIPPED","UNDELIVERED","BOUNCED"].map((s) => <MenuItem key={s} value={s}>{s}</MenuItem>)}</Select></FormControl></Grid>
+          <Grid size={{ xs: 12, md: 3 }}>
+            <CampaignLookupField
+              token={auth.accessToken}
+              tenantId={auth.tenantId}
+              value={campaignId}
+              onChange={setCampaignId}
+              label="Campaign"
+              helperText="Search by campaign name, type, or campaign reference."
+            />
+          </Grid>
+          <Grid size={{ xs: 6, md: 2 }}><FormControl fullWidth><InputLabel>Campaign Type</InputLabel><Select value={campaignType} label="Campaign Type" onChange={(e) => setCampaignType(String(e.target.value) as CarePilotCampaignType | "")}><MenuItem value="">All</MenuItem>{(["APPOINTMENT_REMINDER","MISSED_APPOINTMENT_FOLLOW_UP","FOLLOW_UP_REMINDER","REFILL_REMINDER","VACCINATION_REMINDER","BILLING_REMINDER","WELLNESS_MESSAGE","CUSTOM"] as CarePilotCampaignType[]).map((s) => <MenuItem key={s} value={s}>{campaignTypeLabel(s)}</MenuItem>)}</Select></FormControl></Grid>
+          <Grid size={{ xs: 6, md: 1.5 }}><FormControl fullWidth><InputLabel>Channel</InputLabel><Select value={channel} label="Channel" onChange={(e) => setChannel(String(e.target.value) as CarePilotChannelType | "")}><MenuItem value="">All</MenuItem><MenuItem value="EMAIL">Email</MenuItem><MenuItem value="SMS">SMS</MenuItem><MenuItem value="WHATSAPP">WhatsApp</MenuItem></Select></FormControl></Grid>
+          <Grid size={{ xs: 12, md: 2 }}><TextField fullWidth label="Patient" value={patientQuery} onChange={(e) => setPatientQuery(e.target.value)} helperText="Search by patient name or patient reference." /></Grid>
+          <Grid size={{ xs: 6, md: 2 }}><FormControl fullWidth><InputLabel>Status</InputLabel><Select value={statusFilter} label="Status" onChange={(e) => setStatusFilter(String(e.target.value))}><MenuItem value="">Auto (Tab)</MenuItem>{(["QUEUED","PROCESSING","RETRY_SCHEDULED","FAILED","DEAD_LETTER","SUCCEEDED","CANCELLED","SUPPRESSED","DELIVERED","READ","SKIPPED","UNDELIVERED","BOUNCED"] as string[]).map((s) => <MenuItem key={s} value={s}>{humanizeCarePilotCode(s)}</MenuItem>)}</Select></FormControl></Grid>
           <Grid size={{ xs: 6, md: 1 }}><Button fullWidth variant="contained" onClick={() => void load()}>Apply</Button></Grid>
         </Grid>
       </CardContent></Card>
 
       <Grid container spacing={1.5}>
         <Grid size={{ xs: 6, md: 2 }}>{kpi("Scheduled Today", counts.scheduledToday)}</Grid>
-        <Grid size={{ xs: 6, md: 2 }}>{kpi("Pending", counts.pending)}</Grid>
-        <Grid size={{ xs: 6, md: 2 }}>{kpi("Retrying", counts.retrying)}</Grid>
-        <Grid size={{ xs: 6, md: 2 }}>{kpi("Failed", counts.failed)}</Grid>
+        <Grid size={{ xs: 6, md: 2 }}>{kpi("Sent", counts.sent)}</Grid>
         <Grid size={{ xs: 6, md: 2 }}>{kpi("Delivered", counts.delivered)}</Grid>
         <Grid size={{ xs: 6, md: 2 }}>{kpi("Read", counts.read)}</Grid>
+        <Grid size={{ xs: 6, md: 2 }}>{kpi("Failed", counts.failed)}</Grid>
+        <Grid size={{ xs: 6, md: 2 }}>{kpi("Pending", counts.pending)}</Grid>
+        <Grid size={{ xs: 6, md: 2 }}>{kpi("Retrying", counts.retrying)}</Grid>
       </Grid>
 
       <Card><CardContent sx={{ pb: 0 }}>
@@ -305,31 +359,58 @@ export default function RemindersPage() {
                 {displayed.map((row) => (
                   <TableRow key={row.executionId} hover>
                     <TableCell>
-                      <Typography variant="body2" sx={{ fontWeight: 700 }}>{row.patientName || row.patientId || "-"}</Typography>
-                      <Typography variant="caption" color="text.secondary">{row.patientEmail || row.patientPhone || "No contact"}</Typography>
+                      <Typography variant="body2" sx={{ fontWeight: 700 }}>{row.patientName || "Unknown patient"}</Typography>
+                      <Typography variant="caption" color="text.secondary">{row.patientReference || row.patientEmail || row.patientPhone || "No contact"}</Typography>
                     </TableCell>
-                    <TableCell>{row.campaignName}</TableCell>
-                    <TableCell>{row.campaignType || "-"}</TableCell>
-                    <TableCell>{row.channel}</TableCell>
-                    <TableCell>{row.scheduledAt ? new Date(row.scheduledAt).toLocaleString() : "-"}</TableCell>
-                    <TableCell><Chip size="small" color={executionColor(row.executionStatus)} label={row.executionStatus} /></TableCell>
-                    <TableCell><Chip size="small" color={deliveryColor(row.deliveryStatus)} label={row.deliveryStatus || "-"} /></TableCell>
+                    <TableCell>
+                      <Stack spacing={0.25}>
+                        <Typography variant="body2" sx={{ fontWeight: 700 }}>{row.campaignName}</Typography>
+                        <Typography variant="caption" color="text.secondary">{row.campaignReference || "Unknown reference"}</Typography>
+                      </Stack>
+                    </TableCell>
+                    <TableCell>{row.campaignType ? campaignTypeLabel(row.campaignType) : "-"}</TableCell>
+                    <TableCell>{channelTypeLabel(row.channel)}</TableCell>
+                    <TableCell><Typography variant="body2" sx={{ whiteSpace: "nowrap" }}>{formatCarePilotDateTime(row.scheduledAt, clinicTimeZone)}</Typography></TableCell>
+                    <TableCell><Chip size="small" color={executionColor(row.executionStatus)} label={humanizeCarePilotCode(row.executionStatus)} /></TableCell>
+                    <TableCell><Chip size="small" color={deliveryColor(row.deliveryStatus)} label={humanizeCarePilotCode(row.deliveryStatus)} /></TableCell>
                     <TableCell>{row.retryCount}</TableCell>
-                    <TableCell>{row.providerName || "-"}</TableCell>
-                    <TableCell>{row.reminderReason || row.failureReason || "-"}</TableCell>
-                    <TableCell align="right">
-                      <Stack direction="row" spacing={1} justifyContent="flex-end">
-                        <Button size="small" onClick={() => void openDetail(row.executionId)}>View Timeline</Button>
+                    <TableCell>{providerLabel(row.providerName)}</TableCell>
+                    <TableCell>{row.reasonLabel || row.failureReason || "-"}</TableCell>
+                    <TableCell align="right" sx={{ minWidth: 320 }}>
+                      <Stack direction="row" spacing={1} justifyContent="flex-end" alignItems="center" flexWrap="wrap">
+                        <Button
+                          size="small"
+                          onClick={(event) => {
+                            viewTimelineButtonRef.current = event.currentTarget;
+                            void openDetail(row.executionId);
+                          }}
+                        >
+                          View Timeline
+                        </Button>
                         <Button size="small" onClick={() => row.patientId && navigate(`/patients/${row.patientId}`)} disabled={!row.patientId}>Open Patient</Button>
-                        <Button size="small" onClick={() => navigate(`/carepilot/campaigns?campaignId=${encodeURIComponent(row.campaignId)}`)}>Open Campaign</Button>
-                        {canMutate ? <Button size="small" disabled={!(row.executionStatus === "FAILED" || row.executionStatus === "DEAD_LETTER")} onClick={() => void onAction(row, "retry")}>Retry</Button> : null}
-                        {canMutate ? <Button size="small" disabled={!(row.executionStatus === "FAILED" || row.executionStatus === "DEAD_LETTER")} onClick={() => void onAction(row, "resend")}>Resend</Button> : null}
-                        {canMutate ? <Button size="small" disabled={!canMutateRow(row)} onClick={() => void onAction(row, "cancel")}>Cancel</Button> : null}
-                        {canMutate ? <Button size="small" disabled={!canMutateRow(row)} onClick={() => void onAction(row, "suppress")}>Suppress</Button> : null}
-                        {canMutate ? <Button size="small" disabled={!canMutateRow(row)} onClick={() => {
-                          setRescheduleTarget(row);
-                          setRescheduleAt(row.scheduledAt ? row.scheduledAt.slice(0, 16) : "");
-                        }}>Reschedule</Button> : null}
+                        {canViewCampaigns ? <Button size="small" onClick={() => navigate(`/carepilot/campaigns?campaignId=${encodeURIComponent(row.campaignId)}`)}>Open Campaign</Button> : null}
+                        {canMutate && (row.executionStatus === "FAILED" || row.executionStatus === "DEAD_LETTER" || canMutateRow(row)) ? (
+                          <>
+                            <IconButton size="small" aria-label="More reminder actions" onClick={(event) => openActionMenu(event, row)}>
+                              <MoreVertIcon fontSize="small" />
+                            </IconButton>
+                            <Menu anchorEl={actionMenuAnchor} open={actionMenuRow?.executionId === row.executionId && Boolean(actionMenuAnchor)} onClose={closeActionMenu}>
+                              {(row.executionStatus === "FAILED" || row.executionStatus === "DEAD_LETTER") ? [
+                                <MenuItem key="retry" onClick={() => { closeActionMenu(); void onAction(row, "retry"); }}>Retry</MenuItem>,
+                                <MenuItem key="resend" onClick={() => { closeActionMenu(); void onAction(row, "resend"); }}>Resend</MenuItem>,
+                              ] : null}
+                              {canMutateRow(row) ? [
+                                <MenuItem key="cancel" onClick={() => { closeActionMenu(); void onAction(row, "cancel"); }}>Cancel</MenuItem>,
+                                <MenuItem key="suppress" onClick={() => { closeActionMenu(); void onAction(row, "suppress"); }}>Suppress</MenuItem>,
+                                <MenuItem key="reschedule" onClick={() => {
+                                  closeActionMenu();
+                                  setRescheduleTarget(row);
+                                  setRescheduleAt(row.scheduledAt ? row.scheduledAt.slice(0, 16) : "");
+                                }}>Reschedule</MenuItem>,
+                              ] : null}
+                            </Menu>
+                          </>
+                        ) : null}
                       </Stack>
                     </TableCell>
                   </TableRow>
@@ -340,27 +421,35 @@ export default function RemindersPage() {
         </CardContent></Card>
       )}
 
-      <Dialog open={detailOpen} onClose={() => setDetailOpen(false)} fullWidth maxWidth="lg">
-        <DialogTitle>Reminder Timeline</DialogTitle>
-        <DialogContent>
+      <Dialog open={detailOpen} onClose={() => closeDetail()} fullWidth maxWidth="lg" aria-labelledby="reminder-timeline-title" aria-describedby="reminder-timeline-description">
+        <DialogTitle id="reminder-timeline-title" sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 2 }}>
+          <span>Reminder Timeline</span>
+          <IconButton aria-label="Close reminder timeline" onClick={closeDetail} size="small">
+            <CloseRoundedIcon fontSize="small" />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent id="reminder-timeline-description">
           {!detail ? <Box sx={{ minHeight: 120, display: "grid", placeItems: "center" }}><CircularProgress size={28} /></Box> : (
             <Stack spacing={2}>
               <Card variant="outlined"><CardContent>
                 <Typography variant="subtitle1" sx={{ fontWeight: 800, mb: 1 }}>Reminder Details</Typography>
-                <Typography variant="body2">Patient: {detail.reminder.patientName || detail.reminder.patientId || "-"}</Typography>
+                <Typography variant="body2">Patient: {detail.reminder.patientName || "Unknown patient"} {detail.reminder.patientReference ? `· ${detail.reminder.patientReference}` : ""}</Typography>
                 <Typography variant="body2">Campaign: {detail.reminder.campaignName}</Typography>
-                <Typography variant="body2">Trigger: {detail.reminder.triggerType || "-"}</Typography>
-                <Typography variant="body2">Reason: {detail.reminder.reminderReason || "-"}</Typography>
-                <Typography variant="body2">Scheduled: {detail.reminder.scheduledAt ? new Date(detail.reminder.scheduledAt).toLocaleString() : "-"}</Typography>
-                <Typography variant="body2">Status: {detail.reminder.executionStatus} / {detail.reminder.deliveryStatus || "-"}</Typography>
+                <Typography variant="body2" color="text.secondary">{detail.reminder.campaignReference || "Unknown reference"}</Typography>
+                <Typography variant="body2">Reminder Type: {detail.reminder.campaignType ? campaignTypeLabel(detail.reminder.campaignType) : "-"}</Typography>
+                <Typography variant="body2">Trigger: {detail.reminder.triggerType ? triggerTypeLabel(detail.reminder.triggerType) : "-"}</Typography>
+                <Typography variant="body2">Execution Source: {humanizeSourceType(detail.timeline.execution.sourceType)}</Typography>
+                <Typography variant="body2">Reason: {detail.reminder.reasonLabel || "-"}</Typography>
+                <Typography variant="body2">Scheduled: {formatCarePilotDateTime(detail.reminder.scheduledAt, clinicTimeZone)}</Typography>
+                <Typography variant="body2">Status: {humanizeCarePilotCode(detail.reminder.executionStatus)} / {humanizeCarePilotCode(detail.reminder.deliveryStatus)}</Typography>
                 <Typography variant="body2">Retry Count: {detail.reminder.retryCount}</Typography>
               </CardContent></Card>
 
               <Card variant="outlined"><CardContent>
                 <Typography variant="subtitle1" sx={{ fontWeight: 800, mb: 1 }}>Status Timeline</Typography>
                 {detail.timeline.statusEvents.length === 0 ? <Alert severity="info">No timeline events.</Alert> : (
-                  <Table size="small"><TableHead><TableRow><TableCell>Type</TableCell><TableCell>Status</TableCell><TableCell>Detail</TableCell><TableCell>At</TableCell></TableRow></TableHead><TableBody>
-                    {detail.timeline.statusEvents.map((event, idx) => <TableRow key={`${event.type}-${idx}`}><TableCell>{event.type}</TableCell><TableCell>{event.status}</TableCell><TableCell>{event.detail || "-"}</TableCell><TableCell>{event.at ? new Date(event.at).toLocaleString() : "-"}</TableCell></TableRow>)}
+                  <Table size="small"><TableHead><TableRow><TableCell>Event</TableCell><TableCell>Status</TableCell><TableCell>Detail</TableCell><TableCell>At</TableCell></TableRow></TableHead><TableBody>
+                    {detail.timeline.statusEvents.filter(shouldRenderTimelineEvent).map((event, idx) => <TableRow key={`${event.reasonCode}-${idx}`}><TableCell>{timelineReasonLabel(event)}</TableCell><TableCell>{humanizeCarePilotCode(event.status)}</TableCell><TableCell>{event.detail ? event.detail : ""}</TableCell><TableCell>{formatCarePilotDateTime(event.at, clinicTimeZone)}</TableCell></TableRow>)}
                   </TableBody></Table>
                 )}
               </CardContent></Card>
@@ -369,7 +458,7 @@ export default function RemindersPage() {
                 <Typography variant="subtitle1" sx={{ fontWeight: 800, mb: 1 }}>Delivery Attempts</Typography>
                 {detail.timeline.deliveryAttempts.length === 0 ? <Alert severity="info">No delivery attempts.</Alert> : (
                   <Table size="small"><TableHead><TableRow><TableCell>#</TableCell><TableCell>Provider</TableCell><TableCell>Status</TableCell><TableCell>Error Code</TableCell><TableCell>Error</TableCell><TableCell>Attempted At</TableCell></TableRow></TableHead><TableBody>
-                    {detail.timeline.deliveryAttempts.map((attempt) => <TableRow key={attempt.id}><TableCell>{attempt.attemptNumber}</TableCell><TableCell>{attempt.providerName || "-"}</TableCell><TableCell>{attempt.deliveryStatus}</TableCell><TableCell>{attempt.errorCode || "-"}</TableCell><TableCell>{attempt.errorMessage || "-"}</TableCell><TableCell>{attempt.attemptedAt ? new Date(attempt.attemptedAt).toLocaleString() : "-"}</TableCell></TableRow>)}
+                    {detail.timeline.deliveryAttempts.map((attempt) => <TableRow key={attempt.id}><TableCell>{attempt.attemptNumber}</TableCell><TableCell>{providerLabel(attempt.providerName)}</TableCell><TableCell>{humanizeCarePilotCode(attempt.deliveryStatus)}</TableCell><TableCell>{attempt.errorCode || ""}</TableCell><TableCell>{attempt.errorMessage || ""}</TableCell><TableCell>{formatCarePilotDateTime(attempt.attemptedAt, clinicTimeZone)}</TableCell></TableRow>)}
                   </TableBody></Table>
                 )}
               </CardContent></Card>
@@ -378,14 +467,27 @@ export default function RemindersPage() {
                 <Typography variant="subtitle1" sx={{ fontWeight: 800, mb: 1 }}>Delivery Events</Typography>
                 {detail.timeline.deliveryEvents.length === 0 ? <Alert severity="info">No provider delivery events.</Alert> : (
                   <Table size="small"><TableHead><TableRow><TableCell>Provider Status</TableCell><TableCell>Internal Status</TableCell><TableCell>Provider</TableCell><TableCell>Message ID</TableCell><TableCell>Event Time</TableCell><TableCell>Received</TableCell></TableRow></TableHead><TableBody>
-                    {detail.timeline.deliveryEvents.map((event, idx) => <TableRow key={`${event.id || idx}`}><TableCell>{event.externalStatus || "-"}</TableCell><TableCell>{event.internalStatus}</TableCell><TableCell>{event.providerName || "-"}</TableCell><TableCell>{event.providerMessageId || "-"}</TableCell><TableCell>{event.eventTimestamp ? new Date(event.eventTimestamp).toLocaleString() : "-"}</TableCell><TableCell>{event.receivedAt ? new Date(event.receivedAt).toLocaleString() : "-"}</TableCell></TableRow>)}
+                    {detail.timeline.deliveryEvents.map((event, idx) => <TableRow key={`${event.id || idx}`}><TableCell>{humanizeCarePilotCode(event.externalStatus)}</TableCell><TableCell>{humanizeCarePilotCode(event.internalStatus)}</TableCell><TableCell>{providerLabel(event.providerName)}</TableCell><TableCell>{event.providerMessageId ? "Recorded" : ""}</TableCell><TableCell>{formatCarePilotDateTime(event.eventTimestamp, clinicTimeZone)}</TableCell><TableCell>{formatCarePilotDateTime(event.receivedAt, clinicTimeZone)}</TableCell></TableRow>)}
                   </TableBody></Table>
                 )}
               </CardContent></Card>
             </Stack>
           )}
         </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button type="button" onClick={closeDetail}>Close</Button>
+        </DialogActions>
       </Dialog>
+
+      <ConfirmationDialog
+        open={Boolean(actionTarget)}
+        title={actionTarget ? `${actionTarget.action.charAt(0).toUpperCase()}${actionTarget.action.slice(1)} reminder execution` : "Reminder action"}
+        description="This will update the reminder execution state. Continue?"
+        confirmLabel={actionTarget?.action === "retry" ? "Retry" : actionTarget?.action === "resend" ? "Resend" : actionTarget?.action === "cancel" ? "Cancel" : "Suppress"}
+        confirmColor="warning"
+        onCancel={() => setActionTarget(null)}
+        onConfirm={() => void submitAction()}
+      />
 
       <Dialog open={Boolean(rescheduleTarget)} onClose={() => setRescheduleTarget(null)} maxWidth="sm" fullWidth>
         <DialogTitle>Reschedule Reminder</DialogTitle>

@@ -17,19 +17,24 @@ class CarePilotEngagementControllerSecurityTest {
                 int.class,
                 int.class
         );
+        Method profiles = CarePilotEngagementController.class.getMethod(
+                "profiles",
+                String.class,
+                int.class,
+                int.class
+        );
         Method highRisk = CarePilotEngagementController.class.getMethod("highRisk", int.class, int.class);
         Method inactive = CarePilotEngagementController.class.getMethod("inactive", int.class, int.class);
 
         assertAllowed(overview.getAnnotation(PreAuthorize.class).value());
         assertAllowed(cohorts.getAnnotation(PreAuthorize.class).value());
+        assertAllowed(profiles.getAnnotation(PreAuthorize.class).value());
         assertAllowed(highRisk.getAnnotation(PreAuthorize.class).value());
         assertAllowed(inactive.getAnnotation(PreAuthorize.class).value());
     }
 
     private void assertAllowed(String guard) {
-        assertThat(guard).contains("CLINIC_ADMIN");
-        assertThat(guard).contains("AUDITOR");
-        assertThat(guard).contains("PLATFORM_ADMIN");
-        assertThat(guard).doesNotContain("DOCTOR").doesNotContain("BILLING_USER").doesNotContain("RECEPTIONIST");
+        assertThat(guard).contains("engage.analytics.view");
+        assertThat(guard).doesNotContain("CLINIC_ADMIN").doesNotContain("AUDITOR").doesNotContain("PLATFORM_ADMIN");
     }
 }

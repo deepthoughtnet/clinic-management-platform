@@ -104,8 +104,8 @@ export default function WebinarsPage() {
   const [regSaving, setRegSaving] = React.useState(false);
   const [regError, setRegError] = React.useState<string | null>(null);
 
-  const canView = auth.rolesUpper.includes("CLINIC_ADMIN") || auth.rolesUpper.includes("RECEPTIONIST") || auth.rolesUpper.includes("AUDITOR") || (auth.rolesUpper.includes("PLATFORM_ADMIN") && Boolean(auth.tenantId));
-  const canMutate = auth.rolesUpper.includes("CLINIC_ADMIN") || auth.rolesUpper.includes("RECEPTIONIST") || (auth.rolesUpper.includes("PLATFORM_ADMIN") && Boolean(auth.tenantId));
+  const canView = auth.hasPermission("engage.webinar.manage");
+  const canMutate = auth.hasPermission("engage.webinar.manage");
 
   const load = React.useCallback(async () => {
     if (!auth.accessToken || !auth.tenantId || !canView) {
@@ -388,7 +388,7 @@ export default function WebinarsPage() {
           {!regLoading && registrations.length === 0 ? <Alert severity="info">No registrations yet.</Alert> : null}
           {!regLoading && registrations.length > 0 ? (
             <Table size="small"><TableHead><TableRow><TableCell>Attendee</TableCell><TableCell>Email</TableCell><TableCell>Phone</TableCell><TableCell>Status</TableCell><TableCell>Patient</TableCell><TableCell>Lead</TableCell><TableCell>Campaign</TableCell><TableCell align="right">Actions</TableCell></TableRow></TableHead><TableBody>
-              {registrations.map((row) => <TableRow key={row.id}><TableCell>{row.attendeeName}</TableCell><TableCell>{row.attendeeEmail || "-"}</TableCell><TableCell>{row.attendeePhone || "-"}</TableCell><TableCell><Chip size="small" label={row.registrationStatus} /></TableCell><TableCell>{row.patientId || "-"}</TableCell><TableCell>{row.leadId ? <Stack direction="row" spacing={1} alignItems="center"><Typography variant="body2">{row.leadName || row.leadId}</Typography><Button size="small" onClick={() => openLead(row)}>Open Lead</Button></Stack> : "-"}</TableCell><TableCell>{row.campaignName || "-"}</TableCell><TableCell align="right">{canMutate ? <Stack direction="row" spacing={1} justifyContent="flex-end"><Button size="small" onClick={() => void markAttendance(row.id, "ATTENDED")} disabled={regSaving}>Attended</Button><Button size="small" onClick={() => void markAttendance(row.id, "NO_SHOW")} disabled={regSaving}>No-show</Button><Button size="small" color="error" onClick={() => void markAttendance(row.id, "CANCELLED")} disabled={regSaving}>Cancel</Button></Stack> : "-"}</TableCell></TableRow>)}
+              {registrations.map((row) => <TableRow key={row.id}><TableCell>{row.attendeeName}</TableCell><TableCell>{row.attendeeEmail || "-"}</TableCell><TableCell>{row.attendeePhone || "-"}</TableCell><TableCell><Chip size="small" label={row.registrationStatus} /></TableCell><TableCell>{row.patientId ? "Patient record" : "-"}</TableCell><TableCell>{row.leadId ? <Stack direction="row" spacing={1} alignItems="center"><Typography variant="body2">{row.leadName || "Linked lead"}</Typography><Button size="small" onClick={() => openLead(row)}>Open Lead</Button></Stack> : "-"}</TableCell><TableCell>{row.campaignName || "-"}</TableCell><TableCell align="right">{canMutate ? <Stack direction="row" spacing={1} justifyContent="flex-end"><Button size="small" onClick={() => void markAttendance(row.id, "ATTENDED")} disabled={regSaving}>Attended</Button><Button size="small" onClick={() => void markAttendance(row.id, "NO_SHOW")} disabled={regSaving}>No-show</Button><Button size="small" color="error" onClick={() => void markAttendance(row.id, "CANCELLED")} disabled={regSaving}>Cancel</Button></Stack> : "-"}</TableCell></TableRow>)}
             </TableBody></Table>
           ) : null}
         </DialogContent>

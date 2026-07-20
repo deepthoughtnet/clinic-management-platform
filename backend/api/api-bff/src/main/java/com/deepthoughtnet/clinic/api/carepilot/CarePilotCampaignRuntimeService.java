@@ -5,6 +5,8 @@ import com.deepthoughtnet.clinic.appointment.db.AppointmentRepository;
 import com.deepthoughtnet.clinic.billing.db.BillRepository;
 import com.deepthoughtnet.clinic.carepilot.campaign.db.CampaignEntity;
 import com.deepthoughtnet.clinic.carepilot.campaign.db.CampaignRepository;
+import com.deepthoughtnet.clinic.carepilot.execution.db.CampaignDeliveryAttemptEntity;
+import com.deepthoughtnet.clinic.carepilot.execution.db.CampaignDeliveryAttemptRepository;
 import com.deepthoughtnet.clinic.carepilot.execution.db.CampaignExecutionEntity;
 import com.deepthoughtnet.clinic.carepilot.execution.db.CampaignExecutionRepository;
 import com.deepthoughtnet.clinic.carepilot.execution.model.ExecutionStatus;
@@ -38,6 +40,7 @@ public class CarePilotCampaignRuntimeService {
 
     private final CampaignRepository campaignRepository;
     private final CampaignExecutionRepository executionRepository;
+    private final CampaignDeliveryAttemptRepository attemptRepository;
     private final PatientRepository patientRepository;
     private final AppointmentRepository appointmentRepository;
     private final PrescriptionRepository prescriptionRepository;
@@ -49,6 +52,7 @@ public class CarePilotCampaignRuntimeService {
     public CarePilotCampaignRuntimeService(
             CampaignRepository campaignRepository,
             CampaignExecutionRepository executionRepository,
+            CampaignDeliveryAttemptRepository attemptRepository,
             PatientRepository patientRepository,
             AppointmentRepository appointmentRepository,
             PrescriptionRepository prescriptionRepository,
@@ -59,6 +63,7 @@ public class CarePilotCampaignRuntimeService {
     ) {
         this.campaignRepository = campaignRepository;
         this.executionRepository = executionRepository;
+        this.attemptRepository = attemptRepository;
         this.patientRepository = patientRepository;
         this.appointmentRepository = appointmentRepository;
         this.prescriptionRepository = prescriptionRepository;
@@ -78,6 +83,11 @@ public class CarePilotCampaignRuntimeService {
 
         List<CampaignExecutionEntity> all = executionRepository.findByTenantIdAndCampaignIdOrderByUpdatedAtDesc(tenantId, campaignId);
         List<CampaignExecutionEntity> recent = executionRepository.findTop50ByTenantIdAndCampaignIdOrderByUpdatedAtDesc(tenantId, campaignId);
+        Map<UUID, Long> deliveryAttemptCounts = attemptRepository.findByTenantIdAndExecutionIdInOrderByAttemptedAtDesc(
+                        tenantId,
+                        recent.stream().map(CampaignExecutionEntity::getId).toList()
+                ).stream()
+                .collect(Collectors.groupingBy(CampaignDeliveryAttemptEntity::getExecutionId, Collectors.counting()));
 
         Map<UUID, PatientEntity> patientById = patientRepository.findByTenantIdAndIdIn(
                 tenantId,
@@ -115,7 +125,14 @@ public class CarePilotCampaignRuntimeService {
                 schedulerMonitor.lastReminderScanAt(tenantId),
                 summary(all),
                 recent.stream()
-                        .map(e -> toExecutionView(tenantId, e, patientById.get(e.getRecipientPatientId()), appointmentById.get(e.getSourceReferenceId()), doctorByUserId))
+                        .map(e -> toExecutionView(
+                                tenantId,
+                                e,
+                                patientById.get(e.getRecipientPatientId()),
+                                appointmentById.get(e.getSourceReferenceId()),
+                                doctorByUserId,
+                                deliveryAttemptCounts.getOrDefault(e.getId(), 0L).intValue()
+                        ))
                         .toList()
         );
     }
@@ -151,7 +168,8 @@ public class CarePilotCampaignRuntimeService {
             CampaignExecutionEntity e,
             PatientEntity patient,
             AppointmentEntity appointment,
-            Map<UUID, AppUserEntity> doctorByUserId
+            Map<UUID, AppUserEntity> doctorByUserId,
+            int deliveryAttemptCount
     ) {
         String entityType = normalizeEntityType(e.getSourceType(), e.getCampaignId());
         UUID entityId = e.getSourceReferenceId();
@@ -181,6 +199,7 @@ public class CarePilotCampaignRuntimeService {
                 e.getProviderMessageId(),
                 e.getDeliveryStatus() != null ? e.getDeliveryStatus().name() : (e.getStatus() == null ? null : e.getStatus().name()),
                 e.getFailureReason() == null ? e.getLastError() : e.getFailureReason(),
+                deliveryAttemptCount,
                 e.getAttemptCount()
         );
     }
@@ -282,6 +301,7 @@ public class CarePilotCampaignRuntimeService {
             String providerMessageId,
             String status,
             String failureReason,
+            int deliveryAttemptCount,
             int retryCount
     ) {}
 }

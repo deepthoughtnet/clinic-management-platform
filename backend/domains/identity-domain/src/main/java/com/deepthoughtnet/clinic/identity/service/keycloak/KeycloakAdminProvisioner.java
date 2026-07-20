@@ -32,6 +32,8 @@ public interface KeycloakAdminProvisioner {
             UUID tenantId,
             String email,
             String username,
+            String firstName,
+            String lastName,
             String displayName,
             String tempPassword,
             boolean emailVerified

@@ -1,0 +1,94 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+
+function readSource(relPath) {
+  return fs.readFileSync(path.join(process.cwd(), "src", ...relPath.split("/")), "utf8");
+}
+
+test("campaign workflow ui exposes submit review and approve states without legacy archived status", () => {
+  const source = readSource("products/carepilot/campaigns/CampaignsPage.tsx");
+
+  assert.ok(source.includes('canManage = auth.hasPermission("engage.campaign.manage")'));
+  assert.ok(source.includes('canViewTemplates = canManage || auth.hasPermission("engage.template.view")'));
+  assert.ok(source.includes('canReviewApprovalQueue = canReview || canApprove'));
+  assert.ok(source.includes("Promise.allSettled"));
+  assert.ok(source.includes("canManage ? <Tab value=\"templates\" label=\"Templates\" /> : null"));
+  assert.ok(source.includes('canApprove && campaign.status === "PENDING_APPROVAL"'));
+  assert.ok(source.includes('canReview && campaign.status === "PENDING_APPROVAL"'));
+  assert.ok(source.includes('canActivate && campaign.status === "APPROVED"'));
+  assert.ok(source.includes('canActivate && campaign.status === "PAUSED"'));
+  assert.ok(source.includes('campaign.status === "ACTIVE" && campaign.triggerType === "MANUAL"'));
+  assert.ok(source.includes('openEditCampaign(campaign)'));
+  assert.ok(source.includes('Edit campaign and resubmit'));
+  assert.ok(source.includes('Manager Resolution Note'));
+  assert.ok(source.includes('Save a campaign change or provide a resolution note before resubmitting.'));
+  assert.ok(source.includes('Campaign version conflict'));
+  assert.ok(source.includes('editAndResubmitCarePilotCampaign'));
+  assert.ok(source.includes('getCarePilotCampaignTriggerPreview'));
+  assert.ok(source.includes('TextEntryDialog'));
+  assert.ok(source.includes('ConfirmationDialog'));
+  assert.ok(source.includes('Request campaign changes'));
+  assert.ok(source.includes('Review comments'));
+  assert.ok(source.includes('resumeCarePilotCampaign'));
+  assert.ok(source.includes('title="Activate campaign"'));
+  assert.ok(source.includes('title="Run campaign"'));
+  assert.ok(source.includes('confirmLabel="Run campaign"'));
+  assert.ok(source.includes('Execution reference:'));
+  assert.ok(source.includes('campaignStatusLabel("PENDING_APPROVAL")'));
+  assert.ok(source.includes('campaignStatusLabel("CHANGES_REQUESTED")'));
+  assert.ok(source.includes('campaignTypeLabel(campaign.campaignType)'));
+  assert.ok(source.includes('<b>Template Subject:</b>'));
+  assert.ok(source.includes('<b>Template Body Preview:</b>'));
+  assert.ok(source.includes('approvalHistoryNewestFirst.map'));
+  assert.ok(source.includes('tabIndex={0}'));
+  assert.ok(source.includes('aria-label="Campaign approval history"'));
+  assert.ok(source.includes('maxHeight: { xs: 320, md: 400 }'));
+  assert.ok(source.includes('overflowY: "auto"'));
+  assert.ok(source.includes('Newest approval first'));
+  assert.ok(source.includes('useCarePilotTenantTimezone'));
+  assert.ok(source.includes('formatCarePilotDateTime(execution.scheduledAt, clinicTimeZone)'));
+  assert.ok(source.includes('formatCarePilotDateTime(execution.executedAt, clinicTimeZone)'));
+  assert.ok(source.includes('providerLabel(execution.providerName)'));
+  assert.ok(source.includes('humanizeCarePilotCode(execution.status)'));
+  assert.ok(source.includes('formatCarePilotDateTime(execution.updatedAt, clinicTimeZone)'));
+  assert.ok(source.includes('humanizeCarePilotCode(execution.deliveryStatus)'));
+  assert.ok(source.includes('deliveryAttemptCount'));
+  assert.ok(source.includes('humanizeCarePilotCode(attempt.deliveryStatus)'));
+  assert.ok(source.includes('formatCarePilotDateTime(row.createdAt, clinicTimeZone)'));
+  assert.ok(source.includes('formatCarePilotDateTime(row.attemptedAt, clinicTimeZone)'));
+  assert.ok(source.includes('providerLabel(row.providerName)'));
+  assert.ok(source.includes('channelTypeLabel(row.channel as CarePilotChannelType)'));
+  assert.ok(source.includes('formatCarePilotDateTime(attempt.attemptedAt, clinicTimeZone)'));
+  assert.ok(source.includes('aria-label="Close campaign delivery attempts"'));
+  assert.ok(source.includes('campaign-delivery-attempts-title'));
+  assert.ok(source.includes('campaign-delivery-attempts-description'));
+  assert.ok(source.includes('closeAttempts'));
+  assert.ok(source.includes('attemptsTriggerRef.current?.focus()'));
+  assert.ok(!source.includes('new Date(execution.scheduledAt).toLocaleString()'));
+  assert.ok(!source.includes('execution.providerName || "-"'));
+  assert.ok(!source.includes('attempt.providerName || "-"'));
+  assert.ok(!source.includes('row.providerName || "-"'));
+  assert.ok(!source.includes('new Date(attempt.attemptedAt).toLocaleString()'));
+  assert.ok(!source.includes('campaign.active ? <Chip size="small" label={campaignStatusLabel("ACTIVE")} color="success" variant="outlined" /> : null'));
+  assert.ok(!source.includes('Optimistic Lock Version'));
+  assert.ok(!source.includes('window.prompt'));
+  assert.ok(!source.includes('window.confirm'));
+  assert.ok(!source.includes('ARCHIVED'));
+});
+
+test("ops reminders and leads use the minimal campaign lookup endpoint", () => {
+  const opsSource = readSource("products/carepilot/ops/OpsConsolePage.tsx");
+  const remindersSource = readSource("products/carepilot/reminders/RemindersPage.tsx");
+  const leadsSource = readSource("products/carepilot/leads/LeadsPage.tsx");
+
+  assert.ok(opsSource.includes("CampaignLookupField"));
+  assert.ok(opsSource.includes("lookupCarePilotCampaigns"));
+  assert.ok(remindersSource.includes("CampaignLookupField"));
+  assert.ok(leadsSource.includes("CampaignLookupField"));
+  assert.ok(leadsSource.includes("lookupCarePilotCampaigns"));
+  assert.ok(!opsSource.includes("listCarePilotCampaigns("));
+  assert.ok(!remindersSource.includes("listCarePilotCampaigns("));
+  assert.ok(!leadsSource.includes("listCarePilotCampaigns("));
+});

@@ -24,7 +24,7 @@ public class CareAiConversationController {
     }
 
     @GetMapping
-    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('RECEPTIONIST')")
+    @PreAuthorize("@permissionChecker.hasAnyPermission('engage.reception.operate','engage.view')")
     public List<CareAiConversationResponse> list() {
         return conversationPersistenceService.listConversations(RequestContextHolder.requireTenantId()).stream()
                 .map(this::toResponse)
@@ -32,7 +32,7 @@ public class CareAiConversationController {
     }
 
     @GetMapping("/active")
-    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('RECEPTIONIST')")
+    @PreAuthorize("@permissionChecker.hasAnyPermission('engage.reception.operate','engage.view')")
     public List<CareAiConversationResponse> active(@RequestParam(required = false) UUID patientId) {
         return conversationPersistenceService.listActiveConversations(RequestContextHolder.requireTenantId()).stream()
                 .filter(conversation -> patientId == null || patientId.equals(conversation.getPatientId()))
@@ -41,13 +41,13 @@ public class CareAiConversationController {
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('RECEPTIONIST')")
+    @PreAuthorize("@permissionChecker.hasAnyPermission('engage.reception.operate','engage.view')")
     public CareAiConversationResponse get(@PathVariable UUID id) {
         return toResponse(conversationPersistenceService.getConversation(RequestContextHolder.requireTenantId(), id));
     }
 
     @GetMapping("/{id}/messages")
-    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('RECEPTIONIST')")
+    @PreAuthorize("@permissionChecker.hasAnyPermission('engage.reception.operate','engage.view')")
     public List<CareAiMessageResponse> messages(@PathVariable UUID id) {
         return conversationPersistenceService.listMessages(RequestContextHolder.requireTenantId(), id).stream()
                 .map(this::toResponse)

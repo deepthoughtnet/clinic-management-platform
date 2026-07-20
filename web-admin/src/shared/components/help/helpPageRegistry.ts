@@ -55,6 +55,7 @@ export const HELP_PAGE_ROUTES: HelpPageRoute[] = [
   { path: "/carepilot/reminders", pageKey: "ENGAGE_REMINDERS", cmsPageKey: "ENGAGE_REMINDERS", title: "Jeevanam Engage Reminders" },
   { path: "/carepilot/engagement", pageKey: "ENGAGE_PATIENT_ENGAGEMENT", cmsPageKey: "ENGAGE_PATIENT_ENGAGEMENT", title: "Jeevanam Engage Patient Engagement" },
   { path: "/carepilot/webinars", pageKey: "ENGAGE_WEBINAR_AUTOMATION", cmsPageKey: "ENGAGE_WEBINAR_AUTOMATION", title: "Jeevanam Engage Webinar Automation" },
+  { path: "/carepilot/ai-operations", pageKey: "ENGAGE_AI_OPERATIONS", cmsPageKey: "ENGAGE_AI_OPERATIONS", title: "Jeevanam Engage AI Operations" },
   { path: "/carepilot/ai-calls", pageKey: "ENGAGE_AI_CALLS", cmsPageKey: "ENGAGE_AI_CALLS", title: "Jeevanam Engage AI Calls" },
   { path: "/carepilot/ai-receptionist/active-conversations", pageKey: "ENGAGE_AI_RECEPTIONIST_ACTIVE", cmsPageKey: "ENGAGE_AI_RECEPTIONIST_ACTIVE", title: "Jeevanam Engage AI Receptionist Active Conversations" },
   { path: "/carepilot/ai-receptionist/callback-queue", pageKey: "ENGAGE_AI_RECEPTIONIST_CALLBACK", cmsPageKey: "ENGAGE_AI_RECEPTIONIST_CALLBACK", title: "Jeevanam Engage AI Receptionist Callback Queue" },
@@ -121,23 +122,26 @@ export function resolveHelpRouteByPageKey(pageKey: string): HelpPageRoute | null
   if (normalized === "WEBINAR_AUTOMATION" || normalized === "WEBINARS") {
     return HELP_PAGE_ROUTES.find((route) => route.path === "/carepilot/webinars") || null;
   }
-  if (normalized === "AI_CALLS") {
-    return HELP_PAGE_ROUTES.find((route) => route.path === "/carepilot/ai-calls") || null;
+  if (normalized === "AI_CALLS" || normalized === "ENGAGE_AI_CALLS") {
+    return { path: "/carepilot/ai-operations?tab=calls", pageKey: "ENGAGE_AI_OPERATIONS", cmsPageKey: "ENGAGE_AI_OPERATIONS", title: "Jeevanam Engage AI Operations" };
   }
-  if (normalized === "AI_RECEPTIONIST_ACTIVE") {
-    return HELP_PAGE_ROUTES.find((route) => route.path === "/carepilot/ai-receptionist/active-conversations") || null;
+  if (normalized === "AI_RECEPTIONIST_ACTIVE" || normalized === "ENGAGE_AI_RECEPTIONIST_ACTIVE") {
+    return { path: "/carepilot/ai-operations?tab=conversations", pageKey: "ENGAGE_AI_OPERATIONS", cmsPageKey: "ENGAGE_AI_OPERATIONS", title: "Jeevanam Engage AI Operations" };
   }
-  if (normalized === "AI_RECEPTIONIST_CALLBACK") {
-    return HELP_PAGE_ROUTES.find((route) => route.path === "/carepilot/ai-receptionist/callback-queue") || null;
+  if (normalized === "AI_RECEPTIONIST_CALLBACK" || normalized === "ENGAGE_AI_RECEPTIONIST_CALLBACK") {
+    return { path: "/carepilot/ai-operations?tab=work-queue&type=callback", pageKey: "ENGAGE_AI_OPERATIONS", cmsPageKey: "ENGAGE_AI_OPERATIONS", title: "Jeevanam Engage AI Operations" };
   }
-  if (normalized === "AI_RECEPTIONIST_ESCALATION") {
-    return HELP_PAGE_ROUTES.find((route) => route.path === "/carepilot/ai-receptionist/escalation-queue") || null;
+  if (normalized === "AI_RECEPTIONIST_ESCALATION" || normalized === "ENGAGE_AI_RECEPTIONIST_ESCALATION") {
+    return { path: "/carepilot/ai-operations?tab=work-queue&type=escalation", pageKey: "ENGAGE_AI_OPERATIONS", cmsPageKey: "ENGAGE_AI_OPERATIONS", title: "Jeevanam Engage AI Operations" };
   }
-  if (normalized === "AI_RECEPTIONIST_APPOINTMENT_HANDOFF") {
-    return HELP_PAGE_ROUTES.find((route) => route.path === "/carepilot/ai-receptionist/appointment-handoffs") || null;
+  if (normalized === "AI_RECEPTIONIST_APPOINTMENT_HANDOFF" || normalized === "ENGAGE_AI_RECEPTIONIST_APPOINTMENT_HANDOFF") {
+    return { path: "/carepilot/ai-operations?tab=work-queue&type=appointment-handoff", pageKey: "ENGAGE_AI_OPERATIONS", cmsPageKey: "ENGAGE_AI_OPERATIONS", title: "Jeevanam Engage AI Operations" };
   }
-  if (normalized === "RECEPTIONIST_QUEUE") {
-    return HELP_PAGE_ROUTES.find((route) => route.path === "/carepilot/receptionist-queue") || null;
+  if (normalized === "RECEPTIONIST_QUEUE" || normalized === "ENGAGE_RECEPTIONIST_QUEUE") {
+    return { path: "/carepilot/ai-operations?tab=work-queue", pageKey: "ENGAGE_AI_OPERATIONS", cmsPageKey: "ENGAGE_AI_OPERATIONS", title: "Jeevanam Engage AI Operations" };
+  }
+  if (normalized === "AI_OPERATIONS" || normalized === "ENGAGE_AI_OPERATIONS") {
+    return HELP_PAGE_ROUTES.find((route) => route.path === "/carepilot/ai-operations") || null;
   }
   if (normalized === "PHARMACY") {
     return HELP_PAGE_ROUTES.find((route) => route.path === "/pharmacy/dashboard") || null;

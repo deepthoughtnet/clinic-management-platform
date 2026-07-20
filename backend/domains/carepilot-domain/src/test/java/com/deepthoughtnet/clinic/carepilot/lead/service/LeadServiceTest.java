@@ -60,6 +60,29 @@ class LeadServiceTest {
     }
 
     @Test
+    void createLeadAllowsOptionalFollowUp() {
+        var record = service.create(tenantId, new LeadUpsertCommand(
+                "Asha", "Mehta", "9876543210", "asha@example.com", PatientGender.FEMALE, null,
+                LeadSource.WALK_IN, "desk", null, null, LeadStatus.NEW, LeadPriority.MEDIUM,
+                "note", "uat", null, null
+        ), actorId);
+
+        assertThat(record.nextFollowUpAt()).isNull();
+    }
+
+    @Test
+    void createLeadPreservesFollowUpInstant() {
+        OffsetDateTime followUpAt = OffsetDateTime.parse("2026-08-02T11:00:00+05:30");
+        var record = service.create(tenantId, new LeadUpsertCommand(
+                "Asha", "Mehta", "9876543210", "asha@example.com", PatientGender.FEMALE, null,
+                LeadSource.WALK_IN, "desk", null, null, LeadStatus.NEW, LeadPriority.MEDIUM,
+                "note", "uat", null, followUpAt
+        ), actorId);
+
+        assertThat(record.nextFollowUpAt()).isEqualTo(followUpAt);
+    }
+
+    @Test
     void convertedLeadIsImmutableExceptNotesAndTags() {
         LeadEntity entity = LeadEntity.create(tenantId, actorId);
         entity.setFirstName("Old");

@@ -27,6 +27,7 @@ import {
   type PlatformWebhookMetrics,
 } from "../../api/clinicApi";
 import { useAuth } from "../../auth/useAuth";
+import { TextEntryDialog } from "../../components/clinical/TextEntryDialog";
 
 function fmtDate(value: string | null | undefined) {
   if (!value) return "-";
@@ -50,6 +51,8 @@ export default function PlatformOpsPage() {
   const [severityFilter, setSeverityFilter] = useState<"ALL" | "CRITICAL" | "WARNING">("ALL");
   const [statusFilter, setStatusFilter] = useState<"ALL" | "OPEN" | "ACKNOWLEDGED" | "RESOLVED" | "SUPPRESSED">("ALL");
   const [rulesCount, setRulesCount] = useState(0);
+  const [resolveTarget, setResolveTarget] = useState<string | null>(null);
+  const [resolveNotes, setResolveNotes] = useState("");
 
   const canAct = rolesUpper.includes("PLATFORM_ADMIN") || rolesUpper.includes("CLINIC_ADMIN");
 
@@ -104,14 +107,22 @@ export default function PlatformOpsPage() {
 
   async function onResolve(id: string) {
     if (!accessToken || !tenantId) return;
-    const notes = window.prompt("Resolution notes") || undefined;
-    await resolvePlatformAlert(accessToken, tenantId, id, notes);
-    await loadAll();
+    setResolveTarget(id);
+    setResolveNotes("");
   }
 
   async function onSuppress(id: string) {
     if (!accessToken || !tenantId) return;
     await suppressPlatformAlert(accessToken, tenantId, id);
+    await loadAll();
+  }
+
+  async function submitResolve() {
+    if (!accessToken || !tenantId || !resolveTarget) return;
+    const notes = resolveNotes.trim() || undefined;
+    await resolvePlatformAlert(accessToken, tenantId, resolveTarget, notes);
+    setResolveTarget(null);
+    setResolveNotes("");
     await loadAll();
   }
 
@@ -199,6 +210,21 @@ export default function PlatformOpsPage() {
       </section>
 
       <section><h3>Critical Alerts</h3><Table columns={["Type", "Source", "Status", "Last Seen"]} rows={criticalAlerts.map((a) => [a.ruleKey || a.alertType, a.source, a.status, fmtDate(a.lastSeenAt)])} /></section>
+
+      <TextEntryDialog
+        open={Boolean(resolveTarget)}
+        title="Resolve alert"
+        description="Add optional resolution notes before marking the alert resolved."
+        label="Resolution notes"
+        placeholder="Add resolution notes"
+        value={resolveNotes}
+        required={false}
+        multiline
+        confirmLabel="Resolve"
+        submittingLabel="Resolving..."
+        onCancel={() => setResolveTarget(null)}
+        onSubmit={submitResolve}
+      />
     </div>
   );
 }

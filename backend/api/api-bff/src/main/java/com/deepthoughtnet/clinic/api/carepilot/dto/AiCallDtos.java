@@ -133,6 +133,7 @@ public final class AiCallDtos {
 
     public record AiCallSchedulerHealthResponse(
             boolean enabled,
+            String workerLabel,
             OffsetDateTime lastRunAt,
             OffsetDateTime nextEstimatedRunAt,
             int lastProcessedCount,

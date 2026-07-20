@@ -125,6 +125,7 @@ function iconFor(key: string): React.ReactNode {
     "patient-engagement": <GroupsRoundedIcon fontSize="small" />,
     leads: <ContactPhoneRoundedIcon fontSize="small" />,
     "webinar-automation": <CampaignRoundedIcon fontSize="small" />,
+    "ai-operations": <SmartToyRoundedIcon fontSize="small" />,
     "ai-calls": <SmartToyRoundedIcon fontSize="small" />,
     "ai-receptionist-active": <SmartToyRoundedIcon fontSize="small" />,
     "ai-receptionist-callbacks": <ContactPhoneRoundedIcon fontSize="small" />,
@@ -203,6 +204,7 @@ export default function SidebarNav({ open, variant, width, onClose }: SidebarNav
         if (item.platformOnly && !isPlatformAdmin) return false;
         if (item.requiresTenant && !isTenantSelected) return false;
         if (item.rolesAny && item.rolesAny.length > 0 && !item.rolesAny.some((role) => activeRoles.has(role)) && !(isPlatformAdmin && auth.tenantId)) return false;
+        if (item.permissionsAny && item.permissionsAny.length > 0 && !item.permissionsAny.some((permission) => auth.hasPermission(permission))) return false;
         if (item.moduleAll && !item.moduleAll.every((moduleCode) => enabledTenantModules.has(moduleCode))) return false;
         if (item.moduleAny && !item.moduleAny.some((moduleCode) => enabledTenantModules.has(moduleCode))) return false;
         if (group.key === "pharmacy") {

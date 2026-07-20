@@ -30,7 +30,8 @@ test("lab report delivery UI exposes action menu and publish success panel", () 
 
 test("lab report pdf metadata includes approval, publication, verification, and signature fields", () => {
   const source = readSource("pages/lab/LabPage.tsx");
-  const backend = fs.readFileSync(path.join(process.cwd(), "backend", "api", "api-bff", "src", "main", "java", "com", "deepthoughtnet", "clinic", "api", "lab", "service", "LabService.java"), "utf8");
+  const repoRoot = path.resolve(process.cwd(), "..");
+  const backend = fs.readFileSync(path.join(repoRoot, "backend", "api", "api-bff", "src", "main", "java", "com", "deepthoughtnet", "clinic", "api", "lab", "service", "LabService.java"), "utf8");
 
   assert.ok(backend.includes("Approved By"));
   assert.ok(backend.includes("Published By"));

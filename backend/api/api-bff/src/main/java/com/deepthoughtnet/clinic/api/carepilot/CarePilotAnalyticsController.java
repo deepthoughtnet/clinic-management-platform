@@ -31,7 +31,7 @@ public class CarePilotAnalyticsController {
      * Returns aggregate execution and delivery analytics for a date range and optional campaign.
      */
     @GetMapping("/summary")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.analytics.view')")
     public AnalyticsSummaryResponse summary(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
@@ -51,9 +51,10 @@ public class CarePilotAnalyticsController {
                 record.failedExecutions(),
                 record.retryingExecutions(),
                 record.skippedExecutions(),
+                record.queuedExecutions(),
+                record.sentExecutions(),
                 record.deliveredExecutions(),
                 record.readExecutions(),
-                record.bouncedExecutions(),
                 record.undeliveredExecutions(),
                 record.successRate(),
                 record.failureRate(),
@@ -61,7 +62,7 @@ public class CarePilotAnalyticsController {
                 record.executionsByStatus(),
                 record.executionsByChannel(),
                 record.executionsByCampaign().stream().map(row -> new CampaignBreakdownResponse(
-                        row.campaignId(), row.campaignName(), row.totalExecutions(), row.successfulExecutions(), row.failedExecutions(), row.successRate()
+                        row.campaignId(), row.campaignReference(), row.campaignName(), row.totalExecutions(), row.successfulExecutions(), row.failedExecutions(), row.successRate()
                 )).toList(),
                 record.providerFailureSummary().stream().map(row -> new ProviderFailureSummaryResponse(row.providerName(), row.failureCount())).toList(),
                 record.recentFailures().stream().map(this::toResponse).toList(),
@@ -72,7 +73,7 @@ public class CarePilotAnalyticsController {
     private ExecutionResponse toResponse(CampaignExecutionRecord record) {
         return new ExecutionResponse(
                 record.id(), record.tenantId(), record.campaignId(), record.templateId(), record.channelType(),
-                record.recipientPatientId(), record.scheduledAt(), record.status(), record.attemptCount(), record.lastError(),
+                record.recipientPatientId(), record.scheduledAt(), record.status(), record.attemptCount(), record.deliveryAttemptCount(), record.lastError(),
                 record.executedAt(), record.nextAttemptAt(), record.deliveryStatus(), record.providerName(),
                 record.providerMessageId(), record.sourceType(), record.sourceReferenceId(), record.reminderWindow(),
                 record.referenceDateTime(), record.lastAttemptAt(), record.failureReason(), record.createdAt(), record.updatedAt()

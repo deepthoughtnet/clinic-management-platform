@@ -65,10 +65,8 @@ function guidance(channel: CarePilotMessagingProviderStatus["channel"]): string[
 
 export default function MessagingPage() {
   const auth = useAuth();
-  const canView = auth.rolesUpper.includes("CLINIC_ADMIN")
-    || auth.rolesUpper.includes("AUDITOR")
-    || ((auth.rolesUpper.includes("PLATFORM_ADMIN") || auth.rolesUpper.includes("PLATFORM_TENANT_SUPPORT")) && Boolean(auth.tenantId));
-  const canTestSend = auth.rolesUpper.includes("CLINIC_ADMIN") || ((auth.rolesUpper.includes("PLATFORM_ADMIN") || auth.rolesUpper.includes("PLATFORM_TENANT_SUPPORT")) && Boolean(auth.tenantId));
+  const canView = auth.hasPermission("engage.provider.view");
+  const canTestSend = auth.hasPermission("engage.provider.admin");
 
   const [loading, setLoading] = React.useState(true);
   const [refreshing, setRefreshing] = React.useState(false);
@@ -145,7 +143,7 @@ export default function MessagingPage() {
         body,
       });
       const line = result.success
-        ? `Success: ${result.status}${result.providerMessageId ? ` • id=${result.providerMessageId}` : ""}`
+        ? `Success: ${result.status}${result.providerMessageId ? " • message recorded" : ""}`
         : `Failed: ${result.status}${result.errorMessage ? ` • ${result.errorMessage}` : ""}`;
       setSendResult(line);
       await load(true);

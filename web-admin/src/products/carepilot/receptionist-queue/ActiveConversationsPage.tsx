@@ -38,11 +38,7 @@ export default function ActiveConversationsPage() {
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
 
-  const canView =
-    auth.rolesUpper.includes("CLINIC_ADMIN") ||
-    auth.rolesUpper.includes("RECEPTIONIST") ||
-    auth.rolesUpper.includes("AUDITOR") ||
-    (auth.rolesUpper.includes("PLATFORM_ADMIN") && auth.rolesUpper.includes("PLATFORM_TENANT_SUPPORT") && Boolean(auth.tenantId));
+  const canView = auth.hasPermission("engage.reception.operate") || auth.hasPermission("engage.view");
 
   const load = React.useCallback(async () => {
     if (!auth.accessToken || !auth.tenantId) return;
@@ -111,8 +107,8 @@ export default function ActiveConversationsPage() {
               <TableCell>{formatDateTime(row.updatedAt)}</TableCell>
               <TableCell>{row.channel}</TableCell>
               <TableCell>{row.status}</TableCell>
-              <TableCell>{row.patientId || "-"}</TableCell>
-              <TableCell>{row.currentWorkflowId || "-"}</TableCell>
+              <TableCell>{row.patientId ? "Patient record" : "-"}</TableCell>
+              <TableCell>{row.currentWorkflowId ? "Workflow record" : "-"}</TableCell>
               <TableCell>{row.summary || "-"}</TableCell>
               <TableCell align="right">
                 <Button size="small" onClick={() => void openConversation(row)}>View Transcript</Button>
@@ -125,9 +121,9 @@ export default function ActiveConversationsPage() {
         <DialogTitle>Active Conversation</DialogTitle>
         <DialogContent dividers>
           <Stack spacing={1.5}>
-            <Typography variant="body2">Conversation: {selected?.id}</Typography>
+            <Typography variant="body2">Conversation: Active record</Typography>
             <Typography variant="body2">Channel: {selected?.channel}</Typography>
-            <Typography variant="body2">Patient: {selected?.patientId || "-"}</Typography>
+            <Typography variant="body2">Patient: {selected?.patientId ? "Patient record" : "-"}</Typography>
             <Typography variant="body2">Summary: {selected?.summary || "-"}</Typography>
             {messages.length === 0 ? <Typography variant="body2" color="text.secondary">No messages available.</Typography> : null}
             {messages.map((message) => (

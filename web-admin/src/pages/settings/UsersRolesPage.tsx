@@ -45,6 +45,8 @@ import {
 
 const ASSIGNABLE_ROLES = [
   "CLINIC_ADMIN",
+  "ENGAGE_MANAGER",
+  "ENGAGE_EXECUTIVE",
   "DOCTOR",
   "RECEPTIONIST",
   "BILLING_USER",
@@ -146,6 +148,7 @@ function permissionModule(permission: string) {
   if (normalized.startsWith("lab.")) return "Laboratory";
   if (normalized.startsWith("notification.")) return "Notifications";
   if (normalized.startsWith("carepilot.")) return "CarePilot";
+  if (normalized.startsWith("engage.")) return "Engage";
   if (normalized.startsWith("ai_") || normalized.startsWith("ai.")) return "AI";
   if (normalized.startsWith("tenant.users.") || normalized.startsWith("user.")) return "Users";
   if (normalized.startsWith("clinic.")) return "Clinic";

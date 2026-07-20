@@ -37,6 +37,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -105,17 +106,18 @@ public class CampaignExecutionService {
                 command.referenceDateTime()
         );
         try {
-            return toRecord(repository.save(entity));
+            CampaignExecutionEntity saved = repository.save(entity);
+            return toRecord(saved, deliveryAttemptCount(tenantId, saved.getId()));
         } catch (DataIntegrityViolationException ex) {
             if (command.sourceReferenceId() != null && StringUtils.hasText(command.reminderWindow())) {
-                return repository.findFirstByTenantIdAndCampaignIdAndSourceReferenceIdAndReminderWindowAndChannelType(
+                        return repository.findFirstByTenantIdAndCampaignIdAndSourceReferenceIdAndReminderWindowAndChannelType(
                                 tenantId,
                                 command.campaignId(),
                                 command.sourceReferenceId(),
                                 command.reminderWindow(),
                                 command.channelType()
                         )
-                        .map(this::toRecord)
+                        .map(existing -> toRecord(existing, deliveryAttemptCount(tenantId, existing.getId())))
                         .orElseThrow(() -> ex);
             }
             throw ex;
@@ -126,7 +128,11 @@ public class CampaignExecutionService {
     /** Lists execution rows in reverse chronological order for a tenant. */
     public List<CampaignExecutionRecord> list(UUID tenantId) {
         CarePilotValidators.requireTenant(tenantId);
-        return repository.findByTenantIdOrderByCreatedAtDesc(tenantId).stream().map(this::toRecord).toList();
+        List<CampaignExecutionEntity> rows = repository.findByTenantIdOrderByCreatedAtDesc(tenantId);
+        Map<UUID, Integer> deliveryAttemptCounts = deliveryAttemptCounts(tenantId, rows);
+        return rows.stream()
+                .map(entity -> toRecord(entity, deliveryAttemptCounts.getOrDefault(entity.getId(), 0)))
+                .toList();
     }
 
     @Transactional
@@ -134,7 +140,8 @@ public class CampaignExecutionService {
     public CampaignExecutionRecord markSuccess(UUID tenantId, UUID executionId) {
         CampaignExecutionEntity entity = requireExecution(tenantId, executionId);
         entity.markSucceeded(entity.getProviderName(), entity.getProviderMessageId());
-        return toRecord(repository.save(entity));
+        CampaignExecutionEntity saved = repository.save(entity);
+        return toRecord(saved, deliveryAttemptCount(tenantId, saved.getId()));
     }
 
     @Transactional
@@ -142,19 +149,21 @@ public class CampaignExecutionService {
     public CampaignExecutionRecord markFailure(UUID tenantId, UUID executionId, String error, OffsetDateTime nextAttemptAt) {
         CampaignExecutionEntity entity = requireExecution(tenantId, executionId);
         entity.markFailed(error, "MANUAL_FAILURE", MessageDeliveryStatus.FAILED, nextAttemptAt, retryPolicy.maxRetries());
-        return toRecord(repository.save(entity));
+        CampaignExecutionEntity saved = repository.save(entity);
+        return toRecord(saved, deliveryAttemptCount(tenantId, saved.getId()));
     }
 
     @Transactional(readOnly = true)
     /** Lists terminal failed/dead-letter executions for admin and audit review. */
     public List<CampaignExecutionRecord> listFailed(UUID tenantId) {
         CarePilotValidators.requireTenant(tenantId);
-        return repository.findByTenantIdAndStatusInOrderByUpdatedAtDesc(
-                        tenantId,
-                        List.of(ExecutionStatus.FAILED, ExecutionStatus.DEAD_LETTER)
-                )
-                .stream()
-                .map(this::toRecord)
+        List<CampaignExecutionEntity> rows = repository.findByTenantIdAndStatusInOrderByUpdatedAtDesc(
+                tenantId,
+                List.of(ExecutionStatus.FAILED, ExecutionStatus.DEAD_LETTER)
+        );
+        Map<UUID, Integer> deliveryAttemptCounts = deliveryAttemptCounts(tenantId, rows);
+        return rows.stream()
+                .map(entity -> toRecord(entity, deliveryAttemptCounts.getOrDefault(entity.getId(), 0)))
                 .toList();
     }
 
@@ -178,7 +187,8 @@ public class CampaignExecutionService {
             throw new IllegalArgumentException("Only failed or dead-letter executions can be retried");
         }
         entity.markQueuedForRetry();
-        return toRecord(repository.save(entity));
+        CampaignExecutionEntity saved = repository.save(entity);
+        return toRecord(saved, deliveryAttemptCount(tenantId, saved.getId()));
     }
 
     @Transactional
@@ -187,7 +197,8 @@ public class CampaignExecutionService {
         CampaignExecutionEntity entity = requireExecution(tenantId, executionId);
         ensureMutableReminderState(entity, "cancelled");
         entity.markCancelled(StringUtils.hasText(reason) ? reason : "CANCELLED_BY_OPERATOR");
-        return toRecord(repository.save(entity));
+        CampaignExecutionEntity saved = repository.save(entity);
+        return toRecord(saved, deliveryAttemptCount(tenantId, saved.getId()));
     }
 
     @Transactional
@@ -196,7 +207,8 @@ public class CampaignExecutionService {
         CampaignExecutionEntity entity = requireExecution(tenantId, executionId);
         ensureMutableReminderState(entity, "suppressed");
         entity.markSuppressed(StringUtils.hasText(reason) ? reason : "SUPPRESSED_BY_OPERATOR");
-        return toRecord(repository.save(entity));
+        CampaignExecutionEntity saved = repository.save(entity);
+        return toRecord(saved, deliveryAttemptCount(tenantId, saved.getId()));
     }
 
     @Transactional
@@ -215,7 +227,8 @@ public class CampaignExecutionService {
             resolvedReason = "RESCHEDULED_" + resolvedReason;
         }
         entity.markRescheduled(newScheduledAt, resolvedReason);
-        return toRecord(repository.save(entity));
+        CampaignExecutionEntity saved = repository.save(entity);
+        return toRecord(saved, deliveryAttemptCount(tenantId, saved.getId()));
     }
 
     @Transactional
@@ -507,15 +520,32 @@ public class CampaignExecutionService {
                 .orElseThrow(() -> new IllegalArgumentException("Execution not found"));
     }
 
-    private CampaignExecutionRecord toRecord(CampaignExecutionEntity entity) {
+    private CampaignExecutionRecord toRecord(CampaignExecutionEntity entity, int deliveryAttemptCount) {
         return new CampaignExecutionRecord(
                 entity.getId(), entity.getTenantId(), entity.getCampaignId(), entity.getTemplateId(), entity.getChannelType(),
                 entity.getRecipientPatientId(), entity.getScheduledAt(), entity.getStatus(), entity.getAttemptCount(),
-                entity.getLastError(), entity.getExecutedAt(), entity.getNextAttemptAt(), entity.getDeliveryStatus(),
+                deliveryAttemptCount, entity.getLastError(), entity.getExecutedAt(), entity.getNextAttemptAt(), entity.getDeliveryStatus(),
                 entity.getProviderName(), entity.getProviderMessageId(), entity.getSourceType(), entity.getSourceReferenceId(),
                 entity.getReminderWindow(), entity.getReferenceDateTime(), entity.getLastAttemptAt(), entity.getFailureReason(),
                 entity.getCreatedAt(), entity.getUpdatedAt()
         );
+    }
+
+    private int deliveryAttemptCount(UUID tenantId, UUID executionId) {
+        return attemptRepository.findByTenantIdAndExecutionIdOrderByAttemptNumberDesc(tenantId, executionId).size();
+    }
+
+    private Map<UUID, Integer> deliveryAttemptCounts(UUID tenantId, List<CampaignExecutionEntity> rows) {
+        List<UUID> executionIds = rows.stream().map(CampaignExecutionEntity::getId).toList();
+        if (executionIds.isEmpty()) {
+            return Map.of();
+        }
+        return attemptRepository.findByTenantIdAndExecutionIdInOrderByAttemptedAtDesc(tenantId, executionIds).stream()
+                .collect(Collectors.groupingBy(
+                        CampaignDeliveryAttemptEntity::getExecutionId,
+                        LinkedHashMap::new,
+                        Collectors.collectingAndThen(Collectors.counting(), Long::intValue)
+                ));
     }
 
     private CampaignDeliveryAttemptRecord toAttemptRecord(CampaignDeliveryAttemptEntity entity) {

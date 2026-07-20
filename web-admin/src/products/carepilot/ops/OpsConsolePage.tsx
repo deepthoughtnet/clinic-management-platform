@@ -1,4 +1,5 @@
 import * as React from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   Alert,
   Box,
@@ -8,15 +9,19 @@ import {
   Chip,
   CircularProgress,
   Dialog,
+  DialogActions,
   DialogContent,
   DialogTitle,
   FormControl,
   Grid,
   InputLabel,
+  IconButton,
   MenuItem,
   Select,
   Snackbar,
   Stack,
+  Tab,
+  Tabs,
   Table,
   TableBody,
   TableCell,
@@ -25,114 +30,221 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 import { useAuth } from "../../../auth/useAuth";
+import { ConfirmationDialog } from "../../../components/clinical/ConfirmationDialog";
 import { engageOpsConsoleFilterSchema, mapZodErrors } from "@deepthoughtnet/form-validation-kit";
 import {
   getCarePilotExecutionTimeline,
-  getCarePilotLeadAnalyticsSummary,
-  getCarePilotWebinarAnalyticsSummary,
-  listCarePilotEngagementCohort,
-  listCarePilotCampaigns,
-  listCarePilotOpsFailedExecutions,
+  getCarePilotOpsReadiness,
+  listCarePilotOpsExecutions,
+  lookupCarePilotCampaigns,
   resendCarePilotExecution,
   retryCarePilotExecution,
-  type CarePilotCampaign,
-  type CarePilotChannelType,
-  type CarePilotEngagementProfile,
-  type CarePilotExecution,
-  type CarePilotExecutionStatus,
+  type CarePilotCampaignLookup,
   type CarePilotExecutionTimeline,
-  type CarePilotLeadAnalyticsSummary,
-  type CarePilotWebinarAnalyticsSummary,
+  type CarePilotOpsExecution,
+  type CarePilotOpsReadiness,
 } from "../../../api/clinicApi";
+import CampaignLookupField from "../components/CampaignLookupField";
+import { campaignTypeLabel, channelTypeLabel } from "../campaigns/campaignLabels";
+import {
+  formatCarePilotDateTime,
+  formatCarePilotDurationMinutes,
+  humanizeCarePilotCode,
+  providerLabel,
+} from "../shared/carepilotFormatting";
+import { useCarePilotTenantTimezone } from "../shared/useCarePilotTenantTimezone";
+import {
+  OPS_FAILED_STATUSES,
+  OPS_QUEUED_STATUSES,
+  parseOpsFilters,
+  serializeOpsFilters,
+  type OpsFilters,
+} from "./opsConsoleFilters";
+
+type OpsTab = "all" | "queued" | "failed" | "readiness";
 
 function deliveryChipColor(status: string) {
   if (status === "READ" || status === "DELIVERED" || status === "SENT") return "success" as const;
   if (status === "FAILED" || status === "BOUNCED" || status === "UNDELIVERED") return "error" as const;
-  if (status === "QUEUED") return "info" as const;
+  if (status === "QUEUED" || status === "PROCESSING" || status === "RETRY_SCHEDULED") return "info" as const;
   return "default" as const;
+}
+
+function executionStatusColor(status: string) {
+  if (status === "SUCCEEDED") return "success" as const;
+  if (status === "FAILED" || status === "DEAD_LETTER") return "error" as const;
+  if (status === "RETRY_SCHEDULED") return "warning" as const;
+  if (status === "QUEUED" || status === "PROCESSING") return "info" as const;
+  if (status === "CANCELLED" || status === "SUPPRESSED") return "default" as const;
+  return "default" as const;
+}
+
+function queueAgeLabel(execution: CarePilotOpsExecution) {
+  if (execution.status !== "QUEUED" && execution.status !== "PROCESSING" && execution.status !== "RETRY_SCHEDULED") {
+    return "—";
+  }
+  return formatCarePilotDurationMinutes(execution.queueAgeMinutes);
+}
+
+function durationMinutes(startAt: string | null, endAt: string | null) {
+  if (!startAt || !endAt) return null;
+  const start = new Date(startAt).getTime();
+  const end = new Date(endAt).getTime();
+  if (Number.isNaN(start) || Number.isNaN(end) || end < start) return null;
+  return Math.floor((end - start) / 60000);
+}
+
+function queueWaitMinutes(execution: CarePilotExecutionTimeline["execution"]) {
+  if (execution.status !== "PROCESSING") return null;
+  return durationMinutes(execution.createdAt, execution.updatedAt);
+}
+
+function processingDurationMinutes(execution: CarePilotExecutionTimeline["execution"], now = new Date()) {
+  if (execution.status !== "PROCESSING" || !execution.updatedAt) return null;
+  return durationMinutes(execution.updatedAt, now.toISOString());
 }
 
 export default function OpsConsolePage() {
   const auth = useAuth();
-  const [loading, setLoading] = React.useState(true);
-  const [error, setError] = React.useState<string | null>(null);
-  const [toast, setToast] = React.useState<string | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
 
-  const [campaigns, setCampaigns] = React.useState<CarePilotCampaign[]>([]);
-  const [rows, setRows] = React.useState<CarePilotExecution[]>([]);
+  const initialFilters = React.useMemo(() => parseOpsFilters(searchParams), [searchParams]);
+  const [draftFilters, setDraftFilters] = React.useState<OpsFilters>(initialFilters);
+  const [appliedFilters, setAppliedFilters] = React.useState<OpsFilters>(initialFilters);
+  const [activeTab, setActiveTab] = React.useState<OpsTab>("all");
 
-  const [startDate, setStartDate] = React.useState("");
-  const [endDate, setEndDate] = React.useState("");
-  const [campaignId, setCampaignId] = React.useState("");
-  const [channel, setChannel] = React.useState<CarePilotChannelType | "">("");
-  const [status, setStatus] = React.useState<CarePilotExecutionStatus | "">("");
-  const [providerName, setProviderName] = React.useState("");
-  const [reminderWindow, setReminderWindow] = React.useState<"" | "H24" | "H2">("");
-  const [retryableOnly, setRetryableOnly] = React.useState(false);
+  const [executionRows, setExecutionRows] = React.useState<CarePilotOpsExecution[]>([]);
+  const [campaignLookupRows, setCampaignLookupRows] = React.useState<CarePilotCampaignLookup[]>([]);
+  const [readiness, setReadiness] = React.useState<CarePilotOpsReadiness | null>(null);
+
+  const [resultsLoading, setResultsLoading] = React.useState(false);
+  const [auxLoading, setAuxLoading] = React.useState(true);
+  const [resultsError, setResultsError] = React.useState<string | null>(null);
+  const [auxError, setAuxError] = React.useState<string | null>(null);
   const [filterErrors, setFilterErrors] = React.useState<Record<string, string>>({});
+  const [toast, setToast] = React.useState<string | null>(null);
 
   const [timelineOpen, setTimelineOpen] = React.useState(false);
   const [timelineLoading, setTimelineLoading] = React.useState(false);
   const [timeline, setTimeline] = React.useState<CarePilotExecutionTimeline | null>(null);
-  const [highRiskRows, setHighRiskRows] = React.useState<CarePilotEngagementProfile[]>([]);
-  const [inactiveRows, setInactiveRows] = React.useState<CarePilotEngagementProfile[]>([]);
-  const [leadOps, setLeadOps] = React.useState<CarePilotLeadAnalyticsSummary | null>(null);
-  const [webinarOps, setWebinarOps] = React.useState<CarePilotWebinarAnalyticsSummary | null>(null);
+  const [actionTarget, setActionTarget] = React.useState<{ executionId: string; resend: boolean } | null>(null);
+  const viewAttemptsButtonRef = React.useRef<HTMLButtonElement | null>(null);
 
-  const canView = auth.rolesUpper.includes("CLINIC_ADMIN") || auth.rolesUpper.includes("AUDITOR") || (auth.rolesUpper.includes("PLATFORM_ADMIN") && Boolean(auth.tenantId));
-  const canMutate = auth.rolesUpper.includes("CLINIC_ADMIN") || (auth.rolesUpper.includes("PLATFORM_ADMIN") && Boolean(auth.tenantId));
+  const execSeq = React.useRef(0);
+  const auxSeq = React.useRef(0);
 
-  const load = React.useCallback(async () => {
+  const canView = auth.hasPermission("engage.ops.view");
+  const canMutate = auth.hasPermission("engage.reminder.operate");
+  const { clinicTimeZone } = useCarePilotTenantTimezone(auth.accessToken, auth.tenantId);
+
+  const resolvedCampaign = React.useMemo(
+    () => campaignLookupRows.find((row) => row.id === draftFilters.campaignId) || null,
+    [campaignLookupRows, draftFilters.campaignId],
+  );
+
+  const refreshAuxiliaryData = React.useCallback(async (campaignRefFilter: string) => {
+    if (!auth.accessToken || !auth.tenantId || !canView) return;
+    const seq = ++auxSeq.current;
+    setAuxLoading(true);
+    setAuxError(null);
+    try {
+      const query = campaignRefFilter || "";
+      const [lookupRows, readinessRows] = await Promise.all([
+        lookupCarePilotCampaigns(auth.accessToken, auth.tenantId, query, 50),
+        getCarePilotOpsReadiness(auth.accessToken, auth.tenantId),
+      ]);
+      if (seq !== auxSeq.current) return;
+      setCampaignLookupRows(lookupRows);
+      setReadiness(readinessRows);
+    } catch (err) {
+      if (seq !== auxSeq.current) return;
+      setAuxError(err instanceof Error ? err.message : "Failed to load ops context");
+    } finally {
+      if (seq === auxSeq.current) {
+        setAuxLoading(false);
+      }
+    }
+  }, [auth.accessToken, auth.tenantId, canView]);
+
+  const loadExecutions = React.useCallback(async (filters: OpsFilters) => {
     if (!auth.accessToken || !auth.tenantId || !canView) {
-      setLoading(false);
       return;
     }
-    setLoading(true);
-    setError(null);
+    const seq = ++execSeq.current;
+    setResultsLoading(true);
+    setResultsError(null);
     try {
-      const parsed = engageOpsConsoleFilterSchema.safeParse({ startDate, endDate, providerName });
+      const parsed = engageOpsConsoleFilterSchema.safeParse({ startDate: filters.startDate, endDate: filters.endDate, providerName: filters.providerName });
       if (!parsed.success) {
         setFilterErrors(mapZodErrors(parsed.error));
-        setLoading(false);
+        if (seq === execSeq.current) {
+          setResultsLoading(false);
+        }
         return;
       }
       setFilterErrors({});
-      const [campaignRows, failedRows, highRisk, inactive, leadSummary, webinarSummary] = await Promise.all([
-        listCarePilotCampaigns(auth.accessToken, auth.tenantId),
-        listCarePilotOpsFailedExecutions(auth.accessToken, auth.tenantId, {
-          startDate: startDate || undefined,
-          endDate: endDate || undefined,
-          campaignId: campaignId || undefined,
-          channel: channel || undefined,
-          status: status || undefined,
-          providerName: providerName || undefined,
-          retryableOnly,
-        }),
-        listCarePilotEngagementCohort(auth.accessToken, auth.tenantId, "HIGH_RISK_PATIENTS", { limit: 8 }),
-        listCarePilotEngagementCohort(auth.accessToken, auth.tenantId, "INACTIVE_PATIENTS", { limit: 8 }),
-        getCarePilotLeadAnalyticsSummary(auth.accessToken, auth.tenantId),
-        getCarePilotWebinarAnalyticsSummary(auth.accessToken, auth.tenantId),
-      ]);
-      setCampaigns(campaignRows);
-      setRows(reminderWindow ? failedRows.filter((row) => row.reminderWindow === reminderWindow) : failedRows);
-      setHighRiskRows(highRisk.rows);
-      setInactiveRows(inactive.rows);
-      setLeadOps(leadSummary);
-      setWebinarOps(webinarSummary);
+      const rows = await listCarePilotOpsExecutions(auth.accessToken, auth.tenantId, {
+        campaignRef: filters.campaignRef || undefined,
+        channel: filters.channel || undefined,
+        status: filters.status || undefined,
+        providerName: filters.providerName || undefined,
+        retryableOnly: filters.retryableOnly,
+        startDate: filters.startDate || undefined,
+        endDate: filters.endDate || undefined,
+        reminderWindow: filters.reminderWindow || undefined,
+      });
+      if (seq !== execSeq.current) return;
+      setExecutionRows(rows);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load ops queue");
+      if (seq !== execSeq.current) return;
+      setResultsError(err instanceof Error ? err.message : "Failed to load ops queue");
     } finally {
-      setLoading(false);
+      if (seq === execSeq.current) {
+        setResultsLoading(false);
+      }
     }
-  }, [auth.accessToken, auth.tenantId, canView, startDate, endDate, campaignId, channel, status, providerName, retryableOnly, reminderWindow]);
+  }, [auth.accessToken, auth.tenantId, canView]);
 
   React.useEffect(() => {
-    void load();
-  }, [load]);
+    const next = parseOpsFilters(searchParams);
+    setDraftFilters(next);
+    setAppliedFilters(next);
+  }, [searchParams]);
 
-  const openTimeline = async (executionId: string) => {
+  React.useEffect(() => {
+    void loadExecutions(appliedFilters);
+  }, [appliedFilters, loadExecutions]);
+
+  React.useEffect(() => {
+    void refreshAuxiliaryData(appliedFilters.campaignRef);
+  }, []);
+
+  React.useEffect(() => {
+    if (!draftFilters.campaignRef || draftFilters.campaignId || campaignLookupRows.length === 0) return;
+    const match = campaignLookupRows.find((row) => row.campaignReference === draftFilters.campaignRef);
+    if (match) {
+      setDraftFilters((current) => current.campaignId ? current : { ...current, campaignId: match.id });
+    }
+  }, [campaignLookupRows, draftFilters.campaignId, draftFilters.campaignRef]);
+
+  const handleApply = React.useCallback(() => {
+      setSearchParams(serializeOpsFilters(draftFilters));
+  }, [draftFilters, setSearchParams]);
+
+  const handleClear = React.useCallback(() => {
+    setSearchParams(new URLSearchParams());
+  }, [setSearchParams]);
+
+  const handleRefresh = React.useCallback(() => {
+    void refreshAuxiliaryData(appliedFilters.campaignRef);
+    void loadExecutions(appliedFilters);
+  }, [appliedFilters, loadExecutions, refreshAuxiliaryData]);
+
+  const openTimeline = React.useCallback(async (executionId: string, trigger?: HTMLButtonElement | null) => {
     if (!auth.accessToken || !auth.tenantId) return;
+    viewAttemptsButtonRef.current = trigger || null;
     setTimelineOpen(true);
     setTimelineLoading(true);
     setTimeline(null);
@@ -143,138 +255,443 @@ export default function OpsConsolePage() {
     } finally {
       setTimelineLoading(false);
     }
-  };
+  }, [auth.accessToken, auth.tenantId]);
 
-  const runAction = async (executionId: string, resend: boolean) => {
+  const closeTimeline = React.useCallback(() => {
+    setTimelineOpen(false);
+    window.setTimeout(() => viewAttemptsButtonRef.current?.focus(), 0);
+  }, []);
+
+  const runAction = React.useCallback((executionId: string, resend: boolean) => {
     if (!auth.accessToken || !auth.tenantId || !canMutate) return;
-    const confirmed = window.confirm(resend ? "Resend this execution?" : "Retry this execution?");
-    if (!confirmed) return;
+    setActionTarget({ executionId, resend });
+  }, [auth.accessToken, auth.tenantId, canMutate]);
+
+  const submitAction = React.useCallback(async () => {
+    if (!auth.accessToken || !auth.tenantId || !canMutate || !actionTarget) return;
+    const { executionId, resend } = actionTarget;
     try {
-      if (resend) await resendCarePilotExecution(auth.accessToken, auth.tenantId, executionId);
-      else await retryCarePilotExecution(auth.accessToken, auth.tenantId, executionId);
+      if (resend) {
+        await resendCarePilotExecution(auth.accessToken, auth.tenantId, executionId);
+      } else {
+        await retryCarePilotExecution(auth.accessToken, auth.tenantId, executionId);
+      }
       setToast(`Execution ${resend ? "resend" : "retry"} queued.`);
-      await load();
+      await loadExecutions(appliedFilters);
     } catch (err) {
       setToast(err instanceof Error ? err.message : "Action failed");
+    } finally {
+      setActionTarget(null);
     }
-  };
+  }, [actionTarget, appliedFilters, auth.accessToken, auth.tenantId, canMutate, loadExecutions]);
 
-  const campaignById = React.useMemo(() => new Map(campaigns.map((c) => [c.id, c])), [campaigns]);
+  const filteredRows = React.useMemo(() => {
+    if (activeTab === "queued") return executionRows.filter((row) => OPS_QUEUED_STATUSES.includes(row.status));
+    if (activeTab === "failed") return executionRows.filter((row) => OPS_FAILED_STATUSES.includes(row.status));
+    return executionRows;
+  }, [activeTab, executionRows]);
+
+  const counts = React.useMemo(() => ({
+    all: executionRows.length,
+    queued: executionRows.filter((row) => OPS_QUEUED_STATUSES.includes(row.status)).length,
+    failed: executionRows.filter((row) => OPS_FAILED_STATUSES.includes(row.status)).length,
+    stuck: executionRows.filter((row) => row.stuck).length,
+  }), [executionRows]);
 
   if (!auth.tenantId) return <Alert severity="info">Select a tenant to use Jeevanam Engage ops console.</Alert>;
   if (!canView) return <Alert severity="error">You do not have access to Jeevanam Engage ops console.</Alert>;
 
   return (
     <Stack spacing={2}>
-      <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 1.5 }}>
+      <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 1.5 }}>
         <Box>
           <Typography variant="h4" sx={{ fontWeight: 900 }}>Jeevanam Engage Ops Console</Typography>
-          <Typography variant="body2" color="text.secondary">Failed execution queue, retries, resends, and delivery attempt drill-down.</Typography>
+          <Typography variant="body2" color="text.secondary">Campaign execution queues, stuck work, failures, retries, and readiness.</Typography>
         </Box>
-        <Button variant="outlined" onClick={() => void load()}>Refresh</Button>
+        <Button type="button" variant="outlined" onClick={handleRefresh}>Refresh</Button>
       </Box>
 
       {!canMutate ? <Alert severity="info">Read-only mode: retry/resend actions are restricted.</Alert> : null}
+      {resultsError ? <Alert severity="error">{resultsError}</Alert> : null}
+      {auxError ? <Alert severity="warning">{auxError}</Alert> : null}
 
-      <Card><CardContent>
-        <Grid container spacing={2}>
-          <Grid size={{ xs: 6, md: 2 }}><TextField fullWidth type="date" label="Start" value={startDate} onChange={(e) => setStartDate(e.target.value)} InputLabelProps={{ shrink: true }} error={Boolean(filterErrors.startDate)} helperText={filterErrors.startDate || ""} /></Grid>
-          <Grid size={{ xs: 6, md: 2 }}><TextField fullWidth type="date" label="End" value={endDate} onChange={(e) => setEndDate(e.target.value)} InputLabelProps={{ shrink: true }} error={Boolean(filterErrors.endDate)} helperText={filterErrors.endDate || ""} /></Grid>
-          <Grid size={{ xs: 12, md: 3 }}><FormControl fullWidth><InputLabel>Campaign</InputLabel><Select value={campaignId} label="Campaign" onChange={(e) => setCampaignId(String(e.target.value))}><MenuItem value="">All</MenuItem>{campaigns.map((c) => <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>)}</Select></FormControl></Grid>
-          <Grid size={{ xs: 6, md: 2 }}><FormControl fullWidth><InputLabel>Channel</InputLabel><Select value={channel} label="Channel" onChange={(e) => setChannel(String(e.target.value) as CarePilotChannelType | "")}><MenuItem value="">All</MenuItem><MenuItem value="EMAIL">EMAIL</MenuItem><MenuItem value="SMS">SMS</MenuItem><MenuItem value="WHATSAPP">WHATSAPP</MenuItem><MenuItem value="IN_APP">IN_APP</MenuItem><MenuItem value="APP_NOTIFICATION">APP_NOTIFICATION</MenuItem></Select></FormControl></Grid>
-          <Grid size={{ xs: 6, md: 2 }}><FormControl fullWidth><InputLabel>Status</InputLabel><Select value={status} label="Status" onChange={(e) => setStatus(String(e.target.value) as CarePilotExecutionStatus | "")}><MenuItem value="">All</MenuItem><MenuItem value="FAILED">FAILED</MenuItem><MenuItem value="DEAD_LETTER">DEAD_LETTER</MenuItem></Select></FormControl></Grid>
-          <Grid size={{ xs: 6, md: 2 }}><FormControl fullWidth><InputLabel>Reminder</InputLabel><Select value={reminderWindow} label="Reminder" onChange={(e) => setReminderWindow(String(e.target.value) as "" | "H24" | "H2")}><MenuItem value="">All</MenuItem><MenuItem value="H24">24-hour</MenuItem><MenuItem value="H2">2-hour</MenuItem></Select></FormControl></Grid>
-          <Grid size={{ xs: 12, md: 1 }}><Button fullWidth variant="contained" onClick={() => void load()}>Apply</Button></Grid>
-          <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth label="Provider" value={providerName} onChange={(e) => setProviderName(e.target.value)} /></Grid>
-          <Grid size={{ xs: 12, md: 4 }}><Button variant={retryableOnly ? "contained" : "outlined"} onClick={() => setRetryableOnly((v) => !v)}>{retryableOnly ? "Retryable Only: ON" : "Retryable Only: OFF"}</Button></Grid>
-        </Grid>
-      </CardContent></Card>
+      <Card>
+        <CardContent>
+          <Box component="form" onSubmit={(event) => { event.preventDefault(); handleApply(); }}>
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 6, md: 2 }}>
+                <TextField
+                  fullWidth
+                  type="date"
+                  label="Start"
+                  value={draftFilters.startDate}
+                  onChange={(event) => setDraftFilters((current) => ({ ...current, startDate: event.target.value }))}
+                  InputLabelProps={{ shrink: true }}
+                  error={Boolean(filterErrors.startDate)}
+                  helperText={filterErrors.startDate || ""}
+                />
+              </Grid>
+              <Grid size={{ xs: 6, md: 2 }}>
+                <TextField
+                  fullWidth
+                  type="date"
+                  label="End"
+                  value={draftFilters.endDate}
+                  onChange={(event) => setDraftFilters((current) => ({ ...current, endDate: event.target.value }))}
+                  InputLabelProps={{ shrink: true }}
+                  error={Boolean(filterErrors.endDate)}
+                  helperText={filterErrors.endDate || ""}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 3 }}>
+                <CampaignLookupField
+                  token={auth.accessToken}
+                  tenantId={auth.tenantId}
+                  value={draftFilters.campaignId}
+                  onChange={(campaignId) => setDraftFilters((current) => ({ ...current, campaignId }))}
+                  onSelectOption={(option) => setDraftFilters((current) => ({
+                    ...current,
+                    campaignId: option?.id || "",
+                    campaignRef: option?.campaignReference || "",
+                  }))}
+                  label="Campaign"
+                  helperText="Search by campaign name, type, or campaign reference."
+                />
+              </Grid>
+              <Grid size={{ xs: 6, md: 2 }}>
+                <FormControl fullWidth>
+                  <InputLabel>Channel</InputLabel>
+                  <Select
+                    value={draftFilters.channel}
+                    label="Channel"
+                    onChange={(event) => setDraftFilters((current) => ({ ...current, channel: String(event.target.value) as OpsFilters["channel"] }))}
+                  >
+                    <MenuItem value="">All</MenuItem>
+                    <MenuItem value="EMAIL">Email</MenuItem>
+                    <MenuItem value="SMS">SMS</MenuItem>
+                    <MenuItem value="WHATSAPP">WhatsApp</MenuItem>
+                    <MenuItem value="IN_APP">In-app</MenuItem>
+                    <MenuItem value="APP_NOTIFICATION">App notification</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
+              <Grid size={{ xs: 6, md: 2 }}>
+                <FormControl fullWidth>
+                  <InputLabel>Status</InputLabel>
+                  <Select
+                    value={draftFilters.status}
+                    label="Status"
+                    onChange={(event) => setDraftFilters((current) => ({ ...current, status: String(event.target.value) as OpsFilters["status"] }))}
+                  >
+                    <MenuItem value="">All</MenuItem>
+                      {["QUEUED", "PROCESSING", "RETRY_SCHEDULED", "FAILED", "DEAD_LETTER", "SUCCEEDED", "CANCELLED", "SUPPRESSED", "DELIVERED", "READ", "SKIPPED", "UNDELIVERED", "BOUNCED"].map((value) => <MenuItem key={value} value={value}>{humanizeCarePilotCode(value)}</MenuItem>)}
+                  </Select>
+                </FormControl>
+              </Grid>
+              <Grid size={{ xs: 6, md: 2 }}>
+                <FormControl fullWidth>
+                  <InputLabel>Reminder</InputLabel>
+                  <Select
+                    value={draftFilters.reminderWindow}
+                    label="Reminder"
+                    onChange={(event) => setDraftFilters((current) => ({ ...current, reminderWindow: String(event.target.value) as OpsFilters["reminderWindow"] }))}
+                  >
+                    <MenuItem value="">All</MenuItem>
+                    <MenuItem value="H24">24-hour</MenuItem>
+                    <MenuItem value="H2">2-hour</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
+              <Grid size={{ xs: 6, md: 3 }}>
+                <TextField
+                  fullWidth
+                  label="Provider"
+                  value={draftFilters.providerName}
+                  onChange={(event) => setDraftFilters((current) => ({ ...current, providerName: event.target.value }))}
+                  error={Boolean(filterErrors.providerName)}
+                  helperText={filterErrors.providerName || ""}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 2 }}>
+                <Button fullWidth type="submit" variant="contained" disabled={resultsLoading}>Apply</Button>
+              </Grid>
+              <Grid size={{ xs: 12, md: 2 }}>
+                <Button fullWidth type="button" variant="outlined" onClick={handleClear}>Clear</Button>
+              </Grid>
+              <Grid size={{ xs: 12, md: 2 }}>
+                <Button
+                  fullWidth
+                  type="button"
+                  variant={draftFilters.retryableOnly ? "contained" : "outlined"}
+                  onClick={() => setDraftFilters((current) => ({ ...current, retryableOnly: !current.retryableOnly }))}
+                >
+                  {draftFilters.retryableOnly ? "Retryable Only: ON" : "Retryable Only: OFF"}
+                </Button>
+              </Grid>
+              {resolvedCampaign ? (
+                <Grid size={{ xs: 12 }}>
+                  <Alert severity="info">
+                    Selected campaign: {resolvedCampaign.name} • {campaignTypeLabel(resolvedCampaign.campaignType)} • {resolvedCampaign.campaignReference}
+                  </Alert>
+                </Grid>
+              ) : null}
+            </Grid>
+          </Box>
+        </CardContent>
+      </Card>
 
-      <Grid container spacing={2}>
-        <Grid size={{ xs: 6, md: 3 }}><Card><CardContent><Typography variant="caption">Follow-ups Due</Typography><Typography variant="h5">{leadOps?.followUpsDue ?? 0}</Typography></CardContent></Card></Grid>
-        <Grid size={{ xs: 6, md: 3 }}><Card><CardContent><Typography variant="caption">Stale Leads</Typography><Typography variant="h5">{leadOps?.staleLeads ?? 0}</Typography></CardContent></Card></Grid>
-        <Grid size={{ xs: 6, md: 3 }}><Card><CardContent><Typography variant="caption">High Priority Leads</Typography><Typography variant="h5">{leadOps?.highPriorityActiveLeads ?? 0}</Typography></CardContent></Card></Grid>
-        <Grid size={{ xs: 6, md: 3 }}><Card><CardContent><Typography variant="caption">Lead Conversion</Typography><Typography variant="h5">{(leadOps?.conversionRate ?? 0).toFixed(1)}%</Typography></CardContent></Card></Grid>
-        <Grid size={{ xs: 6, md: 3 }}><Card><CardContent><Typography variant="caption">Webinars Upcoming</Typography><Typography variant="h5">{webinarOps?.upcomingWebinars ?? 0}</Typography></CardContent></Card></Grid>
-        <Grid size={{ xs: 6, md: 3 }}><Card><CardContent><Typography variant="caption">Webinar No-Shows</Typography><Typography variant="h5">{webinarOps?.noShowCount ?? 0}</Typography></CardContent></Card></Grid>
-        <Grid size={{ xs: 6, md: 3 }}><Card><CardContent><Typography variant="caption">Webinar Attendance</Typography><Typography variant="h5">{(webinarOps?.attendanceRate ?? 0).toFixed(1)}%</Typography></CardContent></Card></Grid>
-        <Grid size={{ xs: 6, md: 3 }}><Card><CardContent><Typography variant="caption">Webinar Registrations</Typography><Typography variant="h5">{webinarOps?.totalRegistrations ?? 0}</Typography></CardContent></Card></Grid>
+      <Grid container spacing={1.5}>
+        <Grid size={{ xs: 6, md: 3 }}><Card><CardContent><Typography variant="caption">All Executions</Typography><Typography variant="h5">{counts.all}</Typography></CardContent></Card></Grid>
+        <Grid size={{ xs: 6, md: 3 }}><Card><CardContent><Typography variant="caption">Queued / Stuck</Typography><Typography variant="h5">{counts.queued}</Typography></CardContent></Card></Grid>
+        <Grid size={{ xs: 6, md: 3 }}><Card><CardContent><Typography variant="caption">Failed / Retrying</Typography><Typography variant="h5">{counts.failed}</Typography></CardContent></Card></Grid>
+        <Grid size={{ xs: 6, md: 3 }}><Card><CardContent><Typography variant="caption">Stuck Indicators</Typography><Typography variant="h5">{counts.stuck}</Typography></CardContent></Card></Grid>
       </Grid>
 
-      {error ? <Alert severity="error">{error}</Alert> : null}
-      {loading ? <Box sx={{ minHeight: 160, display: "grid", placeItems: "center" }}><CircularProgress /></Box> : null}
+      <Card>
+        <CardContent sx={{ pb: 0 }}>
+          <Tabs value={activeTab} onChange={(_, value) => setActiveTab(value)} variant="scrollable" allowScrollButtonsMobile>
+            <Tab value="all" label="All Executions" />
+            <Tab value="queued" label="Queued / Stuck" />
+            <Tab value="failed" label="Failed / Retrying" />
+            <Tab value="readiness" label="Readiness" />
+          </Tabs>
+        </CardContent>
+      </Card>
 
-      {!loading ? (
-        <Card><CardContent>
-          <Typography variant="h6" sx={{ fontWeight: 800, mb: 1 }}>Failed Execution Queue</Typography>
-          {rows.length === 0 ? <Alert severity="info">No failed executions found for the selected filters.</Alert> : (
-            <Table size="small"><TableHead><TableRow><TableCell>Campaign</TableCell><TableCell>Reminder</TableCell><TableCell>Appointment Ref</TableCell><TableCell>Patient/Entity</TableCell><TableCell>Channel</TableCell><TableCell>Provider</TableCell><TableCell>Status</TableCell><TableCell>Retry Count</TableCell><TableCell>Last Attempt</TableCell><TableCell>Next Retry</TableCell><TableCell>Failure Reason</TableCell><TableCell align="right">Actions</TableCell></TableRow></TableHead>
-              <TableBody>{rows.map((row) => <TableRow key={row.id}><TableCell>{campaignById.get(row.campaignId)?.name || row.campaignId}</TableCell><TableCell>{row.reminderWindow ? <Chip size="small" variant="outlined" label={row.reminderWindow} /> : "-"}</TableCell><TableCell>{row.sourceReferenceId || "-"}</TableCell><TableCell>{row.recipientPatientId || "-"}</TableCell><TableCell>{row.channelType}</TableCell><TableCell>{row.providerName || "-"}</TableCell><TableCell><Chip size="small" color={row.status === "DEAD_LETTER" ? "error" : "warning"} label={row.status} /></TableCell><TableCell>{row.attemptCount}</TableCell><TableCell>{row.lastAttemptAt ? new Date(row.lastAttemptAt).toLocaleString() : "-"}</TableCell><TableCell>{row.nextAttemptAt ? new Date(row.nextAttemptAt).toLocaleString() : "-"}</TableCell><TableCell>{row.failureReason || row.lastError || "-"}</TableCell><TableCell align="right"><Stack direction="row" spacing={1} justifyContent="flex-end"><Button size="small" onClick={() => void openTimeline(row.id)}>View Attempts</Button>{canMutate ? <Button size="small" onClick={() => void runAction(row.id, false)}>Retry</Button> : null}{canMutate ? <Button size="small" onClick={() => void runAction(row.id, true)}>Resend</Button> : null}</Stack></TableCell></TableRow>)}</TableBody>
-            </Table>
-          )}
-        </CardContent></Card>
-      ) : null}
-      {!loading ? (
-        <Grid container spacing={2}>
-          <Grid size={{ xs: 12, lg: 6 }}>
-            <Card><CardContent>
-              <Typography variant="h6" sx={{ fontWeight: 800, mb: 1 }}>High-Risk Patients</Typography>
-              {highRiskRows.length === 0 ? <Alert severity="info">No high-risk patients currently identified.</Alert> : (
-                <Table size="small"><TableHead><TableRow><TableCell>Patient</TableCell><TableCell>Score</TableCell><TableCell>Reason</TableCell><TableCell>Suggested Campaign</TableCell></TableRow></TableHead><TableBody>
-                  {highRiskRows.map((row) => <TableRow key={row.patientId}><TableCell>{row.patientName}</TableCell><TableCell>{row.engagementScore}</TableCell><TableCell>{row.riskReasons[0] || "-"}</TableCell><TableCell>{row.suggestedCampaignType}</TableCell></TableRow>)}
-                </TableBody></Table>
-              )}
-            </CardContent></Card>
-          </Grid>
-          <Grid size={{ xs: 12, lg: 6 }}>
-            <Card><CardContent>
-              <Typography variant="h6" sx={{ fontWeight: 800, mb: 1 }}>Inactive Patients</Typography>
-              {inactiveRows.length === 0 ? <Alert severity="info">No inactive patients currently identified.</Alert> : (
-                <Table size="small"><TableHead><TableRow><TableCell>Patient</TableCell><TableCell>Score</TableCell><TableCell>Last Visit</TableCell><TableCell>Suggested Campaign</TableCell></TableRow></TableHead><TableBody>
-                  {inactiveRows.map((row) => <TableRow key={row.patientId}><TableCell>{row.patientName}</TableCell><TableCell>{row.engagementScore}</TableCell><TableCell>{row.lastConsultationAt || row.lastAppointmentAt || "-"}</TableCell><TableCell>{row.suggestedCampaignType}</TableCell></TableRow>)}
-                </TableBody></Table>
-              )}
-            </CardContent></Card>
-          </Grid>
-        </Grid>
-      ) : null}
+      {activeTab === "readiness" ? (
+        <Card>
+          <CardContent>
+            <Typography variant="h6" sx={{ fontWeight: 800, mb: 1 }}>Queue Readiness</Typography>
+            {auxLoading && !readiness ? <Box sx={{ minHeight: 160, display: "grid", placeItems: "center" }}><CircularProgress /></Box> : null}
+            {!auxLoading && readiness ? (
+              <Stack spacing={2}>
+                <Grid container spacing={2}>
+                  <Grid size={{ xs: 12, md: 4 }}>
+                    <Card variant="outlined"><CardContent>
+                      <Typography variant="caption">Manual execution dispatcher</Typography>
+                      <Typography variant="h6">{readiness.manualExecutionDispatcherEnabled ? "Enabled" : "Disabled"}</Typography>
+                      <Typography variant="body2" color="text.secondary">Last acquired: {formatCarePilotDateTime(readiness.manualExecutionDispatcherLastAcquiredAt, clinicTimeZone)}</Typography>
+                      <Typography variant="body2" color="text.secondary">Last skipped: {formatCarePilotDateTime(readiness.manualExecutionDispatcherLastSkippedAt, clinicTimeZone)}</Typography>
+                    </CardContent></Card>
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 4 }}>
+                    <Card variant="outlined"><CardContent>
+                      <Typography variant="caption">Reminder scheduler</Typography>
+                      <Typography variant="h6">{readiness.reminderSchedulerEnabled ? "Enabled" : "Disabled"}</Typography>
+                      <Typography variant="body2" color="text.secondary">Last scan: {formatCarePilotDateTime(readiness.reminderSchedulerLastScanAt, clinicTimeZone)}</Typography>
+                    </CardContent></Card>
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 4 }}>
+                    <Card variant="outlined"><CardContent>
+                      <Typography variant="caption">Queue depth</Typography>
+                      <Typography variant="h6">{readiness.queueDepth}</Typography>
+                      <Typography variant="body2" color="text.secondary">Oldest queued age: {readiness.oldestQueuedAgeMinutes ? `${readiness.oldestQueuedAgeMinutes}m` : "-"}</Typography>
+                      <Typography variant="body2" color="text.secondary">Last successful dispatch: {formatCarePilotDateTime(readiness.lastSuccessfulDispatchAt, clinicTimeZone)}</Typography>
+                    </CardContent></Card>
+                  </Grid>
+                </Grid>
+                <Card variant="outlined">
+                  <CardContent>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 800, mb: 1 }}>Provider readiness by channel</Typography>
+                    <Table size="small">
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>Channel</TableCell>
+                          <TableCell>Provider</TableCell>
+                          <TableCell>Status</TableCell>
+                          <TableCell>Configured</TableCell>
+                          <TableCell>Available</TableCell>
+                          <TableCell>Message</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {readiness.providerStatuses.map((provider) => (
+                          <TableRow key={provider.channel}>
+                            <TableCell>{provider.channel}</TableCell>
+                            <TableCell>{providerLabel(provider.providerName)}</TableCell>
+                            <TableCell><Chip size="small" color={provider.status === "READY" ? "success" : provider.status === "ERROR" ? "error" : "default"} label={provider.status} /></TableCell>
+                            <TableCell>{provider.configured ? "Yes" : "No"}</TableCell>
+                            <TableCell>{provider.available ? "Yes" : "No"}</TableCell>
+                            <TableCell>{provider.message}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </CardContent>
+                </Card>
+              </Stack>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : (
+        <Card>
+          <CardContent>
+            <Typography variant="h6" sx={{ fontWeight: 800, mb: 1 }}>
+              {activeTab === "all" ? "All Executions" : activeTab === "queued" ? "Queued / Stuck" : "Failed / Retrying"}
+            </Typography>
+            {resultsLoading ? <Box sx={{ minHeight: 160, display: "grid", placeItems: "center" }}><CircularProgress /></Box> : null}
+            {!resultsLoading && filteredRows.length === 0 ? (
+              <Alert severity="info">
+                {activeTab === "all"
+                  ? "No executions found for the selected filters."
+                  : activeTab === "queued"
+                    ? "No queued or stuck executions found."
+                    : "No failed or retrying executions found."}
+              </Alert>
+            ) : null}
+            {!resultsLoading && filteredRows.length > 0 ? (
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Execution</TableCell>
+                    <TableCell>Campaign</TableCell>
+                    <TableCell>Patient / Entity</TableCell>
+                    <TableCell>Channel</TableCell>
+                    <TableCell>Execution Status</TableCell>
+                    <TableCell>Delivery Status</TableCell>
+                    <TableCell>Queued</TableCell>
+                    <TableCell>Queue Age</TableCell>
+                    <TableCell>Provider</TableCell>
+                    <TableCell>Delivery Attempts</TableCell>
+                    <TableCell>Retries</TableCell>
+                    <TableCell>Reason</TableCell>
+                    <TableCell align="right">Actions</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {filteredRows.map((row) => (
+                    <TableRow key={row.executionReference} hover>
+                      <TableCell>
+                        <Typography variant="body2" sx={{ fontWeight: 700 }}>{row.executionReference}</Typography>
+                        <Typography variant="caption" color="text.secondary">{row.status === "QUEUED" || row.status === "PROCESSING" ? "Awaiting dispatch" : humanizeCarePilotCode(row.status)}</Typography>
+                      </TableCell>
+                      <TableCell>
+                    <Typography variant="body2" sx={{ fontWeight: 700 }}>{row.campaignName}</Typography>
+                    <Typography variant="caption" color="text.secondary">{`${row.campaignType ? campaignTypeLabel(row.campaignType as any) : "Campaign"} • ${row.campaignReference}`}</Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2" sx={{ fontWeight: 700 }}>{row.patientName || "Unknown patient"}</Typography>
+                        <Typography variant="caption" color="text.secondary">{row.patientReference || row.relatedEntityLabel || "Business reference unavailable"}</Typography>
+                      </TableCell>
+                      <TableCell>{channelTypeLabel(row.channelType)}</TableCell>
+                      <TableCell>
+                        <Chip size="small" color={executionStatusColor(row.status)} label={humanizeCarePilotCode(row.status)} />
+                      </TableCell>
+                      <TableCell>
+                        <Chip size="small" color={row.deliveryStatus ? deliveryChipColor(row.deliveryStatus) : "default"} label={humanizeCarePilotCode(row.deliveryStatus)} />
+                        {row.stuck ? <Chip size="small" sx={{ ml: 1 }} color="warning" label="Stuck" /> : null}
+                      </TableCell>
+                      <TableCell>{formatCarePilotDateTime(row.queuedAt, clinicTimeZone)}</TableCell>
+                      <TableCell>{queueAgeLabel(row)}</TableCell>
+                      <TableCell>{providerLabel(row.providerName)}</TableCell>
+                      <TableCell>{row.deliveryAttemptCount}</TableCell>
+                      <TableCell>{row.retryCount}</TableCell>
+                      <TableCell>{row.blockingReason || row.failureReason || "-"}</TableCell>
+                      <TableCell align="right">
+                        <Stack direction="row" spacing={1} justifyContent="flex-end">
+                          <Button type="button" size="small" onClick={(event) => void openTimeline(row.executionId, event.currentTarget)}>View Attempts</Button>
+                          {canMutate && OPS_FAILED_STATUSES.includes(row.status) ? <Button type="button" size="small" onClick={() => void runAction(row.executionId, false)}>Retry</Button> : null}
+                          {canMutate && OPS_FAILED_STATUSES.includes(row.status) ? <Button type="button" size="small" onClick={() => void runAction(row.executionId, true)}>Resend</Button> : null}
+                        </Stack>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            ) : null}
+          </CardContent>
+        </Card>
+      )}
 
-      <Dialog open={timelineOpen} onClose={() => setTimelineOpen(false)} fullWidth maxWidth="lg">
-        <DialogTitle>Execution Timeline</DialogTitle>
-        <DialogContent>
+      <Dialog
+        open={timelineOpen}
+        onClose={closeTimeline}
+        fullWidth
+        maxWidth="lg"
+        aria-labelledby="ops-execution-timeline-title"
+        aria-describedby="ops-execution-timeline-description"
+      >
+        <DialogTitle
+          id="ops-execution-timeline-title"
+          sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 2 }}
+        >
+          <span>Execution Timeline</span>
+          <IconButton aria-label="Close execution timeline" onClick={closeTimeline} size="small">
+            <CloseRoundedIcon fontSize="small" />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent id="ops-execution-timeline-description">
           {timelineLoading ? <Box sx={{ minHeight: 120, display: "grid", placeItems: "center" }}><CircularProgress size={28} /></Box> : null}
           {!timelineLoading && timeline ? (
             <Stack spacing={2}>
-              <Card variant="outlined"><CardContent><Typography variant="subtitle1" sx={{ fontWeight: 800 }}>Execution Metadata</Typography>
-                <Grid container spacing={1}><Grid size={{ xs: 12, md: 6 }}><Typography variant="body2">Execution: {timeline.execution.id}</Typography></Grid><Grid size={{ xs: 12, md: 6 }}><Typography variant="body2">Scheduled: {new Date(timeline.execution.scheduledAt).toLocaleString()}</Typography></Grid><Grid size={{ xs: 12, md: 6 }}><Typography variant="body2">Executed: {timeline.execution.executedAt ? new Date(timeline.execution.executedAt).toLocaleString() : "-"}</Typography></Grid><Grid size={{ xs: 12, md: 6 }}><Typography variant="body2">Retry Count: {timeline.execution.attemptCount}</Typography></Grid></Grid>
-              </CardContent></Card>
-              <Card variant="outlined"><CardContent><Typography variant="subtitle1" sx={{ fontWeight: 800, mb: 1 }}>Delivery Attempts</Typography>
-                {timeline.deliveryAttempts.length === 0 ? <Alert severity="info">No attempts recorded yet.</Alert> : (
-                  <Table size="small"><TableHead><TableRow><TableCell>#</TableCell><TableCell>Provider</TableCell><TableCell>Channel</TableCell><TableCell>Status</TableCell><TableCell>Error Code</TableCell><TableCell>Error Message</TableCell><TableCell>Attempted At</TableCell></TableRow></TableHead><TableBody>
-                    {timeline.deliveryAttempts.map((a) => <TableRow key={a.id}><TableCell>{a.attemptNumber}</TableCell><TableCell>{a.providerName || "-"}</TableCell><TableCell>{a.channelType}</TableCell><TableCell><Chip size="small" color={deliveryChipColor(a.deliveryStatus)} label={a.deliveryStatus} /></TableCell><TableCell>{a.errorCode || "-"}</TableCell><TableCell>{a.errorMessage || "-"}</TableCell><TableCell>{a.attemptedAt ? new Date(a.attemptedAt).toLocaleString() : "-"}</TableCell></TableRow>)}
-                  </TableBody></Table>
-                )}
-              </CardContent></Card>
-              <Card variant="outlined"><CardContent><Typography variant="subtitle1" sx={{ fontWeight: 800, mb: 1 }}>Provider Delivery Events</Typography>
-                {timeline.deliveryEvents.length === 0 ? <Alert severity="info">No provider webhook events recorded yet.</Alert> : (
-                  <Table size="small"><TableHead><TableRow><TableCell>Type</TableCell><TableCell>Status</TableCell><TableCell>Provider</TableCell><TableCell>Message ID</TableCell><TableCell>External</TableCell><TableCell>Event Time</TableCell></TableRow></TableHead><TableBody>
-                    {timeline.deliveryEvents.map((event, idx) => (
-                      <TableRow key={`${event.id || "event"}-${idx}`}>
-                        <TableCell>{event.eventType}</TableCell>
-                        <TableCell><Chip size="small" color={deliveryChipColor(event.internalStatus)} label={event.internalStatus} /></TableCell>
-                        <TableCell>{event.providerName || "-"}</TableCell>
-                        <TableCell>{event.providerMessageId || "-"}</TableCell>
-                        <TableCell>{event.externalStatus || "-"}</TableCell>
-                        <TableCell>{event.eventTimestamp ? new Date(event.eventTimestamp).toLocaleString() : "-"}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody></Table>
-                )}
-              </CardContent></Card>
+              <Card variant="outlined">
+                <CardContent>
+                  <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>Execution Metadata</Typography>
+                  <Grid container spacing={1}>
+                    <Grid size={{ xs: 12, md: 6 }}><Typography variant="body2">Execution Status: {humanizeCarePilotCode(timeline.execution.status)}</Typography></Grid>
+                    <Grid size={{ xs: 12, md: 6 }}><Typography variant="body2">Delivery Status: {humanizeCarePilotCode(timeline.execution.deliveryStatus)}</Typography></Grid>
+                    <Grid size={{ xs: 12, md: 6 }}><Typography variant="body2">Scheduled: {formatCarePilotDateTime(timeline.execution.scheduledAt, clinicTimeZone)}</Typography></Grid>
+                    <Grid size={{ xs: 12, md: 6 }}><Typography variant="body2">Queued: {formatCarePilotDateTime(timeline.execution.createdAt, clinicTimeZone)}</Typography></Grid>
+                    <Grid size={{ xs: 12, md: 6 }}><Typography variant="body2">Executed: {formatCarePilotDateTime(timeline.execution.executedAt, clinicTimeZone)}</Typography></Grid>
+                    <Grid size={{ xs: 12, md: 6 }}><Typography variant="body2">Queue Wait: {formatCarePilotDurationMinutes(queueWaitMinutes(timeline.execution))}</Typography></Grid>
+                    <Grid size={{ xs: 12, md: 6 }}><Typography variant="body2">Processing Duration: {formatCarePilotDurationMinutes(processingDurationMinutes(timeline.execution))}</Typography></Grid>
+                    <Grid size={{ xs: 12, md: 6 }}><Typography variant="body2">Delivery Attempt Count: {timeline.deliveryAttempts.length}</Typography></Grid>
+                    <Grid size={{ xs: 12, md: 6 }}><Typography variant="body2">Retry Count: {timeline.execution.attemptCount}</Typography></Grid>
+                  </Grid>
+                </CardContent>
+              </Card>
+              <Card variant="outlined">
+                <CardContent>
+                  <Typography variant="subtitle1" sx={{ fontWeight: 800, mb: 1 }}>Delivery Attempts</Typography>
+                  {timeline.deliveryAttempts.length === 0 ? <Alert severity="info">No attempts recorded yet.</Alert> : (
+                    <Table size="small">
+                      <TableHead><TableRow><TableCell>#</TableCell><TableCell>Provider</TableCell><TableCell>Channel</TableCell><TableCell>Status</TableCell><TableCell>Error Code</TableCell><TableCell>Error Message</TableCell><TableCell>Attempted At</TableCell></TableRow></TableHead>
+                      <TableBody>
+                        {timeline.deliveryAttempts.map((attempt) => <TableRow key={attempt.id}><TableCell>{attempt.attemptNumber}</TableCell><TableCell>{providerLabel(attempt.providerName)}</TableCell><TableCell>{channelTypeLabel(attempt.channelType)}</TableCell><TableCell><Chip size="small" color={deliveryChipColor(attempt.deliveryStatus)} label={humanizeCarePilotCode(attempt.deliveryStatus)} /></TableCell><TableCell>{attempt.errorCode || "-"}</TableCell><TableCell>{attempt.errorMessage || "-"}</TableCell><TableCell>{formatCarePilotDateTime(attempt.attemptedAt, clinicTimeZone)}</TableCell></TableRow>)}
+                      </TableBody>
+                    </Table>
+                  )}
+                </CardContent>
+              </Card>
+              <Card variant="outlined">
+                <CardContent>
+                  <Typography variant="subtitle1" sx={{ fontWeight: 800, mb: 1 }}>Provider Delivery Events</Typography>
+                  {timeline.deliveryEvents.length === 0 ? <Alert severity="info">No provider webhook events recorded yet.</Alert> : (
+                    <Table size="small">
+                      <TableHead><TableRow><TableCell>Type</TableCell><TableCell>Status</TableCell><TableCell>Provider</TableCell><TableCell>Message ID</TableCell><TableCell>External</TableCell><TableCell>Event Time</TableCell></TableRow></TableHead>
+                      <TableBody>
+                        {timeline.deliveryEvents.map((event, index) => (
+                          <TableRow key={`${event.id || "event"}-${index}`}>
+                            <TableCell>{event.eventType}</TableCell>
+                            <TableCell><Chip size="small" color={event.internalStatus ? deliveryChipColor(event.internalStatus) : "default"} label={humanizeCarePilotCode(event.internalStatus)} /></TableCell>
+                            <TableCell>{providerLabel(event.providerName)}</TableCell>
+                            <TableCell>{event.providerMessageId ? "Recorded" : "-"}</TableCell>
+                            <TableCell>{event.externalStatus || "-"}</TableCell>
+                            <TableCell>{formatCarePilotDateTime(event.eventTimestamp, clinicTimeZone)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                </CardContent>
+              </Card>
             </Stack>
           ) : null}
         </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button type="button" onClick={closeTimeline}>Close</Button>
+        </DialogActions>
       </Dialog>
+
+      <ConfirmationDialog
+        open={Boolean(actionTarget)}
+        title={actionTarget?.resend ? "Resend execution" : "Retry execution"}
+        description="This will queue a new delivery attempt. Continue?"
+        confirmLabel={actionTarget?.resend ? "Resend" : "Retry"}
+        confirmColor="warning"
+        onCancel={() => setActionTarget(null)}
+        onConfirm={() => void submitAction()}
+      />
 
       <Snackbar open={Boolean(toast)} autoHideDuration={3000} onClose={() => setToast(null)} message={toast || ""} />
     </Stack>

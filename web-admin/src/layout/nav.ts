@@ -1,4 +1,5 @@
 import { branding } from "../branding";
+import { ENGAGE_ANALYTICS_VIEW } from "../auth/permissions";
 import type { TenantModuleCode } from "../modules/moduleRegistry";
 
 export type NavItem = {
@@ -8,6 +9,7 @@ export type NavItem = {
   platformOnly?: boolean;
   requiresTenant?: boolean;
   rolesAny?: string[];
+  permissionsAny?: string[];
   badge?: string;
   disabled?: boolean;
   future?: boolean;
@@ -88,22 +90,17 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "ENGAGE",
     requiresTenant: true,
     defaultExpanded: false,
-    rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"],
+    rolesAny: ["CLINIC_ADMIN", "ENGAGE_MANAGER", "ENGAGE_EXECUTIVE", "RECEPTIONIST", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"],
     items: [
-      { key: "campaigns", label: "Campaigns", path: "/carepilot/campaigns", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR"], moduleAny: ["CAREPILOT"] },
-      { key: "analytics", label: "Analytics", path: "/carepilot/analytics", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR"], moduleAny: ["CAREPILOT"] },
-      { key: "ops-console", label: "Ops Console", path: "/carepilot/ops", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR"], moduleAny: ["CAREPILOT"] },
-      { key: "messaging", label: "Messaging", path: "/carepilot/messaging", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"], moduleAny: ["CAREPILOT"] },
-      { key: "reminders", label: "Reminders", path: "/carepilot/reminders", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR"], moduleAny: ["CAREPILOT"] },
-      { key: "patient-engagement", label: "Patient Engagement", path: "/carepilot/engagement", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR"], moduleAny: ["CAREPILOT"] },
-      { key: "leads", label: "Leads", path: "/carepilot/leads", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR"], moduleAny: ["CAREPILOT"] },
-      { key: "webinar-automation", label: "Webinar Automation", path: "/carepilot/webinars", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR"], moduleAny: ["CAREPILOT"] },
-      { key: "ai-calls", label: "AI Calls", path: "/carepilot/ai-calls", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR"], moduleAny: ["CAREPILOT"] },
-      { key: "ai-receptionist-active", label: "AI Receptionist · Active Conversations", path: "/carepilot/ai-receptionist/active-conversations", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"], moduleAny: ["CAREPILOT"] },
-      { key: "ai-receptionist-callbacks", label: "AI Receptionist · Callback Queue", path: "/carepilot/ai-receptionist/callback-queue", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"], moduleAny: ["CAREPILOT"] },
-      { key: "ai-receptionist-escalations", label: "AI Receptionist · Escalation Queue", path: "/carepilot/ai-receptionist/escalation-queue", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"], moduleAny: ["CAREPILOT"] },
-      { key: "ai-receptionist-handoffs", label: "AI Receptionist · Appointment Handoffs", path: "/carepilot/ai-receptionist/appointment-handoffs", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"], moduleAny: ["CAREPILOT"] },
-      { key: "receptionist-queue", label: "Receptionist Queue", path: "/carepilot/receptionist-queue", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"], moduleAny: ["CAREPILOT"] },
+      { key: "campaigns", label: "Campaigns", path: "/carepilot/campaigns", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "ENGAGE_MANAGER", "AUDITOR"], moduleAny: ["CAREPILOT"] },
+      { key: "analytics", label: "Analytics", path: "/carepilot/analytics", requiresTenant: true, permissionsAny: [ENGAGE_ANALYTICS_VIEW], moduleAny: ["CAREPILOT"] },
+      { key: "ops-console", label: "Ops Console", path: "/carepilot/ops", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "ENGAGE_MANAGER", "ENGAGE_EXECUTIVE", "AUDITOR"], moduleAny: ["CAREPILOT"] },
+      { key: "messaging", label: "Messaging", path: "/carepilot/messaging", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR"], moduleAny: ["CAREPILOT"] },
+      { key: "reminders", label: "Reminders", path: "/carepilot/reminders", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "ENGAGE_MANAGER", "ENGAGE_EXECUTIVE", "AUDITOR"], moduleAny: ["CAREPILOT"] },
+      { key: "patient-engagement", label: "Patient Engagement", path: "/carepilot/engagement", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "ENGAGE_MANAGER", "AUDITOR"], moduleAny: ["CAREPILOT"] },
+      { key: "leads", label: "Leads", path: "/carepilot/leads", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "ENGAGE_MANAGER", "ENGAGE_EXECUTIVE"], moduleAny: ["CAREPILOT"] },
+      { key: "webinar-automation", label: "Webinar Automation", path: "/carepilot/webinars", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "ENGAGE_MANAGER"], moduleAny: ["CAREPILOT"] },
+      { key: "ai-operations", label: "AI Operations", path: "/carepilot/ai-operations", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "ENGAGE_MANAGER", "ENGAGE_EXECUTIVE", "RECEPTIONIST", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"], moduleAny: ["CAREPILOT"] },
     ],
   },
   {

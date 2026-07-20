@@ -72,4 +72,14 @@ public final class EngagementDtos {
             List<EngagementProfileResponse> rows,
             OffsetDateTime generatedAt
     ) {}
+
+    /** Tenant-scoped engagement-level drill-down for scored patients. */
+    public record EngagementProfileListResponse(
+            String selectedLevel,
+            int offset,
+            int limit,
+            int count,
+            List<EngagementProfileResponse> rows,
+            OffsetDateTime generatedAt
+    ) {}
 }

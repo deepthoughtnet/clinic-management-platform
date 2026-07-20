@@ -32,7 +32,7 @@ public class CarePilotTemplateController {
     }
 
     @GetMapping
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasAnyPermission('engage.template.view','engage.template.manage')")
     public List<TemplateResponse> list() {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return templateService.list(tenantId).stream().map(this::toResponse).toList();
@@ -40,7 +40,7 @@ public class CarePilotTemplateController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.template.manage')")
     public TemplateResponse create(@RequestBody CreateTemplateRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return toResponse(templateService.create(tenantId, new CampaignTemplateCreateCommand(
@@ -49,7 +49,7 @@ public class CarePilotTemplateController {
     }
 
     @PatchMapping("/{templateId}")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.template.manage')")
     public TemplateResponse patch(@PathVariable UUID templateId, @RequestBody PatchTemplateRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return toResponse(templateService.patch(tenantId, templateId, new CampaignTemplatePatchCommand(

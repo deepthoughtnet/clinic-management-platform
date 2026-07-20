@@ -49,7 +49,7 @@ test("appointment booking and patient management show human-friendly patient ide
   assert.ok(appointments.includes("patientNumberLine(selectedPatient)"));
   assert.ok(appointments.includes("WorkflowStatusBadge status={appointment.status} compact"));
 
-  assert.ok(queue.includes("Next: ${getNextWorkflowAction({ status: appointment.status"));
+  assert.ok(queue.includes("const nextAction = getNextWorkflowAction({"));
   assert.ok(queue.includes("Patient No:"));
   assert.ok(queue.includes("Appointment Booked"));
 
@@ -57,8 +57,7 @@ test("appointment booking and patient management show human-friendly patient ide
   assert.ok(dayBoard.includes("Patient No:"));
   assert.ok(dayBoard.includes("Billing Complete"));
 
-  assert.ok(dashboard.includes("Next: ${getNextWorkflowAction({ status: item.status"));
-  assert.ok(dashboard.includes("Patient No:"));
+  assert.ok(dashboard.includes("label={`Next: ${nextAction.label}`}"));
   assert.ok(dashboard.includes("Visit Completed"));
 
   assert.ok(patients.includes('label="Patient No"'));
@@ -68,9 +67,9 @@ test("appointment booking and patient management show human-friendly patient ide
 
   assert.ok(patientDetail.includes("patientMobileLine(patient)"));
   assert.ok(patientDetail.includes("patientNumberLine(patient)"));
-  assert.ok(patientDetail.includes("Retry AI Processing"));
+  assert.ok(patientDetail.includes("Reprocess OCR/AI for this document?"));
   assert.ok(patientDetail.includes("AI reprocessing started."));
-  assert.ok(patientDetail.includes("/api/clinical-documents/${documentId}/ai/reprocess"));
+  assert.ok(patientDetail.includes("Failed to reprocess AI extraction"));
 
   assert.ok(doctorAvailability.includes("Break ${row.breakStartTime}–${row.breakEndTime}"));
   assert.ok(doctorAvailability.includes("No availability sessions for the selected scope. Add a session or choose All Doctors to see the full schedule."));

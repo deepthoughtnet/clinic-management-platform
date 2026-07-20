@@ -40,7 +40,7 @@ public class CarePilotRemindersController {
      * Lists reminder executions with operational filters.
      */
     @GetMapping
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasAnyPermission('engage.reminder.view','engage.reminder.operate','engage.audit.view')")
     public ReminderListResponse list(
             @RequestParam(required = false) String status,
             @RequestParam(required = false) UUID campaignId,
@@ -48,6 +48,7 @@ public class CarePilotRemindersController {
             @RequestParam(required = false) ChannelType channel,
             @RequestParam(required = false) UUID patientId,
             @RequestParam(required = false) String patientName,
+            @RequestParam(required = false) String patientQuery,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fromDate,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate toDate,
             @RequestParam(required = false) String providerName,
@@ -55,14 +56,14 @@ public class CarePilotRemindersController {
             @RequestParam(defaultValue = "50") int size
     ) {
         UUID tenantId = RequestContextHolder.requireTenantId();
-        return remindersService.list(tenantId, status, campaignId, campaignType, channel, patientId, patientName, fromDate, toDate, providerName, page, size);
+        return remindersService.list(tenantId, status, campaignId, campaignType, channel, patientId, patientName, patientQuery, fromDate, toDate, providerName, page, size);
     }
 
     /**
      * Returns reminder execution detail including timeline/attempts/events.
      */
     @GetMapping("/{executionId}")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasAnyPermission('engage.reminder.view','engage.reminder.operate','engage.audit.view')")
     public ReminderDetailResponse detail(@PathVariable UUID executionId) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return remindersService.detail(tenantId, executionId);
@@ -72,7 +73,7 @@ public class CarePilotRemindersController {
      * Reuses existing execution retry flow from reminders management context.
      */
     @PatchMapping("/{executionId}/retry")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.reminder.operate')")
     public ExecutionResponse retry(@PathVariable UUID executionId) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         CampaignExecutionRecord record = executionService.retryExecution(tenantId, executionId);
@@ -83,7 +84,7 @@ public class CarePilotRemindersController {
      * Reuses existing execution resend alias flow from reminders management context.
      */
     @PatchMapping("/{executionId}/resend")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.reminder.operate')")
     public ExecutionResponse resend(@PathVariable UUID executionId) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         CampaignExecutionRecord record = executionService.retryExecution(tenantId, executionId);
@@ -94,7 +95,7 @@ public class CarePilotRemindersController {
      * Cancels a queued/retrying reminder execution and prevents further processing.
      */
     @PostMapping("/{executionId}/cancel")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.reminder.operate')")
     public ExecutionResponse cancel(@PathVariable UUID executionId, @RequestBody(required = false) ReminderMutationRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         CampaignExecutionRecord record = executionService.cancelExecution(tenantId, executionId, request == null ? null : request.reason());
@@ -105,7 +106,7 @@ public class CarePilotRemindersController {
      * Suppresses a queued/retrying reminder execution and prevents future pickup.
      */
     @PostMapping("/{executionId}/suppress")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.reminder.operate')")
     public ExecutionResponse suppress(@PathVariable UUID executionId, @RequestBody(required = false) ReminderMutationRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         CampaignExecutionRecord record = executionService.suppressExecution(tenantId, executionId, request == null ? null : request.reason());
@@ -116,7 +117,7 @@ public class CarePilotRemindersController {
      * Reschedules a queued/retrying reminder execution to a new future timestamp.
      */
     @PostMapping("/{executionId}/reschedule")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.reminder.operate')")
     public ExecutionResponse reschedule(@PathVariable UUID executionId, @RequestBody ReminderMutationRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         CampaignExecutionRecord record = executionService.rescheduleExecution(
@@ -131,7 +132,7 @@ public class CarePilotRemindersController {
     private ExecutionResponse toResponse(CampaignExecutionRecord record) {
         return new ExecutionResponse(
                 record.id(), record.tenantId(), record.campaignId(), record.templateId(), record.channelType(),
-                record.recipientPatientId(), record.scheduledAt(), record.status(), record.attemptCount(), record.lastError(),
+                record.recipientPatientId(), record.scheduledAt(), record.status(), record.attemptCount(), record.deliveryAttemptCount(), record.lastError(),
                 record.executedAt(), record.nextAttemptAt(), record.deliveryStatus(), record.providerName(),
                 record.providerMessageId(), record.sourceType(), record.sourceReferenceId(), record.reminderWindow(),
                 record.referenceDateTime(), record.lastAttemptAt(), record.failureReason(), record.createdAt(), record.updatedAt()

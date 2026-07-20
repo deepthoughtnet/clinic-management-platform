@@ -39,6 +39,8 @@ import jakarta.validation.constraints.Size;
 public class TenantUserManagementController {
     private static final Set<String> CLINIC_ASSIGNABLE_ROLES = Set.of(
             "CLINIC_ADMIN",
+            "ENGAGE_MANAGER",
+            "ENGAGE_EXECUTIVE",
             "DOCTOR",
             "RECEPTIONIST",
             "BILLING_USER",
@@ -56,6 +58,8 @@ public class TenantUserManagementController {
             "TENANT_ADMIN",
             "ADMIN",
             "CLINIC_ADMIN",
+            "ENGAGE_MANAGER",
+            "ENGAGE_EXECUTIVE",
             "DOCTOR",
             "RECEPTIONIST",
             "BILLING_USER",
@@ -99,6 +103,8 @@ public class TenantUserManagementController {
                         tenantId,
                         request.email(),
                         request.username(),
+                        request.firstName(),
+                        request.lastName(),
                         joinName(request.firstName(), request.lastName()),
                         role,
                         request.resolvedTemporaryPassword(),

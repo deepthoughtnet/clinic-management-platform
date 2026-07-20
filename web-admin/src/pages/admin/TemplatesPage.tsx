@@ -25,6 +25,7 @@ import {
   Typography,
 } from "@mui/material";
 import { useAuth } from "../../auth/useAuth";
+import { ConfirmationDialog } from "../../components/clinical/ConfirmationDialog";
 import {
   activateAdminTemplate,
   createAdminTemplate,
@@ -89,6 +90,7 @@ export default function TemplatesPage() {
   const [previewSubject, setPreviewSubject] = React.useState("");
   const [previewBody, setPreviewBody] = React.useState("");
   const [previewTemplateId, setPreviewTemplateId] = React.useState<string | null>(null);
+  const [pendingAction, setPendingAction] = React.useState<{ kind: "delete" | "toggle"; row: AdminTemplate } | null>(null);
 
   const canMutate = auth.rolesUpper.includes("CLINIC_ADMIN") || auth.rolesUpper.includes("PLATFORM_ADMIN") || auth.rolesUpper.includes("PLATFORM_TENANT_SUPPORT");
 
@@ -194,6 +196,12 @@ export default function TemplatesPage() {
   }
 
   async function toggleActive(row: AdminTemplate) {
+    setPendingAction({ kind: "toggle", row });
+  }
+
+  async function applyToggleActive() {
+    if (!pendingAction || pendingAction.kind !== "toggle" || !auth.accessToken || !auth.tenantId) return;
+    const row = pendingAction.row;
     if (!auth.accessToken || !auth.tenantId) return;
     try {
       if (row.active) {
@@ -206,18 +214,26 @@ export default function TemplatesPage() {
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to update status");
+    } finally {
+      setPendingAction(null);
     }
   }
 
   async function remove(row: AdminTemplate) {
     if (!auth.accessToken || !auth.tenantId || row.systemTemplate) return;
-    if (!window.confirm(`Delete template "${row.name}"?`)) return;
+    setPendingAction({ kind: "delete", row });
+  }
+
+  async function applyDeleteTemplate() {
+    if (!pendingAction || pendingAction.kind !== "delete" || !auth.accessToken || !auth.tenantId || pendingAction.row.systemTemplate) return;
     try {
-      await deleteAdminTemplate(auth.accessToken, auth.tenantId, row.id);
+      await deleteAdminTemplate(auth.accessToken, auth.tenantId, pendingAction.row.id);
       setSuccess("Template deleted");
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to delete template");
+    } finally {
+      setPendingAction(null);
     }
   }
 
@@ -351,6 +367,20 @@ export default function TemplatesPage() {
           <Button onClick={() => setPreviewOpen(false)}>Close</Button>
         </DialogActions>
       </Dialog>
+
+      <ConfirmationDialog
+        open={Boolean(pendingAction)}
+        title={pendingAction?.kind === "delete" ? "Delete template" : pendingAction?.row.active ? "Deactivate template" : "Activate template"}
+        description={pendingAction?.kind === "delete"
+          ? `Delete template "${pendingAction.row.name}"?`
+          : pendingAction?.row
+            ? `Change active state for "${pendingAction.row.name}"?`
+            : undefined}
+        confirmLabel={pendingAction?.kind === "delete" ? "Delete" : pendingAction?.row.active ? "Deactivate" : "Activate"}
+        confirmColor="error"
+        onCancel={() => setPendingAction(null)}
+        onConfirm={() => void (pendingAction?.kind === "delete" ? applyDeleteTemplate() : applyToggleActive())}
+      />
     </Stack>
   );
 }

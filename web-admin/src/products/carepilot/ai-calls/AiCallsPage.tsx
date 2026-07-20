@@ -198,15 +198,8 @@ function executionStatusColor(status: CarePilotAiCallExecutionStatus): "default"
 
 export default function AiCallsPage() {
   const auth = useAuth();
-  const canView =
-    auth.rolesUpper.includes("CLINIC_ADMIN") ||
-    auth.rolesUpper.includes("AUDITOR") ||
-    auth.rolesUpper.includes("RECEPTIONIST") ||
-    (auth.rolesUpper.includes("PLATFORM_ADMIN") && Boolean(auth.tenantId));
-  const canMutate =
-    auth.rolesUpper.includes("CLINIC_ADMIN") ||
-    auth.rolesUpper.includes("RECEPTIONIST") ||
-    (auth.rolesUpper.includes("PLATFORM_ADMIN") && Boolean(auth.tenantId));
+  const canView = auth.hasPermission("engage.ai.operate");
+  const canMutate = auth.hasPermission("engage.ai.operate");
 
   const [loading, setLoading] = React.useState(true);
   const [submitting, setSubmitting] = React.useState(false);
@@ -585,9 +578,12 @@ export default function AiCallsPage() {
 
       <Card>
         <CardContent>
-          <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Scheduler Health</Typography>
+          <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>{schedulerHealth?.workerLabel || "AI Calls Dispatch Worker"}</Typography>
           <Typography variant="body2" color="text.secondary">
             Enabled: {String(schedulerHealth?.enabled ?? false)} | Last run: {formatDateTime(schedulerHealth?.lastRunAt)} | Next estimated run: {formatDateTime(schedulerHealth?.nextEstimatedRunAt)} | Processed: {schedulerHealth?.lastProcessedCount ?? 0} | Dispatched: {schedulerHealth?.lastDispatchedCount ?? 0} | Failed: {schedulerHealth?.lastFailedCount ?? 0} | Skipped: {schedulerHealth?.lastSkippedCount ?? 0}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Disabled means queued AI calls will not be dispatched automatically. Manual calls, transcripts, and related operational queues remain available when permitted.
           </Typography>
         </CardContent>
       </Card>
@@ -635,7 +631,7 @@ export default function AiCallsPage() {
                           <TableCell>{campaign.name}</TableCell>
                           <TableCell>{campaign.callType}</TableCell>
                           <TableCell><Chip size="small" label={campaign.status} /></TableCell>
-                          <TableCell>{voiceTemplates.find((template) => template.id === campaign.templateId)?.name || campaign.templateId || "-"}</TableCell>
+                          <TableCell>{voiceTemplates.find((template) => template.id === campaign.templateId)?.name || "Unknown template"}</TableCell>
                           <TableCell>{campaign.retryEnabled ? `Yes (${campaign.maxAttempts})` : "No"}</TableCell>
                           <TableCell align="right">
                             <Stack direction="row" spacing={1} justifyContent="flex-end">
@@ -665,7 +661,7 @@ export default function AiCallsPage() {
                     <Typography variant="body2"><b>Status:</b> {selectedCampaign.status}</Typography>
                     <Typography variant="body2"><b>Type:</b> {selectedCampaign.callType}</Typography>
                     <Typography variant="body2"><b>Description:</b> {selectedCampaign.description || "-"}</Typography>
-                    <Typography variant="body2"><b>Template:</b> {voiceTemplates.find((template) => template.id === selectedCampaign.templateId)?.name || selectedCampaign.templateId || "-"}</Typography>
+                    <Typography variant="body2"><b>Template:</b> {voiceTemplates.find((template) => template.id === selectedCampaign.templateId)?.name || "Unknown template"}</Typography>
                     <Typography variant="body2"><b>Retry enabled:</b> {selectedCampaign.retryEnabled ? "Yes" : "No"}</Typography>
                     <Typography variant="body2"><b>Max attempts:</b> {selectedCampaign.maxAttempts}</Typography>
                     <Typography variant="body2"><b>Escalation enabled:</b> {selectedCampaign.escalationEnabled ? "Yes" : "No"}</Typography>
@@ -715,7 +711,7 @@ export default function AiCallsPage() {
                     {executions.map((execution) => (
                       <TableRow key={execution.id}>
                         <TableCell>{execution.phoneNumber}</TableCell>
-                        <TableCell>{campaigns.find((campaign) => campaign.id === execution.campaignId)?.name || execution.campaignId}</TableCell>
+                        <TableCell>{campaigns.find((campaign) => campaign.id === execution.campaignId)?.name || "Campaign"}</TableCell>
                         <TableCell><Chip size="small" label={execution.executionStatus} color={executionStatusColor(execution.executionStatus)} /></TableCell>
                         <TableCell>{execution.providerName || "-"}</TableCell>
                         <TableCell>{formatDateTime(execution.scheduledAt)}</TableCell>
@@ -791,7 +787,7 @@ export default function AiCallsPage() {
                       <TableCell>{execution.phoneNumber}</TableCell>
                       <TableCell><Chip size="small" color="warning" label={execution.executionStatus} /></TableCell>
                       <TableCell>{execution.escalationReason || execution.failureReason || execution.transcriptSummary || "-"}</TableCell>
-                      <TableCell>{campaigns.find((campaign) => campaign.id === execution.campaignId)?.name || execution.campaignId}</TableCell>
+                      <TableCell>{campaigns.find((campaign) => campaign.id === execution.campaignId)?.name || "Campaign"}</TableCell>
                       <TableCell align="right"><Button size="small" onClick={() => void openExecutionDetails(execution.id)}>View Details</Button></TableCell>
                     </TableRow>
                   ))}
@@ -826,7 +822,7 @@ export default function AiCallsPage() {
                   <Typography variant="body2">No-answer rate: {(analytics?.noAnswerRate ?? 0).toFixed(1)}%</Typography>
                   <Typography variant="body2">Retry rate: {(analytics?.retryRate ?? 0).toFixed(1)}%</Typography>
                   <Typography variant="body2">Average duration: {(analytics?.averageDurationSeconds ?? 0).toFixed(1)}s</Typography>
-                  <Typography variant="body2">Scheduler enabled: {String(schedulerHealth?.enabled ?? false)}</Typography>
+                  <Typography variant="body2">{(schedulerHealth?.workerLabel || "AI Calls Dispatch Worker")} enabled: {String(schedulerHealth?.enabled ?? false)}</Typography>
                   <Typography variant="body2">Last dispatch run: {formatDateTime(schedulerHealth?.lastRunAt)}</Typography>
                 </Stack>
               </CardContent>
@@ -961,14 +957,11 @@ export default function AiCallsPage() {
           ) : (
             <Grid container spacing={2} sx={{ pt: 1 }}>
               <Grid size={{ xs: 12, md: 6 }}>
-                <Typography variant="body2"><b>Execution ID:</b> {selectedExecution.id}</Typography>
-                <Typography variant="body2"><b>Campaign:</b> {campaigns.find((campaign) => campaign.id === selectedExecution.campaignId)?.name || selectedExecution.campaignId}</Typography>
+                <Typography variant="body2"><b>Execution:</b> Call record</Typography>
+                <Typography variant="body2"><b>Campaign:</b> {campaigns.find((campaign) => campaign.id === selectedExecution.campaignId)?.name || "Campaign"}</Typography>
                 <Typography variant="body2"><b>Status:</b> {selectedExecution.executionStatus}</Typography>
                 <Typography variant="body2"><b>Phone:</b> {selectedExecution.phoneNumber}</Typography>
-                <Typography variant="body2"><b>Patient ID:</b> {selectedExecution.patientId || "-"}</Typography>
-                <Typography variant="body2"><b>Lead ID:</b> {selectedExecution.leadId || "-"}</Typography>
                 <Typography variant="body2"><b>Provider:</b> {selectedExecution.providerName || "-"}</Typography>
-                <Typography variant="body2"><b>Provider Call ID:</b> {selectedExecution.providerCallId || "-"}</Typography>
               </Grid>
               <Grid size={{ xs: 12, md: 6 }}>
                 <Typography variant="body2"><b>Scheduled:</b> {formatDateTime(selectedExecution.scheduledAt)}</Typography>

@@ -52,7 +52,7 @@ public class CarePilotWebinarController {
     }
 
     @GetMapping
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('RECEPTIONIST') or @permissionChecker.hasRole('AUDITOR') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.webinar.manage')")
     public WebinarListResponse list(
             @RequestParam(required = false) com.deepthoughtnet.clinic.carepilot.webinar.model.WebinarStatus status,
             @RequestParam(required = false) com.deepthoughtnet.clinic.carepilot.webinar.model.WebinarType webinarType,
@@ -69,7 +69,7 @@ public class CarePilotWebinarController {
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('RECEPTIONIST') or @permissionChecker.hasRole('AUDITOR') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.webinar.manage')")
     public WebinarResponse get(@PathVariable UUID id) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return toResponse(webinarService.find(tenantId, id).orElseThrow(() -> new IllegalArgumentException("Webinar not found")));
@@ -77,7 +77,7 @@ public class CarePilotWebinarController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('RECEPTIONIST') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.webinar.manage')")
     public WebinarResponse create(@RequestBody WebinarUpsertRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actor = RequestContextHolder.require().appUserId();
@@ -85,7 +85,7 @@ public class CarePilotWebinarController {
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('RECEPTIONIST') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.webinar.manage')")
     public WebinarResponse update(@PathVariable UUID id, @RequestBody WebinarUpsertRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actor = RequestContextHolder.require().appUserId();
@@ -101,7 +101,7 @@ public class CarePilotWebinarController {
     }
 
     @GetMapping("/{id}/registrations")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('RECEPTIONIST') or @permissionChecker.hasRole('AUDITOR') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.webinar.manage')")
     public WebinarRegistrationListResponse registrations(@PathVariable UUID id, @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "25") int size) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         var rows = registrationService.list(tenantId, id, page, size);
@@ -113,7 +113,7 @@ public class CarePilotWebinarController {
 
     @PostMapping("/{id}/register")
     @ResponseStatus(HttpStatus.CREATED)
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('RECEPTIONIST') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.webinar.manage')")
     public WebinarRegistrationResponse register(@PathVariable UUID id, @RequestBody WebinarRegistrationRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorId = RequestContextHolder.require().appUserId();
@@ -133,7 +133,7 @@ public class CarePilotWebinarController {
     }
 
     @PostMapping("/{id}/attendance")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('RECEPTIONIST') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.webinar.manage')")
     public WebinarRegistrationResponse attendance(@PathVariable UUID id, @RequestBody WebinarAttendanceRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         if (request == null || request.registrationId() == null) {
@@ -147,7 +147,7 @@ public class CarePilotWebinarController {
     }
 
     @GetMapping("/analytics/summary")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('RECEPTIONIST') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.webinar.manage')")
     public WebinarAnalyticsSummaryResponse analytics() {
         UUID tenantId = RequestContextHolder.requireTenantId();
         var row = analyticsService.summary(tenantId);

@@ -63,7 +63,7 @@ class StartupSchemaRecoveryFlywayTest extends PostgresTestContainerSupport {
                 assertThat(tableExists(connection, schema.name(), "notification_outbox")).isTrue();
                 assertThat(columnExists(connection, schema.name(), "notification_outbox", "next_retry_at")).isTrue();
                 assertThat(repairFlyway.info().current()).isNotNull();
-                assertThat(repairFlyway.info().current().getVersion().getVersion()).isEqualTo("104");
+                assertThat(repairFlyway.info().current().getVersion().getVersion()).isEqualTo("109");
             }
         }
     }
@@ -86,7 +86,7 @@ class StartupSchemaRecoveryFlywayTest extends PostgresTestContainerSupport {
                 assertThat(tableExists(connection, schema.name(), "notification_outbox")).isTrue();
                 assertThat(columnExists(connection, schema.name(), "notification_outbox", "next_retry_at")).isTrue();
                 assertThat(repairFlyway.info().current()).isNotNull();
-                assertThat(repairFlyway.info().current().getVersion().getVersion()).isEqualTo("104");
+                assertThat(repairFlyway.info().current().getVersion().getVersion()).isEqualTo("109");
             }
         }
     }

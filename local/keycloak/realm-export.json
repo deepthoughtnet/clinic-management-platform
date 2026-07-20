@@ -46,6 +46,14 @@
         "description": "Read-only audit and compliance user"
       },
       {
+        "name": "ENGAGE_MANAGER",
+        "description": "Engage campaign and automation manager"
+      },
+      {
+        "name": "ENGAGE_EXECUTIVE",
+        "description": "Engage operations and communication executive"
+      },
+      {
         "name": "SERVICE_AGENT",
         "description": "Non-human service or automation account"
       },
@@ -235,6 +243,42 @@
       ],
       "realmRoles": [
         "AUDITOR"
+      ]
+    },
+    {
+      "username": "nisha.kulkarni",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Nisha",
+      "lastName": "Kulkarni",
+      "email": "nisha.kulkarni@jfcuat.local",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Password@123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "ENGAGE_MANAGER"
+      ]
+    },
+    {
+      "username": "arjun.rao",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Arjun",
+      "lastName": "Rao",
+      "email": "arjun.rao@jfcuat.local",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Password@123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "ENGAGE_EXECUTIVE"
       ]
     }
   ]

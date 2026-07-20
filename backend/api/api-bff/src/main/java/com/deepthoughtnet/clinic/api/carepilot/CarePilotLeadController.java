@@ -72,7 +72,7 @@ public class CarePilotLeadController {
     }
 
     @GetMapping
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('RECEPTIONIST') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.leads.operate')")
     public LeadListResponse list(
             @RequestParam(required = false) com.deepthoughtnet.clinic.carepilot.lead.model.LeadStatus status,
             @RequestParam(required = false) com.deepthoughtnet.clinic.carepilot.lead.model.LeadSource source,
@@ -94,7 +94,7 @@ public class CarePilotLeadController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('RECEPTIONIST') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.leads.operate')")
     public LeadResponse create(@Valid @RequestBody LeadUpsertRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actor = RequestContextHolder.require().appUserId();
@@ -102,7 +102,7 @@ public class CarePilotLeadController {
     }
 
     @PostMapping(value = "/import-csv", consumes = "multipart/form-data")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('RECEPTIONIST') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.leads.bulk.manage')")
     public LeadCsvImportResponse importCsv(@RequestParam("file") MultipartFile file) throws java.io.IOException {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actor = RequestContextHolder.require().appUserId();
@@ -110,13 +110,13 @@ public class CarePilotLeadController {
     }
 
     @GetMapping(value = "/import-template", produces = "text/csv")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('RECEPTIONIST') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.leads.bulk.manage')")
     public ResponseEntity<byte[]> importTemplate() throws java.io.IOException {
         return csvResponse("carepilot-leads-import-template.csv", leadCsvService.importTemplateCsv());
     }
 
     @GetMapping(value = "/export", produces = "text/csv")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('RECEPTIONIST') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.leads.bulk.manage')")
     public ResponseEntity<byte[]> export(
             @RequestParam(required = false) com.deepthoughtnet.clinic.carepilot.lead.model.LeadStatus status,
             @RequestParam(required = false) com.deepthoughtnet.clinic.carepilot.lead.model.LeadSource source,
@@ -138,14 +138,14 @@ public class CarePilotLeadController {
     }
 
     @GetMapping("/{id:" + UUID_PATH + "}")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('RECEPTIONIST') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.leads.operate')")
     public LeadResponse get(@PathVariable UUID id) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return toResponse(leadService.find(tenantId, id).orElseThrow(() -> new IllegalArgumentException("Lead not found")));
     }
 
     @PutMapping("/{id:" + UUID_PATH + "}")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('RECEPTIONIST') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.leads.operate')")
     public LeadResponse update(@PathVariable UUID id, @Valid @RequestBody LeadUpsertRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actor = RequestContextHolder.require().appUserId();
@@ -153,7 +153,7 @@ public class CarePilotLeadController {
     }
 
     @PostMapping("/{id:" + UUID_PATH + "}/status")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('RECEPTIONIST') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.leads.operate')")
     public LeadResponse updateStatus(@PathVariable UUID id, @RequestBody LeadStatusUpdateRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actor = RequestContextHolder.require().appUserId();
@@ -163,7 +163,7 @@ public class CarePilotLeadController {
     }
 
     @GetMapping("/{leadId:" + UUID_PATH + "}/activities")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('RECEPTIONIST') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.leads.operate')")
     public LeadActivityListResponse activities(
             @PathVariable UUID leadId,
             @RequestParam(defaultValue = "0") int page,
@@ -183,7 +183,7 @@ public class CarePilotLeadController {
     }
 
     @PostMapping("/{leadId:" + UUID_PATH + "}/notes")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('RECEPTIONIST') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.leads.operate')")
     public LeadResponse addNote(@PathVariable UUID leadId, @RequestBody LeadNoteRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actor = RequestContextHolder.require().appUserId();
@@ -191,7 +191,7 @@ public class CarePilotLeadController {
     }
 
     @PostMapping("/{id:" + UUID_PATH + "}/convert")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('RECEPTIONIST') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.leads.operate')")
     public LeadConversionResponse convert(@PathVariable UUID id, @RequestBody(required = false) LeadConvertRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actor = RequestContextHolder.require().appUserId();
@@ -217,7 +217,7 @@ public class CarePilotLeadController {
     }
 
     @GetMapping("/analytics/summary")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('RECEPTIONIST') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.leads.operate')")
     public LeadAnalyticsResponse analytics(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate

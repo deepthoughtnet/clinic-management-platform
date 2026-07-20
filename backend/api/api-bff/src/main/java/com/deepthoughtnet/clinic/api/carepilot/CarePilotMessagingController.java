@@ -45,14 +45,14 @@ public class CarePilotMessagingController {
     }
 
     @GetMapping("/status")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.provider.view')")
     public List<ProviderStatusResponse> status() {
         RequestContextHolder.requireTenantId();
         return messagingStatusService.providerStatuses();
     }
 
     @PostMapping("/{channel}/test-send")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.provider.admin')")
     public ProviderTestSendResponse testSend(
             @PathVariable MessageChannel channel,
             @Valid @RequestBody ProviderTestSendRequest request

@@ -33,6 +33,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import { ConfirmationDialog } from "../../components/clinical/ConfirmationDialog";
 import AddRoundedIcon from "@mui/icons-material/AddRounded";
 import DownloadRoundedIcon from "@mui/icons-material/DownloadRounded";
 import EditRoundedIcon from "@mui/icons-material/EditRounded";
@@ -752,6 +753,7 @@ export default function LabPage() {
   const [categories, setCategories] = React.useState<string[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
+  const [deactivateTarget, setDeactivateTarget] = React.useState<LabTest | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [tab, setTab] = React.useState(0);
   const [search, setSearch] = React.useState("");
@@ -1221,18 +1223,23 @@ export default function LabPage() {
 
   const deactivate = async (row: LabTest) => {
     if (!auth.accessToken || !auth.tenantId) return;
-    if (!window.confirm(`Deactivate ${row.testName}?`)) return;
+    setDeactivateTarget(row);
+  };
+
+  async function submitDeactivate() {
+    if (!auth.accessToken || !auth.tenantId || !deactivateTarget) return;
     setSaving(true);
     setError(null);
     try {
-      await deactivateLabTest(auth.accessToken, auth.tenantId, row.id);
+      await deactivateLabTest(auth.accessToken, auth.tenantId, deactivateTarget.id);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to deactivate lab test");
     } finally {
       setSaving(false);
+      setDeactivateTarget(null);
     }
-  };
+  }
 
   const collectPayment = async () => {
     if (!auth.accessToken || !auth.tenantId || !paymentTarget) return;
@@ -3365,6 +3372,16 @@ export default function LabPage() {
         </DialogActions>
       </Dialog>
 
+      <ConfirmationDialog
+        open={Boolean(deactivateTarget)}
+        title="Deactivate lab test"
+        description={deactivateTarget ? `Deactivate ${deactivateTarget.testName}?` : undefined}
+        confirmLabel="Deactivate"
+        confirmColor="error"
+        onCancel={() => setDeactivateTarget(null)}
+        onConfirm={() => void submitDeactivate()}
+      />
+
       {canQuickRegisterPatient ? (
         <PatientQuickRegisterDialog
           open={quickRegisterOpen}
@@ -3418,8 +3435,9 @@ function OrderQueue(props: {
   }
 
   return (
-    <Box sx={{ overflowX: "auto" }}>
-      <Table size="small">
+    <>
+      <Box sx={{ overflowX: "auto" }}>
+        <Table size="small">
         <TableHead>
           <TableRow>
             <TableCell>Order</TableCell>
@@ -3599,7 +3617,8 @@ function OrderQueue(props: {
           );
           })}
         </TableBody>
-      </Table>
-    </Box>
+        </Table>
+      </Box>
+    </>
   );
 }

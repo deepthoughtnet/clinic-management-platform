@@ -257,6 +257,8 @@ public class PlatformTenantService {
                         tenantId,
                         command.email().trim().toLowerCase(Locale.ROOT),
                         command.email().trim().toLowerCase(Locale.ROOT),
+                        command.firstName(),
+                        command.lastName(),
                         displayName,
                         command.tempPassword(),
                         "CLINIC_ADMIN"

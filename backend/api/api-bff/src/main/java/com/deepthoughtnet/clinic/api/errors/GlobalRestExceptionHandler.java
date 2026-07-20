@@ -1,11 +1,13 @@
 package com.deepthoughtnet.clinic.api.errors;
 
 import com.deepthoughtnet.clinic.platform.core.errors.BadRequestException;
+import com.deepthoughtnet.clinic.carepilot.shared.exception.CampaignConflictException;
 import com.deepthoughtnet.clinic.platform.core.errors.ForbiddenException;
 import com.deepthoughtnet.clinic.platform.core.errors.UnauthorizedException;
 import com.deepthoughtnet.clinic.api.medicationsafety.MedicationSafetyGuardErrorResponse;
 import com.deepthoughtnet.clinic.api.medicationsafety.MedicationSafetyGuardException;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityConflictException;
+import com.deepthoughtnet.clinic.identity.service.TenantProvisioningException;
 import com.deepthoughtnet.clinic.patient.service.model.PatientConflictException;
 import com.fasterxml.jackson.databind.JsonMappingException;
 import com.deepthoughtnet.clinic.identity.exception.TenantModuleDisabledException;
@@ -163,6 +165,11 @@ public class GlobalRestExceptionHandler {
         return build(HttpStatus.BAD_REQUEST, "bad_request", userMessage(ex.getMessage(), "Invalid request"), req);
     }
 
+    @ExceptionHandler(CampaignConflictException.class)
+    public ResponseEntity<?> handleCampaignConflict(CampaignConflictException ex, HttpServletRequest req) {
+        return build(HttpStatus.CONFLICT, "conflict", userMessage(ex.getMessage(), "Campaign state conflict"), req);
+    }
+
     @ExceptionHandler(TenantModuleDisabledException.class)
     public ResponseEntity<?> handleTenantModuleDisabled(TenantModuleDisabledException ex, HttpServletRequest req) {
         return build(HttpStatus.FORBIDDEN, "module_disabled", "AI module is not enabled for this clinic.", req);
@@ -195,6 +202,15 @@ public class GlobalRestExceptionHandler {
                 ex.getFindingIds()
         );
         return ResponseEntity.status(ex.getStatus()).body(body);
+    }
+
+    @ExceptionHandler(TenantProvisioningException.class)
+    public ResponseEntity<?> handleTenantProvisioning(TenantProvisioningException ex, HttpServletRequest req) {
+        String message = ex.getMessage();
+        if (ex.stage() != null && !ex.stage().isBlank()) {
+            message = message + " (stage=" + ex.stage() + ")";
+        }
+        return build(HttpStatus.INTERNAL_SERVER_ERROR, "provisioning_failed", userMessage(message, "User provisioning failed"), req);
     }
 
     @ExceptionHandler(Exception.class)

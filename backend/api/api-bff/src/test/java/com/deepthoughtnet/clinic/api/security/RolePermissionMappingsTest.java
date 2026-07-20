@@ -70,7 +70,11 @@ class RolePermissionMappingsTest {
                 Permissions.LAB_ORDER_COLLECT_SAMPLE,
                 Permissions.LAB_ORDER_RESULT_ENTRY,
                 Permissions.LAB_ORDER_GENERATE_REPORT,
-                Permissions.LAB_ORDER_REVIEW
+                Permissions.LAB_ORDER_REVIEW,
+                Permissions.ENGAGE_TEMPLATE_VIEW,
+                Permissions.ENGAGE_CAMPAIGN_REVIEW,
+                Permissions.ENGAGE_CAMPAIGN_APPROVE,
+                Permissions.ENGAGE_CAMPAIGN_ACTIVATE
         );
         assertThat(permissions).doesNotContain(
                 Permissions.CONSULTATION_CREATE,
@@ -79,7 +83,78 @@ class RolePermissionMappingsTest {
                 Permissions.PRESCRIPTION_CREATE,
                 Permissions.PRESCRIPTION_FINALIZE,
                 Permissions.PRESCRIPTION_PRINT,
-                Permissions.PRESCRIPTION_SEND
+                Permissions.PRESCRIPTION_SEND,
+                Permissions.ENGAGE_CAMPAIGN_MANAGE,
+                Permissions.ENGAGE_CAMPAIGN_SUBMIT,
+                Permissions.ENGAGE_TEMPLATE_MANAGE
+        );
+    }
+
+    @Test
+    void engageManagerCanPrepareEngageWorkButCannotActivateOrAdministerProviders() {
+        Set<String> permissions = RolePermissionMappings.permissionsForRole(Roles.ENGAGE_MANAGER);
+
+        assertThat(permissions).contains(
+                Permissions.ENGAGE_VIEW,
+                Permissions.ENGAGE_CAMPAIGN_VIEW,
+                Permissions.ENGAGE_CAMPAIGN_MANAGE,
+                Permissions.ENGAGE_TEMPLATE_MANAGE,
+                Permissions.ENGAGE_LEADS_BULK_MANAGE,
+                Permissions.ENGAGE_AUDIENCE_MANAGE,
+                Permissions.ENGAGE_REMINDER_VIEW,
+                Permissions.ENGAGE_REMINDER_OPERATE,
+                Permissions.ENGAGE_RECEPTION_OPERATE,
+                Permissions.ENGAGE_ANALYTICS_VIEW,
+                Permissions.ENGAGE_LEADS_OPERATE,
+                Permissions.ENGAGE_WEBINAR_MANAGE,
+                Permissions.ENGAGE_AI_OPERATE,
+                Permissions.USER_READ
+        );
+        assertThat(permissions).doesNotContain(
+                Permissions.ENGAGE_CAMPAIGN_ACTIVATE,
+                Permissions.ENGAGE_CAMPAIGN_APPROVE,
+                Permissions.ENGAGE_CAMPAIGN_REVIEW,
+                Permissions.ENGAGE_PROVIDER_ADMIN,
+                Permissions.USER_MANAGE
+        );
+    }
+
+    @Test
+    void analyticsReadPermissionIsGrantedOnlyToApprovedEngageReaders() {
+        Set<String> clinicAdmin = RolePermissionMappings.permissionsForRole(Roles.CLINIC_ADMIN);
+        Set<String> engageManager = RolePermissionMappings.permissionsForRole(Roles.ENGAGE_MANAGER);
+        Set<String> auditor = RolePermissionMappings.permissionsForRole(Roles.AUDITOR);
+        Set<String> engageExecutive = RolePermissionMappings.permissionsForRole(Roles.ENGAGE_EXECUTIVE);
+        Set<String> receptionist = RolePermissionMappings.permissionsForRole(Roles.RECEPTIONIST);
+
+        assertThat(clinicAdmin).contains(Permissions.ENGAGE_ANALYTICS_VIEW);
+        assertThat(engageManager).contains(Permissions.ENGAGE_ANALYTICS_VIEW);
+        assertThat(auditor).contains(Permissions.ENGAGE_ANALYTICS_VIEW);
+        assertThat(engageExecutive).doesNotContain(Permissions.ENGAGE_ANALYTICS_VIEW);
+        assertThat(receptionist).doesNotContain(Permissions.ENGAGE_ANALYTICS_VIEW);
+    }
+
+    @Test
+    void engageExecutiveIsOperationalAndReadLimited() {
+        Set<String> permissions = RolePermissionMappings.permissionsForRole(Roles.ENGAGE_EXECUTIVE);
+
+        assertThat(permissions).contains(
+                Permissions.ENGAGE_VIEW,
+                Permissions.ENGAGE_MESSAGE_SEND,
+                Permissions.ENGAGE_REMINDER_VIEW,
+                Permissions.ENGAGE_REMINDER_OPERATE,
+                Permissions.ENGAGE_RECEPTION_OPERATE,
+                Permissions.ENGAGE_LEADS_OPERATE,
+                Permissions.USER_READ
+        );
+        assertThat(permissions).doesNotContain(
+                Permissions.ENGAGE_CAMPAIGN_MANAGE,
+                Permissions.ENGAGE_CAMPAIGN_ACTIVATE,
+                Permissions.ENGAGE_LEADS_BULK_MANAGE,
+                Permissions.ENGAGE_TEMPLATE_MANAGE,
+                Permissions.ENGAGE_PROVIDER_ADMIN,
+                Permissions.USER_MANAGE,
+                Permissions.ENGAGE_ANALYTICS_VIEW
         );
     }
 

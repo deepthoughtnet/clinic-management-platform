@@ -29,6 +29,7 @@ import {
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 
 import { useAuth } from "../../auth/useAuth";
+import { ConfirmationDialog } from "../../components/clinical/ConfirmationDialog";
 import { documentUploadSchema, firstZodError } from "@deepthoughtnet/form-validation-kit";
 import {
   getPatient,
@@ -129,6 +130,7 @@ export default function PatientDetailPage() {
   const [documentFilter, setDocumentFilter] = React.useState<"ALL" | "LAB" | "RADIOLOGY" | "REFERRAL" | "PRESCRIPTION" | "DISCHARGE" | "OTHER">("ALL");
   const [reviewBusy, setReviewBusy] = React.useState(false);
   const [rowActionBusyDocumentId, setRowActionBusyDocumentId] = React.useState<string | null>(null);
+  const [documentActionTarget, setDocumentActionTarget] = React.useState<{ documentId: string; kind: "reprocess" | "repair" } | null>(null);
   const [pollingDocumentId, setPollingDocumentId] = React.useState<string | null>(null);
   const [reviewNotes, setReviewNotes] = React.useState("");
   const [reviewOverrideReason, setReviewOverrideReason] = React.useState("");
@@ -406,44 +408,41 @@ export default function PatientDetailPage() {
 
   const reprocessDocument = async (documentId: string) => {
     if (!auth.accessToken || !auth.tenantId) return;
-    if (!window.confirm("Reprocess OCR/AI for this document?")) {
-      return;
-    }
-    setRowActionBusyDocumentId(documentId);
-    setError(null);
-    try {
-      const updated = await reprocessClinicalDocumentExtraction(auth.accessToken, auth.tenantId, documentId);
-      upsertDocumentRow(updated);
-      setToast("AI reprocessing started.");
-      setPollingDocumentId(documentId);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to reprocess AI extraction");
-      setRowActionBusyDocumentId((current) => (current === documentId ? null : current));
-    } finally {
-    }
+    setDocumentActionTarget({ documentId, kind: "reprocess" });
   };
 
   const repairDocumentMemory = async (documentId: string) => {
     if (!auth.accessToken || !auth.tenantId) return;
-    if (!window.confirm("Repair clinical memory for this document?")) {
-      return;
-    }
+    setDocumentActionTarget({ documentId, kind: "repair" });
+  };
+
+  const submitDocumentAction = async () => {
+    if (!auth.accessToken || !auth.tenantId || !documentActionTarget) return;
+    const { documentId, kind } = documentActionTarget;
     setRowActionBusyDocumentId(documentId);
     setError(null);
     try {
-      const result = await repairClinicalMemoryApi(auth.accessToken, auth.tenantId, documentId);
-      const corrected = result.correctedValues?.[0];
-      const correctedText = corrected ? `, ${corrected.conceptKey} corrected ${corrected.oldValue} → ${corrected.newValue}` : "";
-      setToast(
-        result.status === "SUCCESS"
-          ? `Memory repaired: ${result.insertedConceptCount} concepts inserted, ${result.filteredPollutedConceptCount} polluted concepts filtered${correctedText}`
-          : `Memory repair failed: ${result.message}`
-      );
-      await refreshDocuments();
+      if (kind === "reprocess") {
+        const updated = await reprocessClinicalDocumentExtraction(auth.accessToken, auth.tenantId, documentId);
+        upsertDocumentRow(updated);
+        setToast("AI reprocessing started.");
+        setPollingDocumentId(documentId);
+      } else {
+        const result = await repairClinicalMemoryApi(auth.accessToken, auth.tenantId, documentId);
+        const corrected = result.correctedValues?.[0];
+        const correctedText = corrected ? `, ${corrected.conceptKey} corrected ${corrected.oldValue} → ${corrected.newValue}` : "";
+        setToast(
+          result.status === "SUCCESS"
+            ? `Memory repaired: ${result.insertedConceptCount} concepts inserted, ${result.filteredPollutedConceptCount} polluted concepts filtered${correctedText}`
+            : `Memory repair failed: ${result.message}`
+        );
+        await refreshDocuments();
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to repair clinical memory");
+      setError(err instanceof Error ? err.message : kind === "reprocess" ? "Failed to reprocess AI extraction" : "Failed to repair clinical memory");
     } finally {
       setRowActionBusyDocumentId((current) => (current === documentId ? null : current));
+      setDocumentActionTarget(null);
     }
   };
 
@@ -969,6 +968,17 @@ export default function PatientDetailPage() {
         reprocessBusy={Boolean(viewerDocument && (rowActionBusyDocumentId === viewerDocument.id || pollingDocumentId === viewerDocument.id))}
         onRepairMemory={viewerDocument && computeDocumentAiActions(viewerDocument).showRepairMemory ? () => void repairDocumentMemory(viewerDocument.id) : undefined}
         repairBusy={Boolean(viewerDocument && rowActionBusyDocumentId === viewerDocument.id)}
+      />
+      <ConfirmationDialog
+        open={Boolean(documentActionTarget)}
+        title={documentActionTarget?.kind === "reprocess" ? "Reprocess OCR/AI" : "Repair clinical memory"}
+        description={documentActionTarget?.kind === "reprocess"
+          ? "Reprocess OCR/AI for this document?"
+          : "Repair clinical memory for this document?"}
+        confirmLabel={documentActionTarget?.kind === "reprocess" ? "Reprocess" : "Repair"}
+        confirmColor="warning"
+        onCancel={() => setDocumentActionTarget(null)}
+        onConfirm={() => void submitDocumentAction()}
       />
       <Snackbar open={Boolean(toast)} autoHideDuration={3500} onClose={() => setToast(null)} message={toast || ""} />
     </Stack>

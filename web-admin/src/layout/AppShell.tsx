@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useTheme } from "@mui/material/styles";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigationType } from "react-router-dom";
 import {
   Box,
   CssBaseline,
@@ -20,10 +20,12 @@ const DRAWER_CLOSED = 88;
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const theme = useTheme();
   const location = useLocation();
+  const navigationType = useNavigationType();
   const auth = useAuth();
   const isMobile = useMediaQuery(theme.breakpoints.down("md"));
   const [desktopOpen, setDesktopOpen] = React.useState(true);
   const [mobileOpen, setMobileOpen] = React.useState(false);
+  const scrollPositionsRef = React.useRef(new Map<string, { x: number; y: number }>());
 
   const drawerWidth = desktopOpen ? DRAWER_OPEN : DRAWER_CLOSED;
 
@@ -32,6 +34,24 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     // changes or the tenant context flips while the drawer is open.
     setMobileOpen(false);
   }, [location.pathname, auth.selectedTenant?.id]);
+
+  React.useLayoutEffect(() => {
+    if ("scrollRestoration" in window.history) {
+      window.history.scrollRestoration = "manual";
+    }
+  }, []);
+
+  React.useLayoutEffect(() => {
+    const saved = scrollPositionsRef.current.get(location.key);
+    if (navigationType === "POP" && saved) {
+      window.scrollTo({ left: saved.x, top: saved.y, behavior: "auto" });
+    } else {
+      window.scrollTo({ left: 0, top: 0, behavior: "auto" });
+    }
+    return () => {
+      scrollPositionsRef.current.set(location.key, { x: window.scrollX, y: window.scrollY });
+    };
+  }, [location.key, navigationType]);
 
   return (
     <Box sx={{ display: "flex", minHeight: "100vh", bgcolor: "background.default" }}>

@@ -210,10 +210,62 @@ public final class RolePermissionMappings {
                     Permissions.CAREPILOT_LEAD_CREATE,
                     Permissions.CAREPILOT_LEAD_UPDATE,
                     Permissions.CAREPILOT_LEAD_CONVERT,
-                    Permissions.CAREPILOT_WEBINAR_READ,
+            Permissions.CAREPILOT_WEBINAR_READ,
                     Permissions.CAREPILOT_WEBINAR_MANAGE,
-                    Permissions.AI_VOICE_TEST
+                    Permissions.AI_VOICE_TEST,
+                    Permissions.ENGAGE_VIEW,
+                    Permissions.ENGAGE_MESSAGE_SEND,
+                    Permissions.ENGAGE_REMINDER_VIEW,
+                    Permissions.ENGAGE_REMINDER_OPERATE,
+                    Permissions.ENGAGE_RECEPTION_OPERATE,
+                    Permissions.ENGAGE_OPS_VIEW,
+                    Permissions.ENGAGE_CAMPAIGN_VIEW,
+                    Permissions.ENGAGE_CAMPAIGN_REVIEW,
+                    Permissions.ENGAGE_CAMPAIGN_APPROVE,
+                    Permissions.ENGAGE_TEMPLATE_VIEW,
+                    Permissions.ENGAGE_CAMPAIGN_LOOKUP,
+                    Permissions.ENGAGE_CAMPAIGN_ACTIVATE,
+                    Permissions.ENGAGE_ANALYTICS_VIEW,
+                    Permissions.ENGAGE_AUDIT_VIEW,
+                    Permissions.ENGAGE_PROVIDER_VIEW,
+                    Permissions.ENGAGE_PROVIDER_ADMIN,
+                    Permissions.ENGAGE_LEADS_OPERATE,
+                    Permissions.ENGAGE_WEBINAR_MANAGE,
+                    Permissions.ENGAGE_AI_OPERATE
             )
+    );
+
+    private static final Set<String> ENGAGE_MANAGER_PERMISSIONS = Set.of(
+                    Permissions.ENGAGE_VIEW,
+                    Permissions.ENGAGE_MESSAGE_SEND,
+                    Permissions.ENGAGE_REMINDER_VIEW,
+                    Permissions.ENGAGE_REMINDER_OPERATE,
+                    Permissions.ENGAGE_RECEPTION_OPERATE,
+                    Permissions.ENGAGE_OPS_VIEW,
+                    Permissions.USER_READ,
+                    Permissions.ENGAGE_CAMPAIGN_VIEW,
+                    Permissions.ENGAGE_CAMPAIGN_MANAGE,
+                    Permissions.ENGAGE_CAMPAIGN_SUBMIT,
+                    Permissions.ENGAGE_CAMPAIGN_LOOKUP,
+                    Permissions.ENGAGE_TEMPLATE_MANAGE,
+            Permissions.ENGAGE_LEADS_BULK_MANAGE,
+            Permissions.ENGAGE_AUDIENCE_MANAGE,
+            Permissions.ENGAGE_ANALYTICS_VIEW,
+            Permissions.ENGAGE_LEADS_OPERATE,
+            Permissions.ENGAGE_WEBINAR_MANAGE,
+            Permissions.ENGAGE_AI_OPERATE
+    );
+
+    private static final Set<String> ENGAGE_EXECUTIVE_PERMISSIONS = Set.of(
+            Permissions.ENGAGE_VIEW,
+            Permissions.ENGAGE_MESSAGE_SEND,
+            Permissions.ENGAGE_REMINDER_VIEW,
+            Permissions.ENGAGE_REMINDER_OPERATE,
+            Permissions.ENGAGE_RECEPTION_OPERATE,
+            Permissions.ENGAGE_OPS_VIEW,
+            Permissions.USER_READ,
+            Permissions.ENGAGE_CAMPAIGN_LOOKUP,
+            Permissions.ENGAGE_LEADS_OPERATE
     );
 
     private static final Set<String> DOCTOR_PERMISSIONS = Set.of(
@@ -287,7 +339,11 @@ public final class RolePermissionMappings {
             Permissions.CAREPILOT_LEAD_CONVERT,
             Permissions.CAREPILOT_WEBINAR_READ,
             Permissions.AI_VOICE_TEST,
-            Permissions.CAREPILOT_WEBINAR_MANAGE
+            Permissions.CAREPILOT_WEBINAR_MANAGE,
+            Permissions.ENGAGE_VIEW,
+            Permissions.ENGAGE_MESSAGE_SEND,
+            Permissions.ENGAGE_REMINDER_VIEW,
+            Permissions.ENGAGE_RECEPTION_OPERATE
     );
 
     private static final Set<String> BILLING_USER_PERMISSIONS = Set.of(
@@ -527,7 +583,14 @@ public final class RolePermissionMappings {
             Permissions.DECISIONING_POLICY_READ,
             Permissions.DECISIONING_EXECUTION_READ,
             Permissions.CAREPILOT_LEAD_READ,
-            Permissions.CAREPILOT_WEBINAR_READ
+            Permissions.CAREPILOT_WEBINAR_READ,
+            Permissions.ENGAGE_VIEW,
+            Permissions.ENGAGE_CAMPAIGN_VIEW,
+            Permissions.ENGAGE_REMINDER_VIEW,
+            Permissions.ENGAGE_OPS_VIEW,
+            Permissions.ENGAGE_ANALYTICS_VIEW,
+            Permissions.ENGAGE_AUDIT_VIEW,
+            Permissions.ENGAGE_PROVIDER_VIEW
     );
 
     private static final Set<String> PLATFORM_TENANT_SUPPORT_PERMISSIONS = Set.of(
@@ -556,7 +619,13 @@ public final class RolePermissionMappings {
             Permissions.AI_COPILOT_CLINIC_READ,
             Permissions.AI_COPILOT_RECONCILIATION_READ,
             Permissions.CAREPILOT_LEAD_READ,
-            Permissions.CAREPILOT_WEBINAR_READ
+            Permissions.CAREPILOT_WEBINAR_READ,
+            Permissions.ENGAGE_VIEW,
+            Permissions.ENGAGE_CAMPAIGN_VIEW,
+            Permissions.ENGAGE_REMINDER_VIEW,
+            Permissions.ENGAGE_ANALYTICS_VIEW,
+            Permissions.ENGAGE_AUDIT_VIEW,
+            Permissions.ENGAGE_PROVIDER_VIEW
     );
 
     private static final Map<String, Set<String>> ROLE_PERMISSIONS = Map.ofEntries(
@@ -565,6 +634,8 @@ public final class RolePermissionMappings {
             Map.entry(Roles.PLATFORM_ADMIN, PLATFORM_ADMIN_PERMISSIONS),
             Map.entry(Roles.PLATFORM_TENANT_SUPPORT, PLATFORM_TENANT_SUPPORT_PERMISSIONS),
             Map.entry(Roles.CLINIC_ADMIN, CLINIC_ADMIN_PERMISSIONS),
+            Map.entry(Roles.ENGAGE_MANAGER, ENGAGE_MANAGER_PERMISSIONS),
+            Map.entry(Roles.ENGAGE_EXECUTIVE, ENGAGE_EXECUTIVE_PERMISSIONS),
             Map.entry(Roles.DOCTOR, DOCTOR_PERMISSIONS),
             Map.entry(Roles.RECEPTIONIST, RECEPTIONIST_PERMISSIONS),
             Map.entry(Roles.BILLING_USER, BILLING_USER_PERMISSIONS),

@@ -33,7 +33,7 @@ test("vaccinations page hides vaccine master for non-managers and keeps operatio
   assert.ok(source.includes("Vaccination history"));
   assert.ok(source.includes("Full-width clinical workspace for recorded, imported, and billed vaccinations."));
   assert.ok(source.includes("Vaccination Timeline"));
-  assert.ok(source.includes("Age-based roadmap for the selected patient."));
+  assert.ok(source.includes("Age-based immunization roadmap for the selected patient."));
   assert.ok(source.includes("Immunization Passport"));
   assert.ok(source.includes("View Passport"));
   assert.ok(source.includes("Print Passport"));

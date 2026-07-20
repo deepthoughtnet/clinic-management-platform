@@ -20,6 +20,15 @@ import {
   type AiOpsWorkflowRun,
 } from "../../api/clinicApi";
 import { useAuth } from "../../auth/useAuth";
+import {
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  Button,
+  TextField,
+  Stack,
+} from "@mui/material";
 
 function fmtDate(value: string | null | undefined) {
   if (!value) return "-";
@@ -37,6 +46,15 @@ export default function AiOpsPage() {
   const [tools, setTools] = useState<AiOpsTool[]>([]);
   const [guardrails, setGuardrails] = useState<AiOpsGuardrail[]>([]);
   const [workflowRuns, setWorkflowRuns] = useState<AiOpsWorkflowRun[]>([]);
+  const [createPromptOpen, setCreatePromptOpen] = useState(false);
+  const [createPromptKey, setCreatePromptKey] = useState("");
+  const [createPromptName, setCreatePromptName] = useState("");
+  const [createPromptError, setCreatePromptError] = useState<string | null>(null);
+  const [createVersionOpen, setCreateVersionOpen] = useState(false);
+  const [createVersionTarget, setCreateVersionTarget] = useState<string | null>(null);
+  const [systemPrompt, setSystemPrompt] = useState("You are a careful medical assistant.");
+  const [userPromptTemplate, setUserPromptTemplate] = useState("Summarize {{inputVariablesJson}}");
+  const [createVersionError, setCreateVersionError] = useState<string | null>(null);
 
   async function loadAll() {
     if (!accessToken || !tenantId) return;
@@ -77,23 +95,18 @@ export default function AiOpsPage() {
   const topInvocations = useMemo(() => invocations.slice(0, 20), [invocations]);
 
   async function onCreatePrompt() {
-    if (!accessToken || !tenantId) return;
-    const promptKey = window.prompt("Prompt key");
-    if (!promptKey) return;
-    const name = window.prompt("Prompt name") || promptKey;
-    await createAiOpsPrompt(accessToken, tenantId, { promptKey, name });
-    await loadAll();
+    setCreatePromptOpen(true);
+    setCreatePromptKey("");
+    setCreatePromptName("");
+    setCreatePromptError(null);
   }
 
   async function onCreateVersion(promptId: string) {
-    if (!accessToken || !tenantId) return;
-    const systemPrompt = window.prompt("System prompt", "You are a careful medical assistant.");
-    const userPromptTemplate = window.prompt("User prompt template", "Summarize {{inputVariablesJson}}");
-    if (!systemPrompt || !userPromptTemplate) return;
-    await createAiOpsPromptVersion(accessToken, tenantId, promptId, { systemPrompt, userPromptTemplate });
-    const detail = await getAiOpsPrompt(accessToken, tenantId, promptId);
-    setSelectedPrompt(detail);
-    await loadAll();
+    setCreateVersionTarget(promptId);
+    setCreateVersionOpen(true);
+    setSystemPrompt("You are a careful medical assistant.");
+    setUserPromptTemplate("Summarize {{inputVariablesJson}}");
+    setCreateVersionError(null);
   }
 
   async function onActivate(promptId: string, versionId: string) {
@@ -110,6 +123,44 @@ export default function AiOpsPage() {
     const detail = await getAiOpsPrompt(accessToken, tenantId, promptId);
     setSelectedPrompt(detail);
     await loadAll();
+  }
+
+  async function submitCreatePrompt() {
+    if (!accessToken || !tenantId) return;
+    const promptKey = createPromptKey.trim();
+    const name = createPromptName.trim() || promptKey;
+    if (!promptKey) {
+      setCreatePromptError("Prompt key is required.");
+      return;
+    }
+    try {
+      await createAiOpsPrompt(accessToken, tenantId, { promptKey, name });
+      setCreatePromptOpen(false);
+      await loadAll();
+    } catch (e) {
+      setCreatePromptError(e instanceof Error ? e.message : "Failed to create prompt");
+    }
+  }
+
+  async function submitCreateVersion() {
+    if (!accessToken || !tenantId || !createVersionTarget) return;
+    if (!systemPrompt.trim() || !userPromptTemplate.trim()) {
+      setCreateVersionError("System prompt and user prompt template are required.");
+      return;
+    }
+    try {
+      await createAiOpsPromptVersion(accessToken, tenantId, createVersionTarget, {
+        systemPrompt: systemPrompt.trim(),
+        userPromptTemplate: userPromptTemplate.trim(),
+      });
+      const detail = await getAiOpsPrompt(accessToken, tenantId, createVersionTarget);
+      setSelectedPrompt(detail);
+      setCreateVersionOpen(false);
+      setCreateVersionTarget(null);
+      await loadAll();
+    } catch (e) {
+      setCreateVersionError(e instanceof Error ? e.message : "Failed to create prompt version");
+    }
   }
 
   return (
@@ -206,6 +257,62 @@ export default function AiOpsPage() {
         <SimpleList title="Guardrails" items={guardrails.map((g) => `${g.profileKey} (maxTokens=${g.maxOutputTokens ?? "-"})`)} />
         <SimpleList title="Workflow Runs" items={workflowRuns.map((w) => `${w.workflowKey} - ${w.status} (${fmtDate(w.startedAt)})`)} />
       </section>
+
+      <Dialog open={createPromptOpen} onClose={() => setCreatePromptOpen(false)} fullWidth maxWidth="sm">
+        <DialogTitle>Create prompt</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <TextField
+              autoFocus
+              label="Prompt key"
+              value={createPromptKey}
+              onChange={(e) => setCreatePromptKey(e.target.value)}
+              error={Boolean(createPromptError) && !createPromptKey.trim()}
+              helperText={createPromptError || "Unique identifier used by the prompt registry."}
+            />
+            <TextField
+              label="Prompt name"
+              value={createPromptName}
+              onChange={(e) => setCreatePromptName(e.target.value)}
+              helperText="Optional display name. Defaults to the prompt key."
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setCreatePromptOpen(false)}>Cancel</Button>
+          <Button variant="contained" onClick={() => void submitCreatePrompt()} disabled={!createPromptKey.trim()}>Create</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={createVersionOpen} onClose={() => setCreateVersionOpen(false)} fullWidth maxWidth="md">
+        <DialogTitle>Create prompt version</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <TextField
+              autoFocus
+              label="System prompt"
+              multiline
+              minRows={5}
+              value={systemPrompt}
+              onChange={(e) => setSystemPrompt(e.target.value)}
+              error={Boolean(createVersionError) && !systemPrompt.trim()}
+              helperText={createVersionError || "Required system prompt sent to the model."}
+            />
+            <TextField
+              label="User prompt template"
+              multiline
+              minRows={4}
+              value={userPromptTemplate}
+              onChange={(e) => setUserPromptTemplate(e.target.value)}
+              helperText="Required template with input variables."
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setCreateVersionOpen(false)}>Cancel</Button>
+          <Button variant="contained" onClick={() => void submitCreateVersion()} disabled={!systemPrompt.trim() || !userPromptTemplate.trim()}>Create Version</Button>
+        </DialogActions>
+      </Dialog>
     </div>
   );
 }

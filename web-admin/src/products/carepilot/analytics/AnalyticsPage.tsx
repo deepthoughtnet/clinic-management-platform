@@ -22,6 +22,8 @@ import {
   Typography,
 } from "@mui/material";
 import { useAuth } from "../../../auth/useAuth";
+import { ENGAGE_ANALYTICS_VIEW } from "../../../auth/permissions";
+import { channelTypeLabel } from "../campaigns/campaignLabels";
 import {
   getCarePilotAnalyticsSummary,
   getCarePilotEngagementOverview,
@@ -29,6 +31,7 @@ import {
   type CarePilotAnalyticsSummary,
   type CarePilotCampaign,
   type CarePilotEngagementOverview,
+  type CarePilotChannelType,
 } from "../../../api/clinicApi";
 
 function kpi(title: string, value: string | number) {
@@ -40,6 +43,15 @@ function kpi(title: string, value: string | number) {
       </CardContent>
     </Card>
   );
+}
+
+function executionStatusLabel(value: string) {
+  if (value === "SUCCEEDED") return "Succeeded";
+  return value
+    .toLowerCase()
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 export default function AnalyticsPage() {
@@ -54,7 +66,7 @@ export default function AnalyticsPage() {
   const [endDate, setEndDate] = React.useState("");
   const [campaignId, setCampaignId] = React.useState("");
 
-  const canView = auth.rolesUpper.includes("CLINIC_ADMIN") || auth.rolesUpper.includes("AUDITOR") || (auth.rolesUpper.includes("PLATFORM_ADMIN") && Boolean(auth.tenantId));
+  const canView = auth.hasPermission(ENGAGE_ANALYTICS_VIEW);
 
   const load = React.useCallback(async () => {
     if (!auth.accessToken || !auth.tenantId || !canView) {
@@ -87,14 +99,14 @@ export default function AnalyticsPage() {
     void load();
   }, [load]);
 
-  if (!auth.tenantId) return <Alert severity="info">Select a tenant to view CarePilot analytics.</Alert>;
-  if (!canView) return <Alert severity="error">You do not have access to CarePilot analytics.</Alert>;
+  if (!auth.tenantId) return <Alert severity="info">Select a tenant to view Jeevanam Engage analytics.</Alert>;
+  if (!canView) return <Alert severity="error">You do not have access to Jeevanam Engage analytics.</Alert>;
 
   return (
     <Stack spacing={2}>
       <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 1.5 }}>
         <Box>
-          <Typography variant="h4" sx={{ fontWeight: 900 }}>CarePilot Analytics</Typography>
+          <Typography variant="h4" sx={{ fontWeight: 900 }}>Jeevanam Engage Analytics</Typography>
           <Typography variant="body2" color="text.secondary">Operational visibility across campaign execution and delivery health.</Typography>
         </Box>
         <Button variant="outlined" onClick={() => void load()}>Refresh</Button>
@@ -130,9 +142,11 @@ export default function AnalyticsPage() {
             <Grid size={{ xs: 6, md: 3 }}>{kpi("Failed", summary.failedExecutions)}</Grid>
             <Grid size={{ xs: 6, md: 3 }}>{kpi("Pending", summary.pendingExecutions)}</Grid>
             <Grid size={{ xs: 6, md: 3 }}>{kpi("Retrying", summary.retryingExecutions)}</Grid>
+            <Grid size={{ xs: 6, md: 3 }}>{kpi("Queued", summary.queuedExecutions)}</Grid>
+            <Grid size={{ xs: 6, md: 3 }}>{kpi("Sent", summary.sentExecutions)}</Grid>
             <Grid size={{ xs: 6, md: 3 }}>{kpi("Delivered", summary.deliveredExecutions)}</Grid>
             <Grid size={{ xs: 6, md: 3 }}>{kpi("Read", summary.readExecutions)}</Grid>
-            <Grid size={{ xs: 6, md: 3 }}>{kpi("Undelivered", summary.undeliveredExecutions + summary.bouncedExecutions)}</Grid>
+            <Grid size={{ xs: 6, md: 3 }}>{kpi("Undelivered", summary.undeliveredExecutions)}</Grid>
             <Grid size={{ xs: 6, md: 3 }}>{kpi("Success Rate", `${summary.successRate.toFixed(1)}%`)}</Grid>
             <Grid size={{ xs: 6, md: 3 }}>{kpi("Failure Rate", `${summary.failureRate.toFixed(1)}%`)}</Grid>
             <Grid size={{ xs: 6, md: 3 }}>{kpi("Active Campaigns", summary.activeCampaigns)}</Grid>
@@ -150,14 +164,14 @@ export default function AnalyticsPage() {
             <Grid size={{ xs: 12, lg: 6 }}>
               <Card><CardContent><Typography variant="h6" sx={{ fontWeight: 800, mb: 1 }}>Executions by Status</Typography>
                 <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                  {Object.entries(summary.executionsByStatus).map(([key, value]) => <Chip key={key} label={`${key}: ${value}`} />)}
+                  {Object.entries(summary.executionsByStatus).map(([key, value]) => <Chip key={key} label={`${executionStatusLabel(key)}: ${value}`} />)}
                 </Stack>
               </CardContent></Card>
             </Grid>
             <Grid size={{ xs: 12, lg: 6 }}>
               <Card><CardContent><Typography variant="h6" sx={{ fontWeight: 800, mb: 1 }}>Executions by Channel</Typography>
                 <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                  {Object.entries(summary.executionsByChannel).map(([key, value]) => <Chip key={key} color="primary" variant="outlined" label={`${key}: ${value}`} />)}
+                  {Object.entries(summary.executionsByChannel).map(([key, value]) => <Chip key={key} color="primary" variant="outlined" label={`${channelTypeLabel(key as CarePilotChannelType)}: ${value}`} />)}
                 </Stack>
               </CardContent></Card>
             </Grid>
@@ -168,7 +182,7 @@ export default function AnalyticsPage() {
               <Typography variant="h6" sx={{ fontWeight: 800, mb: 1 }}>Campaign Performance</Typography>
               {summary.executionsByCampaign.length === 0 ? <Alert severity="info">No campaign execution data for this range.</Alert> : (
                 <Table size="small"><TableHead><TableRow><TableCell>Campaign</TableCell><TableCell>Total</TableCell><TableCell>Success</TableCell><TableCell>Failed</TableCell><TableCell>Success Rate</TableCell></TableRow></TableHead>
-                  <TableBody>{summary.executionsByCampaign.map((row) => <TableRow key={row.campaignId}><TableCell>{row.campaignName}</TableCell><TableCell>{row.totalExecutions}</TableCell><TableCell>{row.successfulExecutions}</TableCell><TableCell>{row.failedExecutions}</TableCell><TableCell>{row.successRate.toFixed(1)}%</TableCell></TableRow>)}</TableBody>
+                  <TableBody>{summary.executionsByCampaign.map((row) => <TableRow key={row.campaignId}><TableCell><Typography variant="body2" sx={{ fontWeight: 700 }}>{`${row.campaignName} · ${row.campaignReference}`}</Typography></TableCell><TableCell>{row.totalExecutions}</TableCell><TableCell>{row.successfulExecutions}</TableCell><TableCell>{row.failedExecutions}</TableCell><TableCell>{row.successRate.toFixed(1)}%</TableCell></TableRow>)}</TableBody>
                 </Table>
               )}
             </CardContent>

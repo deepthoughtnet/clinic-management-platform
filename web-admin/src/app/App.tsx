@@ -1,6 +1,6 @@
 import * as React from "react";
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { Box, Button, Paper, Typography } from "@mui/material";
+import { Box, Button, CircularProgress, Paper, Typography } from "@mui/material";
 
 import AppShell from "../layout/AppShell";
 import { AuthContext } from "../auth/AuthContext";
@@ -62,13 +62,9 @@ import PatientEngagementPage from "../products/carepilot/engagement/PatientEngag
 import RemindersPage from "../products/carepilot/reminders/RemindersPage";
 import LeadsPage from "../products/carepilot/leads/LeadsPage";
 import WebinarsPage from "../products/carepilot/webinars/WebinarsPage";
-import AiCallsPage from "../products/carepilot/ai-calls/AiCallsPage";
-import ActiveConversationsPage from "../products/carepilot/receptionist-queue/ActiveConversationsPage";
-import AppointmentHandoffsPage from "../products/carepilot/receptionist-queue/AppointmentHandoffsPage";
-import CallbackQueuePage from "../products/carepilot/receptionist-queue/CallbackQueuePage";
-import EscalationQueuePage from "../products/carepilot/receptionist-queue/EscalationQueuePage";
-import ReceptionistQueuePage from "../products/carepilot/receptionist-queue/ReceptionistQueuePage";
+import AiOperationsPage from "../products/carepilot/ai-operations/AiOperationsPage";
 import { hasTenantModule } from "../auth/moduleEntitlements";
+import { ENGAGE_ANALYTICS_VIEW } from "../auth/permissions";
 import { branding, productTitle } from "../branding";
 import { canAccessFeature, isRouteAccessibleForAuth, resolveTenantLandingPage, type AppFeatureId } from "../modules/moduleRegistry";
 
@@ -262,6 +258,30 @@ function TenantRoleGate({ rolesAny, children }: { rolesAny: string[]; children: 
   return <>{children}</>;
 }
 
+function PermissionGate({
+  anyPermissions,
+  title = "Access denied",
+  message = "You do not have access to this page.",
+  children,
+}: {
+  anyPermissions: string[];
+  title?: string;
+  message?: string;
+  children: React.ReactNode;
+}) {
+  const auth = useAuth();
+  if (!auth.initialized) {
+    return <Box sx={{ p: 3, display: "grid", placeItems: "center" }}><CircularProgress /></Box>;
+  }
+  const allowed = anyPermissions.some((permission) => auth.permissions.includes(permission));
+
+  if (!allowed) {
+    return <FeatureDisabledPage title={title} message={message} actionLabel="Open Tenant Home" actionTo="/" />;
+  }
+
+  return <>{children}</>;
+}
+
 function PlatformAdminGate({ children }: { children: React.ReactNode }) {
   const auth = useAuth();
   if (!auth.rolesUpper.includes("PLATFORM_ADMIN")) {
@@ -376,20 +396,138 @@ function AuthedApp() {
         <Route path="/platform/tenants/:tenantId" element={<PathnameKeyedRoute><TenantDetailPage /></PathnameKeyedRoute>} />
         <Route path="/platform/plans" element={<PathnameKeyedRoute><PlansModulesPage /></PathnameKeyedRoute>} />
         <Route path="/platform/product-implementation" element={<PathnameKeyedRoute><PlatformAdminGate><ProductImplementationPage /></PlatformAdminGate></PathnameKeyedRoute>} />
-        <Route path="/carepilot/campaigns" element={<PathnameKeyedRoute><ModuleGate moduleKey="carePilot"><CampaignsPage /></ModuleGate></PathnameKeyedRoute>} />
-        <Route path="/carepilot/analytics" element={<PathnameKeyedRoute><ModuleGate moduleKey="carePilot"><AnalyticsPage /></ModuleGate></PathnameKeyedRoute>} />
-        <Route path="/carepilot/ops" element={<PathnameKeyedRoute><ModuleGate moduleKey="carePilot"><OpsConsolePage /></ModuleGate></PathnameKeyedRoute>} />
-        <Route path="/carepilot/messaging" element={<PathnameKeyedRoute><ModuleGate moduleKey="carePilot"><MessagingPage /></ModuleGate></PathnameKeyedRoute>} />
-        <Route path="/carepilot/engagement" element={<PathnameKeyedRoute><ModuleGate moduleKey="carePilot"><PatientEngagementPage /></ModuleGate></PathnameKeyedRoute>} />
-        <Route path="/carepilot/reminders" element={<PathnameKeyedRoute><ModuleGate moduleKey="carePilot"><RemindersPage /></ModuleGate></PathnameKeyedRoute>} />
-        <Route path="/carepilot/leads" element={<PathnameKeyedRoute><ModuleGate moduleKey="carePilot"><LeadsPage /></ModuleGate></PathnameKeyedRoute>} />
-        <Route path="/carepilot/webinars" element={<PathnameKeyedRoute><ModuleGate moduleKey="carePilot"><WebinarsPage /></ModuleGate></PathnameKeyedRoute>} />
-        <Route path="/carepilot/ai-calls" element={<PathnameKeyedRoute><ModuleGate moduleKey="carePilot"><AiCallsPage /></ModuleGate></PathnameKeyedRoute>} />
-        <Route path="/carepilot/ai-receptionist/active-conversations" element={<PathnameKeyedRoute><ModuleGate moduleKey="carePilot"><ActiveConversationsPage /></ModuleGate></PathnameKeyedRoute>} />
-        <Route path="/carepilot/ai-receptionist/callback-queue" element={<PathnameKeyedRoute><ModuleGate moduleKey="carePilot"><CallbackQueuePage /></ModuleGate></PathnameKeyedRoute>} />
-        <Route path="/carepilot/ai-receptionist/escalation-queue" element={<PathnameKeyedRoute><ModuleGate moduleKey="carePilot"><EscalationQueuePage /></ModuleGate></PathnameKeyedRoute>} />
-        <Route path="/carepilot/ai-receptionist/appointment-handoffs" element={<PathnameKeyedRoute><ModuleGate moduleKey="carePilot"><AppointmentHandoffsPage /></ModuleGate></PathnameKeyedRoute>} />
-        <Route path="/carepilot/receptionist-queue" element={<PathnameKeyedRoute><ModuleGate moduleKey="carePilot"><ReceptionistQueuePage /></ModuleGate></PathnameKeyedRoute>} />
+        <Route
+          path="/carepilot/campaigns"
+          element={
+            <PathnameKeyedRoute>
+              <ModuleGate moduleKey="carePilot">
+                <PermissionGate anyPermissions={["engage.campaign.view", "engage.audit.view"]}>
+                  <CampaignsPage />
+                </PermissionGate>
+              </ModuleGate>
+            </PathnameKeyedRoute>
+          }
+        />
+        <Route
+          path="/carepilot/analytics"
+          element={
+            <PathnameKeyedRoute>
+              <ModuleGate moduleKey="carePilot">
+                <PermissionGate anyPermissions={[ENGAGE_ANALYTICS_VIEW]}>
+                  <AnalyticsPage />
+                </PermissionGate>
+              </ModuleGate>
+            </PathnameKeyedRoute>
+          }
+        />
+        <Route
+          path="/carepilot/ops"
+          element={
+            <PathnameKeyedRoute>
+              <ModuleGate moduleKey="carePilot">
+                <PermissionGate anyPermissions={["engage.ops.view"]}>
+                  <OpsConsolePage />
+                </PermissionGate>
+              </ModuleGate>
+            </PathnameKeyedRoute>
+          }
+        />
+        <Route
+          path="/carepilot/messaging"
+          element={
+            <PathnameKeyedRoute>
+              <ModuleGate moduleKey="carePilot">
+                <PermissionGate anyPermissions={["engage.provider.view"]}>
+                  <MessagingPage />
+                </PermissionGate>
+              </ModuleGate>
+            </PathnameKeyedRoute>
+          }
+        />
+        <Route
+          path="/carepilot/engagement"
+          element={
+            <PathnameKeyedRoute>
+              <ModuleGate moduleKey="carePilot">
+                <PermissionGate anyPermissions={[ENGAGE_ANALYTICS_VIEW]}>
+                  <PatientEngagementPage />
+                </PermissionGate>
+              </ModuleGate>
+            </PathnameKeyedRoute>
+          }
+        />
+        <Route
+          path="/carepilot/reminders"
+          element={
+            <PathnameKeyedRoute>
+              <ModuleGate moduleKey="carePilot">
+                <PermissionGate anyPermissions={["engage.reminder.view", "engage.reminder.operate", "engage.audit.view"]}>
+                  <RemindersPage />
+                </PermissionGate>
+              </ModuleGate>
+            </PathnameKeyedRoute>
+          }
+        />
+        <Route
+          path="/carepilot/leads"
+          element={
+            <PathnameKeyedRoute>
+              <ModuleGate moduleKey="carePilot">
+                <PermissionGate anyPermissions={["engage.leads.operate"]}>
+                  <LeadsPage />
+                </PermissionGate>
+              </ModuleGate>
+            </PathnameKeyedRoute>
+          }
+        />
+        <Route
+          path="/carepilot/webinars"
+          element={
+            <PathnameKeyedRoute>
+              <ModuleGate moduleKey="carePilot">
+                <PermissionGate anyPermissions={["engage.webinar.manage"]}>
+                  <WebinarsPage />
+                </PermissionGate>
+              </ModuleGate>
+            </PathnameKeyedRoute>
+          }
+        />
+        <Route
+          path="/carepilot/ai-operations"
+          element={
+            <PathnameKeyedRoute>
+              <ModuleGate moduleKey="carePilot">
+                <PermissionGate anyPermissions={["engage.ai.operate", "engage.reception.operate", "engage.view"]}>
+                  <AiOperationsPage />
+                </PermissionGate>
+              </ModuleGate>
+            </PathnameKeyedRoute>
+          }
+        />
+        <Route
+          path="/carepilot/ai-calls"
+          element={<Navigate to="/carepilot/ai-operations?tab=calls" replace />}
+        />
+        <Route
+          path="/carepilot/ai-receptionist/active-conversations"
+          element={<Navigate to="/carepilot/ai-operations?tab=conversations" replace />}
+        />
+        <Route
+          path="/carepilot/ai-receptionist/callback-queue"
+          element={<Navigate to="/carepilot/ai-operations?tab=work-queue&type=callback" replace />}
+        />
+        <Route
+          path="/carepilot/ai-receptionist/escalation-queue"
+          element={<Navigate to="/carepilot/ai-operations?tab=work-queue&type=escalation" replace />}
+        />
+        <Route
+          path="/carepilot/ai-receptionist/appointment-handoffs"
+          element={<Navigate to="/carepilot/ai-operations?tab=work-queue&type=appointment-handoff" replace />}
+        />
+        <Route
+          path="/carepilot/receptionist-queue"
+          element={<Navigate to="/carepilot/ai-operations?tab=work-queue" replace />}
+        />
         <Route
           path="/platform/users"
           element={<PathnameKeyedRoute><PlaceholderPage title="Users / Admins" description="Platform user administration can be enabled when backend APIs are exposed." /></PathnameKeyedRoute>}
@@ -426,6 +564,7 @@ function formatPageTitle(pathname: string): string {
   if (pathname === "/pharmacy/reconciliation") return "Reconciliation";
   if (pathname === "/pharmacy/pos") return "POS Sale";
   if (pathname === "/pharmacy/operations") return "Procurement";
+  if (pathname === "/carepilot/ai-operations") return "AI Operations";
   if (pathname.startsWith("/platform/product-implementation")) return "Product Implementation";
   const leaf = pathname.split("/").filter(Boolean).at(-1) || "Dashboard";
   return leaf.replace(/-/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());

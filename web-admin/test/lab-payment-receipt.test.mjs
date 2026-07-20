@@ -13,7 +13,6 @@ test("lab payment receipt flow reuses billing receipt component and exposes post
   assert.ok(source.includes('ReceiptPrintDialog'));
   assert.ok(source.includes('type ReceiptPrintData'));
   assert.ok(source.includes('getClinicProfile'));
-  assert.ok(source.includes('getBill'));
   assert.ok(source.includes('sendReceipt'));
   assert.ok(source.includes('paymentReceipt'));
   assert.ok(source.includes('buildReceiptPaymentSummary'));

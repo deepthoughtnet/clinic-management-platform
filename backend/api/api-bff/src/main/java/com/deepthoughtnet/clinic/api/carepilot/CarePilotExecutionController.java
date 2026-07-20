@@ -31,14 +31,14 @@ public class CarePilotExecutionController {
     }
 
     @GetMapping
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasAnyPermission('engage.reminder.view','engage.reminder.operate','engage.audit.view')")
     public List<ExecutionResponse> list() {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return executionService.list(tenantId).stream().map(this::toResponse).toList();
     }
 
     @GetMapping("/failed")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasAnyPermission('engage.reminder.view','engage.reminder.operate','engage.audit.view')")
     /** Lists executions that are in terminal failure/dead-letter states. */
     public List<ExecutionResponse> listFailed() {
         UUID tenantId = RequestContextHolder.requireTenantId();
@@ -46,7 +46,7 @@ public class CarePilotExecutionController {
     }
 
     @GetMapping("/{executionId}/attempts")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasAnyPermission('engage.reminder.view','engage.reminder.operate','engage.audit.view')")
     /** Lists per-attempt delivery audit history for one execution. */
     public List<DeliveryAttemptResponse> listAttempts(@PathVariable UUID executionId) {
         UUID tenantId = RequestContextHolder.requireTenantId();
@@ -61,7 +61,7 @@ public class CarePilotExecutionController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.message.send')")
     public ExecutionResponse create(@RequestBody CreateExecutionRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return toResponse(executionService.create(tenantId, new CampaignExecutionCreateCommand(
@@ -71,7 +71,7 @@ public class CarePilotExecutionController {
     }
 
     @PatchMapping("/{executionId}/retry")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.reminder.operate')")
     /** Requeues a failed execution so scheduler can retry delivery. */
     public ExecutionResponse retry(@PathVariable UUID executionId) {
         UUID tenantId = RequestContextHolder.requireTenantId();
@@ -79,7 +79,7 @@ public class CarePilotExecutionController {
     }
 
     @PatchMapping("/{executionId}/resend")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.reminder.operate')")
     /** Alias endpoint for retry to provide an explicit resend action. */
     public ExecutionResponse resend(@PathVariable UUID executionId) {
         UUID tenantId = RequestContextHolder.requireTenantId();
@@ -90,7 +90,7 @@ public class CarePilotExecutionController {
     private ExecutionResponse toResponse(CampaignExecutionRecord record) {
         return new ExecutionResponse(
                 record.id(), record.tenantId(), record.campaignId(), record.templateId(), record.channelType(),
-                record.recipientPatientId(), record.scheduledAt(), record.status(), record.attemptCount(), record.lastError(),
+                record.recipientPatientId(), record.scheduledAt(), record.status(), record.attemptCount(), record.deliveryAttemptCount(), record.lastError(),
                 record.executedAt(), record.nextAttemptAt(), record.deliveryStatus(), record.providerName(),
                 record.providerMessageId(), record.sourceType(), record.sourceReferenceId(), record.reminderWindow(),
                 record.referenceDateTime(), record.lastAttemptAt(), record.failureReason(), record.createdAt(), record.updatedAt()

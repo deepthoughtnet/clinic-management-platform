@@ -60,14 +60,14 @@ public class CarePilotAiCallController {
     }
 
     @GetMapping("/campaigns")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('RECEPTIONIST') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.ai.operate')")
     public java.util.List<AiCallCampaignResponse> listCampaigns() {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return campaignService.list(tenantId).stream().map(this::toCampaignResponse).toList();
     }
 
     @GetMapping("/campaigns/{id}")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('RECEPTIONIST') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.ai.operate')")
     public AiCallCampaignResponse getCampaign(@PathVariable UUID id) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return toCampaignResponse(campaignService.find(tenantId, id).orElseThrow(() -> new IllegalArgumentException("AI call campaign not found")));
@@ -75,7 +75,7 @@ public class CarePilotAiCallController {
 
     @PostMapping("/campaigns")
     @ResponseStatus(HttpStatus.CREATED)
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('RECEPTIONIST') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.ai.operate')")
     public AiCallCampaignResponse createCampaign(@RequestBody AiCallCampaignUpsertRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actor = RequestContextHolder.require().appUserId();
@@ -83,7 +83,7 @@ public class CarePilotAiCallController {
     }
 
     @PutMapping("/campaigns/{id}")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('RECEPTIONIST') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.ai.operate')")
     public AiCallCampaignResponse updateCampaign(@PathVariable UUID id, @RequestBody AiCallCampaignUpsertRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actor = RequestContextHolder.require().appUserId();
@@ -91,7 +91,7 @@ public class CarePilotAiCallController {
     }
 
     @PostMapping("/campaigns/{id}/status")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('RECEPTIONIST') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.ai.operate')")
     public AiCallCampaignResponse updateCampaignStatus(@PathVariable UUID id, @RequestBody AiCallCampaignStatusRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actor = RequestContextHolder.require().appUserId();
@@ -119,7 +119,7 @@ public class CarePilotAiCallController {
     }
 
     @GetMapping("/executions")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('RECEPTIONIST') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.ai.operate')")
     public AiCallExecutionListResponse executions(
             @RequestParam(required = false) com.deepthoughtnet.clinic.carepilot.ai_call.model.AiCallExecutionStatus status,
             @RequestParam(required = false) com.deepthoughtnet.clinic.carepilot.ai_call.model.AiCallType callType,
@@ -149,7 +149,7 @@ public class CarePilotAiCallController {
     }
 
     @GetMapping("/executions/{id}")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('RECEPTIONIST') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.ai.operate')")
     public AiCallExecutionResponse execution(@PathVariable UUID id) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         var row = orchestrationService.get(tenantId, id);
@@ -157,7 +157,7 @@ public class CarePilotAiCallController {
     }
 
     @GetMapping("/executions/{id}/transcript")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('RECEPTIONIST') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.ai.operate')")
     public AiCallTranscriptResponse transcript(@PathVariable UUID id) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         var row = orchestrationService.transcript(tenantId, id);
@@ -183,7 +183,7 @@ public class CarePilotAiCallController {
     }
 
     @PostMapping("/executions/{id}/retry")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('RECEPTIONIST') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.ai.operate')")
     public AiCallExecutionResponse retry(@PathVariable UUID id) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         var row = orchestrationService.retry(tenantId, id);
@@ -231,10 +231,11 @@ public class CarePilotAiCallController {
     }
 
     @GetMapping("/scheduler-health")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('RECEPTIONIST') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.ai.operate')")
     public AiCallSchedulerHealthResponse schedulerHealth() {
         return new AiCallSchedulerHealthResponse(
                 schedulerMonitor.enabled(),
+                "AI Calls Dispatch Worker",
                 schedulerMonitor.lastRunAt(),
                 schedulerMonitor.nextEstimatedRunAt(),
                 schedulerMonitor.lastProcessedCount(),
@@ -246,7 +247,7 @@ public class CarePilotAiCallController {
     }
 
     @GetMapping("/analytics/summary")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('RECEPTIONIST') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.ai.operate')")
     public AiCallAnalyticsResponse analyticsSummary() {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return AiCallAnalyticsResponse.from(analyticsService.summary(tenantId));

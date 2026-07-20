@@ -13,6 +13,7 @@ import {
   DialogContent,
   DialogTitle,
   FormControl,
+  FormHelperText,
   Grid,
   InputLabel,
   MenuItem,
@@ -31,7 +32,8 @@ import {
 } from "@mui/material";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../../auth/useAuth";
-import { firstZodError, leadCreateSchema, leadFilterSchema, leadImportSchema, leadUpdateSchema, normalizeIndianMobileInput } from "@deepthoughtnet/form-validation-kit";
+import { ENGAGE_ANALYTICS_VIEW } from "../../../auth/permissions";
+import { firstZodError, leadFilterSchema, leadImportSchema } from "@deepthoughtnet/form-validation-kit";
 import {
   addCarePilotLeadNote,
   convertCarePilotLead,
@@ -41,13 +43,13 @@ import {
   getCarePilotLeadImportTemplate,
   getClinicUsers,
   importCarePilotLeadsCsv,
-  listCarePilotCampaigns,
+  lookupCarePilotCampaigns,
   listCarePilotLeadActivities,
   listCarePilotLeads,
   updateCarePilotLead,
   updateCarePilotLeadStatus,
   type AppointmentPriority,
-  type CarePilotCampaign,
+  type CarePilotCampaignLookup,
   type CarePilotLead,
   type CarePilotLeadActivity,
   type CarePilotLeadAnalyticsSummary,
@@ -58,6 +60,8 @@ import {
   type ClinicUser,
 } from "../../../api/clinicApi";
 import RequiredLabel from "../../../components/forms/RequiredLabel";
+import CampaignLookupField from "../components/CampaignLookupField";
+import { buildLeadCreatePayload, mapLeadApiErrorToFieldErrors, toLeadDateTimeInputValue, validateLeadDraft } from "./leadFormUtils";
 
 const STATUSES: CarePilotLeadStatus[] = ["NEW", "CONTACTED", "QUALIFIED", "FOLLOW_UP_REQUIRED", "APPOINTMENT_BOOKED", "CONVERTED", "LOST", "SPAM"];
 const SOURCES: CarePilotLeadSource[] = ["WEBSITE", "WEBINAR", "WALK_IN", "PHONE_CALL", "WHATSAPP", "FACEBOOK", "GOOGLE_ADS", "REFERRAL", "CAMPAIGN", "MANUAL", "AI_RECEPTIONIST", "OTHER"];
@@ -129,14 +133,24 @@ function downloadCsv(filename: string, csv: string) {
 export default function LeadsPage() {
   const auth = useAuth();
   const navigate = useNavigate();
-  const canView = auth.rolesUpper.includes("CLINIC_ADMIN") || auth.rolesUpper.includes("AUDITOR") || auth.rolesUpper.includes("RECEPTIONIST") || (auth.rolesUpper.includes("PLATFORM_ADMIN") && Boolean(auth.tenantId));
-  const canMutate = auth.rolesUpper.includes("CLINIC_ADMIN") || auth.rolesUpper.includes("RECEPTIONIST") || (auth.rolesUpper.includes("PLATFORM_ADMIN") && Boolean(auth.tenantId));
+  const canView = auth.hasPermission("engage.leads.operate");
+  const canMutate = auth.hasPermission("engage.leads.operate");
+  const canViewAnalytics = auth.hasPermission(ENGAGE_ANALYTICS_VIEW);
+  const canViewCampaigns = auth.hasPermission("engage.campaign.view")
+    || auth.hasPermission("engage.campaign.manage")
+    || auth.hasPermission("engage.audit.view");
+  const canBulkManage = auth.hasPermission("engage.leads.bulk.manage");
+  const canViewUsers = auth.hasPermission("user.read");
 
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [toast, setToast] = React.useState<string | null>(null);
+  const [saveError, setSaveError] = React.useState<string | null>(null);
+  const [saving, setSaving] = React.useState(false);
+  const saveInFlightRef = React.useRef(false);
+  const [fieldErrors, setFieldErrors] = React.useState<Record<string, string>>({});
   const [rows, setRows] = React.useState<CarePilotLead[]>([]);
-  const [campaigns, setCampaigns] = React.useState<CarePilotCampaign[]>([]);
+  const [campaigns, setCampaigns] = React.useState<CarePilotCampaignLookup[]>([]);
   const [users, setUsers] = React.useState<ClinicUser[]>([]);
   const [analytics, setAnalytics] = React.useState<CarePilotLeadAnalyticsSummary | null>(null);
   const [viewMode, setViewMode] = React.useState<"TABLE" | "KANBAN">("TABLE");
@@ -153,6 +167,10 @@ export default function LeadsPage() {
   const [editorOpen, setEditorOpen] = React.useState(false);
   const [editorLead, setEditorLead] = React.useState<CarePilotLead | null>(null);
   const [draft, setDraft] = React.useState<LeadDraft>(emptyDraft());
+  const firstNameInputRef = React.useRef<HTMLInputElement | null>(null);
+  const phoneInputRef = React.useRef<HTMLInputElement | null>(null);
+  const emailInputRef = React.useRef<HTMLInputElement | null>(null);
+  const nextFollowUpInputRef = React.useRef<HTMLInputElement | null>(null);
 
   const [activities, setActivities] = React.useState<CarePilotLeadActivity[]>([]);
   const [activityLoading, setActivityLoading] = React.useState(false);
@@ -167,6 +185,40 @@ export default function LeadsPage() {
   const [convertOpen, setConvertOpen] = React.useState(false);
   const [convertLead, setConvertLead] = React.useState<CarePilotLead | null>(null);
   const [convertDraft, setConvertDraft] = React.useState<ConvertDraft>(emptyConvertDraft());
+
+  const clearSaveState = () => {
+    setSaveError(null);
+    setFieldErrors({});
+    saveInFlightRef.current = false;
+  };
+
+  const clearLeadFieldError = (field: string) => {
+    setFieldErrors((current) => {
+      if (!current[field]) return current;
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
+    setSaveError(null);
+  };
+
+  const focusLeadField = (field: string) => {
+    const refs: Record<string, React.RefObject<HTMLInputElement | null>> = {
+      firstName: firstNameInputRef,
+      phone: phoneInputRef,
+      email: emailInputRef,
+      nextFollowUpAt: nextFollowUpInputRef,
+    };
+    const ref = refs[field];
+    if (ref?.current) {
+      ref.current.focus();
+      ref.current.scrollIntoView({ block: "center" });
+      return;
+    }
+    const element = document.querySelector(`[data-lead-field="${field}"]`) as HTMLElement | null;
+    element?.scrollIntoView({ block: "center" });
+    element?.focus?.();
+  };
 
   const load = React.useCallback(async () => {
     if (!auth.accessToken || !auth.tenantId || !canView) { setLoading(false); return; }
@@ -183,7 +235,7 @@ export default function LeadsPage() {
       setLoading(false);
       return;
     }
-    setLoading(true); setError(null);
+      setLoading(true); setError(null);
     try {
       const forcedStatus = tab === "CONVERTED" ? "CONVERTED" : tab === "LOST" ? "LOST" : parsed.data.status || undefined;
       const followUpDue = tab === "FOLLOW_UPS";
@@ -191,9 +243,15 @@ export default function LeadsPage() {
       const requestSize = parsed.data.size ?? (viewMode === "KANBAN" ? 200 : size);
       const [leadList, summary, campaignRows, userRows] = await Promise.all([
         listCarePilotLeads(auth.accessToken, auth.tenantId, { status: forcedStatus, source: parsed.data.source || undefined, priority: parsed.data.priority || undefined, search: parsed.data.search || undefined, followUpDue, page: requestPage, size: requestSize }),
-        getCarePilotLeadAnalyticsSummary(auth.accessToken, auth.tenantId),
-        listCarePilotCampaigns(auth.accessToken, auth.tenantId),
-        getClinicUsers(auth.accessToken, auth.tenantId),
+        canViewAnalytics
+          ? getCarePilotLeadAnalyticsSummary(auth.accessToken, auth.tenantId)
+          : Promise.resolve(null),
+        canViewCampaigns
+          ? lookupCarePilotCampaigns(auth.accessToken, auth.tenantId, "", 50)
+          : Promise.resolve([] as CarePilotCampaignLookup[]),
+        canViewUsers
+          ? getClinicUsers(auth.accessToken, auth.tenantId)
+          : Promise.resolve([] as ClinicUser[]),
       ]);
       setRows(leadList.rows); setTotal(leadList.total); setAnalytics(summary); setCampaigns(campaignRows); setUsers(userRows);
     } catch (err) {
@@ -201,7 +259,7 @@ export default function LeadsPage() {
     } finally {
       setLoading(false);
     }
-  }, [auth.accessToken, auth.tenantId, canView, tab, statusFilter, sourceFilter, priorityFilter, search, page, size, viewMode]);
+  }, [auth.accessToken, auth.tenantId, canView, canViewAnalytics, canViewCampaigns, canViewUsers, tab, statusFilter, sourceFilter, priorityFilter, search, page, size, viewMode]);
 
   React.useEffect(() => { void load(); }, [load]);
 
@@ -216,7 +274,13 @@ export default function LeadsPage() {
     }
   }, [auth.accessToken, auth.tenantId]);
 
-  const openCreate = () => { setEditorLead(null); setDraft(emptyDraft()); setActivities([]); setEditorOpen(true); };
+  const openCreate = () => {
+    setEditorLead(null);
+    setDraft(emptyDraft());
+    setActivities([]);
+    clearSaveState();
+    setEditorOpen(true);
+  };
 
   const openEdit = async (lead: CarePilotLead) => {
     setEditorLead(lead);
@@ -231,47 +295,58 @@ export default function LeadsPage() {
       priority: lead.priority,
       notes: lead.notes || "",
       tags: lead.tags || "",
-      nextFollowUpAt: lead.nextFollowUpAt ? lead.nextFollowUpAt.slice(0, 16) : "",
+      nextFollowUpAt: lead.nextFollowUpAt ? toLeadDateTimeInputValue(lead.nextFollowUpAt) : "",
       campaignId: lead.campaignId || "",
       assignedToAppUserId: lead.assignedToAppUserId || "",
     });
+    clearSaveState();
     setEditorOpen(true);
     await loadActivitiesForLead(lead.id);
   };
 
   const save = async () => {
-    if (!auth.accessToken || !auth.tenantId || !canMutate) return;
-    const normalizedPhone = normalizeIndianMobileInput(draft.phone) as string;
-    if (!/^[6-9]\d{9}$/.test(normalizedPhone)) {
-      setToast("Enter a valid 10-digit Indian mobile number.");
+    if (!auth.accessToken || !auth.tenantId || !canMutate || saving || saveInFlightRef.current) return;
+    const validation = validateLeadDraft(draft, users);
+    if (Object.keys(validation.fieldErrors).length > 0) {
+      setFieldErrors(validation.fieldErrors);
+      setSaveError("Please correct the highlighted fields.");
+      setToast("Please correct the highlighted fields.");
+      window.setTimeout(() => focusLeadField(Object.keys(validation.fieldErrors)[0]), 0);
       return;
     }
-    const payload = {
-      firstName: draft.firstName,
-      lastName: draft.lastName || null,
-      phone: normalizedPhone,
-      email: draft.email || null,
-      source: draft.source,
-      sourceDetails: draft.sourceDetails || null,
-      status: draft.status,
-      priority: draft.priority,
-      notes: draft.notes || null,
-      tags: draft.tags || null,
-      campaignId: draft.campaignId || null,
-      assignedToAppUserId: draft.assignedToAppUserId || null,
-      nextFollowUpAt: draft.nextFollowUpAt ? new Date(draft.nextFollowUpAt).toISOString() : null,
-    };
-    const parsed = (editorLead ? leadUpdateSchema : leadCreateSchema).safeParse(payload);
-    if (!parsed.success) {
-      setToast(firstZodError(parsed.error));
-      return;
-    }
+
+    const payload = buildLeadCreatePayload(draft, validation.normalizedPhone) as Partial<CarePilotLead>;
+    setSaving(true);
+    saveInFlightRef.current = true;
+    setSaveError(null);
+    setFieldErrors({});
     try {
-      if (editorLead) await updateCarePilotLead(auth.accessToken, auth.tenantId, editorLead.id, parsed.data); else await createCarePilotLead(auth.accessToken, auth.tenantId, parsed.data);
+      if (editorLead) {
+        await updateCarePilotLead(auth.accessToken, auth.tenantId, editorLead.id, payload);
+      } else {
+        await createCarePilotLead(auth.accessToken, auth.tenantId, payload);
+      }
       setToast(editorLead ? "Lead updated" : "Lead created");
       setEditorOpen(false);
+      clearSaveState();
       await load();
-    } catch (err) { setToast(err instanceof Error ? err.message : "Save failed"); }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Save failed";
+      const mappedErrors = mapLeadApiErrorToFieldErrors(message);
+      if (Object.keys(mappedErrors).length > 0) {
+        setFieldErrors(mappedErrors);
+        setSaveError("Please correct the highlighted fields.");
+        setToast("Please correct the highlighted fields.");
+        window.setTimeout(() => focusLeadField(Object.keys(mappedErrors)[0]), 0);
+        return;
+      }
+      setSaveError(null);
+      setToast("Unable to save lead. Please try again.");
+    }
+    finally {
+      setSaving(false);
+      saveInFlightRef.current = false;
+    }
   };
 
   const addNote = async () => {
@@ -328,7 +403,7 @@ export default function LeadsPage() {
   };
 
   const downloadTemplate = async () => {
-    if (!auth.accessToken || !auth.tenantId || !canMutate) return;
+    if (!auth.accessToken || !auth.tenantId || !canBulkManage) return;
     try {
       const csv = await getCarePilotLeadImportTemplate(auth.accessToken, auth.tenantId);
       downloadCsv("carepilot-leads-import-template.csv", csv);
@@ -338,7 +413,7 @@ export default function LeadsPage() {
   };
 
   const exportCsv = async () => {
-    if (!auth.accessToken || !auth.tenantId) return;
+    if (!auth.accessToken || !auth.tenantId || !canBulkManage) return;
     try {
       const forcedStatus = tab === "CONVERTED" ? "CONVERTED" : tab === "LOST" ? "LOST" : statusFilter || undefined;
       const followUpDue = tab === "FOLLOW_UPS";
@@ -359,7 +434,7 @@ export default function LeadsPage() {
 
   const handleImportFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (!file || !auth.accessToken || !auth.tenantId || !canMutate) return;
+    if (!file || !auth.accessToken || !auth.tenantId || !canBulkManage) return;
     try {
       const parsed = leadImportSchema.safeParse({ file });
       if (!parsed.success) {
@@ -407,8 +482,13 @@ export default function LeadsPage() {
   if (!auth.tenantId) return <Alert severity="info">Select a tenant to use Jeevanam Engage leads.</Alert>;
   if (!canView) return <Alert severity="error">You do not have access to Jeevanam Engage leads.</Alert>;
 
-  const userName = (id?: string | null) => users.find((u) => u.appUserId === id)?.displayName || id || "-";
-  const campaignName = (id?: string | null) => campaigns.find((c) => c.id === id)?.name || "-";
+  const userName = (id?: string | null) => users.find((u) => u.appUserId === id)?.displayName || users.find((u) => u.appUserId === id)?.username || "Unknown user";
+  const campaignName = (id?: string | null) => {
+    if (!id) return "-";
+    const campaign = campaigns.find((c) => c.id === id);
+    if (!campaign) return "Unknown campaign";
+    return `${campaign.name} • ${campaign.campaignReference}`;
+  };
   const groupedKanbanRows = KANBAN_COLUMNS.map((status) => ({ status, rows: rows.filter((lead) => lead.status === status) }));
 
   const renderLeadActions = (lead: CarePilotLead, compact = false) => (
@@ -417,6 +497,7 @@ export default function LeadsPage() {
       {canMutate && lead.status !== "CONVERTED" ? <Button size="small" onClick={() => openFollowUpDialog(lead)}>Follow-up</Button> : null}
       {canMutate && lead.status === "FOLLOW_UP_REQUIRED" ? <Button size="small" onClick={() => void markFollowUpCompleted(lead)}>Mark Done</Button> : null}
       {canMutate && lead.status !== "CONVERTED" ? <Button size="small" onClick={() => openConvert(lead)}>Convert</Button> : null}
+      {canViewCampaigns && lead.campaignId ? <Button size="small" onClick={() => navigate(`/carepilot/campaigns?campaignId=${lead.campaignId}`)}>Open Campaign</Button> : null}
     </Stack>
   );
 
@@ -426,9 +507,9 @@ export default function LeadsPage() {
         <Box><Typography variant="h4" sx={{ fontWeight: 900 }}>Jeevanam Engage Leads</Typography><Typography variant="body2" color="text.secondary">Lead intake, timeline, follow-up, and conversion workflow.</Typography></Box>
         <Stack direction="row" spacing={1} flexWrap="wrap">
           <Button variant="outlined" onClick={() => void load()}>Refresh</Button>
-          <Button variant="outlined" onClick={() => void exportCsv()}>Export CSV</Button>
-          {canMutate ? <Button variant="outlined" onClick={() => void downloadTemplate()}>Download Template</Button> : null}
-          {canMutate ? <Button variant="outlined" onClick={openImportFilePicker}>Import CSV</Button> : null}
+          {canBulkManage ? <Button variant="outlined" onClick={() => void exportCsv()}>Export CSV</Button> : null}
+          {canBulkManage ? <Button variant="outlined" onClick={() => void downloadTemplate()}>Download Template</Button> : null}
+          {canBulkManage ? <Button variant="outlined" onClick={openImportFilePicker}>Import CSV</Button> : null}
           {canMutate ? <Button variant="contained" onClick={openCreate}>New Lead</Button> : null}
         </Stack>
       </Box>
@@ -436,14 +517,16 @@ export default function LeadsPage() {
 
       {!canMutate ? <Alert severity="info">Read-only mode for your role.</Alert> : null}
 
-      <Grid container spacing={2}>
-        <Grid size={{ xs: 6, md: 2 }}><Card><CardContent><Typography variant="caption">New Leads</Typography><Typography variant="h5">{analytics?.newLeads ?? 0}</Typography></CardContent></Card></Grid>
-        <Grid size={{ xs: 6, md: 2 }}><Card><CardContent><Typography variant="caption">Qualified</Typography><Typography variant="h5">{analytics?.qualifiedLeads ?? 0}</Typography></CardContent></Card></Grid>
-        <Grid size={{ xs: 6, md: 2 }}><Card><CardContent><Typography variant="caption">Due Today</Typography><Typography variant="h5">{analytics?.followUpsDueToday ?? 0}</Typography></CardContent></Card></Grid>
-        <Grid size={{ xs: 6, md: 2 }}><Card><CardContent><Typography variant="caption">Overdue</Typography><Typography variant="h5">{analytics?.overdueFollowUps ?? 0}</Typography></CardContent></Card></Grid>
-        <Grid size={{ xs: 6, md: 2 }}><Card><CardContent><Typography variant="caption">Converted</Typography><Typography variant="h5">{analytics?.convertedLeads ?? 0}</Typography></CardContent></Card></Grid>
-        <Grid size={{ xs: 6, md: 2 }}><Card><CardContent><Typography variant="caption">Conv. Rate</Typography><Typography variant="h5">{(analytics?.conversionRate ?? 0).toFixed(1)}%</Typography></CardContent></Card></Grid>
-      </Grid>
+      {canViewAnalytics ? (
+        <Grid container spacing={2}>
+          <Grid size={{ xs: 6, md: 2 }}><Card><CardContent><Typography variant="caption">New Leads</Typography><Typography variant="h5">{analytics?.newLeads ?? 0}</Typography></CardContent></Card></Grid>
+          <Grid size={{ xs: 6, md: 2 }}><Card><CardContent><Typography variant="caption">Qualified</Typography><Typography variant="h5">{analytics?.qualifiedLeads ?? 0}</Typography></CardContent></Card></Grid>
+          <Grid size={{ xs: 6, md: 2 }}><Card><CardContent><Typography variant="caption">Due Today</Typography><Typography variant="h5">{analytics?.followUpsDueToday ?? 0}</Typography></CardContent></Card></Grid>
+          <Grid size={{ xs: 6, md: 2 }}><Card><CardContent><Typography variant="caption">Overdue</Typography><Typography variant="h5">{analytics?.overdueFollowUps ?? 0}</Typography></CardContent></Card></Grid>
+          <Grid size={{ xs: 6, md: 2 }}><Card><CardContent><Typography variant="caption">Converted</Typography><Typography variant="h5">{analytics?.convertedLeads ?? 0}</Typography></CardContent></Card></Grid>
+          <Grid size={{ xs: 6, md: 2 }}><Card><CardContent><Typography variant="caption">Conv. Rate</Typography><Typography variant="h5">{(analytics?.conversionRate ?? 0).toFixed(1)}%</Typography></CardContent></Card></Grid>
+        </Grid>
+      ) : null}
 
       <Card><CardContent>
         <Grid container spacing={1.5}>
@@ -487,7 +570,6 @@ export default function LeadsPage() {
                         {renderLeadActions(lead)}
                         {lead.convertedPatientId ? <Button size="small" onClick={() => navigate(`/patients/${lead.convertedPatientId}`)}>Open Patient</Button> : null}
                         {lead.bookedAppointmentId ? <Button size="small" onClick={() => navigate(`/appointments`)}>Open Appointment</Button> : null}
-                        {lead.campaignId ? <Button size="small" onClick={() => navigate(`/carepilot/campaigns?campaignId=${lead.campaignId}`)}>Open Campaign</Button> : null}
                       </Stack>
                     </TableCell>
                   </TableRow>
@@ -543,33 +625,47 @@ export default function LeadsPage() {
         )
       ) : null}
 
-      <Dialog open={editorOpen} onClose={() => setEditorOpen(false)} fullWidth maxWidth="lg">
+      <Dialog open={editorOpen} onClose={() => { setEditorOpen(false); clearSaveState(); }} fullWidth maxWidth="lg">
         <DialogTitle>{editorLead ? "Lead Detail" : "Create Lead"}</DialogTitle>
         <DialogContent>
+          {saveError ? <Alert severity="error" sx={{ mb: 1.5 }}>{saveError}</Alert> : null}
           <Grid container spacing={1.5} sx={{ pt: 0.5 }}>
-            <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="First name" value={draft.firstName} onChange={(e) => setDraft((d) => ({ ...d, firstName: e.target.value }))} inputProps={{ maxLength: 60 }} /></Grid>
-            <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Last name" value={draft.lastName} onChange={(e) => setDraft((d) => ({ ...d, lastName: e.target.value }))} inputProps={{ maxLength: 60 }} /></Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
+            <Grid size={{ xs: 12, md: 6 }} data-lead-field="firstName"><TextField fullWidth inputRef={firstNameInputRef} label="First name" value={draft.firstName} onChange={(e) => { clearLeadFieldError("firstName"); setDraft((d) => ({ ...d, firstName: e.target.value })); }} inputProps={{ maxLength: 60 }} error={Boolean(fieldErrors.firstName)} helperText={fieldErrors.firstName || ""} /></Grid>
+            <Grid size={{ xs: 12, md: 6 }} data-lead-field="lastName"><TextField fullWidth label="Last name" value={draft.lastName} onChange={(e) => setDraft((d) => ({ ...d, lastName: e.target.value }))} inputProps={{ maxLength: 60 }} /></Grid>
+            <Grid size={{ xs: 12, md: 6 }} data-lead-field="phone">
               <TextField
                 fullWidth
+                inputRef={phoneInputRef}
                 label={<RequiredLabel text="Phone" />}
                 value={draft.phone}
-                onChange={(e) => setDraft((d) => ({ ...d, phone: e.target.value }))}
+                onChange={(e) => { clearLeadFieldError("phone"); setDraft((d) => ({ ...d, phone: e.target.value })); }}
                 inputProps={{ inputMode: "tel" }}
-                error={Boolean(draft.phone) && !leadCreateSchema.shape.phone.safeParse(draft.phone).success}
-                helperText={Boolean(draft.phone) && !leadCreateSchema.shape.phone.safeParse(draft.phone).success ? "Enter a valid 10-digit Indian mobile number." : ""}
+                error={Boolean(fieldErrors.phone)}
+                helperText={fieldErrors.phone || ""}
               />
             </Grid>
-            <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Email" value={draft.email} onChange={(e) => setDraft((d) => ({ ...d, email: e.target.value }))} inputProps={{ maxLength: 120 }} /></Grid>
-            <Grid size={{ xs: 12, md: 3 }}><FormControl fullWidth><InputLabel>Source</InputLabel><Select value={draft.source} label="Source" onChange={(e) => setDraft((d) => ({ ...d, source: String(e.target.value) as CarePilotLeadSource }))}>{SOURCES.map((s) => <MenuItem key={s} value={s}>{s}</MenuItem>)}</Select></FormControl></Grid>
-            <Grid size={{ xs: 12, md: 3 }}><FormControl fullWidth><InputLabel>Status</InputLabel><Select value={draft.status} label="Status" onChange={(e) => setDraft((d) => ({ ...d, status: String(e.target.value) as CarePilotLeadStatus }))}>{STATUSES.map((s) => <MenuItem key={s} value={s}>{s}</MenuItem>)}</Select></FormControl></Grid>
-            <Grid size={{ xs: 12, md: 3 }}><FormControl fullWidth><InputLabel>Priority</InputLabel><Select value={draft.priority} label="Priority" onChange={(e) => setDraft((d) => ({ ...d, priority: String(e.target.value) as CarePilotLeadPriority }))}>{PRIORITIES.map((s) => <MenuItem key={s} value={s}>{s}</MenuItem>)}</Select></FormControl></Grid>
-            <Grid size={{ xs: 12, md: 3 }}><FormControl fullWidth><InputLabel>Campaign</InputLabel><Select value={draft.campaignId} label="Campaign" onChange={(e) => setDraft((d) => ({ ...d, campaignId: String(e.target.value) }))}><MenuItem value="">None</MenuItem>{campaigns.map((c) => <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>)}</Select></FormControl></Grid>
-            <Grid size={{ xs: 12, md: 3 }}><FormControl fullWidth><InputLabel>Assigned To</InputLabel><Select value={draft.assignedToAppUserId} label="Assigned To" onChange={(e) => setDraft((d) => ({ ...d, assignedToAppUserId: String(e.target.value) }))}><MenuItem value="">Unassigned</MenuItem>{users.map((u) => <MenuItem key={u.appUserId} value={u.appUserId}>{u.displayName || u.appUserId}</MenuItem>)}</Select></FormControl></Grid>
-            <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Source details" value={draft.sourceDetails} onChange={(e) => setDraft((d) => ({ ...d, sourceDetails: e.target.value }))} inputProps={{ maxLength: 120 }} /></Grid>
-            <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth type="datetime-local" label="Next follow-up" value={draft.nextFollowUpAt} onChange={(e) => setDraft((d) => ({ ...d, nextFollowUpAt: e.target.value }))} InputLabelProps={{ shrink: true }} /></Grid>
-            <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Tags" value={draft.tags} onChange={(e) => setDraft((d) => ({ ...d, tags: e.target.value }))} inputProps={{ maxLength: 120 }} /></Grid>
-            <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth multiline minRows={3} label="Notes" value={draft.notes} onChange={(e) => setDraft((d) => ({ ...d, notes: e.target.value }))} inputProps={{ maxLength: 250 }} /></Grid>
+            <Grid size={{ xs: 12, md: 6 }} data-lead-field="email"><TextField fullWidth inputRef={emailInputRef} label="Email" value={draft.email} onChange={(e) => { clearLeadFieldError("email"); setDraft((d) => ({ ...d, email: e.target.value })); }} inputProps={{ maxLength: 120 }} error={Boolean(fieldErrors.email)} helperText={fieldErrors.email || ""} /></Grid>
+            <Grid size={{ xs: 12, md: 3 }} data-lead-field="source"><FormControl fullWidth error={Boolean(fieldErrors.source)}><InputLabel>Source</InputLabel><Select value={draft.source} label="Source" onChange={(e) => { clearLeadFieldError("source"); setDraft((d) => ({ ...d, source: String(e.target.value) as CarePilotLeadSource })); }}>{SOURCES.map((s) => <MenuItem key={s} value={s}>{s}</MenuItem>)}</Select><FormHelperText>{fieldErrors.source || ""}</FormHelperText></FormControl></Grid>
+            <Grid size={{ xs: 12, md: 3 }} data-lead-field="status"><FormControl fullWidth error={Boolean(fieldErrors.status)}><InputLabel>Status</InputLabel><Select value={draft.status} label="Status" onChange={(e) => { clearLeadFieldError("status"); setDraft((d) => ({ ...d, status: String(e.target.value) as CarePilotLeadStatus })); }}>{STATUSES.map((s) => <MenuItem key={s} value={s}>{s}</MenuItem>)}</Select><FormHelperText>{fieldErrors.status || ""}</FormHelperText></FormControl></Grid>
+            <Grid size={{ xs: 12, md: 3 }} data-lead-field="priority"><FormControl fullWidth error={Boolean(fieldErrors.priority)}><InputLabel>Priority</InputLabel><Select value={draft.priority} label="Priority" onChange={(e) => { clearLeadFieldError("priority"); setDraft((d) => ({ ...d, priority: String(e.target.value) as CarePilotLeadPriority })); }}>{PRIORITIES.map((s) => <MenuItem key={s} value={s}>{s}</MenuItem>)}</Select><FormHelperText>{fieldErrors.priority || ""}</FormHelperText></FormControl></Grid>
+            {canViewCampaigns ? (
+              <Grid size={{ xs: 12, md: 3 }} data-lead-field="campaignId">
+                <CampaignLookupField
+                  token={auth.accessToken}
+                  tenantId={auth.tenantId}
+                  value={draft.campaignId}
+                  onChange={(value) => { clearLeadFieldError("campaignId"); setDraft((d) => ({ ...d, campaignId: value })); }}
+                  label="Campaign"
+                  helperText={fieldErrors.campaignId || "Optional campaign association."}
+                  error={Boolean(fieldErrors.campaignId)}
+                />
+              </Grid>
+            ) : null}
+            {canViewUsers ? <Grid size={{ xs: 12, md: 3 }} data-lead-field="assignedToAppUserId"><FormControl fullWidth error={Boolean(fieldErrors.assignedToAppUserId)}><InputLabel>Assigned To</InputLabel><Select value={draft.assignedToAppUserId} label="Assigned To" onChange={(e) => { clearLeadFieldError("assignedToAppUserId"); setDraft((d) => ({ ...d, assignedToAppUserId: String(e.target.value) })); }}><MenuItem value="">Unassigned</MenuItem>{users.map((u) => <MenuItem key={u.appUserId} value={u.appUserId}>{u.displayName || u.username || "Unknown user"}</MenuItem>)}</Select><FormHelperText>{fieldErrors.assignedToAppUserId || "Optional active assignee."}</FormHelperText></FormControl></Grid> : null}
+            <Grid size={{ xs: 12, md: 6 }} data-lead-field="sourceDetails"><TextField fullWidth label="Source details" value={draft.sourceDetails} onChange={(e) => { clearLeadFieldError("sourceDetails"); setDraft((d) => ({ ...d, sourceDetails: e.target.value })); }} inputProps={{ maxLength: 120 }} /></Grid>
+            <Grid size={{ xs: 12, md: 6 }} data-lead-field="nextFollowUpAt"><TextField fullWidth inputRef={nextFollowUpInputRef} type="datetime-local" label="Next follow-up" value={draft.nextFollowUpAt} onChange={(e) => { clearLeadFieldError("nextFollowUpAt"); setDraft((d) => ({ ...d, nextFollowUpAt: e.target.value })); }} InputLabelProps={{ shrink: true }} error={Boolean(fieldErrors.nextFollowUpAt)} helperText={fieldErrors.nextFollowUpAt || "Optional follow-up date and time."} /></Grid>
+            <Grid size={{ xs: 12, md: 6 }} data-lead-field="tags"><TextField fullWidth label="Tags" value={draft.tags} onChange={(e) => { clearLeadFieldError("tags"); setDraft((d) => ({ ...d, tags: e.target.value })); }} inputProps={{ maxLength: 120 }} /></Grid>
+            <Grid size={{ xs: 12, md: 6 }} data-lead-field="notes"><TextField fullWidth multiline minRows={3} label="Notes" value={draft.notes} onChange={(e) => { clearLeadFieldError("notes"); setDraft((d) => ({ ...d, notes: e.target.value })); }} inputProps={{ maxLength: 250 }} /></Grid>
           </Grid>
 
           {editorLead ? (
@@ -582,7 +678,7 @@ export default function LeadsPage() {
             </Box>
           ) : null}
         </DialogContent>
-        <DialogActions><Button onClick={() => setEditorOpen(false)}>Close</Button>{canMutate ? <Button variant="contained" onClick={() => void save()}>Save</Button> : null}</DialogActions>
+        <DialogActions><Button onClick={() => { setEditorOpen(false); clearSaveState(); }}>Close</Button>{canMutate ? <Button variant="contained" onClick={() => void save()} disabled={saving}>{saving ? "Saving..." : "Save"}</Button> : null}</DialogActions>
       </Dialog>
 
       <Dialog open={convertOpen} onClose={() => setConvertOpen(false)} fullWidth maxWidth="md">
@@ -593,7 +689,7 @@ export default function LeadsPage() {
             <FormControl><InputLabel>Conversion Mode</InputLabel><Select value={convertDraft.bookAppointment ? "CONVERT_AND_BOOK" : "CONVERT_ONLY"} label="Conversion Mode" onChange={(e) => setConvertDraft((d) => ({ ...d, bookAppointment: String(e.target.value) === "CONVERT_AND_BOOK" }))}><MenuItem value="CONVERT_ONLY">Convert only</MenuItem><MenuItem value="CONVERT_AND_BOOK">Convert and book appointment</MenuItem></Select></FormControl>
             {convertDraft.bookAppointment ? (
               <Grid container spacing={1.5}>
-                <Grid size={{ xs: 12, md: 6 }}><FormControl fullWidth><InputLabel>Doctor</InputLabel><Select value={convertDraft.doctorUserId} label="Doctor" onChange={(e) => setConvertDraft((d) => ({ ...d, doctorUserId: String(e.target.value) }))}>{users.filter((u) => (u.membershipRole || "").includes("DOCTOR")).map((u) => <MenuItem key={u.appUserId} value={u.appUserId}>{u.displayName || u.appUserId}</MenuItem>)}</Select></FormControl></Grid>
+                <Grid size={{ xs: 12, md: 6 }}><FormControl fullWidth><InputLabel>Doctor</InputLabel><Select value={convertDraft.doctorUserId} label="Doctor" onChange={(e) => setConvertDraft((d) => ({ ...d, doctorUserId: String(e.target.value) }))}>{users.filter((u) => (u.membershipRole || "").includes("DOCTOR")).map((u) => <MenuItem key={u.appUserId} value={u.appUserId}>{u.displayName || u.username || "Unknown user"}</MenuItem>)}</Select></FormControl></Grid>
                 <Grid size={{ xs: 12, md: 3 }}><TextField fullWidth type="date" label="Date" value={convertDraft.appointmentDate} onChange={(e) => setConvertDraft((d) => ({ ...d, appointmentDate: e.target.value }))} InputLabelProps={{ shrink: true }} /></Grid>
                 <Grid size={{ xs: 12, md: 3 }}><TextField fullWidth type="time" label="Time" value={convertDraft.appointmentTime} onChange={(e) => setConvertDraft((d) => ({ ...d, appointmentTime: e.target.value }))} InputLabelProps={{ shrink: true }} /></Grid>
                 <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Reason" value={convertDraft.reason} onChange={(e) => setConvertDraft((d) => ({ ...d, reason: e.target.value }))} inputProps={{ maxLength: 250 }} /></Grid>

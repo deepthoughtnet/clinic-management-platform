@@ -18,6 +18,7 @@ class CarePilotRemindersControllerSecurityTest {
                 com.deepthoughtnet.clinic.carepilot.messaging.model.ChannelType.class,
                 java.util.UUID.class,
                 String.class,
+                String.class,
                 java.time.LocalDate.class,
                 java.time.LocalDate.class,
                 String.class,
@@ -29,8 +30,8 @@ class CarePilotRemindersControllerSecurityTest {
         String listGuard = list.getAnnotation(PreAuthorize.class).value();
         String detailGuard = detail.getAnnotation(PreAuthorize.class).value();
 
-        assertThat(listGuard).contains("CLINIC_ADMIN").contains("AUDITOR").contains("PLATFORM_ADMIN");
-        assertThat(detailGuard).contains("CLINIC_ADMIN").contains("AUDITOR").contains("PLATFORM_ADMIN");
+        assertThat(listGuard).contains("engage.reminder.view").contains("engage.reminder.operate").contains("engage.audit.view");
+        assertThat(detailGuard).contains("engage.reminder.view").contains("engage.reminder.operate").contains("engage.audit.view");
     }
 
     @Test
@@ -47,11 +48,11 @@ class CarePilotRemindersControllerSecurityTest {
         String suppressGuard = suppress.getAnnotation(PreAuthorize.class).value();
         String rescheduleGuard = reschedule.getAnnotation(PreAuthorize.class).value();
 
-        assertThat(retryGuard).contains("CLINIC_ADMIN").contains("PLATFORM_ADMIN");
-        assertThat(resendGuard).contains("CLINIC_ADMIN").contains("PLATFORM_ADMIN");
-        assertThat(cancelGuard).contains("CLINIC_ADMIN").contains("PLATFORM_ADMIN");
-        assertThat(suppressGuard).contains("CLINIC_ADMIN").contains("PLATFORM_ADMIN");
-        assertThat(rescheduleGuard).contains("CLINIC_ADMIN").contains("PLATFORM_ADMIN");
-        assertThat(retryGuard).doesNotContain("AUDITOR").doesNotContain("DOCTOR").doesNotContain("BILLING_USER").doesNotContain("RECEPTIONIST");
+        assertThat(retryGuard).contains("engage.reminder.operate");
+        assertThat(resendGuard).contains("engage.reminder.operate");
+        assertThat(cancelGuard).contains("engage.reminder.operate");
+        assertThat(suppressGuard).contains("engage.reminder.operate");
+        assertThat(rescheduleGuard).contains("engage.reminder.operate");
+        assertThat(retryGuard).doesNotContain("engage.audit.view").doesNotContain("engage.analytics.view").doesNotContain("engage.provider.admin");
     }
 }

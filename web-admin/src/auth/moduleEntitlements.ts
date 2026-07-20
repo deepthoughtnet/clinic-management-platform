@@ -20,6 +20,8 @@ const ROLE_PRIORITY = [
   "LAB_ASSISTANT",
   "LAB_APPROVER",
   "PLATFORM_TENANT_SUPPORT",
+  "ENGAGE_MANAGER",
+  "ENGAGE_EXECUTIVE",
   "SERVICE_AGENT",
 ] as const;
 
@@ -40,6 +42,8 @@ const ROLE_LABELS: Record<string, string> = {
   LAB_ASSISTANT: "Lab Assistant",
   LAB_APPROVER: "Lab Approver",
   PLATFORM_TENANT_SUPPORT: "Platform Support",
+  ENGAGE_MANAGER: "Engage Manager",
+  ENGAGE_EXECUTIVE: "Engage Executive",
   SERVICE_AGENT: "Service Agent",
 };
 

@@ -28,8 +28,8 @@ class CarePilotLeadControllerSecurityTest {
         String listGuard = list.getAnnotation(PreAuthorize.class).value();
         String getGuard = get.getAnnotation(PreAuthorize.class).value();
 
-        assertThat(listGuard).contains("CLINIC_ADMIN").contains("AUDITOR").contains("RECEPTIONIST").contains("PLATFORM_ADMIN");
-        assertThat(getGuard).contains("CLINIC_ADMIN").contains("AUDITOR").contains("RECEPTIONIST").contains("PLATFORM_ADMIN");
+        assertThat(listGuard).contains("engage.leads.operate");
+        assertThat(getGuard).contains("engage.leads.operate");
     }
 
     @Test
@@ -44,8 +44,11 @@ class CarePilotLeadControllerSecurityTest {
 
         for (Method method : new Method[]{create, importCsv, template, update, status, note, convert}) {
             String guard = method.getAnnotation(PreAuthorize.class).value();
-            assertThat(guard).contains("CLINIC_ADMIN").contains("RECEPTIONIST").contains("PLATFORM_ADMIN");
-            assertThat(guard).doesNotContain("AUDITOR");
+            if (method == importCsv || method == template) {
+                assertThat(guard).contains("engage.leads.bulk.manage");
+            } else {
+                assertThat(guard).contains("engage.leads.operate");
+            }
         }
     }
 
@@ -53,7 +56,7 @@ class CarePilotLeadControllerSecurityTest {
     void activitiesAreReadableByReadRoles() throws Exception {
         Method activities = CarePilotLeadController.class.getMethod("activities", java.util.UUID.class, int.class, int.class);
         String guard = activities.getAnnotation(PreAuthorize.class).value();
-        assertThat(guard).contains("CLINIC_ADMIN").contains("AUDITOR").contains("RECEPTIONIST").contains("PLATFORM_ADMIN");
+        assertThat(guard).contains("engage.leads.operate");
     }
 
     @Test
@@ -70,6 +73,6 @@ class CarePilotLeadControllerSecurityTest {
                 java.time.LocalDate.class
         );
         String guard = export.getAnnotation(PreAuthorize.class).value();
-        assertThat(guard).contains("CLINIC_ADMIN").contains("AUDITOR").contains("RECEPTIONIST").contains("PLATFORM_ADMIN");
+        assertThat(guard).contains("engage.leads.bulk.manage");
     }
 }

@@ -45,7 +45,7 @@ class TenantUserManagementServiceTest {
         TenantMembershipRepository membershipRepository = mock(TenantMembershipRepository.class);
         KeycloakAdminProvisioner keycloakAdminProvisioner = mock(KeycloakAdminProvisioner.class);
 
-        when(keycloakAdminProvisioner.createOrGetTenantUserId(any(), any(), any(), any(), any(), anyBoolean()))
+        when(keycloakAdminProvisioner.createOrGetTenantUserId(any(), any(), any(), any(), any(), any(), any(), anyBoolean()))
                 .thenReturn("kc-sub");
         when(appUserRepository.findByTenantIdAndKeycloakSub(any(), any())).thenReturn(Optional.empty());
         when(appUserRepository.findByTenantIdAndEmailIgnoreCase(any(), any())).thenReturn(Optional.empty());
@@ -62,6 +62,8 @@ class TenantUserManagementServiceTest {
                 tenantId,
                 "user@example.com",
                 "reception01",
+                "User",
+                "One",
                 "User One",
                 "RECEPTIONIST",
                 "Temp@1234",
@@ -153,7 +155,7 @@ class TenantUserManagementServiceTest {
         TenantMembershipRepository membershipRepository = mock(TenantMembershipRepository.class);
         KeycloakAdminProvisioner keycloakAdminProvisioner = mock(KeycloakAdminProvisioner.class);
 
-        when(keycloakAdminProvisioner.createOrGetTenantUserId(any(), any(), any(), any(), any(), anyBoolean()))
+        when(keycloakAdminProvisioner.createOrGetTenantUserId(any(), any(), any(), any(), any(), any(), any(), anyBoolean()))
                 .thenReturn("kc-sub");
         when(appUserRepository.findByTenantIdAndKeycloakSub(any(), any()))
                 .thenReturn(Optional.empty());
@@ -176,6 +178,8 @@ class TenantUserManagementServiceTest {
                 tenantId,
                 "user@example.com",
                 "user",
+                "User",
+                null,
                 "User",
                 role,
                 null

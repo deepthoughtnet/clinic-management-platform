@@ -7,6 +7,7 @@ import java.util.UUID;
  */
 public record CampaignExecutionBreakdownRecord(
         UUID campaignId,
+        String campaignReference,
         String campaignName,
         long totalExecutions,
         long successfulExecutions,

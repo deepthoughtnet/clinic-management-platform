@@ -144,6 +144,8 @@ public class KeycloakAdminProvisionerImpl implements KeycloakAdminProvisioner {
             UUID tenantId,
             String email,
             String username,
+            String firstName,
+            String lastName,
             String displayName,
             String tempPassword,
             boolean emailVerified
@@ -197,6 +199,14 @@ public class KeycloakAdminProvisionerImpl implements KeycloakAdminProvisioner {
                     existing.setFirstName(displayName);
                     changed = true;
                 }
+                if (StringUtils.hasText(firstName) && !firstName.equals(existing.getFirstName())) {
+                    existing.setFirstName(firstName);
+                    changed = true;
+                }
+                if (StringUtils.hasText(lastName) && !lastName.equals(existing.getLastName())) {
+                    existing.setLastName(lastName);
+                    changed = true;
+                }
                 if (emailVerified && (existing.isEmailVerified() == null || !existing.isEmailVerified())) {
                     existing.setEmailVerified(Boolean.TRUE);
                     changed = true;
@@ -230,8 +240,13 @@ public class KeycloakAdminProvisionerImpl implements KeycloakAdminProvisioner {
                 u.setUsername(username);
             }
 
-            if (StringUtils.hasText(displayName)) {
+            if (StringUtils.hasText(firstName)) {
+                u.setFirstName(firstName);
+            } else if (StringUtils.hasText(displayName)) {
                 u.setFirstName(displayName);
+            }
+            if (StringUtils.hasText(lastName)) {
+                u.setLastName(lastName);
             }
 
             Response resp = rr.users().create(u);

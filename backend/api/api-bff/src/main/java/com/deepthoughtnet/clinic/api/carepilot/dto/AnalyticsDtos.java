@@ -18,6 +18,7 @@ public final class AnalyticsDtos {
 
     public record CampaignBreakdownResponse(
             UUID campaignId,
+            String campaignReference,
             String campaignName,
             long totalExecutions,
             long successfulExecutions,
@@ -42,9 +43,10 @@ public final class AnalyticsDtos {
             long failedExecutions,
             long retryingExecutions,
             long skippedExecutions,
+            long queuedExecutions,
+            long sentExecutions,
             long deliveredExecutions,
             long readExecutions,
-            long bouncedExecutions,
             long undeliveredExecutions,
             double successRate,
             double failureRate,
@@ -58,7 +60,8 @@ public final class AnalyticsDtos {
     ) {}
 
     public record TimelineEventResponse(
-            String type,
+            String reasonCode,
+            String reasonLabel,
             String status,
             String detail,
             OffsetDateTime at

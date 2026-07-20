@@ -74,6 +74,7 @@ import CompareArrowsRoundedIcon from "@mui/icons-material/CompareArrowsRounded";
 
 import { consultationSchema, firstZodError, labConsultationOrderCreateSchema } from "@deepthoughtnet/form-validation-kit";
 import { useAuth } from "../../auth/useAuth";
+import { ConfirmationDialog } from "../../components/clinical/ConfirmationDialog";
 import { ClinicalAiDraftCard, type ClinicalAiDraftStatus } from "../../components/clinical/ClinicalAiDraftCard";
 import { documentBusinessStatusLabel, documentTypeLabel, isPublishedLabDocument } from "../../components/clinical/documentTypeOptions";
 import { AppointmentTokenChip, WorkflowStatusBadge } from "../../components/workflow/WorkflowUx";
@@ -163,7 +164,6 @@ import {
 } from "../../api/clinicApi";
 import { ApiClientError } from "../../api/restClient";
 import { ClinicalDocumentViewer } from "../../components/clinical/ClinicalDocumentViewer";
-import { ConfirmationDialog } from "../../components/clinical/ConfirmationDialog";
 import { PatientIntelligenceCard } from "../../components/clinical/PatientIntelligenceCard";
 import { PatientDocumentUploadDialog } from "../../components/clinical/PatientDocumentUploadDialog";
 import { useClinicalReasoning } from "../../hooks/useClinicalReasoning";
@@ -2582,6 +2582,7 @@ export default function ConsultationWorkspacePage() {
   const [completionValidationOpen, setCompletionValidationOpen] = React.useState(false);
   const [consultationAuditShareLog, setConsultationAuditShareLog] = React.useState<string[]>([]);
   const [documentRowBusyId, setDocumentRowBusyId] = React.useState<string | null>(null);
+  const [documentActionTarget, setDocumentActionTarget] = React.useState<{ documentId: string; kind: "reprocess" | "repair" } | null>(null);
   const [workspaceConfirmation, setWorkspaceConfirmation] = React.useState<PrescriptionDialogState>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [info, setInfo] = React.useState<string | null>(null);
@@ -2868,46 +2869,42 @@ export default function ConsultationWorkspacePage() {
 
   const reprocessClinicalDocumentRow = React.useCallback(async (documentId: string) => {
     if (!auth.accessToken || !auth.tenantId || !consultation) return;
-    if (!window.confirm("Reprocess OCR/AI for this document?")) {
-      return;
-    }
-    setDocumentRowBusyId(documentId);
-    setInfo("AI reprocessing started.");
-    setError(null);
-    try {
-      const updated = await reprocessClinicalDocumentExtraction(auth.accessToken, auth.tenantId, documentId);
-      upsertClinicalDocumentRow(updated);
-      void refreshClinicalArtifacts(consultation.patientId, consultation, { includeContext: true, includeIntake: true, keepLoadingState: false });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to reprocess AI extraction");
-      setDocumentRowBusyId((current) => (current === documentId ? null : current));
-    }
-  }, [auth.accessToken, auth.tenantId, consultation, refreshClinicalArtifacts, upsertClinicalDocumentRow]);
+    setDocumentActionTarget({ documentId, kind: "reprocess" });
+  }, [auth.accessToken, auth.tenantId, consultation]);
 
   const repairClinicalMemoryRow = React.useCallback(async (documentId: string) => {
     if (!auth.accessToken || !auth.tenantId || !consultation) return;
-    if (!window.confirm("Repair clinical memory for this document?")) {
-      return;
-    }
+    setDocumentActionTarget({ documentId, kind: "repair" });
+  }, [auth.accessToken, auth.tenantId, consultation]);
+
+  const submitDocumentAction = React.useCallback(async () => {
+    if (!auth.accessToken || !auth.tenantId || !consultation || !documentActionTarget) return;
+    const { documentId, kind } = documentActionTarget;
     setDocumentRowBusyId(documentId);
-    setInfo("Clinical memory repair started.");
     setError(null);
     try {
-      const result = await repairClinicalMemoryApi(auth.accessToken, auth.tenantId, documentId);
-      const corrected = result.correctedValues?.[0];
-      const correctedText = corrected ? `, ${corrected.conceptKey} corrected ${corrected.oldValue} → ${corrected.newValue}` : "";
-      setInfo(
-        result.status === "SUCCESS"
-          ? `Memory repaired: ${result.insertedConceptCount} concepts inserted, ${result.filteredPollutedConceptCount} polluted concepts filtered${correctedText}`
-          : `Memory repair failed: ${result.message}`
-      );
-      await refreshClinicalArtifacts(consultation.patientId, consultation, { includeContext: true, includeIntake: true, keepLoadingState: false });
+      if (kind === "reprocess") {
+        const updated = await reprocessClinicalDocumentExtraction(auth.accessToken, auth.tenantId, documentId);
+        upsertClinicalDocumentRow(updated);
+        setInfo("AI reprocessing started.");
+      } else {
+        const result = await repairClinicalMemoryApi(auth.accessToken, auth.tenantId, documentId);
+        const corrected = result.correctedValues?.[0];
+        const correctedText = corrected ? `, ${corrected.conceptKey} corrected ${corrected.oldValue} → ${corrected.newValue}` : "";
+        setInfo(
+          result.status === "SUCCESS"
+            ? `Memory repaired: ${result.insertedConceptCount} concepts inserted, ${result.filteredPollutedConceptCount} polluted concepts filtered${correctedText}`
+            : `Memory repair failed: ${result.message}`
+        );
+      }
+      void refreshClinicalArtifacts(consultation.patientId, consultation, { includeContext: true, includeIntake: true, keepLoadingState: false });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to repair clinical memory");
+      setError(err instanceof Error ? err.message : kind === "reprocess" ? "Failed to reprocess AI extraction" : "Failed to repair clinical memory");
     } finally {
       setDocumentRowBusyId((current) => (current === documentId ? null : current));
+      setDocumentActionTarget(null);
     }
-  }, [auth.accessToken, auth.tenantId, consultation, refreshClinicalArtifacts, upsertClinicalDocumentRow]);
+  }, [auth.accessToken, auth.tenantId, consultation, documentActionTarget, refreshClinicalArtifacts, upsertClinicalDocumentRow]);
 
   const longitudinalSnapshotLabel = React.useCallback((concept: {
     label: string;
@@ -14021,6 +14018,17 @@ export default function ConsultationWorkspacePage() {
         reprocessBusy={Boolean(viewerDocument && documentRowBusyId === viewerDocument.id)}
         onRepairMemory={viewerDocument && canEditConsultation && canRepairClinicalMemory(viewerDocument) ? () => void repairClinicalMemoryRow(viewerDocument.id) : undefined}
         repairBusy={Boolean(viewerDocument && documentRowBusyId === viewerDocument.id)}
+      />
+      <ConfirmationDialog
+        open={Boolean(documentActionTarget)}
+        title={documentActionTarget?.kind === "reprocess" ? "Reprocess OCR/AI" : "Repair clinical memory"}
+        description={documentActionTarget?.kind === "reprocess"
+          ? "Reprocess OCR/AI for this document?"
+          : "Repair clinical memory for this document?"}
+        confirmLabel={documentActionTarget?.kind === "reprocess" ? "Reprocess" : "Repair"}
+        confirmColor="warning"
+        onCancel={() => setDocumentActionTarget(null)}
+        onConfirm={() => void submitDocumentAction()}
       />
     </Stack>
   );

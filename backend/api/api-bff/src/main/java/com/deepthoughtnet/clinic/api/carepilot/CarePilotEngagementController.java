@@ -2,8 +2,10 @@ package com.deepthoughtnet.clinic.api.carepilot;
 
 import com.deepthoughtnet.clinic.api.carepilot.dto.EngagementDtos.EngagementCohortResponse;
 import com.deepthoughtnet.clinic.api.carepilot.dto.EngagementDtos.EngagementOverviewResponse;
+import com.deepthoughtnet.clinic.api.carepilot.dto.EngagementDtos.EngagementProfileListResponse;
 import com.deepthoughtnet.clinic.api.carepilot.dto.EngagementDtos.EngagementProfileResponse;
 import com.deepthoughtnet.clinic.carepilot.engagement.model.EngagementCohortType;
+import com.deepthoughtnet.clinic.carepilot.engagement.model.EngagementLevel;
 import com.deepthoughtnet.clinic.carepilot.engagement.model.PatientEngagementProfileRecord;
 import com.deepthoughtnet.clinic.carepilot.engagement.service.PatientEngagementService;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
@@ -30,7 +32,7 @@ public class CarePilotEngagementController {
 
     /** Returns aggregated engagement overview metrics. */
     @GetMapping("/overview")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.analytics.view')")
     public EngagementOverviewResponse overview() {
         UUID tenantId = RequestContextHolder.requireTenantId();
         var record = engagementService.overview(tenantId);
@@ -54,7 +56,7 @@ public class CarePilotEngagementController {
 
     /** Returns cohort members for one engagement segment. */
     @GetMapping("/cohorts")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.analytics.view')")
     public EngagementCohortResponse cohorts(
             @RequestParam EngagementCohortType cohort,
             @RequestParam(defaultValue = "0") int offset,
@@ -64,12 +66,38 @@ public class CarePilotEngagementController {
         List<EngagementProfileResponse> rows = engagementService.cohort(tenantId, cohort, offset, limit).stream()
                 .map(this::toResponse)
                 .toList();
-        return new EngagementCohortResponse(cohort, Math.max(0, offset), Math.max(1, Math.min(200, limit)), rows.size(), rows, OffsetDateTime.now());
+        int totalCount = Math.toIntExact(engagementService.cohortCount(tenantId, cohort));
+        return new EngagementCohortResponse(cohort, Math.max(0, offset), Math.max(1, Math.min(200, limit)), totalCount, rows, OffsetDateTime.now());
+    }
+
+    /** Returns patient profiles filtered by engagement level or all scored patients. */
+    @GetMapping("/profiles")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.analytics.view')")
+    public EngagementProfileListResponse profiles(
+            @RequestParam(required = false) String level,
+            @RequestParam(defaultValue = "0") int offset,
+            @RequestParam(defaultValue = "200") int limit
+    ) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        EngagementLevel engagementLevel = parseLevel(level);
+        List<EngagementProfileResponse> rows = engagementService.profiles(tenantId, engagementLevel, offset, limit).stream()
+                .map(this::toResponse)
+                .toList();
+        long totalCount = engagementService.profileCount(tenantId, engagementLevel);
+        String selectedLevel = engagementLevel == null ? "ALL" : engagementLevel.name();
+        return new EngagementProfileListResponse(
+                selectedLevel,
+                Math.max(0, offset),
+                Math.max(1, Math.min(2000, limit)),
+                Math.toIntExact(totalCount),
+                rows,
+                OffsetDateTime.now()
+        );
     }
 
     /** Returns high-risk patients. */
     @GetMapping("/high-risk")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.analytics.view')")
     public EngagementCohortResponse highRisk(
             @RequestParam(defaultValue = "0") int offset,
             @RequestParam(defaultValue = "50") int limit
@@ -79,7 +107,7 @@ public class CarePilotEngagementController {
 
     /** Returns inactive patients according to current engagement thresholds. */
     @GetMapping("/inactive")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.analytics.view')")
     public EngagementCohortResponse inactive(
             @RequestParam(defaultValue = "0") int offset,
             @RequestParam(defaultValue = "50") int limit
@@ -117,5 +145,12 @@ public class CarePilotEngagementController {
                 row.suggestedCampaignType(),
                 row.generatedAt()
         );
+    }
+
+    private EngagementLevel parseLevel(String level) {
+        if (level == null || level.isBlank() || "ALL".equalsIgnoreCase(level.trim())) {
+            return null;
+        }
+        return EngagementLevel.valueOf(level.trim().toUpperCase());
     }
 }

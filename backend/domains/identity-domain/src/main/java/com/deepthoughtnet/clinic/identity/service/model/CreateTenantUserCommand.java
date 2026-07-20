@@ -6,6 +6,8 @@ public record CreateTenantUserCommand(
         UUID tenantId,
         String email,
         String username,
+        String firstName,
+        String lastName,
         String displayName,
         String role,
         String tempPassword,
@@ -21,6 +23,19 @@ public record CreateTenantUserCommand(
             String role,
             String tempPassword
     ) {
-        this(tenantId, email, username, displayName, role, tempPassword, null, null, null);
+        this(tenantId, email, username, null, null, displayName, role, tempPassword, null, null, null);
+    }
+
+    public CreateTenantUserCommand(
+            UUID tenantId,
+            String email,
+            String username,
+            String firstName,
+            String lastName,
+            String displayName,
+            String role,
+            String tempPassword
+    ) {
+        this(tenantId, email, username, firstName, lastName, displayName, role, tempPassword, null, null, null);
     }
 }
