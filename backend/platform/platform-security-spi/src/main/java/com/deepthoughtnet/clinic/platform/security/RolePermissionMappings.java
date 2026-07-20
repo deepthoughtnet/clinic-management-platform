@@ -206,12 +206,6 @@ public final class RolePermissionMappings {
             Permissions.AUDIT_READ,
             Permissions.APPOINTMENT_CHECKIN_PAYMENT_BYPASS,
             Permissions.INVENTORY_MANAGE,
-            Permissions.CAREPILOT_LEAD_READ,
-                    Permissions.CAREPILOT_LEAD_CREATE,
-                    Permissions.CAREPILOT_LEAD_UPDATE,
-                    Permissions.CAREPILOT_LEAD_CONVERT,
-            Permissions.CAREPILOT_WEBINAR_READ,
-                    Permissions.CAREPILOT_WEBINAR_MANAGE,
                     Permissions.AI_VOICE_TEST,
                     Permissions.ENGAGE_VIEW,
                     Permissions.ENGAGE_MESSAGE_SEND,
@@ -229,10 +223,78 @@ public final class RolePermissionMappings {
                     Permissions.ENGAGE_AUDIT_VIEW,
                     Permissions.ENGAGE_PROVIDER_VIEW,
                     Permissions.ENGAGE_PROVIDER_ADMIN,
-                    Permissions.ENGAGE_LEADS_OPERATE,
-                    Permissions.ENGAGE_WEBINAR_MANAGE,
+                    Permissions.ENGAGE_LEAD_VIEW,
+                    Permissions.ENGAGE_LEAD_VIEW_ALL,
+                    Permissions.ENGAGE_LEAD_CREATE,
+                    Permissions.ENGAGE_LEAD_EDIT,
+                    Permissions.ENGAGE_LEAD_ASSIGN,
+                    Permissions.ENGAGE_LEAD_FOLLOW_UP,
+                    Permissions.ENGAGE_LEAD_CONVERT,
+                    Permissions.ENGAGE_LEAD_BOOK_APPOINTMENT,
+                    Permissions.ENGAGE_LEAD_IMPORT,
+                    Permissions.ENGAGE_LEAD_EXPORT,
+                    Permissions.ENGAGE_LEAD_VIEW_AUDIT,
+                    Permissions.ENGAGE_WEBINAR_VIEW,
+                    Permissions.ENGAGE_WEBINAR_CREATE,
+                    Permissions.ENGAGE_WEBINAR_EDIT,
+                    Permissions.ENGAGE_WEBINAR_PUBLISH,
+                    Permissions.ENGAGE_WEBINAR_CANCEL,
+                    Permissions.ENGAGE_WEBINAR_MANAGE_REGISTRATIONS,
+                    Permissions.ENGAGE_WEBINAR_RECORD_ATTENDANCE,
+                    Permissions.ENGAGE_WEBINAR_RUN_AUTOMATION,
+                    Permissions.ENGAGE_WEBINAR_EXPORT,
+                    Permissions.ENGAGE_WEBINAR_VIEW_ANALYTICS,
+                    Permissions.ENGAGE_WEBINAR_VIEW_AUDIT,
                     Permissions.ENGAGE_AI_OPERATE
             )
+    );
+
+    private static final Set<String> ENGAGE_LEAD_MANAGER_PERMISSIONS = Set.of(
+            Permissions.ENGAGE_VIEW,
+            Permissions.ENGAGE_CAMPAIGN_LOOKUP,
+            Permissions.ENGAGE_LEAD_VIEW,
+            Permissions.ENGAGE_LEAD_VIEW_ALL,
+            Permissions.ENGAGE_LEAD_CREATE,
+            Permissions.ENGAGE_LEAD_EDIT,
+            Permissions.ENGAGE_LEAD_ASSIGN,
+            Permissions.ENGAGE_LEAD_FOLLOW_UP,
+            Permissions.ENGAGE_LEAD_CONVERT,
+            Permissions.ENGAGE_LEAD_BOOK_APPOINTMENT,
+            Permissions.ENGAGE_LEAD_IMPORT,
+            Permissions.ENGAGE_LEAD_EXPORT,
+            Permissions.ENGAGE_LEAD_VIEW_AUDIT
+    );
+
+    private static final Set<String> ENGAGE_LEAD_EXECUTIVE_PERMISSIONS = Set.of(
+            Permissions.ENGAGE_VIEW,
+            Permissions.ENGAGE_CAMPAIGN_LOOKUP,
+            Permissions.ENGAGE_LEAD_VIEW,
+            Permissions.ENGAGE_LEAD_CREATE,
+            Permissions.ENGAGE_LEAD_EDIT,
+            Permissions.ENGAGE_LEAD_ASSIGN,
+            Permissions.ENGAGE_LEAD_FOLLOW_UP
+    );
+
+    private static final Set<String> ENGAGE_WEBINAR_MANAGER_PERMISSIONS = Set.of(
+            Permissions.ENGAGE_VIEW,
+            Permissions.ENGAGE_WEBINAR_VIEW,
+            Permissions.ENGAGE_WEBINAR_CREATE,
+            Permissions.ENGAGE_WEBINAR_EDIT,
+            Permissions.ENGAGE_WEBINAR_PUBLISH,
+            Permissions.ENGAGE_WEBINAR_CANCEL,
+            Permissions.ENGAGE_WEBINAR_MANAGE_REGISTRATIONS,
+            Permissions.ENGAGE_WEBINAR_RECORD_ATTENDANCE,
+            Permissions.ENGAGE_WEBINAR_RUN_AUTOMATION,
+            Permissions.ENGAGE_WEBINAR_EXPORT,
+            Permissions.ENGAGE_WEBINAR_VIEW_ANALYTICS,
+            Permissions.ENGAGE_WEBINAR_VIEW_AUDIT
+    );
+
+    private static final Set<String> ENGAGE_WEBINAR_EXECUTIVE_PERMISSIONS = Set.of(
+            Permissions.ENGAGE_VIEW,
+            Permissions.ENGAGE_WEBINAR_VIEW,
+            Permissions.ENGAGE_WEBINAR_MANAGE_REGISTRATIONS,
+            Permissions.ENGAGE_WEBINAR_RECORD_ATTENDANCE
     );
 
     private static final Set<String> ENGAGE_MANAGER_PERMISSIONS = Set.of(
@@ -248,11 +310,30 @@ public final class RolePermissionMappings {
                     Permissions.ENGAGE_CAMPAIGN_SUBMIT,
                     Permissions.ENGAGE_CAMPAIGN_LOOKUP,
                     Permissions.ENGAGE_TEMPLATE_MANAGE,
-            Permissions.ENGAGE_LEADS_BULK_MANAGE,
             Permissions.ENGAGE_AUDIENCE_MANAGE,
             Permissions.ENGAGE_ANALYTICS_VIEW,
-            Permissions.ENGAGE_LEADS_OPERATE,
-            Permissions.ENGAGE_WEBINAR_MANAGE,
+            Permissions.ENGAGE_LEAD_VIEW,
+            Permissions.ENGAGE_LEAD_VIEW_ALL,
+            Permissions.ENGAGE_LEAD_CREATE,
+            Permissions.ENGAGE_LEAD_EDIT,
+            Permissions.ENGAGE_LEAD_ASSIGN,
+            Permissions.ENGAGE_LEAD_FOLLOW_UP,
+            Permissions.ENGAGE_LEAD_CONVERT,
+            Permissions.ENGAGE_LEAD_BOOK_APPOINTMENT,
+            Permissions.ENGAGE_LEAD_IMPORT,
+            Permissions.ENGAGE_LEAD_EXPORT,
+            Permissions.ENGAGE_LEAD_VIEW_AUDIT,
+            Permissions.ENGAGE_WEBINAR_VIEW,
+            Permissions.ENGAGE_WEBINAR_CREATE,
+            Permissions.ENGAGE_WEBINAR_EDIT,
+            Permissions.ENGAGE_WEBINAR_PUBLISH,
+            Permissions.ENGAGE_WEBINAR_CANCEL,
+            Permissions.ENGAGE_WEBINAR_MANAGE_REGISTRATIONS,
+            Permissions.ENGAGE_WEBINAR_RECORD_ATTENDANCE,
+            Permissions.ENGAGE_WEBINAR_RUN_AUTOMATION,
+            Permissions.ENGAGE_WEBINAR_EXPORT,
+            Permissions.ENGAGE_WEBINAR_VIEW_ANALYTICS,
+            Permissions.ENGAGE_WEBINAR_VIEW_AUDIT,
             Permissions.ENGAGE_AI_OPERATE
     );
 
@@ -265,7 +346,14 @@ public final class RolePermissionMappings {
             Permissions.ENGAGE_OPS_VIEW,
             Permissions.USER_READ,
             Permissions.ENGAGE_CAMPAIGN_LOOKUP,
-            Permissions.ENGAGE_LEADS_OPERATE
+            Permissions.ENGAGE_LEAD_VIEW,
+            Permissions.ENGAGE_LEAD_CREATE,
+            Permissions.ENGAGE_LEAD_EDIT,
+            Permissions.ENGAGE_LEAD_ASSIGN,
+            Permissions.ENGAGE_LEAD_FOLLOW_UP,
+            Permissions.ENGAGE_WEBINAR_VIEW,
+            Permissions.ENGAGE_WEBINAR_MANAGE_REGISTRATIONS,
+            Permissions.ENGAGE_WEBINAR_RECORD_ATTENDANCE
     );
 
     private static final Set<String> DOCTOR_PERMISSIONS = Set.of(
@@ -333,13 +421,7 @@ public final class RolePermissionMappings {
             Permissions.PATIENT_DOCUMENT_UPLOAD,
             Permissions.CLINICAL_INTAKE_READ,
             Permissions.CLINICAL_INTAKE_WRITE,
-            Permissions.CAREPILOT_LEAD_READ,
-            Permissions.CAREPILOT_LEAD_CREATE,
-            Permissions.CAREPILOT_LEAD_UPDATE,
-            Permissions.CAREPILOT_LEAD_CONVERT,
-            Permissions.CAREPILOT_WEBINAR_READ,
             Permissions.AI_VOICE_TEST,
-            Permissions.CAREPILOT_WEBINAR_MANAGE,
             Permissions.ENGAGE_VIEW,
             Permissions.ENGAGE_MESSAGE_SEND,
             Permissions.ENGAGE_REMINDER_VIEW,
@@ -582,15 +664,19 @@ public final class RolePermissionMappings {
             Permissions.RECONCILIATION_EXCEPTION_READ,
             Permissions.DECISIONING_POLICY_READ,
             Permissions.DECISIONING_EXECUTION_READ,
-            Permissions.CAREPILOT_LEAD_READ,
-            Permissions.CAREPILOT_WEBINAR_READ,
             Permissions.ENGAGE_VIEW,
             Permissions.ENGAGE_CAMPAIGN_VIEW,
             Permissions.ENGAGE_REMINDER_VIEW,
             Permissions.ENGAGE_OPS_VIEW,
             Permissions.ENGAGE_ANALYTICS_VIEW,
             Permissions.ENGAGE_AUDIT_VIEW,
-            Permissions.ENGAGE_PROVIDER_VIEW
+            Permissions.ENGAGE_PROVIDER_VIEW,
+            Permissions.ENGAGE_LEAD_VIEW,
+            Permissions.ENGAGE_LEAD_VIEW_ALL,
+            Permissions.ENGAGE_LEAD_VIEW_AUDIT,
+            Permissions.ENGAGE_WEBINAR_VIEW,
+            Permissions.ENGAGE_WEBINAR_VIEW_ANALYTICS,
+            Permissions.ENGAGE_WEBINAR_VIEW_AUDIT
     );
 
     private static final Set<String> PLATFORM_TENANT_SUPPORT_PERMISSIONS = Set.of(
@@ -618,8 +704,6 @@ public final class RolePermissionMappings {
             Permissions.AI_COPILOT_READ,
             Permissions.AI_COPILOT_CLINIC_READ,
             Permissions.AI_COPILOT_RECONCILIATION_READ,
-            Permissions.CAREPILOT_LEAD_READ,
-            Permissions.CAREPILOT_WEBINAR_READ,
             Permissions.ENGAGE_VIEW,
             Permissions.ENGAGE_CAMPAIGN_VIEW,
             Permissions.ENGAGE_REMINDER_VIEW,

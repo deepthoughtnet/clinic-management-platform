@@ -632,7 +632,7 @@ public class AiReceptionistWorkflowService {
         if (phone == null || name == null) {
             return;
         }
-        var page = leadService.search(session.getTenantId(), new LeadSearchCriteria(null, null, null, null, phone, false, null, null), 0, 10);
+        var page = leadService.search(session.getTenantId(), new LeadSearchCriteria(null, null, null, null, phone, false, false, null, null), 0, 10);
         LeadRecord existing = page.getContent().stream().filter(row -> phone.equals(row.phone())).findFirst().orElse(null);
 
         String[] parts = splitName(name);

@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.api.carepilot;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
@@ -15,6 +16,7 @@ import com.deepthoughtnet.clinic.api.carepilot.dto.LeadDtos.LeadConvertRequest;
 import com.deepthoughtnet.clinic.api.carepilot.dto.LeadDtos.LeadNoteRequest;
 import com.deepthoughtnet.clinic.api.carepilot.dto.LeadDtos.LeadStatusUpdateRequest;
 import com.deepthoughtnet.clinic.api.carepilot.dto.LeadDtos.LeadUpsertRequest;
+import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
 import com.deepthoughtnet.clinic.api.security.PermissionChecker;
 import com.deepthoughtnet.clinic.carepilot.lead.activity.model.LeadActivityRecord;
 import com.deepthoughtnet.clinic.carepilot.lead.activity.model.LeadActivityType;
@@ -33,6 +35,7 @@ import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
 import com.deepthoughtnet.clinic.platform.core.context.TenantId;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -71,6 +74,7 @@ class CarePilotLeadControllerAuthorizationTest {
     @MockBean private LeadAnalyticsService analyticsService;
     @MockBean private LeadActivityService activityService;
     @MockBean private CarePilotLeadCsvService leadCsvService;
+    @MockBean private ClinicTimeZoneResolver clinicTimeZoneResolver;
 
     @AfterEach
     void tearDown() {
@@ -81,6 +85,7 @@ class CarePilotLeadControllerAuthorizationTest {
     @WithMockUser(roles = "ENGAGE_EXECUTIVE")
     void engageExecutiveCanUseLeadOperationalEndpoints() throws Exception {
         setRequestContext("ENGAGE_EXECUTIVE");
+        when(clinicTimeZoneResolver.resolve(TENANT_ID)).thenReturn(ZoneId.of("Asia/Kolkata"));
         stubLeadWorkflows();
 
         mockMvc.perform(get("/api/carepilot/leads")).andExpect(status().isOk());
@@ -116,7 +121,7 @@ class CarePilotLeadControllerAuthorizationTest {
                         .with(csrf())
                         .contentType("application/json")
                         .content("{\"bookAppointment\":false}"))
-                .andExpect(status().isOk());
+                .andExpect(status().isForbidden());
     }
 
     @Test
@@ -135,11 +140,12 @@ class CarePilotLeadControllerAuthorizationTest {
     }
 
     @Test
-    @WithMockUser(roles = "CLINIC_ADMIN")
-    void clinicAdminCanUseLeadCsvBulkEndpoints() throws Exception {
-        setRequestContext("CLINIC_ADMIN");
+    @WithMockUser(roles = "ENGAGE_MANAGER")
+    void engageManagerCanUseLeadCsvBulkEndpoints() throws Exception {
+        setRequestContext("ENGAGE_MANAGER");
+        when(clinicTimeZoneResolver.resolve(TENANT_ID)).thenReturn(ZoneId.of("Asia/Kolkata"));
         when(leadCsvService.importTemplateCsv()).thenReturn("firstName,phone\nAsha,9876543210\n");
-        when(leadCsvService.exportCsv(eq(TENANT_ID), any())).thenReturn("firstName,phone\nAsha,9876543210\n");
+        when(leadCsvService.exportCsv(eq(TENANT_ID), any(ZoneId.class), any(LeadSearchCriteria.class), any(UUID.class), anyBoolean())).thenReturn("firstName,phone\nAsha,9876543210\n");
         when(leadCsvService.importCsv(eq(TENANT_ID), any(), eq(ACTOR_ID))).thenReturn(
                 new com.deepthoughtnet.clinic.api.carepilot.dto.LeadDtos.LeadCsvImportResponse(1, 0, 0, List.of())
         );
@@ -157,14 +163,14 @@ class CarePilotLeadControllerAuthorizationTest {
     private void stubLeadWorkflows() {
         LeadRecord lead = sampleLead();
         LeadActivityRecord activity = sampleActivity();
-        when(leadService.search(eq(TENANT_ID), any(LeadSearchCriteria.class), anyInt(), anyInt()))
+        when(leadService.search(eq(TENANT_ID), any(ZoneId.class), any(LeadSearchCriteria.class), anyInt(), anyInt(), any(), anyBoolean()))
                 .thenReturn(new PageImpl<>(List.of(lead), PageRequest.of(0, 25), 1));
-        when(leadService.find(eq(TENANT_ID), eq(LEAD_ID))).thenReturn(Optional.of(lead));
+        when(leadService.requireVisibleLead(eq(TENANT_ID), eq(LEAD_ID), any(UUID.class), anyBoolean())).thenReturn(lead);
         when(leadService.create(eq(TENANT_ID), any(), eq(ACTOR_ID))).thenReturn(lead);
         when(leadService.update(eq(TENANT_ID), eq(LEAD_ID), any(), eq(ACTOR_ID))).thenReturn(lead);
         when(leadService.updateStatus(eq(TENANT_ID), eq(LEAD_ID), any(), eq(ACTOR_ID))).thenReturn(lead);
         when(leadService.addNote(eq(TENANT_ID), eq(LEAD_ID), any(), eq(ACTOR_ID))).thenReturn(lead);
-        when(conversionService.convert(eq(TENANT_ID), eq(LEAD_ID), eq(ACTOR_ID), any(), eq(false)))
+        when(conversionService.convert(eq(TENANT_ID), eq(LEAD_ID), eq(ACTOR_ID), any(), eq(false), any(UUID.class), anyBoolean()))
                 .thenReturn(new LeadConversionResult(LEAD_ID, UUID.randomUUID(), true, APPOINTMENT_ID, null));
         when(activityService.list(eq(TENANT_ID), eq(LEAD_ID), anyInt(), anyInt()))
                 .thenReturn(new PageImpl<>(List.of(activity), PageRequest.of(0, 25), 1));
@@ -233,13 +239,15 @@ class CarePilotLeadControllerAuthorizationTest {
     static class ControllerConfig {
         @Bean
         CarePilotLeadController carePilotLeadController(
-                LeadService leadService,
-                LeadConversionService conversionService,
-                LeadAnalyticsService analyticsService,
-                LeadActivityService activityService,
-                CarePilotLeadCsvService leadCsvService
+        LeadService leadService,
+        LeadConversionService conversionService,
+        LeadAnalyticsService analyticsService,
+        LeadActivityService activityService,
+        CarePilotLeadCsvService leadCsvService,
+        ClinicTimeZoneResolver clinicTimeZoneResolver,
+        PermissionChecker permissionChecker
         ) {
-            return new CarePilotLeadController(leadService, conversionService, analyticsService, activityService, leadCsvService);
+            return new CarePilotLeadController(leadService, conversionService, analyticsService, activityService, leadCsvService, clinicTimeZoneResolver, permissionChecker);
         }
     }
 

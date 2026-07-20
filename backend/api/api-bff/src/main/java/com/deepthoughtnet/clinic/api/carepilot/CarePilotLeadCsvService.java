@@ -8,6 +8,7 @@ import com.deepthoughtnet.clinic.carepilot.lead.activity.model.LeadActivityType;
 import com.deepthoughtnet.clinic.carepilot.lead.activity.service.LeadActivityService;
 import com.deepthoughtnet.clinic.carepilot.lead.db.LeadEntity;
 import com.deepthoughtnet.clinic.carepilot.lead.db.LeadRepository;
+import com.deepthoughtnet.clinic.carepilot.lead.model.LeadPresentationLabels;
 import com.deepthoughtnet.clinic.carepilot.lead.model.LeadPriority;
 import com.deepthoughtnet.clinic.carepilot.lead.model.LeadRecord;
 import com.deepthoughtnet.clinic.carepilot.lead.model.LeadSearchCriteria;
@@ -24,6 +25,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.time.ZoneId;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -44,9 +46,13 @@ import org.springframework.util.StringUtils;
 
 @Service
 public class CarePilotLeadCsvService {
-    private static final String[] CSV_HEADERS = {
+    private static final String[] IMPORT_HEADERS = {
             "firstName", "lastName", "phone", "email", "source", "status", "priority", "campaignName",
             "assignedToEmail", "nextFollowUpAt", "sourceDetails", "tags", "notes"
+    };
+    private static final String[] EXPORT_HEADERS = {
+            "firstName", "lastName", "phone", "email", "source", "status", "priority", "campaignName",
+            "assignedTo", "nextFollowUpAt", "sourceDetails", "tags", "notes"
     };
 
     private final LeadService leadService;
@@ -145,7 +151,7 @@ public class CarePilotLeadCsvService {
     @Transactional(readOnly = true)
     public String importTemplateCsv() throws IOException {
         try (StringWriter writer = new StringWriter();
-             CSVPrinter printer = new CSVPrinter(writer, CSVFormat.DEFAULT.builder().setHeader(CSV_HEADERS).build())) {
+             CSVPrinter printer = new CSVPrinter(writer, CSVFormat.DEFAULT.builder().setHeader(IMPORT_HEADERS).build())) {
             printer.printRecord(
                     "Ava",
                     "Smith",
@@ -167,24 +173,29 @@ public class CarePilotLeadCsvService {
     }
 
     @Transactional(readOnly = true)
-    public String exportCsv(UUID tenantId, LeadSearchCriteria criteria) throws IOException {
-        List<LeadRecord> rows = leadService.searchAll(tenantId, criteria);
+    public String exportCsv(UUID tenantId, ZoneId tenantZone, LeadSearchCriteria criteria) throws IOException {
+        return exportCsv(tenantId, tenantZone, criteria, null, true);
+    }
+
+    @Transactional(readOnly = true)
+    public String exportCsv(UUID tenantId, ZoneId tenantZone, LeadSearchCriteria criteria, UUID viewerAppUserId, boolean viewAll) throws IOException {
+        List<LeadRecord> rows = leadService.searchAll(tenantId, tenantZone, criteria, viewerAppUserId, viewAll);
         Map<UUID, String> campaignNames = campaignNamesById(tenantId);
-        Map<UUID, String> userEmails = userEmailsById(tenantId);
+        Map<UUID, String> userLabels = userLabelsById(tenantId);
         try (StringWriter writer = new StringWriter();
-             CSVPrinter printer = new CSVPrinter(writer, CSVFormat.DEFAULT.builder().setHeader(CSV_HEADERS).build())) {
+             CSVPrinter printer = new CSVPrinter(writer, CSVFormat.DEFAULT.builder().setHeader(EXPORT_HEADERS).build())) {
             for (LeadRecord row : rows) {
                 printer.printRecord(
                         safe(row.firstName()),
                         safe(row.lastName()),
                         safe(row.phone()),
                         safe(row.email()),
-                        row.source() == null ? "" : row.source().name(),
-                        row.status() == null ? "" : row.status().name(),
-                        row.priority() == null ? "" : row.priority().name(),
+                        LeadPresentationLabels.sourceLabel(row.source()),
+                        LeadPresentationLabels.statusLabel(row.status()),
+                        LeadPresentationLabels.priorityLabel(row.priority()),
                         safe(campaignNames.get(row.campaignId())),
-                        safe(userEmails.get(row.assignedToAppUserId())),
-                        row.nextFollowUpAt() == null ? "" : row.nextFollowUpAt().toString(),
+                        assigneeLabel(row.assignedToAppUserId(), userLabels),
+                        LeadPresentationLabels.formatDateTime(row.nextFollowUpAt(), tenantZone),
                         safe(row.sourceDetails()),
                         safe(row.tags()),
                         safe(row.notes())
@@ -293,12 +304,36 @@ public class CarePilotLeadCsvService {
         return users;
     }
 
-    private Map<UUID, String> userEmailsById(UUID tenantId) {
+    private Map<UUID, String> userLabelsById(UUID tenantId) {
         Map<UUID, String> users = new LinkedHashMap<>();
         for (TenantUserRecord user : tenantUserManagementService.list(tenantId)) {
-            users.put(user.appUserId(), user.email());
+            users.put(user.appUserId(), userLabel(user));
         }
         return users;
+    }
+
+    private String assigneeLabel(UUID assignedToAppUserId, Map<UUID, String> userLabels) {
+        if (assignedToAppUserId == null) {
+            return "Unassigned";
+        }
+        String label = userLabels.get(assignedToAppUserId);
+        return StringUtils.hasText(label) ? label : "Unavailable user";
+    }
+
+    private String userLabel(TenantUserRecord user) {
+        if (user == null) {
+            return null;
+        }
+        String displayName = normalizeNullable(user.displayName());
+        if (StringUtils.hasText(displayName)) {
+            return displayName;
+        }
+        String username = normalizeNullable(user.username());
+        if (StringUtils.hasText(username)) {
+            return username;
+        }
+        String employeeCode = normalizeNullable(user.employeeCode());
+        return StringUtils.hasText(employeeCode) ? employeeCode : null;
     }
 
     private <E extends Enum<E>> E parseEnum(String raw, Class<E> type, E defaultValue, String label, int rowNumber) {

@@ -23,6 +23,7 @@ import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
 import com.deepthoughtnet.clinic.patient.service.model.PatientGender;
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -109,7 +110,7 @@ class CarePilotLeadCsvServiceTest {
                 OffsetDateTime.now(),
                 "EXISTING"
         )));
-        when(leadService.searchAll(eq(tenantId), any(LeadSearchCriteria.class))).thenReturn(List.of(new LeadRecord(
+        when(leadService.searchAll(eq(tenantId), any(ZoneId.class), any(LeadSearchCriteria.class))).thenReturn(List.of(new LeadRecord(
                 UUID.randomUUID(),
                 tenantId,
                 "Ava",
@@ -130,7 +131,7 @@ class CarePilotLeadCsvServiceTest {
                 null,
                 null,
                 null,
-                null,
+                OffsetDateTime.parse("2026-08-02T05:30:00Z"),
                 null,
                 actorId,
                 actorId,
@@ -138,10 +139,13 @@ class CarePilotLeadCsvServiceTest {
                 OffsetDateTime.now()
         )));
 
-        String csv = service.exportCsv(tenantId, new LeadSearchCriteria(null, null, null, null, null, false, null, null));
+        String csv = service.exportCsv(tenantId, ZoneId.of("Asia/Kolkata"), new LeadSearchCriteria(null, null, null, null, null, false, false, null, null));
 
-        assertThat(csv).contains("campaignName").contains("assignedToEmail");
-        assertThat(csv).contains("Spring Webinar").contains("owner@example.com");
+        assertThat(csv).contains("campaignName").contains("assignedTo");
+        assertThat(csv).contains("Spring Webinar").contains("Owner");
+        assertThat(csv).contains("Webinar").contains("New").contains("Medium");
+        assertThat(csv).contains("02 Aug 2026, 11:00 AM IST (UTC+05:30)");
+        assertThat(csv).doesNotContain("WEBINAR,NEW,MEDIUM");
     }
 
     @Test

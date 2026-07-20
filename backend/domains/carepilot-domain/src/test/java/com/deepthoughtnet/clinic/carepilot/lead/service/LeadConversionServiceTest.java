@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -76,6 +77,27 @@ class LeadConversionServiceTest {
         assertThat(result.newlyCreated()).isFalse();
         assertThat(result.patientId()).isEqualTo(existing.getId());
         assertThat(lead.getStatus()).isEqualTo(LeadStatus.CONVERTED);
+    }
+
+    @Test
+    void conversionLinksExistingPatientWhenEmailMatches() {
+        LeadEntity lead = LeadEntity.create(tenantId, actorId);
+        lead.setFirstName("Amy");
+        lead.setPhone("+15550999");
+        lead.setEmail("amy@example.com");
+        lead.setSource(LeadSource.MANUAL);
+        when(leadRepository.findByTenantIdAndId(tenantId, lead.getId())).thenReturn(Optional.of(lead));
+        when(patientRepository.findFirstByTenantIdAndMobileIgnoreCaseAndActiveTrue(tenantId, "+15550999")).thenReturn(Optional.empty());
+
+        PatientEntity existing = PatientEntity.create(tenantId, "PAT-EMAIL");
+        existing.update("Amy", "", PatientGender.FEMALE, null, null, "+15550000", "amy@example.com", null, null, null, null, null, null, null, null, null, null, null, null, null, null, true);
+        when(patientRepository.findFirstByTenantIdAndEmailIgnoreCaseAndActiveTrue(tenantId, "amy@example.com")).thenReturn(Optional.of(existing));
+
+        var result = service.convert(tenantId, lead.getId(), actorId, null, false);
+
+        assertThat(result.newlyCreated()).isFalse();
+        assertThat(result.patientId()).isEqualTo(existing.getId());
+        verify(patientService, never()).create(any(), any(), any());
     }
 
     @Test
@@ -185,5 +207,35 @@ class LeadConversionServiceTest {
         assertThat(lead.getStatus()).isEqualTo(LeadStatus.CONVERTED);
         verify(appointmentService).validateScheduledBookingRequest(eq(tenantId), any(), any(), any(), any(), any(), eq(false));
         verify(leadService).linkAppointment(tenantId, lead.getId(), appointmentId, actorId);
+    }
+
+    @Test
+    void conversionClearsPendingFollowUpAndIsIdempotent() {
+        LeadEntity lead = LeadEntity.create(tenantId, actorId);
+        lead.setFirstName("Eve");
+        lead.setPhone("+15556666");
+        lead.setSource(LeadSource.WEBSITE);
+        lead.setNextFollowUpAt(OffsetDateTime.parse("2026-07-20T10:30:00+05:30"));
+        when(leadRepository.findByTenantIdAndId(tenantId, lead.getId())).thenReturn(Optional.of(lead));
+        when(patientRepository.findFirstByTenantIdAndMobileIgnoreCaseAndActiveTrue(tenantId, "+15556666")).thenReturn(Optional.empty());
+
+        UUID patientId = UUID.randomUUID();
+        when(patientService.create(any(), any(), any())).thenReturn(new PatientRecord(
+                patientId, tenantId, "PAT-Z", "Eve", "", PatientGender.UNKNOWN, null, null, "+15556666", null,
+                null, null, null, null, null, null, null, null, null, null, null, null, null, null, true,
+                OffsetDateTime.now(), OffsetDateTime.now()
+        ));
+
+        var first = service.convert(tenantId, lead.getId(), actorId, null, false);
+        var second = service.convert(tenantId, lead.getId(), actorId, null, false);
+
+        assertThat(first.newlyCreated()).isTrue();
+        assertThat(first.patientId()).isEqualTo(patientId);
+        assertThat(second.newlyCreated()).isFalse();
+        assertThat(second.patientId()).isEqualTo(patientId);
+        assertThat(lead.getStatus()).isEqualTo(LeadStatus.CONVERTED);
+        assertThat(lead.getNextFollowUpAt()).isNull();
+        verify(activityService, times(2)).record(any(), any(), any(), any(), any(), any(), any(), any(), any(), eq(actorId));
+        verify(leadRepository, times(1)).save(lead);
     }
 }

@@ -116,3 +116,24 @@ export function humanizeCarePilotCode(value: string | null | undefined) {
     .toLowerCase()
     .replace(/(^|\s)\w/g, (match) => match.toUpperCase());
 }
+
+export function formatCarePilotAssigneeLabel(
+  user: { displayName?: string | null; username?: string | null } | null | undefined,
+  assignedToAppUserId?: string | null
+) {
+  if (!assignedToAppUserId) {
+    return "Unassigned";
+  }
+  if (!user) {
+    return "Unavailable user";
+  }
+  const displayName = user.displayName?.trim();
+  if (displayName) {
+    return displayName;
+  }
+  const username = user.username?.trim();
+  if (username) {
+    return username;
+  }
+  return "Unavailable user";
+}

@@ -16,6 +16,6 @@ public enum LeadStatus {
     }
 
     public boolean isActivePipeline() {
-        return this != LOST && this != SPAM;
+        return !isTerminal();
     }
 }

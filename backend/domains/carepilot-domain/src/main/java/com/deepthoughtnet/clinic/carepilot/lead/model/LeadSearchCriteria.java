@@ -11,6 +11,7 @@ public record LeadSearchCriteria(
         LeadPriority priority,
         String search,
         boolean followUpDueOnly,
+        boolean pipelineOnly,
         LocalDate createdFrom,
         LocalDate createdTo
 ) {}

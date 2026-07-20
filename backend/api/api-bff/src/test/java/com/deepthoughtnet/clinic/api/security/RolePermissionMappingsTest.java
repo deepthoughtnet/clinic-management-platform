@@ -99,14 +99,29 @@ class RolePermissionMappingsTest {
                 Permissions.ENGAGE_CAMPAIGN_VIEW,
                 Permissions.ENGAGE_CAMPAIGN_MANAGE,
                 Permissions.ENGAGE_TEMPLATE_MANAGE,
-                Permissions.ENGAGE_LEADS_BULK_MANAGE,
                 Permissions.ENGAGE_AUDIENCE_MANAGE,
                 Permissions.ENGAGE_REMINDER_VIEW,
                 Permissions.ENGAGE_REMINDER_OPERATE,
                 Permissions.ENGAGE_RECEPTION_OPERATE,
                 Permissions.ENGAGE_ANALYTICS_VIEW,
-                Permissions.ENGAGE_LEADS_OPERATE,
-                Permissions.ENGAGE_WEBINAR_MANAGE,
+                Permissions.ENGAGE_LEAD_VIEW,
+                Permissions.ENGAGE_LEAD_VIEW_ALL,
+                Permissions.ENGAGE_LEAD_CREATE,
+                Permissions.ENGAGE_LEAD_EDIT,
+                Permissions.ENGAGE_LEAD_ASSIGN,
+                Permissions.ENGAGE_LEAD_FOLLOW_UP,
+                Permissions.ENGAGE_LEAD_CONVERT,
+                Permissions.ENGAGE_LEAD_BOOK_APPOINTMENT,
+                Permissions.ENGAGE_LEAD_IMPORT,
+                Permissions.ENGAGE_LEAD_EXPORT,
+                Permissions.ENGAGE_WEBINAR_VIEW,
+                Permissions.ENGAGE_WEBINAR_CREATE,
+                Permissions.ENGAGE_WEBINAR_EDIT,
+                Permissions.ENGAGE_WEBINAR_PUBLISH,
+                Permissions.ENGAGE_WEBINAR_CANCEL,
+                Permissions.ENGAGE_WEBINAR_MANAGE_REGISTRATIONS,
+                Permissions.ENGAGE_WEBINAR_RECORD_ATTENDANCE,
+                Permissions.ENGAGE_WEBINAR_VIEW_ANALYTICS,
                 Permissions.ENGAGE_AI_OPERATE,
                 Permissions.USER_READ
         );
@@ -144,17 +159,33 @@ class RolePermissionMappingsTest {
                 Permissions.ENGAGE_REMINDER_VIEW,
                 Permissions.ENGAGE_REMINDER_OPERATE,
                 Permissions.ENGAGE_RECEPTION_OPERATE,
-                Permissions.ENGAGE_LEADS_OPERATE,
+                Permissions.ENGAGE_LEAD_VIEW,
+                Permissions.ENGAGE_LEAD_CREATE,
+                Permissions.ENGAGE_LEAD_EDIT,
+                Permissions.ENGAGE_LEAD_ASSIGN,
+                Permissions.ENGAGE_LEAD_FOLLOW_UP,
+                Permissions.ENGAGE_WEBINAR_VIEW,
+                Permissions.ENGAGE_WEBINAR_MANAGE_REGISTRATIONS,
+                Permissions.ENGAGE_WEBINAR_RECORD_ATTENDANCE,
                 Permissions.USER_READ
         );
         assertThat(permissions).doesNotContain(
                 Permissions.ENGAGE_CAMPAIGN_MANAGE,
                 Permissions.ENGAGE_CAMPAIGN_ACTIVATE,
-                Permissions.ENGAGE_LEADS_BULK_MANAGE,
                 Permissions.ENGAGE_TEMPLATE_MANAGE,
                 Permissions.ENGAGE_PROVIDER_ADMIN,
                 Permissions.USER_MANAGE,
-                Permissions.ENGAGE_ANALYTICS_VIEW
+                Permissions.ENGAGE_ANALYTICS_VIEW,
+                Permissions.ENGAGE_LEAD_VIEW_ALL,
+                Permissions.ENGAGE_LEAD_CONVERT,
+                Permissions.ENGAGE_LEAD_BOOK_APPOINTMENT,
+                Permissions.ENGAGE_LEAD_IMPORT,
+                Permissions.ENGAGE_LEAD_EXPORT,
+                Permissions.ENGAGE_WEBINAR_CREATE,
+                Permissions.ENGAGE_WEBINAR_EDIT,
+                Permissions.ENGAGE_WEBINAR_CANCEL,
+                Permissions.ENGAGE_WEBINAR_PUBLISH,
+                Permissions.ENGAGE_WEBINAR_RUN_AUTOMATION
         );
     }
 
@@ -388,16 +419,90 @@ class RolePermissionMappingsTest {
     @Test
     void carePilotLeadPermissionsFollowOperationalRoleModel() {
         Set<String> clinicAdmin = RolePermissionMappings.permissionsForRole(Roles.CLINIC_ADMIN);
+        Set<String> engageManager = RolePermissionMappings.permissionsForRole(Roles.ENGAGE_MANAGER);
+        Set<String> engageExecutive = RolePermissionMappings.permissionsForRole(Roles.ENGAGE_EXECUTIVE);
         Set<String> receptionist = RolePermissionMappings.permissionsForRole(Roles.RECEPTIONIST);
         Set<String> auditor = RolePermissionMappings.permissionsForRole(Roles.AUDITOR);
         Set<String> doctor = RolePermissionMappings.permissionsForRole(Roles.DOCTOR);
         Set<String> billing = RolePermissionMappings.permissionsForRole(Roles.BILLING_USER);
 
-        assertThat(clinicAdmin).contains(Permissions.CAREPILOT_LEAD_READ, Permissions.CAREPILOT_LEAD_CREATE, Permissions.CAREPILOT_LEAD_UPDATE, Permissions.CAREPILOT_LEAD_CONVERT);
-        assertThat(receptionist).contains(Permissions.CAREPILOT_LEAD_READ, Permissions.CAREPILOT_LEAD_CREATE, Permissions.CAREPILOT_LEAD_UPDATE, Permissions.CAREPILOT_LEAD_CONVERT);
-        assertThat(auditor).contains(Permissions.CAREPILOT_LEAD_READ);
-        assertThat(doctor).doesNotContain(Permissions.CAREPILOT_LEAD_READ, Permissions.CAREPILOT_LEAD_CREATE, Permissions.CAREPILOT_LEAD_UPDATE, Permissions.CAREPILOT_LEAD_CONVERT);
-        assertThat(billing).doesNotContain(Permissions.CAREPILOT_LEAD_READ, Permissions.CAREPILOT_LEAD_CREATE, Permissions.CAREPILOT_LEAD_UPDATE, Permissions.CAREPILOT_LEAD_CONVERT);
+        assertThat(clinicAdmin).contains(
+                Permissions.ENGAGE_LEAD_VIEW,
+                Permissions.ENGAGE_LEAD_VIEW_ALL,
+                Permissions.ENGAGE_LEAD_CREATE,
+                Permissions.ENGAGE_LEAD_EDIT,
+                Permissions.ENGAGE_LEAD_ASSIGN,
+                Permissions.ENGAGE_LEAD_FOLLOW_UP,
+                Permissions.ENGAGE_LEAD_CONVERT,
+                Permissions.ENGAGE_LEAD_BOOK_APPOINTMENT,
+                Permissions.ENGAGE_LEAD_IMPORT,
+                Permissions.ENGAGE_LEAD_EXPORT,
+                Permissions.ENGAGE_LEAD_VIEW_AUDIT
+        );
+        assertThat(engageManager).contains(
+                Permissions.ENGAGE_LEAD_VIEW,
+                Permissions.ENGAGE_LEAD_VIEW_ALL,
+                Permissions.ENGAGE_LEAD_CREATE,
+                Permissions.ENGAGE_LEAD_EDIT,
+                Permissions.ENGAGE_LEAD_ASSIGN,
+                Permissions.ENGAGE_LEAD_FOLLOW_UP,
+                Permissions.ENGAGE_LEAD_CONVERT,
+                Permissions.ENGAGE_LEAD_BOOK_APPOINTMENT,
+                Permissions.ENGAGE_LEAD_IMPORT,
+                Permissions.ENGAGE_LEAD_EXPORT,
+                Permissions.ENGAGE_LEAD_VIEW_AUDIT
+        );
+        assertThat(engageExecutive).contains(
+                Permissions.ENGAGE_LEAD_VIEW,
+                Permissions.ENGAGE_LEAD_CREATE,
+                Permissions.ENGAGE_LEAD_EDIT,
+                Permissions.ENGAGE_LEAD_ASSIGN,
+                Permissions.ENGAGE_LEAD_FOLLOW_UP
+        );
+        assertThat(receptionist).doesNotContain(
+                Permissions.ENGAGE_LEAD_VIEW,
+                Permissions.ENGAGE_LEAD_VIEW_ALL,
+                Permissions.ENGAGE_LEAD_CREATE,
+                Permissions.ENGAGE_LEAD_EDIT,
+                Permissions.ENGAGE_LEAD_ASSIGN,
+                Permissions.ENGAGE_LEAD_FOLLOW_UP,
+                Permissions.ENGAGE_LEAD_CONVERT,
+                Permissions.ENGAGE_LEAD_BOOK_APPOINTMENT,
+                Permissions.ENGAGE_LEAD_IMPORT,
+                Permissions.ENGAGE_LEAD_EXPORT,
+                Permissions.ENGAGE_LEAD_VIEW_AUDIT
+        );
+        assertThat(auditor).contains(
+                Permissions.ENGAGE_LEAD_VIEW,
+                Permissions.ENGAGE_LEAD_VIEW_ALL,
+                Permissions.ENGAGE_LEAD_VIEW_AUDIT
+        );
+        assertThat(doctor).doesNotContain(
+                Permissions.ENGAGE_LEAD_VIEW,
+                Permissions.ENGAGE_LEAD_VIEW_ALL,
+                Permissions.ENGAGE_LEAD_CREATE,
+                Permissions.ENGAGE_LEAD_EDIT,
+                Permissions.ENGAGE_LEAD_ASSIGN,
+                Permissions.ENGAGE_LEAD_FOLLOW_UP,
+                Permissions.ENGAGE_LEAD_CONVERT,
+                Permissions.ENGAGE_LEAD_BOOK_APPOINTMENT,
+                Permissions.ENGAGE_LEAD_IMPORT,
+                Permissions.ENGAGE_LEAD_EXPORT,
+                Permissions.ENGAGE_LEAD_VIEW_AUDIT
+        );
+        assertThat(billing).doesNotContain(
+                Permissions.ENGAGE_LEAD_VIEW,
+                Permissions.ENGAGE_LEAD_VIEW_ALL,
+                Permissions.ENGAGE_LEAD_CREATE,
+                Permissions.ENGAGE_LEAD_EDIT,
+                Permissions.ENGAGE_LEAD_ASSIGN,
+                Permissions.ENGAGE_LEAD_FOLLOW_UP,
+                Permissions.ENGAGE_LEAD_CONVERT,
+                Permissions.ENGAGE_LEAD_BOOK_APPOINTMENT,
+                Permissions.ENGAGE_LEAD_IMPORT,
+                Permissions.ENGAGE_LEAD_EXPORT,
+                Permissions.ENGAGE_LEAD_VIEW_AUDIT
+        );
     }
 
     @Test
@@ -442,15 +547,82 @@ class RolePermissionMappingsTest {
     @Test
     void carePilotWebinarPermissionsFollowOperationalRoleModel() {
         Set<String> clinicAdmin = RolePermissionMappings.permissionsForRole(Roles.CLINIC_ADMIN);
+        Set<String> engageManager = RolePermissionMappings.permissionsForRole(Roles.ENGAGE_MANAGER);
+        Set<String> engageExecutive = RolePermissionMappings.permissionsForRole(Roles.ENGAGE_EXECUTIVE);
         Set<String> receptionist = RolePermissionMappings.permissionsForRole(Roles.RECEPTIONIST);
         Set<String> auditor = RolePermissionMappings.permissionsForRole(Roles.AUDITOR);
         Set<String> doctor = RolePermissionMappings.permissionsForRole(Roles.DOCTOR);
         Set<String> billing = RolePermissionMappings.permissionsForRole(Roles.BILLING_USER);
 
-        assertThat(clinicAdmin).contains(Permissions.CAREPILOT_WEBINAR_READ, Permissions.CAREPILOT_WEBINAR_MANAGE);
-        assertThat(receptionist).contains(Permissions.CAREPILOT_WEBINAR_READ, Permissions.CAREPILOT_WEBINAR_MANAGE);
-        assertThat(auditor).contains(Permissions.CAREPILOT_WEBINAR_READ);
-        assertThat(doctor).doesNotContain(Permissions.CAREPILOT_WEBINAR_READ, Permissions.CAREPILOT_WEBINAR_MANAGE);
-        assertThat(billing).doesNotContain(Permissions.CAREPILOT_WEBINAR_READ, Permissions.CAREPILOT_WEBINAR_MANAGE);
+        assertThat(clinicAdmin).contains(
+                Permissions.ENGAGE_WEBINAR_VIEW,
+                Permissions.ENGAGE_WEBINAR_CREATE,
+                Permissions.ENGAGE_WEBINAR_EDIT,
+                Permissions.ENGAGE_WEBINAR_PUBLISH,
+                Permissions.ENGAGE_WEBINAR_CANCEL,
+                Permissions.ENGAGE_WEBINAR_MANAGE_REGISTRATIONS,
+                Permissions.ENGAGE_WEBINAR_RECORD_ATTENDANCE,
+                Permissions.ENGAGE_WEBINAR_VIEW_ANALYTICS,
+                Permissions.ENGAGE_WEBINAR_VIEW_AUDIT
+        );
+        assertThat(engageManager).contains(
+                Permissions.ENGAGE_WEBINAR_VIEW,
+                Permissions.ENGAGE_WEBINAR_CREATE,
+                Permissions.ENGAGE_WEBINAR_EDIT,
+                Permissions.ENGAGE_WEBINAR_PUBLISH,
+                Permissions.ENGAGE_WEBINAR_CANCEL,
+                Permissions.ENGAGE_WEBINAR_MANAGE_REGISTRATIONS,
+                Permissions.ENGAGE_WEBINAR_RECORD_ATTENDANCE,
+                Permissions.ENGAGE_WEBINAR_VIEW_ANALYTICS
+        );
+        assertThat(engageExecutive).contains(
+                Permissions.ENGAGE_WEBINAR_VIEW,
+                Permissions.ENGAGE_WEBINAR_MANAGE_REGISTRATIONS,
+                Permissions.ENGAGE_WEBINAR_RECORD_ATTENDANCE
+        );
+        assertThat(receptionist).doesNotContain(
+                Permissions.ENGAGE_WEBINAR_VIEW,
+                Permissions.ENGAGE_WEBINAR_CREATE,
+                Permissions.ENGAGE_WEBINAR_EDIT,
+                Permissions.ENGAGE_WEBINAR_PUBLISH,
+                Permissions.ENGAGE_WEBINAR_CANCEL,
+                Permissions.ENGAGE_WEBINAR_MANAGE_REGISTRATIONS,
+                Permissions.ENGAGE_WEBINAR_RECORD_ATTENDANCE,
+                Permissions.ENGAGE_WEBINAR_RUN_AUTOMATION,
+                Permissions.ENGAGE_WEBINAR_EXPORT,
+                Permissions.ENGAGE_WEBINAR_VIEW_ANALYTICS,
+                Permissions.ENGAGE_WEBINAR_VIEW_AUDIT
+        );
+        assertThat(auditor).contains(
+                Permissions.ENGAGE_WEBINAR_VIEW,
+                Permissions.ENGAGE_WEBINAR_VIEW_ANALYTICS,
+                Permissions.ENGAGE_WEBINAR_VIEW_AUDIT
+        );
+        assertThat(doctor).doesNotContain(
+                Permissions.ENGAGE_WEBINAR_VIEW,
+                Permissions.ENGAGE_WEBINAR_CREATE,
+                Permissions.ENGAGE_WEBINAR_EDIT,
+                Permissions.ENGAGE_WEBINAR_PUBLISH,
+                Permissions.ENGAGE_WEBINAR_CANCEL,
+                Permissions.ENGAGE_WEBINAR_MANAGE_REGISTRATIONS,
+                Permissions.ENGAGE_WEBINAR_RECORD_ATTENDANCE,
+                Permissions.ENGAGE_WEBINAR_RUN_AUTOMATION,
+                Permissions.ENGAGE_WEBINAR_EXPORT,
+                Permissions.ENGAGE_WEBINAR_VIEW_ANALYTICS,
+                Permissions.ENGAGE_WEBINAR_VIEW_AUDIT
+        );
+        assertThat(billing).doesNotContain(
+                Permissions.ENGAGE_WEBINAR_VIEW,
+                Permissions.ENGAGE_WEBINAR_CREATE,
+                Permissions.ENGAGE_WEBINAR_EDIT,
+                Permissions.ENGAGE_WEBINAR_PUBLISH,
+                Permissions.ENGAGE_WEBINAR_CANCEL,
+                Permissions.ENGAGE_WEBINAR_MANAGE_REGISTRATIONS,
+                Permissions.ENGAGE_WEBINAR_RECORD_ATTENDANCE,
+                Permissions.ENGAGE_WEBINAR_RUN_AUTOMATION,
+                Permissions.ENGAGE_WEBINAR_EXPORT,
+                Permissions.ENGAGE_WEBINAR_VIEW_ANALYTICS,
+                Permissions.ENGAGE_WEBINAR_VIEW_AUDIT
+        );
     }
 }

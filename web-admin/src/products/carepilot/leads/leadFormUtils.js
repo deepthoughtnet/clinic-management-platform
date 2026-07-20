@@ -1,5 +1,6 @@
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DATETIME_LOCAL_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/;
+const LEAD_PHONE_MESSAGE = "Enter a valid 10-digit mobile number.";
 
 function trimmed(value) {
   return typeof value === "string" ? value.trim() : "";
@@ -54,7 +55,7 @@ export function validateLeadDraft(draft, clinicUsers = []) {
     fieldErrors.firstName = "First name is required.";
   }
   if (!/^[6-9]\d{9}$/.test(normalizedPhone)) {
-    fieldErrors.phone = "Enter a valid 10-digit mobile number.";
+    fieldErrors.phone = LEAD_PHONE_MESSAGE;
   }
   if (trimmedEmail && !EMAIL_RE.test(trimmedEmail)) {
     fieldErrors.email = "Enter a valid email address.";
@@ -115,7 +116,7 @@ export function mapLeadApiErrorToFieldErrors(message) {
 
     const lower = fragment.toLowerCase();
     if (lower.includes("mobile number") || lower.includes("phone")) {
-      fieldErrors.phone = "Enter a valid 10-digit mobile number.";
+      fieldErrors.phone = LEAD_PHONE_MESSAGE;
     } else if (lower.includes("email")) {
       fieldErrors.email = "Enter a valid email address.";
     } else if (lower.includes("follow up") || lower.includes("follow-up")) {
@@ -152,7 +153,7 @@ function normalizeFieldName(field) {
 function resolveFieldMessage(field, message) {
   const lower = String(message || "").toLowerCase();
   if (field === "phone" || lower.includes("mobile number")) {
-    return "Enter a valid 10-digit mobile number.";
+    return LEAD_PHONE_MESSAGE;
   }
   if (field === "email" || lower.includes("email")) {
     return "Enter a valid email address.";

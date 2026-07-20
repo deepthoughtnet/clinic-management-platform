@@ -17,11 +17,13 @@ import com.deepthoughtnet.clinic.carepilot.webinar.registration.WebinarAttendanc
 import com.deepthoughtnet.clinic.carepilot.webinar.registration.WebinarRegistrationCommand;
 import com.deepthoughtnet.clinic.carepilot.webinar.registration.WebinarRegistrationService;
 import com.deepthoughtnet.clinic.carepilot.webinar.service.WebinarService;
+import com.deepthoughtnet.clinic.api.security.PermissionChecker;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.time.LocalDate;
 import java.util.UUID;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -40,19 +42,22 @@ public class CarePilotWebinarController {
     private final WebinarService webinarService;
     private final WebinarRegistrationService registrationService;
     private final WebinarAnalyticsService analyticsService;
+    private final PermissionChecker permissionChecker;
 
     public CarePilotWebinarController(
             WebinarService webinarService,
             WebinarRegistrationService registrationService,
-            WebinarAnalyticsService analyticsService
+            WebinarAnalyticsService analyticsService,
+            PermissionChecker permissionChecker
     ) {
         this.webinarService = webinarService;
         this.registrationService = registrationService;
         this.analyticsService = analyticsService;
+        this.permissionChecker = permissionChecker;
     }
 
     @GetMapping
-    @PreAuthorize("@permissionChecker.hasPermission('engage.webinar.manage')")
+    @PreAuthorize("@permissionChecker.hasAnyPermission('engage.webinar.view','engage.webinar.view.audit','engage.webinar.view.analytics')")
     public WebinarListResponse list(
             @RequestParam(required = false) com.deepthoughtnet.clinic.carepilot.webinar.model.WebinarStatus status,
             @RequestParam(required = false) com.deepthoughtnet.clinic.carepilot.webinar.model.WebinarType webinarType,
@@ -69,7 +74,7 @@ public class CarePilotWebinarController {
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("@permissionChecker.hasPermission('engage.webinar.manage')")
+    @PreAuthorize("@permissionChecker.hasAnyPermission('engage.webinar.view','engage.webinar.view.audit','engage.webinar.view.analytics')")
     public WebinarResponse get(@PathVariable UUID id) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return toResponse(webinarService.find(tenantId, id).orElseThrow(() -> new IllegalArgumentException("Webinar not found")));
@@ -77,7 +82,7 @@ public class CarePilotWebinarController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    @PreAuthorize("@permissionChecker.hasPermission('engage.webinar.manage')")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.webinar.create')")
     public WebinarResponse create(@RequestBody WebinarUpsertRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actor = RequestContextHolder.require().appUserId();
@@ -85,7 +90,7 @@ public class CarePilotWebinarController {
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("@permissionChecker.hasPermission('engage.webinar.manage')")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.webinar.edit')")
     public WebinarResponse update(@PathVariable UUID id, @RequestBody WebinarUpsertRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actor = RequestContextHolder.require().appUserId();
@@ -93,15 +98,16 @@ public class CarePilotWebinarController {
     }
 
     @PostMapping("/{id}/status")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('RECEPTIONIST') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasAnyPermission('engage.webinar.publish','engage.webinar.cancel','engage.webinar.edit')")
     public WebinarResponse updateStatus(@PathVariable UUID id, @RequestBody WebinarStatusUpdateRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actor = RequestContextHolder.require().appUserId();
+        requireStatusPermission(request);
         return toResponse(webinarService.updateStatus(tenantId, id, request == null ? null : request.status(), actor));
     }
 
     @GetMapping("/{id}/registrations")
-    @PreAuthorize("@permissionChecker.hasPermission('engage.webinar.manage')")
+    @PreAuthorize("@permissionChecker.hasAnyPermission('engage.webinar.manage.registrations','engage.webinar.view','engage.webinar.view.audit')")
     public WebinarRegistrationListResponse registrations(@PathVariable UUID id, @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "25") int size) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         var rows = registrationService.list(tenantId, id, page, size);
@@ -113,7 +119,7 @@ public class CarePilotWebinarController {
 
     @PostMapping("/{id}/register")
     @ResponseStatus(HttpStatus.CREATED)
-    @PreAuthorize("@permissionChecker.hasPermission('engage.webinar.manage')")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.webinar.manage.registrations')")
     public WebinarRegistrationResponse register(@PathVariable UUID id, @RequestBody WebinarRegistrationRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorId = RequestContextHolder.require().appUserId();
@@ -133,7 +139,7 @@ public class CarePilotWebinarController {
     }
 
     @PostMapping("/{id}/attendance")
-    @PreAuthorize("@permissionChecker.hasPermission('engage.webinar.manage')")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.webinar.record.attendance')")
     public WebinarRegistrationResponse attendance(@PathVariable UUID id, @RequestBody WebinarAttendanceRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         if (request == null || request.registrationId() == null) {
@@ -147,7 +153,7 @@ public class CarePilotWebinarController {
     }
 
     @GetMapping("/analytics/summary")
-    @PreAuthorize("@permissionChecker.hasPermission('engage.webinar.manage')")
+    @PreAuthorize("@permissionChecker.hasAnyPermission('engage.webinar.view.analytics','engage.webinar.view.audit')")
     public WebinarAnalyticsSummaryResponse analytics() {
         UUID tenantId = RequestContextHolder.requireTenantId();
         var row = analyticsService.summary(tenantId);
@@ -174,5 +180,20 @@ public class CarePilotWebinarController {
                 row.scheduledStartAt(), row.scheduledEndAt(), row.timezone(), row.capacity(), row.registrationEnabled(), row.reminderEnabled(), row.followupEnabled(),
                 row.tags(), row.createdBy(), row.updatedBy(), row.createdAt(), row.updatedAt()
         );
+    }
+
+    private void requireStatusPermission(WebinarStatusUpdateRequest request) {
+        if (request == null || request.status() == null) {
+            throw new IllegalArgumentException("status is required");
+        }
+        if (request.status() == com.deepthoughtnet.clinic.carepilot.webinar.model.WebinarStatus.CANCELLED) {
+            if (!permissionChecker.hasPermission("engage.webinar.cancel")) {
+                throw new AccessDeniedException("Webinar cancel permission is required");
+            }
+            return;
+        }
+        if (!permissionChecker.hasPermission("engage.webinar.publish")) {
+            throw new AccessDeniedException("Webinar publish permission is required");
+        }
     }
 }

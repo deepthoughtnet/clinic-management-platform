@@ -1,5 +1,13 @@
 import { branding } from "../branding";
-import { ENGAGE_ANALYTICS_VIEW } from "../auth/permissions";
+import {
+  ENGAGE_ANALYTICS_VIEW,
+  ENGAGE_LEAD_VIEW,
+  ENGAGE_LEAD_VIEW_ALL,
+  ENGAGE_LEAD_VIEW_AUDIT,
+  ENGAGE_WEBINAR_VIEW,
+  ENGAGE_WEBINAR_VIEW_ANALYTICS,
+  ENGAGE_WEBINAR_VIEW_AUDIT,
+} from "../auth/permissions";
 import type { TenantModuleCode } from "../modules/moduleRegistry";
 
 export type NavItem = {
@@ -98,8 +106,8 @@ export const NAV_GROUPS: NavGroup[] = [
       { key: "messaging", label: "Messaging", path: "/carepilot/messaging", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR"], moduleAny: ["CAREPILOT"] },
       { key: "reminders", label: "Reminders", path: "/carepilot/reminders", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "ENGAGE_MANAGER", "ENGAGE_EXECUTIVE", "AUDITOR"], moduleAny: ["CAREPILOT"] },
       { key: "patient-engagement", label: "Patient Engagement", path: "/carepilot/engagement", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "ENGAGE_MANAGER", "AUDITOR"], moduleAny: ["CAREPILOT"] },
-      { key: "leads", label: "Leads", path: "/carepilot/leads", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "ENGAGE_MANAGER", "ENGAGE_EXECUTIVE"], moduleAny: ["CAREPILOT"] },
-      { key: "webinar-automation", label: "Webinar Automation", path: "/carepilot/webinars", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "ENGAGE_MANAGER"], moduleAny: ["CAREPILOT"] },
+      { key: "leads", label: "Leads", path: "/carepilot/leads", requiresTenant: true, permissionsAny: [ENGAGE_LEAD_VIEW, ENGAGE_LEAD_VIEW_ALL, ENGAGE_LEAD_VIEW_AUDIT], moduleAny: ["CAREPILOT"] },
+      { key: "webinar-automation", label: "Webinar Automation", path: "/carepilot/webinars", requiresTenant: true, permissionsAny: [ENGAGE_WEBINAR_VIEW, ENGAGE_WEBINAR_VIEW_ANALYTICS, ENGAGE_WEBINAR_VIEW_AUDIT], moduleAny: ["CAREPILOT"] },
       { key: "ai-operations", label: "AI Operations", path: "/carepilot/ai-operations", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "ENGAGE_MANAGER", "ENGAGE_EXECUTIVE", "RECEPTIONIST", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"], moduleAny: ["CAREPILOT"] },
     ],
   },

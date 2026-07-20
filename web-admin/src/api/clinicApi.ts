@@ -6864,6 +6864,7 @@ export async function exportCarePilotLeadsCsv(
     priority?: CarePilotLeadPriority;
     search?: string;
     followUpDue?: boolean;
+    pipelineOnly?: boolean;
   } = {},
 ) {
   const query = new URLSearchParams();
@@ -6872,6 +6873,7 @@ export async function exportCarePilotLeadsCsv(
   if (filters.priority) query.set("priority", filters.priority);
   if (filters.search) query.set("search", filters.search);
   if (filters.followUpDue) query.set("followUpDue", "true");
+  if (filters.pipelineOnly) query.set("pipelineOnly", "true");
   const suffix = query.toString() ? `?${query.toString()}` : "";
   return httpGetText(`/api/carepilot/leads/export${suffix}`, { token, tenantId, accept: "text/csv, */*" });
 }
@@ -7459,6 +7461,7 @@ export async function listCarePilotLeads(token: string, tenantId: string, filter
   priority?: CarePilotLeadPriority;
   search?: string;
   followUpDue?: boolean;
+  pipelineOnly?: boolean;
   createdFrom?: string;
   createdTo?: string;
   page?: number;
@@ -7471,6 +7474,7 @@ export async function listCarePilotLeads(token: string, tenantId: string, filter
   if (filters?.priority) query.set("priority", filters.priority);
   if (filters?.search) query.set("search", filters.search);
   if (filters?.followUpDue) query.set("followUpDue", "true");
+  if (filters?.pipelineOnly) query.set("pipelineOnly", "true");
   if (filters?.createdFrom) query.set("createdFrom", filters.createdFrom);
   if (filters?.createdTo) query.set("createdTo", filters.createdTo);
   if (filters?.page != null) query.set("page", String(filters.page));

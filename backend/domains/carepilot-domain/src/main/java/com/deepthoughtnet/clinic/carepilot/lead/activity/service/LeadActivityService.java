@@ -8,10 +8,12 @@ import com.deepthoughtnet.clinic.carepilot.lead.model.LeadStatus;
 import com.deepthoughtnet.clinic.carepilot.shared.util.CarePilotValidators;
 import java.time.OffsetDateTime;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.Map;
 import java.util.UUID;
-import java.util.function.Function;
+import java.util.List;
 import java.util.stream.Collectors;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -67,11 +69,16 @@ public class LeadActivityService {
         CarePilotValidators.requireId(leadId, "leadId");
         int safePage = Math.max(0, page);
         int safeSize = Math.max(1, Math.min(200, size));
-        return repository.findByTenantIdAndLeadIdOrderByCreatedAtDesc(
+        Page<LeadActivityEntity> result = repository.findByTenantIdAndLeadIdOrderByCreatedAtDesc(
                 tenantId,
                 leadId,
                 PageRequest.of(safePage, safeSize, Sort.by(Sort.Direction.DESC, "createdAt"))
-        ).map(this::toRecord);
+        );
+        List<LeadActivityRecord> sorted = result.getContent().stream()
+                .map(this::toRecord)
+                .sorted(activityComparator())
+                .toList();
+        return new PageImpl<>(sorted, result.getPageable(), result.getTotalElements());
     }
 
     @Transactional(readOnly = true)
@@ -102,5 +109,12 @@ public class LeadActivityService {
                 row.getId(), row.getTenantId(), row.getLeadId(), row.getActivityType(), row.getTitle(), row.getDescription(),
                 row.getOldStatus(), row.getNewStatus(), row.getRelatedEntityType(), row.getRelatedEntityId(), row.getCreatedByAppUserId(), row.getCreatedAt()
         );
+    }
+
+    private Comparator<LeadActivityRecord> activityComparator() {
+        return Comparator
+                .comparing(LeadActivityRecord::createdAt, Comparator.nullsLast(Comparator.reverseOrder()))
+                .thenComparing(record -> record.activityType() == null ? 0 : record.activityType().lifecyclePriority(), Comparator.reverseOrder())
+                .thenComparing(LeadActivityRecord::id, Comparator.reverseOrder());
     }
 }

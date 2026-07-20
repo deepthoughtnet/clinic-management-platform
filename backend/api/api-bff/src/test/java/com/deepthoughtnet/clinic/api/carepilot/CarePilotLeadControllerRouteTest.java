@@ -12,10 +12,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.deepthoughtnet.clinic.carepilot.lead.activity.service.LeadActivityService;
 import com.deepthoughtnet.clinic.carepilot.lead.analytics.LeadAnalyticsService;
 import com.deepthoughtnet.clinic.carepilot.lead.conversion.LeadConversionService;
+import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
+import com.deepthoughtnet.clinic.api.security.PermissionChecker;
+import com.deepthoughtnet.clinic.carepilot.lead.model.LeadSearchCriteria;
 import com.deepthoughtnet.clinic.carepilot.lead.service.LeadService;
 import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
 import com.deepthoughtnet.clinic.platform.core.context.TenantId;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
+import java.time.ZoneId;
 import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
@@ -33,8 +37,13 @@ class CarePilotLeadControllerRouteTest {
     @Test
     void importTemplateUsesStaticRouteInsteadOfUuidDetailRoute() throws Exception {
         CarePilotLeadCsvService leadCsvService = mock(CarePilotLeadCsvService.class);
+        ClinicTimeZoneResolver clinicTimeZoneResolver = mock(ClinicTimeZoneResolver.class);
+        PermissionChecker permissionChecker = mock(PermissionChecker.class);
+        when(clinicTimeZoneResolver.resolve(any())).thenReturn(ZoneId.of("UTC"));
         when(leadCsvService.importTemplateCsv()).thenReturn("firstName,lastName\nAva,Smith\n");
-        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller(leadCsvService)).build();
+        when(permissionChecker.hasPermission(any())).thenReturn(true);
+        when(permissionChecker.hasAnyPermission(any())).thenReturn(true);
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller(leadCsvService, clinicTimeZoneResolver, permissionChecker)).build();
 
         mockMvc.perform(get("/api/carepilot/leads/import-template"))
                 .andExpect(status().isOk())
@@ -48,8 +57,13 @@ class CarePilotLeadControllerRouteTest {
         UUID tenantId = UUID.randomUUID();
         UUID actorId = UUID.randomUUID();
         CarePilotLeadCsvService leadCsvService = mock(CarePilotLeadCsvService.class);
-        when(leadCsvService.exportCsv(eq(tenantId), any())).thenReturn("firstName,lastName\nAva,Smith\n");
-        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller(leadCsvService)).build();
+        ClinicTimeZoneResolver clinicTimeZoneResolver = mock(ClinicTimeZoneResolver.class);
+        PermissionChecker permissionChecker = mock(PermissionChecker.class);
+        when(clinicTimeZoneResolver.resolve(tenantId)).thenReturn(ZoneId.of("Asia/Kolkata"));
+        when(leadCsvService.exportCsv(eq(tenantId), any(ZoneId.class), any(LeadSearchCriteria.class), any(UUID.class), eq(true))).thenReturn("firstName,lastName\nAva,Smith\n");
+        when(permissionChecker.hasPermission(any())).thenReturn(true);
+        when(permissionChecker.hasAnyPermission(any())).thenReturn(true);
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller(leadCsvService, clinicTimeZoneResolver, permissionChecker)).build();
         RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), actorId, "sub", Set.of("CLINIC_ADMIN"), "CLINIC_ADMIN", "cid"));
 
         mockMvc.perform(get("/api/carepilot/leads/export").queryParam("search", "Ava"))
@@ -59,13 +73,15 @@ class CarePilotLeadControllerRouteTest {
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("firstName,lastName")));
     }
 
-    private CarePilotLeadController controller(CarePilotLeadCsvService leadCsvService) {
+    private CarePilotLeadController controller(CarePilotLeadCsvService leadCsvService, ClinicTimeZoneResolver clinicTimeZoneResolver, PermissionChecker permissionChecker) {
         return new CarePilotLeadController(
                 mock(LeadService.class),
                 mock(LeadConversionService.class),
                 mock(LeadAnalyticsService.class),
                 mock(LeadActivityService.class),
-                leadCsvService
+                leadCsvService,
+                clinicTimeZoneResolver,
+                permissionChecker
         );
     }
 }

@@ -3,12 +3,15 @@ package com.deepthoughtnet.clinic.carepilot.lead.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.deepthoughtnet.clinic.carepilot.campaign.db.CampaignRepository;
+import com.deepthoughtnet.clinic.carepilot.lead.activity.model.LeadActivityType;
 import com.deepthoughtnet.clinic.carepilot.lead.activity.service.LeadActivityService;
 import com.deepthoughtnet.clinic.carepilot.lead.db.LeadEntity;
 import com.deepthoughtnet.clinic.carepilot.lead.db.LeadRepository;
@@ -116,5 +119,41 @@ class LeadServiceTest {
         assertThatThrownBy(() -> service.updateStatus(tenantId, entity.getId(), new LeadStatusUpdateCommand(
                 LeadStatus.LOST, null, null, null, null, "oops"
         ), actorId)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void statusUpdateCompletesPendingFollowUpOnce() {
+        LeadEntity entity = LeadEntity.create(tenantId, actorId);
+        entity.setFirstName("A");
+        entity.setPhone("9876543210");
+        entity.setSource(LeadSource.MANUAL);
+        entity.setStatus(LeadStatus.FOLLOW_UP_REQUIRED);
+        entity.setNextFollowUpAt(OffsetDateTime.parse("2026-07-20T09:00:00+05:30"));
+        when(repository.findByTenantIdAndId(tenantId, entity.getId())).thenReturn(Optional.of(entity));
+
+        var updated = service.updateStatus(tenantId, entity.getId(), new LeadStatusUpdateCommand(
+                LeadStatus.CONTACTED, null, null, null, null, "Follow-up completed after call"
+        ), actorId);
+
+        assertThat(updated.status()).isEqualTo(LeadStatus.CONTACTED);
+        assertThat(updated.nextFollowUpAt()).isNull();
+        assertThat(updated.notes()).contains("Follow-up completed after call");
+        verify(activityService, times(1)).record(eq(tenantId), eq(entity.getId()), eq(LeadActivityType.FOLLOW_UP_COMPLETED), any(), any(), any(), any(), any(), any(), eq(actorId));
+    }
+
+    @Test
+    void statusUpdateWithoutPendingFollowUpDoesNotCreateCompletionEvent() {
+        LeadEntity entity = LeadEntity.create(tenantId, actorId);
+        entity.setFirstName("A");
+        entity.setPhone("9876543210");
+        entity.setSource(LeadSource.MANUAL);
+        entity.setStatus(LeadStatus.NEW);
+        when(repository.findByTenantIdAndId(tenantId, entity.getId())).thenReturn(Optional.of(entity));
+
+        service.updateStatus(tenantId, entity.getId(), new LeadStatusUpdateCommand(
+                LeadStatus.CONTACTED, null, null, null, null, "Checked in"
+        ), actorId);
+
+        verify(activityService, never()).record(eq(tenantId), eq(entity.getId()), eq(LeadActivityType.FOLLOW_UP_COMPLETED), any(), any(), any(), any(), any(), any(), any());
     }
 }

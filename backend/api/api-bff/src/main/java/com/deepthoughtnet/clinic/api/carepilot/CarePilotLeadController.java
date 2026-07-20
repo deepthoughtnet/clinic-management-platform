@@ -21,9 +21,12 @@ import com.deepthoughtnet.clinic.carepilot.lead.model.LeadSearchCriteria;
 import com.deepthoughtnet.clinic.carepilot.lead.model.LeadStatusUpdateCommand;
 import com.deepthoughtnet.clinic.carepilot.lead.model.LeadUpsertCommand;
 import com.deepthoughtnet.clinic.carepilot.lead.service.LeadService;
+import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
+import com.deepthoughtnet.clinic.api.security.PermissionChecker;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -32,6 +35,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -56,23 +60,29 @@ public class CarePilotLeadController {
     private final LeadAnalyticsService analyticsService;
     private final LeadActivityService activityService;
     private final CarePilotLeadCsvService leadCsvService;
+    private final ClinicTimeZoneResolver clinicTimeZoneResolver;
+    private final PermissionChecker permissionChecker;
 
     public CarePilotLeadController(
             LeadService leadService,
             LeadConversionService conversionService,
             LeadAnalyticsService analyticsService,
             LeadActivityService activityService,
-            CarePilotLeadCsvService leadCsvService
+            CarePilotLeadCsvService leadCsvService,
+            ClinicTimeZoneResolver clinicTimeZoneResolver,
+            PermissionChecker permissionChecker
     ) {
         this.leadService = leadService;
         this.conversionService = conversionService;
         this.analyticsService = analyticsService;
         this.activityService = activityService;
         this.leadCsvService = leadCsvService;
+        this.clinicTimeZoneResolver = clinicTimeZoneResolver;
+        this.permissionChecker = permissionChecker;
     }
 
     @GetMapping
-    @PreAuthorize("@permissionChecker.hasPermission('engage.leads.operate')")
+    @PreAuthorize("@permissionChecker.hasAnyPermission('engage.lead.view','engage.lead.view.all','engage.lead.view.audit')")
     public LeadListResponse list(
             @RequestParam(required = false) com.deepthoughtnet.clinic.carepilot.lead.model.LeadStatus status,
             @RequestParam(required = false) com.deepthoughtnet.clinic.carepilot.lead.model.LeadSource source,
@@ -80,21 +90,28 @@ public class CarePilotLeadController {
             @RequestParam(required = false) com.deepthoughtnet.clinic.carepilot.lead.model.LeadPriority priority,
             @RequestParam(required = false) String search,
             @RequestParam(required = false, defaultValue = "false") boolean followUpDue,
+            @RequestParam(required = false, defaultValue = "false") boolean pipelineOnly,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate createdFrom,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate createdTo,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "25") int size
     ) {
         UUID tenantId = RequestContextHolder.requireTenantId();
-        Page<LeadRecord> result = leadService.search(tenantId,
-                new LeadSearchCriteria(status, source, assignedToAppUserId, priority, search, followUpDue, createdFrom, createdTo),
-                page, size);
+        UUID viewerAppUserId = RequestContextHolder.require().appUserId();
+        boolean viewAll = canViewAllLeads();
+        if (!viewAll && assignedToAppUserId != null && !assignedToAppUserId.equals(viewerAppUserId)) {
+            throw new AccessDeniedException("Lead is not visible");
+        }
+        ZoneId tenantZone = clinicTimeZoneResolver.resolve(tenantId);
+        Page<LeadRecord> result = leadService.search(tenantId, tenantZone,
+                new LeadSearchCriteria(status, source, assignedToAppUserId, priority, search, followUpDue, pipelineOnly, createdFrom, createdTo),
+                page, size, viewerAppUserId, viewAll);
         return new LeadListResponse(result.getNumber(), result.getSize(), result.getTotalElements(), result.getContent().stream().map(this::toResponse).toList());
     }
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    @PreAuthorize("@permissionChecker.hasPermission('engage.leads.operate')")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.lead.create')")
     public LeadResponse create(@Valid @RequestBody LeadUpsertRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actor = RequestContextHolder.require().appUserId();
@@ -102,7 +119,7 @@ public class CarePilotLeadController {
     }
 
     @PostMapping(value = "/import-csv", consumes = "multipart/form-data")
-    @PreAuthorize("@permissionChecker.hasPermission('engage.leads.bulk.manage')")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.lead.import')")
     public LeadCsvImportResponse importCsv(@RequestParam("file") MultipartFile file) throws java.io.IOException {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actor = RequestContextHolder.require().appUserId();
@@ -110,13 +127,13 @@ public class CarePilotLeadController {
     }
 
     @GetMapping(value = "/import-template", produces = "text/csv")
-    @PreAuthorize("@permissionChecker.hasPermission('engage.leads.bulk.manage')")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.lead.import')")
     public ResponseEntity<byte[]> importTemplate() throws java.io.IOException {
         return csvResponse("carepilot-leads-import-template.csv", leadCsvService.importTemplateCsv());
     }
 
     @GetMapping(value = "/export", produces = "text/csv")
-    @PreAuthorize("@permissionChecker.hasPermission('engage.leads.bulk.manage')")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.lead.export')")
     public ResponseEntity<byte[]> export(
             @RequestParam(required = false) com.deepthoughtnet.clinic.carepilot.lead.model.LeadStatus status,
             @RequestParam(required = false) com.deepthoughtnet.clinic.carepilot.lead.model.LeadSource source,
@@ -124,52 +141,67 @@ public class CarePilotLeadController {
             @RequestParam(required = false) com.deepthoughtnet.clinic.carepilot.lead.model.LeadPriority priority,
             @RequestParam(required = false) String search,
             @RequestParam(required = false, defaultValue = "false") boolean followUpDue,
+            @RequestParam(required = false, defaultValue = "false") boolean pipelineOnly,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate createdFrom,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate createdTo
     ) throws java.io.IOException {
         UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID viewerAppUserId = RequestContextHolder.require().appUserId();
+        boolean viewAll = canViewAllLeads();
+        if (!viewAll && assignedToAppUserId != null && !assignedToAppUserId.equals(viewerAppUserId)) {
+            throw new AccessDeniedException("Lead is not visible");
+        }
+        ZoneId tenantZone = clinicTimeZoneResolver.resolve(tenantId);
         return csvResponse(
                 "carepilot-leads-export.csv",
                 leadCsvService.exportCsv(
                         tenantId,
-                        new LeadSearchCriteria(status, source, assignedToAppUserId, priority, search, followUpDue, createdFrom, createdTo)
+                        tenantZone,
+                        new LeadSearchCriteria(status, source, assignedToAppUserId, priority, search, followUpDue, pipelineOnly, createdFrom, createdTo),
+                        viewerAppUserId,
+                        viewAll
                 )
         );
     }
 
     @GetMapping("/{id:" + UUID_PATH + "}")
-    @PreAuthorize("@permissionChecker.hasPermission('engage.leads.operate')")
+    @PreAuthorize("@permissionChecker.hasAnyPermission('engage.lead.view','engage.lead.view.all','engage.lead.view.audit')")
     public LeadResponse get(@PathVariable UUID id) {
         UUID tenantId = RequestContextHolder.requireTenantId();
-        return toResponse(leadService.find(tenantId, id).orElseThrow(() -> new IllegalArgumentException("Lead not found")));
+        UUID viewerAppUserId = RequestContextHolder.require().appUserId();
+        return toResponse(leadService.requireVisibleLead(tenantId, id, viewerAppUserId, canViewAllLeads()));
     }
 
     @PutMapping("/{id:" + UUID_PATH + "}")
-    @PreAuthorize("@permissionChecker.hasPermission('engage.leads.operate')")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.lead.edit')")
     public LeadResponse update(@PathVariable UUID id, @Valid @RequestBody LeadUpsertRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actor = RequestContextHolder.require().appUserId();
+        leadService.assertVisible(tenantId, id, actor, canViewAllLeads());
         return toResponse(leadService.update(tenantId, id, toCommand(request), actor));
     }
 
     @PostMapping("/{id:" + UUID_PATH + "}/status")
-    @PreAuthorize("@permissionChecker.hasPermission('engage.leads.operate')")
+    @PreAuthorize("@permissionChecker.hasAnyPermission('engage.lead.edit','engage.lead.assign','engage.lead.follow.up')")
     public LeadResponse updateStatus(@PathVariable UUID id, @RequestBody LeadStatusUpdateRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actor = RequestContextHolder.require().appUserId();
+        leadService.assertVisible(tenantId, id, actor, canViewAllLeads());
         return toResponse(leadService.updateStatus(tenantId, id, new LeadStatusUpdateCommand(
                 request.status(), request.priority(), request.assignedToAppUserId(), request.lastContactedAt(), request.nextFollowUpAt(), request.comment()
         ), actor));
     }
 
     @GetMapping("/{leadId:" + UUID_PATH + "}/activities")
-    @PreAuthorize("@permissionChecker.hasPermission('engage.leads.operate')")
+    @PreAuthorize("@permissionChecker.hasAnyPermission('engage.lead.view','engage.lead.view.all','engage.lead.view.audit')")
     public LeadActivityListResponse activities(
             @PathVariable UUID leadId,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "25") int size
     ) {
         UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID viewerAppUserId = RequestContextHolder.require().appUserId();
+        leadService.assertVisible(tenantId, leadId, viewerAppUserId, canViewAllLeads());
         var rows = activityService.list(tenantId, leadId, page, size);
         return new LeadActivityListResponse(
                 rows.getNumber(),
@@ -183,22 +215,28 @@ public class CarePilotLeadController {
     }
 
     @PostMapping("/{leadId:" + UUID_PATH + "}/notes")
-    @PreAuthorize("@permissionChecker.hasPermission('engage.leads.operate')")
+    @PreAuthorize("@permissionChecker.hasAnyPermission('engage.lead.edit','engage.lead.follow.up')")
     public LeadResponse addNote(@PathVariable UUID leadId, @RequestBody LeadNoteRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actor = RequestContextHolder.require().appUserId();
+        leadService.assertVisible(tenantId, leadId, actor, canViewAllLeads());
         return toResponse(leadService.addNote(tenantId, leadId, request == null ? null : request.note(), actor));
     }
 
     @PostMapping("/{id:" + UUID_PATH + "}/convert")
-    @PreAuthorize("@permissionChecker.hasPermission('engage.leads.operate')")
+    @PreAuthorize("@permissionChecker.hasAnyPermission('engage.lead.convert','engage.lead.book.appointment')")
     public LeadConversionResponse convert(@PathVariable UUID id, @RequestBody(required = false) LeadConvertRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actor = RequestContextHolder.require().appUserId();
+        leadService.assertVisible(tenantId, id, actor, canViewAllLeads());
         boolean book = request != null && request.bookAppointment();
         LeadAppointmentBookingCommand booking = null;
         if (book && request.appointment() == null) {
             throw new IllegalArgumentException("appointment details are required when bookAppointment is true");
+        }
+        requireLeadConversionPermission();
+        if (book) {
+            requireLeadBookAppointmentPermission();
         }
         if (book && request.appointment() != null) {
             booking = new LeadAppointmentBookingCommand(
@@ -212,23 +250,40 @@ public class CarePilotLeadController {
         }
         boolean allowOverbooking = RequestContextHolder.require().tenantRole() != null
                 && RequestContextHolder.require().tenantRole().toUpperCase().contains("CLINIC_ADMIN");
-        LeadConversionResult result = conversionService.convert(tenantId, id, actor, booking, allowOverbooking);
+        LeadConversionResult result = conversionService.convert(tenantId, id, actor, booking, allowOverbooking, actor, canViewAllLeads());
         return new LeadConversionResponse(result.leadId(), result.patientId(), result.newlyCreated(), result.appointmentId(), result.appointmentError());
     }
 
     @GetMapping("/analytics/summary")
-    @PreAuthorize("@permissionChecker.hasPermission('engage.leads.operate')")
+    @PreAuthorize("@permissionChecker.hasPermission('engage.analytics.view')")
     public LeadAnalyticsResponse analytics(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate
     ) {
         UUID tenantId = RequestContextHolder.requireTenantId();
-        var row = analyticsService.summary(tenantId, startDate, endDate);
+        ZoneId tenantZone = clinicTimeZoneResolver.resolve(tenantId);
+        var row = analyticsService.summary(tenantId, tenantZone, startDate, endDate);
         return new LeadAnalyticsResponse(
                 row.totalLeads(), row.newLeads(), row.qualifiedLeads(), row.convertedLeads(), row.lostLeads(), row.followUpsDue(),
                 row.followUpsDueToday(), row.overdueFollowUps(), row.conversionRate(), row.sourceBreakdown(), row.staleLeads(),
                 row.highPriorityActiveLeads(), row.conversionsWithAppointment(), row.avgHoursToConversion()
         );
+    }
+
+    private boolean canViewAllLeads() {
+        return permissionChecker.hasPermission("engage.lead.view.all");
+    }
+
+    private void requireLeadConversionPermission() {
+        if (!permissionChecker.hasPermission("engage.lead.convert")) {
+            throw new AccessDeniedException("Lead conversion permission is required");
+        }
+    }
+
+    private void requireLeadBookAppointmentPermission() {
+        if (!permissionChecker.hasPermission("engage.lead.book.appointment")) {
+            throw new AccessDeniedException("Lead appointment booking permission is required");
+        }
     }
 
     private LeadUpsertCommand toCommand(LeadUpsertRequest request) {

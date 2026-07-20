@@ -31,6 +31,18 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../../auth/useAuth";
 import { mapZodErrors, engageWebinarRegistrationSchema, engageWebinarSchema, normalizeIndianMobileInput } from "@deepthoughtnet/form-validation-kit";
 import {
+  ENGAGE_WEBINAR_CANCEL,
+  ENGAGE_WEBINAR_CREATE,
+  ENGAGE_WEBINAR_EDIT,
+  ENGAGE_WEBINAR_MANAGE_REGISTRATIONS,
+  ENGAGE_WEBINAR_PUBLISH,
+  ENGAGE_WEBINAR_RECORD_ATTENDANCE,
+  ENGAGE_WEBINAR_RUN_AUTOMATION,
+  ENGAGE_WEBINAR_VIEW,
+  ENGAGE_WEBINAR_VIEW_ANALYTICS,
+  ENGAGE_WEBINAR_VIEW_AUDIT,
+} from "../../../auth/permissions";
+import {
   createCarePilotWebinar,
   getCarePilotWebinarAnalyticsSummary,
   listCarePilotCampaigns,
@@ -104,8 +116,17 @@ export default function WebinarsPage() {
   const [regSaving, setRegSaving] = React.useState(false);
   const [regError, setRegError] = React.useState<string | null>(null);
 
-  const canView = auth.hasPermission("engage.webinar.manage");
-  const canMutate = auth.hasPermission("engage.webinar.manage");
+  const canView = auth.hasPermission(ENGAGE_WEBINAR_VIEW)
+    || auth.hasPermission(ENGAGE_WEBINAR_VIEW_ANALYTICS)
+    || auth.hasPermission(ENGAGE_WEBINAR_VIEW_AUDIT);
+  const canCreate = auth.hasPermission(ENGAGE_WEBINAR_CREATE);
+  const canEdit = auth.hasPermission(ENGAGE_WEBINAR_EDIT);
+  const canPublish = auth.hasPermission(ENGAGE_WEBINAR_PUBLISH);
+  const canCancel = auth.hasPermission(ENGAGE_WEBINAR_CANCEL);
+  const canManageRegistrations = auth.hasPermission(ENGAGE_WEBINAR_MANAGE_REGISTRATIONS);
+  const canRecordAttendance = auth.hasPermission(ENGAGE_WEBINAR_RECORD_ATTENDANCE);
+  const canRunAutomation = auth.hasPermission(ENGAGE_WEBINAR_RUN_AUTOMATION);
+  const canMutate = canCreate || canEdit || canPublish || canCancel || canManageRegistrations || canRecordAttendance || canRunAutomation;
 
   const load = React.useCallback(async () => {
     if (!auth.accessToken || !auth.tenantId || !canView) {
@@ -225,7 +246,7 @@ export default function WebinarsPage() {
   };
 
   const openRegistrations = async (row: CarePilotWebinar) => {
-    if (!auth.accessToken || !auth.tenantId) return;
+    if (!auth.accessToken || !auth.tenantId || !(canManageRegistrations || canRecordAttendance || canView)) return;
     setRegWebinar(row);
     setRegOpen(true);
     setRegistrations([]);
@@ -242,7 +263,7 @@ export default function WebinarsPage() {
   };
 
   const addRegistration = async () => {
-    if (!auth.accessToken || !auth.tenantId || !regWebinar || !canMutate) return;
+    if (!auth.accessToken || !auth.tenantId || !regWebinar || !canManageRegistrations) return;
     setRegError(null);
     setRegSaving(true);
     try {
@@ -273,7 +294,7 @@ export default function WebinarsPage() {
   };
 
   const markAttendance = async (registrationId: string, status: CarePilotWebinarRegistrationStatus) => {
-    if (!auth.accessToken || !auth.tenantId || !regWebinar || !canMutate) return;
+    if (!auth.accessToken || !auth.tenantId || !regWebinar || !canRecordAttendance) return;
     setRegError(null);
     setRegSaving(true);
     try {
@@ -291,7 +312,9 @@ export default function WebinarsPage() {
   };
 
   const quickStatus = async (row: CarePilotWebinar, status: CarePilotWebinarStatus) => {
-    if (!auth.accessToken || !auth.tenantId || !canMutate) return;
+    if (!auth.accessToken || !auth.tenantId) return;
+    if (status === "CANCELLED" && !canCancel) return;
+    if (status !== "CANCELLED" && !canPublish) return;
     await updateCarePilotWebinarStatus(auth.accessToken, auth.tenantId, row.id, status);
     await load();
   };
@@ -314,7 +337,7 @@ export default function WebinarsPage() {
         </Box>
         <Stack direction="row" spacing={1}>
           <Button variant="outlined" onClick={() => void load()}>Refresh</Button>
-          {canMutate ? <Button variant="contained" onClick={() => openEditor()}>New Webinar</Button> : null}
+          {canCreate ? <Button variant="contained" onClick={() => openEditor()}>New Webinar</Button> : null}
         </Stack>
       </Box>
 
@@ -343,7 +366,7 @@ export default function WebinarsPage() {
         <Card><CardContent>
           {rows.length === 0 ? <Alert severity="info">No webinars found for selected filters.</Alert> : (
             <Table size="small"><TableHead><TableRow><TableCell>Webinar</TableCell><TableCell>Type</TableCell><TableCell>Start</TableCell><TableCell>Status</TableCell><TableCell>Reminder</TableCell><TableCell>URL</TableCell><TableCell align="right">Actions</TableCell></TableRow></TableHead><TableBody>
-              {rows.map((row) => <TableRow key={row.id}><TableCell><Stack spacing={0.25}><Typography variant="body2" sx={{ fontWeight: 700 }}>{row.title}</Typography><Typography variant="caption" color="text.secondary">{row.organizerName || "-"}</Typography><Typography variant="caption" color="text.secondary">{row.campaignName ? `Campaign: ${row.campaignName}` : "Campaign: None"}</Typography></Stack></TableCell><TableCell>{row.webinarType}</TableCell><TableCell>{new Date(row.scheduledStartAt).toLocaleString()}</TableCell><TableCell><Chip size="small" label={row.status} color={statusColor(row.status)} /></TableCell><TableCell>{row.reminderEnabled ? <Chip size="small" variant="outlined" label="Enabled" /> : <Chip size="small" label="Off" />}</TableCell><TableCell>{row.webinarUrl ? <Button size="small" href={row.webinarUrl} target="_blank" rel="noreferrer">Open</Button> : "-"}</TableCell><TableCell align="right"><Stack direction="row" spacing={1} justifyContent="flex-end"><Button size="small" onClick={() => void openRegistrations(row)}>Registrations</Button>{canMutate ? <Button size="small" onClick={() => openEditor(row)}>Edit</Button> : null}{canMutate && row.status !== "LIVE" ? <Button size="small" onClick={() => void quickStatus(row, "LIVE")}>Mark Live</Button> : null}{canMutate && row.status !== "COMPLETED" ? <Button size="small" onClick={() => void quickStatus(row, "COMPLETED")}>Complete</Button> : null}{canMutate && row.status !== "CANCELLED" ? <Button size="small" color="error" onClick={() => void quickStatus(row, "CANCELLED")}>Cancel</Button> : null}</Stack></TableCell></TableRow>)}
+              {rows.map((row) => <TableRow key={row.id}><TableCell><Stack spacing={0.25}><Typography variant="body2" sx={{ fontWeight: 700 }}>{row.title}</Typography><Typography variant="caption" color="text.secondary">{row.organizerName || "-"}</Typography><Typography variant="caption" color="text.secondary">{row.campaignName ? `Campaign: ${row.campaignName}` : "Campaign: None"}</Typography></Stack></TableCell><TableCell>{row.webinarType}</TableCell><TableCell>{new Date(row.scheduledStartAt).toLocaleString()}</TableCell><TableCell><Chip size="small" label={row.status} color={statusColor(row.status)} /></TableCell><TableCell>{row.reminderEnabled ? <Chip size="small" variant="outlined" label="Enabled" /> : <Chip size="small" label="Off" />}</TableCell><TableCell>{row.webinarUrl ? <Button size="small" href={row.webinarUrl} target="_blank" rel="noreferrer">Open</Button> : "-"}</TableCell><TableCell align="right"><Stack direction="row" spacing={1} justifyContent="flex-end"><Button size="small" onClick={() => void openRegistrations(row)}>Registrations</Button>{canEdit ? <Button size="small" onClick={() => openEditor(row)}>Edit</Button> : null}{canPublish && row.status !== "LIVE" ? <Button size="small" onClick={() => void quickStatus(row, "LIVE")}>Mark Live</Button> : null}{canPublish && row.status !== "COMPLETED" ? <Button size="small" onClick={() => void quickStatus(row, "COMPLETED")}>Complete</Button> : null}{canCancel && row.status !== "CANCELLED" ? <Button size="small" color="error" onClick={() => void quickStatus(row, "CANCELLED")}>Cancel</Button> : null}</Stack></TableCell></TableRow>)}
             </TableBody></Table>
           )}
         </CardContent></Card>
@@ -374,7 +397,7 @@ export default function WebinarsPage() {
         <DialogTitle>Registrations{regWebinar ? ` · ${regWebinar.title}` : ""}</DialogTitle>
         <DialogContent>
           {regError ? <Alert severity="error" sx={{ mb: 2 }}>{regError}</Alert> : null}
-          {canMutate ? (
+          {canManageRegistrations ? (
             <Grid container spacing={1.5} sx={{ mb: 2, mt: 0.5 }}>
               <Grid size={{ xs: 12, md: 3 }}><TextField fullWidth size="small" required label="Attendee *" value={regForm.attendeeName} onChange={(e) => setRegForm((v) => ({ ...v, attendeeName: e.target.value }))} error={Boolean(regFormErrors.attendeeName)} helperText={regFormErrors.attendeeName || "Attendee name is required."} /></Grid>
               <Grid size={{ xs: 12, md: 2.5 }}><TextField fullWidth size="small" label="Email" value={regForm.attendeeEmail} onChange={(e) => setRegForm((v) => ({ ...v, attendeeEmail: e.target.value }))} error={Boolean(regFormErrors.attendeeEmail)} helperText={regFormErrors.attendeeEmail || "Enter a valid email address if provided."} /></Grid>
@@ -388,7 +411,7 @@ export default function WebinarsPage() {
           {!regLoading && registrations.length === 0 ? <Alert severity="info">No registrations yet.</Alert> : null}
           {!regLoading && registrations.length > 0 ? (
             <Table size="small"><TableHead><TableRow><TableCell>Attendee</TableCell><TableCell>Email</TableCell><TableCell>Phone</TableCell><TableCell>Status</TableCell><TableCell>Patient</TableCell><TableCell>Lead</TableCell><TableCell>Campaign</TableCell><TableCell align="right">Actions</TableCell></TableRow></TableHead><TableBody>
-              {registrations.map((row) => <TableRow key={row.id}><TableCell>{row.attendeeName}</TableCell><TableCell>{row.attendeeEmail || "-"}</TableCell><TableCell>{row.attendeePhone || "-"}</TableCell><TableCell><Chip size="small" label={row.registrationStatus} /></TableCell><TableCell>{row.patientId ? "Patient record" : "-"}</TableCell><TableCell>{row.leadId ? <Stack direction="row" spacing={1} alignItems="center"><Typography variant="body2">{row.leadName || "Linked lead"}</Typography><Button size="small" onClick={() => openLead(row)}>Open Lead</Button></Stack> : "-"}</TableCell><TableCell>{row.campaignName || "-"}</TableCell><TableCell align="right">{canMutate ? <Stack direction="row" spacing={1} justifyContent="flex-end"><Button size="small" onClick={() => void markAttendance(row.id, "ATTENDED")} disabled={regSaving}>Attended</Button><Button size="small" onClick={() => void markAttendance(row.id, "NO_SHOW")} disabled={regSaving}>No-show</Button><Button size="small" color="error" onClick={() => void markAttendance(row.id, "CANCELLED")} disabled={regSaving}>Cancel</Button></Stack> : "-"}</TableCell></TableRow>)}
+              {registrations.map((row) => <TableRow key={row.id}><TableCell>{row.attendeeName}</TableCell><TableCell>{row.attendeeEmail || "-"}</TableCell><TableCell>{row.attendeePhone || "-"}</TableCell><TableCell><Chip size="small" label={row.registrationStatus} /></TableCell><TableCell>{row.patientId ? "Patient record" : "-"}</TableCell><TableCell>{row.leadId ? <Stack direction="row" spacing={1} alignItems="center"><Typography variant="body2">{row.leadName || "Linked lead"}</Typography><Button size="small" onClick={() => openLead(row)}>Open Lead</Button></Stack> : "-"}</TableCell><TableCell>{row.campaignName || "-"}</TableCell><TableCell align="right">{canRecordAttendance ? <Stack direction="row" spacing={1} justifyContent="flex-end"><Button size="small" onClick={() => void markAttendance(row.id, "ATTENDED")} disabled={regSaving}>Attended</Button><Button size="small" onClick={() => void markAttendance(row.id, "NO_SHOW")} disabled={regSaving}>No-show</Button><Button size="small" color="error" onClick={() => void markAttendance(row.id, "CANCELLED")} disabled={regSaving}>Cancel</Button></Stack> : "-"}</TableCell></TableRow>)}
             </TableBody></Table>
           ) : null}
         </DialogContent>

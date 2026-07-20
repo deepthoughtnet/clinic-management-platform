@@ -10,6 +10,7 @@ type Props = {
   onChange: (campaignId: string) => void;
   onSelectOption?: (campaign: CarePilotCampaignLookup | null) => void;
   label: string;
+  placeholder?: string;
   helperText?: React.ReactNode;
   disabled?: boolean;
   error?: boolean;
@@ -27,6 +28,7 @@ export default function CampaignLookupField({
   onChange,
   onSelectOption,
   label,
+  placeholder = "Select campaign",
   helperText,
   disabled,
   error,
@@ -90,11 +92,12 @@ export default function CampaignLookupField({
       disabled={disabled || !token || !tenantId}
       renderInput={(params) => (
         <TextField
-          {...params}
-          label={label}
-          error={error}
-          helperText={helperText}
-        />
+        {...params}
+        label={label}
+        placeholder={placeholder}
+        error={error}
+        helperText={helperText}
+      />
       )}
     />
   );

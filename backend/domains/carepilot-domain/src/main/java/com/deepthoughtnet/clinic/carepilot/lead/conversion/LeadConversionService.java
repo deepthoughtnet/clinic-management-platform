@@ -17,6 +17,7 @@ import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.patient.service.PatientService;
 import com.deepthoughtnet.clinic.patient.service.model.PatientGender;
 import com.deepthoughtnet.clinic.patient.service.model.PatientUpsertCommand;
+import java.time.OffsetDateTime;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
@@ -51,8 +52,22 @@ public class LeadConversionService {
 
     @Transactional
     public LeadConversionResult convert(UUID tenantId, UUID leadId, UUID actorId, LeadAppointmentBookingCommand appointmentBooking, boolean allowOverbooking) {
+        return convert(tenantId, leadId, actorId, appointmentBooking, allowOverbooking, null, true);
+    }
+
+    @Transactional
+    public LeadConversionResult convert(
+            UUID tenantId,
+            UUID leadId,
+            UUID actorId,
+            LeadAppointmentBookingCommand appointmentBooking,
+            boolean allowOverbooking,
+            UUID viewerAppUserId,
+            boolean viewAll
+    ) {
         CarePilotValidators.requireTenant(tenantId);
         CarePilotValidators.requireId(leadId, "leadId");
+        leadService.assertVisible(tenantId, leadId, viewerAppUserId, viewAll);
         LeadEntity lead = leadRepository.findByTenantIdAndId(tenantId, leadId).orElseThrow(() -> new IllegalArgumentException("Lead not found"));
 
         if (lead.getConvertedPatientId() != null) {
@@ -61,6 +76,7 @@ public class LeadConversionService {
         if (lead.getStatus() == LeadStatus.SPAM) {
             throw new IllegalArgumentException("Spam lead cannot be converted");
         }
+        OffsetDateTime previousFollowUpAt = lead.getNextFollowUpAt();
         if (appointmentBooking != null) {
             appointmentService.validateScheduledBookingRequest(
                     tenantId,
@@ -134,8 +150,23 @@ public class LeadConversionService {
             appointmentId = record.id();
         }
 
+        lead.setNextFollowUpAt(null);
         lead.setConverted(patientId, actorId);
         leadRepository.save(lead);
+        if (previousFollowUpAt != null) {
+            leadActivityService.record(
+                    tenantId,
+                    lead.getId(),
+                    LeadActivityType.FOLLOW_UP_COMPLETED,
+                    "Follow-up completed",
+                    "Follow-up cleared during conversion",
+                    null,
+                    LeadStatus.CONVERTED,
+                    null,
+                    null,
+                    actorId
+            );
+        }
         leadActivityService.record(
                 tenantId,
                 lead.getId(),

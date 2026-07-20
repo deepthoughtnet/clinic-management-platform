@@ -28,8 +28,8 @@ class CarePilotLeadControllerSecurityTest {
         String listGuard = list.getAnnotation(PreAuthorize.class).value();
         String getGuard = get.getAnnotation(PreAuthorize.class).value();
 
-        assertThat(listGuard).contains("engage.leads.operate");
-        assertThat(getGuard).contains("engage.leads.operate");
+        assertThat(listGuard).contains("engage.lead.view");
+        assertThat(getGuard).contains("engage.lead.view");
     }
 
     @Test
@@ -45,9 +45,9 @@ class CarePilotLeadControllerSecurityTest {
         for (Method method : new Method[]{create, importCsv, template, update, status, note, convert}) {
             String guard = method.getAnnotation(PreAuthorize.class).value();
             if (method == importCsv || method == template) {
-                assertThat(guard).contains("engage.leads.bulk.manage");
+                assertThat(guard).contains("engage.lead.import");
             } else {
-                assertThat(guard).contains("engage.leads.operate");
+                assertThat(guard).contains("engage.lead");
             }
         }
     }
@@ -56,7 +56,7 @@ class CarePilotLeadControllerSecurityTest {
     void activitiesAreReadableByReadRoles() throws Exception {
         Method activities = CarePilotLeadController.class.getMethod("activities", java.util.UUID.class, int.class, int.class);
         String guard = activities.getAnnotation(PreAuthorize.class).value();
-        assertThat(guard).contains("engage.leads.operate");
+        assertThat(guard).contains("engage.lead.view");
     }
 
     @Test
@@ -73,6 +73,6 @@ class CarePilotLeadControllerSecurityTest {
                 java.time.LocalDate.class
         );
         String guard = export.getAnnotation(PreAuthorize.class).value();
-        assertThat(guard).contains("engage.leads.bulk.manage");
+        assertThat(guard).contains("engage.lead.export");
     }
 }

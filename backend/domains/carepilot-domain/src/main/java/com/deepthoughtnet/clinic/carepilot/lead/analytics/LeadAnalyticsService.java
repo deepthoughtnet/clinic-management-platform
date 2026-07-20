@@ -8,6 +8,7 @@ import com.deepthoughtnet.clinic.carepilot.shared.util.CarePilotValidators;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -31,38 +32,45 @@ public class LeadAnalyticsService {
 
     @Transactional(readOnly = true)
     public LeadAnalyticsRecord summary(UUID tenantId, LocalDate startDate, LocalDate endDate) {
+        return summary(tenantId, ZoneOffset.UTC, startDate, endDate);
+    }
+
+    @Transactional(readOnly = true)
+    public LeadAnalyticsRecord summary(UUID tenantId, ZoneId tenantZone, LocalDate startDate, LocalDate endDate) {
         CarePilotValidators.requireTenant(tenantId);
-        OffsetDateTime now = OffsetDateTime.now();
+        ZoneId zone = tenantZone == null ? ZoneOffset.UTC : tenantZone;
+        OffsetDateTime now = OffsetDateTime.now(zone);
         long total = repository.countByTenantId(tenantId);
         long newLeads = repository.countByTenantIdAndStatus(tenantId, LeadStatus.NEW);
         long qualified = repository.countByTenantIdAndStatus(tenantId, LeadStatus.QUALIFIED);
-        long converted = repository.countByTenantIdAndStatus(tenantId, LeadStatus.CONVERTED);
         long lost = repository.countByTenantIdAndStatus(tenantId, LeadStatus.LOST);
         long followUpsDue = repository.countByTenantIdAndNextFollowUpAtLessThanEqualAndStatusNotIn(tenantId, now, TERMINAL);
+        List<LeadEntity> dueRows = repository.findByTenantIdAndNextFollowUpAtLessThanEqualAndStatusNotIn(tenantId, now, TERMINAL);
 
-        OffsetDateTime todayStart = LocalDate.now(ZoneOffset.UTC).atStartOfDay().atOffset(ZoneOffset.UTC);
-        OffsetDateTime todayEnd = todayStart.plusDays(1).minusNanos(1);
-        List<LeadEntity> dueRows = repository.findByTenantIdAndNextFollowUpAtLessThanEqualAndStatusNotIn(tenantId, todayEnd, TERMINAL);
+        LocalDate today = LocalDate.now(zone);
+        OffsetDateTime todayStart = today.atStartOfDay(zone).toOffsetDateTime();
+        OffsetDateTime todayEnd = today.plusDays(1).atStartOfDay(zone).toOffsetDateTime().minusNanos(1);
         long dueToday = dueRows.stream().filter(r -> r.getNextFollowUpAt() != null && !r.getNextFollowUpAt().isBefore(todayStart) && !r.getNextFollowUpAt().isAfter(todayEnd)).count();
         long overdue = dueRows.stream().filter(r -> r.getNextFollowUpAt() != null && r.getNextFollowUpAt().isBefore(todayStart)).count();
 
-        List<LeadEntity> staleWindow = repository.findByTenantIdAndCreatedAtBetween(tenantId, OffsetDateTime.now().minusDays(3650), OffsetDateTime.now().minusDays(7));
+        List<LeadEntity> staleWindow = repository.findByTenantIdAndCreatedAtBetween(tenantId, now.minusDays(3650), now.minusDays(7));
         long stale = staleWindow.stream().filter(row -> !row.getStatus().isTerminal()).count();
 
-        List<LeadEntity> highPriorityWindow = repository.findByTenantIdAndCreatedAtBetween(tenantId, OffsetDateTime.now().minusDays(3650), OffsetDateTime.now().plusDays(1));
+        List<LeadEntity> highPriorityWindow = repository.findByTenantIdAndCreatedAtBetween(tenantId, now.minusDays(3650), now.plusDays(1));
         long highPriority = highPriorityWindow.stream().filter(row -> row.getPriority() == LeadPriority.HIGH && row.getStatus().isActivePipeline()).count();
 
-        LocalDate effectiveStart = startDate == null ? LocalDate.now(ZoneOffset.UTC).minusDays(30) : startDate;
-        LocalDate effectiveEnd = endDate == null ? LocalDate.now(ZoneOffset.UTC) : endDate;
-        OffsetDateTime from = effectiveStart.atStartOfDay().atOffset(ZoneOffset.UTC);
-        OffsetDateTime to = effectiveEnd.plusDays(1).atStartOfDay().atOffset(ZoneOffset.UTC).minusNanos(1);
+        LocalDate effectiveStart = startDate == null ? today.minusDays(30) : startDate;
+        LocalDate effectiveEnd = endDate == null ? today : endDate;
+        OffsetDateTime from = effectiveStart.atStartOfDay(zone).toOffsetDateTime();
+        OffsetDateTime to = effectiveEnd.plusDays(1).atStartOfDay(zone).toOffsetDateTime().minusNanos(1);
         List<LeadEntity> window = repository.findByTenantIdAndCreatedAtBetween(tenantId, from, to);
         Map<String, Long> sourceBreakdown = window.stream()
                 .collect(Collectors.groupingBy(row -> row.getSource().name(), LinkedHashMap::new, Collectors.counting()));
 
         long conversionsWithAppointment = repository.countByTenantIdAndConvertedPatientIdIsNotNullAndBookedAppointmentIdIsNotNull(tenantId);
-        List<LeadEntity> convertedRows = window.stream().filter(r -> r.getStatus() == LeadStatus.CONVERTED && r.getUpdatedAt() != null).toList();
-        Double avgHoursToConversion = convertedRows.isEmpty() ? null : convertedRows.stream()
+        long converted = window.stream().filter(r -> r.getStatus() == LeadStatus.CONVERTED).count();
+        Double avgHoursToConversion = converted == 0 ? null : window.stream()
+                .filter(r -> r.getStatus() == LeadStatus.CONVERTED && r.getUpdatedAt() != null)
                 .mapToLong(r -> Math.max(0, ChronoUnit.HOURS.between(r.getCreatedAt(), r.getUpdatedAt())))
                 .average()
                 .orElse(0d);
@@ -76,7 +84,7 @@ public class LeadAnalyticsService {
                 followUpsDue,
                 dueToday,
                 overdue,
-                total == 0 ? 0d : ((double) converted * 100d) / total,
+                window.isEmpty() ? 0d : ((double) converted * 100d) / window.size(),
                 sourceBreakdown,
                 stale,
                 highPriority,

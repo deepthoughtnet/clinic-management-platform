@@ -64,7 +64,15 @@ import LeadsPage from "../products/carepilot/leads/LeadsPage";
 import WebinarsPage from "../products/carepilot/webinars/WebinarsPage";
 import AiOperationsPage from "../products/carepilot/ai-operations/AiOperationsPage";
 import { hasTenantModule } from "../auth/moduleEntitlements";
-import { ENGAGE_ANALYTICS_VIEW } from "../auth/permissions";
+import {
+  ENGAGE_ANALYTICS_VIEW,
+  ENGAGE_LEAD_VIEW,
+  ENGAGE_LEAD_VIEW_ALL,
+  ENGAGE_LEAD_VIEW_AUDIT,
+  ENGAGE_WEBINAR_VIEW,
+  ENGAGE_WEBINAR_VIEW_ANALYTICS,
+  ENGAGE_WEBINAR_VIEW_AUDIT,
+} from "../auth/permissions";
 import { branding, productTitle } from "../branding";
 import { canAccessFeature, isRouteAccessibleForAuth, resolveTenantLandingPage, type AppFeatureId } from "../modules/moduleRegistry";
 
@@ -473,7 +481,7 @@ function AuthedApp() {
           element={
             <PathnameKeyedRoute>
               <ModuleGate moduleKey="carePilot">
-                <PermissionGate anyPermissions={["engage.leads.operate"]}>
+                <PermissionGate anyPermissions={[ENGAGE_LEAD_VIEW, ENGAGE_LEAD_VIEW_ALL, ENGAGE_LEAD_VIEW_AUDIT]}>
                   <LeadsPage />
                 </PermissionGate>
               </ModuleGate>
@@ -485,7 +493,7 @@ function AuthedApp() {
           element={
             <PathnameKeyedRoute>
               <ModuleGate moduleKey="carePilot">
-                <PermissionGate anyPermissions={["engage.webinar.manage"]}>
+                <PermissionGate anyPermissions={[ENGAGE_WEBINAR_VIEW, ENGAGE_WEBINAR_VIEW_ANALYTICS, ENGAGE_WEBINAR_VIEW_AUDIT]}>
                   <WebinarsPage />
                 </PermissionGate>
               </ModuleGate>
