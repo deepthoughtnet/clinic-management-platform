@@ -15,11 +15,14 @@ import com.deepthoughtnet.clinic.carepilot.lead.activity.model.LeadActivityType;
 import com.deepthoughtnet.clinic.carepilot.lead.activity.service.LeadActivityService;
 import com.deepthoughtnet.clinic.carepilot.lead.db.LeadEntity;
 import com.deepthoughtnet.clinic.carepilot.lead.db.LeadRepository;
+import com.deepthoughtnet.clinic.carepilot.lead.model.LeadConvertedMetadataCommand;
 import com.deepthoughtnet.clinic.carepilot.lead.model.LeadPriority;
 import com.deepthoughtnet.clinic.carepilot.lead.model.LeadSource;
 import com.deepthoughtnet.clinic.carepilot.lead.model.LeadStatus;
 import com.deepthoughtnet.clinic.carepilot.lead.model.LeadStatusUpdateCommand;
 import com.deepthoughtnet.clinic.carepilot.lead.model.LeadUpsertCommand;
+import com.deepthoughtnet.clinic.identity.db.AppUserEntity;
+import com.deepthoughtnet.clinic.identity.db.AppUserRepository;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.patient.service.model.PatientGender;
 import java.time.OffsetDateTime;
@@ -36,6 +39,7 @@ class LeadServiceTest {
     private CampaignRepository campaignRepository;
     private LeadActivityService activityService;
     private PatientRepository patientRepository;
+    private AppUserRepository appUserRepository;
     private LeadService service;
 
     @BeforeEach
@@ -44,7 +48,8 @@ class LeadServiceTest {
         campaignRepository = mock(CampaignRepository.class);
         activityService = mock(LeadActivityService.class);
         patientRepository = mock(PatientRepository.class);
-        service = new LeadService(repository, campaignRepository, activityService, patientRepository);
+        appUserRepository = mock(AppUserRepository.class);
+        service = new LeadService(repository, campaignRepository, activityService, patientRepository, appUserRepository);
         when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(activityService.latestByLeadIds(any(), any())).thenReturn(java.util.Map.of());
         when(patientRepository.findByTenantIdAndId(any(), any())).thenReturn(Optional.empty());
@@ -137,6 +142,60 @@ class LeadServiceTest {
         assertThat(updated.sourceDetails()).isEqualTo("new source");
         assertThat(updated.notes()).isEqualTo("changed-note");
         assertThat(updated.tags()).isEqualTo("changed-tags");
+    }
+
+    @Test
+    void convertedMetadataUpdateAllowsPartialMarketingPayloadWithoutImmutableFields() {
+        LeadEntity entity = LeadEntity.create(tenantId, actorId);
+        entity.setFirstName("Old");
+        entity.setLastName("Name");
+        entity.setPhone("9876543210");
+        entity.setEmail("old@example.com");
+        entity.setGender(PatientGender.FEMALE);
+        entity.setDateOfBirth(java.time.LocalDate.of(1992, 1, 1));
+        entity.setSource(LeadSource.MANUAL);
+        entity.setStatus(LeadStatus.CONVERTED);
+        entity.setPriority(LeadPriority.MEDIUM);
+        entity.setLastContactedAt(OffsetDateTime.parse("2026-07-20T09:00:00Z"));
+        when(repository.findByTenantIdAndId(tenantId, entity.getId())).thenReturn(Optional.of(entity));
+        UUID campaignId = UUID.randomUUID();
+        UUID assigneeId = UUID.randomUUID();
+        when(campaignRepository.findByTenantIdAndId(tenantId, campaignId)).thenReturn(Optional.of(mock(com.deepthoughtnet.clinic.carepilot.campaign.db.CampaignEntity.class)));
+        AppUserEntity assignee = mock(AppUserEntity.class);
+        when(assignee.getStatus()).thenReturn("ACTIVE");
+        when(appUserRepository.findByTenantIdAndId(tenantId, assigneeId)).thenReturn(Optional.of(assignee));
+
+        var updated = service.updateConvertedMetadata(tenantId, entity.getId(), new LeadConvertedMetadataCommand(
+                "marketing note",
+                "Test, UAT",
+                "webinar follow-up",
+                campaignId,
+                assigneeId
+        ), actorId);
+
+        assertThat(updated.notes()).isEqualTo("marketing note");
+        assertThat(updated.tags()).isEqualTo("Test, UAT");
+        assertThat(updated.sourceDetails()).isEqualTo("webinar follow-up");
+        assertThat(updated.campaignId()).isEqualTo(campaignId);
+        assertThat(updated.assignedToAppUserId()).isEqualTo(assigneeId);
+        assertThat(updated.status()).isEqualTo(LeadStatus.CONVERTED);
+    }
+
+    @Test
+    void convertedMetadataUpdateRejectsCrossTenantAssignee() {
+        LeadEntity entity = LeadEntity.create(tenantId, actorId);
+        entity.setFirstName("Old");
+        entity.setPhone("9876543210");
+        entity.setSource(LeadSource.MANUAL);
+        entity.setStatus(LeadStatus.CONVERTED);
+        when(repository.findByTenantIdAndId(tenantId, entity.getId())).thenReturn(Optional.of(entity));
+
+        UUID assigneeId = UUID.randomUUID();
+        when(appUserRepository.findByTenantIdAndId(tenantId, assigneeId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.updateConvertedMetadata(tenantId, entity.getId(), new LeadConvertedMetadataCommand(
+                null, null, null, null, assigneeId
+        ), actorId)).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("assignedToAppUserId");
     }
 
     @Test

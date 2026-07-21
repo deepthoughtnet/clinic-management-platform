@@ -5,6 +5,7 @@ import com.deepthoughtnet.clinic.carepilot.lead.activity.model.LeadActivityType;
 import com.deepthoughtnet.clinic.carepilot.lead.activity.service.LeadActivityService;
 import com.deepthoughtnet.clinic.carepilot.lead.db.LeadEntity;
 import com.deepthoughtnet.clinic.carepilot.lead.db.LeadRepository;
+import com.deepthoughtnet.clinic.carepilot.lead.model.LeadConvertedMetadataCommand;
 import com.deepthoughtnet.clinic.carepilot.lead.model.LeadPresentationLabels;
 import com.deepthoughtnet.clinic.carepilot.lead.model.LeadPriority;
 import com.deepthoughtnet.clinic.carepilot.lead.model.LeadRecord;
@@ -15,6 +16,8 @@ import com.deepthoughtnet.clinic.carepilot.lead.model.LeadStatusUpdateCommand;
 import com.deepthoughtnet.clinic.carepilot.lead.model.LeadUpsertCommand;
 import com.deepthoughtnet.clinic.carepilot.shared.util.CarePilotValidators;
 import com.deepthoughtnet.clinic.platform.core.errors.ForbiddenException;
+import com.deepthoughtnet.clinic.identity.db.AppUserEntity;
+import com.deepthoughtnet.clinic.identity.db.AppUserRepository;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import jakarta.persistence.criteria.Predicate;
 import java.nio.charset.StandardCharsets;
@@ -51,12 +54,14 @@ public class LeadService {
     private final CampaignRepository campaignRepository;
     private final LeadActivityService leadActivityService;
     private final PatientRepository patientRepository;
+    private final AppUserRepository appUserRepository;
 
-    public LeadService(LeadRepository repository, CampaignRepository campaignRepository, LeadActivityService leadActivityService, PatientRepository patientRepository) {
+    public LeadService(LeadRepository repository, CampaignRepository campaignRepository, LeadActivityService leadActivityService, PatientRepository patientRepository, AppUserRepository appUserRepository) {
         this.repository = repository;
         this.campaignRepository = campaignRepository;
         this.leadActivityService = leadActivityService;
         this.patientRepository = patientRepository;
+        this.appUserRepository = appUserRepository;
     }
 
     @Transactional(readOnly = true)
@@ -164,6 +169,52 @@ public class LeadService {
             recordStatusTransition(tenantId, saved.getId(), beforeStatus, saved.getStatus(), actorId);
         }
         maybeRecordFollowUpScheduled(saved, beforeFollowUp, actorId);
+        return toRecord(saved, OffsetDateTime.now());
+    }
+
+    @Transactional
+    public LeadRecord updateConvertedMetadata(UUID tenantId, UUID id, LeadConvertedMetadataCommand command, UUID actorId) {
+        CarePilotValidators.requireTenant(tenantId);
+        CarePilotValidators.requireId(id, "id");
+        if (command == null) {
+            throw new IllegalArgumentException("command is required");
+        }
+        LeadEntity entity = require(tenantId, id);
+        if (entity.getStatus() != LeadStatus.CONVERTED) {
+            throw new IllegalArgumentException("Converted lead metadata can only be updated after conversion");
+        }
+        UUID beforeCampaign = entity.getCampaignId();
+        UUID beforeAssignee = entity.getAssignedToAppUserId();
+        String beforeNotes = entity.getNotes();
+        String beforeTags = entity.getTags();
+        String beforeSourceDetails = entity.getSourceDetails();
+
+        if (command.campaignId() != null && campaignRepository.findByTenantIdAndId(entity.getTenantId(), command.campaignId()).isEmpty()) {
+            throw new IllegalArgumentException("campaignId does not belong to tenant");
+        }
+        if (command.assignedToAppUserId() != null) {
+            AppUserEntity assignee = appUserRepository.findByTenantIdAndId(entity.getTenantId(), command.assignedToAppUserId())
+                    .orElseThrow(() -> new IllegalArgumentException("assignedToAppUserId does not belong to tenant"));
+            if (!"ACTIVE".equalsIgnoreCase(assignee.getStatus())) {
+                throw new IllegalArgumentException("assignedToAppUserId must reference an active Engage user");
+            }
+        }
+
+        entity.setNotes(normalizeNullable(command.notes()));
+        entity.setTags(normalizeConvertedTags(command.tags()));
+        entity.setSourceDetails(normalizeNullable(command.sourceDetails()));
+        entity.setCampaignId(command.campaignId());
+        entity.setAssignedToAppUserId(command.assignedToAppUserId());
+        entity.touch(actorId);
+
+        LeadEntity saved = repository.save(entity);
+        if (!Objects.equals(beforeCampaign, saved.getCampaignId())
+                || !Objects.equals(beforeAssignee, saved.getAssignedToAppUserId())
+                || !Objects.equals(beforeNotes, saved.getNotes())
+                || !Objects.equals(beforeTags, saved.getTags())
+                || !Objects.equals(beforeSourceDetails, saved.getSourceDetails())) {
+            leadActivityService.record(tenantId, saved.getId(), LeadActivityType.UPDATED, "Converted lead updated", "Marketing metadata updated", null, null, null, null, actorId);
+        }
         return toRecord(saved, OffsetDateTime.now());
     }
 
@@ -370,6 +421,17 @@ public class LeadService {
 
     private String normalizeNullable(String value) {
         return StringUtils.hasText(value) ? value.trim() : null;
+    }
+
+    private String normalizeConvertedTags(String value) {
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
+        return java.util.Arrays.stream(value.split(","))
+                .map(String::trim)
+                .filter(StringUtils::hasText)
+                .reduce((left, right) -> left + ", " + right)
+                .orElse(null);
     }
 
     private String normalizeMobile(String value, String field) {

@@ -6,6 +6,29 @@ function trimmed(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function normalizeCommaSeparatedText(value) {
+  if (typeof value !== "string") {
+    return "";
+  }
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .join(", ");
+}
+
+function normalizeCommaSeparatedTextForComparison(value) {
+  const normalized = normalizeCommaSeparatedText(value);
+  if (!normalized) {
+    return "";
+  }
+  return normalized
+    .split(", ")
+    .filter(Boolean)
+    .sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }))
+    .join(", ");
+}
+
 function normalizeIndianMobileInput(value) {
   if (typeof value !== "string") {
     return value;
@@ -76,6 +99,42 @@ export function validateLeadDraft(draft, clinicUsers = []) {
   };
 }
 
+export function toConvertedLeadMetadataSnapshot(source) {
+  return {
+    notes: trimmed(source?.notes),
+    tags: normalizeCommaSeparatedTextForComparison(source?.tags),
+    sourceDetails: trimmed(source?.sourceDetails),
+    campaignId: trimmed(source?.campaignId),
+    assignedToAppUserId: trimmed(source?.assignedToAppUserId),
+  };
+}
+
+export function hasConvertedLeadMetadataChanges(current, baseline) {
+  const currentSnapshot = toConvertedLeadMetadataSnapshot(current);
+  const baselineSnapshot = toConvertedLeadMetadataSnapshot(baseline);
+  return Object.keys(currentSnapshot).some((key) => currentSnapshot[key] !== baselineSnapshot[key]);
+}
+
+export function buildConvertedLeadMetadataPayload(draft, baseline) {
+  const currentComparison = toConvertedLeadMetadataSnapshot(draft);
+  const baselineComparison = toConvertedLeadMetadataSnapshot(baseline);
+  const currentPayload = {
+    notes: trimmed(draft?.notes),
+    tags: normalizeCommaSeparatedText(draft?.tags),
+    sourceDetails: trimmed(draft?.sourceDetails),
+    campaignId: trimmed(draft?.campaignId),
+    assignedToAppUserId: trimmed(draft?.assignedToAppUserId),
+  };
+  const payload = {};
+  for (const key of Object.keys(currentPayload)) {
+    if (currentComparison[key] === baselineComparison[key]) {
+      continue;
+    }
+    payload[key] = currentPayload[key] || null;
+  }
+  return payload;
+}
+
 export function buildLeadCreatePayload(draft, normalizedPhone) {
   const nextFollowUpAt = toIsoOffsetDateTime(draft.nextFollowUpAt);
   return {
@@ -88,7 +147,7 @@ export function buildLeadCreatePayload(draft, normalizedPhone) {
     status: draft.status,
     priority: draft.priority,
     notes: trimmed(draft.notes) || null,
-    tags: trimmed(draft.tags) || null,
+    tags: normalizeCommaSeparatedText(draft.tags) || null,
     campaignId: trimmed(draft.campaignId) || null,
     assignedToAppUserId: trimmed(draft.assignedToAppUserId) || null,
     nextFollowUpAt,

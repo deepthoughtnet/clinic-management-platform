@@ -71,6 +71,14 @@ public final class LeadDtos {
             OffsetDateTime nextFollowUpAt
     ) {}
 
+    public record LeadConvertedMetadataUpdateRequest(
+            String notes,
+            String tags,
+            String sourceDetails,
+            UUID campaignId,
+            UUID assignedToAppUserId
+    ) {}
+
     public record LeadStatusUpdateRequest(
             LeadStatus status,
             LeadPriority priority,

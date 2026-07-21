@@ -20,7 +20,9 @@ test("open patient is guarded by shared tenant-aware entitlement checks", () => 
   assert.ok(helper.includes('canViewLinkedPatientConsultationHistory'));
 
   assert.ok(leads.includes('canOpenLinkedPatient(auth)'));
-  assert.ok(leads.includes('lead.convertedPatientId && canOpenPatient'));
+  assert.ok(leads.includes('renderConvertedPatientActions'));
+  assert.ok(leads.includes('renderLeadActions(lead)'));
+  assert.ok(!leads.includes('lead.convertedPatientId && canOpenPatient ? <Button size="small" onClick={() => navigate(`/patients/${lead.convertedPatientId}`)}>Open Patient</Button> : null'));
   assert.ok(leads.includes('View Consultation History'));
   assert.ok(reminders.includes('canOpenLinkedPatient(auth)'));
   assert.ok(reminders.includes('row.patientId && canOpenPatient'));

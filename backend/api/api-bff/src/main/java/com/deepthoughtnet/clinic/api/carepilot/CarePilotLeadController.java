@@ -16,11 +16,13 @@ import com.deepthoughtnet.clinic.carepilot.lead.analytics.LeadAnalyticsService;
 import com.deepthoughtnet.clinic.carepilot.lead.conversion.LeadAppointmentBookingCommand;
 import com.deepthoughtnet.clinic.carepilot.lead.conversion.LeadConversionResult;
 import com.deepthoughtnet.clinic.carepilot.lead.conversion.LeadConversionService;
+import com.deepthoughtnet.clinic.carepilot.lead.model.LeadConvertedMetadataCommand;
 import com.deepthoughtnet.clinic.carepilot.lead.model.LeadRecord;
 import com.deepthoughtnet.clinic.carepilot.lead.model.LeadSearchCriteria;
 import com.deepthoughtnet.clinic.carepilot.lead.model.LeadStatusUpdateCommand;
 import com.deepthoughtnet.clinic.carepilot.lead.model.LeadUpsertCommand;
 import com.deepthoughtnet.clinic.carepilot.lead.service.LeadService;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
 import com.deepthoughtnet.clinic.api.security.PermissionChecker;
 import com.deepthoughtnet.clinic.identity.service.TenantSubscriptionService;
@@ -49,6 +51,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 import jakarta.validation.Valid;
+import org.springframework.util.StringUtils;
 
 /** CarePilot lead intake, lifecycle, conversion, and analytics APIs. */
 @RestController
@@ -185,6 +188,22 @@ public class CarePilotLeadController {
         return toResponse(leadService.update(tenantId, id, toCommand(request), actor));
     }
 
+    @PutMapping("/{id:" + UUID_PATH + "}/converted-metadata")
+    @PreAuthorize("@permissionChecker.hasAnyPermission('engage.lead.edit','engage.lead.assign')")
+    public LeadResponse updateConvertedMetadata(@PathVariable UUID id, @RequestBody(required = false) JsonNode request) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actor = RequestContextHolder.require().appUserId();
+        LeadRecord current = leadService.requireVisibleLead(tenantId, id, actor, canViewAllLeads());
+        requireConvertedLeadMetadataPermission(request);
+        return toResponse(leadService.updateConvertedMetadata(tenantId, id, new LeadConvertedMetadataCommand(
+                readText(request, "notes", current.notes()),
+                readText(request, "tags", current.tags()),
+                readText(request, "sourceDetails", current.sourceDetails()),
+                readUuid(request, "campaignId", current.campaignId()),
+                readUuid(request, "assignedToAppUserId", current.assignedToAppUserId())
+        ), actor));
+    }
+
     @PostMapping("/{id:" + UUID_PATH + "}/status")
     @PreAuthorize("@permissionChecker.hasAnyPermission('engage.lead.edit','engage.lead.assign','engage.lead.follow.up')")
     public LeadResponse updateStatus(@PathVariable UUID id, @RequestBody LeadStatusUpdateRequest request) {
@@ -308,6 +327,45 @@ public class CarePilotLeadController {
                 row.notes(), row.tags(), canExposePatientNavigation(row.tenantId()) ? row.convertedPatientId() : null, row.bookedAppointmentId(), row.lastContactedAt(), row.nextFollowUpAt(), row.lastActivityAt(),
                 row.createdBy(), row.updatedBy(), row.createdAt(), row.updatedAt()
         );
+    }
+
+    private void requireConvertedLeadMetadataPermission(JsonNode request) {
+        boolean hasMarketingUpdate = request != null && (
+                request.has("notes")
+                || request.has("tags")
+                || request.has("sourceDetails")
+                || request.has("campaignId")
+        );
+        boolean hasAssigneeUpdate = request != null && request.has("assignedToAppUserId");
+        if (hasMarketingUpdate && !permissionChecker.hasPermission("engage.lead.edit")) {
+            throw new AccessDeniedException("You do not have permission to update converted lead marketing details");
+        }
+        if (hasAssigneeUpdate && !permissionChecker.hasPermission("engage.lead.assign")) {
+            throw new AccessDeniedException("You do not have permission to change the assignee");
+        }
+    }
+
+    private String readText(JsonNode request, String field, String fallback) {
+        if (request == null || !request.has(field)) {
+            return fallback;
+        }
+        JsonNode node = request.get(field);
+        if (node == null || node.isNull()) {
+            return null;
+        }
+        String value = node.asText();
+        return value == null ? null : value;
+    }
+
+    private UUID readUuid(JsonNode request, String field, UUID fallback) {
+        if (request == null || !request.has(field)) {
+            return fallback;
+        }
+        JsonNode node = request.get(field);
+        if (node == null || node.isNull() || !StringUtils.hasText(node.asText())) {
+            return null;
+        }
+        return UUID.fromString(node.asText());
     }
 
     private boolean canExposePatientNavigation(UUID tenantId) {

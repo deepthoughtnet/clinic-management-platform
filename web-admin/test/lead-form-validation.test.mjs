@@ -86,7 +86,8 @@ test("lead form submit path prevents duplicate clicks and shows inline errors", 
   assert.ok(source.includes("saving || saveInFlightRef.current"));
   assert.ok(source.includes("setFieldErrors(validation.fieldErrors)"));
   assert.ok(source.includes("mapLeadApiErrorToFieldErrors(message)"));
-  assert.ok(source.includes("disabled={saving}"));
+  assert.ok(source.includes("convertedLeadCanSave"));
+  assert.ok(source.includes("disabled={saving || (convertedLead ? !convertedLeadDirty : false)}"));
   assert.ok(source.includes("error={Boolean(fieldErrors.nextFollowUpAt)}"));
   assert.ok(source.includes("clearSaveState()"));
 });

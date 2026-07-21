@@ -19,6 +19,7 @@ class CarePilotLeadControllerSecurityTest {
                 com.deepthoughtnet.clinic.carepilot.lead.model.LeadPriority.class,
                 String.class,
                 boolean.class,
+                boolean.class,
                 java.time.LocalDate.class,
                 java.time.LocalDate.class,
                 int.class,
@@ -41,11 +42,15 @@ class CarePilotLeadControllerSecurityTest {
         Method status = CarePilotLeadController.class.getMethod("updateStatus", java.util.UUID.class, com.deepthoughtnet.clinic.api.carepilot.dto.LeadDtos.LeadStatusUpdateRequest.class);
         Method note = CarePilotLeadController.class.getMethod("addNote", java.util.UUID.class, com.deepthoughtnet.clinic.api.carepilot.dto.LeadDtos.LeadNoteRequest.class);
         Method convert = CarePilotLeadController.class.getMethod("convert", java.util.UUID.class, com.deepthoughtnet.clinic.api.carepilot.dto.LeadDtos.LeadConvertRequest.class);
+        Method convertedMetadata = CarePilotLeadController.class.getMethod("updateConvertedMetadata", java.util.UUID.class, com.fasterxml.jackson.databind.JsonNode.class);
 
-        for (Method method : new Method[]{create, importCsv, template, update, status, note, convert}) {
+        for (Method method : new Method[]{create, importCsv, template, update, status, note, convert, convertedMetadata}) {
             String guard = method.getAnnotation(PreAuthorize.class).value();
             if (method == importCsv || method == template) {
                 assertThat(guard).contains("engage.lead.import");
+            } else if (method == convertedMetadata) {
+                assertThat(guard).contains("engage.lead.edit");
+                assertThat(guard).contains("engage.lead.assign");
             } else {
                 assertThat(guard).contains("engage.lead");
             }
@@ -68,6 +73,7 @@ class CarePilotLeadControllerSecurityTest {
                 java.util.UUID.class,
                 com.deepthoughtnet.clinic.carepilot.lead.model.LeadPriority.class,
                 String.class,
+                boolean.class,
                 boolean.class,
                 java.time.LocalDate.class,
                 java.time.LocalDate.class

@@ -7495,6 +7495,21 @@ export async function updateCarePilotLead(token: string, tenantId: string, leadI
   return httpPut<CarePilotLead>(`/api/carepilot/leads/${leadId}`, body, { token, tenantId });
 }
 
+export async function updateCarePilotConvertedLeadMetadata(
+  token: string,
+  tenantId: string,
+  leadId: string,
+  body: {
+    notes?: string | null;
+    tags?: string | null;
+    sourceDetails?: string | null;
+    campaignId?: string | null;
+    assignedToAppUserId?: string | null;
+  }
+) {
+  return httpPut<CarePilotLead>(`/api/carepilot/leads/${leadId}/converted-metadata`, body, { token, tenantId });
+}
+
 export async function updateCarePilotLeadStatus(
   token: string,
   tenantId: string,

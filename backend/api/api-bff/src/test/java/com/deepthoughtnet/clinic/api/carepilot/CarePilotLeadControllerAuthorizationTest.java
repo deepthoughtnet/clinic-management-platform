@@ -108,6 +108,13 @@ class CarePilotLeadControllerAuthorizationTest {
                                 {"firstName":"Asha","phone":"9876543210","status":"CONTACTED","priority":"HIGH","source":"MANUAL"}
                                 """))
                 .andExpect(status().isOk());
+        mockMvc.perform(put("/api/carepilot/leads/{id}/converted-metadata", LEAD_ID)
+                        .with(csrf())
+                        .contentType("application/json")
+                        .content("""
+                                {"notes":"marketing note","tags":"vip","sourceDetails":"webinar","campaignId":"%s"}
+                                """.formatted(UUID.randomUUID())))
+                .andExpect(status().isOk());
         mockMvc.perform(post("/api/carepilot/leads/{id}/status", LEAD_ID)
                         .with(csrf())
                         .contentType("application/json")
@@ -174,6 +181,7 @@ class CarePilotLeadControllerAuthorizationTest {
         when(leadService.requireVisibleLead(eq(TENANT_ID), eq(LEAD_ID), any(UUID.class), anyBoolean())).thenReturn(lead);
         when(leadService.create(eq(TENANT_ID), any(), eq(ACTOR_ID))).thenReturn(lead);
         when(leadService.update(eq(TENANT_ID), eq(LEAD_ID), any(), eq(ACTOR_ID))).thenReturn(lead);
+        when(leadService.updateConvertedMetadata(eq(TENANT_ID), eq(LEAD_ID), any(), eq(ACTOR_ID))).thenReturn(lead);
         when(leadService.updateStatus(eq(TENANT_ID), eq(LEAD_ID), any(), eq(ACTOR_ID))).thenReturn(lead);
         when(leadService.addNote(eq(TENANT_ID), eq(LEAD_ID), any(), eq(ACTOR_ID))).thenReturn(lead);
         when(conversionService.convert(eq(TENANT_ID), eq(LEAD_ID), eq(ACTOR_ID), any(), eq(false), any(UUID.class), anyBoolean()))

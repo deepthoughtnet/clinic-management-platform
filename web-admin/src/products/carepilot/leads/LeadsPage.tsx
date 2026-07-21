@@ -61,6 +61,7 @@ import {
   lookupCarePilotCampaigns,
   listCarePilotLeadActivities,
   listCarePilotLeads,
+  updateCarePilotConvertedLeadMetadata,
   updateCarePilotLead,
   updateCarePilotLeadStatus,
   type AppointmentPriority,
@@ -91,7 +92,15 @@ import {
   leadStatusLabel,
 } from "../shared/leadFormatting";
 import { useCarePilotTenantTimezone } from "../shared/useCarePilotTenantTimezone";
-import { buildLeadCreatePayload, mapLeadApiErrorToFieldErrors, toLeadDateTimeInputValue, validateLeadDraft } from "./leadFormUtils";
+import {
+  buildConvertedLeadMetadataPayload,
+  buildLeadCreatePayload,
+  hasConvertedLeadMetadataChanges,
+  mapLeadApiErrorToFieldErrors,
+  toConvertedLeadMetadataSnapshot,
+  toLeadDateTimeInputValue,
+  validateLeadDraft,
+} from "./leadFormUtils";
 const KANBAN_COLUMNS: CarePilotLeadStatus[] = ["NEW", "CONTACTED", "QUALIFIED", "FOLLOW_UP_REQUIRED", "APPOINTMENT_BOOKED", "CONVERTED", "LOST", "SPAM"];
 
 type LeadDraft = {
@@ -233,6 +242,7 @@ export default function LeadsPage() {
   const phoneInputRef = React.useRef<HTMLInputElement | null>(null);
   const emailInputRef = React.useRef<HTMLInputElement | null>(null);
   const nextFollowUpInputRef = React.useRef<HTMLInputElement | null>(null);
+  const convertedLeadSnapshotRef = React.useRef<ReturnType<typeof toConvertedLeadMetadataSnapshot> | null>(null);
 
   const [activities, setActivities] = React.useState<CarePilotLeadActivity[]>([]);
   const [activityLoading, setActivityLoading] = React.useState(false);
@@ -267,6 +277,29 @@ export default function LeadsPage() {
     setFieldErrors({});
     saveInFlightRef.current = false;
   };
+
+  const hydrateEditorLead = React.useCallback((lead: CarePilotLead) => {
+    setEditorLead(lead);
+    setLinkedPatientDetail(null);
+    setDraft({
+      firstName: lead.firstName,
+      lastName: lead.lastName || "",
+      phone: lead.phone,
+      email: lead.email || "",
+      source: lead.source,
+      sourceDetails: lead.sourceDetails || "",
+      status: lead.status,
+      priority: lead.priority,
+      notes: lead.notes || "",
+      tags: lead.tags || "",
+      nextFollowUpAt: isTerminalLeadStatus(lead.status) ? "" : (lead.nextFollowUpAt ? toLeadDateTimeInputValue(lead.nextFollowUpAt) : ""),
+      campaignId: lead.campaignId || "",
+      assignedToAppUserId: lead.assignedToAppUserId || "",
+    });
+    convertedLeadSnapshotRef.current = lead.status === "CONVERTED" ? toConvertedLeadMetadataSnapshot(lead) : null;
+    clearSaveState();
+    setEditorOpen(true);
+  }, []);
 
   const clearLeadFieldError = (field: string) => {
     setFieldErrors((current) => {
@@ -398,25 +431,7 @@ export default function LeadsPage() {
         setSearchParams(nextParams, { replace: true });
         setTab(nextTab);
         setStatusFilter(lead.status);
-        setEditorLead(lead);
-        setLinkedPatientDetail(null);
-        setDraft({
-          firstName: lead.firstName,
-          lastName: lead.lastName || "",
-          phone: lead.phone,
-          email: lead.email || "",
-          source: lead.source,
-          sourceDetails: lead.sourceDetails || "",
-          status: lead.status,
-          priority: lead.priority,
-          notes: lead.notes || "",
-          tags: lead.tags || "",
-          nextFollowUpAt: isTerminalLeadStatus(lead.status) ? "" : (lead.nextFollowUpAt ? toLeadDateTimeInputValue(lead.nextFollowUpAt) : ""),
-          campaignId: lead.campaignId || "",
-          assignedToAppUserId: lead.assignedToAppUserId || "",
-        });
-        clearSaveState();
-        setEditorOpen(true);
+        hydrateEditorLead(lead);
         await loadActivitiesForLead(lead.id);
       } catch {
         if (!cancelled) {
@@ -428,11 +443,12 @@ export default function LeadsPage() {
     return () => {
       cancelled = true;
     };
-  }, [auth.accessToken, auth.tenantId, canView, loadActivitiesForLead, searchParams, setSearchParams]);
+  }, [auth.accessToken, auth.tenantId, canView, hydrateEditorLead, loadActivitiesForLead, searchParams, setSearchParams]);
 
   const openCreate = () => {
     setEditorLead(null);
     setDraft(emptyDraft());
+    convertedLeadSnapshotRef.current = null;
     setActivities([]);
     setLinkedPatientDetail(null);
     clearSaveState();
@@ -440,25 +456,7 @@ export default function LeadsPage() {
   };
 
   const openEdit = async (lead: CarePilotLead) => {
-    setEditorLead(lead);
-    setLinkedPatientDetail(null);
-    setDraft({
-      firstName: lead.firstName,
-      lastName: lead.lastName || "",
-      phone: lead.phone,
-      email: lead.email || "",
-      source: lead.source,
-      sourceDetails: lead.sourceDetails || "",
-      status: lead.status,
-      priority: lead.priority,
-      notes: lead.notes || "",
-      tags: lead.tags || "",
-      nextFollowUpAt: isTerminalLeadStatus(lead.status) ? "" : (lead.nextFollowUpAt ? toLeadDateTimeInputValue(lead.nextFollowUpAt) : ""),
-      campaignId: lead.campaignId || "",
-      assignedToAppUserId: lead.assignedToAppUserId || "",
-    });
-    clearSaveState();
-    setEditorOpen(true);
+    hydrateEditorLead(lead);
     await loadActivitiesForLead(lead.id);
   };
 
@@ -474,18 +472,38 @@ export default function LeadsPage() {
       return;
     }
 
-    const payload = buildLeadCreatePayload(draft, validation.normalizedPhone) as Partial<CarePilotLead>;
+    const createPayload = buildLeadCreatePayload(draft, validation.normalizedPhone) as Partial<CarePilotLead>;
+    if (convertedLead && !convertedLeadDirty) {
+      setToast("No converted lead changes to save.");
+      return;
+    }
     setSaving(true);
     saveInFlightRef.current = true;
     setSaveError(null);
     setFieldErrors({});
     try {
       if (editorLead) {
-        await updateCarePilotLead(auth.accessToken, auth.tenantId, editorLead.id, payload);
+        if (convertedLead) {
+          if (!convertedLeadDirty) {
+            setToast("No converted lead changes to save.");
+            return;
+          }
+          await updateCarePilotConvertedLeadMetadata(
+            auth.accessToken,
+            auth.tenantId,
+            editorLead.id,
+            buildConvertedLeadMetadataPayload(draft, convertedLeadSnapshotRef.current)
+          );
+          convertedLeadSnapshotRef.current = toConvertedLeadMetadataSnapshot(draft);
+          setToast("Converted lead marketing details saved.");
+        } else {
+          await updateCarePilotLead(auth.accessToken, auth.tenantId, editorLead.id, createPayload);
+          setToast("Lead updated");
+        }
       } else {
-        await createCarePilotLead(auth.accessToken, auth.tenantId, payload);
+        await createCarePilotLead(auth.accessToken, auth.tenantId, createPayload);
+        setToast("Lead created");
       }
-      setToast(editorLead ? "Lead updated" : "Lead created");
       setEditorOpen(false);
       clearSaveState();
       await load();
@@ -501,7 +519,7 @@ export default function LeadsPage() {
         return;
       }
       setSaveError(null);
-      setToast("Unable to save lead. Please try again.");
+      setToast(convertedLead ? "Unable to save converted lead details." : "Unable to save lead. Please try again.");
     }
     finally {
       setSaving(false);
@@ -647,7 +665,13 @@ export default function LeadsPage() {
   if (!canView) return <Alert severity="error">You do not have access to Jeevanam Engage leads.</Alert>;
 
   const convertedLead = editorLead?.status === "CONVERTED";
-  const canPersistLeadForm = editorLead ? (convertedLead ? canSaveLead : canMutate) : canCreate;
+  const canEditConvertedMarketing = !!editorLead && convertedLead && canSaveLead;
+  const canEditConvertedAssignee = !!editorLead && convertedLead && canAssign;
+  const convertedLeadCanSave = !!editorLead && convertedLead ? (canEditConvertedMarketing || canEditConvertedAssignee) : false;
+  const convertedLeadDirty = convertedLead && convertedLeadCanSave && convertedLeadSnapshotRef.current
+    ? hasConvertedLeadMetadataChanges(draft, convertedLeadSnapshotRef.current)
+    : false;
+  const canPersistLeadForm = editorLead ? (convertedLead ? convertedLeadCanSave : canMutate) : canCreate;
   const canAddLeadNote = editorLead ? (convertedLead ? canSaveLead : canMutate) : canMutate;
   const conversionActivity = activities.find((activity) => activity.activityType === "CONVERTED_TO_PATIENT") || null;
 
@@ -669,6 +693,18 @@ export default function LeadsPage() {
   };
   const groupedKanbanRows = KANBAN_COLUMNS.map((status) => ({ status, rows: rows.filter((lead) => lead.status === status) }));
 
+  const renderConvertedPatientActions = (lead: CarePilotLead) => {
+    if (lead.status !== "CONVERTED" || !lead.convertedPatientId) {
+      return null;
+    }
+    return (
+      <>
+        {canOpenPatient ? <Button size="small" onClick={() => navigate(`/patients/${lead.convertedPatientId}`)}>Open Patient</Button> : null}
+        {canViewLinkedPatientConsultationHistory(auth) ? <Button size="small" onClick={() => navigate(`/patients/${lead.convertedPatientId}`)}>View Consultation History</Button> : null}
+      </>
+    );
+  };
+
   const renderLeadActions = (lead: CarePilotLead, compact = false) => (
     <Stack direction={compact ? "column" : "row"} spacing={1} justifyContent={compact ? "flex-start" : "flex-end"} alignItems={compact ? "stretch" : "center"}>
       <Button size="small" onClick={() => void openEdit(lead)}>{lead.status === "CONVERTED" ? "View Details" : "View/Edit"}</Button>
@@ -676,8 +712,7 @@ export default function LeadsPage() {
       {canFollowUp && lead.status === "FOLLOW_UP_REQUIRED" ? <Button size="small" onClick={() => void markFollowUpCompleted(lead)}>Mark Done</Button> : null}
       {canConvert && lead.status !== "CONVERTED" ? <Button size="small" onClick={() => openConvert(lead)}>Convert</Button> : null}
       {canViewCampaigns && lead.campaignId ? <Button size="small" onClick={() => navigate(`/carepilot/campaigns?campaignId=${lead.campaignId}`)}>Open Campaign</Button> : null}
-      {lead.status === "CONVERTED" && lead.convertedPatientId && canOpenPatient ? <Button size="small" onClick={() => navigate(`/patients/${lead.convertedPatientId}`)}>Open Patient</Button> : null}
-      {lead.status === "CONVERTED" && lead.convertedPatientId && canViewLinkedPatientConsultationHistory(auth) ? <Button size="small" onClick={() => navigate(`/patients/${lead.convertedPatientId}`)}>View Consultation History</Button> : null}
+      {renderConvertedPatientActions(lead)}
     </Stack>
   );
 
@@ -773,7 +808,6 @@ export default function LeadsPage() {
                     <TableCell align="right">
                       <Stack direction="row" spacing={1} justifyContent="flex-end">
                         {renderLeadActions(lead)}
-                        {lead.convertedPatientId && canOpenPatient ? <Button size="small" onClick={() => navigate(`/patients/${lead.convertedPatientId}`)}>Open Patient</Button> : null}
                         {lead.bookedAppointmentId ? <Button size="small" onClick={() => navigate(`/appointments`)}>Open Appointment</Button> : null}
                       </Stack>
                     </TableCell>
@@ -860,10 +894,9 @@ export default function LeadsPage() {
                   </>
                 ) : null}
                 <Typography variant="body2">Source: {leadSourceLabel(editorLead?.source)}{editorLead?.sourceDetails ? ` · ${editorLead.sourceDetails}` : ""}</Typography>
-                {editorLead?.convertedPatientId && canOpenPatient ? (
+                {editorLead?.convertedPatientId ? (
                   <Stack direction="row" spacing={1} flexWrap="wrap">
-                    <Button size="small" onClick={() => navigate(`/patients/${editorLead.convertedPatientId}`)}>Open Patient</Button>
-                    {canViewLinkedPatientConsultationHistory(auth) ? <Button size="small" onClick={() => navigate(`/patients/${editorLead.convertedPatientId}`)}>View Consultation History</Button> : null}
+                    {renderConvertedPatientActions(editorLead)}
                   </Stack>
                 ) : null}
                 {editorLead && !editorLead.convertedPatientId && canOpenPatient ? (
@@ -924,15 +957,15 @@ export default function LeadsPage() {
                   value={draft.campaignId}
                   onChange={(value) => { clearLeadFieldError("campaignId"); setDraft((d) => ({ ...d, campaignId: value })); }}
                   label="Campaign"
-                  helperText={fieldErrors.campaignId || (convertedLead && !canPersistLeadForm ? "Read-only after conversion." : "Optional. Associate this lead with a campaign.")}
+                  helperText={fieldErrors.campaignId || (convertedLead && !canEditConvertedMarketing ? "Read-only after conversion." : "Optional. Associate this lead with a campaign.")}
                   error={Boolean(fieldErrors.campaignId)}
-                  disabled={convertedLead && !canPersistLeadForm}
+                  disabled={convertedLead && !canEditConvertedMarketing}
                 />
               </Grid>
             ) : null}
             {canViewUsers ? (
               <Grid size={{ xs: 12, md: 6, lg: 4 }} sx={{ minWidth: 0 }} data-lead-field="assignedToAppUserId">
-                <FormControl fullWidth error={Boolean(fieldErrors.assignedToAppUserId)} disabled={convertedLead && !canPersistLeadForm}>
+                <FormControl fullWidth error={Boolean(fieldErrors.assignedToAppUserId)} disabled={convertedLead && !canEditConvertedAssignee}>
                   <InputLabel>Assigned To</InputLabel>
                   <Select
                     value={draft.assignedToAppUserId}
@@ -951,14 +984,14 @@ export default function LeadsPage() {
                     <MenuItem value="">Unassigned</MenuItem>
                     {users.map((u) => <MenuItem key={u.appUserId} value={u.appUserId} title={formatCarePilotAssigneeLabel(u, u.appUserId)}>{formatCarePilotAssigneeLabel(u, u.appUserId)}</MenuItem>)}
                   </Select>
-                  <FormHelperText>{fieldErrors.assignedToAppUserId || (convertedLead && !canPersistLeadForm ? "Read-only after conversion." : "Optional. Assign this lead to an active Engage user.")}</FormHelperText>
+                  <FormHelperText>{fieldErrors.assignedToAppUserId || (convertedLead && !canEditConvertedAssignee ? "Read-only after conversion." : "Optional. Assign this lead to an active Engage user.")}</FormHelperText>
                 </FormControl>
               </Grid>
             ) : null}
-            <Grid size={{ xs: 12, md: 6, lg: 8 }} sx={{ minWidth: 0 }} data-lead-field="sourceDetails"><TextField fullWidth label="Source details" value={draft.sourceDetails} onChange={(e) => { clearLeadFieldError("sourceDetails"); setDraft((d) => ({ ...d, sourceDetails: e.target.value })); }} inputProps={{ maxLength: 120, readOnly: convertedLead && !canPersistLeadForm }} disabled={convertedLead && !canPersistLeadForm} helperText={convertedLead && !canPersistLeadForm ? "Read-only after conversion." : "Example: Google Search, referral name, event name"} /></Grid>
+            <Grid size={{ xs: 12, md: 6, lg: 8 }} sx={{ minWidth: 0 }} data-lead-field="sourceDetails"><TextField fullWidth label="Source details" value={draft.sourceDetails} onChange={(e) => { clearLeadFieldError("sourceDetails"); setDraft((d) => ({ ...d, sourceDetails: e.target.value })); }} inputProps={{ maxLength: 120, readOnly: convertedLead && !canEditConvertedMarketing }} disabled={convertedLead && !canEditConvertedMarketing} helperText={convertedLead && !canEditConvertedMarketing ? "Read-only after conversion." : "Example: Google Search, referral name, event name"} /></Grid>
             <Grid size={{ xs: 12, md: 6 }} sx={{ minWidth: 0 }} data-lead-field="nextFollowUpAt"><TextField fullWidth inputRef={nextFollowUpInputRef} type="datetime-local" label="Next follow-up" value={draft.nextFollowUpAt} onChange={(e) => { clearLeadFieldError("nextFollowUpAt"); setDraft((d) => ({ ...d, nextFollowUpAt: e.target.value })); }} InputLabelProps={{ shrink: true }} disabled={convertedLead} error={Boolean(fieldErrors.nextFollowUpAt)} helperText={fieldErrors.nextFollowUpAt || (convertedLead ? "Read-only after conversion." : `Optional follow-up date and time. Tenant time: ${clinicTimeZone}.`)} /></Grid>
-            <Grid size={{ xs: 12, md: 6 }} sx={{ minWidth: 0 }} data-lead-field="tags"><TextField fullWidth label="Tags" value={draft.tags} onChange={(e) => { clearLeadFieldError("tags"); setDraft((d) => ({ ...d, tags: e.target.value })); }} inputProps={{ maxLength: 120, readOnly: convertedLead && !canPersistLeadForm }} disabled={convertedLead && !canPersistLeadForm} helperText={convertedLead && !canPersistLeadForm ? "Read-only after conversion." : "Add tags separated by commas."} /></Grid>
-            <Grid size={{ xs: 12 }} sx={{ minWidth: 0 }} data-lead-field="notes"><TextField fullWidth multiline minRows={3} label="Notes" value={draft.notes} onChange={(e) => { clearLeadFieldError("notes"); setDraft((d) => ({ ...d, notes: e.target.value })); }} inputProps={{ maxLength: 250, readOnly: convertedLead && !canPersistLeadForm }} disabled={convertedLead && !canPersistLeadForm} helperText={convertedLead && !canPersistLeadForm ? "Read-only after conversion." : ""} /></Grid>
+            <Grid size={{ xs: 12, md: 6 }} sx={{ minWidth: 0 }} data-lead-field="tags"><TextField fullWidth label="Tags" value={draft.tags} onChange={(e) => { clearLeadFieldError("tags"); setDraft((d) => ({ ...d, tags: e.target.value })); }} inputProps={{ maxLength: 120, readOnly: convertedLead && !canEditConvertedMarketing }} disabled={convertedLead && !canEditConvertedMarketing} helperText={convertedLead && !canEditConvertedMarketing ? "Read-only after conversion." : "Add tags separated by commas."} /></Grid>
+            <Grid size={{ xs: 12 }} sx={{ minWidth: 0 }} data-lead-field="notes"><TextField fullWidth multiline minRows={3} label="Notes" value={draft.notes} onChange={(e) => { clearLeadFieldError("notes"); setDraft((d) => ({ ...d, notes: e.target.value })); }} inputProps={{ maxLength: 250, readOnly: convertedLead && !canEditConvertedMarketing }} disabled={convertedLead && !canEditConvertedMarketing} helperText={convertedLead && !canEditConvertedMarketing ? "Read-only after conversion." : ""} /></Grid>
           </Grid>
 
           {editorLead ? (
@@ -992,7 +1025,14 @@ export default function LeadsPage() {
             </Box>
           ) : null}
         </DialogContent>
-        <DialogActions><Button onClick={() => { setEditorOpen(false); clearSaveState(); }}>Close</Button>{canPersistLeadForm ? <Button variant="contained" onClick={() => void save()} disabled={saving}>{saving ? "Saving..." : "Save"}</Button> : null}</DialogActions>
+        <DialogActions>
+          <Button onClick={() => { setEditorOpen(false); clearSaveState(); }}>Close</Button>
+          {canPersistLeadForm ? (
+            <Button variant="contained" onClick={() => void save()} disabled={saving || (convertedLead ? !convertedLeadDirty : false)}>
+              {saving ? "Saving..." : "Save"}
+            </Button>
+          ) : null}
+        </DialogActions>
       </Dialog>
 
       <Dialog open={convertOpen} onClose={() => setConvertOpen(false)} fullWidth maxWidth="md">
