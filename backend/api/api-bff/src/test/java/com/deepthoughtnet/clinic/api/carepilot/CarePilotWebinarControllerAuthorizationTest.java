@@ -25,6 +25,7 @@ import com.deepthoughtnet.clinic.carepilot.webinar.model.WebinarType;
 import com.deepthoughtnet.clinic.carepilot.webinar.model.WebinarRegistrationRecord;
 import com.deepthoughtnet.clinic.carepilot.webinar.registration.WebinarRegistrationService;
 import com.deepthoughtnet.clinic.carepilot.webinar.service.WebinarService;
+import com.deepthoughtnet.clinic.identity.service.TenantSubscriptionService;
 import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
 import com.deepthoughtnet.clinic.platform.core.context.TenantId;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
@@ -64,6 +65,7 @@ class CarePilotWebinarControllerAuthorizationTest {
     @MockBean private WebinarService webinarService;
     @MockBean private WebinarRegistrationService registrationService;
     @MockBean private WebinarAnalyticsService analyticsService;
+    @MockBean private TenantSubscriptionService tenantSubscriptionService;
 
     @AfterEach
     void tearDown() {
@@ -74,6 +76,8 @@ class CarePilotWebinarControllerAuthorizationTest {
     @WithMockUser(roles = "ENGAGE_MANAGER")
     void engageManagerCanUseWebinarEndpoints() throws Exception {
         setRequestContext("ENGAGE_MANAGER");
+        when(tenantSubscriptionService.isModuleEnabled(eq(TENANT_ID), eq("APPOINTMENTS"))).thenReturn(true);
+        when(tenantSubscriptionService.isModuleEnabled(eq(TENANT_ID), eq("CONSULTATION"))).thenReturn(false);
         stubWebinarWorkflows();
 
         mockMvc.perform(get("/api/carepilot/webinars")).andExpect(status().isOk());
@@ -115,6 +119,8 @@ class CarePilotWebinarControllerAuthorizationTest {
     @WithMockUser(roles = "ENGAGE_EXECUTIVE")
     void engageExecutiveCanRegisterAndRecordAttendanceButCannotPublishOrCreate() throws Exception {
         setRequestContext("ENGAGE_EXECUTIVE");
+        when(tenantSubscriptionService.isModuleEnabled(eq(TENANT_ID), eq("APPOINTMENTS"))).thenReturn(true);
+        when(tenantSubscriptionService.isModuleEnabled(eq(TENANT_ID), eq("CONSULTATION"))).thenReturn(false);
         stubWebinarWorkflows();
 
         mockMvc.perform(get("/api/carepilot/webinars")).andExpect(status().isOk());
@@ -241,9 +247,10 @@ class CarePilotWebinarControllerAuthorizationTest {
                 WebinarService webinarService,
                 WebinarRegistrationService registrationService,
                 WebinarAnalyticsService analyticsService,
+                TenantSubscriptionService tenantSubscriptionService,
                 PermissionChecker permissionChecker
         ) {
-            return new CarePilotWebinarController(webinarService, registrationService, analyticsService, permissionChecker);
+            return new CarePilotWebinarController(webinarService, registrationService, analyticsService, tenantSubscriptionService, permissionChecker);
         }
     }
 

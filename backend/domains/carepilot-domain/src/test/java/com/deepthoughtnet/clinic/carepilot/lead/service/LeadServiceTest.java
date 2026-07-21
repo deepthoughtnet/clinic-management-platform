@@ -20,6 +20,7 @@ import com.deepthoughtnet.clinic.carepilot.lead.model.LeadSource;
 import com.deepthoughtnet.clinic.carepilot.lead.model.LeadStatus;
 import com.deepthoughtnet.clinic.carepilot.lead.model.LeadStatusUpdateCommand;
 import com.deepthoughtnet.clinic.carepilot.lead.model.LeadUpsertCommand;
+import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.patient.service.model.PatientGender;
 import java.time.OffsetDateTime;
 import java.util.Optional;
@@ -34,6 +35,7 @@ class LeadServiceTest {
     private LeadRepository repository;
     private CampaignRepository campaignRepository;
     private LeadActivityService activityService;
+    private PatientRepository patientRepository;
     private LeadService service;
 
     @BeforeEach
@@ -41,9 +43,11 @@ class LeadServiceTest {
         repository = mock(LeadRepository.class);
         campaignRepository = mock(CampaignRepository.class);
         activityService = mock(LeadActivityService.class);
-        service = new LeadService(repository, campaignRepository, activityService);
+        patientRepository = mock(PatientRepository.class);
+        service = new LeadService(repository, campaignRepository, activityService, patientRepository);
         when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(activityService.latestByLeadIds(any(), any())).thenReturn(java.util.Map.of());
+        when(patientRepository.findByTenantIdAndId(any(), any())).thenReturn(Optional.empty());
     }
 
     @Test
@@ -86,25 +90,72 @@ class LeadServiceTest {
     }
 
     @Test
-    void convertedLeadIsImmutableExceptNotesAndTags() {
+    void convertedLeadProjectionHidesStaleNextFollowUp() {
+        LeadEntity entity = LeadEntity.create(tenantId, actorId);
+        entity.setFirstName("Rahul");
+        entity.setPhone("9876543210");
+        entity.setSource(LeadSource.WEBSITE);
+        entity.setStatus(LeadStatus.CONVERTED);
+        entity.setConverted(UUID.randomUUID(), actorId);
+        entity.setNextFollowUpAt(OffsetDateTime.parse("2026-07-21T05:30:00Z"));
+        when(repository.findByTenantIdAndId(tenantId, entity.getId())).thenReturn(Optional.of(entity));
+
+        var record = service.find(tenantId, entity.getId()).orElseThrow();
+
+        assertThat(record.nextFollowUpAt()).isNull();
+        assertThat(record.convertedPatientId()).isNull();
+    }
+
+    @Test
+    void convertedLeadAllowsMarketingMetadataUpdatesOnly() {
         LeadEntity entity = LeadEntity.create(tenantId, actorId);
         entity.setFirstName("Old");
+        entity.setLastName("Name");
         entity.setPhone("9876543210");
+        entity.setEmail("old@example.com");
         entity.setSource(LeadSource.MANUAL);
         entity.setStatus(LeadStatus.CONVERTED);
         entity.setPriority(LeadPriority.MEDIUM);
+        entity.setSourceDetails("old source");
+        UUID campaignId = UUID.randomUUID();
+        UUID assigneeId = UUID.randomUUID();
+        entity.setCampaignId(campaignId);
+        entity.setAssignedToAppUserId(assigneeId);
         when(repository.findByTenantIdAndId(tenantId, entity.getId())).thenReturn(Optional.of(entity));
+        when(campaignRepository.findByTenantIdAndId(tenantId, campaignId)).thenReturn(Optional.of(mock(com.deepthoughtnet.clinic.carepilot.campaign.db.CampaignEntity.class)));
 
         var updated = service.update(tenantId, entity.getId(), new LeadUpsertCommand(
-                "New", "Name", "1234567890", "new@example.com", PatientGender.OTHER, null,
-                LeadSource.GOOGLE_ADS, "x", null, null, LeadStatus.LOST, LeadPriority.LOW,
+                "Old", "Name", "9876543210", "old@example.com", null, null,
+                LeadSource.MANUAL, "new source", campaignId, assigneeId, LeadStatus.CONVERTED, LeadPriority.MEDIUM,
                 "changed-note", "changed-tags", null, null
         ), actorId);
 
         assertThat(updated.firstName()).isEqualTo("Old");
         assertThat(updated.phone()).isEqualTo("9876543210");
+        assertThat(updated.campaignId()).isEqualTo(campaignId);
+        assertThat(updated.assignedToAppUserId()).isEqualTo(assigneeId);
+        assertThat(updated.sourceDetails()).isEqualTo("new source");
         assertThat(updated.notes()).isEqualTo("changed-note");
         assertThat(updated.tags()).isEqualTo("changed-tags");
+    }
+
+    @Test
+    void convertedLeadRejectsImmutableFieldChanges() {
+        LeadEntity entity = LeadEntity.create(tenantId, actorId);
+        entity.setFirstName("Old");
+        entity.setLastName("Name");
+        entity.setPhone("9876543210");
+        entity.setEmail("old@example.com");
+        entity.setSource(LeadSource.MANUAL);
+        entity.setStatus(LeadStatus.CONVERTED);
+        entity.setPriority(LeadPriority.MEDIUM);
+        when(repository.findByTenantIdAndId(tenantId, entity.getId())).thenReturn(Optional.of(entity));
+
+        assertThatThrownBy(() -> service.update(tenantId, entity.getId(), new LeadUpsertCommand(
+                "Changed", "Name", "1234567890", "new@example.com", PatientGender.OTHER, null,
+                LeadSource.GOOGLE_ADS, "x", null, null, LeadStatus.LOST, LeadPriority.LOW,
+                "note", "tags", null, null
+        ), actorId)).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Converted leads cannot change immutable fields");
     }
 
     @Test

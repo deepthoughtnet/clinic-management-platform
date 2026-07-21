@@ -31,10 +31,13 @@ import com.deepthoughtnet.clinic.patient.db.PatientEntity;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.patient.service.model.PatientGender;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 
 class WebinarRegistrationServiceTest {
     private final UUID tenantId = UUID.randomUUID();
@@ -192,6 +195,21 @@ class WebinarRegistrationServiceTest {
                 null, null, "Manual Attendee", null, null, null, null
         ), actorId)).isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("patientId, leadId, attendeeEmail, or attendeePhone is required");
+    }
+
+    @Test
+    void listHidesStalePatientLinksWithoutInventingAReplacement() {
+        WebinarRegistrationEntity row = WebinarRegistrationEntity.create(tenantId, webinar.getId());
+        row.setPatientId(UUID.randomUUID());
+        row.setAttendeeName("Archived");
+        when(registrationRepository.findByTenantIdAndWebinarIdOrderByCreatedAtDesc(eq(tenantId), eq(webinar.getId()), any()))
+                .thenReturn(new PageImpl<>(List.of(row), PageRequest.of(0, 25), 1));
+        when(patientRepository.findByTenantIdAndId(eq(tenantId), eq(row.getPatientId()))).thenReturn(Optional.empty());
+
+        var page = service.list(tenantId, webinar.getId(), 0, 25);
+
+        assertThat(page.getContent()).hasSize(1);
+        assertThat(page.getContent().get(0).patientId()).isNull();
     }
 
     private LeadRecord leadRecord(UUID id, String firstName, String lastName, String phone, String email, UUID campaignId, LeadSource source) {

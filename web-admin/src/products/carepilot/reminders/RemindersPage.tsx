@@ -52,6 +52,7 @@ import {
 import CampaignLookupField from "../components/CampaignLookupField";
 import { campaignTypeLabel, channelTypeLabel, triggerTypeLabel } from "../campaigns/campaignLabels";
 import { formatCarePilotDateTime, humanizeCarePilotCode, providerLabel } from "../shared/carepilotFormatting";
+import { canOpenLinkedPatient } from "../shared/patientNavigation";
 import { useCarePilotTenantTimezone } from "../shared/useCarePilotTenantTimezone";
 
 const TAB_FILTERS = ["Upcoming", "Pending", "Sent", "Retrying", "Failed", "Delivered", "Read", "Skipped", "All"] as const;
@@ -137,6 +138,7 @@ export default function RemindersPage() {
   const canViewCampaigns = auth.hasPermission("engage.campaign.view")
     || auth.hasPermission("engage.campaign.manage")
     || auth.hasPermission("engage.audit.view");
+  const canOpenPatient = canOpenLinkedPatient(auth);
   const { clinicTimeZone } = useCarePilotTenantTimezone(auth.accessToken, auth.tenantId);
 
   const [loading, setLoading] = React.useState(true);
@@ -396,7 +398,7 @@ export default function RemindersPage() {
                         >
                           View Timeline
                         </Button>
-                        <Button size="small" onClick={() => row.patientId && navigate(`/patients/${row.patientId}`)} disabled={!row.patientId}>Open Patient</Button>
+                        {row.patientId && canOpenPatient ? <Button size="small" onClick={() => navigate(`/patients/${row.patientId}`)}>Open Patient</Button> : null}
                         {canViewCampaigns ? <Button size="small" onClick={() => navigate(`/carepilot/campaigns?campaignId=${encodeURIComponent(row.campaignId)}`)}>Open Campaign</Button> : null}
                         {canMutate && (row.executionStatus === "FAILED" || row.executionStatus === "DEAD_LETTER" || canMutateRow(row)) ? (
                           <>

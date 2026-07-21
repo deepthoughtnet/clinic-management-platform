@@ -30,6 +30,8 @@ function formatPathLabel(pathname: string): string {
   if (pathname === "/dashboard") return "Dashboard";
   if (pathname === "/pharmacy/dashboard") return "Pharmacy Dashboard";
   if (pathname === "/lab") return "Laboratory Dashboard";
+  if (pathname === "/patients/new") return "Patients";
+  if (/^\/patients\/[^/]+\/edit$/.test(pathname) || /^\/patients\/[^/]+$/.test(pathname)) return "Patient Details";
   if (pathname === "/pharmacy/pos") return "POS Sale";
   if (pathname === "/prescriptions") return "Prescription Register";
   if (pathname === "/inventory") return "Inventory";

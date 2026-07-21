@@ -27,9 +27,9 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../../../auth/useAuth";
-import { mapZodErrors, engageWebinarRegistrationSchema, engageWebinarSchema, normalizeIndianMobileInput } from "@deepthoughtnet/form-validation-kit";
+import { mapZodErrors, engageWebinarRegistrationSchema, normalizeIndianMobileInput } from "@deepthoughtnet/form-validation-kit";
 import {
   ENGAGE_WEBINAR_CANCEL,
   ENGAGE_WEBINAR_CREATE,
@@ -60,8 +60,102 @@ import {
   type CarePilotWebinarStatus,
   type CarePilotWebinarType,
 } from "../../../api/clinicApi";
+import { ApiClientError } from "../../../api/restClient";
+import { formatCarePilotDateTime, formatCarePilotDateTimeInput, humanizeCarePilotCode } from "../shared/carepilotFormatting";
+import { buildWebinarPayload, getWebinarDateFieldErrors, validateWebinarDraft } from "./webinarFormUtils";
 
 const WEBINAR_TYPES: CarePilotWebinarType[] = ["HEALTH_AWARENESS", "WELLNESS", "CLINIC_EVENT", "MARKETING", "EDUCATIONAL", "OTHER"];
+type WebinarTab = "DRAFTS" | "UPCOMING" | "LIVE" | "COMPLETED" | "CANCELLED";
+
+const WEBINAR_TAB_ORDER: WebinarTab[] = ["DRAFTS", "UPCOMING", "LIVE", "COMPLETED", "CANCELLED"];
+const WEBINAR_STATUS_OPTIONS: Array<{ value: CarePilotWebinarStatus | ""; label: string }> = [
+  { value: "", label: "All" },
+  { value: "DRAFT", label: "Draft" },
+  { value: "SCHEDULED", label: "Upcoming" },
+  { value: "LIVE", label: "Live" },
+  { value: "COMPLETED", label: "Completed" },
+  { value: "CANCELLED", label: "Cancelled" },
+];
+
+function webinarStatusLabel(status: CarePilotWebinarStatus | "" | null | undefined) {
+  if (!status) return "-";
+  if (status === "DRAFT") return "Draft";
+  if (status === "SCHEDULED") return "Upcoming";
+  return humanizeCarePilotCode(status);
+}
+
+function webinarTypeLabel(type: CarePilotWebinarType | null | undefined) {
+  return humanizeCarePilotCode(type);
+}
+
+function webinarTabLabel(tab: WebinarTab) {
+  if (tab === "DRAFTS") return "Drafts";
+  if (tab === "UPCOMING") return "Upcoming";
+  if (tab === "LIVE") return "Live";
+  if (tab === "COMPLETED") return "Completed";
+  return "Cancelled";
+}
+
+function webinarTabEmptyState(tab: WebinarTab) {
+  if (tab === "DRAFTS") return "No draft webinars found.";
+  if (tab === "UPCOMING") return "No upcoming webinars found.";
+  if (tab === "LIVE") return "No live webinars found.";
+  if (tab === "COMPLETED") return "No completed webinars found.";
+  return "No cancelled webinars found.";
+}
+
+function normalizeWebinarStatusQuery(value: string | null | undefined): CarePilotWebinarStatus | "" {
+  const raw = (value || "").trim().toLowerCase();
+  if (raw === "draft") return "DRAFT";
+  if (raw === "scheduled" || raw === "upcoming") return "SCHEDULED";
+  if (raw === "live") return "LIVE";
+  if (raw === "completed") return "COMPLETED";
+  if (raw === "cancelled" || raw === "canceled") return "CANCELLED";
+  return "";
+}
+
+function normalizeWebinarTabQuery(value: string | null | undefined): WebinarTab {
+  const raw = (value || "").trim().toLowerCase();
+  if (raw === "draft" || raw === "drafts") return "DRAFTS";
+  if (raw === "upcoming" || raw === "scheduled") return "UPCOMING";
+  if (raw === "live") return "LIVE";
+  if (raw === "completed") return "COMPLETED";
+  if (raw === "cancelled" || raw === "canceled") return "CANCELLED";
+  return "UPCOMING";
+}
+
+function statusToTab(status: CarePilotWebinarStatus): WebinarTab {
+  if (status === "DRAFT") return "DRAFTS";
+  if (status === "SCHEDULED") return "UPCOMING";
+  if (status === "LIVE") return "LIVE";
+  if (status === "COMPLETED") return "COMPLETED";
+  return "CANCELLED";
+}
+
+function tabToStatus(tab: WebinarTab): CarePilotWebinarStatus | "" {
+  if (tab === "DRAFTS") return "DRAFT";
+  if (tab === "UPCOMING") return "SCHEDULED";
+  if (tab === "LIVE") return "LIVE";
+  if (tab === "COMPLETED") return "COMPLETED";
+  return "CANCELLED";
+}
+
+function tabQueryValue(tab: WebinarTab) {
+  if (tab === "DRAFTS") return "drafts";
+  if (tab === "UPCOMING") return "upcoming";
+  if (tab === "LIVE") return "live";
+  if (tab === "COMPLETED") return "completed";
+  return "cancelled";
+}
+
+function statusQueryValue(status: CarePilotWebinarStatus | "") {
+  if (status === "DRAFT") return "draft";
+  if (status === "SCHEDULED") return "scheduled";
+  if (status === "LIVE") return "live";
+  if (status === "COMPLETED") return "completed";
+  if (status === "CANCELLED") return "cancelled";
+  return "";
+}
 
 function statusColor(status: CarePilotWebinarStatus) {
   if (status === "SCHEDULED") return "info" as const;
@@ -74,15 +168,23 @@ function statusColor(status: CarePilotWebinarStatus) {
 export default function WebinarsPage() {
   const auth = useAuth();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
+  const [pageError, setPageError] = React.useState<string | null>(null);
+  const [pageAccessDenied, setPageAccessDenied] = React.useState(false);
 
-  const [tab, setTab] = React.useState<"UPCOMING" | "LIVE" | "COMPLETED" | "CANCELLED">("UPCOMING");
-  const [statusFilter, setStatusFilter] = React.useState<CarePilotWebinarStatus | "">("");
+  const [tab, setTab] = React.useState<WebinarTab>(() => {
+    const explicitStatus = normalizeWebinarStatusQuery(searchParams.get("status"));
+    if (explicitStatus) {
+      return statusToTab(explicitStatus);
+    }
+    return normalizeWebinarTabQuery(searchParams.get("tab"));
+  });
+  const [statusFilter, setStatusFilter] = React.useState<CarePilotWebinarStatus | "">(normalizeWebinarStatusQuery(searchParams.get("status")));
   const [typeFilter, setTypeFilter] = React.useState<CarePilotWebinarType | "">("");
 
-  const [rows, setRows] = React.useState<CarePilotWebinar[]>([]);
+  const [allRows, setAllRows] = React.useState<CarePilotWebinar[]>([]);
   const [campaigns, setCampaigns] = React.useState<CarePilotCampaign[]>([]);
   const [analytics, setAnalytics] = React.useState<CarePilotWebinarAnalyticsSummary | null>(null);
 
@@ -106,6 +208,7 @@ export default function WebinarsPage() {
     tags: "",
   });
   const [formErrors, setFormErrors] = React.useState<Record<string, string>>({});
+  const [formValidated, setFormValidated] = React.useState(false);
 
   const [regOpen, setRegOpen] = React.useState(false);
   const [regWebinar, setRegWebinar] = React.useState<CarePilotWebinar | null>(null);
@@ -119,6 +222,10 @@ export default function WebinarsPage() {
   const canView = auth.hasPermission(ENGAGE_WEBINAR_VIEW)
     || auth.hasPermission(ENGAGE_WEBINAR_VIEW_ANALYTICS)
     || auth.hasPermission(ENGAGE_WEBINAR_VIEW_AUDIT);
+  const canViewAnalytics = auth.hasPermission(ENGAGE_WEBINAR_VIEW_ANALYTICS);
+  const canViewCampaigns = auth.hasPermission("engage.campaign.view")
+    || auth.hasPermission("engage.campaign.manage")
+    || auth.hasPermission("engage.audit.view");
   const canCreate = auth.hasPermission(ENGAGE_WEBINAR_CREATE);
   const canEdit = auth.hasPermission(ENGAGE_WEBINAR_EDIT);
   const canPublish = auth.hasPermission(ENGAGE_WEBINAR_PUBLISH);
@@ -128,42 +235,140 @@ export default function WebinarsPage() {
   const canRunAutomation = auth.hasPermission(ENGAGE_WEBINAR_RUN_AUTOMATION);
   const canMutate = canCreate || canEdit || canPublish || canCancel || canManageRegistrations || canRecordAttendance || canRunAutomation;
 
+  React.useEffect(() => {
+    const nextStatus = normalizeWebinarStatusQuery(searchParams.get("status"));
+    const nextTab = nextStatus ? statusToTab(nextStatus) : normalizeWebinarTabQuery(searchParams.get("tab"));
+    setStatusFilter((current) => (current === nextStatus ? current : nextStatus));
+    setTab((current) => (current === nextTab ? current : nextTab));
+  }, [searchParams]);
+
+  React.useEffect(() => {
+    if (searchParams.has("tab") || searchParams.has("status")) {
+      return;
+    }
+    if (loading) {
+      return;
+    }
+    const hasDrafts = allRows.some((row) => row.status === "DRAFT");
+    const hasScheduled = allRows.some((row) => row.status === "SCHEDULED");
+    if (hasDrafts && !hasScheduled && tab !== "DRAFTS") {
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.set("tab", tabQueryValue("DRAFTS"));
+      nextParams.set("status", statusQueryValue("DRAFT"));
+      setTab("DRAFTS");
+      setStatusFilter("DRAFT");
+      setSearchParams(nextParams, { replace: true });
+    }
+  }, [allRows, loading, searchParams, setSearchParams, tab]);
+
+  const setTabAndUrl = React.useCallback((nextTab: WebinarTab) => {
+    const nextStatus = tabToStatus(nextTab);
+    setTab(nextTab);
+    setStatusFilter(nextStatus);
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set("tab", tabQueryValue(nextTab));
+    if (nextStatus) {
+      nextParams.set("status", statusQueryValue(nextStatus));
+    } else {
+      nextParams.delete("status");
+    }
+    setSearchParams(nextParams, { replace: false });
+  }, [searchParams, setSearchParams]);
+
+  const setStatusAndMaybeTab = React.useCallback((nextStatus: CarePilotWebinarStatus | "") => {
+    setStatusFilter(nextStatus);
+    const nextTab = nextStatus ? statusToTab(nextStatus) : tab;
+    if (nextStatus) {
+      setTab(nextTab);
+    }
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set("tab", tabQueryValue(nextTab));
+    if (nextStatus) {
+      nextParams.set("status", statusQueryValue(nextStatus));
+    } else {
+      nextParams.delete("status");
+    }
+    setSearchParams(nextParams, { replace: false });
+  }, [searchParams, setSearchParams, tab]);
+
   const load = React.useCallback(async () => {
     if (!auth.accessToken || !auth.tenantId || !canView) {
       setLoading(false);
       return;
     }
     setLoading(true);
-    setError(null);
+    setPageError(null);
+    setPageAccessDenied(false);
     try {
-      const [webinars, summary, campaignRows] = await Promise.all([
-        listCarePilotWebinars(auth.accessToken, auth.tenantId, {
-          status: statusFilter || undefined,
-          webinarType: typeFilter || undefined,
-          upcoming: tab === "UPCOMING" ? true : undefined,
-          completed: tab === "COMPLETED" ? true : undefined,
-          size: 100,
-        }),
-        getCarePilotWebinarAnalyticsSummary(auth.accessToken, auth.tenantId),
-        listCarePilotCampaigns(auth.accessToken, auth.tenantId),
-      ]);
-      let filtered = webinars.rows;
-      if (tab === "LIVE") filtered = filtered.filter((r) => r.status === "LIVE");
-      if (tab === "CANCELLED") filtered = filtered.filter((r) => r.status === "CANCELLED");
-      if (tab === "COMPLETED") filtered = filtered.filter((r) => r.status === "COMPLETED");
-      setRows(filtered);
-      setAnalytics(summary);
-      setCampaigns(campaignRows);
+      const webinars = await listCarePilotWebinars(auth.accessToken, auth.tenantId, {
+        status: statusFilter || undefined,
+        webinarType: typeFilter || undefined,
+        size: 100,
+      });
+      setAllRows(webinars.rows);
+      if (canViewAnalytics) {
+        try {
+          setAnalytics(await getCarePilotWebinarAnalyticsSummary(auth.accessToken, auth.tenantId));
+        } catch {
+          setAnalytics(null);
+        }
+      } else {
+        setAnalytics(null);
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load webinars");
+      setAllRows([]);
+      setAnalytics(null);
+      if (err instanceof ApiClientError && err.status === 403) {
+        setPageAccessDenied(true);
+      } else {
+        setPageError(err instanceof Error ? err.message : "Failed to load webinars");
+      }
     } finally {
       setLoading(false);
     }
-  }, [auth.accessToken, auth.tenantId, canView, statusFilter, typeFilter, tab]);
+  }, [auth.accessToken, auth.tenantId, canView, canViewAnalytics, statusFilter, typeFilter]);
 
   React.useEffect(() => { void load(); }, [load]);
 
+  const visibleRows = React.useMemo(() => {
+    let filtered = allRows;
+    if (tab === "DRAFTS") filtered = filtered.filter((r) => r.status === "DRAFT");
+    if (tab === "UPCOMING") filtered = filtered.filter((r) => r.status === "SCHEDULED");
+    if (tab === "LIVE") filtered = filtered.filter((r) => r.status === "LIVE");
+    if (tab === "CANCELLED") filtered = filtered.filter((r) => r.status === "CANCELLED");
+    if (tab === "COMPLETED") filtered = filtered.filter((r) => r.status === "COMPLETED");
+    return filtered;
+  }, [allRows, tab]);
+
+  const basicSummary = React.useMemo(() => {
+    const counts = {
+      total: allRows.length,
+      upcoming: 0,
+      live: 0,
+      completed: 0,
+      cancelled: 0,
+    };
+    for (const row of allRows) {
+      if (row.status === "SCHEDULED") counts.upcoming += 1;
+      else if (row.status === "LIVE") counts.live += 1;
+      else if (row.status === "COMPLETED") counts.completed += 1;
+      else if (row.status === "CANCELLED") counts.cancelled += 1;
+    }
+    return counts;
+  }, [allRows]);
+
+  const loadCampaigns = React.useCallback(async () => {
+    if (!auth.accessToken || !auth.tenantId || !canViewCampaigns) return;
+    try {
+      const rows = await listCarePilotCampaigns(auth.accessToken, auth.tenantId);
+      setCampaigns(rows);
+    } catch {
+      setCampaigns([]);
+    }
+  }, [auth.accessToken, auth.tenantId, canViewCampaigns]);
+
   const openEditor = (row?: CarePilotWebinar) => {
+    void loadCampaigns();
     if (row) {
       setEditing(row);
       setForm({
@@ -174,8 +379,8 @@ export default function WebinarsPage() {
         webinarUrl: row.webinarUrl || "",
         organizerName: row.organizerName || "",
         organizerEmail: row.organizerEmail || "",
-        scheduledStartAt: row.scheduledStartAt.slice(0, 16),
-        scheduledEndAt: row.scheduledEndAt.slice(0, 16),
+        scheduledStartAt: formatCarePilotDateTimeInput(row.scheduledStartAt, row.timezone),
+        scheduledEndAt: formatCarePilotDateTimeInput(row.scheduledEndAt, row.timezone),
         timezone: row.timezone,
         capacity: row.capacity == null ? "" : String(row.capacity),
         registrationEnabled: row.registrationEnabled,
@@ -203,34 +408,43 @@ export default function WebinarsPage() {
         tags: "",
       });
     }
+    setFormValidated(false);
+    setFormErrors({});
     setEditorOpen(true);
   };
+
+  React.useEffect(() => {
+    if (!formValidated && !formErrors.scheduledStartAt && !formErrors.scheduledEndAt) {
+      return;
+    }
+    const { scheduledStartAt, scheduledEndAt } = getWebinarDateFieldErrors(form);
+    setFormErrors((current) => {
+      const next = { ...current };
+      if (scheduledStartAt) next.scheduledStartAt = scheduledStartAt;
+      else delete next.scheduledStartAt;
+      if (scheduledEndAt) next.scheduledEndAt = scheduledEndAt;
+      else delete next.scheduledEndAt;
+      return next;
+    });
+  }, [form.scheduledStartAt, form.scheduledEndAt, formValidated]);
 
   const saveWebinar = async () => {
     if (!auth.accessToken || !auth.tenantId || !canMutate) return;
     setSaving(true);
     try {
-      const payload = {
-        title: form.title,
-        description: form.description || null,
-        webinarType: form.webinarType,
-        campaignId: form.campaignId || null,
-        webinarUrl: form.webinarUrl || null,
-        organizerName: form.organizerName || null,
-        organizerEmail: form.organizerEmail || null,
-        scheduledStartAt: new Date(form.scheduledStartAt).toISOString(),
-        scheduledEndAt: new Date(form.scheduledEndAt).toISOString(),
-        timezone: form.timezone,
-        capacity: form.capacity ? Number(form.capacity) : null,
-        registrationEnabled: form.registrationEnabled,
-        reminderEnabled: form.reminderEnabled,
-        followupEnabled: form.followupEnabled,
-        tags: form.tags || null,
-        status: editing?.status || "DRAFT",
-      };
-      const parsed = engageWebinarSchema.safeParse(payload);
-      if (!parsed.success) {
-        setFormErrors(mapZodErrors(parsed.error));
+      setFormValidated(true);
+      const draft = { ...form, status: editing?.status || "DRAFT" };
+      const validationErrors = validateWebinarDraft(draft);
+      if (Object.keys(validationErrors).length > 0) {
+        setFormErrors(validationErrors);
+        return;
+      }
+      const payload = buildWebinarPayload(draft);
+      if (payload.scheduledStartAt == null || payload.scheduledEndAt == null) {
+        setFormErrors({
+          scheduledStartAt: validationErrors.scheduledStartAt || "Start date/time is required.",
+          scheduledEndAt: validationErrors.scheduledEndAt || "End date/time is required and must be on or after start.",
+        });
         return;
       }
       setFormErrors({});
@@ -239,7 +453,7 @@ export default function WebinarsPage() {
       setEditorOpen(false);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save webinar");
+      setPageError(err instanceof Error ? err.message : "Failed to save webinar");
     } finally {
       setSaving(false);
     }
@@ -320,13 +534,58 @@ export default function WebinarsPage() {
   };
 
   const openLead = (row: CarePilotWebinarRegistration) => {
-    const searchValue = row.attendeePhone || row.attendeeEmail || row.leadName || row.leadId;
-    if (!searchValue) return;
-    navigate(`/carepilot/leads?search=${encodeURIComponent(searchValue)}`);
+    if (!row.leadId) return;
+    navigate(`/carepilot/leads?tab=converted&status=converted&leadId=${encodeURIComponent(row.leadId)}`);
   };
 
   if (!auth.tenantId) return <Alert severity="info">Select a tenant to use Webinar Automation.</Alert>;
   if (!canView) return <Alert severity="error">You do not have access to Webinar Automation.</Alert>;
+  if (pageAccessDenied) {
+    return (
+      <Box sx={{ p: 3, maxWidth: 760 }}>
+        <Card variant="outlined" sx={{ borderRadius: 2 }}>
+          <CardContent>
+            <Stack spacing={1.5}>
+              <Typography variant="h6" sx={{ fontWeight: 900 }}>
+                Access denied
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                You do not have access to Webinar Automation.
+              </Typography>
+              <Box>
+                <Button variant="contained" onClick={() => navigate("/")}>
+                  Open Tenant Home
+                </Button>
+              </Box>
+            </Stack>
+          </CardContent>
+        </Card>
+      </Box>
+    );
+  }
+  if (!loading && pageError) {
+    return (
+      <Box sx={{ p: 3, maxWidth: 760 }}>
+        <Card variant="outlined" sx={{ borderRadius: 2 }}>
+          <CardContent>
+            <Stack spacing={1.5}>
+              <Typography variant="h6" sx={{ fontWeight: 900 }}>
+                Unable to load Webinar Automation
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                {pageError}
+              </Typography>
+              <Box>
+                <Button variant="contained" onClick={() => void load()}>
+                  Retry
+                </Button>
+              </Box>
+            </Stack>
+          </CardContent>
+        </Card>
+      </Box>
+    );
+  }
 
   return (
     <Stack spacing={2}>
@@ -342,31 +601,32 @@ export default function WebinarsPage() {
       </Box>
 
       <Grid container spacing={2}>
-        <Grid size={{ xs: 6, md: 2.4 }}><Card><CardContent><Typography variant="caption">Upcoming</Typography><Typography variant="h5">{analytics?.upcomingWebinars ?? 0}</Typography></CardContent></Card></Grid>
-        <Grid size={{ xs: 6, md: 2.4 }}><Card><CardContent><Typography variant="caption">Registrations</Typography><Typography variant="h5">{analytics?.totalRegistrations ?? 0}</Typography></CardContent></Card></Grid>
-        <Grid size={{ xs: 6, md: 2.4 }}><Card><CardContent><Typography variant="caption">Attendance Rate</Typography><Typography variant="h5">{(analytics?.attendanceRate ?? 0).toFixed(1)}%</Typography></CardContent></Card></Grid>
-        <Grid size={{ xs: 6, md: 2.4 }}><Card><CardContent><Typography variant="caption">No-Shows</Typography><Typography variant="h5">{analytics?.noShowCount ?? 0}</Typography></CardContent></Card></Grid>
-        <Grid size={{ xs: 6, md: 2.4 }}><Card><CardContent><Typography variant="caption">Completed</Typography><Typography variant="h5">{analytics?.completedWebinars ?? 0}</Typography></CardContent></Card></Grid>
+        <Grid size={{ xs: 6, md: 2.4 }}><Card><CardContent><Typography variant="caption">Total</Typography><Typography variant="h5">{basicSummary.total}</Typography></CardContent></Card></Grid>
+        <Grid size={{ xs: 6, md: 2.4 }}><Card><CardContent><Typography variant="caption">Upcoming</Typography><Typography variant="h5">{basicSummary.upcoming}</Typography></CardContent></Card></Grid>
+        <Grid size={{ xs: 6, md: 2.4 }}><Card><CardContent><Typography variant="caption">Live</Typography><Typography variant="h5">{basicSummary.live}</Typography></CardContent></Card></Grid>
+        <Grid size={{ xs: 6, md: 2.4 }}><Card><CardContent><Typography variant="caption">Completed</Typography><Typography variant="h5">{basicSummary.completed}</Typography></CardContent></Card></Grid>
+        <Grid size={{ xs: 6, md: 2.4 }}><Card><CardContent><Typography variant="caption">Cancelled</Typography><Typography variant="h5">{basicSummary.cancelled}</Typography></CardContent></Card></Grid>
       </Grid>
 
       <Card><CardContent>
         <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
-          <FormControl size="small" sx={{ minWidth: 180 }}><InputLabel>Status</InputLabel><Select value={statusFilter} label="Status" onChange={(e) => setStatusFilter(e.target.value as CarePilotWebinarStatus | "")}><MenuItem value="">All</MenuItem>{["DRAFT", "SCHEDULED", "LIVE", "COMPLETED", "CANCELLED"].map((s) => <MenuItem key={s} value={s}>{s}</MenuItem>)}</Select></FormControl>
+          <FormControl size="small" sx={{ minWidth: 180 }}><InputLabel>Status</InputLabel><Select value={statusFilter} label="Status" onChange={(e) => setStatusAndMaybeTab(e.target.value as CarePilotWebinarStatus | "")}>{WEBINAR_STATUS_OPTIONS.map((option) => <MenuItem key={option.value || "ALL"} value={option.value}>{option.label}</MenuItem>)}</Select></FormControl>
           <FormControl size="small" sx={{ minWidth: 180 }}><InputLabel>Type</InputLabel><Select value={typeFilter} label="Type" onChange={(e) => setTypeFilter(e.target.value as CarePilotWebinarType | "")}><MenuItem value="">All</MenuItem>{WEBINAR_TYPES.map((s) => <MenuItem key={s} value={s}>{s}</MenuItem>)}</Select></FormControl>
           <Button variant="outlined" onClick={() => { setStatusFilter(""); setTypeFilter(""); }}>Reset</Button>
         </Stack>
       </CardContent></Card>
 
-      <Tabs value={tab} onChange={(_, next) => setTab(next)}><Tab value="UPCOMING" label="Upcoming" /><Tab value="LIVE" label="Live" /><Tab value="COMPLETED" label="Completed" /><Tab value="CANCELLED" label="Cancelled" /></Tabs>
+      <Tabs value={tab} onChange={(_, next) => setTabAndUrl(next as WebinarTab)} variant="scrollable" allowScrollButtonsMobile>
+        {WEBINAR_TAB_ORDER.map((item) => <Tab key={item} value={item} label={webinarTabLabel(item)} />)}
+      </Tabs>
 
-      {error ? <Alert severity="error">{error}</Alert> : null}
       {loading ? <Box sx={{ minHeight: 220, display: "grid", placeItems: "center" }}><CircularProgress /></Box> : null}
 
       {!loading ? (
         <Card><CardContent>
-          {rows.length === 0 ? <Alert severity="info">No webinars found for selected filters.</Alert> : (
-            <Table size="small"><TableHead><TableRow><TableCell>Webinar</TableCell><TableCell>Type</TableCell><TableCell>Start</TableCell><TableCell>Status</TableCell><TableCell>Reminder</TableCell><TableCell>URL</TableCell><TableCell align="right">Actions</TableCell></TableRow></TableHead><TableBody>
-              {rows.map((row) => <TableRow key={row.id}><TableCell><Stack spacing={0.25}><Typography variant="body2" sx={{ fontWeight: 700 }}>{row.title}</Typography><Typography variant="caption" color="text.secondary">{row.organizerName || "-"}</Typography><Typography variant="caption" color="text.secondary">{row.campaignName ? `Campaign: ${row.campaignName}` : "Campaign: None"}</Typography></Stack></TableCell><TableCell>{row.webinarType}</TableCell><TableCell>{new Date(row.scheduledStartAt).toLocaleString()}</TableCell><TableCell><Chip size="small" label={row.status} color={statusColor(row.status)} /></TableCell><TableCell>{row.reminderEnabled ? <Chip size="small" variant="outlined" label="Enabled" /> : <Chip size="small" label="Off" />}</TableCell><TableCell>{row.webinarUrl ? <Button size="small" href={row.webinarUrl} target="_blank" rel="noreferrer">Open</Button> : "-"}</TableCell><TableCell align="right"><Stack direction="row" spacing={1} justifyContent="flex-end"><Button size="small" onClick={() => void openRegistrations(row)}>Registrations</Button>{canEdit ? <Button size="small" onClick={() => openEditor(row)}>Edit</Button> : null}{canPublish && row.status !== "LIVE" ? <Button size="small" onClick={() => void quickStatus(row, "LIVE")}>Mark Live</Button> : null}{canPublish && row.status !== "COMPLETED" ? <Button size="small" onClick={() => void quickStatus(row, "COMPLETED")}>Complete</Button> : null}{canCancel && row.status !== "CANCELLED" ? <Button size="small" color="error" onClick={() => void quickStatus(row, "CANCELLED")}>Cancel</Button> : null}</Stack></TableCell></TableRow>)}
+          {visibleRows.length === 0 ? <Alert severity="info">{webinarTabEmptyState(tab)}</Alert> : (
+            <Table size="small"><TableHead><TableRow><TableCell>Webinar</TableCell><TableCell>Type</TableCell><TableCell>Schedule</TableCell><TableCell>Capacity</TableCell><TableCell>Status</TableCell><TableCell>Reminder</TableCell><TableCell>URL</TableCell><TableCell align="right">Actions</TableCell></TableRow></TableHead><TableBody>
+              {visibleRows.map((row) => <TableRow key={row.id}><TableCell><Stack spacing={0.25}><Typography variant="body2" sx={{ fontWeight: 700 }}>{row.title}</Typography><Typography variant="caption" color="text.secondary">{row.organizerName || "-"}</Typography><Typography variant="caption" color="text.secondary">{row.campaignName ? `Campaign: ${row.campaignName}` : "Campaign: None"}</Typography></Stack></TableCell><TableCell>{webinarTypeLabel(row.webinarType)}</TableCell><TableCell><Stack spacing={0.25}><Typography variant="body2">{formatCarePilotDateTime(row.scheduledStartAt, row.timezone)}</Typography><Typography variant="caption" color="text.secondary">{formatCarePilotDateTime(row.scheduledEndAt, row.timezone)}</Typography></Stack></TableCell><TableCell>{row.capacity == null ? "Unlimited" : row.capacity}</TableCell><TableCell><Chip size="small" label={webinarStatusLabel(row.status)} color={statusColor(row.status)} /></TableCell><TableCell>{row.reminderEnabled ? <Chip size="small" variant="outlined" label="Enabled" /> : <Chip size="small" label="Off" />}</TableCell><TableCell>{row.webinarUrl ? <Button size="small" href={row.webinarUrl} target="_blank" rel="noreferrer">Open</Button> : "-"}</TableCell><TableCell align="right"><Stack direction="row" spacing={1} justifyContent="flex-end"><Button size="small" onClick={() => void openRegistrations(row)}>Registrations</Button>{canEdit ? <Button size="small" onClick={() => openEditor(row)}>Edit</Button> : null}{canPublish && row.status === "DRAFT" ? <Button size="small" onClick={() => void quickStatus(row, "SCHEDULED")}>Publish</Button> : null}{canPublish && row.status === "SCHEDULED" ? <Button size="small" onClick={() => void quickStatus(row, "LIVE")}>Start</Button> : null}{canPublish && row.status === "LIVE" ? <Button size="small" onClick={() => void quickStatus(row, "COMPLETED")}>Complete</Button> : null}{canCancel && row.status !== "CANCELLED" ? <Button size="small" color="error" onClick={() => void quickStatus(row, "CANCELLED")}>Cancel</Button> : null}</Stack></TableCell></TableRow>)}
             </TableBody></Table>
           )}
         </CardContent></Card>

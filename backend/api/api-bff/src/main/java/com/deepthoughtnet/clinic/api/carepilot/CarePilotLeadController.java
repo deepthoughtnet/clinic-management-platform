@@ -23,6 +23,7 @@ import com.deepthoughtnet.clinic.carepilot.lead.model.LeadUpsertCommand;
 import com.deepthoughtnet.clinic.carepilot.lead.service.LeadService;
 import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
 import com.deepthoughtnet.clinic.api.security.PermissionChecker;
+import com.deepthoughtnet.clinic.identity.service.TenantSubscriptionService;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
@@ -61,6 +62,7 @@ public class CarePilotLeadController {
     private final LeadActivityService activityService;
     private final CarePilotLeadCsvService leadCsvService;
     private final ClinicTimeZoneResolver clinicTimeZoneResolver;
+    private final TenantSubscriptionService tenantSubscriptionService;
     private final PermissionChecker permissionChecker;
 
     public CarePilotLeadController(
@@ -70,6 +72,7 @@ public class CarePilotLeadController {
             LeadActivityService activityService,
             CarePilotLeadCsvService leadCsvService,
             ClinicTimeZoneResolver clinicTimeZoneResolver,
+            TenantSubscriptionService tenantSubscriptionService,
             PermissionChecker permissionChecker
     ) {
         this.leadService = leadService;
@@ -78,6 +81,7 @@ public class CarePilotLeadController {
         this.activityService = activityService;
         this.leadCsvService = leadCsvService;
         this.clinicTimeZoneResolver = clinicTimeZoneResolver;
+        this.tenantSubscriptionService = tenantSubscriptionService;
         this.permissionChecker = permissionChecker;
     }
 
@@ -301,9 +305,17 @@ public class CarePilotLeadController {
         return new LeadResponse(
                 row.id(), row.tenantId(), row.firstName(), row.lastName(), row.fullName(), row.phone(), row.email(), row.gender(),
                 row.dateOfBirth(), row.source(), row.sourceDetails(), row.campaignId(), row.assignedToAppUserId(), row.status(), row.priority(),
-                row.notes(), row.tags(), row.convertedPatientId(), row.bookedAppointmentId(), row.lastContactedAt(), row.nextFollowUpAt(), row.lastActivityAt(),
+                row.notes(), row.tags(), canExposePatientNavigation(row.tenantId()) ? row.convertedPatientId() : null, row.bookedAppointmentId(), row.lastContactedAt(), row.nextFollowUpAt(), row.lastActivityAt(),
                 row.createdBy(), row.updatedBy(), row.createdAt(), row.updatedAt()
         );
+    }
+
+    private boolean canExposePatientNavigation(UUID tenantId) {
+        if (!permissionChecker.hasPermission("patient.read")) {
+            return false;
+        }
+        return tenantSubscriptionService.isModuleEnabled(tenantId, "APPOINTMENTS")
+                || tenantSubscriptionService.isModuleEnabled(tenantId, "CONSULTATION");
     }
 
     private ResponseEntity<byte[]> csvResponse(String filename, String csv) {

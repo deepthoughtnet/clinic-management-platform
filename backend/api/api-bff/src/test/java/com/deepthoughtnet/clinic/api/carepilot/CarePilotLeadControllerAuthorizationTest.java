@@ -30,6 +30,7 @@ import com.deepthoughtnet.clinic.carepilot.lead.model.LeadSearchCriteria;
 import com.deepthoughtnet.clinic.carepilot.lead.model.LeadSource;
 import com.deepthoughtnet.clinic.carepilot.lead.model.LeadStatus;
 import com.deepthoughtnet.clinic.carepilot.lead.service.LeadService;
+import com.deepthoughtnet.clinic.identity.service.TenantSubscriptionService;
 import com.deepthoughtnet.clinic.patient.service.model.PatientGender;
 import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
 import com.deepthoughtnet.clinic.platform.core.context.TenantId;
@@ -75,6 +76,7 @@ class CarePilotLeadControllerAuthorizationTest {
     @MockBean private LeadActivityService activityService;
     @MockBean private CarePilotLeadCsvService leadCsvService;
     @MockBean private ClinicTimeZoneResolver clinicTimeZoneResolver;
+    @MockBean private TenantSubscriptionService tenantSubscriptionService;
 
     @AfterEach
     void tearDown() {
@@ -86,6 +88,8 @@ class CarePilotLeadControllerAuthorizationTest {
     void engageExecutiveCanUseLeadOperationalEndpoints() throws Exception {
         setRequestContext("ENGAGE_EXECUTIVE");
         when(clinicTimeZoneResolver.resolve(TENANT_ID)).thenReturn(ZoneId.of("Asia/Kolkata"));
+        when(tenantSubscriptionService.isModuleEnabled(eq(TENANT_ID), eq("APPOINTMENTS"))).thenReturn(true);
+        when(tenantSubscriptionService.isModuleEnabled(eq(TENANT_ID), eq("CONSULTATION"))).thenReturn(false);
         stubLeadWorkflows();
 
         mockMvc.perform(get("/api/carepilot/leads")).andExpect(status().isOk());
@@ -144,6 +148,8 @@ class CarePilotLeadControllerAuthorizationTest {
     void engageManagerCanUseLeadCsvBulkEndpoints() throws Exception {
         setRequestContext("ENGAGE_MANAGER");
         when(clinicTimeZoneResolver.resolve(TENANT_ID)).thenReturn(ZoneId.of("Asia/Kolkata"));
+        when(tenantSubscriptionService.isModuleEnabled(eq(TENANT_ID), eq("APPOINTMENTS"))).thenReturn(true);
+        when(tenantSubscriptionService.isModuleEnabled(eq(TENANT_ID), eq("CONSULTATION"))).thenReturn(false);
         when(leadCsvService.importTemplateCsv()).thenReturn("firstName,phone\nAsha,9876543210\n");
         when(leadCsvService.exportCsv(eq(TENANT_ID), any(ZoneId.class), any(LeadSearchCriteria.class), any(UUID.class), anyBoolean())).thenReturn("firstName,phone\nAsha,9876543210\n");
         when(leadCsvService.importCsv(eq(TENANT_ID), any(), eq(ACTOR_ID))).thenReturn(
@@ -239,15 +245,16 @@ class CarePilotLeadControllerAuthorizationTest {
     static class ControllerConfig {
         @Bean
         CarePilotLeadController carePilotLeadController(
-        LeadService leadService,
-        LeadConversionService conversionService,
-        LeadAnalyticsService analyticsService,
-        LeadActivityService activityService,
-        CarePilotLeadCsvService leadCsvService,
-        ClinicTimeZoneResolver clinicTimeZoneResolver,
-        PermissionChecker permissionChecker
+                LeadService leadService,
+                LeadConversionService conversionService,
+                LeadAnalyticsService analyticsService,
+                LeadActivityService activityService,
+                CarePilotLeadCsvService leadCsvService,
+                ClinicTimeZoneResolver clinicTimeZoneResolver,
+                TenantSubscriptionService tenantSubscriptionService,
+                PermissionChecker permissionChecker
         ) {
-            return new CarePilotLeadController(leadService, conversionService, analyticsService, activityService, leadCsvService, clinicTimeZoneResolver, permissionChecker);
+            return new CarePilotLeadController(leadService, conversionService, analyticsService, activityService, leadCsvService, clinicTimeZoneResolver, tenantSubscriptionService, permissionChecker);
         }
     }
 

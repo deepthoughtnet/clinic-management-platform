@@ -73,6 +73,7 @@ export default function CampaignLookupField({
 
   return (
     <Autocomplete<CarePilotCampaignLookup, false, false, false>
+      fullWidth
       options={options}
       loading={loading}
       value={selected}
@@ -92,12 +93,13 @@ export default function CampaignLookupField({
       disabled={disabled || !token || !tenantId}
       renderInput={(params) => (
         <TextField
-        {...params}
-        label={label}
-        placeholder={placeholder}
-        error={error}
-        helperText={helperText}
-      />
+          {...params}
+          fullWidth
+          label={label}
+          placeholder={placeholder}
+          error={error}
+          helperText={helperText}
+        />
       )}
     />
   );

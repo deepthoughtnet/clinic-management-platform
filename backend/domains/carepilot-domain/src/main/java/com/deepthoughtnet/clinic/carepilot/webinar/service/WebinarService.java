@@ -79,6 +79,7 @@ public class WebinarService {
             throw new IllegalArgumentException("status is required");
         }
         WebinarEntity row = require(tenantId, id);
+        validateTransition(row.getStatus(), status);
         row.setStatus(status);
         row.touch(actorId);
         return toRecord(repository.save(row));
@@ -101,6 +102,21 @@ public class WebinarService {
         }
         if (command.capacity() != null && command.capacity() < 1) {
             throw new IllegalArgumentException("capacity must be positive when configured");
+        }
+    }
+
+    private void validateTransition(WebinarStatus current, WebinarStatus next) {
+        if (current == null || next == null || current == next) {
+            return;
+        }
+        boolean allowed = switch (current) {
+            case DRAFT -> next == WebinarStatus.SCHEDULED || next == WebinarStatus.CANCELLED;
+            case SCHEDULED -> next == WebinarStatus.LIVE || next == WebinarStatus.CANCELLED;
+            case LIVE -> next == WebinarStatus.COMPLETED || next == WebinarStatus.CANCELLED;
+            case COMPLETED, CANCELLED -> false;
+        };
+        if (!allowed) {
+            throw new IllegalArgumentException("Invalid webinar status transition: " + current + " -> " + next);
         }
     }
 

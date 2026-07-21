@@ -279,11 +279,15 @@ public class WebinarRegistrationService {
 
     private WebinarRegistrationRecord toRecord(WebinarRegistrationEntity row, WebinarEntity webinar, LeadRecord lead) {
         UUID campaignId = lead == null || lead.campaignId() == null ? webinar.getCampaignId() : lead.campaignId();
+        UUID patientId = row.getPatientId();
+        if (patientId != null && patientRepository.findByTenantIdAndId(row.getTenantId(), patientId).isEmpty()) {
+            patientId = null;
+        }
         return new WebinarRegistrationRecord(
                 row.getId(),
                 row.getTenantId(),
                 row.getWebinarId(),
-                row.getPatientId(),
+                patientId,
                 row.getLeadId(),
                 lead == null ? null : lead.fullName(),
                 campaignId,

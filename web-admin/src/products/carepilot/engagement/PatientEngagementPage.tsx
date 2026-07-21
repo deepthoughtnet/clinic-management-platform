@@ -36,6 +36,7 @@ import {
 } from "../../../api/clinicApi";
 import { campaignTypeLabel } from "../campaigns/campaignLabels";
 import { formatCarePilotDateTime } from "../shared/carepilotFormatting";
+import { canOpenLinkedPatient } from "../shared/patientNavigation";
 import { useCarePilotTenantTimezone } from "../shared/useCarePilotTenantTimezone";
 
 const COHORT_OPTIONS: Array<{ value: CarePilotEngagementCohort; label: string }> = [
@@ -218,6 +219,7 @@ export default function PatientEngagementPage() {
   const auth = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const canOpenPatient = canOpenLinkedPatient(auth);
   const canView = auth.hasPermission(ENGAGE_ANALYTICS_VIEW);
   const { clinicTimeZone } = useCarePilotTenantTimezone(auth.accessToken, auth.tenantId);
 
@@ -428,7 +430,7 @@ export default function PatientEngagementPage() {
                 <TableCell>{formatLocalDate(row.lastConsultationAt || row.lastAppointmentAt || null)}</TableCell>
                 <TableCell>{formatCarePilotDateTime(row.generatedAt, clinicTimeZone)}</TableCell>
                 <TableCell align="right">
-                  {row.patientId ? (
+                  {row.patientId && canOpenPatient ? (
                     <Button type="button" size="small" onClick={() => navigate(`/patients/${row.patientId}`)}>Open Patient</Button>
                   ) : null}
                 </TableCell>
@@ -528,7 +530,7 @@ export default function PatientEngagementPage() {
                   </Stack>
                 </TableCell>
                 <TableCell align="right">
-                  {row.patientId ? (
+                  {row.patientId && canOpenPatient ? (
                     <Button type="button" size="small" onClick={() => navigate(`/patients/${row.patientId}`)}>Open Patient</Button>
                   ) : null}
                 </TableCell>

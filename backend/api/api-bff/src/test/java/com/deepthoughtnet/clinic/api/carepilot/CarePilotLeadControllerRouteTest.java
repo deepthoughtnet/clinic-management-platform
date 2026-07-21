@@ -16,6 +16,7 @@ import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
 import com.deepthoughtnet.clinic.api.security.PermissionChecker;
 import com.deepthoughtnet.clinic.carepilot.lead.model.LeadSearchCriteria;
 import com.deepthoughtnet.clinic.carepilot.lead.service.LeadService;
+import com.deepthoughtnet.clinic.identity.service.TenantSubscriptionService;
 import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
 import com.deepthoughtnet.clinic.platform.core.context.TenantId;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
@@ -39,11 +40,14 @@ class CarePilotLeadControllerRouteTest {
         CarePilotLeadCsvService leadCsvService = mock(CarePilotLeadCsvService.class);
         ClinicTimeZoneResolver clinicTimeZoneResolver = mock(ClinicTimeZoneResolver.class);
         PermissionChecker permissionChecker = mock(PermissionChecker.class);
+        TenantSubscriptionService tenantSubscriptionService = mock(TenantSubscriptionService.class);
         when(clinicTimeZoneResolver.resolve(any())).thenReturn(ZoneId.of("UTC"));
         when(leadCsvService.importTemplateCsv()).thenReturn("firstName,lastName\nAva,Smith\n");
         when(permissionChecker.hasPermission(any())).thenReturn(true);
         when(permissionChecker.hasAnyPermission(any())).thenReturn(true);
-        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller(leadCsvService, clinicTimeZoneResolver, permissionChecker)).build();
+        when(tenantSubscriptionService.isModuleEnabled(any(), eq("APPOINTMENTS"))).thenReturn(true);
+        when(tenantSubscriptionService.isModuleEnabled(any(), eq("CONSULTATION"))).thenReturn(false);
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller(leadCsvService, clinicTimeZoneResolver, tenantSubscriptionService, permissionChecker)).build();
 
         mockMvc.perform(get("/api/carepilot/leads/import-template"))
                 .andExpect(status().isOk())
@@ -59,11 +63,14 @@ class CarePilotLeadControllerRouteTest {
         CarePilotLeadCsvService leadCsvService = mock(CarePilotLeadCsvService.class);
         ClinicTimeZoneResolver clinicTimeZoneResolver = mock(ClinicTimeZoneResolver.class);
         PermissionChecker permissionChecker = mock(PermissionChecker.class);
+        TenantSubscriptionService tenantSubscriptionService = mock(TenantSubscriptionService.class);
         when(clinicTimeZoneResolver.resolve(tenantId)).thenReturn(ZoneId.of("Asia/Kolkata"));
         when(leadCsvService.exportCsv(eq(tenantId), any(ZoneId.class), any(LeadSearchCriteria.class), any(UUID.class), eq(true))).thenReturn("firstName,lastName\nAva,Smith\n");
         when(permissionChecker.hasPermission(any())).thenReturn(true);
         when(permissionChecker.hasAnyPermission(any())).thenReturn(true);
-        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller(leadCsvService, clinicTimeZoneResolver, permissionChecker)).build();
+        when(tenantSubscriptionService.isModuleEnabled(any(), eq("APPOINTMENTS"))).thenReturn(true);
+        when(tenantSubscriptionService.isModuleEnabled(any(), eq("CONSULTATION"))).thenReturn(false);
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller(leadCsvService, clinicTimeZoneResolver, tenantSubscriptionService, permissionChecker)).build();
         RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), actorId, "sub", Set.of("CLINIC_ADMIN"), "CLINIC_ADMIN", "cid"));
 
         mockMvc.perform(get("/api/carepilot/leads/export").queryParam("search", "Ava"))
@@ -73,7 +80,7 @@ class CarePilotLeadControllerRouteTest {
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("firstName,lastName")));
     }
 
-    private CarePilotLeadController controller(CarePilotLeadCsvService leadCsvService, ClinicTimeZoneResolver clinicTimeZoneResolver, PermissionChecker permissionChecker) {
+    private CarePilotLeadController controller(CarePilotLeadCsvService leadCsvService, ClinicTimeZoneResolver clinicTimeZoneResolver, TenantSubscriptionService tenantSubscriptionService, PermissionChecker permissionChecker) {
         return new CarePilotLeadController(
                 mock(LeadService.class),
                 mock(LeadConversionService.class),
@@ -81,6 +88,7 @@ class CarePilotLeadControllerRouteTest {
                 mock(LeadActivityService.class),
                 leadCsvService,
                 clinicTimeZoneResolver,
+                tenantSubscriptionService,
                 permissionChecker
         );
     }

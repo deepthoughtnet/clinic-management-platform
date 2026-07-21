@@ -15,6 +15,7 @@ import com.deepthoughtnet.clinic.carepilot.lead.model.LeadStatusUpdateCommand;
 import com.deepthoughtnet.clinic.carepilot.lead.model.LeadUpsertCommand;
 import com.deepthoughtnet.clinic.carepilot.shared.util.CarePilotValidators;
 import com.deepthoughtnet.clinic.platform.core.errors.ForbiddenException;
+import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import jakarta.persistence.criteria.Predicate;
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
@@ -24,6 +25,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Objects;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -48,11 +50,13 @@ public class LeadService {
     private final LeadRepository repository;
     private final CampaignRepository campaignRepository;
     private final LeadActivityService leadActivityService;
+    private final PatientRepository patientRepository;
 
-    public LeadService(LeadRepository repository, CampaignRepository campaignRepository, LeadActivityService leadActivityService) {
+    public LeadService(LeadRepository repository, CampaignRepository campaignRepository, LeadActivityService leadActivityService, PatientRepository patientRepository) {
         this.repository = repository;
         this.campaignRepository = campaignRepository;
         this.leadActivityService = leadActivityService;
+        this.patientRepository = patientRepository;
     }
 
     @Transactional(readOnly = true)
@@ -171,11 +175,11 @@ public class LeadService {
             throw new IllegalArgumentException("command is required");
         }
         LeadEntity entity = require(tenantId, id);
+        if (entity.getStatus() == LeadStatus.CONVERTED) {
+            throw new IllegalArgumentException("Converted leads cannot be updated through status actions");
+        }
         LeadStatus oldStatus = entity.getStatus();
         OffsetDateTime oldFollowUp = entity.getNextFollowUpAt();
-        if (entity.getStatus() == LeadStatus.CONVERTED && command.status() != null && command.status() != LeadStatus.CONVERTED) {
-            throw new IllegalArgumentException("Converted leads cannot be transitioned out of CONVERTED");
-        }
         if (command.status() != null) {
             entity.setStatus(command.status());
         }
@@ -272,6 +276,14 @@ public class LeadService {
             entity.setLastContactedAt(command.lastContactedAt());
             entity.setNextFollowUpAt(command.nextFollowUpAt());
             entity.setFullName(fullName(command.firstName(), command.lastName()));
+        } else {
+            validateConvertedLeadUpdate(entity, command);
+            if (command.campaignId() != null && campaignRepository.findByTenantIdAndId(entity.getTenantId(), command.campaignId()).isEmpty()) {
+                throw new IllegalArgumentException("campaignId does not belong to tenant");
+            }
+            entity.setSourceDetails(normalizeNullable(command.sourceDetails()));
+            entity.setCampaignId(command.campaignId());
+            entity.setAssignedToAppUserId(command.assignedToAppUserId());
         }
         entity.setNotes(normalizeNullable(command.notes()));
         entity.setTags(normalizeNullable(command.tags()));
@@ -342,11 +354,16 @@ public class LeadService {
     }
 
     private LeadRecord toRecord(LeadEntity row, OffsetDateTime lastActivityAt) {
+        OffsetDateTime nextFollowUpAt = row.getStatus() != null && row.getStatus().isTerminal() ? null : row.getNextFollowUpAt();
+        UUID convertedPatientId = row.getConvertedPatientId();
+        if (convertedPatientId != null && patientRepository.findByTenantIdAndId(row.getTenantId(), convertedPatientId).isEmpty()) {
+            convertedPatientId = null;
+        }
         return new LeadRecord(
                 row.getId(), row.getTenantId(), row.getFirstName(), row.getLastName(), row.getFullName(),
                 row.getPhone(), row.getEmail(), row.getGender(), row.getDateOfBirth(), row.getSource(), row.getSourceDetails(),
                 row.getCampaignId(), row.getAssignedToAppUserId(), row.getStatus(), row.getPriority(), row.getNotes(), row.getTags(),
-                row.getConvertedPatientId(), row.getBookedAppointmentId(), row.getLastContactedAt(), row.getNextFollowUpAt(), lastActivityAt,
+                convertedPatientId, row.getBookedAppointmentId(), row.getLastContactedAt(), nextFollowUpAt, lastActivityAt,
                 row.getCreatedBy(), row.getUpdatedBy(), row.getCreatedAt(), row.getUpdatedAt()
         );
     }
@@ -364,6 +381,24 @@ public class LeadService {
             throw new IllegalArgumentException(field + " must be a valid 10-digit mobile number");
         }
         return normalized;
+    }
+
+    private void validateConvertedLeadUpdate(LeadEntity entity, LeadUpsertCommand command) {
+        List<String> immutableFields = new ArrayList<>();
+        if (!Objects.equals(normalizeNullable(command.firstName()), normalizeNullable(entity.getFirstName()))) immutableFields.add("firstName");
+        if (!Objects.equals(normalizeNullable(command.lastName()), normalizeNullable(entity.getLastName()))) immutableFields.add("lastName");
+        if (!Objects.equals(normalizeMobile(command.phone(), "phone"), entity.getPhone())) immutableFields.add("phone");
+        if (!Objects.equals(normalizeNullable(command.email()), normalizeNullable(entity.getEmail()))) immutableFields.add("email");
+        if (!Objects.equals(command.gender(), entity.getGender())) immutableFields.add("gender");
+        if (!Objects.equals(command.dateOfBirth(), entity.getDateOfBirth())) immutableFields.add("dateOfBirth");
+        if (!Objects.equals(command.source(), entity.getSource())) immutableFields.add("source");
+        if (!Objects.equals(command.status(), entity.getStatus())) immutableFields.add("status");
+        if (!Objects.equals(command.priority(), entity.getPriority())) immutableFields.add("priority");
+        if (!Objects.equals(command.lastContactedAt(), entity.getLastContactedAt())) immutableFields.add("lastContactedAt");
+        if (!Objects.equals(command.nextFollowUpAt(), entity.getNextFollowUpAt())) immutableFields.add("nextFollowUpAt");
+        if (!immutableFields.isEmpty()) {
+            throw new IllegalArgumentException("Converted leads cannot change immutable fields: " + String.join(", ", immutableFields));
+        }
     }
 
     private String fullName(String first, String last) {

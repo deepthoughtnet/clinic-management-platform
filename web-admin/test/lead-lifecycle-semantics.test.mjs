@@ -19,7 +19,11 @@ test("lead page uses shared assignee labels and tenant timezone formatting", () 
   assert.ok(page.includes('formatCarePilotAssigneeLabel(u, u.appUserId)'));
   assert.ok(page.includes('const pipelineOnly = tab === "PIPELINE";'));
   assert.ok(page.includes('listCarePilotLeads(auth.accessToken, auth.tenantId, { status: forcedStatus, source: parsed.data.source || undefined, priority: parsed.data.priority || undefined, search: parsed.data.search || undefined, followUpDue, pipelineOnly, page: requestPage, size: requestSize })'));
-  assert.ok(page.includes('No leads found for current filters.'));
+  assert.ok(page.includes('No active leads in the pipeline.'));
+  assert.ok(page.includes('No converted leads found.'));
+  assert.ok(page.includes('No lost leads found.'));
+  assert.ok(page.includes('No active follow-ups are due.'));
+  assert.ok(page.includes('No leads match the current filters.'));
   assert.ok(!page.includes('Unknown user'));
   assert.ok(formatting.includes('return "Unassigned";'));
   assert.ok(formatting.includes('return "Unavailable user";'));

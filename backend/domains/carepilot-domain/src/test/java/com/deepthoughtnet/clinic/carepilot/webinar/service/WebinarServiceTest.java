@@ -1,11 +1,13 @@
 package com.deepthoughtnet.clinic.carepilot.webinar.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.deepthoughtnet.clinic.carepilot.campaign.db.CampaignRepository;
+import com.deepthoughtnet.clinic.carepilot.webinar.db.WebinarEntity;
 import com.deepthoughtnet.clinic.carepilot.webinar.db.WebinarRepository;
 import com.deepthoughtnet.clinic.carepilot.webinar.model.WebinarStatus;
 import com.deepthoughtnet.clinic.carepilot.webinar.model.WebinarType;
@@ -43,5 +45,29 @@ class WebinarServiceTest {
 
         assertThat(row.title()).isEqualTo("Diabetes Awareness");
         assertThat(row.status()).isEqualTo(WebinarStatus.SCHEDULED);
+    }
+
+    @Test
+    void draftPublishTransitionsToScheduled() {
+        WebinarEntity entity = WebinarEntity.create(tenantId, actorId);
+        entity.setTitle("Future Draft");
+        entity.setStatus(WebinarStatus.DRAFT);
+        when(repository.findByTenantIdAndId(tenantId, entity.getId())).thenReturn(java.util.Optional.of(entity));
+
+        var updated = service.updateStatus(tenantId, entity.getId(), WebinarStatus.SCHEDULED, actorId);
+
+        assertThat(updated.status()).isEqualTo(WebinarStatus.SCHEDULED);
+    }
+
+    @Test
+    void draftCannotJumpDirectlyToLive() {
+        WebinarEntity entity = WebinarEntity.create(tenantId, actorId);
+        entity.setTitle("Future Draft");
+        entity.setStatus(WebinarStatus.DRAFT);
+        when(repository.findByTenantIdAndId(tenantId, entity.getId())).thenReturn(java.util.Optional.of(entity));
+
+        assertThatThrownBy(() -> service.updateStatus(tenantId, entity.getId(), WebinarStatus.LIVE, actorId))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Invalid webinar status transition");
     }
 }

@@ -23,6 +23,10 @@ test("lead shared labels drive source, status, priority, and timeline presentati
   assert.ok(formatting.includes('Next follow-up:'));
 
   assert.ok(page.includes('LEAD_SELECT_MENU_PROPS'));
+  assert.ok(page.includes('sx={{ minWidth: 0 }} data-lead-field="campaignId"'));
+  assert.ok(page.includes('size={{ xs: 12, md: 6, lg: 3 }} sx={{ minWidth: 0 }} data-lead-field="source"'));
+  assert.ok(page.includes('size={{ xs: 12, md: 6, lg: 4 }} sx={{ minWidth: 0 }} data-lead-field="assignedToAppUserId"'));
+  assert.ok(page.includes('size={{ xs: 12, md: 6, lg: 8 }} sx={{ minWidth: 0 }} data-lead-field="sourceDetails"'));
   assert.ok(page.includes('LEAD_SOURCE_OPTIONS.map'));
   assert.ok(page.includes('LEAD_STATUS_OPTIONS.map'));
   assert.ok(page.includes('LEAD_PRIORITY_OPTIONS.map'));
@@ -51,8 +55,10 @@ test("lead shared labels drive source, status, priority, and timeline presentati
   assert.ok(!page.includes('Unknown user'));
   assert.ok(!page.includes('Source: {lead.source}'));
   assert.ok(!page.includes('Next follow-up: {lead.nextFollowUpAt ? formatLeadDateTime(lead.nextFollowUpAt) : "-"'));
+  assert.ok(campaignField.includes('fullWidth'));
   assert.ok(campaignField.includes('placeholder = "Select campaign"'));
   assert.ok(campaignField.includes('placeholder={placeholder}'));
+  assert.ok(campaignField.includes('Autocomplete<CarePilotCampaignLookup, false, false, false>'));
 });
 
 test("lead validation summary and focus behavior are accessible and non-destructive", () => {

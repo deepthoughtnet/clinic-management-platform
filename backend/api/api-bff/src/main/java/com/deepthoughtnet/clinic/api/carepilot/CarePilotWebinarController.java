@@ -18,6 +18,7 @@ import com.deepthoughtnet.clinic.carepilot.webinar.registration.WebinarRegistrat
 import com.deepthoughtnet.clinic.carepilot.webinar.registration.WebinarRegistrationService;
 import com.deepthoughtnet.clinic.carepilot.webinar.service.WebinarService;
 import com.deepthoughtnet.clinic.api.security.PermissionChecker;
+import com.deepthoughtnet.clinic.identity.service.TenantSubscriptionService;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.time.LocalDate;
 import java.util.UUID;
@@ -42,17 +43,20 @@ public class CarePilotWebinarController {
     private final WebinarService webinarService;
     private final WebinarRegistrationService registrationService;
     private final WebinarAnalyticsService analyticsService;
+    private final TenantSubscriptionService tenantSubscriptionService;
     private final PermissionChecker permissionChecker;
 
     public CarePilotWebinarController(
             WebinarService webinarService,
             WebinarRegistrationService registrationService,
             WebinarAnalyticsService analyticsService,
+            TenantSubscriptionService tenantSubscriptionService,
             PermissionChecker permissionChecker
     ) {
         this.webinarService = webinarService;
         this.registrationService = registrationService;
         this.analyticsService = analyticsService;
+        this.tenantSubscriptionService = tenantSubscriptionService;
         this.permissionChecker = permissionChecker;
     }
 
@@ -112,7 +116,7 @@ public class CarePilotWebinarController {
         UUID tenantId = RequestContextHolder.requireTenantId();
         var rows = registrationService.list(tenantId, id, page, size);
         return new WebinarRegistrationListResponse(rows.getNumber(), rows.getSize(), rows.getTotalElements(), rows.getContent().stream().map(r -> new WebinarRegistrationResponse(
-                r.id(), r.tenantId(), r.webinarId(), r.patientId(), r.leadId(), r.leadName(), r.campaignId(), r.campaignName(), r.attendeeName(), r.attendeeEmail(), r.attendeePhone(),
+                r.id(), r.tenantId(), r.webinarId(), canExposePatientNavigation(r.tenantId()) ? r.patientId() : null, r.leadId(), r.leadName(), r.campaignId(), r.campaignName(), r.attendeeName(), r.attendeeEmail(), r.attendeePhone(),
                 r.registrationStatus(), r.attended(), r.attendedAt(), r.source(), r.notes(), r.createdAt(), r.updatedAt()
         )).toList());
     }
@@ -133,7 +137,7 @@ public class CarePilotWebinarController {
                 request == null ? null : request.notes()
         ), actorId);
         return new WebinarRegistrationResponse(
-                row.id(), row.tenantId(), row.webinarId(), row.patientId(), row.leadId(), row.leadName(), row.campaignId(), row.campaignName(), row.attendeeName(), row.attendeeEmail(), row.attendeePhone(),
+                row.id(), row.tenantId(), row.webinarId(), canExposePatientNavigation(row.tenantId()) ? row.patientId() : null, row.leadId(), row.leadName(), row.campaignId(), row.campaignName(), row.attendeeName(), row.attendeeEmail(), row.attendeePhone(),
                 row.registrationStatus(), row.attended(), row.attendedAt(), row.source(), row.notes(), row.createdAt(), row.updatedAt()
         );
     }
@@ -147,7 +151,7 @@ public class CarePilotWebinarController {
         }
         var row = registrationService.markAttendance(tenantId, id, request.registrationId(), new WebinarAttendanceCommand(request.registrationStatus(), request.notes()));
         return new WebinarRegistrationResponse(
-                row.id(), row.tenantId(), row.webinarId(), row.patientId(), row.leadId(), row.leadName(), row.campaignId(), row.campaignName(), row.attendeeName(), row.attendeeEmail(), row.attendeePhone(),
+                row.id(), row.tenantId(), row.webinarId(), canExposePatientNavigation(row.tenantId()) ? row.patientId() : null, row.leadId(), row.leadName(), row.campaignId(), row.campaignName(), row.attendeeName(), row.attendeeEmail(), row.attendeePhone(),
                 row.registrationStatus(), row.attended(), row.attendedAt(), row.source(), row.notes(), row.createdAt(), row.updatedAt()
         );
     }
@@ -195,5 +199,13 @@ public class CarePilotWebinarController {
         if (!permissionChecker.hasPermission("engage.webinar.publish")) {
             throw new AccessDeniedException("Webinar publish permission is required");
         }
+    }
+
+    private boolean canExposePatientNavigation(UUID tenantId) {
+        if (!permissionChecker.hasPermission("patient.read")) {
+            return false;
+        }
+        return tenantSubscriptionService.isModuleEnabled(tenantId, "APPOINTMENTS")
+                || tenantSubscriptionService.isModuleEnabled(tenantId, "CONSULTATION");
     }
 }
