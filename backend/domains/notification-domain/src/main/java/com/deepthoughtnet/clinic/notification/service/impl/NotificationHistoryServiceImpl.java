@@ -2,6 +2,8 @@ package com.deepthoughtnet.clinic.notification.service.impl;
 
 import com.deepthoughtnet.clinic.notification.db.NotificationHistoryEntity;
 import com.deepthoughtnet.clinic.notification.db.NotificationHistoryRepository;
+import com.deepthoughtnet.clinic.notification.db.NotificationOutboxEntity;
+import com.deepthoughtnet.clinic.notification.db.NotificationOutboxRepository;
 import com.deepthoughtnet.clinic.notification.model.NotificationEventPayload;
 import com.deepthoughtnet.clinic.notification.service.NotificationHistoryFilter;
 import com.deepthoughtnet.clinic.notification.service.NotificationHistoryService;
@@ -33,17 +35,20 @@ public class NotificationHistoryServiceImpl implements NotificationHistoryServic
     private static final String ENTITY_TYPE = "NOTIFICATION_HISTORY";
 
     private final NotificationHistoryRepository repository;
+    private final NotificationOutboxRepository outboxRepository;
     private final OutboxEventPublisher outboxEventPublisher;
     private final AuditEventPublisher auditEventPublisher;
     private final ObjectMapper objectMapper;
 
     public NotificationHistoryServiceImpl(
             NotificationHistoryRepository repository,
+            NotificationOutboxRepository outboxRepository,
             OutboxEventPublisher outboxEventPublisher,
             AuditEventPublisher auditEventPublisher,
             ObjectMapper objectMapper
     ) {
         this.repository = repository;
+        this.outboxRepository = outboxRepository;
         this.outboxEventPublisher = outboxEventPublisher;
         this.auditEventPublisher = auditEventPublisher;
         this.objectMapper = objectMapper;
@@ -93,9 +98,43 @@ public class NotificationHistoryServiceImpl implements NotificationHistoryServic
             UUID sourceId,
             UUID actorAppUserId
     ) {
+        return queueDetailed(
+                tenantId,
+                patientId,
+                eventType,
+                channel,
+                recipient,
+                channel,
+                recipient,
+                subject,
+                message,
+                sourceType,
+                sourceId,
+                null,
+                actorAppUserId
+        );
+    }
+
+    @Override
+    @Transactional
+    public NotificationQueueResult queueDetailed(
+            UUID tenantId,
+            UUID patientId,
+            String eventType,
+            String historyChannel,
+            String historyRecipient,
+            String deliveryChannel,
+            String deliveryRecipient,
+            String subject,
+            String message,
+            String sourceType,
+            UUID sourceId,
+            String detailsJson,
+            UUID actorAppUserId
+    ) {
         requireTenant(tenantId);
-        validate(eventType, channel, recipient, message);
-        String deduplicationKey = buildDeduplicationKey(tenantId, eventType, patientId, recipient, sourceType, sourceId);
+        validate(eventType, historyChannel, historyRecipient, message);
+        String deduplicationKey = buildDeduplicationKey(tenantId, eventType, patientId, historyRecipient, sourceType, sourceId);
         NotificationHistoryEntity existing = repository.findByTenantIdAndDeduplicationKey(tenantId, deduplicationKey).orElse(null);
         if (existing != null) {
             return new NotificationQueueResult(toRecord(existing), false);
@@ -105,8 +144,8 @@ public class NotificationHistoryServiceImpl implements NotificationHistoryServic
                 tenantId,
                 patientId,
                 eventType.trim().toUpperCase(Locale.ROOT),
-                channel.trim().toLowerCase(Locale.ROOT),
-                recipient.trim(),
+                historyChannel.trim().toLowerCase(Locale.ROOT),
+                historyRecipient.trim(),
                 normalizeNullable(subject),
                 message.trim(),
                 normalizeNullable(sourceType),
@@ -120,7 +159,7 @@ public class NotificationHistoryServiceImpl implements NotificationHistoryServic
                 ENTITY_TYPE,
                 saved.getId(),
                 saved.getDeduplicationKey(),
-                payloadJson(saved),
+                payloadJson(saved, deliveryChannel, deliveryRecipient, detailsJson),
                 OffsetDateTime.now()
         ));
         if (outboxId != null) {
@@ -146,7 +185,7 @@ public class NotificationHistoryServiceImpl implements NotificationHistoryServic
                 ENTITY_TYPE,
                 saved.getId(),
                 saved.getDeduplicationKey() + ":retry:" + saved.getAttemptCount(),
-                payloadJson(saved),
+                payloadJsonForRetry(saved),
                 OffsetDateTime.now()
         ));
         if (outboxId != null) {
@@ -256,18 +295,23 @@ public class NotificationHistoryServiceImpl implements NotificationHistoryServic
         );
     }
 
-    private String payloadJson(NotificationHistoryEntity entity) {
+    private String payloadJson(
+            NotificationHistoryEntity entity,
+            String deliveryChannel,
+            String deliveryRecipient,
+            String detailsJson
+    ) {
         try {
             return objectMapper.writeValueAsString(new NotificationEventPayload(
                     entity.getId(),
                     entity.getEventType(),
                     List.of(),
-                    entity.getRecipient(),
-                    entity.getChannel(),
+                    normalizeNullable(deliveryRecipient),
+                    normalizeNullable(deliveryChannel) == null ? entity.getChannel() : deliveryChannel.trim().toLowerCase(Locale.ROOT),
                     entity.getSubject(),
                     entity.getMessage(),
                     "notification.sent",
-                    null,
+                    detailsJson,
                     entity.getPatientId(),
                     entity.getSourceType(),
                     entity.getSourceId()
@@ -275,6 +319,15 @@ public class NotificationHistoryServiceImpl implements NotificationHistoryServic
         } catch (JsonProcessingException ex) {
             return "{\"historyId\":\"" + entity.getId() + "\"}";
         }
+    }
+
+    private String payloadJsonForRetry(NotificationHistoryEntity entity) {
+        if (entity.getOutboxEventId() != null) {
+            return outboxRepository.findByTenantIdAndId(entity.getTenantId(), entity.getOutboxEventId())
+                    .map(NotificationOutboxEntity::getPayloadJson)
+                    .orElseGet(() -> payloadJson(entity, entity.getChannel(), entity.getRecipient(), null));
+        }
+        return payloadJson(entity, entity.getChannel(), entity.getRecipient(), null);
     }
 
     private void validate(String eventType, String channel, String recipient, String message) {
@@ -333,7 +386,7 @@ public class NotificationHistoryServiceImpl implements NotificationHistoryServic
                 actorAppUserId,
                 OffsetDateTime.now(),
                 message,
-                payloadJson(entity)
+                payloadJson(entity, entity.getChannel(), entity.getRecipient(), null)
         ));
     }
 }

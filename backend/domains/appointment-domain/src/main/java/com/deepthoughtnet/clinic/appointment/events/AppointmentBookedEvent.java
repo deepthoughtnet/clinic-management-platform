@@ -33,8 +33,10 @@ public record AppointmentBookedEvent(
             UUID appointmentId,
             UUID patientId,
             UUID doctorUserId,
+            String doctorDisplayName,
             LocalDate appointmentDate,
             LocalTime appointmentTime,
+            String appointmentTimezone,
             String appointmentStatus,
             String appointmentType,
             UUID actorId
@@ -57,8 +59,10 @@ public record AppointmentBookedEvent(
                         appointmentId,
                         patientId,
                         doctorUserId,
+                        doctorDisplayName,
                         appointmentDate,
                         appointmentTime,
+                        appointmentTimezone,
                         appointmentStatus,
                         appointmentType
                 )

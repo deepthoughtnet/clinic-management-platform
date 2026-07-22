@@ -15,8 +15,10 @@ public record AppointmentBookedEventPayload(
         java.util.UUID appointmentId,
         java.util.UUID patientId,
         java.util.UUID doctorUserId,
+        String doctorDisplayName,
         LocalDate appointmentDate,
         LocalTime appointmentTime,
+        String appointmentTimezone,
         String appointmentStatus,
         String appointmentType
 ) implements ModuleBusinessEventPayload {

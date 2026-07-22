@@ -134,7 +134,6 @@ public class AppointmentController {
                 request.priority(),
                 request.allowAdHocBooking()
         ), actorAppUserId, allowOverbooking, bookingZone));
-        notificationActionService.sendAppointmentBooked(tenantId, UUID.fromString(response.id()), actorAppUserId);
         return response;
     }
 
@@ -153,7 +152,6 @@ public class AppointmentController {
                 request.reason(),
                 request.priority()
         ), actorAppUserId, allowOverbooking, bookingZone));
-        notificationActionService.sendAppointmentBooked(tenantId, UUID.fromString(response.id()), actorAppUserId);
         return response;
     }
 

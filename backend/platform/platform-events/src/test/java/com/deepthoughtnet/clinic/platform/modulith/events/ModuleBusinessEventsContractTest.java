@@ -31,8 +31,10 @@ class ModuleBusinessEventsContractTest {
                 aggregateId,
                 UUID.randomUUID(),
                 UUID.randomUUID(),
+                "Dr. Clinic",
                 LocalDate.of(2026, 7, 22),
                 LocalTime.of(11, 0),
+                "Asia/Kolkata",
                 "BOOKED",
                 "SCHEDULED",
                 UUID.randomUUID()
@@ -40,6 +42,8 @@ class ModuleBusinessEventsContractTest {
 
         assertThat(event.eventVersion()).isEqualTo(1);
         assertThat(event.payload().appointmentId()).isEqualTo(aggregateId);
+        assertThat(event.payload().doctorDisplayName()).isEqualTo("Dr. Clinic");
+        assertThat(event.payload().appointmentTimezone()).isEqualTo("Asia/Kolkata");
         assertThat(event.correlationId()).isEqualTo("corr-appointment");
         assertThat(objectMapper.writeValueAsString(event))
                 .contains("\"eventType\":\"APPOINTMENT_BOOKED\"")

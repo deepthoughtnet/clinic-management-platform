@@ -496,9 +496,6 @@ public class PatientPortalService {
                 false,
                 tenantZone
         );
-        if (notificationActionService != null) {
-            notificationActionService.sendAppointmentBooked(bookingDoctor.tenantId(), booked.id(), actorAppUserId);
-        }
         if (log.isDebugEnabled()) {
             log.debug(
                     "patient.portal.booking.created patientPortalSessionId={} appointmentId={} appointmentPatientId={} appointmentTenantId={} appointmentStatus={}",

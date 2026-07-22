@@ -23,6 +23,7 @@ import com.deepthoughtnet.clinic.patient.db.PatientEntity;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
 import com.deepthoughtnet.clinic.platform.modulith.events.ModuleBusinessEventPublisher;
+import com.deepthoughtnet.clinic.appointment.events.AppointmentBookedEvent;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -32,6 +33,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
+import org.mockito.ArgumentCaptor;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 @ExtendWith(MockitoExtension.class)
@@ -110,6 +112,38 @@ class AppointmentServiceQueueAndTokenTest {
         assertThat(first.tokenNumber()).isEqualTo(1);
         assertThat(second.tokenNumber()).isEqualTo(2);
         assertThat(nextDay.tokenNumber()).isEqualTo(1);
+    }
+
+    @Test
+    void createScheduledPublishesAppointmentBookedEventWithTenantTimezone() {
+        LocalDate appointmentDate = LocalDate.now(CLINIC_ZONE).plusDays(2);
+        var response = service.createScheduled(
+                TENANT_ID,
+                new com.deepthoughtnet.clinic.appointment.service.model.AppointmentUpsertCommand(
+                        PATIENT_ONE_ID,
+                        DOCTOR_ID,
+                        appointmentDate,
+                        java.time.LocalTime.of(11, 0),
+                        "Booked from test",
+                        AppointmentType.SCHEDULED,
+                        null,
+                        AppointmentPriority.NORMAL
+                ),
+                ACTOR_ID,
+                false,
+                CLINIC_ZONE
+        );
+
+        assertThat(response.id()).isNotNull();
+        ArgumentCaptor<AppointmentBookedEvent> eventCaptor = ArgumentCaptor.forClass(AppointmentBookedEvent.class);
+        verify(moduleBusinessEventPublisher).publish(eventCaptor.capture());
+        AppointmentBookedEvent event = eventCaptor.getValue();
+        assertThat(event.payload().appointmentTimezone()).isEqualTo(CLINIC_ZONE.getId());
+        assertThat(event.payload().doctorDisplayName()).isEqualTo("Doctor One");
+        assertThat(event.payload().appointmentDate()).isEqualTo(appointmentDate);
+        assertThat(event.payload().appointmentTime()).isEqualTo(java.time.LocalTime.of(11, 0));
+        assertThat(event.tenantId()).isEqualTo(TENANT_ID);
+        assertThat(event.payload().appointmentId()).isEqualTo(response.id());
     }
 
     @Test

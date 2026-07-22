@@ -26,7 +26,7 @@ public interface NotificationHistoryService {
             UUID sourceId,
             UUID actorAppUserId
     ) {
-        return queueDetailed(tenantId, patientId, eventType, channel, recipient, subject, message, sourceType, sourceId, actorAppUserId)
+        return queueDetailed(tenantId, patientId, eventType, channel, recipient, channel, recipient, subject, message, sourceType, sourceId, null, actorAppUserId)
                 .notification();
     }
 
@@ -40,6 +40,22 @@ public interface NotificationHistoryService {
             String message,
             String sourceType,
             UUID sourceId,
+            UUID actorAppUserId
+    );
+
+    NotificationQueueResult queueDetailed(
+            UUID tenantId,
+            UUID patientId,
+            String eventType,
+            String historyChannel,
+            String historyRecipient,
+            String deliveryChannel,
+            String deliveryRecipient,
+            String subject,
+            String message,
+            String sourceType,
+            UUID sourceId,
+            String detailsJson,
             UUID actorAppUserId
     );
 

@@ -117,8 +117,10 @@ class ModuleBusinessEventInfrastructureTest {
                 APPOINTMENT_ID,
                 PATIENT_ID,
                 UUID.randomUUID(),
+                "Dr. Clinic",
                 LocalDate.of(2026, 7, 22),
                 LocalTime.of(11, 0),
+                "Asia/Kolkata",
                 "BOOKED",
                 "SCHEDULED",
                 ACTOR_ID
@@ -253,8 +255,10 @@ class ModuleBusinessEventInfrastructureTest {
                 APPOINTMENT_ID,
                 PATIENT_ID,
                 UUID.randomUUID(),
+                "Dr. Clinic",
                 LocalDate.of(2026, 7, 22),
                 LocalTime.of(11, 0),
+                "Asia/Kolkata",
                 "BOOKED",
                 "SCHEDULED",
                 ACTOR_ID
@@ -300,8 +304,10 @@ class ModuleBusinessEventInfrastructureTest {
                 APPOINTMENT_ID,
                 PATIENT_ID,
                 UUID.randomUUID(),
+                "Dr. Clinic",
                 LocalDate.of(2026, 7, 22),
                 LocalTime.of(11, 0),
+                "Asia/Kolkata",
                 "BOOKED",
                 "SCHEDULED",
                 ACTOR_ID

@@ -698,13 +698,16 @@ public class AppointmentService {
                 "Created appointment",
                 detailsJson(saved)
         ));
+        String doctorDisplayName = doctorDisplayName(tenantId, saved.getDoctorUserId());
         moduleBusinessEventPublisher.publish(AppointmentBookedEvent.booked(
                 tenantId,
                 saved.getId(),
                 saved.getPatientId(),
                 saved.getDoctorUserId(),
+                doctorDisplayName,
                 saved.getAppointmentDate(),
                 saved.getAppointmentTime(),
+                resolveBookingZone(bookingZone).getId(),
                 saved.getStatus() == null ? null : saved.getStatus().name(),
                 saved.getType() == null ? null : saved.getType().name(),
                 actorAppUserId
@@ -784,13 +787,16 @@ public class AppointmentService {
                 "Created walk-in appointment",
                 detailsJson(saved)
         ));
+        String doctorDisplayName = doctorDisplayName(tenantId, saved.getDoctorUserId());
         moduleBusinessEventPublisher.publish(AppointmentBookedEvent.booked(
                 tenantId,
                 saved.getId(),
                 saved.getPatientId(),
                 saved.getDoctorUserId(),
+                doctorDisplayName,
                 saved.getAppointmentDate(),
                 saved.getAppointmentTime(),
+                resolveBookingZone(bookingZone).getId(),
                 saved.getStatus() == null ? null : saved.getStatus().name(),
                 saved.getType() == null ? null : saved.getType().name(),
                 actorAppUserId
@@ -1230,6 +1236,11 @@ public class AppointmentService {
         }
         return tenantUserManagementService.list(tenantId).stream()
                 .collect(Collectors.toMap(TenantUserRecord::appUserId, Function.identity(), (a, b) -> a, LinkedHashMap::new));
+    }
+
+    private String doctorDisplayName(UUID tenantId, UUID doctorUserId) {
+        TenantUserRecord doctor = tenantUsersById(tenantId).get(doctorUserId);
+        return doctor == null ? null : doctor.displayName();
     }
 
     private Map<UUID, PatientEntity> patientsByIds(UUID tenantId, Collection<UUID> ids) {
