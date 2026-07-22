@@ -1,11 +1,14 @@
 package com.deepthoughtnet.clinic.appointment.events;
 
 import com.deepthoughtnet.clinic.platform.modulith.events.ModuleBusinessEventListener;
-import com.deepthoughtnet.clinic.platform.modulith.events.model.AppointmentBookedEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+/**
+ * Diagnostic listener that proves appointment business facts remain owned by
+ * the appointment module rather than the generic platform event store.
+ */
 @Component
 public class AppointmentBookedEventListener implements ModuleBusinessEventListener<AppointmentBookedEvent> {
     private static final Logger log = LoggerFactory.getLogger(AppointmentBookedEventListener.class);

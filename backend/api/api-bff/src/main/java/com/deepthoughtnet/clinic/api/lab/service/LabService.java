@@ -49,6 +49,7 @@ import com.deepthoughtnet.clinic.api.lab.service.model.LabTestRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabTestParameterRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabTestUpsertCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabTestParameterUpsertCommand;
+import com.deepthoughtnet.clinic.api.lab.events.LabReportPublishedEvent;
 import com.deepthoughtnet.clinic.api.clinicaldocument.db.ClinicalDocumentType;
 import com.deepthoughtnet.clinic.api.clinicaldocument.service.ClinicalDocumentUploadCommand;
 import com.deepthoughtnet.clinic.api.clinicaldocument.service.ClinicalDocumentRecord;
@@ -74,7 +75,6 @@ import com.deepthoughtnet.clinic.platform.audit.AuditEventCommand;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
 import com.deepthoughtnet.clinic.platform.branding.BrandingProperties;
 import com.deepthoughtnet.clinic.platform.modulith.events.ModuleBusinessEventPublisher;
-import com.deepthoughtnet.clinic.platform.modulith.events.ModuleBusinessEvents;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
@@ -882,7 +882,7 @@ public class LabService {
                 actorAppUserId
         );
         notifyRequestingDoctor(tenantId, saved, actorAppUserId);
-        moduleBusinessEventPublisher.publish(ModuleBusinessEvents.labReportPublished(
+        moduleBusinessEventPublisher.publish(LabReportPublishedEvent.published(
                 tenantId,
                 saved.getId(),
                 saved.getPatientId(),

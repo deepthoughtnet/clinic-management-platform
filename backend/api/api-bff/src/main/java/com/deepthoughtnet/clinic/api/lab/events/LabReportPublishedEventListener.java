@@ -1,11 +1,14 @@
 package com.deepthoughtnet.clinic.api.lab.events;
 
 import com.deepthoughtnet.clinic.platform.modulith.events.ModuleBusinessEventListener;
-import com.deepthoughtnet.clinic.platform.modulith.events.model.LabReportPublishedEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+/**
+ * Diagnostic listener that keeps the lab publication fact local to the lab
+ * workflow while the generic platform module only stores and dispatches it.
+ */
 @Component
 public class LabReportPublishedEventListener implements ModuleBusinessEventListener<LabReportPublishedEvent> {
     private static final Logger log = LoggerFactory.getLogger(LabReportPublishedEventListener.class);

@@ -12,8 +12,8 @@ import com.deepthoughtnet.clinic.carepilot.lead.db.LeadRepository;
 import com.deepthoughtnet.clinic.carepilot.lead.model.LeadStatus;
 import com.deepthoughtnet.clinic.carepilot.lead.service.LeadService;
 import com.deepthoughtnet.clinic.carepilot.shared.util.CarePilotValidators;
+import com.deepthoughtnet.clinic.carepilot.lead.events.LeadConvertedEvent;
 import com.deepthoughtnet.clinic.platform.modulith.events.ModuleBusinessEventPublisher;
-import com.deepthoughtnet.clinic.platform.modulith.events.ModuleBusinessEvents;
 import com.deepthoughtnet.clinic.patient.db.PatientEntity;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.patient.service.PatientService;
@@ -187,7 +187,7 @@ public class LeadConversionService {
         if (appointmentId != null) {
             leadService.linkAppointment(tenantId, lead.getId(), appointmentId, actorId);
         }
-        moduleBusinessEventPublisher.publish(ModuleBusinessEvents.leadConverted(
+        moduleBusinessEventPublisher.publish(LeadConvertedEvent.converted(
                 tenantId,
                 lead.getId(),
                 patientId,

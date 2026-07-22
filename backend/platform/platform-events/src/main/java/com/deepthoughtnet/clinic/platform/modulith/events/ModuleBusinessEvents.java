@@ -13,6 +13,10 @@ import java.time.OffsetDateTime;
 import java.util.UUID;
 import org.slf4j.MDC;
 
+/**
+ * Legacy compatibility helper retained for the platform-events test suite while
+ * the public business contracts live in the owning modules.
+ */
 public final class ModuleBusinessEvents {
     private static final String APPOINTMENT_MODULE = "APPOINTMENT";
     private static final String LAB_MODULE = "LAB";

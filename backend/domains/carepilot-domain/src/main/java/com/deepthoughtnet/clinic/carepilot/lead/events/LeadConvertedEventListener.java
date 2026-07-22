@@ -1,11 +1,14 @@
 package com.deepthoughtnet.clinic.carepilot.lead.events;
 
 import com.deepthoughtnet.clinic.platform.modulith.events.ModuleBusinessEventListener;
-import com.deepthoughtnet.clinic.platform.modulith.events.model.LeadConvertedEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+/**
+ * Diagnostic listener that keeps the lead conversion vocabulary within the
+ * carepilot module while leaving the platform event store generic.
+ */
 @Component
 public class LeadConvertedEventListener implements ModuleBusinessEventListener<LeadConvertedEvent> {
     private static final Logger log = LoggerFactory.getLogger(LeadConvertedEventListener.class);

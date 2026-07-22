@@ -32,9 +32,9 @@ import com.deepthoughtnet.clinic.appointment.service.model.WaitlistStatus;
 import com.deepthoughtnet.clinic.appointment.service.model.WalkInAppointmentCommand;
 import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
 import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
+import com.deepthoughtnet.clinic.appointment.events.AppointmentBookedEvent;
 import com.deepthoughtnet.clinic.patient.db.PatientEntity;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
-import com.deepthoughtnet.clinic.platform.modulith.events.ModuleBusinessEvents;
 import com.deepthoughtnet.clinic.platform.modulith.events.ModuleBusinessEventPublisher;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventCommand;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
@@ -698,7 +698,7 @@ public class AppointmentService {
                 "Created appointment",
                 detailsJson(saved)
         ));
-        moduleBusinessEventPublisher.publish(ModuleBusinessEvents.appointmentBooked(
+        moduleBusinessEventPublisher.publish(AppointmentBookedEvent.booked(
                 tenantId,
                 saved.getId(),
                 saved.getPatientId(),
@@ -784,7 +784,7 @@ public class AppointmentService {
                 "Created walk-in appointment",
                 detailsJson(saved)
         ));
-        moduleBusinessEventPublisher.publish(ModuleBusinessEvents.appointmentBooked(
+        moduleBusinessEventPublisher.publish(AppointmentBookedEvent.booked(
                 tenantId,
                 saved.getId(),
                 saved.getPatientId(),
