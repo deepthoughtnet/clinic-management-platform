@@ -11,7 +11,9 @@ import com.deepthoughtnet.clinic.platform.core.context.TenantId;
 import com.deepthoughtnet.clinic.platform.core.security.AppUserProvisioner;
 import com.deepthoughtnet.clinic.platform.core.security.AuthContextExtractor;
 import com.deepthoughtnet.clinic.platform.core.security.TenantRoleResolver;
+import com.deepthoughtnet.clinic.platform.spring.context.CorrelationId;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
+import com.deepthoughtnet.clinic.platform.spring.context.TenantHeaders;
 import com.deepthoughtnet.clinic.platform.spring.web.RequestContextFilter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.Set;
@@ -20,6 +22,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.MDC;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 
@@ -89,5 +92,31 @@ class RequestContextFilterTest {
         assertThat(chainCalled).isFalse();
         assertThat(response.getStatus()).isEqualTo(403);
         assertThat(response.getContentAsString()).contains("You do not have permission to perform this action");
+    }
+
+    @Test
+    void primaryCorrelationHeaderIsAcceptedAndResponseHeadersAreSet() throws Exception {
+        when(auth.keycloakSub()).thenReturn("sub-789");
+        when(auth.email()).thenReturn("clinic.user@arogia.com");
+        when(auth.displayName()).thenReturn("Clinic User");
+        when(auth.rolesUpper()).thenReturn(Set.of("CLINIC_USER"));
+        when(auth.resolveTenantId("tenant-123")).thenReturn(new TenantId(java.util.UUID.randomUUID()));
+        when(provisioner.upsertAndReturnId(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn(java.util.UUID.randomUUID());
+        when(roleResolver.resolveTenantRole(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anySet()))
+                .thenReturn("CLINIC_USER");
+
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/me");
+        request.addHeader(TenantHeaders.TENANT_HEADER, "tenant-123");
+        request.addHeader(CorrelationId.HEADER, "corr-primary");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        AtomicReference<String> mdcDuringChain = new AtomicReference<>();
+
+        filter.doFilter(request, response, (req, res) -> mdcDuringChain.set(MDC.get(CorrelationId.MDC_KEY)));
+
+        assertThat(mdcDuringChain.get()).isEqualTo("corr-primary");
+        assertThat(response.getHeader(CorrelationId.HEADER)).isEqualTo("corr-primary");
+        assertThat(response.getHeader(CorrelationId.LEGACY_HEADER)).isEqualTo("corr-primary");
+        assertThat(MDC.get(CorrelationId.MDC_KEY)).isNull();
     }
 }

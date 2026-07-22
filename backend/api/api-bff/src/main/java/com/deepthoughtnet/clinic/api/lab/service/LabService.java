@@ -73,6 +73,8 @@ import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventCommand;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
 import com.deepthoughtnet.clinic.platform.branding.BrandingProperties;
+import com.deepthoughtnet.clinic.platform.modulith.events.ModuleBusinessEventPublisher;
+import com.deepthoughtnet.clinic.platform.modulith.events.ModuleBusinessEvents;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
@@ -150,6 +152,7 @@ public class LabService {
     private final ClinicalDocumentService clinicalDocumentService;
     private final ObjectStorageService objectStorageService;
     private final LabNotificationService labNotificationService;
+    private final ModuleBusinessEventPublisher moduleBusinessEventPublisher;
     private final AuditEventPublisher auditEventPublisher;
     private final ObjectMapper objectMapper;
     private final BrandingProperties brandingProperties;
@@ -172,6 +175,7 @@ public class LabService {
             ClinicalDocumentService clinicalDocumentService,
             ObjectStorageService objectStorageService,
             LabNotificationService labNotificationService,
+            ModuleBusinessEventPublisher moduleBusinessEventPublisher,
             AuditEventPublisher auditEventPublisher,
             ObjectMapper objectMapper,
             BrandingProperties brandingProperties,
@@ -193,6 +197,7 @@ public class LabService {
         this.clinicalDocumentService = clinicalDocumentService;
         this.objectStorageService = objectStorageService;
         this.labNotificationService = labNotificationService;
+        this.moduleBusinessEventPublisher = moduleBusinessEventPublisher;
         this.auditEventPublisher = auditEventPublisher;
         this.objectMapper = objectMapper;
         this.brandingProperties = brandingProperties;
@@ -877,6 +882,15 @@ public class LabService {
                 actorAppUserId
         );
         notifyRequestingDoctor(tenantId, saved, actorAppUserId);
+        moduleBusinessEventPublisher.publish(ModuleBusinessEvents.labReportPublished(
+                tenantId,
+                saved.getId(),
+                saved.getPatientId(),
+                saved.getConsultationId(),
+                pdf.filename(),
+                saved.getReportDeliveryStatus(),
+                actorAppUserId
+        ));
         return toRecord(tenantId, saved);
     }
 

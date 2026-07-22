@@ -32,6 +32,7 @@ import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
 import com.deepthoughtnet.clinic.patient.db.PatientEntity;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
+import com.deepthoughtnet.clinic.platform.modulith.events.ModuleBusinessEventPublisher;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.DayOfWeek;
 import java.time.Duration;
@@ -80,6 +81,9 @@ class AppointmentServiceSlotsTest {
     @Mock
     private AuditEventPublisher auditEventPublisher;
 
+    @Mock
+    private ModuleBusinessEventPublisher moduleBusinessEventPublisher;
+
     private AppointmentService service;
     private final AtomicReference<AppointmentWaitlistEntity> savedWaitlist = new AtomicReference<>();
 
@@ -93,6 +97,7 @@ class AppointmentServiceSlotsTest {
                 patientRepository,
                 tenantUserManagementService,
                 auditEventPublisher,
+                moduleBusinessEventPublisher,
                 new ObjectMapper()
         );
         lenient().when(appointmentRepository.save(any(AppointmentEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));

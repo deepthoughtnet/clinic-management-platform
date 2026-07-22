@@ -19,6 +19,7 @@ import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
 import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
+import com.deepthoughtnet.clinic.platform.modulith.events.ModuleBusinessEventPublisher;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -59,6 +60,9 @@ class AppointmentServiceStatusTransitionTest {
     @Mock
     private AuditEventPublisher auditEventPublisher;
 
+    @Mock
+    private ModuleBusinessEventPublisher moduleBusinessEventPublisher;
+
     private AppointmentService service;
 
     @BeforeEach
@@ -71,6 +75,7 @@ class AppointmentServiceStatusTransitionTest {
                 patientRepository,
                 tenantUserManagementService,
                 auditEventPublisher,
+                moduleBusinessEventPublisher,
                 new ObjectMapper()
         );
         lenient().when(appointmentRepository.save(any(AppointmentEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));

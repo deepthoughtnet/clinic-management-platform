@@ -11,6 +11,7 @@ import com.deepthoughtnet.clinic.identity.db.TenantPlanEntity;
 import com.deepthoughtnet.clinic.identity.db.TenantPlanRepository;
 import com.deepthoughtnet.clinic.inventory.db.PharmacySalePrescriptionRepository;
 import com.deepthoughtnet.clinic.inventory.db.PharmacySaleRepository;
+import com.deepthoughtnet.clinic.platform.modulith.events.db.ModuleBusinessEventRepository;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -44,6 +45,9 @@ class PersistenceScanConfigTest extends com.deepthoughtnet.clinic.api.support.Ab
     private TenantOnboardingRepository tenantOnboardingRepository;
 
     @Autowired
+    private ModuleBusinessEventRepository moduleBusinessEventRepository;
+
+    @Autowired
     private TestEntityManager entityManager;
 
     @Test
@@ -64,6 +68,11 @@ class PersistenceScanConfigTest extends com.deepthoughtnet.clinic.api.support.Ab
     @Test
     void tenantOnboardingRepositoryIsRegistered() {
         assertThat(tenantOnboardingRepository).isNotNull();
+    }
+
+    @Test
+    void moduleBusinessEventRepositoryIsRegisteredThroughPublicPlatformConfiguration() {
+        assertThat(moduleBusinessEventRepository).isNotNull();
     }
 
     @Test

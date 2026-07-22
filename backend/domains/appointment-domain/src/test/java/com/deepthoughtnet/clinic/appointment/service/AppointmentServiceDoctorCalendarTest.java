@@ -18,6 +18,7 @@ import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
 import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
+import com.deepthoughtnet.clinic.platform.modulith.events.ModuleBusinessEventPublisher;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.DayOfWeek;
 import java.time.LocalTime;
@@ -54,6 +55,8 @@ class AppointmentServiceDoctorCalendarTest {
     private TenantUserManagementService tenantUserManagementService;
     @Mock
     private AuditEventPublisher auditEventPublisher;
+    @Mock
+    private ModuleBusinessEventPublisher moduleBusinessEventPublisher;
 
     private AppointmentService service;
 
@@ -67,6 +70,7 @@ class AppointmentServiceDoctorCalendarTest {
                 patientRepository,
                 tenantUserManagementService,
                 auditEventPublisher,
+                moduleBusinessEventPublisher,
                 new ObjectMapper()
         );
         lenient().when(tenantUserManagementService.list(TENANT_ID)).thenReturn(List.of(new TenantUserRecord(

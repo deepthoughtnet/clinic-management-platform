@@ -49,9 +49,10 @@ public class RequestContextFilter extends OncePerRequestFilter implements Ordere
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
 
-        String corr = CorrelationId.ensure(request.getHeader(CorrelationId.HEADER));
+        String corr = CorrelationId.resolve(request.getHeader(CorrelationId.HEADER), request.getHeader(CorrelationId.LEGACY_HEADER));
         MDC.put(CorrelationId.MDC_KEY, corr);
         response.setHeader(CorrelationId.HEADER, corr);
+        response.setHeader(CorrelationId.LEGACY_HEADER, corr);
 
         try {
             String sub = safe(auth.keycloakSub());
@@ -169,8 +170,9 @@ public class RequestContextFilter extends OncePerRequestFilter implements Ordere
         response.resetBuffer();
         response.setStatus(status);
         response.setContentType("application/json");
-        String correlationId = CorrelationId.ensure(request.getHeader(CorrelationId.HEADER));
+        String correlationId = CorrelationId.resolve(request.getHeader(CorrelationId.HEADER), request.getHeader(CorrelationId.LEGACY_HEADER));
         response.setHeader(CorrelationId.HEADER, correlationId);
+        response.setHeader(CorrelationId.LEGACY_HEADER, correlationId);
         LinkedHashMap<String, Object> body = new LinkedHashMap<>();
         body.put("timestamp", java.time.OffsetDateTime.now().toString());
         body.put("path", request.getRequestURI());

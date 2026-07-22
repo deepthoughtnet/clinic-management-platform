@@ -17,12 +17,16 @@ public class DatabaseSchemaIntegrityService {
             "app_users",
             "patients",
             "notification_outbox",
+            "module_business_events",
+            "module_business_event_listener_jobs",
             "clinical_ai_jobs",
             "help_pages",
             "prescription_safety_reviews"
     );
     private static final Map<String, List<String>> CRITICAL_COLUMNS = Map.of(
             "notification_outbox", List.of("next_retry_at"),
+            "module_business_events", List.of("payload_json"),
+            "module_business_event_listener_jobs", List.of("next_attempt_at", "status"),
             "tenants", List.of("id", "code"),
             "app_users", List.of("id", "tenant_id"),
             "patients", List.of("id", "tenant_id")

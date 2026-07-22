@@ -29,6 +29,7 @@ import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.patient.service.PatientService;
 import com.deepthoughtnet.clinic.patient.service.model.PatientGender;
 import com.deepthoughtnet.clinic.patient.service.model.PatientRecord;
+import com.deepthoughtnet.clinic.platform.modulith.events.ModuleBusinessEventPublisher;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
@@ -47,6 +48,7 @@ class LeadConversionServiceTest {
     private AppointmentService appointmentService;
     private LeadActivityService activityService;
     private LeadService leadService;
+    private ModuleBusinessEventPublisher moduleBusinessEventPublisher;
     private LeadConversionService service;
 
     @BeforeEach
@@ -57,7 +59,8 @@ class LeadConversionServiceTest {
         appointmentService = mock(AppointmentService.class);
         activityService = mock(LeadActivityService.class);
         leadService = mock(LeadService.class);
-        service = new LeadConversionService(leadRepository, patientRepository, patientService, appointmentService, activityService, leadService);
+        moduleBusinessEventPublisher = mock(ModuleBusinessEventPublisher.class);
+        service = new LeadConversionService(leadRepository, patientRepository, patientService, appointmentService, activityService, leadService, moduleBusinessEventPublisher);
         when(leadRepository.save(any())).thenAnswer(i -> i.getArgument(0));
     }
 

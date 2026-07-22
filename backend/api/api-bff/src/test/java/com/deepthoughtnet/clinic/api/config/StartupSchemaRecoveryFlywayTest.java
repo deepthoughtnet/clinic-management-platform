@@ -37,6 +37,8 @@ class StartupSchemaRecoveryFlywayTest extends PostgresTestContainerSupport {
                 assertThat(tableExists(connection, schema.name(), "help_attachments")).isTrue();
                 assertThat(tableExists(connection, schema.name(), "notification_outbox")).isTrue();
                 assertThat(columnExists(connection, schema.name(), "notification_outbox", "next_retry_at")).isTrue();
+                assertThat(tableExists(connection, schema.name(), "module_business_events")).isTrue();
+                assertThat(tableExists(connection, schema.name(), "module_business_event_listener_jobs")).isTrue();
             }
         }
     }
@@ -62,6 +64,8 @@ class StartupSchemaRecoveryFlywayTest extends PostgresTestContainerSupport {
                 assertThat(tableExists(connection, schema.name(), "prescription_safety_reviews")).isTrue();
                 assertThat(tableExists(connection, schema.name(), "notification_outbox")).isTrue();
                 assertThat(columnExists(connection, schema.name(), "notification_outbox", "next_retry_at")).isTrue();
+                assertThat(tableExists(connection, schema.name(), "module_business_events")).isTrue();
+                assertThat(tableExists(connection, schema.name(), "module_business_event_listener_jobs")).isTrue();
                 assertThat(repairFlyway.info().current()).isNotNull();
                 assertThat(repairFlyway.info().current().getVersion().getVersion()).isEqualTo("109");
             }
@@ -85,6 +89,8 @@ class StartupSchemaRecoveryFlywayTest extends PostgresTestContainerSupport {
                 assertThat(tableExists(connection, schema.name(), "help_attachments")).isTrue();
                 assertThat(tableExists(connection, schema.name(), "notification_outbox")).isTrue();
                 assertThat(columnExists(connection, schema.name(), "notification_outbox", "next_retry_at")).isTrue();
+                assertThat(tableExists(connection, schema.name(), "module_business_events")).isTrue();
+                assertThat(tableExists(connection, schema.name(), "module_business_event_listener_jobs")).isTrue();
                 assertThat(repairFlyway.info().current()).isNotNull();
                 assertThat(repairFlyway.info().current().getVersion().getVersion()).isEqualTo("109");
             }

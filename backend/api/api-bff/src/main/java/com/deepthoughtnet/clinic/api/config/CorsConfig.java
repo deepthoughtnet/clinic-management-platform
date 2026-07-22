@@ -47,12 +47,13 @@ public class CorsConfig {
                 "X-Patient-Session",
                 "X-Platform-Op",
                 "X-Correlation-Id",
+                "X-Correlation-ID",
                 "Accept",
                 "Origin",
                 "Cache-Control",
                 "Pragma"
         ));
-        cfg.setExposedHeaders(List.of("WWW-Authenticate", "X-Correlation-Id"));
+        cfg.setExposedHeaders(List.of("WWW-Authenticate", "X-Correlation-ID", "X-Correlation-Id"));
         cfg.setAllowCredentials(false);
         cfg.setMaxAge(3600L);
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();

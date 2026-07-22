@@ -1,10 +1,15 @@
 package com.deepthoughtnet.clinic.api.config;
 
+import com.deepthoughtnet.clinic.platform.modulith.events.config.PlatformEventsPersistenceConfiguration;
 import org.springframework.boot.autoconfigure.domain.EntityScan;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Import;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 
 @Configuration
+// The event store bootstrap is imported through the public platform-events configuration so the BFF
+// does not know or scan the internal repository/entity package names directly.
+@Import(PlatformEventsPersistenceConfiguration.class)
 @EntityScan(basePackages = {
         "com.deepthoughtnet.clinic.platform.audit.db",
         "com.deepthoughtnet.clinic.api.clinicaldocument.db",

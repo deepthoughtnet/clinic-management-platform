@@ -34,6 +34,8 @@ import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
 import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
 import com.deepthoughtnet.clinic.patient.db.PatientEntity;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
+import com.deepthoughtnet.clinic.platform.modulith.events.ModuleBusinessEvents;
+import com.deepthoughtnet.clinic.platform.modulith.events.ModuleBusinessEventPublisher;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventCommand;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -87,6 +89,7 @@ public class AppointmentService {
     private final PatientRepository patientRepository;
     private final TenantUserManagementService tenantUserManagementService;
     private final AuditEventPublisher auditEventPublisher;
+    private final ModuleBusinessEventPublisher moduleBusinessEventPublisher;
     private final ObjectMapper objectMapper;
 
     public AppointmentService(
@@ -97,6 +100,7 @@ public class AppointmentService {
             PatientRepository patientRepository,
             TenantUserManagementService tenantUserManagementService,
             AuditEventPublisher auditEventPublisher,
+            ModuleBusinessEventPublisher moduleBusinessEventPublisher,
             ObjectMapper objectMapper
     ) {
         this.appointmentRepository = appointmentRepository;
@@ -106,6 +110,7 @@ public class AppointmentService {
         this.patientRepository = patientRepository;
         this.tenantUserManagementService = tenantUserManagementService;
         this.auditEventPublisher = auditEventPublisher;
+        this.moduleBusinessEventPublisher = moduleBusinessEventPublisher;
         this.objectMapper = objectMapper;
     }
 
@@ -693,6 +698,17 @@ public class AppointmentService {
                 "Created appointment",
                 detailsJson(saved)
         ));
+        moduleBusinessEventPublisher.publish(ModuleBusinessEvents.appointmentBooked(
+                tenantId,
+                saved.getId(),
+                saved.getPatientId(),
+                saved.getDoctorUserId(),
+                saved.getAppointmentDate(),
+                saved.getAppointmentTime(),
+                saved.getStatus() == null ? null : saved.getStatus().name(),
+                saved.getType() == null ? null : saved.getType().name(),
+                actorAppUserId
+        ));
         return toRecord(saved, tenantUsersById(tenantId), patientsByIds(tenantId, List.of(saved.getPatientId())));
     }
 
@@ -767,6 +783,17 @@ public class AppointmentService {
                 OffsetDateTime.now(),
                 "Created walk-in appointment",
                 detailsJson(saved)
+        ));
+        moduleBusinessEventPublisher.publish(ModuleBusinessEvents.appointmentBooked(
+                tenantId,
+                saved.getId(),
+                saved.getPatientId(),
+                saved.getDoctorUserId(),
+                saved.getAppointmentDate(),
+                saved.getAppointmentTime(),
+                saved.getStatus() == null ? null : saved.getStatus().name(),
+                saved.getType() == null ? null : saved.getType().name(),
+                actorAppUserId
         ));
         return toRecord(saved, tenantUsersById(tenantId), patientsByIds(tenantId, List.of(saved.getPatientId())));
     }

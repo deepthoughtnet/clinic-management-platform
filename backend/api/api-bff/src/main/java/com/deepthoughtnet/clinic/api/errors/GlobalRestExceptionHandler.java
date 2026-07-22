@@ -292,7 +292,7 @@ public class GlobalRestExceptionHandler {
     }
 
     private String correlationId(HttpServletRequest req) {
-        String correlationId = req == null ? null : req.getHeader(CorrelationId.HEADER);
+        String correlationId = req == null ? null : CorrelationId.resolve(req.getHeader(CorrelationId.HEADER), req.getHeader(CorrelationId.LEGACY_HEADER));
         if (correlationId == null || correlationId.isBlank()) {
             correlationId = MDC.get(CorrelationId.MDC_KEY);
         }

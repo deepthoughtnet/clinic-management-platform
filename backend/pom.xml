@@ -38,6 +38,7 @@
     <module>platform/platform-core</module>
     <module>platform/platform-idempotency</module>
     <module>platform/platform-jobs</module>
+    <module>platform/platform-events</module>
     <module>platform/platform-outbox</module>
     <module>platform/platform-security-kc</module>
     <module>platform/platform-security-spi</module>

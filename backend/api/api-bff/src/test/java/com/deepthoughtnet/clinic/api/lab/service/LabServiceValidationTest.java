@@ -48,6 +48,7 @@ import com.deepthoughtnet.clinic.patient.db.PatientEntity;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
 import com.deepthoughtnet.clinic.platform.branding.BrandingProperties;
+import com.deepthoughtnet.clinic.platform.modulith.events.ModuleBusinessEventPublisher;
 import com.deepthoughtnet.clinic.platform.storage.ObjectStorageService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
@@ -102,6 +103,7 @@ class LabServiceValidationTest {
     @Mock private BrandingProperties brandingProperties;
     @Mock private LabCatalogueConfigService labCatalogueConfigService;
     @Mock private PlatformTransactionManager platformTransactionManager;
+    @Mock private ModuleBusinessEventPublisher moduleBusinessEventPublisher;
 
     private LabService service;
 
@@ -123,6 +125,7 @@ class LabServiceValidationTest {
                 clinicalDocumentService,
                 objectStorageService,
                 labNotificationService,
+                moduleBusinessEventPublisher,
                 auditEventPublisher,
                 new ObjectMapper(),
                 brandingProperties,

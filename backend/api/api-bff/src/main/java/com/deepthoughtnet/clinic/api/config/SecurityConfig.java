@@ -182,10 +182,11 @@ public class SecurityConfig {
     }
 
     private void writeError(ObjectMapper objectMapper, HttpServletRequest request, HttpServletResponse response, int status, String code, String message) throws java.io.IOException {
-        String correlationId = CorrelationId.ensure(request.getHeader(CorrelationId.HEADER));
+        String correlationId = CorrelationId.resolve(request.getHeader(CorrelationId.HEADER), request.getHeader(CorrelationId.LEGACY_HEADER));
         response.setStatus(status);
         response.setContentType("application/json");
         response.setHeader(CorrelationId.HEADER, correlationId);
+        response.setHeader(CorrelationId.LEGACY_HEADER, correlationId);
         response.getWriter().write(objectMapper.writeValueAsString(ApiError.of(status, code, message, request.getRequestURI(), correlationId)));
     }
 
