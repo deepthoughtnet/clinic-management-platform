@@ -4,16 +4,22 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.deepthoughtnet.clinic.notification.db.NotificationOutboxEntity;
 import com.deepthoughtnet.clinic.notification.db.NotificationOutboxRepository;
+import com.deepthoughtnet.clinic.appointment.service.AppointmentReminderReadService;
 import com.deepthoughtnet.clinic.notification.model.NotificationEventPayload;
 import com.deepthoughtnet.clinic.notification.service.NotificationDispatcher.NotificationDispatchSettings;
 import com.deepthoughtnet.clinic.notification.service.NotificationHistoryService;
 import com.deepthoughtnet.clinic.notify.NotificationMessage;
 import com.deepthoughtnet.clinic.notify.NotificationProvider;
+import com.deepthoughtnet.clinic.messaging.spi.MessageProvider;
+import com.deepthoughtnet.clinic.patient.service.PatientService;
+import com.deepthoughtnet.clinic.patient.service.model.PatientRecord;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
 import java.time.OffsetDateTime;
@@ -30,12 +36,17 @@ class NotificationDispatcherTest {
     private final NotificationOutboxRepository repository = mock(NotificationOutboxRepository.class);
     private final NotificationRecipientResolver recipientResolver = mock(NotificationRecipientResolver.class);
     private final NotificationHistoryService notificationHistoryService = mock(NotificationHistoryService.class);
+    private final AppointmentReminderReadService appointmentReminderReadService = mock(AppointmentReminderReadService.class);
+    private final PatientService patientService = mock(PatientService.class);
     private final NotificationProvider notificationProvider = mock(NotificationProvider.class);
     private final NotificationDispatcher dispatcher = new NotificationDispatcher(
             repository,
             recipientResolver,
             notificationHistoryService,
+            appointmentReminderReadService,
+            patientService,
             notificationProvider,
+            List.<MessageProvider>of(),
             objectMapper
     );
 
@@ -86,6 +97,36 @@ class NotificationDispatcherTest {
         assertThat(event.getNextAttemptAt()).isAfter(OffsetDateTime.now().minusSeconds(1));
     }
 
+    @Test
+    void dispatchOneSendsInAppNotificationToStablePatientRecipientWithoutPortalMapping() throws Exception {
+        NotificationOutboxEntity event = inAppEvent();
+        when(repository.findById(event.getId())).thenReturn(Optional.of(event));
+        when(patientService.findById(event.getTenantId(), UUID.fromString("22222222-2222-4222-8222-222222222222")))
+                .thenReturn(Optional.of(patientRecord(true)));
+
+        dispatcher.dispatchOne(event.getId(), settings());
+
+        verifyNoInteractions(notificationProvider);
+        assertThat(event.getStatus()).isEqualTo("SENT");
+        assertThat(event.getAttemptCount()).isEqualTo(1);
+        assertThat(event.getProcessedAt()).isNotNull();
+        assertThat(event.getLastError()).isNull();
+    }
+
+    @Test
+    void dispatchOneSkipsInAppNotificationWhenPatientRecordIsUnavailable() throws Exception {
+        NotificationOutboxEntity event = inAppEvent();
+        when(repository.findById(event.getId())).thenReturn(Optional.of(event));
+        when(patientService.findById(event.getTenantId(), UUID.fromString("22222222-2222-4222-8222-222222222222")))
+                .thenReturn(Optional.empty());
+
+        dispatcher.dispatchOne(event.getId(), settings());
+
+        assertThat(event.getStatus()).isEqualTo("IGNORED");
+        assertThat(event.getIgnoredAt()).isNotNull();
+        verify(notificationHistoryService).markSkipped(event.getTenantId(), UUID.fromString("11111111-1111-4111-8111-111111111111"), "Patient record unavailable");
+    }
+
     private NotificationOutboxEntity pendingEvent() throws Exception {
         NotificationEventPayload payload = new NotificationEventPayload(
                 "CLINIC_READY_FOR_APPROVAL",
@@ -103,6 +144,64 @@ class NotificationDispatcherTest {
                 "notification:test:" + UUID.randomUUID(),
                 objectMapper.writeValueAsString(payload),
                 OffsetDateTime.now().minusMinutes(1)
+        );
+    }
+
+    private NotificationOutboxEntity inAppEvent() throws Exception {
+        NotificationEventPayload payload = new NotificationEventPayload(
+                UUID.fromString("11111111-1111-4111-8111-111111111111"),
+                "APPOINTMENT_BOOKED",
+                List.of(),
+                "22222222-2222-4222-8222-222222222222",
+                "in_app",
+                "Appointment confirmed",
+                "Your appointment with Dr. Amit Verma is confirmed for 24 Jul 2026, 10:00 AM.",
+                "notification.sent",
+                "{\"recipientType\":\"PATIENT\",\"recipientId\":\"22222222-2222-4222-8222-222222222222\"}",
+                UUID.fromString("22222222-2222-4222-8222-222222222222"),
+                "APPOINTMENT",
+                UUID.randomUUID()
+        );
+        return NotificationOutboxEntity.pending(
+                UUID.randomUUID(),
+                "NOTIFICATION.APPOINTMENT_BOOKED",
+                "NOTIFICATION_HISTORY",
+                UUID.fromString("11111111-1111-4111-8111-111111111111"),
+                "notification:test:" + UUID.randomUUID(),
+                objectMapper.writeValueAsString(payload),
+                OffsetDateTime.now().minusMinutes(1)
+        );
+    }
+
+    private PatientRecord patientRecord(boolean active) {
+        return new PatientRecord(
+                UUID.fromString("22222222-2222-4222-8222-222222222222"),
+                UUID.randomUUID(),
+                "PAT-001",
+                "Smita",
+                "Patil",
+                null,
+                null,
+                null,
+                "9999999999",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                active,
+                OffsetDateTime.now(),
+                OffsetDateTime.now()
         );
     }
 

@@ -23,6 +23,12 @@
     <dependencies>
     <dependency>
         <groupId>com.deepthoughtnet.clinic</groupId>
+        <artifactId>messaging-spi</artifactId>
+        <version>${project.version}</version>
+    </dependency>
+
+    <dependency>
+        <groupId>com.deepthoughtnet.clinic</groupId>
         <artifactId>appointment-domain</artifactId>
         <version>${project.version}</version>
     </dependency>

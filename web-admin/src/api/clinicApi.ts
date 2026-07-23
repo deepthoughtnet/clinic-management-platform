@@ -900,6 +900,20 @@ export type NotificationHistory = {
   updatedAt: string;
 };
 
+export type NotificationHistoryGroup = {
+  logicalNotificationId: string;
+  tenantId: string;
+  patientId: string | null;
+  eventType: NotificationEventType;
+  subject: string | null;
+  message: string;
+  overallStatus: "DELIVERED" | "PARTIAL" | "PENDING" | "FAILED" | "NOT_DELIVERED";
+  readState: "READ" | "UNREAD";
+  queuedAt: string | null;
+  lastActivityAt: string | null;
+  deliveries: NotificationHistory[];
+};
+
 export type VoiceProviderTrace = {
   sttProvider: string | null;
   llmProvider: string | null;
@@ -4532,6 +4546,29 @@ export async function getNotifications(
   if (params.to) query.set("to", params.to);
   const suffix = query.toString() ? `?${query.toString()}` : "";
   return httpGet<NotificationHistory[]>(`/api/notifications${suffix}`, { token, tenantId });
+}
+
+export async function getGroupedNotifications(
+  token: string,
+  tenantId: string,
+  params: {
+    status?: string | null;
+    eventType?: NotificationEventType | null;
+    channel?: NotificationChannel | null;
+    patientId?: string | null;
+    from?: string | null;
+    to?: string | null;
+  } = {},
+) {
+  const query = new URLSearchParams();
+  if (params.status) query.set("status", params.status);
+  if (params.eventType) query.set("eventType", params.eventType);
+  if (params.channel) query.set("channel", params.channel);
+  if (params.patientId) query.set("patientId", params.patientId);
+  if (params.from) query.set("from", params.from);
+  if (params.to) query.set("to", params.to);
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return httpGet<NotificationHistoryGroup[]>(`/api/notifications/grouped${suffix}`, { token, tenantId });
 }
 
 export async function getPatientNotifications(token: string, tenantId: string, patientId: string) {

@@ -2,6 +2,7 @@ package com.deepthoughtnet.clinic.api.notifications;
 
 import com.deepthoughtnet.clinic.notification.service.NotificationHistoryFilter;
 import com.deepthoughtnet.clinic.notification.service.NotificationHistoryService;
+import com.deepthoughtnet.clinic.notification.service.model.NotificationHistoryGroupRecord;
 import com.deepthoughtnet.clinic.notification.service.model.NotificationHistoryRecord;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.time.OffsetDateTime;
@@ -37,6 +38,20 @@ public class NotificationController {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return notificationHistoryService.list(tenantId, new NotificationHistoryFilter(status, eventType, channel, patientId, from, to, 0, 100))
                 .getContent();
+    }
+
+    @GetMapping("/grouped")
+    @PreAuthorize("@permissionChecker.hasPermission('notification.read')")
+    public List<NotificationHistoryGroupRecord> grouped(
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String eventType,
+            @RequestParam(required = false) String channel,
+            @RequestParam(required = false) UUID patientId,
+            @RequestParam(required = false) OffsetDateTime from,
+            @RequestParam(required = false) OffsetDateTime to
+    ) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        return notificationHistoryService.listGrouped(tenantId, new NotificationHistoryFilter(status, eventType, channel, patientId, from, to, 0, 100));
     }
 
     @GetMapping("/patients/{patientId}")

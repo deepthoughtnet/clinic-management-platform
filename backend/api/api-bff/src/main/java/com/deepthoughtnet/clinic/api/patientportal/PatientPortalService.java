@@ -549,9 +549,6 @@ public class PatientPortalService {
                 false,
                 tenantZone
         );
-        if (notificationActionService != null) {
-            notificationActionService.sendAppointmentRescheduled(current.tenantId(), updated.id(), actorAppUserId);
-        }
         return new PatientPortalAppointmentConfirmationResponse(
                 updated.appointmentDate(),
                 updated.appointmentTime(),
@@ -585,9 +582,6 @@ public class PatientPortalService {
                 ),
                 actorAppUserId
         );
-        if (notificationActionService != null) {
-            notificationActionService.sendAppointmentCancelled(current.tenantId(), current.id(), actorAppUserId);
-        }
         return new PatientPortalAppointmentConfirmationResponse(
                 updated.appointmentDate(),
                 updated.appointmentTime(),

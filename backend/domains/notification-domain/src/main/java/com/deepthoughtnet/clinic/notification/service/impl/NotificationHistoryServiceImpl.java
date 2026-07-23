@@ -7,6 +7,7 @@ import com.deepthoughtnet.clinic.notification.db.NotificationOutboxRepository;
 import com.deepthoughtnet.clinic.notification.model.NotificationEventPayload;
 import com.deepthoughtnet.clinic.notification.service.NotificationHistoryFilter;
 import com.deepthoughtnet.clinic.notification.service.NotificationHistoryService;
+import com.deepthoughtnet.clinic.notification.service.model.NotificationHistoryGroupRecord;
 import com.deepthoughtnet.clinic.notification.service.model.NotificationHistoryRecord;
 import com.deepthoughtnet.clinic.notification.service.model.NotificationQueueResult;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventCommand;
@@ -18,8 +19,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.criteria.Predicate;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
@@ -85,6 +89,29 @@ public class NotificationHistoryServiceImpl implements NotificationHistoryServic
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public List<NotificationHistoryGroupRecord> listGrouped(UUID tenantId, NotificationHistoryFilter filter) {
+        requireTenant(tenantId);
+        List<NotificationHistoryRecord> records = repository.findAll((root, query, cb) -> cb.equal(root.get("tenantId"), tenantId), Sort.by(Sort.Direction.DESC, "createdAt", "id"))
+                .stream()
+                .map(this::toRecord)
+                .toList();
+        Map<String, NotificationHistoryGroupBuilder> groups = new LinkedHashMap<>();
+        for (NotificationHistoryRecord record : records) {
+            String logicalKey = logicalNotificationId(record);
+            groups.computeIfAbsent(logicalKey, NotificationHistoryGroupBuilder::new).add(record);
+        }
+        return groups.values().stream()
+                .map(NotificationHistoryGroupBuilder::build)
+                .filter(group -> matchesGroupedFilter(group, filter))
+                .sorted(Comparator
+                        .comparing(NotificationHistoryGroupRecord::lastActivityAt, Comparator.nullsLast(Comparator.reverseOrder()))
+                        .thenComparing(NotificationHistoryGroupRecord::queuedAt, Comparator.nullsLast(Comparator.reverseOrder()))
+                        .thenComparing(NotificationHistoryGroupRecord::logicalNotificationId))
+                .toList();
+    }
+
+    @Override
     @Transactional
     public NotificationQueueResult queueDetailed(
             UUID tenantId,
@@ -132,42 +159,101 @@ public class NotificationHistoryServiceImpl implements NotificationHistoryServic
             String detailsJson,
             UUID actorAppUserId
     ) {
-        requireTenant(tenantId);
-        validate(eventType, historyChannel, historyRecipient, message);
-        String deduplicationKey = buildDeduplicationKey(tenantId, eventType, patientId, historyRecipient, sourceType, sourceId);
-        NotificationHistoryEntity existing = repository.findByTenantIdAndDeduplicationKey(tenantId, deduplicationKey).orElse(null);
-        if (existing != null) {
-            return new NotificationQueueResult(toRecord(existing), false);
-        }
-
-        NotificationHistoryEntity entity = NotificationHistoryEntity.create(
+        return queueDetailed(
                 tenantId,
                 patientId,
-                eventType.trim().toUpperCase(Locale.ROOT),
-                historyChannel.trim().toLowerCase(Locale.ROOT),
-                historyRecipient.trim(),
-                normalizeNullable(subject),
-                message.trim(),
-                normalizeNullable(sourceType),
+                eventType,
+                historyChannel,
+                historyRecipient,
+                deliveryChannel,
+                deliveryRecipient,
+                subject,
+                message,
+                sourceType,
                 sourceId,
-                deduplicationKey
+                detailsJson,
+                actorAppUserId,
+                null
         );
-        NotificationHistoryEntity saved = repository.save(entity);
-        UUID outboxId = outboxEventPublisher.publish(new OutboxEventCommand(
+    }
+
+    @Override
+    @Transactional
+    public NotificationQueueResult queueDetailed(
+            UUID tenantId,
+            UUID patientId,
+            String eventType,
+            String historyChannel,
+            String historyRecipient,
+            String deliveryChannel,
+            String deliveryRecipient,
+            String subject,
+            String message,
+            String sourceType,
+            UUID sourceId,
+            String detailsJson,
+            UUID actorAppUserId,
+            String deduplicationKey
+    ) {
+        requireTenant(tenantId);
+        validate(eventType, historyChannel, historyRecipient, message);
+        return queueLifecycle(
                 tenantId,
-                "NOTIFICATION." + entity.getEventType(),
-                ENTITY_TYPE,
-                saved.getId(),
-                saved.getDeduplicationKey(),
-                payloadJson(saved, deliveryChannel, deliveryRecipient, detailsJson),
-                OffsetDateTime.now()
-        ));
-        if (outboxId != null) {
-            saved.attachOutboxEvent(outboxId);
-            repository.save(saved);
-        }
-        audit(tenantId, saved, "notification.created", actorAppUserId, "Queued notification");
-        return new NotificationQueueResult(toRecord(saved), true);
+                patientId,
+                eventType,
+                historyChannel,
+                historyRecipient,
+                deliveryChannel,
+                deliveryRecipient,
+                subject,
+                message,
+                sourceType,
+                sourceId,
+                detailsJson,
+                actorAppUserId,
+                deduplicationKey,
+                true,
+                null
+        );
+    }
+
+    @Override
+    @Transactional
+    public NotificationQueueResult recordSkipped(
+            UUID tenantId,
+            UUID patientId,
+            String eventType,
+            String historyChannel,
+            String historyRecipient,
+            String subject,
+            String message,
+            String sourceType,
+            UUID sourceId,
+            String detailsJson,
+            UUID actorAppUserId,
+            String deduplicationKey,
+            String reason
+    ) {
+        requireTenant(tenantId);
+        validate(eventType, historyChannel, historyRecipient, message);
+        return queueLifecycle(
+                tenantId,
+                patientId,
+                eventType,
+                historyChannel,
+                historyRecipient,
+                historyChannel,
+                historyRecipient,
+                subject,
+                message,
+                sourceType,
+                sourceId,
+                detailsJson,
+                actorAppUserId,
+                deduplicationKey,
+                false,
+                reason
+        );
     }
 
     @Override
@@ -295,6 +381,57 @@ public class NotificationHistoryServiceImpl implements NotificationHistoryServic
         );
     }
 
+    private boolean matchesGroupedFilter(NotificationHistoryGroupRecord group, NotificationHistoryFilter filter) {
+        if (filter == null) {
+            return true;
+        }
+        if (hasText(filter.status()) && !group.overallStatus().equalsIgnoreCase(filter.status().trim())) {
+            return false;
+        }
+        if (hasText(filter.eventType()) && !group.eventType().equalsIgnoreCase(filter.eventType().trim())) {
+            return false;
+        }
+        if (filter.patientId() != null && !filter.patientId().equals(group.patientId())) {
+            return false;
+        }
+        if (filter.from() != null && group.queuedAt() != null && group.queuedAt().isBefore(filter.from())) {
+            return false;
+        }
+        if (filter.to() != null && group.queuedAt() != null && group.queuedAt().isAfter(filter.to())) {
+            return false;
+        }
+        if (hasText(filter.channel())) {
+            String requested = filter.channel().trim().toUpperCase(Locale.ROOT);
+            boolean channelMatched = group.deliveries().stream()
+                    .anyMatch(record -> record.channel().equalsIgnoreCase(requested));
+            if (!channelMatched) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static String logicalNotificationId(NotificationHistoryRecord record) {
+        String deduplicationKey = record.deduplicationKey();
+        if (!hasText(deduplicationKey)) {
+            return record.id().toString();
+        }
+        String[] tokens = deduplicationKey.split(":");
+        if (tokens.length >= 8 && looksLikeUuid(tokens[1]) && looksLikeUuid(tokens[2]) && looksLikeUuid(tokens[3])) {
+            return String.join(":", tokens[0], tokens[1], tokens[2], tokens[3]);
+        }
+        return deduplicationKey;
+    }
+
+    private static boolean looksLikeUuid(String value) {
+        try {
+            UUID.fromString(value);
+            return true;
+        } catch (IllegalArgumentException ex) {
+            return false;
+        }
+    }
+
     private String payloadJson(
             NotificationHistoryEntity entity,
             String deliveryChannel,
@@ -346,19 +483,227 @@ public class NotificationHistoryServiceImpl implements NotificationHistoryServic
     }
 
     private String buildDeduplicationKey(UUID tenantId, String eventType, UUID patientId, String recipient, String sourceType, UUID sourceId) {
-        return tenantId + ":" + normalizeToken(eventType) + ":" + normalizeToken(patientId == null ? null : patientId.toString()) + ":" + normalizeToken(recipient) + ":" + normalizeToken(sourceType) + ":" + normalizeToken(sourceId == null ? null : sourceId.toString());
+        return buildDeduplicationKey(tenantId, eventType, null, patientId, recipient, sourceType, sourceId);
     }
 
-    private String normalizeToken(String value) {
+    private String buildDeduplicationKey(UUID tenantId, String eventType, String channel, UUID patientId, String recipient, String sourceType, UUID sourceId) {
+        return tenantId
+                + ":"
+                + normalizeToken(eventType)
+                + ":"
+                + normalizeToken(channel)
+                + ":"
+                + normalizeToken(patientId == null ? null : patientId.toString())
+                + ":"
+                + normalizeToken(recipient)
+                + ":"
+                + normalizeToken(sourceType)
+                + ":"
+                + normalizeToken(sourceId == null ? null : sourceId.toString());
+    }
+
+    private NotificationQueueResult queueLifecycle(
+            UUID tenantId,
+            UUID patientId,
+            String eventType,
+            String historyChannel,
+            String historyRecipient,
+            String deliveryChannel,
+            String deliveryRecipient,
+            String subject,
+            String message,
+            String sourceType,
+            UUID sourceId,
+            String detailsJson,
+            UUID actorAppUserId,
+            String deduplicationKey,
+            boolean queueOutbox,
+            String skipReason
+    ) {
+        String normalizedEventType = eventType.trim().toUpperCase(Locale.ROOT);
+        String normalizedHistoryChannel = historyChannel.trim().toLowerCase(Locale.ROOT);
+        String normalizedHistoryRecipient = historyRecipient.trim();
+        String effectiveDeduplicationKey = hasText(deduplicationKey)
+                ? deduplicationKey.trim()
+                : buildDeduplicationKey(tenantId, normalizedEventType, normalizedHistoryChannel, patientId, normalizedHistoryRecipient, sourceType, sourceId);
+        NotificationHistoryEntity existing = repository.findByTenantIdAndDeduplicationKey(tenantId, effectiveDeduplicationKey).orElse(null);
+        if (existing != null) {
+            return new NotificationQueueResult(toRecord(existing), false);
+        }
+
+        NotificationHistoryEntity entity = NotificationHistoryEntity.create(
+                tenantId,
+                patientId,
+                normalizedEventType,
+                normalizedHistoryChannel,
+                normalizedHistoryRecipient,
+                normalizeNullable(subject),
+                message.trim(),
+                normalizeNullable(sourceType),
+                sourceId,
+                effectiveDeduplicationKey
+        );
+
+        if (!queueOutbox) {
+            entity.markSkipped(hasText(skipReason) ? skipReason.trim() : "Skipped");
+            NotificationHistoryEntity saved = repository.save(entity);
+            audit(tenantId, saved, "notification.skipped", actorAppUserId, "Skipped notification");
+            return new NotificationQueueResult(toRecord(saved), true);
+        }
+
+        NotificationHistoryEntity saved = repository.save(entity);
+        UUID outboxId = outboxEventPublisher.publish(new OutboxEventCommand(
+                tenantId,
+                "NOTIFICATION." + entity.getEventType(),
+                ENTITY_TYPE,
+                saved.getId(),
+                saved.getDeduplicationKey(),
+                payloadJson(saved, deliveryChannel, deliveryRecipient, detailsJson),
+                OffsetDateTime.now()
+        ));
+        if (outboxId != null) {
+            saved.attachOutboxEvent(outboxId);
+            repository.save(saved);
+        }
+        audit(tenantId, saved, "notification.created", actorAppUserId, "Queued notification");
+        return new NotificationQueueResult(toRecord(saved), true);
+    }
+
+    private static String normalizeToken(String value) {
         return value == null || value.isBlank() ? "-" : value.trim().toLowerCase(Locale.ROOT);
     }
 
-    private boolean hasText(String value) {
+    private static boolean hasText(String value) {
         return value != null && !value.isBlank();
     }
 
-    private String normalizeNullable(String value) {
+    private static String normalizeNullable(String value) {
         return hasText(value) ? value.trim() : null;
+    }
+
+    private static final class NotificationHistoryGroupBuilder {
+        private final String logicalNotificationId;
+        private final List<NotificationHistoryRecord> deliveries = new ArrayList<>();
+        private UUID tenantId;
+        private UUID patientId;
+        private String eventType;
+        private String subject;
+        private String message;
+        private OffsetDateTime queuedAt;
+        private OffsetDateTime lastActivityAt;
+        private OffsetDateTime readAt;
+
+        private NotificationHistoryGroupBuilder(String logicalNotificationId) {
+            this.logicalNotificationId = logicalNotificationId;
+        }
+
+        private void add(NotificationHistoryRecord record) {
+            deliveries.add(record);
+            if (tenantId == null) {
+                tenantId = record.tenantId();
+            }
+            if (patientId == null) {
+                patientId = record.patientId();
+            }
+            if (eventType == null) {
+                eventType = record.eventType();
+            }
+            if (subject == null && hasText(record.subject())) {
+                subject = record.subject();
+            }
+            if (message == null && hasText(record.message())) {
+                message = record.message();
+            }
+            queuedAt = min(queuedAt, record.createdAt());
+            lastActivityAt = max(lastActivityAt, record.sentAt(), record.updatedAt(), record.createdAt());
+            readAt = max(readAt, record.readAt());
+        }
+
+        private NotificationHistoryGroupRecord build() {
+            Comparator<NotificationHistoryRecord> deliveryComparator = Comparator
+                    .comparingInt((NotificationHistoryRecord record) -> channelOrder(record.channel()))
+                    .thenComparing(Comparator.comparing(NotificationHistoryRecord::createdAt, Comparator.nullsLast(Comparator.reverseOrder())))
+                    .thenComparing(NotificationHistoryRecord::id);
+            List<NotificationHistoryRecord> orderedDeliveries = deliveries.stream()
+                    .sorted(deliveryComparator)
+                    .toList();
+            return new NotificationHistoryGroupRecord(
+                    logicalNotificationId,
+                    tenantId,
+                    patientId,
+                    eventType,
+                    subject,
+                    message,
+                    overallStatus(orderedDeliveries),
+                    readAt == null ? "UNREAD" : "READ",
+                    queuedAt,
+                    lastActivityAt,
+                    orderedDeliveries
+            );
+        }
+
+        private OffsetDateTime min(OffsetDateTime current, OffsetDateTime candidate) {
+            if (candidate == null) {
+                return current;
+            }
+            if (current == null || candidate.isBefore(current)) {
+                return candidate;
+            }
+            return current;
+        }
+
+        private OffsetDateTime max(OffsetDateTime current, OffsetDateTime... candidates) {
+            OffsetDateTime result = current;
+            for (OffsetDateTime candidate : candidates) {
+                if (candidate == null) {
+                    continue;
+                }
+                if (result == null || candidate.isAfter(result)) {
+                    result = candidate;
+                }
+            }
+            return result;
+        }
+    }
+
+    private static String overallStatus(List<NotificationHistoryRecord> deliveries) {
+        boolean hasSent = deliveries.stream().anyMatch(record -> "SENT".equalsIgnoreCase(record.status()));
+        boolean hasFailed = deliveries.stream().anyMatch(record -> "FAILED".equalsIgnoreCase(record.status()));
+        boolean hasPending = deliveries.stream().anyMatch(record -> "PENDING".equalsIgnoreCase(record.status()));
+        boolean allSkipped = !deliveries.isEmpty() && deliveries.stream().allMatch(record -> "SKIPPED".equalsIgnoreCase(record.status()));
+
+        if (hasSent && hasFailed) {
+            return "PARTIAL";
+        }
+        if (hasSent && hasPending) {
+            return "PENDING";
+        }
+        if (hasSent) {
+            return "DELIVERED";
+        }
+        if (hasPending) {
+            return "PENDING";
+        }
+        if (hasFailed) {
+            return "FAILED";
+        }
+        if (allSkipped) {
+            return "NOT_DELIVERED";
+        }
+        return "NOT_DELIVERED";
+    }
+
+    private static int channelOrder(String channel) {
+        if (channel == null) {
+            return Integer.MAX_VALUE;
+        }
+        return switch (channel.toLowerCase(Locale.ROOT)) {
+            case "in_app" -> 0;
+            case "email" -> 1;
+            case "sms" -> 2;
+            case "whatsapp" -> 3;
+            default -> 10;
+        };
     }
 
     private void requireTenant(UUID tenantId) {

@@ -69,6 +69,96 @@ public record AppointmentBookedEvent(
         );
     }
 
+    public static AppointmentRescheduledEvent rescheduled(
+            UUID tenantId,
+            UUID appointmentId,
+            UUID patientId,
+            UUID doctorUserId,
+            String doctorDisplayName,
+            String clinicDisplayName,
+            LocalDate previousAppointmentDate,
+            LocalTime previousAppointmentTime,
+            LocalDate appointmentDate,
+            LocalTime appointmentTime,
+            String appointmentTimezone,
+            int appointmentVersion,
+            UUID actorId
+    ) {
+        return AppointmentRescheduledEvent.rescheduled(
+                tenantId,
+                appointmentId,
+                patientId,
+                doctorUserId,
+                doctorDisplayName,
+                clinicDisplayName,
+                previousAppointmentDate,
+                previousAppointmentTime,
+                appointmentDate,
+                appointmentTime,
+                appointmentTimezone,
+                appointmentVersion,
+                actorId
+        );
+    }
+
+    public static AppointmentCancelledEvent cancelled(
+            UUID tenantId,
+            UUID appointmentId,
+            UUID patientId,
+            UUID doctorUserId,
+            String doctorDisplayName,
+            String clinicDisplayName,
+            LocalDate appointmentDate,
+            LocalTime appointmentTime,
+            String appointmentTimezone,
+            int appointmentVersion,
+            UUID actorId
+    ) {
+        return AppointmentCancelledEvent.cancelled(
+                tenantId,
+                appointmentId,
+                patientId,
+                doctorUserId,
+                doctorDisplayName,
+                clinicDisplayName,
+                appointmentDate,
+                appointmentTime,
+                appointmentTimezone,
+                appointmentVersion,
+                actorId
+        );
+    }
+
+    public static AppointmentReminderDueEvent reminderDue(
+            UUID tenantId,
+            UUID appointmentId,
+            UUID patientId,
+            UUID doctorUserId,
+            String doctorDisplayName,
+            String clinicDisplayName,
+            LocalDate appointmentDate,
+            LocalTime appointmentTime,
+            String appointmentTimezone,
+            String reminderWindow,
+            int appointmentVersion,
+            UUID actorId
+    ) {
+        return AppointmentReminderDueEvent.due(
+                tenantId,
+                appointmentId,
+                patientId,
+                doctorUserId,
+                doctorDisplayName,
+                clinicDisplayName,
+                appointmentDate,
+                appointmentTime,
+                appointmentTimezone,
+                reminderWindow,
+                appointmentVersion,
+                actorId
+        );
+    }
+
     private static UUID deterministicEventId(String eventType, UUID tenantId, UUID aggregateId) {
         String seed = String.join("|",
                 eventType == null ? "" : eventType.trim(),

@@ -7,9 +7,11 @@ import {
   CardContent,
   Chip,
   CircularProgress,
+  Collapse,
   FormControl,
   Grid,
   InputLabel,
+  IconButton,
   MenuItem,
   Select,
   Stack,
@@ -20,13 +22,14 @@ import {
   TableHead,
   TableRow,
   TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
 
 import { useAuth } from "../../auth/useAuth";
 import { firstZodError, notificationsFilterSchema } from "@deepthoughtnet/form-validation-kit";
 import {
-  getNotifications,
+  getGroupedNotifications,
   markNotificationRead,
   markNotificationUnread,
   retryNotification,
@@ -34,13 +37,13 @@ import {
   type NotificationChannel,
   type NotificationEventType,
   type NotificationHistory,
-  type NotificationStatus,
+  type NotificationHistoryGroup,
   type Patient,
 } from "../../api/clinicApi";
-import { formatNotificationSourceLabel, formatNotificationTargetLabel } from "./notificationDisplay.js";
+import { KeyboardArrowDown, KeyboardArrowUp } from "@mui/icons-material";
 
-const STATUS_OPTIONS: Array<NotificationStatus | ""> = ["", "PENDING", "SENT", "FAILED", "SKIPPED"];
-const CHANNEL_OPTIONS: Array<NotificationChannel | ""> = ["", "EMAIL", "WHATSAPP", "SMS", "PUSH", "IN_APP"];
+const STATUS_OPTIONS: Array<NotificationHistoryGroup["overallStatus"] | ""> = ["", "DELIVERED", "PARTIAL", "PENDING", "FAILED", "NOT_DELIVERED"];
+const CHANNEL_OPTIONS: Array<NotificationChannel | ""> = ["", "IN_APP", "EMAIL", "SMS", "WHATSAPP"];
 const EVENT_OPTIONS: Array<NotificationEventType | ""> = [
   "",
   "APPOINTMENT_BOOKED",
@@ -74,27 +77,174 @@ const REMINDER_EVENT_TYPES = new Set<NotificationEventType>([
   "MISSED_APPOINTMENT_REMINDER",
 ]);
 
-function statusColor(status: NotificationHistory["status"]) {
+const CHANNEL_ORDER: NotificationChannel[] = ["IN_APP", "EMAIL", "SMS", "WHATSAPP"];
+const DISABLED_REASON_PATTERNS = [
+  /clinic\.carepilot\.messaging\.(sms|whatsapp)\.enabled\s*=\s*false/i,
+  /(?:provider|channel)\s+disabled/i,
+  /notifications?\s+disabled/i,
+];
+
+function overallStatusLabel(status: NotificationHistoryGroup["overallStatus"]) {
   switch (status) {
-    case "SENT":
+    case "DELIVERED":
+      return "Delivered";
+    case "PARTIAL":
+      return "Partial";
+    case "PENDING":
+      return "Pending";
+    case "FAILED":
+      return "Failed";
+    case "NOT_DELIVERED":
+      return "Not delivered";
+  }
+  return status;
+}
+
+function overallStatusColor(status: NotificationHistoryGroup["overallStatus"]) {
+  switch (status) {
+    case "DELIVERED":
       return "success";
+    case "PARTIAL":
+      return "warning";
     case "PENDING":
       return "info";
     case "FAILED":
       return "error";
-    case "SKIPPED":
+    case "NOT_DELIVERED":
       return "default";
   }
+  return "default";
+}
+
+function channelLabel(channel: NotificationChannel) {
+  switch (channel) {
+    case "IN_APP":
+      return "In-App";
+    case "EMAIL":
+      return "Email";
+    case "SMS":
+      return "SMS";
+    case "WHATSAPP":
+      return "WhatsApp";
+    default:
+      return channel;
+  }
+}
+
+function normalizeNotificationChannel(channel: string | null | undefined): NotificationChannel | null {
+  if (!channel) {
+    return null;
+  }
+  switch (channel.trim().toLowerCase()) {
+    case "in_app":
+    case "in-app":
+      return "IN_APP";
+    case "email":
+      return "EMAIL";
+    case "sms":
+      return "SMS";
+    case "whatsapp":
+      return "WHATSAPP";
+    default:
+      return null;
+  }
+}
+
+function normalizeNotificationReason(channel: NotificationChannel, reason: string | null): string | null {
+  if (!reason) {
+    return null;
+  }
+  const compact = reason.replace(/\s+/g, " ").trim();
+  const normalized = compact.toLowerCase();
+  if (normalized.includes("patient record unavailable") || normalized.includes("no active recipient available")) {
+    return "Patient record unavailable";
+  }
+  if (normalized.includes("patient email unavailable")) {
+    return "Patient email unavailable";
+  }
+  if (normalized.includes("invalid patient email")) {
+    return "Invalid patient email";
+  }
+  if (normalized.includes("patient mobile unavailable")) {
+    return "Patient mobile unavailable";
+  }
+  if (normalized.includes("invalid patient mobile")) {
+    return "Invalid patient mobile";
+  }
+  if (normalized.includes("patient opted out")) {
+    return "Patient opted out";
+  }
+  if (normalized.includes("provider is not configured") || normalized.includes("provider not configured") || normalized.includes("provider unavailable")) {
+    return `${channelLabel(channel)} provider not configured`;
+  }
+  if (DISABLED_REASON_PATTERNS.some((pattern) => pattern.test(compact))) {
+    return `${channelLabel(channel)} notifications disabled`;
+  }
+  if (normalized.startsWith("skipped:")) {
+    return normalizeNotificationReason(channel, compact.slice(compact.indexOf(":") + 1).trim());
+  }
+  if (normalized.startsWith("provider disabled:")) {
+    const remainder = compact.slice(compact.indexOf(":") + 1).trim();
+    return normalizeNotificationReason(channel, remainder) ?? `${channelLabel(channel)} notifications disabled`;
+  }
+  return compact;
+}
+
+function channelPresentation(delivery?: NotificationHistory | null) {
+  if (!delivery) {
+    return { statusLabel: "Not enabled", tone: "neutral" as const, title: "Not enabled", reason: null as string | null };
+  }
+  const normalizedReason = normalizeNotificationReason(delivery.channel, delivery.failureReason);
+  const status = delivery.status.toUpperCase();
+  if (status === "SENT" || status === "DELIVERED") {
+    return { statusLabel: "Sent", tone: "success" as const, title: normalizedReason ? `Sent — ${normalizedReason}` : "Sent", reason: normalizedReason };
+  }
+  if (status === "PENDING" || status === "QUEUED" || status === "RETRYING") {
+    return { statusLabel: "Pending", tone: "warning" as const, title: normalizedReason ? `Pending — ${normalizedReason}` : "Pending", reason: normalizedReason };
+  }
+  if (status === "FAILED") {
+    return { statusLabel: "Failed", tone: "error" as const, title: normalizedReason ? `Failed — ${normalizedReason}` : "Failed", reason: normalizedReason };
+  }
+  if (status === "SKIPPED" && normalizedReason?.toLowerCase().includes("notifications disabled")) {
+    return { statusLabel: "Disabled", tone: "neutral" as const, title: `Disabled — ${normalizedReason}`, reason: normalizedReason };
+  }
+  if (status === "SKIPPED") {
+    return { statusLabel: "Skipped", tone: "neutral" as const, title: normalizedReason ? `Skipped — ${normalizedReason}` : "Skipped", reason: normalizedReason };
+  }
+  return { statusLabel: status.charAt(0) + status.slice(1).toLowerCase(), tone: "neutral" as const, title: normalizedReason ? `${status.charAt(0) + status.slice(1).toLowerCase()} — ${normalizedReason}` : status, reason: normalizedReason };
+}
+
+function maskRecipient(recipient: string | null) {
+  if (!recipient) {
+    return "Not available";
+  }
+  if (recipient.includes("@")) {
+    const [local, domain] = recipient.split("@");
+    if (!local || !domain) {
+      return recipient;
+    }
+    return `${local.slice(0, 1)}***@${domain}`;
+  }
+  const digits = recipient.replace(/\D/g, "");
+  if (digits.length >= 8) {
+    return `${digits.slice(0, 2)}***${digits.slice(-2)}`;
+  }
+  return recipient;
+}
+
+function formatTimestamp(value: string | null) {
+  return value ? new Date(value).toLocaleString() : "-";
 }
 
 export default function NotificationsPage() {
   const auth = useAuth();
   const canView = Boolean(auth.tenantId) && auth.hasPermission("notification.read");
   const canRetry = auth.hasPermission("notification.retry") || auth.hasPermission("settings.manage");
-  const [rows, setRows] = React.useState<NotificationHistory[]>([]);
+  const [rows, setRows] = React.useState<NotificationHistoryGroup[]>([]);
   const [patients, setPatients] = React.useState<Patient[]>([]);
+  const [expandedRows, setExpandedRows] = React.useState<Record<string, boolean>>({});
   const [filters, setFilters] = React.useState({
-    status: "" as NotificationStatus | "",
+    status: "" as NotificationHistoryGroup["overallStatus"] | "",
     eventType: "" as NotificationEventType | "",
     channel: "" as NotificationChannel | "",
     patientId: "",
@@ -150,7 +300,7 @@ export default function NotificationsPage() {
     setLoading(true);
     setError(null);
     try {
-      const value = await getNotifications(auth.accessToken, auth.tenantId, {
+      const value = await getGroupedNotifications(auth.accessToken, auth.tenantId, {
         status: filters.status || null,
         eventType: filters.eventType || null,
         channel: filters.channel || null,
@@ -223,13 +373,39 @@ export default function NotificationsPage() {
   };
 
   const reminderRows = rows.filter((row) => REMINDER_EVENT_TYPES.has(row.eventType));
-  const pendingCount = rows.filter((row) => row.status === "PENDING").length;
-  const failedCount = rows.filter((row) => row.status === "FAILED").length;
+  const deliveredCount = rows.filter((row) => row.overallStatus === "DELIVERED").length;
+  const pendingCount = rows.filter((row) => row.overallStatus === "PENDING").length;
+  const issueCount = rows.filter((row) => row.overallStatus === "FAILED" || row.overallStatus === "PARTIAL" || row.overallStatus === "NOT_DELIVERED").length;
 
-  const eventLabel = (row: NotificationHistory) => row.eventType.replaceAll("_", " ");
-  const categoryLabel = (row: NotificationHistory) => (REMINDER_EVENT_TYPES.has(row.eventType) ? "Reminder" : "Notification");
-  const sourceLabel = (row: NotificationHistory) => formatNotificationSourceLabel(row);
-  const targetLabel = (row: NotificationHistory) => formatNotificationTargetLabel(row, patients);
+  const eventLabel = (row: NotificationHistoryGroup) => row.eventType.replaceAll("_", " ");
+  const categoryLabel = (row: NotificationHistoryGroup) => (REMINDER_EVENT_TYPES.has(row.eventType) ? "Reminder" : "Notification");
+
+  const channelSummary = (row: NotificationHistoryGroup) => CHANNEL_ORDER.map((channel) => {
+    const delivery = row.deliveries.find((item) => normalizeNotificationChannel(item.channel) === channel) ?? null;
+    const label = channelLabel(channel);
+    const presentation = channelPresentation(delivery);
+    return { channel, label, delivery, ...presentation };
+  }) as Array<{
+    channel: NotificationChannel;
+    label: string;
+    delivery: NotificationHistory | null;
+    tone: "success" | "warning" | "error" | "neutral";
+    title: string;
+    reason: string | null;
+    statusLabel: string;
+  }>;
+
+  const patientName = (patientId: string | null) => {
+    if (!patientId) {
+      return "Patient record unavailable";
+    }
+    const directPatient = patients.find((patient) => patient.id === patientId);
+    return directPatient ? `${directPatient.firstName} ${directPatient.lastName || ""}`.trim() : "Patient record unavailable";
+  };
+
+  const toggleExpanded = (id: string) => {
+    setExpandedRows((current) => ({ ...current, [id]: !current[id] }));
+  };
 
   return (
     <Stack spacing={3}>
@@ -251,7 +427,18 @@ export default function NotificationsPage() {
           <Card>
             <CardContent>
               <Stack spacing={0.75}>
-                <Typography variant="overline" color="text.secondary">Queued / Pending</Typography>
+                <Typography variant="overline" color="text.secondary">Delivered</Typography>
+                <Typography variant="h5" sx={{ fontWeight: 900 }}>{deliveredCount}</Typography>
+                <Typography variant="body2" color="text.secondary">Logical notifications delivered in-app, with optional channels skipped or sent independently.</Typography>
+              </Stack>
+            </CardContent>
+          </Card>
+        </Grid>
+        <Grid size={{ xs: 12, md: 4 }}>
+          <Card>
+            <CardContent>
+              <Stack spacing={0.75}>
+                <Typography variant="overline" color="text.secondary">Pending</Typography>
                 <Typography variant="h5" sx={{ fontWeight: 900 }}>{pendingCount}</Typography>
                 <Typography variant="body2" color="text.secondary">Notifications waiting for dispatch or retry.</Typography>
               </Stack>
@@ -262,20 +449,9 @@ export default function NotificationsPage() {
           <Card>
             <CardContent>
               <Stack spacing={0.75}>
-                <Typography variant="overline" color="text.secondary">Reminder records</Typography>
-                <Typography variant="h5" sx={{ fontWeight: 900 }}>{reminderRows.length}</Typography>
-                <Typography variant="body2" color="text.secondary">Appointment, follow-up, vaccination, and payment reminders.</Typography>
-              </Stack>
-            </CardContent>
-          </Card>
-        </Grid>
-        <Grid size={{ xs: 12, md: 4 }}>
-          <Card>
-            <CardContent>
-              <Stack spacing={0.75}>
-                <Typography variant="overline" color="text.secondary">Failed / Skipped</Typography>
-                <Typography variant="h5" sx={{ fontWeight: 900 }}>{failedCount}</Typography>
-                <Typography variant="body2" color="text.secondary">Review failures and retry only when provider configuration is ready.</Typography>
+                <Typography variant="overline" color="text.secondary">Issues</Typography>
+                <Typography variant="h5" sx={{ fontWeight: 900 }}>{issueCount}</Typography>
+                <Typography variant="body2" color="text.secondary">Failed, partial, or not delivered notifications need review.</Typography>
               </Stack>
             </CardContent>
           </Card>
@@ -291,16 +467,16 @@ export default function NotificationsPage() {
             <Grid container spacing={2}>
               <Grid size={{ xs: 12, md: 3 }}>
                 <FormControl fullWidth>
-                  <InputLabel id="notification-status-label">Status</InputLabel>
+                  <InputLabel id="notification-status-label">Overall status</InputLabel>
                   <Select
                     labelId="notification-status-label"
-                    label="Status"
+                    label="Overall status"
                     value={filters.status}
-                    onChange={(e) => setFilters((current) => ({ ...current, status: String(e.target.value) as NotificationStatus | "" }))}
+                    onChange={(e) => setFilters((current) => ({ ...current, status: String(e.target.value) as NotificationHistoryGroup["overallStatus"] | "" }))}
                   >
                     {STATUS_OPTIONS.map((value) => (
                       <MenuItem key={value || "all"} value={value}>
-                        {value || "All"}
+                        {value ? overallStatusLabel(value) : "All"}
                       </MenuItem>
                     ))}
                   </Select>
@@ -391,74 +567,200 @@ export default function NotificationsPage() {
                     <TableCell>Category</TableCell>
                     <TableCell>Event</TableCell>
                     <TableCell>Patient</TableCell>
-                    <TableCell>Recipient</TableCell>
-                    <TableCell>Channel</TableCell>
-                    <TableCell>Source</TableCell>
-                    <TableCell>Status</TableCell>
+                    <TableCell>Channels</TableCell>
+                    <TableCell>Overall</TableCell>
                     <TableCell>Read</TableCell>
                     <TableCell>Message preview</TableCell>
                     <TableCell>Queued</TableCell>
-                    <TableCell>Sent</TableCell>
-                    {canRetry ? <TableCell align="right">Actions</TableCell> : null}
+                    <TableCell>Last activity</TableCell>
+                    <TableCell align="right">Expand</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {rows.map((row) => (
-                    <TableRow key={row.id} hover>
-                      <TableCell>
-                        <Chip
-                          size="small"
-                          label={categoryLabel(row)}
-                          color={REMINDER_EVENT_TYPES.has(row.eventType) ? "warning" : "default"}
-                          variant={REMINDER_EVENT_TYPES.has(row.eventType) ? "filled" : "outlined"}
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Stack spacing={0.25}>
-                          <Typography variant="body2" sx={{ fontWeight: 700 }}>{eventLabel(row)}</Typography>
-                          <Typography variant="caption" color="text.secondary">{row.subject || "No subject"}</Typography>
-                        </Stack>
-                      </TableCell>
-                      <TableCell>{targetLabel(row)}</TableCell>
-                      <TableCell>{targetLabel(row)}</TableCell>
-                      <TableCell>{row.channel}</TableCell>
-                      <TableCell>{sourceLabel(row)}</TableCell>
-                      <TableCell>
-                        <Stack spacing={0.5} alignItems="flex-start">
-                          <Chip size="small" label={row.status} color={statusColor(row.status)} />
-                          {row.failureReason ? (
-                            <Typography variant="caption" color="error.main">{row.failureReason}</Typography>
-                          ) : null}
-                        </Stack>
-                      </TableCell>
-                      <TableCell>
-                        <Chip size="small" label={row.readAt ? "Read" : "Unread"} color={row.readAt ? "success" : "warning"} />
-                      </TableCell>
-                      <TableCell sx={{ maxWidth: 360 }}>
-                        <Typography variant="body2" noWrap title={row.message}>{row.message}</Typography>
-                      </TableCell>
-                      <TableCell>{new Date(row.createdAt).toLocaleString()}</TableCell>
-                      <TableCell>{row.sentAt ? new Date(row.sentAt).toLocaleString() : "-"}</TableCell>
-                      {canRetry ? (
-                        <TableCell align="right">
-                          <Stack direction="row" spacing={1} justifyContent="flex-end">
-                            {row.readAt ? (
-                              <Button size="small" disabled={workingId === row.id} onClick={() => void markUnread(row.id)}>
-                                Mark unread
-                              </Button>
-                            ) : (
-                              <Button size="small" disabled={workingId === row.id} onClick={() => void markRead(row.id)}>
-                                Mark read
-                              </Button>
-                            )}
-                            <Button size="small" disabled={workingId === row.id || (row.status !== "FAILED" && row.status !== "SKIPPED")} onClick={() => void retry(row.id)}>
-                              Retry
-                            </Button>
-                          </Stack>
-                        </TableCell>
-                      ) : null}
-                    </TableRow>
-                  ))}
+                  {rows.map((row) => {
+                    const expanded = Boolean(expandedRows[row.logicalNotificationId]);
+                    const channels = channelSummary(row);
+                    const channelTitle = channels.map((entry) => `${entry.label}: ${entry.title}`).join(" · ");
+                    return (
+                      <React.Fragment key={row.logicalNotificationId}>
+                        <TableRow hover>
+                          <TableCell>
+                            <Chip
+                              size="small"
+                              label={categoryLabel(row)}
+                              color={REMINDER_EVENT_TYPES.has(row.eventType) ? "warning" : "default"}
+                              variant={REMINDER_EVENT_TYPES.has(row.eventType) ? "filled" : "outlined"}
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Stack spacing={0.25}>
+                              <Typography variant="body2" sx={{ fontWeight: 700 }}>{eventLabel(row)}</Typography>
+                              <Typography variant="caption" color="text.secondary">{row.subject || "No subject"}</Typography>
+                            </Stack>
+                          </TableCell>
+                          <TableCell>{patientName(row.patientId)}</TableCell>
+                          <TableCell>
+                            <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" aria-label={channelTitle} sx={{ maxWidth: 420, rowGap: 0.75 }}>
+                              {channels.map((entry) => {
+                                const tone = entry.tone === "success"
+                                  ? { dot: "#2e7d32", bg: "success.50", border: "success.200" }
+                                  : entry.tone === "warning"
+                                    ? { dot: "#ed6c02", bg: "warning.50", border: "warning.200" }
+                                    : entry.tone === "error"
+                                      ? { dot: "#d32f2f", bg: "error.50", border: "error.200" }
+                                      : { dot: "#6b7280", bg: "grey.100", border: "grey.300" };
+                                const title = `${entry.label}: ${entry.title}`;
+                                return (
+                                  <Tooltip key={entry.channel} title={title} arrow>
+                                    <Box
+                                      component="span"
+                                      aria-label={title}
+                                      sx={{
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        gap: 0.75,
+                                        px: 1,
+                                        py: 0.35,
+                                        borderRadius: 999,
+                                        border: "1px solid",
+                                        borderColor: tone.border,
+                                        backgroundColor: tone.bg,
+                                        maxWidth: "100%",
+                                        flexShrink: 0,
+                                      }}
+                                    >
+                                      <Box
+                                        sx={{
+                                          width: 8,
+                                          height: 8,
+                                          borderRadius: "50%",
+                                          backgroundColor: tone.dot,
+                                          flexShrink: 0,
+                                        }}
+                                      />
+                                      <Typography variant="caption" sx={{ fontWeight: 700, whiteSpace: "nowrap", lineHeight: 1.2 }}>
+                                        {entry.label}
+                                      </Typography>
+                                    </Box>
+                                  </Tooltip>
+                                );
+                              })}
+                            </Stack>
+                          </TableCell>
+                          <TableCell>
+                            <Chip size="small" label={overallStatusLabel(row.overallStatus)} color={overallStatusColor(row.overallStatus)} />
+                          </TableCell>
+                          <TableCell>
+                            <Chip size="small" label={row.readState === "READ" ? "Read" : "Unread"} color={row.readState === "READ" ? "success" : "warning"} />
+                          </TableCell>
+                          <TableCell sx={{ width: 420, maxWidth: 420, verticalAlign: "top" }}>
+                            <Tooltip title={row.message} arrow placement="top-start">
+                              <Box
+                                tabIndex={0}
+                                sx={{
+                                  display: "-webkit-box",
+                                  WebkitLineClamp: 2,
+                                  WebkitBoxOrient: "vertical",
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "normal",
+                                  lineHeight: 1.35,
+                                  maxHeight: "calc(2 * 1.35em)",
+                                  outline: "none",
+                                }}
+                              >
+                                <Typography variant="body2" component="span" sx={{ lineHeight: 1.35 }}>
+                                  {row.message}
+                                </Typography>
+                              </Box>
+                            </Tooltip>
+                          </TableCell>
+                          <TableCell>{formatTimestamp(row.queuedAt)}</TableCell>
+                          <TableCell>{formatTimestamp(row.lastActivityAt)}</TableCell>
+                          <TableCell align="right">
+                            <IconButton
+                              aria-label={expanded ? "Collapse notification details" : "Expand notification details"}
+                              aria-expanded={expanded}
+                              aria-controls={`notification-details-${row.logicalNotificationId}`}
+                              onClick={() => toggleExpanded(row.logicalNotificationId)}
+                              size="small"
+                            >
+                              {expanded ? <KeyboardArrowUp fontSize="small" /> : <KeyboardArrowDown fontSize="small" />}
+                            </IconButton>
+                          </TableCell>
+                        </TableRow>
+                        <TableRow>
+                          <TableCell colSpan={10} sx={{ py: 0, borderBottom: 0 }}>
+                            <Collapse in={expanded} timeout="auto" unmountOnExit>
+                              <Box id={`notification-details-${row.logicalNotificationId}`} sx={{ py: 2, pl: 1, pr: 1 }}>
+                                <Stack spacing={1}>
+                                  {channels.map((entry) => {
+                                    const delivery = entry.delivery;
+                                    return (
+                                      <Box key={entry.channel} sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, p: 1.5 }}>
+                                        <Stack spacing={1}>
+                                          <Stack direction="row" justifyContent="space-between" alignItems="flex-start" gap={2} flexWrap="wrap">
+                                            <Box>
+                                              <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>
+                                                {entry.label}
+                                              </Typography>
+                                              <Typography variant="body2" color="text.secondary">
+                                                Display status: {delivery ? channelPresentation(delivery).statusLabel : "Not enabled"}
+                                              </Typography>
+                                              <Typography variant="body2" color="text.secondary">
+                                                Recipient: {delivery ? (entry.channel === "IN_APP" ? patientName(row.patientId) : maskRecipient(delivery.recipient)) : "Not enabled"}
+                                              </Typography>
+                                              <Typography variant="body2" color="text.secondary">
+                                                Provider: {delivery ? (entry.channel === "IN_APP" ? "Internal" : channelLabel(entry.channel) + " provider") : "Not enabled"}
+                                              </Typography>
+                                            </Box>
+                                            {canRetry ? (
+                                              <Stack direction="row" spacing={1} flexWrap="wrap" justifyContent="flex-end">
+                                                {delivery ? (
+                                                  <>
+                                                    {delivery.readAt ? (
+                                                      <Button size="small" disabled={workingId === delivery.id} onClick={() => void markUnread(delivery.id)}>
+                                                        Mark unread
+                                                      </Button>
+                                                    ) : (
+                                                      <Button size="small" disabled={workingId === delivery.id} onClick={() => void markRead(delivery.id)}>
+                                                        Mark read
+                                                      </Button>
+                                                    )}
+                                                    <Button size="small" disabled={workingId === delivery.id || (delivery.status !== "FAILED" && delivery.status !== "SKIPPED")} onClick={() => void retry(delivery.id)}>
+                                                      Retry
+                                                    </Button>
+                                                  </>
+                                                ) : null}
+                                              </Stack>
+                                            ) : null}
+                                          </Stack>
+                                          <Stack direction="row" spacing={2} flexWrap="wrap">
+                                          <Typography variant="body2">
+                                            <strong>Display status:</strong> {delivery ? channelPresentation(delivery).statusLabel : "Not enabled"}
+                                          </Typography>
+                                            <Typography variant="body2">
+                                              <strong>Queued:</strong> {formatTimestamp(delivery?.createdAt ?? null)}
+                                            </Typography>
+                                            <Typography variant="body2">
+                                              <strong>Sent:</strong> {formatTimestamp(delivery?.sentAt ?? null)}
+                                            </Typography>
+                                            <Typography variant="body2">
+                                              <strong>Failure/skip:</strong> {delivery?.failureReason ? normalizeNotificationReason(entry.channel, delivery.failureReason) : delivery ? "None" : "Not enabled"}
+                                            </Typography>
+                                          </Stack>
+                                        </Stack>
+                                      </Box>
+                                    );
+                                  })}
+                                </Stack>
+                              </Box>
+                            </Collapse>
+                          </TableCell>
+                        </TableRow>
+                      </React.Fragment>
+                    );
+                  })}
                 </TableBody>
               </Table>
             </TableContainer>

@@ -2,6 +2,7 @@ package com.deepthoughtnet.clinic.api;
 
 import com.deepthoughtnet.clinic.api.careai.CareAiTaskSlaProperties;
 import com.deepthoughtnet.clinic.api.patientportal.careai.AivaResponseComposerProperties;
+import com.deepthoughtnet.clinic.api.notifications.AppointmentReminderProperties;
 import com.deepthoughtnet.clinic.notification.service.NotificationProperties;
 import com.deepthoughtnet.clinic.api.notifications.NotificationsSchedulerProperties;
 import com.deepthoughtnet.clinic.platform.branding.BrandingProperties;
@@ -16,6 +17,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
         BrandingProperties.class,
         NotificationProperties.class,
         NotificationsSchedulerProperties.class,
+        AppointmentReminderProperties.class,
         CareAiTaskSlaProperties.class,
         AivaResponseComposerProperties.class
 })

@@ -171,6 +171,7 @@ public class AppointmentController {
         doctorAssignmentSecurityService.requireNonDoctorQueueStatusUpdate();
         requireReceptionQueueTarget(request.status());
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        ZoneId bookingZone = clinicTimeZoneResolver.resolve(tenantId);
         BigDecimal paymentBypassDueAmount = null;
         if (request.status() == AppointmentStatus.WAITING) {
             String paymentBypassReason = normalizeBypassReason(request.paymentBypassReason());
@@ -195,11 +196,10 @@ public class AppointmentController {
                         normalizeNullable(request.paymentBypassNotes()),
                         paymentBypassDueAmount
                 ),
-                actorAppUserId
+                actorAppUserId,
+                bookingZone
         ));
-        if (request.status() == AppointmentStatus.CANCELLED) {
-            notificationActionService.sendAppointmentCancelled(tenantId, id, actorAppUserId);
-        } else if (request.status() == AppointmentStatus.NO_SHOW) {
+        if (request.status() == AppointmentStatus.NO_SHOW) {
             notificationActionService.sendAppointmentNoShow(tenantId, id, actorAppUserId);
         }
         return response;
@@ -227,8 +227,7 @@ public class AppointmentController {
                 request.appointmentDate(),
                 request.appointmentTime(),
                 request.reason()
-        ), actorAppUserId, allowOverbooking, bookingZone));
-        notificationActionService.sendAppointmentRescheduled(tenantId, id, actorAppUserId);
+                ), actorAppUserId, allowOverbooking, bookingZone));
         return response;
     }
 

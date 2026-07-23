@@ -806,6 +806,11 @@ public class AppointmentService {
 
     @Transactional
     public AppointmentRecord updateStatus(UUID tenantId, UUID id, AppointmentStatusUpdateCommand command, UUID actorAppUserId) {
+        return updateStatus(tenantId, id, command, actorAppUserId, DEFAULT_BOOKING_ZONE);
+    }
+
+    @Transactional
+    public AppointmentRecord updateStatus(UUID tenantId, UUID id, AppointmentStatusUpdateCommand command, UUID actorAppUserId, ZoneId bookingZone) {
         requireTenant(tenantId);
         requireId(id, "id");
         if (command == null || command.status() == null) {
@@ -836,6 +841,21 @@ public class AppointmentService {
             entity.setPaymentBypass(paymentBypassReason, paymentBypassNotes, actorAppUserId, OffsetDateTime.now());
         }
         AppointmentEntity saved = appointmentRepository.save(entity);
+        if (command.status() == AppointmentStatus.CANCELLED) {
+            moduleBusinessEventPublisher.publish(AppointmentBookedEvent.cancelled(
+                    tenantId,
+                    saved.getId(),
+                    saved.getPatientId(),
+                    saved.getDoctorUserId(),
+                    doctorDisplayName(tenantId, saved.getDoctorUserId()),
+                    null,
+                    saved.getAppointmentDate(),
+                    saved.getAppointmentTime(),
+                    resolveBookingZone(bookingZone).getId(),
+                    saved.getVersion(),
+                    actorAppUserId
+            ));
+        }
         String action = command.status() == AppointmentStatus.WAITING && StringUtils.hasText(paymentBypassReason)
                 ? "appointment.checkin.payment_bypassed"
                 : "appointment.status.updated";
@@ -908,6 +928,8 @@ public class AppointmentService {
         if (entity.getStatus() != AppointmentStatus.BOOKED) {
             throw new IllegalArgumentException("Only booked appointments can be rescheduled");
         }
+        LocalDate previousDate = entity.getAppointmentDate();
+        LocalTime previousTime = entity.getAppointmentTime();
         UUID targetDoctor = command.doctorUserId() == null ? entity.getDoctorUserId() : command.doctorUserId();
         List<DoctorAvailabilitySlotRecord> slots = listSlots(tenantId, targetDoctor, command.appointmentDate(), bookingZone);
         DoctorAvailabilitySlotRecord matchingSlot = findMatchingSlot(slots, command.appointmentTime());
@@ -939,6 +961,21 @@ public class AppointmentService {
         );
         entity.reassignDoctor(targetDoctor);
         AppointmentEntity saved = appointmentRepository.save(entity);
+        moduleBusinessEventPublisher.publish(AppointmentBookedEvent.rescheduled(
+                tenantId,
+                saved.getId(),
+                saved.getPatientId(),
+                saved.getDoctorUserId(),
+                doctorDisplayName(tenantId, saved.getDoctorUserId()),
+                null,
+                previousDate,
+                previousTime,
+                saved.getAppointmentDate(),
+                saved.getAppointmentTime(),
+                resolveBookingZone(bookingZone).getId(),
+                saved.getVersion(),
+                actorAppUserId
+        ));
         auditEventPublisher.record(new AuditEventCommand(
                 tenantId,
                 APPOINTMENT_ENTITY,

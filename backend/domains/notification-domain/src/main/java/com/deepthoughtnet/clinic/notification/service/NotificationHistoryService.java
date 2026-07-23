@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.notification.service;
 
 import com.deepthoughtnet.clinic.notification.service.model.NotificationHistoryRecord;
+import com.deepthoughtnet.clinic.notification.service.model.NotificationHistoryGroupRecord;
 import com.deepthoughtnet.clinic.notification.service.model.NotificationQueueResult;
 import java.util.List;
 import java.util.Optional;
@@ -9,6 +10,8 @@ import org.springframework.data.domain.Page;
 
 public interface NotificationHistoryService {
     Page<NotificationHistoryRecord> list(UUID tenantId, NotificationHistoryFilter filter);
+
+    List<NotificationHistoryGroupRecord> listGrouped(UUID tenantId, NotificationHistoryFilter filter);
 
     Optional<NotificationHistoryRecord> findById(UUID tenantId, UUID id);
 
@@ -57,6 +60,39 @@ public interface NotificationHistoryService {
             UUID sourceId,
             String detailsJson,
             UUID actorAppUserId
+    );
+
+    NotificationQueueResult queueDetailed(
+            UUID tenantId,
+            UUID patientId,
+            String eventType,
+            String historyChannel,
+            String historyRecipient,
+            String deliveryChannel,
+            String deliveryRecipient,
+            String subject,
+            String message,
+            String sourceType,
+            UUID sourceId,
+            String detailsJson,
+            UUID actorAppUserId,
+            String deduplicationKey
+    );
+
+    NotificationQueueResult recordSkipped(
+            UUID tenantId,
+            UUID patientId,
+            String eventType,
+            String historyChannel,
+            String historyRecipient,
+            String subject,
+            String message,
+            String sourceType,
+            UUID sourceId,
+            String detailsJson,
+            UUID actorAppUserId,
+            String deduplicationKey,
+            String reason
     );
 
     NotificationHistoryRecord retry(UUID tenantId, UUID id, UUID actorAppUserId);

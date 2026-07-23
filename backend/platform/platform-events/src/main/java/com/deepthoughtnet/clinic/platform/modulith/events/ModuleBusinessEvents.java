@@ -2,6 +2,12 @@ package com.deepthoughtnet.clinic.platform.modulith.events;
 
 import com.deepthoughtnet.clinic.platform.modulith.events.model.AppointmentBookedEvent;
 import com.deepthoughtnet.clinic.platform.modulith.events.model.AppointmentBookedEventPayload;
+import com.deepthoughtnet.clinic.platform.modulith.events.model.AppointmentCancelledEvent;
+import com.deepthoughtnet.clinic.platform.modulith.events.model.AppointmentCancelledEventPayload;
+import com.deepthoughtnet.clinic.platform.modulith.events.model.AppointmentReminderDueEvent;
+import com.deepthoughtnet.clinic.platform.modulith.events.model.AppointmentReminderDueEventPayload;
+import com.deepthoughtnet.clinic.platform.modulith.events.model.AppointmentRescheduledEvent;
+import com.deepthoughtnet.clinic.platform.modulith.events.model.AppointmentRescheduledEventPayload;
 import com.deepthoughtnet.clinic.platform.modulith.events.model.LabReportPublishedEvent;
 import com.deepthoughtnet.clinic.platform.modulith.events.model.LabReportPublishedEventPayload;
 import com.deepthoughtnet.clinic.platform.modulith.events.model.LeadConvertedEvent;
@@ -62,6 +68,162 @@ public final class ModuleBusinessEvents {
                         appointmentTimezone,
                         appointmentStatus,
                         appointmentType
+                )
+        );
+    }
+
+    public static AppointmentRescheduledEvent appointmentRescheduled(
+            UUID tenantId,
+            UUID appointmentId,
+            UUID patientId,
+            UUID doctorUserId,
+            String doctorDisplayName,
+            String clinicDisplayName,
+            LocalDate previousAppointmentDate,
+            LocalTime previousAppointmentTime,
+            LocalDate appointmentDate,
+            LocalTime appointmentTime,
+            String appointmentTimezone,
+            int appointmentVersion,
+            UUID actorId
+    ) {
+        OffsetDateTime occurredAt = OffsetDateTime.now();
+        String correlationId = currentCorrelationId();
+        return new AppointmentRescheduledEvent(
+                deterministicEventId(
+                        "APPOINTMENT_RESCHEDULED",
+                        tenantId,
+                        appointmentId,
+                        appointmentVersion,
+                        previousAppointmentDate,
+                        previousAppointmentTime,
+                        appointmentDate,
+                        appointmentTime,
+                        appointmentTimezone
+                ),
+                "APPOINTMENT_RESCHEDULED",
+                1,
+                occurredAt,
+                tenantId,
+                APPOINTMENT_MODULE,
+                "APPOINTMENT",
+                appointmentId,
+                correlationId,
+                correlationId,
+                actorId,
+                new AppointmentRescheduledEventPayload(
+                        appointmentId,
+                        patientId,
+                        doctorUserId,
+                        doctorDisplayName,
+                        clinicDisplayName,
+                        previousAppointmentDate,
+                        previousAppointmentTime,
+                        appointmentDate,
+                        appointmentTime,
+                        appointmentTimezone,
+                        appointmentVersion
+                )
+        );
+    }
+
+    public static AppointmentCancelledEvent appointmentCancelled(
+            UUID tenantId,
+            UUID appointmentId,
+            UUID patientId,
+            UUID doctorUserId,
+            String doctorDisplayName,
+            String clinicDisplayName,
+            LocalDate appointmentDate,
+            LocalTime appointmentTime,
+            String appointmentTimezone,
+            int appointmentVersion,
+            UUID actorId
+    ) {
+        OffsetDateTime occurredAt = OffsetDateTime.now();
+        String correlationId = currentCorrelationId();
+        return new AppointmentCancelledEvent(
+                deterministicEventId(
+                        "APPOINTMENT_CANCELLED",
+                        tenantId,
+                        appointmentId,
+                        appointmentVersion,
+                        appointmentDate,
+                        appointmentTime,
+                        appointmentTimezone
+                ),
+                "APPOINTMENT_CANCELLED",
+                1,
+                occurredAt,
+                tenantId,
+                APPOINTMENT_MODULE,
+                "APPOINTMENT",
+                appointmentId,
+                correlationId,
+                correlationId,
+                actorId,
+                new AppointmentCancelledEventPayload(
+                        appointmentId,
+                        patientId,
+                        doctorUserId,
+                        doctorDisplayName,
+                        clinicDisplayName,
+                        appointmentDate,
+                        appointmentTime,
+                        appointmentTimezone,
+                        appointmentVersion
+                )
+        );
+    }
+
+    public static AppointmentReminderDueEvent appointmentReminderDue(
+            UUID tenantId,
+            UUID appointmentId,
+            UUID patientId,
+            UUID doctorUserId,
+            String doctorDisplayName,
+            String clinicDisplayName,
+            LocalDate appointmentDate,
+            LocalTime appointmentTime,
+            String appointmentTimezone,
+            String reminderWindow,
+            int appointmentVersion,
+            UUID actorId
+    ) {
+        OffsetDateTime occurredAt = OffsetDateTime.now();
+        String correlationId = currentCorrelationId();
+        return new AppointmentReminderDueEvent(
+                deterministicEventId(
+                        "APPOINTMENT_REMINDER_DUE",
+                        tenantId,
+                        appointmentId,
+                        appointmentVersion,
+                        appointmentDate,
+                        appointmentTime,
+                        appointmentTimezone,
+                        reminderWindow
+                ),
+                "APPOINTMENT_REMINDER_DUE",
+                1,
+                occurredAt,
+                tenantId,
+                APPOINTMENT_MODULE,
+                "APPOINTMENT",
+                appointmentId,
+                correlationId,
+                correlationId,
+                actorId,
+                new AppointmentReminderDueEventPayload(
+                        appointmentId,
+                        patientId,
+                        doctorUserId,
+                        doctorDisplayName,
+                        clinicDisplayName,
+                        appointmentDate,
+                        appointmentTime,
+                        appointmentTimezone,
+                        reminderWindow,
+                        appointmentVersion
                 )
         );
     }
@@ -130,13 +292,17 @@ public final class ModuleBusinessEvents {
         );
     }
 
-    public static UUID deterministicEventId(String eventType, UUID tenantId, UUID aggregateId) {
-        String seed = String.join("|",
-                safe(eventType),
-                tenantId == null ? "" : tenantId.toString(),
-                aggregateId == null ? "" : aggregateId.toString()
-        );
-        return UUID.nameUUIDFromBytes(seed.getBytes(StandardCharsets.UTF_8));
+    public static UUID deterministicEventId(Object... parts) {
+        StringBuilder seed = new StringBuilder();
+        if (parts != null) {
+            for (Object part : parts) {
+                if (seed.length() > 0) {
+                    seed.append('|');
+                }
+                seed.append(part == null ? "" : part.toString());
+            }
+        }
+        return UUID.nameUUIDFromBytes(seed.toString().getBytes(StandardCharsets.UTF_8));
     }
 
     public static String currentCorrelationId() {
@@ -150,7 +316,4 @@ public final class ModuleBusinessEvents {
         return correlationId.trim();
     }
 
-    private static String safe(String value) {
-        return value == null ? "" : value.trim();
-    }
 }
