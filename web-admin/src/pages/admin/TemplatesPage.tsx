@@ -24,6 +24,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth";
 import { ConfirmationDialog } from "../../components/clinical/ConfirmationDialog";
 import {
@@ -72,15 +73,16 @@ const variableChips = ["{{patientName}}", "{{doctorName}}", "{{appointmentDate}}
 
 export default function TemplatesPage() {
   const auth = useAuth();
+  const [searchParams] = useSearchParams();
   const [rows, setRows] = React.useState<AdminTemplate[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [success, setSuccess] = React.useState<string | null>(null);
-  const [search, setSearch] = React.useState("");
-  const [typeFilter, setTypeFilter] = React.useState("");
-  const [channelFilter, setChannelFilter] = React.useState("");
-  const [categoryFilter, setCategoryFilter] = React.useState("");
-  const [activeFilter, setActiveFilter] = React.useState("");
+  const [search, setSearch] = React.useState(searchParams.get("search") ?? "");
+  const [typeFilter, setTypeFilter] = React.useState(searchParams.get("templateType") ?? "");
+  const [channelFilter, setChannelFilter] = React.useState(searchParams.get("channel") ?? "");
+  const [categoryFilter, setCategoryFilter] = React.useState(searchParams.get("category") ?? "");
+  const [activeFilter, setActiveFilter] = React.useState(searchParams.get("active") ?? "");
   const [editorOpen, setEditorOpen] = React.useState(false);
   const [editing, setEditing] = React.useState<AdminTemplate | null>(null);
   const [form, setForm] = React.useState<EditorForm>(emptyForm());
@@ -113,6 +115,14 @@ export default function TemplatesPage() {
       setLoading(false);
     }
   }, [auth.accessToken, auth.tenantId, typeFilter, channelFilter, categoryFilter, activeFilter, search]);
+
+  React.useEffect(() => {
+    setSearch(searchParams.get("search") ?? "");
+    setTypeFilter(searchParams.get("templateType") ?? "");
+    setChannelFilter(searchParams.get("channel") ?? "");
+    setCategoryFilter(searchParams.get("category") ?? "");
+    setActiveFilter(searchParams.get("active") ?? "");
+  }, [searchParams]);
 
   React.useEffect(() => {
     void load();

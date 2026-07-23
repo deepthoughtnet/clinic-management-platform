@@ -5,7 +5,9 @@ import com.deepthoughtnet.clinic.api.prescriptiontemplate.service.PrescriptionTe
 import com.deepthoughtnet.clinic.billing.service.BillingService;
 import com.deepthoughtnet.clinic.billing.service.model.BillPdf;
 import com.deepthoughtnet.clinic.billing.service.model.BillRecord;
+import com.deepthoughtnet.clinic.billing.service.model.BillStatus;
 import com.deepthoughtnet.clinic.billing.service.model.ReceiptRecord;
+import com.deepthoughtnet.clinic.billing.service.model.PaymentRecord;
 import com.deepthoughtnet.clinic.identity.service.PlatformTenantManagementService;
 import com.deepthoughtnet.clinic.identity.service.model.PlatformTenantRecord;
 import com.deepthoughtnet.clinic.notification.service.NotificationHistoryService;
@@ -23,6 +25,13 @@ import com.deepthoughtnet.clinic.notify.NotificationAttachment;
 import com.deepthoughtnet.clinic.notify.NotificationDeliveryException;
 import com.deepthoughtnet.clinic.notify.NotificationMessage;
 import com.deepthoughtnet.clinic.notify.NotificationProvider;
+import com.deepthoughtnet.clinic.platform.modulith.events.ModuleBusinessEventPublisher;
+import com.deepthoughtnet.clinic.billing.events.PaymentReminderEvent;
+import com.deepthoughtnet.clinic.prescription.events.PrescriptionReadyEvent;
+import com.deepthoughtnet.clinic.billing.events.BillGeneratedEvent;
+import com.deepthoughtnet.clinic.billing.events.PaymentReceivedEvent;
+import com.deepthoughtnet.clinic.consultation.events.FollowUpDueEvent;
+import com.deepthoughtnet.clinic.vaccination.events.VaccinationDueEvent;
 import com.deepthoughtnet.clinic.vaccination.service.VaccinationService;
 import java.time.Duration;
 import java.time.LocalDate;
@@ -39,6 +48,8 @@ import org.springframework.util.StringUtils;
 @Service
 public class NotificationActionService {
     private static final Logger log = LoggerFactory.getLogger(NotificationActionService.class);
+    private static final String DEFAULT_TIMEZONE = "Asia/Kolkata";
+    private static final String DEFAULT_CURRENCY = "INR";
 
     private final NotificationHistoryService notificationHistoryService;
     private final PrescriptionService prescriptionService;
@@ -50,6 +61,7 @@ public class NotificationActionService {
     private final PatientRepository patientRepository;
     private final NotificationProvider notificationProvider;
     private final PrescriptionTemplateService prescriptionTemplateService;
+    private final ModuleBusinessEventPublisher moduleBusinessEventPublisher;
 
     public NotificationActionService(
             NotificationHistoryService notificationHistoryService,
@@ -61,7 +73,8 @@ public class NotificationActionService {
             PlatformTenantManagementService tenantManagementService,
             PatientRepository patientRepository,
             NotificationProvider notificationProvider,
-            PrescriptionTemplateService prescriptionTemplateService
+            PrescriptionTemplateService prescriptionTemplateService,
+            ModuleBusinessEventPublisher moduleBusinessEventPublisher
     ) {
         this.notificationHistoryService = notificationHistoryService;
         this.prescriptionService = prescriptionService;
@@ -73,6 +86,7 @@ public class NotificationActionService {
         this.patientRepository = patientRepository;
         this.notificationProvider = notificationProvider;
         this.prescriptionTemplateService = prescriptionTemplateService;
+        this.moduleBusinessEventPublisher = moduleBusinessEventPublisher;
     }
 
     public NotificationHistoryRecord sendPrescription(UUID tenantId, UUID prescriptionId, String channel, UUID actorAppUserId) {
@@ -156,46 +170,67 @@ public class NotificationActionService {
     public NotificationHistoryRecord sendPrescriptionReady(UUID tenantId, UUID prescriptionId, UUID actorAppUserId) {
         PrescriptionRecord prescription = prescriptionService.findById(tenantId, prescriptionId)
                 .orElseThrow(() -> new IllegalArgumentException("Prescription not found"));
-        PatientEntity patient = patient(tenantId, prescription.patientId());
-        String subject = "Prescription ready " + prescription.prescriptionNumber();
-        String message = "Your prescription is ready. You can view it in the patient portal.";
-        return queuePatientNotification(tenantId, patient, "PRESCRIPTION_READY", subject, message, "PRESCRIPTION", prescription.id(), actorAppUserId, true, null);
+        moduleBusinessEventPublisher.publish(PrescriptionReadyEvent.ready(
+                tenantId,
+                prescription.id(),
+                prescription.consultationId(),
+                prescription.patientId(),
+                prescription.doctorUserId(),
+                prescription.doctorName(),
+                null,
+                prescription.prescriptionNumber(),
+                prescription.followUpDate(),
+                DEFAULT_TIMEZONE,
+                prescription.finalizedAt(),
+                prescription.versionNumber() == null ? 1 : prescription.versionNumber(),
+                actorAppUserId
+        ));
+        return null;
     }
 
     public NotificationHistoryRecord sendBillGenerated(UUID tenantId, UUID billId, UUID actorAppUserId) {
         BillRecord bill = billingService.findById(tenantId, billId)
                 .orElseThrow(() -> new IllegalArgumentException("Bill not found"));
-        PatientEntity patient = patient(tenantId, bill.patientId());
-        return queuePatientNotification(
+        moduleBusinessEventPublisher.publish(BillGeneratedEvent.generated(
                 tenantId,
-                patient,
-                "BILL_GENERATED",
-                "Bill generated " + bill.billNumber(),
-                "Your bill is ready. You can view it in the patient portal.",
-                "BILL",
                 bill.id(),
-                actorAppUserId,
-                true,
-                null
-        );
+                bill.patientId(),
+                bill.billNumber(),
+                bill.totalAmount(),
+                DEFAULT_CURRENCY,
+                bill.billDate(),
+                null,
+                DEFAULT_TIMEZONE,
+                bill.createdAt(),
+                1,
+                actorAppUserId
+        ));
+        return null;
     }
 
     public NotificationHistoryRecord sendBillPaid(UUID tenantId, UUID billId, UUID actorAppUserId) {
         BillRecord bill = billingService.findById(tenantId, billId)
                 .orElseThrow(() -> new IllegalArgumentException("Bill not found"));
-        PatientEntity patient = patient(tenantId, bill.patientId());
-        return queuePatientNotification(
+        PaymentRecord payment = billingService.listPayments(tenantId, billId).stream().findFirst().orElse(null);
+        if (payment == null) {
+            return null;
+        }
+        moduleBusinessEventPublisher.publish(PaymentReceivedEvent.received(
                 tenantId,
-                patient,
-                "BILL_PAID",
-                "Bill paid " + bill.billNumber(),
-                "Your bill payment has been recorded.",
-                "BILL",
+                payment.id(),
                 bill.id(),
-                actorAppUserId,
-                true,
-                null
-        );
+                bill.patientId(),
+                bill.billNumber(),
+                payment.receiptNumber(),
+                payment.amount(),
+                DEFAULT_CURRENCY,
+                payment.paymentMode() == null ? null : payment.paymentMode().name(),
+                null,
+                DEFAULT_TIMEZONE,
+                payment.paymentDateTime(),
+                actorAppUserId
+        ));
+        return null;
     }
 
     public NotificationHistoryRecord sendReceiptReady(UUID tenantId, UUID receiptId, UUID actorAppUserId) {
@@ -237,21 +272,19 @@ public class NotificationActionService {
     }
 
     public NotificationHistoryRecord sendFollowUpDue(UUID tenantId, UUID consultationId, UUID patientId, String patientName, String doctorName, LocalDate followUpDate, UUID actorAppUserId) {
-        PatientEntity patient = patient(tenantId, patientId);
-        String subject = "Follow-up due";
-        String message = "Your follow-up is due. Please book a visit or contact the clinic.";
-        return queuePatientNotification(
+        moduleBusinessEventPublisher.publish(FollowUpDueEvent.due(
                 tenantId,
-                patient,
-                "FOLLOW_UP_DUE",
-                subject,
-                message,
-                "CONSULTATION",
                 consultationId,
-                actorAppUserId,
-                true,
-                null
-        );
+                patientId,
+                null,
+                doctorName,
+                null,
+                followUpDate,
+                DEFAULT_TIMEZONE,
+                "FOLLOW_UP_DUE",
+                actorAppUserId
+        ));
+        return null;
     }
 
     public InvoiceEmailResult sendInvoiceEmail(UUID tenantId, UUID billId, UUID actorAppUserId) {
@@ -381,38 +414,20 @@ public class NotificationActionService {
         return consultationService.list(tenantId).stream()
                 .filter(record -> record.followUpDate() != null && !record.followUpDate().isAfter(dueDate))
                 .filter(record -> record.status() == ConsultationStatus.COMPLETED || record.status() == ConsultationStatus.DRAFT)
-                .map(record -> queueFollowUpReminder(tenantId, record, actorAppUserId))
+                .map(record -> publishFollowUpReminder(tenantId, record, actorAppUserId))
                 .reduce(ReminderQueueSummary.empty(), ReminderQueueSummary::add);
     }
 
     public ReminderQueueSummary queueVaccinationReminders(UUID tenantId, UUID actorAppUserId) {
         return vaccinationService.listDue(tenantId).stream()
-                .map(vaccination -> {
-                    PatientEntity patient = patient(tenantId, vaccination.patientId());
-                    String channel = normalizeChannel("email");
-                    String recipient = resolveRecipient(patient, channel);
-                    return queueReminder(() -> notificationHistoryService.queueDetailed(
-                            tenantId,
-                            patient.getId(),
-                            "VACCINATION_REMINDER",
-                            channel,
-                            recipient,
-                            "Vaccination reminder",
-                            "Vaccination due for " + vaccination.vaccineName(),
-                            "PATIENT_VACCINATION",
-                            vaccination.id(),
-                            actorAppUserId
-                    ));
-                }).reduce(ReminderQueueSummary.empty(), ReminderQueueSummary::add);
+                .map(vaccination -> publishVaccinationReminder(tenantId, vaccination, actorAppUserId))
+                .reduce(ReminderQueueSummary.empty(), ReminderQueueSummary::add);
     }
 
     public ReminderQueueSummary queuePaymentReminders(UUID tenantId, UUID actorAppUserId) {
         return billingService.list(tenantId, new com.deepthoughtnet.clinic.billing.service.model.BillingSearchCriteria(null, null, null, null, null, null, null)).stream()
-                .filter(bill -> bill.dueAmount() != null && bill.dueAmount().compareTo(java.math.BigDecimal.ZERO) > 0)
-                .filter(bill -> bill.status() == com.deepthoughtnet.clinic.billing.service.model.BillStatus.UNPAID
-                        || bill.status() == com.deepthoughtnet.clinic.billing.service.model.BillStatus.PARTIALLY_PAID
-                        || bill.status() == com.deepthoughtnet.clinic.billing.service.model.BillStatus.ISSUED)
-                .map(bill -> queuePaymentReminder(tenantId, bill, actorAppUserId))
+                .filter(this::isPaymentReminderEligible)
+                .map(bill -> publishPaymentReminder(tenantId, bill, actorAppUserId))
                 .reduce(ReminderQueueSummary.empty(), ReminderQueueSummary::add);
     }
 
@@ -455,40 +470,70 @@ public class NotificationActionService {
         return !diff.isNegative() && diff.minus(targetWindow).abs().compareTo(slack) <= 0;
     }
 
-    private ReminderQueueSummary queueFollowUpReminder(UUID tenantId, ConsultationRecord consultation, UUID actorAppUserId) {
-        PatientEntity patient = patient(tenantId, consultation.patientId());
-        String channel = normalizeChannel("email");
-        String recipient = resolveRecipient(patient, channel);
-        return queueReminder(() -> notificationHistoryService.queueDetailed(
+    private ReminderQueueSummary publishFollowUpReminder(UUID tenantId, ConsultationRecord consultation, UUID actorAppUserId) {
+        moduleBusinessEventPublisher.publish(FollowUpDueEvent.due(
                 tenantId,
-                patient.getId(),
-                "FOLLOW_UP_REMINDER",
-                channel,
-                recipient,
-                "Follow-up reminder",
-                "Follow-up due on " + consultation.followUpDate() + ". Please schedule the next visit.",
-                "CONSULTATION",
                 consultation.id(),
+                consultation.patientId(),
+                consultation.doctorUserId(),
+                consultation.doctorName(),
+                null,
+                consultation.followUpDate(),
+                DEFAULT_TIMEZONE,
+                "FOLLOW_UP_DUE:" + consultation.id() + ":" + consultation.followUpDate(),
                 actorAppUserId
         ));
+        return ReminderQueueSummary.queued();
     }
 
-    private ReminderQueueSummary queuePaymentReminder(UUID tenantId, BillRecord bill, UUID actorAppUserId) {
-        PatientEntity patient = patient(tenantId, bill.patientId());
-        String channel = normalizeChannel("email");
-        String recipient = resolveRecipient(patient, channel);
-        return queueReminder(() -> notificationHistoryService.queueDetailed(
+    private ReminderQueueSummary publishVaccinationReminder(UUID tenantId, com.deepthoughtnet.clinic.vaccination.service.model.PatientVaccinationRecord vaccination, UUID actorAppUserId) {
+        moduleBusinessEventPublisher.publish(VaccinationDueEvent.due(
                 tenantId,
-                patient.getId(),
-                "PAYMENT_REMINDER",
-                channel,
-                recipient,
-                "Payment reminder",
-                "Outstanding bill " + bill.billNumber() + " due amount " + bill.dueAmount(),
-                "BILL",
-                bill.id(),
+                vaccination.id(),
+                vaccination.patientId(),
+                vaccination.vaccineName(),
+                vaccination.doseNumber() == null ? null : "Dose " + vaccination.doseNumber(),
+                vaccination.nextDueDate(),
+                DEFAULT_TIMEZONE,
+                null,
+                "VACCINATION_DUE:" + vaccination.id() + ":" + vaccination.nextDueDate(),
                 actorAppUserId
         ));
+        return ReminderQueueSummary.queued();
+    }
+
+    private ReminderQueueSummary publishPaymentReminder(UUID tenantId, BillRecord bill, UUID actorAppUserId) {
+        try {
+            // Payment reminders now flow through the durable module-event pipeline so notification-domain can
+            // own the IN_APP baseline plus additive external deliveries.
+            moduleBusinessEventPublisher.publish(PaymentReminderEvent.due(
+                    tenantId,
+                    bill.id(),
+                    bill.patientId(),
+                    bill.billNumber(),
+                    bill.dueAmount(),
+                    DEFAULT_CURRENCY,
+                    null,
+                    DEFAULT_TIMEZONE,
+                    bill.status(),
+                    bill.updatedAt(),
+                    "OUTSTANDING",
+                    actorAppUserId
+            ));
+            return ReminderQueueSummary.queued();
+        } catch (RuntimeException ex) {
+            log.warn("Failed to publish payment reminder event for bill {}", bill.billNumber(), ex);
+            return ReminderQueueSummary.failed();
+        }
+    }
+
+    private boolean isPaymentReminderEligible(BillRecord bill) {
+        if (bill == null || bill.dueAmount() == null || bill.dueAmount().compareTo(java.math.BigDecimal.ZERO) <= 0) {
+            return false;
+        }
+        return bill.status() == BillStatus.UNPAID
+                || bill.status() == BillStatus.PARTIALLY_PAID
+                || bill.status() == BillStatus.ISSUED;
     }
 
     private ReminderQueueSummary queueMissedAppointmentReminder(UUID tenantId, UUID appointmentId, UUID actorAppUserId) {

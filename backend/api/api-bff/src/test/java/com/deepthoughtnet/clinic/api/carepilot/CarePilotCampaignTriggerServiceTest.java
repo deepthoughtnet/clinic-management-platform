@@ -334,6 +334,7 @@ class CarePilotCampaignTriggerServiceTest {
                 false,
                 true,
                 5,
+                "{}",
                 OffsetDateTime.parse("2026-07-18T00:00:00Z"),
                 OffsetDateTime.parse("2026-07-18T00:00:00Z"),
                 null,

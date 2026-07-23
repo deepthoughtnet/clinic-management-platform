@@ -31,14 +31,18 @@ public record LabReportPublishedEvent(
             UUID labOrderId,
             UUID patientId,
             UUID consultationId,
+            String orderNumber,
+            String clinicDisplayName,
+            String timezone,
+            OffsetDateTime publishedAt,
             String reportFilename,
             String deliveryStatus,
             UUID actorId
     ) {
-        OffsetDateTime occurredAt = OffsetDateTime.now();
+        OffsetDateTime occurredAt = publishedAt == null ? OffsetDateTime.now() : publishedAt;
         String correlationId = currentCorrelationId();
         return new LabReportPublishedEvent(
-                deterministicEventId("LAB_REPORT_PUBLISHED", tenantId, labOrderId),
+                deterministicEventId("LAB_REPORT_PUBLISHED", tenantId, labOrderId, orderNumber, publishedAt),
                 "LAB_REPORT_PUBLISHED",
                 1,
                 occurredAt,
@@ -53,18 +57,25 @@ public record LabReportPublishedEvent(
                         labOrderId,
                         patientId,
                         consultationId,
+                        orderNumber,
+                        clinicDisplayName,
+                        timezone,
+                        publishedAt,
                         reportFilename,
                         deliveryStatus
                 )
         );
     }
 
-    private static UUID deterministicEventId(String eventType, UUID tenantId, UUID aggregateId) {
-        String seed = String.join("|",
-                eventType == null ? "" : eventType.trim(),
-                tenantId == null ? "" : tenantId.toString(),
-                aggregateId == null ? "" : aggregateId.toString());
-        return UUID.nameUUIDFromBytes(seed.getBytes(StandardCharsets.UTF_8));
+    private static UUID deterministicEventId(Object... parts) {
+        StringBuilder seed = new StringBuilder();
+        for (Object part : parts) {
+            if (seed.length() > 0) {
+                seed.append('|');
+            }
+            seed.append(part == null ? "" : part.toString());
+        }
+        return UUID.nameUUIDFromBytes(seed.toString().getBytes(StandardCharsets.UTF_8));
     }
 
     private static String currentCorrelationId() {

@@ -14,6 +14,7 @@ import com.deepthoughtnet.clinic.appointment.service.model.AppointmentType;
 import com.deepthoughtnet.clinic.billing.service.BillingService;
 import com.deepthoughtnet.clinic.identity.service.PlatformTenantManagementService;
 import com.deepthoughtnet.clinic.identity.service.model.PlatformTenantRecord;
+import com.deepthoughtnet.clinic.platform.modulith.events.ModuleBusinessEventPublisher;
 import com.deepthoughtnet.clinic.notification.service.NotificationHistoryService;
 import com.deepthoughtnet.clinic.notification.service.model.NotificationHistoryRecord;
 import com.deepthoughtnet.clinic.notification.service.model.NotificationQueueResult;
@@ -51,6 +52,7 @@ class NotificationActionServiceReminderTest {
         PatientRepository patientRepository = Mockito.mock(PatientRepository.class);
         NotificationProvider notificationProvider = Mockito.mock(NotificationProvider.class);
         PrescriptionTemplateService prescriptionTemplateService = Mockito.mock(PrescriptionTemplateService.class);
+        ModuleBusinessEventPublisher moduleBusinessEventPublisher = Mockito.mock(ModuleBusinessEventPublisher.class);
 
         NotificationActionService service = new NotificationActionService(
                 notificationHistoryService,
@@ -62,7 +64,8 @@ class NotificationActionServiceReminderTest {
                 tenantManagementService,
                 patientRepository,
                 notificationProvider,
-                prescriptionTemplateService
+                prescriptionTemplateService,
+                moduleBusinessEventPublisher
         );
 
         OffsetDateTime now = OffsetDateTime.now();
@@ -99,6 +102,7 @@ class NotificationActionServiceReminderTest {
         PatientRepository patientRepository = Mockito.mock(PatientRepository.class);
         NotificationProvider notificationProvider = Mockito.mock(NotificationProvider.class);
         PrescriptionTemplateService prescriptionTemplateService = Mockito.mock(PrescriptionTemplateService.class);
+        ModuleBusinessEventPublisher moduleBusinessEventPublisher = Mockito.mock(ModuleBusinessEventPublisher.class);
 
         NotificationActionService service = new NotificationActionService(
                 notificationHistoryService,
@@ -110,7 +114,8 @@ class NotificationActionServiceReminderTest {
                 tenantManagementService,
                 patientRepository,
                 notificationProvider,
-                prescriptionTemplateService
+                prescriptionTemplateService,
+                moduleBusinessEventPublisher
         );
 
         OffsetDateTime now = OffsetDateTime.now();

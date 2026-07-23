@@ -29,6 +29,8 @@ import com.deepthoughtnet.clinic.notify.NotificationDeliveryException;
 import com.deepthoughtnet.clinic.notify.NotificationProvider;
 import com.deepthoughtnet.clinic.patient.db.PatientEntity;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
+import com.deepthoughtnet.clinic.billing.events.PaymentReminderEvent;
+import com.deepthoughtnet.clinic.platform.modulith.events.ModuleBusinessEventPublisher;
 import com.deepthoughtnet.clinic.prescription.service.PrescriptionService;
 import com.deepthoughtnet.clinic.api.prescriptiontemplate.service.PrescriptionTemplateService;
 import com.deepthoughtnet.clinic.vaccination.service.VaccinationService;
@@ -53,6 +55,7 @@ class NotificationActionServiceTest {
     private AppointmentService appointmentService;
     private PatientRepository patientRepository;
     private NotificationProvider notificationProvider;
+    private ModuleBusinessEventPublisher moduleBusinessEventPublisher;
     private NotificationActionService service;
 
     @BeforeEach
@@ -62,6 +65,7 @@ class NotificationActionServiceTest {
         appointmentService = mock(AppointmentService.class);
         patientRepository = mock(PatientRepository.class);
         notificationProvider = mock(NotificationProvider.class);
+        moduleBusinessEventPublisher = mock(ModuleBusinessEventPublisher.class);
         service = new NotificationActionService(
                 notificationHistoryService,
                 mock(PrescriptionService.class),
@@ -72,11 +76,16 @@ class NotificationActionServiceTest {
                 mock(PlatformTenantManagementService.class),
                 patientRepository,
                 notificationProvider,
-                mock(PrescriptionTemplateService.class)
+                mock(PrescriptionTemplateService.class),
+                moduleBusinessEventPublisher
         );
 
         when(notificationHistoryService.queue(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(notificationHistoryRecord());
+        when(notificationHistoryService.queueDetailed(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(new NotificationQueueResult(notificationHistoryRecord(), true));
+        when(notificationHistoryService.queueDetailed(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(new NotificationQueueResult(notificationHistoryRecord(), true));
         PatientEntity patient = mock(PatientEntity.class);
         when(patient.getId()).thenReturn(patientId);
         when(patient.getFirstName()).thenReturn("Asha");
@@ -84,12 +93,11 @@ class NotificationActionServiceTest {
         when(patient.getEmail()).thenReturn("asha@example.com");
         when(patient.getMobile()).thenReturn("9999999999");
         when(patientRepository.findByTenantIdAndId(eq(tenantId), eq(patientId))).thenReturn(Optional.of(patient));
-        when(notificationHistoryService.queueDetailed(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
-                .thenReturn(new NotificationQueueResult(notificationHistoryRecord(), true));
     }
 
     @Test
     void queuePaymentRemindersQueuesOutstandingBills() {
+        when(moduleBusinessEventPublisher.publish(any())).thenReturn(UUID.randomUUID());
         when(billingService.list(eq(tenantId), any(BillingSearchCriteria.class))).thenReturn(List.of(
                 new BillRecord(
                         UUID.randomUUID(),
@@ -125,18 +133,54 @@ class NotificationActionServiceTest {
         NotificationActionService.ReminderQueueSummary queued = service.queuePaymentReminders(tenantId, actorId);
 
         assertThat(queued.queuedCount()).isEqualTo(1);
-        Mockito.verify(notificationHistoryService).queueDetailed(
-                eq(tenantId),
-                eq(patientId),
-                eq("PAYMENT_REMINDER"),
-                eq("email"),
-                eq("asha@example.com"),
-                eq("Payment reminder"),
-                contains("BILL-1"),
-                eq("BILL"),
-                any(),
-                eq(actorId)
-        );
+        org.mockito.ArgumentCaptor<PaymentReminderEvent> eventCaptor = org.mockito.ArgumentCaptor.forClass(PaymentReminderEvent.class);
+        Mockito.verify(moduleBusinessEventPublisher).publish(eventCaptor.capture());
+        assertThat(eventCaptor.getValue().eventType()).isEqualTo("PAYMENT_REMINDER");
+        assertThat(eventCaptor.getValue().payload().billNumber()).isEqualTo("BILL-1");
+        assertThat(eventCaptor.getValue().payload().outstandingAmount()).isEqualByComparingTo("75.00");
+        assertThat(eventCaptor.getValue().payload().billStatus()).isEqualTo(BillStatus.PARTIALLY_PAID.name());
+    }
+
+    @Test
+    void queuePaymentRemindersSkipsFullyPaidBills() {
+        when(billingService.list(eq(tenantId), any(BillingSearchCriteria.class))).thenReturn(List.of(
+                new BillRecord(
+                        UUID.randomUUID(),
+                        tenantId,
+                        "BILL-2",
+                        patientId,
+                        "PAT-1",
+                        "Asha Rao",
+                        null,
+                        null,
+                        LocalDate.now(),
+                        BillStatus.PAID,
+                        new BigDecimal("100.00"),
+                        DiscountType.NONE,
+                        BigDecimal.ZERO,
+                        BigDecimal.ZERO,
+                        null,
+                        null,
+                        BigDecimal.ZERO,
+                        new BigDecimal("100.00"),
+                        new BigDecimal("100.00"),
+                        BigDecimal.ZERO,
+                        new BigDecimal("100.00"),
+                        BigDecimal.ZERO,
+                        null,
+                        null,
+                        OffsetDateTime.now(),
+                        OffsetDateTime.now(),
+                        List.of()
+                )
+        ));
+
+        NotificationActionService.ReminderQueueSummary queued = service.queuePaymentReminders(tenantId, actorId);
+
+        assertThat(queued.queuedCount()).isZero();
+        assertThat(queued.failedCount()).isZero();
+        assertThat(queued.skippedDuplicateCount()).isZero();
+        Mockito.verifyNoInteractions(moduleBusinessEventPublisher);
     }
 
     @Test

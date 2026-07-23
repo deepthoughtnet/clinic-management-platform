@@ -233,14 +233,18 @@ public final class ModuleBusinessEvents {
             UUID labOrderId,
             UUID patientId,
             UUID consultationId,
+            String orderNumber,
+            String clinicDisplayName,
+            String timezone,
+            OffsetDateTime publishedAt,
             String reportFilename,
             String deliveryStatus,
             UUID actorId
     ) {
-        OffsetDateTime occurredAt = OffsetDateTime.now();
+        OffsetDateTime occurredAt = publishedAt == null ? OffsetDateTime.now() : publishedAt;
         String correlationId = currentCorrelationId();
         return new LabReportPublishedEvent(
-                deterministicEventId("LAB_REPORT_PUBLISHED", tenantId, labOrderId),
+                deterministicEventId("LAB_REPORT_PUBLISHED", tenantId, labOrderId, orderNumber, publishedAt),
                 "LAB_REPORT_PUBLISHED",
                 1,
                 occurredAt,
@@ -255,6 +259,10 @@ public final class ModuleBusinessEvents {
                         labOrderId,
                         patientId,
                         consultationId,
+                        orderNumber,
+                        clinicDisplayName,
+                        timezone,
+                        publishedAt,
                         reportFilename,
                         deliveryStatus
                 )

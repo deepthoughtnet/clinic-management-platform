@@ -8,6 +8,7 @@ import com.deepthoughtnet.clinic.platform.modulith.events.model.LeadConvertedEve
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.time.OffsetDateTime;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -59,6 +60,10 @@ class ModuleBusinessEventsContractTest {
                 UUID.randomUUID(),
                 UUID.randomUUID(),
                 UUID.randomUUID(),
+                "LAB-1001",
+                "Clinic",
+                "Asia/Kolkata",
+                OffsetDateTime.parse("2026-07-23T10:15:00Z"),
                 "report.pdf",
                 "DELIVERED",
                 UUID.randomUUID()
@@ -67,6 +72,7 @@ class ModuleBusinessEventsContractTest {
         assertThat(event.eventVersion()).isEqualTo(1);
         assertThat(event.correlationId()).isEqualTo("corr-lab");
         assertThat(event.payload().reportFilename()).isEqualTo("report.pdf");
+        assertThat(event.payload().orderNumber()).isEqualTo("LAB-1001");
     }
 
     @Test

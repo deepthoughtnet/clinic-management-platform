@@ -43,6 +43,7 @@ public final class AdminNotificationSettingsDtos {
             boolean requirePatientConsent,
             boolean unsubscribeFooterEnabled,
             int maxMessagesPerPatientPerDay,
+            String notificationPolicyJson,
             OffsetDateTime createdAt,
             OffsetDateTime updatedAt,
             UUID createdBy,
@@ -78,7 +79,8 @@ public final class AdminNotificationSettingsDtos {
             boolean allowMarketingMessages,
             boolean requirePatientConsent,
             boolean unsubscribeFooterEnabled,
-            int maxMessagesPerPatientPerDay
+            int maxMessagesPerPatientPerDay,
+            String notificationPolicyJson
     ) {
-    }
+}
 }

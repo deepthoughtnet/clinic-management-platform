@@ -36,6 +36,10 @@ test("notifications page groups logical notifications and shows channel details 
   assert.ok(source.includes('return "EMAIL"'));
   assert.ok(source.includes('return "SMS"'));
   assert.ok(source.includes('return "WHATSAPP"'));
+  assert.ok(source.includes("EVENT_LABELS"));
+  assert.ok(source.includes('LAB_REPORT_PUBLISHED: "Lab Report Published"'));
+  assert.ok(source.includes('PAYMENT_RECEIVED: "Payment Received"'));
+  assert.ok(source.includes('VACCINATION_DUE: "Vaccination Due"'));
   assert.ok(source.includes('Display status: {delivery ? channelPresentation(delivery).statusLabel : "Not enabled"}'));
   assert.ok(source.includes('normalizeNotificationReason(entry.channel, delivery.failureReason)'));
   assert.ok(source.includes('key={entry.channel}'));
@@ -47,4 +51,5 @@ test("notifications page groups logical notifications and shows channel details 
   assert.ok(source.includes('return "WhatsApp"'));
   assert.ok(source.includes('title = `${entry.label}: ${entry.title}`'));
   assert.ok(source.includes('notifications disabled'));
+  assert.ok(source.includes('clinic\\.carepilot\\.messaging\\.(sms|whatsapp)\\.enabled\\s*=\\s*false'));
 });

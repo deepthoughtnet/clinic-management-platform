@@ -22,6 +22,7 @@ import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventCommand;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
 import com.deepthoughtnet.clinic.platform.branding.BrandingProperties;
+import com.deepthoughtnet.clinic.platform.modulith.events.ModuleBusinessEventPublisher;
 import com.deepthoughtnet.clinic.prescription.db.PrescriptionEntity;
 import com.deepthoughtnet.clinic.prescription.db.PrescriptionMedicineEntity;
 import com.deepthoughtnet.clinic.prescription.db.PrescriptionMedicineRepository;
@@ -72,6 +73,7 @@ class PrescriptionServiceTest {
     private TenantUserManagementService tenantUserManagementService;
     private ClinicProfileService clinicProfileService;
     private AuditEventPublisher auditEventPublisher;
+    private ModuleBusinessEventPublisher moduleBusinessEventPublisher;
     private PrescriptionService service;
 
     @BeforeEach
@@ -84,6 +86,7 @@ class PrescriptionServiceTest {
         tenantUserManagementService = mock(TenantUserManagementService.class);
         clinicProfileService = mock(ClinicProfileService.class);
         auditEventPublisher = mock(AuditEventPublisher.class);
+        moduleBusinessEventPublisher = mock(ModuleBusinessEventPublisher.class);
 
         service = new PrescriptionService(
                 prescriptionRepository,
@@ -94,6 +97,7 @@ class PrescriptionServiceTest {
                 tenantUserManagementService,
                 clinicProfileService,
                 auditEventPublisher,
+                moduleBusinessEventPublisher,
                 new ObjectMapper(),
                 new BrandingProperties()
         );
@@ -202,6 +206,7 @@ class PrescriptionServiceTest {
 
         PrescriptionRecord finalizedChild = service.finalizePrescription(TENANT_ID, child.id(), ACTOR_ID);
         assertThat(finalizedChild.status()).isEqualTo(PrescriptionStatus.FINALIZED);
+        verify(moduleBusinessEventPublisher, times(2)).publish(any());
 
         PrescriptionEntity supersededParent = prescriptions.get(parent.getId());
         assertThat(supersededParent.getStatus()).isEqualTo(PrescriptionStatus.SUPERSEDED);

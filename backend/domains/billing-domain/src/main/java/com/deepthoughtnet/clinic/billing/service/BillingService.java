@@ -50,6 +50,9 @@ import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventCommand;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
 import com.deepthoughtnet.clinic.platform.branding.BrandingProperties;
+import com.deepthoughtnet.clinic.platform.modulith.events.ModuleBusinessEventPublisher;
+import com.deepthoughtnet.clinic.billing.events.BillGeneratedEvent;
+import com.deepthoughtnet.clinic.billing.events.PaymentReceivedEvent;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.ByteArrayOutputStream;
@@ -102,6 +105,7 @@ public class BillingService {
     @SuppressWarnings("unused")
     private final TenantUserManagementService tenantUserManagementService;
     private final AuditEventPublisher auditEventPublisher;
+    private final ModuleBusinessEventPublisher moduleBusinessEventPublisher;
     private final ObjectMapper objectMapper;
     private final BrandingProperties brandingProperties;
 
@@ -120,6 +124,7 @@ public class BillingService {
             AppUserRepository appUserRepository,
             TenantUserManagementService tenantUserManagementService,
             AuditEventPublisher auditEventPublisher,
+            ModuleBusinessEventPublisher moduleBusinessEventPublisher,
             ObjectMapper objectMapper,
             BrandingProperties brandingProperties
     ) {
@@ -137,6 +142,7 @@ public class BillingService {
         this.appUserRepository = appUserRepository;
         this.tenantUserManagementService = tenantUserManagementService;
         this.auditEventPublisher = auditEventPublisher;
+        this.moduleBusinessEventPublisher = moduleBusinessEventPublisher;
         this.objectMapper = objectMapper;
         this.brandingProperties = brandingProperties;
     }
@@ -297,6 +303,20 @@ public class BillingService {
         BillEntity saved = billRepository.save(entity);
         refreshFinancials(saved);
         auditBill(tenantId, saved, "bill.issued", actorAppUserId, "Issued bill");
+        moduleBusinessEventPublisher.publish(BillGeneratedEvent.generated(
+                tenantId,
+                saved.getId(),
+                saved.getPatientId(),
+                saved.getBillNumber(),
+                saved.getTotalAmount(),
+                "INR",
+                null,
+                tenantData(tenantId, List.of(saved.getPatientId())).clinicDisplayName(),
+                "Asia/Kolkata",
+                saved.getCreatedAt(),
+                saved.getVersion(),
+                actorAppUserId
+        ));
         return toRecord(saved, tenantData(tenantId, List.of(saved.getPatientId())));
     }
 
@@ -372,6 +392,21 @@ public class BillingService {
         ));
         refreshFinancials(bill);
         auditPayment(tenantId, payment, receipt, actorAppUserId, "Collected bill payment");
+        moduleBusinessEventPublisher.publish(PaymentReceivedEvent.received(
+                tenantId,
+                payment.getId(),
+                bill.getId(),
+                bill.getPatientId(),
+                bill.getBillNumber(),
+                receipt.getReceiptNumber(),
+                payment.getAmount(),
+                "INR",
+                payment.getPaymentMode() == null ? null : payment.getPaymentMode().name(),
+                tenantData(tenantId, List.of(bill.getPatientId())).clinicDisplayName(),
+                "Asia/Kolkata",
+                payment.getPaymentDateTime(),
+                actorAppUserId
+        ));
         return toPaymentRecord(payment, receipt);
     }
 

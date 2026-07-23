@@ -101,6 +101,9 @@ public class TenantNotificationSettingsEntity {
     @Column(name = "max_messages_per_patient_per_day", nullable = false)
     private int maxMessagesPerPatientPerDay;
 
+    @Column(name = "notification_policy_json", nullable = false, columnDefinition = "jsonb")
+    private String notificationPolicyJson;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 
@@ -144,6 +147,7 @@ public class TenantNotificationSettingsEntity {
         row.requirePatientConsent = true;
         row.unsubscribeFooterEnabled = true;
         row.maxMessagesPerPatientPerDay = 5;
+        row.notificationPolicyJson = "{}";
         row.createdAt = OffsetDateTime.now();
         row.updatedAt = row.createdAt;
         row.createdBy = actorId;
@@ -176,6 +180,7 @@ public class TenantNotificationSettingsEntity {
             boolean requirePatientConsent,
             boolean unsubscribeFooterEnabled,
             int maxMessagesPerPatientPerDay,
+            String notificationPolicyJson,
             UUID actorId
     ) {
         this.emailEnabled = emailEnabled;
@@ -202,6 +207,7 @@ public class TenantNotificationSettingsEntity {
         this.requirePatientConsent = requirePatientConsent;
         this.unsubscribeFooterEnabled = unsubscribeFooterEnabled;
         this.maxMessagesPerPatientPerDay = maxMessagesPerPatientPerDay;
+        this.notificationPolicyJson = notificationPolicyJson;
         this.updatedAt = OffsetDateTime.now();
         this.updatedBy = actorId;
     }
@@ -232,6 +238,7 @@ public class TenantNotificationSettingsEntity {
     public boolean isRequirePatientConsent() { return requirePatientConsent; }
     public boolean isUnsubscribeFooterEnabled() { return unsubscribeFooterEnabled; }
     public int getMaxMessagesPerPatientPerDay() { return maxMessagesPerPatientPerDay; }
+    public String getNotificationPolicyJson() { return notificationPolicyJson; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
     public UUID getCreatedBy() { return createdBy; }

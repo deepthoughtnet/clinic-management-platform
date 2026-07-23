@@ -132,9 +132,7 @@ public class BillingController {
     public BillResponse issue(@PathVariable UUID id) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
-        BillResponse response = toResponse(billingService.issue(tenantId, id, actorAppUserId));
-        notificationActionService.sendBillGenerated(tenantId, id, actorAppUserId);
-        return response;
+        return toResponse(billingService.issue(tenantId, id, actorAppUserId));
     }
 
     @PatchMapping("/{id}/cancel")
@@ -160,7 +158,6 @@ public class BillingController {
                 request.notes(),
                 request.receivedBy()
         ), actorAppUserId));
-        notificationActionService.sendBillPaid(tenantId, billId, actorAppUserId);
         if (response.receiptId() != null) {
             notificationActionService.sendReceiptReady(tenantId, UUID.fromString(response.receiptId()), actorAppUserId);
         }

@@ -54,28 +54,60 @@ const EVENT_OPTIONS: Array<NotificationEventType | ""> = [
   "PRESCRIPTION_SENT",
   "BILL_GENERATED",
   "BILL_PAID",
+  "PAYMENT_RECEIVED",
   "RECEIPT_SENT",
   "REFUND_PROCESSED",
   "LAB_ORDER_CREATED",
   "LAB_SAMPLE_COLLECTED",
   "LAB_REPORT_READY",
+  "LAB_REPORT_PUBLISHED",
   "LAB_REPORT_REVIEWED",
   "LAB_CRITICAL_RESULT",
   "FOLLOW_UP_DUE",
   "FOLLOW_UP_REMINDER",
   "VACCINATION_REMINDER",
+  "VACCINATION_DUE",
   "APPOINTMENT_REMINDER",
   "PAYMENT_REMINDER",
   "MISSED_APPOINTMENT_REMINDER",
 ];
 
 const REMINDER_EVENT_TYPES = new Set<NotificationEventType>([
-  "FOLLOW_UP_REMINDER",
-  "VACCINATION_REMINDER",
   "APPOINTMENT_REMINDER",
+  "FOLLOW_UP_REMINDER",
+  "FOLLOW_UP_DUE",
+  "VACCINATION_REMINDER",
+  "VACCINATION_DUE",
   "PAYMENT_REMINDER",
   "MISSED_APPOINTMENT_REMINDER",
 ]);
+
+const EVENT_LABELS: Partial<Record<NotificationEventType, string>> = {
+  APPOINTMENT_BOOKED: "Appointment Booked",
+  APPOINTMENT_RESCHEDULED: "Appointment Rescheduled",
+  APPOINTMENT_CANCELLED: "Appointment Cancelled",
+  APPOINTMENT_NO_SHOW: "Appointment No-show",
+  PRESCRIPTION_READY: "Prescription Ready",
+  PRESCRIPTION_SENT: "Prescription Sent",
+  BILL_GENERATED: "Bill Generated",
+  BILL_PAID: "Bill Paid",
+  PAYMENT_RECEIVED: "Payment Received",
+  RECEIPT_SENT: "Receipt Sent",
+  REFUND_PROCESSED: "Refund Processed",
+  LAB_ORDER_CREATED: "Lab Order Created",
+  LAB_SAMPLE_COLLECTED: "Lab Sample Collected",
+  LAB_REPORT_READY: "Lab Report Ready",
+  LAB_REPORT_PUBLISHED: "Lab Report Published",
+  LAB_REPORT_REVIEWED: "Lab Report Reviewed",
+  LAB_CRITICAL_RESULT: "Lab Critical Result",
+  FOLLOW_UP_DUE: "Follow-up Due",
+  FOLLOW_UP_REMINDER: "Follow-up Reminder",
+  VACCINATION_REMINDER: "Vaccination Reminder",
+  VACCINATION_DUE: "Vaccination Due",
+  APPOINTMENT_REMINDER: "Appointment Reminder",
+  PAYMENT_REMINDER: "Payment Reminder",
+  MISSED_APPOINTMENT_REMINDER: "Missed Appointment Reminder",
+};
 
 const CHANNEL_ORDER: NotificationChannel[] = ["IN_APP", "EMAIL", "SMS", "WHATSAPP"];
 const DISABLED_REASON_PATTERNS = [
@@ -173,6 +205,13 @@ function normalizeNotificationReason(channel: NotificationChannel, reason: strin
   }
   if (normalized.includes("patient opted out")) {
     return "Patient opted out";
+  }
+  const keyMatch = compact.match(/clinic\.carepilot\.messaging\.(sms|whatsapp)\.enabled\s*=\s*false/i);
+  if (keyMatch) {
+    return `${channelLabel(channel)} notifications disabled`;
+  }
+  if (normalized.includes("provider disabled") && normalized.includes("enabled=false")) {
+    return `${channelLabel(channel)} notifications disabled`;
   }
   if (normalized.includes("provider is not configured") || normalized.includes("provider not configured") || normalized.includes("provider unavailable")) {
     return `${channelLabel(channel)} provider not configured`;
@@ -377,7 +416,7 @@ export default function NotificationsPage() {
   const pendingCount = rows.filter((row) => row.overallStatus === "PENDING").length;
   const issueCount = rows.filter((row) => row.overallStatus === "FAILED" || row.overallStatus === "PARTIAL" || row.overallStatus === "NOT_DELIVERED").length;
 
-  const eventLabel = (row: NotificationHistoryGroup) => row.eventType.replaceAll("_", " ");
+  const eventLabel = (row: NotificationHistoryGroup) => EVENT_LABELS[row.eventType] ?? row.eventType.replaceAll("_", " ");
   const categoryLabel = (row: NotificationHistoryGroup) => (REMINDER_EVENT_TYPES.has(row.eventType) ? "Reminder" : "Notification");
 
   const channelSummary = (row: NotificationHistoryGroup) => CHANNEL_ORDER.map((channel) => {

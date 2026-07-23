@@ -10,6 +10,14 @@ import com.deepthoughtnet.clinic.appointment.events.AppointmentBookedEvent;
 import com.deepthoughtnet.clinic.appointment.events.AppointmentCancelledEvent;
 import com.deepthoughtnet.clinic.appointment.events.AppointmentReminderDueEvent;
 import com.deepthoughtnet.clinic.appointment.events.AppointmentRescheduledEvent;
+import com.deepthoughtnet.clinic.billing.events.BillGeneratedEvent;
+import com.deepthoughtnet.clinic.billing.events.PaymentReceivedEvent;
+import com.deepthoughtnet.clinic.billing.service.PaymentReminderStateReader;
+import com.deepthoughtnet.clinic.consultation.events.FollowUpDueEvent;
+import com.deepthoughtnet.clinic.platform.modulith.events.model.LabReportPublishedEvent;
+import com.deepthoughtnet.clinic.platform.modulith.events.model.LabReportPublishedEventPayload;
+import com.deepthoughtnet.clinic.platform.modulith.events.model.VaccinationDueEvent;
+import com.deepthoughtnet.clinic.prescription.events.PrescriptionReadyEvent;
 import com.deepthoughtnet.clinic.notification.service.model.NotificationHistoryRecord;
 import com.deepthoughtnet.clinic.notification.service.model.NotificationQueueResult;
 import com.deepthoughtnet.clinic.patient.service.PatientService;
@@ -30,6 +38,7 @@ class AppointmentBookedNotificationServiceTest {
     private static final UUID TENANT_ID = UUID.randomUUID();
     private static final UUID APPOINTMENT_ID = UUID.randomUUID();
     private static final UUID PATIENT_ID = UUID.randomUUID();
+    private static final UUID CONSULTATION_ID = UUID.randomUUID();
     private static final UUID DOCTOR_ID = UUID.randomUUID();
     private static final UUID ACTOR_ID = UUID.randomUUID();
     private static final LocalDate APPOINTMENT_DATE = LocalDate.of(2026, 7, 24);
@@ -48,6 +57,7 @@ class AppointmentBookedNotificationServiceTest {
         ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
         AppointmentBookedNotificationService service = new AppointmentBookedNotificationService(
                 patientService,
+                mock(PaymentReminderStateReader.class),
                 notificationHistoryService,
                 objectMapper
         );
@@ -165,11 +175,142 @@ class AppointmentBookedNotificationServiceTest {
     }
 
     @Test
+    void queuePrescriptionReadyUsesSafeCopyWithoutMedicineDetails() {
+        var captured = captureLifecycleMessage(service -> service.queue(PrescriptionReadyEvent.ready(
+                TENANT_ID,
+                UUID.randomUUID(),
+                CONSULTATION_ID,
+                PATIENT_ID,
+                DOCTOR_ID,
+                "Dr Amit Verma",
+                "City Clinic",
+                "RX-1001",
+                LocalDate.of(2026, 7, 24),
+                APPOINTMENT_TIMEZONE,
+                OffsetDateTime.parse("2026-07-23T10:15:00Z"),
+                1,
+                ACTOR_ID
+        )));
+
+        assertThat(captured).isEqualTo("Your prescription from Dr. Amit Verma is ready. Visit date: 24 Jul 2026.");
+    }
+
+    @Test
+    void queueLabReportReadyUsesBusinessFriendlyCopy() {
+        var captured = captureLifecycleMessage(service -> service.queue(new LabReportPublishedEvent(
+                UUID.randomUUID(),
+                "LAB_REPORT_PUBLISHED",
+                1,
+                OffsetDateTime.parse("2026-07-23T10:15:00Z"),
+                TENANT_ID,
+                "LAB",
+                "LAB_ORDER",
+                UUID.randomUUID(),
+                "corr-lab",
+                "corr-lab",
+                ACTOR_ID,
+                new LabReportPublishedEventPayload(
+                        UUID.randomUUID(),
+                        PATIENT_ID,
+                        CONSULTATION_ID,
+                        "LAB-1001",
+                        "City Clinic",
+                        APPOINTMENT_TIMEZONE,
+                        OffsetDateTime.parse("2026-07-23T10:15:00Z"),
+                        "lab-report.pdf",
+                        "PUBLISHED"
+                )
+        )));
+
+        assertThat(captured).isEqualTo("Your lab report for order LAB-1001 is ready.");
+    }
+
+    @Test
+    void queueBillGeneratedUsesAmountAndDueDate() {
+        var captured = captureLifecycleMessage(service -> service.queue(BillGeneratedEvent.generated(
+                TENANT_ID,
+                UUID.randomUUID(),
+                PATIENT_ID,
+                "BILL-1001",
+                new java.math.BigDecimal("2500.00"),
+                "INR",
+                LocalDate.of(2026, 7, 24),
+                "City Clinic",
+                APPOINTMENT_TIMEZONE,
+                OffsetDateTime.parse("2026-07-23T10:15:00Z"),
+                1,
+                ACTOR_ID
+        )));
+
+        assertThat(captured).contains("₹2500.00");
+        assertThat(captured).contains("Payment is due by 24 Jul 2026.");
+    }
+
+    @Test
+    void queuePaymentReceivedUsesReceiptAwareCopy() {
+        var captured = captureLifecycleMessage(service -> service.queue(PaymentReceivedEvent.received(
+                TENANT_ID,
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                PATIENT_ID,
+                "BILL-1001",
+                "RCPT-2001",
+                new java.math.BigDecimal("2500.00"),
+                "INR",
+                "UPI",
+                "City Clinic",
+                APPOINTMENT_TIMEZONE,
+                OffsetDateTime.parse("2026-07-23T10:15:00Z"),
+                ACTOR_ID
+        )));
+
+        assertThat(captured).contains("We received your payment of ₹2500.00. Thank you.");
+        assertThat(captured).contains("Receipt RCPT-2001 has been generated.");
+    }
+
+    @Test
+    void queueFollowUpDueUsesReminderCopy() {
+        var captured = captureLifecycleMessage(service -> service.queue(FollowUpDueEvent.due(
+                TENANT_ID,
+                CONSULTATION_ID,
+                PATIENT_ID,
+                DOCTOR_ID,
+                "Dr Amit Verma",
+                "City Clinic",
+                LocalDate.of(2026, 7, 24),
+                APPOINTMENT_TIMEZONE,
+                "24h",
+                ACTOR_ID
+        )));
+
+        assertThat(captured).isEqualTo("Reminder: Your follow-up with Dr. Amit Verma is due on 24 Jul 2026.");
+    }
+
+    @Test
+    void queueVaccinationDueUsesDoseAwareCopy() {
+        var captured = captureLifecycleMessage(service -> service.queue(VaccinationDueEvent.due(
+                TENANT_ID,
+                UUID.randomUUID(),
+                PATIENT_ID,
+                "Hepatitis B",
+                "Dose 2",
+                LocalDate.of(2026, 7, 24),
+                APPOINTMENT_TIMEZONE,
+                "City Clinic",
+                "24h",
+                ACTOR_ID
+        )));
+
+        assertThat(captured).isEqualTo("Hepatitis B - Dose 2 is due on 24 Jul 2026.");
+    }
+
+    @Test
     void queueHandlesMissingExternalRecipientWithoutFailing() {
         PatientService patientService = mock(PatientService.class);
         NotificationHistoryService notificationHistoryService = mock(NotificationHistoryService.class);
         AppointmentBookedNotificationService service = new AppointmentBookedNotificationService(
                 patientService,
+                mock(PaymentReminderStateReader.class),
                 notificationHistoryService,
                 new ObjectMapper().findAndRegisterModules()
         );
@@ -285,6 +426,7 @@ class AppointmentBookedNotificationServiceTest {
         NotificationHistoryService notificationHistoryService = mock(NotificationHistoryService.class);
         AppointmentBookedNotificationService service = new AppointmentBookedNotificationService(
                 patientService,
+                mock(PaymentReminderStateReader.class),
                 notificationHistoryService,
                 new ObjectMapper().findAndRegisterModules()
         );

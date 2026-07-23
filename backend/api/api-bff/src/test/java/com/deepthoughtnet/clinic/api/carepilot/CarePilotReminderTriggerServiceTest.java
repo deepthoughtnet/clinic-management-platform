@@ -145,6 +145,7 @@ class CarePilotReminderTriggerServiceTest {
                         com.deepthoughtnet.clinic.carepilot.notificationsettings.model.NotificationChannelPreference.EMAIL,
                         com.deepthoughtnet.clinic.carepilot.notificationsettings.model.NotificationChannelPreference.IN_APP,
                         false, true, true, 5,
+                        "{}",
                         OffsetDateTime.now(), OffsetDateTime.now(), null, null
                 )
         );

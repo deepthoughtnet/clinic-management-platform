@@ -142,6 +142,10 @@ class ModuleBusinessEventInfrastructureTest {
                 LAB_ORDER_ID,
                 PATIENT_ID,
                 UUID.randomUUID(),
+                "LAB-1001",
+                "Clinic",
+                "Asia/Kolkata",
+                OffsetDateTime.parse("2026-07-23T10:15:00Z"),
                 "report.pdf",
                 "DELIVERED",
                 ACTOR_ID
@@ -286,6 +290,10 @@ class ModuleBusinessEventInfrastructureTest {
                 LAB_ORDER_ID,
                 PATIENT_ID,
                 UUID.randomUUID(),
+                "LAB-1001",
+                "Clinic",
+                "Asia/Kolkata",
+                OffsetDateTime.parse("2026-07-23T10:15:00Z"),
                 "report.pdf",
                 "DELIVERED",
                 ACTOR_ID

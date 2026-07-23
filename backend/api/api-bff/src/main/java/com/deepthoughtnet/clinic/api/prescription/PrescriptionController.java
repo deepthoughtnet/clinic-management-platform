@@ -120,7 +120,6 @@ public class PrescriptionController {
         medicationSafetyReviewService.assertFinalizationReady(tenantId, current.consultationId(), actorAppUserId);
         PrescriptionResponse response = toResponse(prescriptionService.finalizePrescription(tenantId, id, actorAppUserId));
         medicationSafetyReviewService.markFinalized(tenantId, current.consultationId(), actorAppUserId);
-        notificationActionService.sendPrescriptionReady(tenantId, id, actorAppUserId);
         return response;
     }
 
@@ -165,7 +164,6 @@ public class PrescriptionController {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         PrescriptionResponse response = toResponse(prescriptionService.markPrinted(tenantId, id, actorAppUserId));
-        notificationActionService.sendPrescriptionReady(tenantId, id, actorAppUserId);
         return response;
     }
 

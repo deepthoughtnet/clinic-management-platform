@@ -30,6 +30,7 @@ public record NotificationSettingsUpdateCommand(
         boolean allowMarketingMessages,
         boolean requirePatientConsent,
         boolean unsubscribeFooterEnabled,
-        int maxMessagesPerPatientPerDay
+        int maxMessagesPerPatientPerDay,
+        String notificationPolicyJson
 ) {
 }

@@ -87,6 +87,7 @@ class ClinicTimeZoneResolverTest {
                 true,
                 true,
                 5,
+                "{}",
                 OffsetDateTime.now(),
                 OffsetDateTime.now(),
                 null,

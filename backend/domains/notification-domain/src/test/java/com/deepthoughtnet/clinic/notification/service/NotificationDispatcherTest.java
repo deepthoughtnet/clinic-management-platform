@@ -12,6 +12,8 @@ import static org.mockito.Mockito.when;
 import com.deepthoughtnet.clinic.notification.db.NotificationOutboxEntity;
 import com.deepthoughtnet.clinic.notification.db.NotificationOutboxRepository;
 import com.deepthoughtnet.clinic.appointment.service.AppointmentReminderReadService;
+import com.deepthoughtnet.clinic.billing.service.PaymentReminderStateReader;
+import com.deepthoughtnet.clinic.billing.service.model.PaymentReminderState;
 import com.deepthoughtnet.clinic.notification.model.NotificationEventPayload;
 import com.deepthoughtnet.clinic.notification.service.NotificationDispatcher.NotificationDispatchSettings;
 import com.deepthoughtnet.clinic.notification.service.NotificationHistoryService;
@@ -37,6 +39,7 @@ class NotificationDispatcherTest {
     private final NotificationRecipientResolver recipientResolver = mock(NotificationRecipientResolver.class);
     private final NotificationHistoryService notificationHistoryService = mock(NotificationHistoryService.class);
     private final AppointmentReminderReadService appointmentReminderReadService = mock(AppointmentReminderReadService.class);
+    private final PaymentReminderStateReader paymentReminderStateReader = mock(PaymentReminderStateReader.class);
     private final PatientService patientService = mock(PatientService.class);
     private final NotificationProvider notificationProvider = mock(NotificationProvider.class);
     private final NotificationDispatcher dispatcher = new NotificationDispatcher(
@@ -44,6 +47,7 @@ class NotificationDispatcherTest {
             recipientResolver,
             notificationHistoryService,
             appointmentReminderReadService,
+            paymentReminderStateReader,
             patientService,
             notificationProvider,
             List.<MessageProvider>of(),
@@ -127,6 +131,27 @@ class NotificationDispatcherTest {
         verify(notificationHistoryService).markSkipped(event.getTenantId(), UUID.fromString("11111111-1111-4111-8111-111111111111"), "Patient record unavailable");
     }
 
+    @Test
+    void dispatchOneSkipsStalePaymentReminderAfterBillIsPaid() throws Exception {
+        NotificationOutboxEntity event = paymentReminderEvent();
+        when(repository.findById(event.getId())).thenReturn(Optional.of(event));
+        when(paymentReminderStateReader.findCurrentState(event.getTenantId(), UUID.fromString("33333333-3333-4333-8333-333333333333")))
+                .thenReturn(new PaymentReminderState(
+                        true,
+                        false,
+                        java.math.BigDecimal.ZERO,
+                        "PAID",
+                        OffsetDateTime.now(),
+                        9L
+                ));
+
+        dispatcher.dispatchOne(event.getId(), settings());
+
+        assertThat(event.getStatus()).isEqualTo("IGNORED");
+        verify(notificationHistoryService).markSkipped(event.getTenantId(), UUID.fromString("11111111-1111-4111-8111-111111111112"), "Bill already paid");
+        verifyNoInteractions(notificationProvider);
+    }
+
     private NotificationOutboxEntity pendingEvent() throws Exception {
         NotificationEventPayload payload = new NotificationEventPayload(
                 "CLINIC_READY_FOR_APPROVAL",
@@ -167,6 +192,32 @@ class NotificationDispatcherTest {
                 "NOTIFICATION.APPOINTMENT_BOOKED",
                 "NOTIFICATION_HISTORY",
                 UUID.fromString("11111111-1111-4111-8111-111111111111"),
+                "notification:test:" + UUID.randomUUID(),
+                objectMapper.writeValueAsString(payload),
+                OffsetDateTime.now().minusMinutes(1)
+        );
+    }
+
+    private NotificationOutboxEntity paymentReminderEvent() throws Exception {
+        NotificationEventPayload payload = new NotificationEventPayload(
+                UUID.fromString("11111111-1111-4111-8111-111111111112"),
+                "PAYMENT_REMINDER",
+                List.of(),
+                "22222222-2222-4222-8222-222222222222",
+                "in_app",
+                "Payment reminder",
+                "Reminder: ₹75.00 is outstanding on bill BILL-9001.",
+                "notification.sent",
+                "{\"outstandingAmount\":\"75.00\",\"billNumber\":\"BILL-9001\"}",
+                UUID.fromString("22222222-2222-4222-8222-222222222222"),
+                "BILL",
+                UUID.fromString("33333333-3333-4333-8333-333333333333")
+        );
+        return NotificationOutboxEntity.pending(
+                UUID.randomUUID(),
+                "NOTIFICATION.PAYMENT_REMINDER",
+                "NOTIFICATION_HISTORY",
+                UUID.fromString("11111111-1111-4111-8111-111111111112"),
                 "notification:test:" + UUID.randomUUID(),
                 objectMapper.writeValueAsString(payload),
                 OffsetDateTime.now().minusMinutes(1)

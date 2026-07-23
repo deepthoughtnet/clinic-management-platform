@@ -3,6 +3,8 @@ package com.deepthoughtnet.clinic.notification.service;
 import com.deepthoughtnet.clinic.appointment.service.AppointmentReminderReadService;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentReminderSnapshot;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentStatus;
+import com.deepthoughtnet.clinic.billing.service.PaymentReminderStateReader;
+import com.deepthoughtnet.clinic.billing.service.model.PaymentReminderState;
 import com.deepthoughtnet.clinic.messaging.spi.MessageChannel;
 import com.deepthoughtnet.clinic.messaging.spi.MessageDeliveryStatus;
 import com.deepthoughtnet.clinic.messaging.spi.MessageProvider;
@@ -39,6 +41,7 @@ public class NotificationDispatcher {
     private final NotificationRecipientResolver recipientResolver;
     private final NotificationHistoryService notificationHistoryService;
     private final AppointmentReminderReadService appointmentReminderReadService;
+    private final PaymentReminderStateReader paymentReminderStateReader;
     private final PatientService patientService;
     private final NotificationProvider notificationProvider;
     private final List<MessageProvider> messageProviders;
@@ -49,6 +52,7 @@ public class NotificationDispatcher {
             NotificationRecipientResolver recipientResolver,
             NotificationHistoryService notificationHistoryService,
             AppointmentReminderReadService appointmentReminderReadService,
+            PaymentReminderStateReader paymentReminderStateReader,
             PatientService patientService,
             NotificationProvider notificationProvider,
             List<MessageProvider> messageProviders,
@@ -58,6 +62,7 @@ public class NotificationDispatcher {
         this.recipientResolver = recipientResolver;
         this.notificationHistoryService = notificationHistoryService;
         this.appointmentReminderReadService = appointmentReminderReadService;
+        this.paymentReminderStateReader = paymentReminderStateReader;
         this.patientService = patientService;
         this.notificationProvider = notificationProvider;
         this.messageProviders = messageProviders == null ? List.of() : List.copyOf(messageProviders);
@@ -96,6 +101,17 @@ public class NotificationDispatcher {
                 event.markIgnored(null);
                 log.info(
                         "Notification outbox reminder skipped as stale. eventId={}, tenantId={}, eventType={}",
+                        event.getId(),
+                        event.getTenantId(),
+                        event.getEventType()
+                );
+                return;
+            }
+            if (isStalePaymentReminder(event, payload)) {
+                markSkipped(event, payload, "Bill already paid");
+                event.markIgnored(null);
+                log.info(
+                        "Notification outbox payment reminder skipped as stale. eventId={}, tenantId={}, eventType={}",
                         event.getId(),
                         event.getTenantId(),
                         event.getEventType()
@@ -469,6 +485,85 @@ public class NotificationDispatcher {
                     safeMessage(ex)
             );
             return false;
+        }
+    }
+
+    private boolean isStalePaymentReminder(NotificationOutboxEntity event, NotificationEventPayload payload) {
+        if (event == null || payload == null || payload.notificationType() == null) {
+            return false;
+        }
+        if (!"PAYMENT_REMINDER".equalsIgnoreCase(payload.notificationType())) {
+            return false;
+        }
+        if (payload.sourceId() == null) {
+            return true;
+        }
+        try {
+            PaymentReminderState bill = paymentReminderStateReader.findCurrentState(event.getTenantId(), payload.sourceId());
+            if (bill == null || !bill.found()) {
+                return true;
+            }
+            if (!bill.reminderEligible()) {
+                return true;
+            }
+            if (bill.outstandingAmount() == null || bill.outstandingAmount().compareTo(java.math.BigDecimal.ZERO) <= 0) {
+                return true;
+            }
+            java.math.BigDecimal expectedAmount = extractAmount(payload);
+            if (expectedAmount != null && bill.outstandingAmount().compareTo(expectedAmount) != 0) {
+                return true;
+            }
+            if (payload.detailsJson() != null && !payload.detailsJson().isBlank()) {
+                try {
+                    JsonNode details = objectMapper.readTree(payload.detailsJson());
+                    JsonNode billUpdatedAt = details.path("billUpdatedAt");
+                    if (!billUpdatedAt.isMissingNode()
+                            && !billUpdatedAt.isNull()
+                            && bill.updatedAt() != null
+                            && !billUpdatedAt.asText().equals(bill.updatedAt().toString())) {
+                        return true;
+                    }
+                } catch (Exception ex) {
+                    log.warn(
+                            "Unable to validate payment reminder freshness against updatedAt. eventId={} tenantId={} error={}",
+                            event.getId(),
+                            event.getTenantId(),
+                            safeMessage(ex)
+                    );
+                }
+            }
+            return false;
+        } catch (Exception ex) {
+            log.warn(
+                    "Unable to validate payment reminder freshness. eventId={} tenantId={} error={}",
+                    event.getId(),
+                    event.getTenantId(),
+                    safeMessage(ex)
+            );
+            return false;
+        }
+    }
+
+    private java.math.BigDecimal extractAmount(NotificationEventPayload payload) {
+        if (payload == null || payload.detailsJson() == null || payload.detailsJson().isBlank()) {
+            return null;
+        }
+        try {
+            JsonNode details = objectMapper.readTree(payload.detailsJson());
+            JsonNode amount = details.path("outstandingAmount");
+            if (amount.isMissingNode() || amount.isNull()) {
+                return null;
+            }
+            if (amount.isNumber()) {
+                return amount.decimalValue();
+            }
+            String text = amount.asText(null);
+            if (text == null || text.isBlank()) {
+                return null;
+            }
+            return new java.math.BigDecimal(text.trim());
+        } catch (Exception ex) {
+            return null;
         }
     }
 

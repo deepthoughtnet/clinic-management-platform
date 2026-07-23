@@ -85,6 +85,7 @@ public class TenantNotificationSettingsService {
                 command.requirePatientConsent(),
                 command.unsubscribeFooterEnabled(),
                 command.maxMessagesPerPatientPerDay(),
+                command.notificationPolicyJson() != null ? command.notificationPolicyJson() : row.getNotificationPolicyJson(),
                 actorId
         );
         return toRecord(repository.save(row));
@@ -276,6 +277,7 @@ public class TenantNotificationSettingsService {
                 row.isRequirePatientConsent(),
                 row.isUnsubscribeFooterEnabled(),
                 row.getMaxMessagesPerPatientPerDay(),
+                row.getNotificationPolicyJson(),
                 row.getCreatedAt(),
                 row.getUpdatedAt(),
                 row.getCreatedBy(),

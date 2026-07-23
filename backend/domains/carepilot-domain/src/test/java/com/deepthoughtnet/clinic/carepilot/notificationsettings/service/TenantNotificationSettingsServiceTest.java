@@ -61,7 +61,7 @@ class TenantNotificationSettingsServiceTest {
                 true, false, false, true,
                 true, true, true, true, true, true, true, true, true, true,
                 true, null, null, "UTC", NotificationChannelPreference.EMAIL, null,
-                false, true, true, 5
+                false, true, true, 5, "{}"
         );
         assertThatThrownBy(() -> service.update(tenantId, invalidQuiet, actorId))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -76,7 +76,7 @@ class TenantNotificationSettingsServiceTest {
                 true, true, true, true, true, true, true, true, true, true,
                 true, LocalTime.of(22, 0), LocalTime.of(6, 0), "UTC",
                 NotificationChannelPreference.EMAIL, NotificationChannelPreference.SMS,
-                false, true, true, 3, actorId
+                false, true, true, 3, "{}", actorId
         );
 
         var warnings = service.computeWarnings(service.toRecordForTest(record), false, false, false);
@@ -93,7 +93,7 @@ class TenantNotificationSettingsServiceTest {
                 true, true, true, true, true, true, true, true, true, true,
                 false, null, null, "UTC",
                 NotificationChannelPreference.SMS, NotificationChannelPreference.IN_APP,
-                false, true, true, 4, actorId
+                false, true, true, 4, "{}", actorId
         );
         var settings = service.toRecordForTest(row);
 
@@ -109,7 +109,7 @@ class TenantNotificationSettingsServiceTest {
                 true, true, true, true, true, true, true, true, true, true,
                 true, LocalTime.of(22, 0), LocalTime.of(6, 0), "UTC",
                 NotificationChannelPreference.EMAIL, NotificationChannelPreference.IN_APP,
-                false, true, true, 4, actorId
+                false, true, true, 4, "{}", actorId
         );
         var settings = service.toRecordForTest(row);
 
@@ -153,7 +153,8 @@ class TenantNotificationSettingsServiceTest {
                 false,
                 true,
                 true,
-                5
+                5,
+                "{}"
         );
     }
 }

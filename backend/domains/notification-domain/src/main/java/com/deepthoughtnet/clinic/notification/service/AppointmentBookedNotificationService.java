@@ -8,11 +8,29 @@ import com.deepthoughtnet.clinic.appointment.events.AppointmentReminderDueEvent;
 import com.deepthoughtnet.clinic.appointment.events.AppointmentReminderDueEventPayload;
 import com.deepthoughtnet.clinic.appointment.events.AppointmentRescheduledEvent;
 import com.deepthoughtnet.clinic.appointment.events.AppointmentRescheduledEventPayload;
+import com.deepthoughtnet.clinic.billing.events.BillGeneratedEvent;
+import com.deepthoughtnet.clinic.billing.events.BillGeneratedEventPayload;
+import com.deepthoughtnet.clinic.billing.events.PaymentReceivedEvent;
+import com.deepthoughtnet.clinic.billing.events.PaymentReceivedEventPayload;
+import com.deepthoughtnet.clinic.billing.events.PaymentReminderEvent;
+import com.deepthoughtnet.clinic.billing.events.PaymentReminderEventPayload;
+import com.deepthoughtnet.clinic.billing.service.PaymentReminderStateReader;
+import com.deepthoughtnet.clinic.billing.service.model.PaymentReminderState;
+import com.deepthoughtnet.clinic.consultation.events.FollowUpDueEvent;
+import com.deepthoughtnet.clinic.consultation.events.FollowUpDueEventPayload;
 import com.deepthoughtnet.clinic.notification.service.model.NotificationQueueResult;
 import com.deepthoughtnet.clinic.patient.service.PatientService;
 import com.deepthoughtnet.clinic.patient.service.model.PatientRecord;
+import com.deepthoughtnet.clinic.prescription.events.PrescriptionReadyEvent;
+import com.deepthoughtnet.clinic.prescription.events.PrescriptionReadyEventPayload;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.deepthoughtnet.clinic.platform.modulith.events.model.LabReportPublishedEvent;
+import com.deepthoughtnet.clinic.platform.modulith.events.model.LabReportPublishedEventPayload;
+import com.deepthoughtnet.clinic.platform.modulith.events.model.VaccinationDueEvent;
+import com.deepthoughtnet.clinic.platform.modulith.events.model.VaccinationDueEventPayload;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -40,15 +58,18 @@ public class AppointmentBookedNotificationService {
     private static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("dd MMM yyyy, h:mm a", Locale.ENGLISH);
 
     private final PatientService patientService;
+    private final PaymentReminderStateReader paymentReminderStateReader;
     private final NotificationHistoryService notificationHistoryService;
     private final ObjectMapper objectMapper;
 
     public AppointmentBookedNotificationService(
             PatientService patientService,
+            PaymentReminderStateReader paymentReminderStateReader,
             NotificationHistoryService notificationHistoryService,
             ObjectMapper objectMapper
     ) {
         this.patientService = patientService;
+        this.paymentReminderStateReader = paymentReminderStateReader;
         this.notificationHistoryService = notificationHistoryService;
         this.objectMapper = objectMapper;
     }
@@ -166,6 +187,268 @@ public class AppointmentBookedNotificationService {
                 "Appointment reminder",
                 "Reminder: You have an appointment with " + safeDoctorName(payload.doctorDisplayName()) + " on " + when + ".",
                 buildReminderDetailsJson(event, payload, when)
+        );
+    }
+
+    public NotificationQueueResult queue(PrescriptionReadyEvent event) {
+        if (event == null || event.payload() == null) {
+            throw new IllegalArgumentException("Prescription ready event is required");
+        }
+        PrescriptionReadyEventPayload payload = event.payload();
+        ZoneId zone = resolveZone(payload.timezone());
+        String followUp = payload.followUpDate() == null ? null : formatAppointmentDateTime(payload.followUpDate(), null, zone);
+        String subject = "Prescription ready";
+        StringBuilder message = new StringBuilder("Your prescription from ").append(safeDoctorName(payload.doctorDisplayName())).append(" is ready.");
+        if (hasText(followUp)) {
+            message.append(" Visit date: ").append(followUp).append(".");
+        }
+        return queueLifecycle(
+                event.tenantId(),
+                event.eventId(),
+                event.actorId(),
+                payload.patientId(),
+                payload.prescriptionId(),
+                "PRESCRIPTION_READY",
+                "PRESCRIPTION",
+                payload.timezone(),
+                payload.doctorDisplayName(),
+                null,
+                null,
+                subject,
+                message.toString(),
+                buildPrescriptionReadyDetailsJson(event, payload, followUp)
+        );
+    }
+
+    public NotificationQueueResult queue(LabReportPublishedEvent event) {
+        if (event == null || event.payload() == null) {
+            throw new IllegalArgumentException("Lab report published event is required");
+        }
+        LabReportPublishedEventPayload payload = event.payload();
+        String subject = "Lab report ready";
+        String message = hasText(payload.orderNumber())
+                ? "Your lab report for order " + payload.orderNumber() + " is ready."
+                : "Your lab report is ready.";
+        return queueLifecycle(
+                event.tenantId(),
+                event.eventId(),
+                event.actorId(),
+                payload.patientId(),
+                payload.labOrderId(),
+                "LAB_REPORT_READY",
+                "LAB_ORDER",
+                payload.timezone(),
+                null,
+                null,
+                null,
+                subject,
+                message,
+                buildLabReportReadyDetailsJson(event, payload)
+        );
+    }
+
+    public NotificationQueueResult queue(BillGeneratedEvent event) {
+        if (event == null || event.payload() == null) {
+            throw new IllegalArgumentException("Bill generated event is required");
+        }
+        BillGeneratedEventPayload payload = event.payload();
+        String amountText = formatMoney(payload.amount());
+        StringBuilder message = new StringBuilder("Your bill of ").append(amountText).append(" is ready.");
+        if (payload.dueAt() != null) {
+            message.append(" Payment is due by ").append(formatAppointmentDateTime(payload.dueAt(), null, resolveZone(payload.timezone()))).append(".");
+        }
+        return queueLifecycle(
+                event.tenantId(),
+                event.eventId(),
+                event.actorId(),
+                payload.patientId(),
+                payload.billId(),
+                "BILL_GENERATED",
+                "BILL",
+                payload.timezone(),
+                null,
+                null,
+                null,
+                "Bill generated",
+                message.toString(),
+                buildBillGeneratedDetailsJson(event, payload, amountText)
+        );
+    }
+
+    public NotificationQueueResult queue(PaymentReceivedEvent event) {
+        if (event == null || event.payload() == null) {
+            throw new IllegalArgumentException("Payment received event is required");
+        }
+        PaymentReceivedEventPayload payload = event.payload();
+        String amountText = formatMoney(payload.amount());
+        StringBuilder message = new StringBuilder("We received your payment of ").append(amountText).append(". Thank you.");
+        if (hasText(payload.receiptNumber())) {
+            message.append(" Receipt ").append(payload.receiptNumber()).append(" has been generated.");
+        }
+        return queueLifecycle(
+                event.tenantId(),
+                event.eventId(),
+                event.actorId(),
+                payload.patientId(),
+                payload.paymentId(),
+                "PAYMENT_RECEIVED",
+                "BILL",
+                payload.timezone(),
+                null,
+                null,
+                null,
+                "Payment received",
+                message.toString(),
+                buildPaymentReceivedDetailsJson(event, payload, amountText)
+        );
+    }
+
+    public NotificationQueueResult queue(PaymentReminderEvent event) {
+        if (event == null || event.payload() == null) {
+            throw new IllegalArgumentException("Payment reminder event is required");
+        }
+        PaymentReminderEventPayload payload = event.payload();
+        String reminderMessage = "Reminder: " + formatMoney(payload.outstandingAmount()) + " is outstanding on bill " + payload.billNumber() + ".";
+        PaymentReminderState currentState = paymentReminderStateReader.findCurrentState(event.tenantId(), payload.billId());
+        boolean stale = !currentState.found()
+                || !currentState.reminderEligible()
+                || currentState.outstandingAmount() == null
+                || currentState.outstandingAmount().compareTo(BigDecimal.ZERO) <= 0
+                || (payload.outstandingAmount() != null && currentState.outstandingAmount().compareTo(payload.outstandingAmount()) != 0)
+                || (payload.billStatus() != null && currentState.billStatus() != null && !payload.billStatus().equalsIgnoreCase(currentState.billStatus()))
+                || (payload.billUpdatedAt() != null
+                && currentState.updatedAt() != null
+                && !payload.billUpdatedAt().toInstant().equals(currentState.updatedAt().toInstant()));
+        if (stale) {
+            PatientRecord patient = patientService.findById(event.tenantId(), payload.patientId()).orElse(null);
+            String staleReason = stalePaymentReminderReason(currentState, payload);
+            if (patient == null || !patient.active()) {
+                return notificationHistoryService.recordSkipped(
+                        event.tenantId(),
+                        payload.patientId(),
+                        "PAYMENT_REMINDER",
+                        "in_app",
+                        payload.patientId() == null ? null : payload.patientId().toString(),
+                        "Payment reminder",
+                        reminderMessage,
+                        "BILL",
+                        payload.billId(),
+                        buildPaymentReminderDetailsJson(event, payload, reminderMessage),
+                        event.actorId(),
+                        buildPaymentReminderDedupeKey(event, payload, "in_app", payload.patientId() == null ? null : payload.patientId().toString()),
+                        "Patient record unavailable"
+                );
+            }
+            return notificationHistoryService.recordSkipped(
+                    event.tenantId(),
+                    payload.patientId(),
+                    "PAYMENT_REMINDER",
+                    "in_app",
+                    payload.patientId().toString(),
+                    "Payment reminder",
+                    reminderMessage,
+                    "BILL",
+                    payload.billId(),
+                    buildPaymentReminderDetailsJson(event, payload, reminderMessage),
+                    event.actorId(),
+                    buildPaymentReminderDedupeKey(event, payload, "in_app", payload.patientId().toString()),
+                    staleReason
+            );
+        }
+
+        PatientRecord patient = patientService.findById(event.tenantId(), payload.patientId()).orElse(null);
+        if (patient == null || !patient.active()) {
+            return notificationHistoryService.recordSkipped(
+                    event.tenantId(),
+                    payload.patientId(),
+                    "PAYMENT_REMINDER",
+                    "in_app",
+                    payload.patientId() == null ? null : payload.patientId().toString(),
+                    "Payment reminder",
+                    reminderMessage,
+                    "BILL",
+                    payload.billId(),
+                    buildPaymentReminderDetailsJson(event, payload, reminderMessage),
+                    event.actorId(),
+                    buildPaymentReminderDedupeKey(event, payload, "in_app", payload.patientId() == null ? null : payload.patientId().toString()),
+                    "Patient record unavailable"
+            );
+        }
+        String subject = "Payment reminder";
+        String message = "Reminder: " + formatMoney(currentState.outstandingAmount()) + " is outstanding on bill " + payload.billNumber() + ".";
+        NotificationQueueResult result = queueLifecycle(
+                event.tenantId(),
+                event.eventId(),
+                event.actorId(),
+                patient.id(),
+                payload.billId(),
+                "PAYMENT_REMINDER",
+                "BILL",
+                payload.timezone(),
+                null,
+                null,
+                null,
+                subject,
+                message,
+                buildPaymentReminderDetailsJson(event, payload, message)
+        );
+        return result;
+    }
+
+    public NotificationQueueResult queue(FollowUpDueEvent event) {
+        if (event == null || event.payload() == null) {
+            throw new IllegalArgumentException("Follow-up due event is required");
+        }
+        FollowUpDueEventPayload payload = event.payload();
+        ZoneId zone = resolveZone(payload.timezone());
+        String followUpDate = payload.followUpDate() == null ? null : formatAppointmentDateTime(payload.followUpDate(), null, zone);
+        String subject = "Follow-up reminder";
+        String message = hasText(payload.doctorDisplayName())
+                ? "Reminder: Your follow-up with " + safeDoctorName(payload.doctorDisplayName()) + " is due on " + followUpDate + "."
+                : "Reminder: Your follow-up is due on " + followUpDate + ".";
+        return queueLifecycle(
+                event.tenantId(),
+                event.eventId(),
+                event.actorId(),
+                payload.patientId(),
+                payload.consultationId(),
+                "FOLLOW_UP_DUE",
+                "CONSULTATION",
+                payload.timezone(),
+                payload.doctorDisplayName(),
+                payload.followUpDate(),
+                null,
+                subject,
+                message,
+                buildFollowUpDueDetailsJson(event, payload, followUpDate)
+        );
+    }
+
+    public NotificationQueueResult queue(VaccinationDueEvent event) {
+        if (event == null || event.payload() == null) {
+            throw new IllegalArgumentException("Vaccination due event is required");
+        }
+        VaccinationDueEventPayload payload = event.payload();
+        String dueDate = payload.dueDate() == null ? null : formatAppointmentDateTime(payload.dueDate(), null, resolveZone(payload.timezone()));
+        String subject = "Vaccination due";
+        String message = hasText(payload.doseDisplayName())
+                ? payload.vaccineDisplayName() + " - " + payload.doseDisplayName() + " is due on " + dueDate + "."
+                : payload.vaccineDisplayName() + " vaccination is due on " + dueDate + ".";
+        return queueLifecycle(
+                event.tenantId(),
+                event.eventId(),
+                event.actorId(),
+                payload.patientId(),
+                payload.vaccinationScheduleEntryId(),
+                "VACCINATION_DUE",
+                "PATIENT_VACCINATION",
+                payload.timezone(),
+                null,
+                payload.dueDate(),
+                null,
+                subject,
+                message,
+                buildVaccinationDueDetailsJson(event, payload, dueDate)
         );
     }
 
@@ -647,6 +930,210 @@ public class AppointmentBookedNotificationService {
         }
     }
 
+    private String buildPrescriptionReadyDetailsJson(
+            PrescriptionReadyEvent event,
+            PrescriptionReadyEventPayload payload,
+            String followUpDate
+    ) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("eventId", event.eventId());
+        details.put("correlationId", event.correlationId());
+        details.put("causationId", event.causationId());
+        details.put("prescriptionId", payload.prescriptionId());
+        details.put("consultationId", payload.consultationId());
+        details.put("patientId", payload.patientId());
+        details.put("recipientType", "PATIENT");
+        details.put("recipientId", payload.patientId());
+        details.put("doctorUserId", payload.doctorUserId());
+        details.put("doctorDisplayName", safeDoctorName(payload.doctorDisplayName()));
+        details.put("prescriptionNumber", payload.prescriptionNumber());
+        details.put("timezone", payload.timezone());
+        details.put("finalizedAt", payload.finalizedAt());
+        details.put("versionNumber", payload.versionNumber());
+        if (hasText(followUpDate)) {
+            details.put("followUpDate", followUpDate);
+        }
+        if (hasText(payload.clinicDisplayName())) {
+            details.put("clinicDisplayName", payload.clinicDisplayName());
+        }
+        try {
+            return objectMapper.writeValueAsString(details);
+        } catch (JsonProcessingException ex) {
+            return "{\"eventId\":\"" + event.eventId() + "\"}";
+        }
+    }
+
+    private String buildLabReportReadyDetailsJson(
+            LabReportPublishedEvent event,
+            LabReportPublishedEventPayload payload
+    ) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("eventId", event.eventId());
+        details.put("correlationId", event.correlationId());
+        details.put("causationId", event.causationId());
+        details.put("labOrderId", payload.labOrderId());
+        details.put("patientId", payload.patientId());
+        details.put("recipientType", "PATIENT");
+        details.put("recipientId", payload.patientId());
+        details.put("consultationId", payload.consultationId());
+        details.put("orderNumber", payload.orderNumber());
+        details.put("timezone", payload.timezone());
+        details.put("publishedAt", payload.publishedAt());
+        if (hasText(payload.clinicDisplayName())) {
+            details.put("clinicDisplayName", payload.clinicDisplayName());
+        }
+        try {
+            return objectMapper.writeValueAsString(details);
+        } catch (JsonProcessingException ex) {
+            return "{\"eventId\":\"" + event.eventId() + "\"}";
+        }
+    }
+
+    private String buildBillGeneratedDetailsJson(BillGeneratedEvent event, BillGeneratedEventPayload payload, String amountText) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("eventId", event.eventId());
+        details.put("correlationId", event.correlationId());
+        details.put("causationId", event.causationId());
+        details.put("billId", payload.billId());
+        details.put("patientId", payload.patientId());
+        details.put("recipientType", "PATIENT");
+        details.put("recipientId", payload.patientId());
+        details.put("billNumber", payload.billNumber());
+        details.put("amount", amountText);
+        details.put("currency", payload.currency());
+        details.put("issuedAt", payload.issuedAt());
+        if (payload.dueAt() != null) {
+            details.put("dueAt", payload.dueAt());
+        }
+        if (hasText(payload.clinicDisplayName())) {
+            details.put("clinicDisplayName", payload.clinicDisplayName());
+        }
+        if (hasText(payload.timezone())) {
+            details.put("timezone", payload.timezone());
+        }
+        try {
+            return objectMapper.writeValueAsString(details);
+        } catch (JsonProcessingException ex) {
+            return "{\"eventId\":\"" + event.eventId() + "\"}";
+        }
+    }
+
+    private String buildPaymentReceivedDetailsJson(PaymentReceivedEvent event, PaymentReceivedEventPayload payload, String amountText) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("eventId", event.eventId());
+        details.put("correlationId", event.correlationId());
+        details.put("causationId", event.causationId());
+        details.put("paymentId", payload.paymentId());
+        details.put("billId", payload.billId());
+        details.put("patientId", payload.patientId());
+        details.put("recipientType", "PATIENT");
+        details.put("recipientId", payload.patientId());
+        details.put("billNumber", payload.billNumber());
+        details.put("receiptNumber", payload.receiptNumber());
+        details.put("amount", amountText);
+        details.put("currency", payload.currency());
+        details.put("paymentMethodDisplayName", payload.paymentMethodDisplayName());
+        details.put("receivedAt", payload.receivedAt());
+        if (hasText(payload.clinicDisplayName())) {
+            details.put("clinicDisplayName", payload.clinicDisplayName());
+        }
+        if (hasText(payload.timezone())) {
+            details.put("timezone", payload.timezone());
+        }
+        try {
+            return objectMapper.writeValueAsString(details);
+        } catch (JsonProcessingException ex) {
+            return "{\"eventId\":\"" + event.eventId() + "\"}";
+        }
+    }
+
+    private String buildPaymentReminderDetailsJson(PaymentReminderEvent event, PaymentReminderEventPayload payload, String reminderMessage) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("eventId", event.eventId());
+        details.put("correlationId", event.correlationId());
+        details.put("causationId", event.causationId());
+        details.put("billId", payload.billId());
+        details.put("patientId", payload.patientId());
+        details.put("recipientType", "PATIENT");
+        details.put("recipientId", payload.patientId());
+        details.put("billNumber", payload.billNumber());
+        details.put("outstandingAmount", payload.outstandingAmount());
+        details.put("currency", payload.currency());
+        details.put("billStatus", payload.billStatus());
+        details.put("billUpdatedAt", payload.billUpdatedAt());
+        details.put("reminderWindow", payload.reminderWindow());
+        details.put("timezone", payload.timezone());
+        details.put("subject", "Payment reminder");
+        details.put("message", reminderMessage);
+        if (hasText(payload.clinicDisplayName())) {
+            details.put("clinicDisplayName", payload.clinicDisplayName());
+        }
+        try {
+            return objectMapper.writeValueAsString(details);
+        } catch (JsonProcessingException ex) {
+            return "{\"eventId\":\"" + event.eventId() + "\"}";
+        }
+    }
+
+    private String buildFollowUpDueDetailsJson(FollowUpDueEvent event, FollowUpDueEventPayload payload, String followUpDate) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("eventId", event.eventId());
+        details.put("correlationId", event.correlationId());
+        details.put("causationId", event.causationId());
+        details.put("consultationId", payload.consultationId());
+        details.put("patientId", payload.patientId());
+        details.put("recipientType", "PATIENT");
+        details.put("recipientId", payload.patientId());
+        details.put("doctorUserId", payload.doctorUserId());
+        details.put("doctorDisplayName", safeDoctorName(payload.doctorDisplayName()));
+        details.put("timezone", payload.timezone());
+        details.put("reminderWindow", payload.reminderWindow());
+        if (hasText(followUpDate)) {
+            details.put("followUpDate", followUpDate);
+        }
+        if (hasText(payload.clinicDisplayName())) {
+            details.put("clinicDisplayName", payload.clinicDisplayName());
+        }
+        try {
+            return objectMapper.writeValueAsString(details);
+        } catch (JsonProcessingException ex) {
+            return "{\"eventId\":\"" + event.eventId() + "\"}";
+        }
+    }
+
+    private String buildVaccinationDueDetailsJson(VaccinationDueEvent event, VaccinationDueEventPayload payload, String dueDate) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("eventId", event.eventId());
+        details.put("correlationId", event.correlationId());
+        details.put("causationId", event.causationId());
+        details.put("vaccinationScheduleEntryId", payload.vaccinationScheduleEntryId());
+        details.put("patientId", payload.patientId());
+        details.put("recipientType", "PATIENT");
+        details.put("recipientId", payload.patientId());
+        details.put("vaccineDisplayName", payload.vaccineDisplayName());
+        details.put("doseDisplayName", payload.doseDisplayName());
+        details.put("timezone", payload.timezone());
+        details.put("reminderWindow", payload.reminderWindow());
+        if (hasText(dueDate)) {
+            details.put("dueDate", dueDate);
+        }
+        if (hasText(payload.clinicDisplayName())) {
+            details.put("clinicDisplayName", payload.clinicDisplayName());
+        }
+        try {
+            return objectMapper.writeValueAsString(details);
+        } catch (JsonProcessingException ex) {
+            return "{\"eventId\":\"" + event.eventId() + "\"}";
+        }
+    }
+
+    private String formatMoney(BigDecimal amount) {
+        if (amount == null) {
+            return "₹0.00";
+        }
+        return "₹" + amount.setScale(2, RoundingMode.HALF_UP).toPlainString();
+    }
+
     private ZoneId resolveZone(String zoneId) {
         if (!hasText(zoneId)) {
             return DEFAULT_ZONE;
@@ -697,6 +1184,33 @@ public class AppointmentBookedNotificationService {
             return "your doctor";
         }
         return "Dr. " + normalized;
+    }
+
+    private String stalePaymentReminderReason(PaymentReminderState currentState, PaymentReminderEventPayload payload) {
+        if (currentState == null || !currentState.found()) {
+            return "Reminder no longer applicable";
+        }
+        if (!currentState.reminderEligible()
+                || currentState.outstandingAmount() == null
+                || currentState.outstandingAmount().compareTo(BigDecimal.ZERO) <= 0) {
+            return "Bill already paid";
+        }
+        if (payload.outstandingAmount() != null
+                && currentState.outstandingAmount() != null
+                && currentState.outstandingAmount().compareTo(payload.outstandingAmount()) != 0) {
+            return "Reminder no longer applicable";
+        }
+        if (payload.billStatus() != null
+                && currentState.billStatus() != null
+                && !payload.billStatus().equalsIgnoreCase(currentState.billStatus())) {
+            return "Reminder no longer applicable";
+        }
+        if (payload.billUpdatedAt() != null
+                && currentState.updatedAt() != null
+                && !payload.billUpdatedAt().toInstant().equals(currentState.updatedAt().toInstant())) {
+            return "Reminder no longer applicable";
+        }
+        return "Reminder no longer applicable";
     }
 
     private boolean hasText(String value) {
@@ -760,6 +1274,24 @@ public class AppointmentBookedNotificationService {
                 + historyRecipient + ":"
                 + sourceType + ":"
                 + sourceId;
+    }
+
+    private String buildPaymentReminderDedupeKey(
+            PaymentReminderEvent event,
+            PaymentReminderEventPayload payload,
+            String historyChannel,
+            String historyRecipient
+    ) {
+        return buildDedupeKey(
+                "PAYMENT_REMINDER",
+                event.tenantId(),
+                event.eventId(),
+                payload.patientId(),
+                historyChannel,
+                historyRecipient,
+                "BILL",
+                payload.billId()
+        );
     }
 
     private String mask(String value) {

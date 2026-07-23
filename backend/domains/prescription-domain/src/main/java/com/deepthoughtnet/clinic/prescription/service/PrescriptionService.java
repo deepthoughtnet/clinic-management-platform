@@ -11,12 +11,14 @@ import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventCommand;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
 import com.deepthoughtnet.clinic.platform.branding.BrandingProperties;
+import com.deepthoughtnet.clinic.platform.modulith.events.ModuleBusinessEventPublisher;
 import com.deepthoughtnet.clinic.prescription.db.PrescriptionEntity;
 import com.deepthoughtnet.clinic.prescription.db.PrescriptionMedicineEntity;
 import com.deepthoughtnet.clinic.prescription.db.PrescriptionMedicineRepository;
 import com.deepthoughtnet.clinic.prescription.db.PrescriptionRepository;
 import com.deepthoughtnet.clinic.prescription.db.PrescriptionTestEntity;
 import com.deepthoughtnet.clinic.prescription.db.PrescriptionTestRepository;
+import com.deepthoughtnet.clinic.prescription.events.PrescriptionReadyEvent;
 import com.deepthoughtnet.clinic.prescription.service.model.MedicineType;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionMedicineCommand;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionMedicineRecord;
@@ -68,6 +70,7 @@ public class PrescriptionService {
     private final TenantUserManagementService tenantUserManagementService;
     private final ClinicProfileService clinicProfileService;
     private final AuditEventPublisher auditEventPublisher;
+    private final ModuleBusinessEventPublisher moduleBusinessEventPublisher;
     private final ObjectMapper objectMapper;
     private final BrandingProperties brandingProperties;
 
@@ -80,6 +83,7 @@ public class PrescriptionService {
             TenantUserManagementService tenantUserManagementService,
             ClinicProfileService clinicProfileService,
             AuditEventPublisher auditEventPublisher,
+            ModuleBusinessEventPublisher moduleBusinessEventPublisher,
             ObjectMapper objectMapper,
             BrandingProperties brandingProperties
     ) {
@@ -91,6 +95,7 @@ public class PrescriptionService {
         this.tenantUserManagementService = tenantUserManagementService;
         this.clinicProfileService = clinicProfileService;
         this.auditEventPublisher = auditEventPublisher;
+        this.moduleBusinessEventPublisher = moduleBusinessEventPublisher;
         this.objectMapper = objectMapper;
         this.brandingProperties = brandingProperties;
     }
@@ -213,6 +218,21 @@ public class PrescriptionService {
         PrescriptionEntity saved = prescriptionRepository.save(entity);
         supersedeParentIfNeeded(tenantId, saved, actorAppUserId);
         audit(tenantId, saved, "prescription.finalized", actorAppUserId, "Finalized prescription");
+        moduleBusinessEventPublisher.publish(PrescriptionReadyEvent.ready(
+                tenantId,
+                saved.getId(),
+                saved.getConsultationId(),
+                saved.getPatientId(),
+                saved.getDoctorUserId(),
+                doctorDisplayName(tenantId, saved.getDoctorUserId()),
+                tenantData(tenantId).clinicDisplayName(),
+                saved.getPrescriptionNumber(),
+                saved.getFollowUpDate(),
+                "Asia/Kolkata",
+                saved.getFinalizedAt(),
+                saved.getVersionNumber() == null ? 1 : saved.getVersionNumber(),
+                actorAppUserId
+        ));
         return toRecord(saved, tenantData(tenantId));
     }
 
@@ -444,6 +464,17 @@ public class PrescriptionService {
         if (!"DOCTOR".equalsIgnoreCase(doctor.membershipRole())) {
             throw new IllegalArgumentException("Selected user is not a doctor");
         }
+    }
+
+    private String doctorDisplayName(UUID tenantId, UUID doctorUserId) {
+        if (doctorUserId == null) {
+            return null;
+        }
+        return tenantUserManagementService.list(tenantId).stream()
+                .filter(record -> record.appUserId() != null && record.appUserId().equals(doctorUserId))
+                .map(TenantUserRecord::displayName)
+                .findFirst()
+                .orElse(null);
     }
 
     private PrescriptionRecord createCorrectionVersion(UUID tenantId, PrescriptionEntity parent, PrescriptionUpsertCommand command, UUID actorAppUserId, String flowType, String correctionReason) {

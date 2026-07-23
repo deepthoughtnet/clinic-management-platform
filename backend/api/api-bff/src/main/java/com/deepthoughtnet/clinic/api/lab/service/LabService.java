@@ -49,7 +49,6 @@ import com.deepthoughtnet.clinic.api.lab.service.model.LabTestRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabTestParameterRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabTestUpsertCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabTestParameterUpsertCommand;
-import com.deepthoughtnet.clinic.api.lab.events.LabReportPublishedEvent;
 import com.deepthoughtnet.clinic.api.clinicaldocument.db.ClinicalDocumentType;
 import com.deepthoughtnet.clinic.api.clinicaldocument.service.ClinicalDocumentUploadCommand;
 import com.deepthoughtnet.clinic.api.clinicaldocument.service.ClinicalDocumentRecord;
@@ -75,6 +74,7 @@ import com.deepthoughtnet.clinic.platform.audit.AuditEventCommand;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
 import com.deepthoughtnet.clinic.platform.branding.BrandingProperties;
 import com.deepthoughtnet.clinic.platform.modulith.events.ModuleBusinessEventPublisher;
+import com.deepthoughtnet.clinic.platform.modulith.events.model.LabReportPublishedEvent;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
@@ -85,6 +85,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -870,23 +871,20 @@ public class LabService {
                 normalizeNullable(command == null ? null : command.publishNotes())
         ));
 
-        labNotificationService.notifyReportPublished(
-                tenantId,
-                saved.getPatientId(),
-                saved.getId(),
-                saved.getOrderNumber(),
-                saved.getPatientName(),
-                saved.getDoctorName(),
-                pdf.content(),
-                pdf.filename(),
-                actorAppUserId
-        );
         notifyRequestingDoctor(tenantId, saved, actorAppUserId);
+        var clinic = clinicProfileService.findByTenantId(tenantId).orElse(null);
+        String clinicDisplayName = clinic == null ? null : firstText(clinic.displayName(), clinic.clinicName(), "Clinic");
+        String timezone = ZoneId.of("Asia/Kolkata").getId();
+        OffsetDateTime publishedAt = OffsetDateTime.now(ZoneOffset.UTC);
         moduleBusinessEventPublisher.publish(LabReportPublishedEvent.published(
                 tenantId,
                 saved.getId(),
                 saved.getPatientId(),
                 saved.getConsultationId(),
+                saved.getOrderNumber(),
+                clinicDisplayName,
+                timezone,
+                publishedAt,
                 pdf.filename(),
                 saved.getReportDeliveryStatus(),
                 actorAppUserId
@@ -925,17 +923,6 @@ public class LabService {
             order.markReportGenerated(actorAppUserId, pdf.filename());
             LabOrderEntity saved = labOrderRepository.save(order);
             auditOrder(tenantId, saved, "lab_order.report_generated", actorAppUserId, "Generated lab report PDF");
-            labNotificationService.notifyReportReady(
-                    tenantId,
-                    saved.getPatientId(),
-                    saved.getId(),
-                    saved.getOrderNumber(),
-                    saved.getPatientName(),
-                    saved.getDoctorName(),
-                    pdf.content(),
-                    pdf.filename(),
-                    actorAppUserId
-            );
         }
         return pdf;
     }

@@ -35,6 +35,7 @@ public record NotificationSettingsRecord(
         boolean requirePatientConsent,
         boolean unsubscribeFooterEnabled,
         int maxMessagesPerPatientPerDay,
+        String notificationPolicyJson,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt,
         UUID createdBy,

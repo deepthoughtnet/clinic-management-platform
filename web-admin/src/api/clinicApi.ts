@@ -31,6 +31,9 @@ export type NotificationEventType =
   | "FOLLOW_UP_DUE"
   | "FOLLOW_UP_REMINDER"
   | "VACCINATION_REMINDER"
+  | "LAB_REPORT_PUBLISHED"
+  | "PAYMENT_RECEIVED"
+  | "VACCINATION_DUE"
   | "APPOINTMENT_REMINDER"
   | "PAYMENT_REMINDER"
   | "MISSED_APPOINTMENT_REMINDER";
@@ -6790,6 +6793,7 @@ export type AdminNotificationSettings = {
   requirePatientConsent: boolean;
   unsubscribeFooterEnabled: boolean;
   maxMessagesPerPatientPerDay: number;
+  notificationPolicyJson: string;
   createdAt: string;
   updatedAt: string;
   createdBy: string | null;
@@ -6831,6 +6835,7 @@ export type AdminNotificationSettingsUpdateInput = {
   requirePatientConsent: boolean;
   unsubscribeFooterEnabled: boolean;
   maxMessagesPerPatientPerDay: number;
+  notificationPolicyJson: string;
 };
 
 export type AdminIntegrationStatus = "READY" | "DISABLED" | "NOT_CONFIGURED" | "ERROR" | "FUTURE";

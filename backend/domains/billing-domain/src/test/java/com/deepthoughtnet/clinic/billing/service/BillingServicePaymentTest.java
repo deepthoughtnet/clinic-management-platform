@@ -44,6 +44,7 @@ import com.deepthoughtnet.clinic.inventory.service.InventoryService;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventCommand;
+import com.deepthoughtnet.clinic.platform.modulith.events.ModuleBusinessEventPublisher;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -68,6 +69,7 @@ class BillingServicePaymentTest {
     private ReceiptRepository receiptRepository;
     private PatientRepository patientRepository;
     private AuditEventPublisher auditEventPublisher;
+    private ModuleBusinessEventPublisher moduleBusinessEventPublisher;
     private DoctorProfileService doctorProfileService;
     private AppointmentService appointmentService;
     private AppUserRepository appUserRepository;
@@ -86,6 +88,7 @@ class BillingServicePaymentTest {
         receiptRepository = mock(ReceiptRepository.class);
         patientRepository = mock(PatientRepository.class);
         auditEventPublisher = mock(AuditEventPublisher.class);
+        moduleBusinessEventPublisher = mock(ModuleBusinessEventPublisher.class);
         doctorProfileService = mock(DoctorProfileService.class);
         appointmentService = mock(AppointmentService.class);
         appUserRepository = mock(AppUserRepository.class);
@@ -104,6 +107,7 @@ class BillingServicePaymentTest {
                 appUserRepository,
                 mock(TenantUserManagementService.class),
                 auditEventPublisher,
+                moduleBusinessEventPublisher,
                 new ObjectMapper(),
                 new BrandingProperties()
         );
@@ -260,6 +264,7 @@ class BillingServicePaymentTest {
         assertThat(bill.getStatus()).isEqualTo(BillStatus.PARTIALLY_PAID);
         assertThat(bill.getPaidAmount()).isEqualByComparingTo("40.00");
         assertThat(bill.getDueAmount()).isEqualByComparingTo("60.00");
+        org.mockito.Mockito.verify(moduleBusinessEventPublisher).publish(any());
         org.mockito.Mockito.verify(auditEventPublisher, org.mockito.Mockito.atLeastOnce()).record(argThat(command -> "payment.collected".equals(command.action())));
     }
 
@@ -278,6 +283,7 @@ class BillingServicePaymentTest {
         assertThat(bill.getStatus()).isEqualTo(BillStatus.PAID);
         assertThat(bill.getPaidAmount()).isEqualByComparingTo("100.00");
         assertThat(bill.getDueAmount()).isEqualByComparingTo("0.00");
+        org.mockito.Mockito.verify(moduleBusinessEventPublisher).publish(any());
     }
 
     @Test

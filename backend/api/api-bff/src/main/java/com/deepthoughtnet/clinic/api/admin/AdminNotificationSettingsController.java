@@ -85,7 +85,8 @@ public class AdminNotificationSettingsController {
                 request.allowMarketingMessages(),
                 request.requirePatientConsent(),
                 request.unsubscribeFooterEnabled(),
-                request.maxMessagesPerPatientPerDay()
+                request.maxMessagesPerPatientPerDay(),
+                request.notificationPolicyJson()
         ), actorId);
         if (log.isDebugEnabled()) {
             log.debug("admin.notification-settings update tenantId={} requestedTimezone={} persistedTimezone={}",
@@ -139,6 +140,7 @@ public class AdminNotificationSettingsController {
                 record.requirePatientConsent(),
                 record.unsubscribeFooterEnabled(),
                 record.maxMessagesPerPatientPerDay(),
+                record.notificationPolicyJson(),
                 record.createdAt(),
                 record.updatedAt(),
                 record.createdBy(),
