@@ -19,6 +19,12 @@ test("notification configuration center groups settings by business domain and p
   assert.ok(page.includes("Quiet Hours"));
   assert.ok(page.includes("Compliance / Consent"));
   assert.ok(page.includes("Rate Limits"));
+  assert.ok(page.includes("Configuration Ready"));
+  assert.ok(page.includes("Not configured"));
+  assert.ok(page.includes("Patient-level preferences override tenant defaults."));
+  assert.ok(page.includes("Critical alerts bypass quiet hours."));
+  assert.ok(page.includes("Template changes affect future notifications only."));
+  assert.ok(page.includes("Rate limits define policy."));
   assert.ok(page.includes("Apply Quiet Hours To"));
   assert.ok(page.includes("Open Template"));
   assert.ok(page.includes("notificationPolicyJson"));

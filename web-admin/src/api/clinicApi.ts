@@ -917,6 +917,189 @@ export type NotificationHistoryGroup = {
   deliveries: NotificationHistory[];
 };
 
+export type NotificationOperationsPeriod = "TODAY" | "LAST_7_DAYS" | "LAST_30_DAYS" | "CUSTOM";
+
+export type NotificationOperationsQuery = {
+  tenantId?: string | null;
+  period?: NotificationOperationsPeriod | null;
+  from?: string | null;
+  to?: string | null;
+  status?: string | null;
+  eventType?: NotificationEventType | null;
+  channel?: NotificationChannel | null;
+  channelStatus?: string | null;
+  patientName?: string | null;
+  patientReference?: string | null;
+  businessReference?: string | null;
+  provider?: string | null;
+  hasFailure?: boolean | null;
+  hasRetry?: boolean | null;
+  sourceModule?: string | null;
+  search?: string | null;
+  page?: number | null;
+  size?: number | null;
+};
+
+export type NotificationOperationsKpiCard = {
+  label: string;
+  value: string;
+  helper: string;
+};
+
+export type NotificationOperationsSchedulerStatus = {
+  enabled: boolean;
+  fixedDelay: string;
+  appointmentReminderEnabled: boolean;
+  appointmentReminderHoursBefore: number;
+  appointmentReminderGraceMinutes: number;
+  outboxPendingCount: number;
+  outboxFailedCount: number;
+};
+
+export type NotificationOperationsSummaryResponse = {
+  tenantId: string;
+  tenantName: string;
+  period: string;
+  from: string;
+  to: string;
+  logicalNotificationsCreated: number;
+  channelDeliveriesAttempted: number;
+  sentCount: number;
+  pendingCount: number;
+  failedCount: number;
+  skippedCount: number;
+  partialCount: number;
+  successRate: number;
+  averageDeliveryLatencyMs: number;
+  retryCount: number;
+  staleDeliveriesSuppressed: number;
+  scheduler: NotificationOperationsSchedulerStatus;
+  kpis: NotificationOperationsKpiCard[];
+};
+
+export type NotificationOperationsChannelRow = {
+  id: string;
+  channel: NotificationChannel;
+  status: string;
+  displayStatus: string;
+  recipient: string;
+  provider: string;
+  failureReason: string | null;
+  failureCategory: string;
+  retryable: boolean;
+  queuedAt: string | null;
+  sentAt: string | null;
+  persistedAttemptCount: number;
+  deliveryAttemptCount: number;
+  providerReference: string | null;
+};
+
+export type NotificationOperationsDeliveryRow = {
+  logicalNotificationId: string;
+  tenantId: string;
+  tenantName: string;
+  patientId: string | null;
+  patientName: string;
+  patientReference: string | null;
+  eventType: NotificationEventType;
+  eventLabel: string;
+  category: string;
+  sourceModule: string;
+  businessReference: string | null;
+  overallStatus: "DELIVERED" | "PARTIAL" | "PENDING" | "FAILED" | "NOT_DELIVERED";
+  readState: "READ" | "UNREAD";
+  messagePreview: string;
+  queuedAt: string | null;
+  lastActivityAt: string | null;
+  retryCount: number;
+  deliveryCount: number;
+  deliveries: NotificationOperationsChannelRow[];
+};
+
+export type NotificationOperationsPageResponse = {
+  items: NotificationOperationsDeliveryRow[];
+  page: number;
+  size: number;
+  totalElements: number;
+  totalPages: number;
+};
+
+export type NotificationOperationsProviderRow = {
+  key: string;
+  name: string;
+  providerType: string;
+  configurationStatus: string;
+  readinessStatus: string;
+  enabled: boolean;
+  configured: boolean;
+  pendingCount: number;
+  failureCount: number;
+  successCount: number;
+  averageLatencyMs: number;
+  lastSuccessfulAt: string | null;
+  lastFailedAt: string | null;
+  lastReadinessCheckAt: string | null;
+  message: string;
+};
+
+export type NotificationOperationsSeriesPoint = {
+  label: string;
+  value: number;
+};
+
+export type NotificationOperationsAnalyticsResponse = {
+  notificationsByDay: NotificationOperationsSeriesPoint[];
+  successFailureTrend: NotificationOperationsSeriesPoint[];
+  channelDistribution: NotificationOperationsSeriesPoint[];
+  statusDistribution: NotificationOperationsSeriesPoint[];
+  topCategories: NotificationOperationsSeriesPoint[];
+  topFailureReasons: NotificationOperationsSeriesPoint[];
+  providerPerformance: NotificationOperationsSeriesPoint[];
+  retryOutcomes: NotificationOperationsSeriesPoint[];
+};
+
+export type NotificationOperationsAuditRow = {
+  auditEventId: string;
+  occurredAt: string;
+  actor: string;
+  tenantName: string;
+  action: string;
+  notificationId: string;
+  notificationType: string;
+  businessReference: string | null;
+  previousState: string | null;
+  newState: string | null;
+  reason: string | null;
+  result: string | null;
+  technicalDetails: string | null;
+  metadata: Record<string, string | null>;
+};
+
+export type NotificationOperationsAuditResponse = {
+  items: NotificationOperationsAuditRow[];
+  page: number;
+  size: number;
+  totalElements: number;
+  totalPages: number;
+};
+
+export type NotificationOperationsRetryRequest = {
+  ids: string[];
+};
+
+export type NotificationOperationsRetryResult = {
+  id: string;
+  status: string;
+  message: string;
+};
+
+export type NotificationOperationsRetryResponse = {
+  results: NotificationOperationsRetryResult[];
+  requestedCount: number;
+  retriedCount: number;
+  skippedCount: number;
+};
+
 export type VoiceProviderTrace = {
   sttProvider: string | null;
   llmProvider: string | null;
@@ -4588,6 +4771,204 @@ export async function markNotificationRead(token: string, tenantId: string, id: 
 
 export async function markNotificationUnread(token: string, tenantId: string, id: string) {
   return httpPost<NotificationHistory>(`/api/notifications/${id}/unread`, undefined, { token, tenantId });
+}
+
+export async function getNotificationOperationsSummary(
+  token: string,
+  params: NotificationOperationsQuery,
+) {
+  const query = new URLSearchParams();
+  if (params.tenantId) query.set("tenantId", params.tenantId);
+  if (params.period) query.set("period", params.period);
+  if (params.from) query.set("from", params.from);
+  if (params.to) query.set("to", params.to);
+  if (params.status) query.set("status", params.status);
+  if (params.eventType) query.set("eventType", params.eventType);
+  if (params.channel) query.set("channel", params.channel);
+  if (params.channelStatus) query.set("channelStatus", params.channelStatus);
+  if (params.patientName) query.set("patientName", params.patientName);
+  if (params.patientReference) query.set("patientReference", params.patientReference);
+  if (params.businessReference) query.set("businessReference", params.businessReference);
+  if (params.provider) query.set("provider", params.provider);
+  if (params.hasFailure !== null && params.hasFailure !== undefined) query.set("hasFailure", String(params.hasFailure));
+  if (params.hasRetry !== null && params.hasRetry !== undefined) query.set("hasRetry", String(params.hasRetry));
+  if (params.sourceModule) query.set("sourceModule", params.sourceModule);
+  if (params.search) query.set("search", params.search);
+  if (params.page !== null && params.page !== undefined) query.set("page", String(params.page));
+  if (params.size !== null && params.size !== undefined) query.set("size", String(params.size));
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return httpGet<NotificationOperationsSummaryResponse>(`/api/notification-operations/summary${suffix}`, { token, tenantId: params.tenantId ?? undefined });
+}
+
+export async function getNotificationOperationsDeliveries(
+  token: string,
+  params: NotificationOperationsQuery,
+) {
+  const query = new URLSearchParams();
+  if (params.tenantId) query.set("tenantId", params.tenantId);
+  if (params.period) query.set("period", params.period);
+  if (params.from) query.set("from", params.from);
+  if (params.to) query.set("to", params.to);
+  if (params.status) query.set("status", params.status);
+  if (params.eventType) query.set("eventType", params.eventType);
+  if (params.channel) query.set("channel", params.channel);
+  if (params.channelStatus) query.set("channelStatus", params.channelStatus);
+  if (params.patientName) query.set("patientName", params.patientName);
+  if (params.patientReference) query.set("patientReference", params.patientReference);
+  if (params.businessReference) query.set("businessReference", params.businessReference);
+  if (params.provider) query.set("provider", params.provider);
+  if (params.hasFailure !== null && params.hasFailure !== undefined) query.set("hasFailure", String(params.hasFailure));
+  if (params.hasRetry !== null && params.hasRetry !== undefined) query.set("hasRetry", String(params.hasRetry));
+  if (params.sourceModule) query.set("sourceModule", params.sourceModule);
+  if (params.search) query.set("search", params.search);
+  if (params.page !== null && params.page !== undefined) query.set("page", String(params.page));
+  if (params.size !== null && params.size !== undefined) query.set("size", String(params.size));
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return httpGet<NotificationOperationsPageResponse>(`/api/notification-operations/deliveries${suffix}`, { token, tenantId: params.tenantId ?? undefined });
+}
+
+export async function getNotificationOperationsDelivery(
+  token: string,
+  params: NotificationOperationsQuery,
+  logicalNotificationId: string,
+) {
+  const query = new URLSearchParams();
+  if (params.tenantId) query.set("tenantId", params.tenantId);
+  if (params.period) query.set("period", params.period);
+  if (params.from) query.set("from", params.from);
+  if (params.to) query.set("to", params.to);
+  if (params.status) query.set("status", params.status);
+  if (params.eventType) query.set("eventType", params.eventType);
+  if (params.channel) query.set("channel", params.channel);
+  if (params.channelStatus) query.set("channelStatus", params.channelStatus);
+  if (params.patientName) query.set("patientName", params.patientName);
+  if (params.patientReference) query.set("patientReference", params.patientReference);
+  if (params.businessReference) query.set("businessReference", params.businessReference);
+  if (params.provider) query.set("provider", params.provider);
+  if (params.hasFailure !== null && params.hasFailure !== undefined) query.set("hasFailure", String(params.hasFailure));
+  if (params.hasRetry !== null && params.hasRetry !== undefined) query.set("hasRetry", String(params.hasRetry));
+  if (params.sourceModule) query.set("sourceModule", params.sourceModule);
+  if (params.search) query.set("search", params.search);
+  if (params.page !== null && params.page !== undefined) query.set("page", String(params.page));
+  if (params.size !== null && params.size !== undefined) query.set("size", String(params.size));
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return httpGet<NotificationOperationsDeliveryRow>(`/api/notification-operations/deliveries/${logicalNotificationId}${suffix}`, { token, tenantId: params.tenantId ?? undefined });
+}
+
+export async function getNotificationOperationsFailures(
+  token: string,
+  params: NotificationOperationsQuery,
+) {
+  const query = new URLSearchParams();
+  if (params.tenantId) query.set("tenantId", params.tenantId);
+  if (params.period) query.set("period", params.period);
+  if (params.from) query.set("from", params.from);
+  if (params.to) query.set("to", params.to);
+  if (params.status) query.set("status", params.status);
+  if (params.eventType) query.set("eventType", params.eventType);
+  if (params.channel) query.set("channel", params.channel);
+  if (params.channelStatus) query.set("channelStatus", params.channelStatus);
+  if (params.patientName) query.set("patientName", params.patientName);
+  if (params.patientReference) query.set("patientReference", params.patientReference);
+  if (params.businessReference) query.set("businessReference", params.businessReference);
+  if (params.provider) query.set("provider", params.provider);
+  if (params.hasFailure !== null && params.hasFailure !== undefined) query.set("hasFailure", String(params.hasFailure));
+  if (params.hasRetry !== null && params.hasRetry !== undefined) query.set("hasRetry", String(params.hasRetry));
+  if (params.sourceModule) query.set("sourceModule", params.sourceModule);
+  if (params.search) query.set("search", params.search);
+  if (params.page !== null && params.page !== undefined) query.set("page", String(params.page));
+  if (params.size !== null && params.size !== undefined) query.set("size", String(params.size));
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return httpGet<NotificationOperationsPageResponse>(`/api/notification-operations/failures${suffix}`, { token, tenantId: params.tenantId ?? undefined });
+}
+
+export async function retryNotificationOperation(token: string, tenantId: string, id: string) {
+  return httpPost<NotificationOperationsRetryResponse>(`/api/notification-operations/deliveries/${id}/retry?tenantId=${encodeURIComponent(tenantId)}`, undefined, { token, tenantId });
+}
+
+export async function bulkRetryNotificationOperations(token: string, tenantId: string, ids: string[]) {
+  return httpPost<NotificationOperationsRetryResponse>(`/api/notification-operations/retries?tenantId=${encodeURIComponent(tenantId)}`, { ids }, { token, tenantId });
+}
+
+export async function getNotificationOperationsProviders(
+  token: string,
+  params: NotificationOperationsQuery,
+) {
+  const query = new URLSearchParams();
+  if (params.tenantId) query.set("tenantId", params.tenantId);
+  if (params.period) query.set("period", params.period);
+  if (params.from) query.set("from", params.from);
+  if (params.to) query.set("to", params.to);
+  if (params.status) query.set("status", params.status);
+  if (params.eventType) query.set("eventType", params.eventType);
+  if (params.channel) query.set("channel", params.channel);
+  if (params.channelStatus) query.set("channelStatus", params.channelStatus);
+  if (params.patientName) query.set("patientName", params.patientName);
+  if (params.patientReference) query.set("patientReference", params.patientReference);
+  if (params.businessReference) query.set("businessReference", params.businessReference);
+  if (params.provider) query.set("provider", params.provider);
+  if (params.hasFailure !== null && params.hasFailure !== undefined) query.set("hasFailure", String(params.hasFailure));
+  if (params.hasRetry !== null && params.hasRetry !== undefined) query.set("hasRetry", String(params.hasRetry));
+  if (params.sourceModule) query.set("sourceModule", params.sourceModule);
+  if (params.search) query.set("search", params.search);
+  if (params.page !== null && params.page !== undefined) query.set("page", String(params.page));
+  if (params.size !== null && params.size !== undefined) query.set("size", String(params.size));
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return httpGet<NotificationOperationsProviderRow[]>(`/api/notification-operations/providers${suffix}`, { token, tenantId: params.tenantId ?? undefined });
+}
+
+export async function getNotificationOperationsAnalytics(
+  token: string,
+  params: NotificationOperationsQuery,
+) {
+  const query = new URLSearchParams();
+  if (params.tenantId) query.set("tenantId", params.tenantId);
+  if (params.period) query.set("period", params.period);
+  if (params.from) query.set("from", params.from);
+  if (params.to) query.set("to", params.to);
+  if (params.status) query.set("status", params.status);
+  if (params.eventType) query.set("eventType", params.eventType);
+  if (params.channel) query.set("channel", params.channel);
+  if (params.channelStatus) query.set("channelStatus", params.channelStatus);
+  if (params.patientName) query.set("patientName", params.patientName);
+  if (params.patientReference) query.set("patientReference", params.patientReference);
+  if (params.businessReference) query.set("businessReference", params.businessReference);
+  if (params.provider) query.set("provider", params.provider);
+  if (params.hasFailure !== null && params.hasFailure !== undefined) query.set("hasFailure", String(params.hasFailure));
+  if (params.hasRetry !== null && params.hasRetry !== undefined) query.set("hasRetry", String(params.hasRetry));
+  if (params.sourceModule) query.set("sourceModule", params.sourceModule);
+  if (params.search) query.set("search", params.search);
+  if (params.page !== null && params.page !== undefined) query.set("page", String(params.page));
+  if (params.size !== null && params.size !== undefined) query.set("size", String(params.size));
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return httpGet<NotificationOperationsAnalyticsResponse>(`/api/notification-operations/analytics${suffix}`, { token, tenantId: params.tenantId ?? undefined });
+}
+
+export async function getNotificationOperationsAudit(
+  token: string,
+  params: NotificationOperationsQuery,
+) {
+  const query = new URLSearchParams();
+  if (params.tenantId) query.set("tenantId", params.tenantId);
+  if (params.period) query.set("period", params.period);
+  if (params.from) query.set("from", params.from);
+  if (params.to) query.set("to", params.to);
+  if (params.status) query.set("status", params.status);
+  if (params.eventType) query.set("eventType", params.eventType);
+  if (params.channel) query.set("channel", params.channel);
+  if (params.channelStatus) query.set("channelStatus", params.channelStatus);
+  if (params.patientName) query.set("patientName", params.patientName);
+  if (params.patientReference) query.set("patientReference", params.patientReference);
+  if (params.businessReference) query.set("businessReference", params.businessReference);
+  if (params.provider) query.set("provider", params.provider);
+  if (params.hasFailure !== null && params.hasFailure !== undefined) query.set("hasFailure", String(params.hasFailure));
+  if (params.hasRetry !== null && params.hasRetry !== undefined) query.set("hasRetry", String(params.hasRetry));
+  if (params.sourceModule) query.set("sourceModule", params.sourceModule);
+  if (params.search) query.set("search", params.search);
+  if (params.page !== null && params.page !== undefined) query.set("page", String(params.page));
+  if (params.size !== null && params.size !== undefined) query.set("size", String(params.size));
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return httpGet<NotificationOperationsAuditResponse>(`/api/notification-operations/audit${suffix}`, { token, tenantId: params.tenantId ?? undefined });
 }
 
 export async function runVoiceTest(

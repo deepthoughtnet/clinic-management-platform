@@ -11,6 +11,7 @@ import ClinicProfilePage from "../pages/settings/ClinicProfilePage";
 import UsersRolesPage from "../pages/settings/UsersRolesPage";
 import TemplatesPage from "../pages/admin/TemplatesPage";
 import NotificationSettingsPage from "../pages/admin/NotificationSettingsPage";
+import NotificationOperationsPage from "../pages/admin/NotificationOperationsPage";
 import IntegrationsPage from "../pages/admin/IntegrationsPage";
 import ReasoningTestConsolePage from "../pages/admin/ReasoningTestConsolePage";
 import AiOpsPage from "../pages/admin/AiOpsPage";
@@ -298,6 +299,14 @@ function PlatformAdminGate({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+function NotificationOperationsGate({ children }: { children: React.ReactNode }) {
+  const auth = useAuth();
+  if (!auth.tenantId && !auth.rolesUpper.includes("PLATFORM_ADMIN")) {
+    return <Navigate to={resolveTenantLandingPage(auth)} replace />;
+  }
+  return <>{children}</>;
+}
+
 function HomeRedirect() {
   const auth = useAuth();
   if (auth.rolesUpper.includes("PLATFORM_ADMIN") && !auth.tenantId) {
@@ -381,6 +390,7 @@ function AuthedApp() {
         <Route path="/finance/payments" element={<PathnameKeyedRoute><RouteAccessGate><FeatureGate featureId="payments"><PaymentsPage /></FeatureGate></RouteAccessGate></PathnameKeyedRoute>} />
         <Route path="/finance/refunds" element={<PathnameKeyedRoute><RouteAccessGate><FeatureGate featureId="refunds"><RefundsPage /></FeatureGate></RouteAccessGate></PathnameKeyedRoute>} />
         <Route path="/notifications" element={<PathnameKeyedRoute><FeatureGate featureId="notifications"><NotificationsPage /></FeatureGate></PathnameKeyedRoute>} />
+        <Route path="/admin/notification-operations" element={<PathnameKeyedRoute><NotificationOperationsGate><NotificationOperationsPage /></NotificationOperationsGate></PathnameKeyedRoute>} />
         <Route path="/vaccinations" element={<PathnameKeyedRoute><FeatureGate featureId="vaccinations"><VaccinationsPage /></FeatureGate></PathnameKeyedRoute>} />
         <Route path="/inventory" element={<PathnameKeyedRoute><RouteAccessGate><FeatureGate featureId="inventory"><InventoryPage /></FeatureGate></RouteAccessGate></PathnameKeyedRoute>} />
         <Route path="/pharmacy/inventory" element={<PathnameKeyedRoute><RouteAccessGate><FeatureGate featureId="inventory"><InventoryPage /></FeatureGate></RouteAccessGate></PathnameKeyedRoute>} />
@@ -572,6 +582,7 @@ function formatPageTitle(pathname: string): string {
   if (pathname === "/pharmacy/reconciliation") return "Reconciliation";
   if (pathname === "/pharmacy/pos") return "POS Sale";
   if (pathname === "/pharmacy/operations") return "Procurement";
+  if (pathname === "/admin/notification-operations") return "Notification Operations";
   if (pathname === "/carepilot/ai-operations") return "AI Operations";
   if (pathname.startsWith("/platform/product-implementation")) return "Product Implementation";
   const leaf = pathname.split("/").filter(Boolean).at(-1) || "Dashboard";

@@ -25,6 +25,7 @@ import {
   TableHead,
   TableRow,
   TextField,
+  Skeleton,
   Tooltip,
   Typography,
 } from "@mui/material";
@@ -269,7 +270,31 @@ export default function NotificationSettingsPage() {
 
   if (!auth.tenantId) return <Alert severity="info">Select a tenant to configure notification settings.</Alert>;
   if (!canView) return <Alert severity="error">You do not have access to notification settings.</Alert>;
-  if (loading || !row) return <Alert severity="info">Loading notification settings...</Alert>;
+  if (loading || !row) {
+    return (
+      <Stack spacing={2}>
+        <Skeleton variant="text" width="32%" height={52} />
+        <Skeleton variant="text" width="55%" />
+        <Grid container spacing={2}>
+          <Grid size={{ xs: 12, md: 6 }}>
+            <Skeleton variant="rounded" height={220} />
+          </Grid>
+          <Grid size={{ xs: 12, md: 6 }}>
+            <Skeleton variant="rounded" height={220} />
+          </Grid>
+        </Grid>
+        <Skeleton variant="rounded" height={380} />
+        <Grid container spacing={2}>
+          <Grid size={{ xs: 12, md: 6 }}>
+            <Skeleton variant="rounded" height={260} />
+          </Grid>
+          <Grid size={{ xs: 12, md: 6 }}>
+            <Skeleton variant="rounded" height={260} />
+          </Grid>
+        </Grid>
+      </Stack>
+    );
+  }
 
   const providerHealth = [
     { label: "In-App", ready: true, description: "Built into the platform." },
@@ -307,6 +332,7 @@ export default function NotificationSettingsPage() {
                 <Box>
                   <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>Channel Configuration</Typography>
                   <Typography variant="body2" color="text.secondary">Runtime channel enablement and fallback behavior.</Typography>
+                  <Typography variant="caption" color="text.secondary">Enable only channels that are ready for tenant use.</Typography>
                 </Box>
               </Stack>
               <Grid container spacing={2}>
@@ -322,7 +348,7 @@ export default function NotificationSettingsPage() {
                       control={<Switch checked={row.emailEnabled} onChange={(e) => setFlag("emailEnabled", e.target.checked)} disabled={!canMutate || (!row.emailReady && !row.emailEnabled)} />}
                       label="Email enabled"
                     />
-                    <Chip size="small" color={row.emailReady ? "success" : "default"} variant="outlined" label={row.emailReady ? "Provider ready" : "Provider missing"} />
+                    <Chip size="small" color={row.emailReady ? "success" : "default"} variant="outlined" label={row.emailReady ? "Configuration Ready" : "Not configured"} />
                   </Stack>
                 </Grid>
                 <Grid size={{ xs: 12, sm: 6 }}>
@@ -331,7 +357,7 @@ export default function NotificationSettingsPage() {
                       control={<Switch checked={row.smsEnabled} onChange={(e) => setFlag("smsEnabled", e.target.checked)} disabled={!canMutate || (!row.smsReady && !row.smsEnabled)} />}
                       label="SMS enabled"
                     />
-                    <Chip size="small" color={row.smsReady ? "success" : "default"} variant="outlined" label={row.smsReady ? "Provider ready" : "Provider missing"} />
+                    <Chip size="small" color={row.smsReady ? "success" : "default"} variant="outlined" label={row.smsReady ? "Configuration Ready" : "Not configured"} />
                   </Stack>
                 </Grid>
                 <Grid size={{ xs: 12, sm: 6 }}>
@@ -340,7 +366,7 @@ export default function NotificationSettingsPage() {
                       control={<Switch checked={row.whatsappEnabled} onChange={(e) => setFlag("whatsappEnabled", e.target.checked)} disabled={!canMutate || (!row.whatsappReady && !row.whatsappEnabled)} />}
                       label="WhatsApp enabled"
                     />
-                    <Chip size="small" color={row.whatsappReady ? "success" : "default"} variant="outlined" label={row.whatsappReady ? "Provider ready" : "Provider missing"} />
+                    <Chip size="small" color={row.whatsappReady ? "success" : "default"} variant="outlined" label={row.whatsappReady ? "Configuration Ready" : "Not configured"} />
                   </Stack>
                 </Grid>
                 <Grid size={{ xs: 12, sm: 6 }}>
@@ -373,6 +399,7 @@ export default function NotificationSettingsPage() {
                 <Box>
                   <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>Provider Health</Typography>
                   <Typography variant="body2" color="text.secondary">Readiness summary for external delivery providers.</Typography>
+                  <Typography variant="caption" color="text.secondary">Configuration Ready reflects setup state; live health is shown only when available.</Typography>
                 </Box>
               </Stack>
               <Stack spacing={1}>
@@ -382,7 +409,7 @@ export default function NotificationSettingsPage() {
                       <Typography variant="body2" sx={{ fontWeight: 700 }}>{item.label}</Typography>
                       <Typography variant="caption" color="text.secondary">{item.description}</Typography>
                     </Box>
-                    <Chip size="small" color={item.ready ? "success" : "default"} label={item.ready ? "Ready" : "Not configured"} />
+                    <Chip size="small" color={item.ready ? "success" : "default"} label={item.ready ? "Configuration Ready" : "Not configured"} />
                   </Stack>
                 ))}
               </Stack>
@@ -419,33 +446,64 @@ export default function NotificationSettingsPage() {
                 sx={{ borderRadius: 2, overflow: "hidden", "&:before": { display: "none" } }}
               >
                 <AccordionSummary expandIcon={<ExpandMoreRoundedIcon />} sx={{ px: 1.5 }}>
-                  <Stack direction="row" spacing={1.25} alignItems="center">
-                    {SECTION_ICONS[section.key] || <SettingsRoundedIcon fontSize="small" />}
-                    <Box>
-                      <Typography sx={{ fontWeight: 800 }}>{section.title}</Typography>
-                      <Typography variant="body2" color="text.secondary">{section.description}</Typography>
-                    </Box>
+                  <Stack direction="row" spacing={1.25} alignItems="center" justifyContent="space-between" sx={{ width: "100%" }}>
+                    <Stack direction="row" spacing={1.25} alignItems="center">
+                      {SECTION_ICONS[section.key] || <SettingsRoundedIcon fontSize="small" />}
+                      <Box>
+                        <Typography sx={{ fontWeight: 800 }}>{section.title}</Typography>
+                        <Typography variant="body2" color="text.secondary">{section.description}</Typography>
+                      </Box>
+                    </Stack>
+                    <Typography variant="caption" color="text.secondary" sx={{ display: { xs: "none", sm: "block" } }}>
+                      Manage templates and tenant policy together
+                    </Typography>
                   </Stack>
                 </AccordionSummary>
                 <AccordionDetails sx={{ px: 1.5, pb: 1.5 }}>
-                  <Table size="small">
-                    <TableHead>
-                      <TableRow>
-                        <TableCell sx={{ fontWeight: 800 }}>Notification Type</TableCell>
+                  {(() => {
+                    const sectionTemplates = section.rows.map((spec) => selectCurrentTemplate(templates, spec)).filter((template): template is AdminTemplate => Boolean(template));
+                    const uniqueTemplates = Array.from(new Map(sectionTemplates.map((template) => [template.id, template])).values());
+                    const sharedTemplate = uniqueTemplates.length === 1 ? uniqueTemplates[0] : null;
+                    const templateUrl = "/admin/templates?templateType=NOTIFICATION";
+                    return (
+                      <Stack spacing={1.5}>
+                        <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 2, flexWrap: "wrap" }}>
+                          <Box>
+                            <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                              {sharedTemplate ? `Current template: ${sharedTemplate.name}` : `${uniqueTemplates.length || 0} templates in use`}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              Template changes affect future notifications only. Repeat links are hidden when a section shares one template.
+                            </Typography>
+                          </Box>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            endIcon={<OpenInNewRoundedIcon fontSize="small" />}
+                            onClick={() => navigate(sharedTemplate ? `/admin/templates?templateType=NOTIFICATION&templateId=${sharedTemplate.id}` : templateUrl)}
+                          >
+                            Manage Template
+                          </Button>
+                        </Box>
+                      <Table size="small">
+                        <TableHead>
+                          <TableRow>
+                            <TableCell sx={{ fontWeight: 800 }}>Notification Type</TableCell>
                         {CHANNEL_ORDER.map((channel) => <TableCell key={channel} align="center" sx={{ fontWeight: 800 }}>{CHANNEL_LABELS[channel]}</TableCell>)}
                         <TableCell sx={{ fontWeight: 800 }}>Template</TableCell>
                       </TableRow>
                     </TableHead>
-                    <TableBody>
-                      {section.rows.map((spec) => {
-                        const template = selectCurrentTemplate(templates, spec);
-                        const templateUrl = `/admin/templates?${notificationTypeFilterParams(spec)}`;
-                        const rowPolicy = policy.sections[section.key]?.[spec.key] || spec.defaultChannels;
-                        return (
-                          <TableRow key={spec.key} hover>
-                            <TableCell>
-                              <Stack spacing={0.25}>
-                                <Typography sx={{ fontWeight: 700 }}>{spec.label}</Typography>
+                      <TableBody>
+                        {section.rows.map((spec) => {
+                          const template = selectCurrentTemplate(templates, spec);
+                          const templateUrl = `/admin/templates?${notificationTypeFilterParams(spec)}`;
+                          const rowPolicy = policy.sections[section.key]?.[spec.key] || spec.defaultChannels;
+                          const repeatAction = uniqueTemplates.length > 1;
+                          return (
+                            <TableRow key={spec.key} hover>
+                              <TableCell>
+                                <Stack spacing={0.25}>
+                                  <Typography sx={{ fontWeight: 700 }}>{spec.label}</Typography>
                                 <Typography variant="caption" color="text.secondary">{spec.description}</Typography>
                               </Stack>
                             </TableCell>
@@ -464,32 +522,37 @@ export default function NotificationSettingsPage() {
                                 </Tooltip>
                               </TableCell>
                             ))}
-                            <TableCell sx={{ minWidth: 280 }}>
-                              <Stack spacing={0.35}>
-                                <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
-                                  <Typography variant="body2" sx={{ fontWeight: 700 }}>
-                                    {template ? template.name : "No template linked"}
+                              <TableCell sx={{ minWidth: 280 }}>
+                                <Stack spacing={0.35}>
+                                  <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+                                    <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                                      {template ? template.name : "No template linked"}
+                                    </Typography>
+                                    <Chip size="small" variant="outlined" label={`${spec.templateType} · ${spec.templateCategory}`} />
+                                  </Stack>
+                                  <Typography variant="caption" color="text.secondary" sx={{ display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: 2, overflow: "hidden" }}>
+                                    {templatePreview(template)}
                                   </Typography>
-                                  <Chip size="small" variant="outlined" label={`${spec.templateType} · ${spec.templateCategory}`} />
+                                  {repeatAction ? (
+                                    <Button
+                                      size="small"
+                                      variant="text"
+                                      endIcon={<OpenInNewRoundedIcon fontSize="small" />}
+                                      onClick={() => navigate(templateUrl)}
+                                    >
+                                      Open Template
+                                    </Button>
+                                  ) : null}
                                 </Stack>
-                                <Typography variant="caption" color="text.secondary" sx={{ display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: 2, overflow: "hidden" }}>
-                                  {templatePreview(template)}
-                                </Typography>
-                                <Button
-                                  size="small"
-                                  variant="text"
-                                  endIcon={<OpenInNewRoundedIcon fontSize="small" />}
-                                  onClick={() => navigate(templateUrl)}
-                                >
-                                  Open Template
-                                </Button>
-                              </Stack>
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })}
-                    </TableBody>
-                  </Table>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                      </Table>
+                      </Stack>
+                    );
+                  })()}
                 </AccordionDetails>
               </Accordion>
             ))}
@@ -501,13 +564,14 @@ export default function NotificationSettingsPage() {
         <Grid size={{ xs: 12, md: 6 }}>
           <Card>
             <CardContent>
-              <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mb: 1 }}>
-                <SettingsRoundedIcon color="primary" />
-                <Box>
-                  <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>Quiet Hours</Typography>
-                  <Typography variant="body2" color="text.secondary">Defers non-critical notifications during tenant quiet hours.</Typography>
-                </Box>
-              </Stack>
+          <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mb: 1 }}>
+            <SettingsRoundedIcon color="primary" />
+            <Box>
+              <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>Quiet Hours</Typography>
+              <Typography variant="body2" color="text.secondary">Defers non-critical notifications during tenant quiet hours.</Typography>
+              <Typography variant="caption" color="text.secondary">Critical alerts bypass quiet hours.</Typography>
+            </Box>
+          </Stack>
               <Grid container spacing={2}>
                 <Grid size={{ xs: 12, md: 3 }}>
                   <FormControlLabel
@@ -550,6 +614,7 @@ export default function NotificationSettingsPage() {
                 <Box>
                   <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>Compliance / Consent</Typography>
                   <Typography variant="body2" color="text.secondary">Tenant defaults for transactional, clinical, and marketing policy.</Typography>
+                  <Typography variant="caption" color="text.secondary">Patient-level preferences override tenant defaults.</Typography>
                 </Box>
               </Stack>
               <Stack spacing={1.25}>
@@ -577,10 +642,13 @@ export default function NotificationSettingsPage() {
         <CardContent>
           <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mb: 1 }}>
             <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>Rate Limits</Typography>
-            <Chip size="small" label="Persisted in notification policy JSON" />
+            <Chip size="small" label="Persisted Only" />
           </Stack>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
             These limits define tenant defaults. Enforcement remains an engine concern and is not changed by this batch.
+          </Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 2 }}>
+            Rate limits define policy. Enforcement depends on provider implementation.
           </Typography>
           <Grid container spacing={2}>
             <Grid size={{ xs: 12, sm: 4 }}>

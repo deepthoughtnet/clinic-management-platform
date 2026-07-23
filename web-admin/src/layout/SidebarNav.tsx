@@ -135,6 +135,7 @@ function iconFor(key: string): React.ReactNode {
     "settings-users-roles": <BadgeRoundedIcon fontSize="small" />,
     templates: <DescriptionRoundedIcon fontSize="small" />,
     "notification-settings": <NotificationsRoundedIcon fontSize="small" />,
+    "notification-operations": <MonitorHeartRoundedIcon fontSize="small" />,
     integrations: <ExtensionRoundedIcon fontSize="small" />,
   };
   return iconMap[key] || <DashboardRoundedIcon fontSize="small" />;
