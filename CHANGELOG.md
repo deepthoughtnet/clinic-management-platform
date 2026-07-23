@@ -1,5 +1,98 @@
 # Jeevanam Healthcare Platform Changelog
 
+## jeevanam-v1-notification-platform-complete
+
+Status:
+Complete
+
+Tag:
+`jeevanam-v1-notification-platform-complete`
+
+Milestone Summary:
+Completed the tenant-aware Jeevanam Notification Platform covering event-driven notification generation, multi-channel delivery, tenant configuration, operational monitoring, retry management, analytics, audit, and production-grade administration UI.
+
+Added:
+- Event-driven notification architecture
+- Durable business-event processing
+- Logical notification grouping
+- Per-channel delivery records
+- In-App baseline delivery
+- Optional Email, SMS, and WhatsApp delivery
+- Channel-failure isolation
+- Idempotent notification processing
+- Stale reminder suppression
+- Tenant-aware notification processing
+
+Business Notification Coverage:
+- Appointment booked
+- Appointment rescheduled
+- Appointment cancelled
+- Appointment reminder
+- Appointment no-show
+- Prescription ready
+- Lab order created
+- Lab sample collected
+- Lab report ready
+- Bill generated
+- Payment reminder
+- Payment received
+- Follow-up notifications
+- Vaccination notifications
+
+Notification Configuration Center:
+- Tenant channel enablement
+- Provider readiness display
+- Notification channel matrix
+- Business-domain grouping
+- Template associations
+- Quiet hours
+- Critical-alert quiet-hour bypass policy
+- Transactional, clinical, and marketing consent settings
+- Tenant rate-limit policy persistence
+- Role-restricted settings access
+- URL-driven settings sections
+- Dirty-state and save feedback
+
+Notification Operations:
+- Notification Operations workspace
+- Overview health KPIs
+- Grouped delivery monitoring
+- Delivery and failure filters
+- Failure categorization
+- Retry management
+- Bounded tenant-aware bulk retry
+- Provider readiness monitoring
+- Operational analytics
+- Notification audit trail
+- Tenant and platform authorization
+- Humanized statuses and business references
+- Privacy-safe recipient information
+- Production UI polish
+
+Operational UI:
+- Notification success health KPI
+- Healthy provider KPI
+- Failed-delivery KPI
+- Pending-retry KPI
+- Technical metrics separated from health metrics
+- Delivery detail view
+- Channel status badges
+- Provider-readiness view
+- Analytics visualization
+- Audit actor/action humanization where implemented
+- Responsive and accessible administration experience
+
+Validation:
+- Backend focused tests passed
+- Frontend tests passed
+- Frontend production build passed
+- Docker API and web-admin containers healthy
+- Notification Operations and Settings UAT completed
+- Milestone tag created and pushed
+
+Next:
+Notification Center v1.0 - tenant-aware and role-aware inbox, bell integration, user read state, actionable deep links, and audience routing.
+
 ## jeevanam-v1-opd-uat-ready
 
 Status:
