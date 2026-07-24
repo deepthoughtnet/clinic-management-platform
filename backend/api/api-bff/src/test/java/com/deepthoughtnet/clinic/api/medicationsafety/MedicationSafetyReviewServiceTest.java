@@ -108,7 +108,7 @@ class MedicationSafetyReviewServiceTest {
     void blocksWarningFinalizationWhenNotAcknowledged() throws Exception {
         SafetyFixture fixture = fixtureWithWarningFinding();
         when(medicationSafetyService.buildEvaluationContext(fixture.tenantId, fixture.consultationId)).thenReturn(fixture.context);
-        when(medicationSafetyService.evaluateForConsultation(fixture.tenantId, fixture.consultationId, fixture.actorAppUserId)).thenReturn(fixture.current);
+        when(medicationSafetyEngine.evaluate(any())).thenReturn(fixture.current);
         PrescriptionSafetyReviewEntity review = PrescriptionSafetyReviewEntity.create(
                 fixture.tenantId,
                 fixture.patientId,
@@ -326,7 +326,7 @@ class MedicationSafetyReviewServiceTest {
     @Test
     void evaluateAndPersistCreatesSnapshotForActiveDraft() throws Exception {
         SafetyFixture fixture = new SafetyFixture("f-info", MedicationSafetySeverity.INFO, MedicationSafetyFindingCategory.DUPLICATE_MEDICATION);
-        when(medicationSafetyEngine.evaluate(any())).thenReturn(fixture.current);
+        when(medicationSafetyService.evaluateForConsultation(fixture.tenantId, fixture.consultationId, fixture.actorAppUserId)).thenReturn(fixture.current);
         when(medicationSafetyService.buildEvaluationContext(fixture.tenantId, fixture.consultationId)).thenReturn(fixture.context);
         when(reviewRepository.findFirstByTenantIdAndPrescriptionIdOrderByUpdatedAtDesc(fixture.tenantId, fixture.prescription.getId()))
                 .thenReturn(java.util.Optional.empty(), java.util.Optional.empty());
@@ -337,10 +337,23 @@ class MedicationSafetyReviewServiceTest {
         ArgumentCaptor<PrescriptionSafetyReviewEntity> captor = ArgumentCaptor.forClass(PrescriptionSafetyReviewEntity.class);
         verify(reviewRepository).save(captor.capture());
         PrescriptionSafetyReviewEntity saved = captor.getValue();
+        assertThat(saved.getTenantId()).isEqualTo(fixture.tenantId);
+        assertThat(saved.getConsultationId()).isEqualTo(fixture.context.consultation().getId());
+        assertThat(saved.getPatientId()).isEqualTo(fixture.context.patient().getId());
         assertThat(saved.getPrescriptionId()).isEqualTo(fixture.prescription.getId());
+        assertThat(saved.getPrescriptionVersion()).isEqualTo(fixture.prescription.getVersionNumber());
         assertThat(saved.getPrescriptionHash()).isEqualTo(fixture.context.prescriptionHash());
         assertThat(saved.getPatientContextHash()).isEqualTo(fixture.context.patientContextHash());
         assertThat(saved.getRulesVersion()).isEqualTo(fixture.current.rulesVersion());
+        assertThat(saved.getEvaluationId()).isEqualTo(fixture.current.evaluationId());
+        assertThat(saved.getEvaluationOverallSeverity()).isEqualTo(MedicationSafetySeverity.INFO.name());
+        assertThat(saved.getDecisionStatus()).isEqualTo(MedicationSafetyReviewDecisionStatus.REVIEWED_NO_BLOCKING_FINDINGS.name());
+        assertThat(saved.getReviewedByAppUserId()).isNull();
+        assertThat(saved.getReviewedAt()).isNotNull();
+        assertThat(saved.getCreatedAt()).isNotNull();
+        assertThat(saved.getUpdatedAt()).isNotNull();
+        assertThat(saved.getSnapshotGeneration()).isEqualTo(1);
+        assertThat(saved.getEvaluationSnapshotJson()).isNotBlank();
         assertThat(result.evaluationId()).isEqualTo(fixture.current.evaluationId());
 
         when(reviewRepository.findFirstByTenantIdAndPrescriptionIdOrderByUpdatedAtDesc(fixture.tenantId, fixture.prescription.getId()))

@@ -9,6 +9,7 @@ import com.deepthoughtnet.clinic.ai.careai.persistence.CareAiConversationPersist
 import com.deepthoughtnet.clinic.ai.careai.persistence.db.CareAiConversationEntity;
 import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
 import com.deepthoughtnet.clinic.platform.core.context.TenantId;
+import com.deepthoughtnet.clinic.platform.security.Permissions;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.lang.reflect.Method;
 import java.util.List;
@@ -43,17 +44,17 @@ class CareAiConversationControllerTest {
     }
 
     @Test
-    void listEndpointAllowsReceptionistAndAuditor() throws Exception {
+    void listEndpointRequiresReceptionOperateOrViewPermission() throws Exception {
         Method method = CareAiConversationController.class.getMethod("list");
         String guard = method.getAnnotation(PreAuthorize.class).value();
-        assertThat(guard).contains("CLINIC_ADMIN").contains("RECEPTIONIST").contains("AUDITOR");
+        assertThat(guard).contains(Permissions.ENGAGE_RECEPTION_OPERATE).contains(Permissions.ENGAGE_VIEW);
     }
 
     @Test
-    void messagesEndpointAllowsReceptionistAndAuditor() throws Exception {
+    void messagesEndpointRequiresReceptionOperateOrViewPermission() throws Exception {
         Method method = CareAiConversationController.class.getMethod("messages", UUID.class);
         String guard = method.getAnnotation(PreAuthorize.class).value();
-        assertThat(guard).contains("RECEPTIONIST").contains("AUDITOR");
+        assertThat(guard).contains(Permissions.ENGAGE_RECEPTION_OPERATE).contains(Permissions.ENGAGE_VIEW);
     }
 
     @Test

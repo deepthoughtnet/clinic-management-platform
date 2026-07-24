@@ -88,6 +88,7 @@ function formatPathLabel(pathname: string): string {
   if (pathname === "/carepilot/ai-operations") return "AI Operations";
   if (pathname.startsWith("/platform/tenants")) return "Platform Tenants";
   if (pathname.startsWith("/platform/plans")) return "Plans / Modules";
+  if (pathname.startsWith("/platform/commercial-catalog")) return "Commercial Catalog";
   if (pathname.startsWith("/platform/users")) return "Users / Admins";
   const leaf = pathname.split("/").filter(Boolean).at(-1) || pathname;
   return leaf.replace(/-/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());

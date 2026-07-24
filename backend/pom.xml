@@ -32,6 +32,7 @@
     <module>domains/prescription-domain</module>
     <module>domains/vaccination-domain</module>
     <module>domains/carepilot-domain</module>
+    <module>domains/commercial-domain</module>
 
     <module>platform/platform-audit</module>
     <module>platform/platform-contracts</module>

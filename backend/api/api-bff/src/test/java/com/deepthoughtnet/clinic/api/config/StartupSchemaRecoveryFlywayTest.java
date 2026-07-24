@@ -4,11 +4,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.deepthoughtnet.clinic.api.config.db.DatabaseSafetyGuard;
 import com.deepthoughtnet.clinic.api.support.PostgresTestContainerSupport;
+import java.util.Arrays;
+import java.util.Objects;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.Statement;
 import java.util.UUID;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.MigrationInfo;
+import org.flywaydb.core.api.MigrationVersion;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 
@@ -67,7 +71,7 @@ class StartupSchemaRecoveryFlywayTest extends PostgresTestContainerSupport {
                 assertThat(tableExists(connection, schema.name(), "module_business_events")).isTrue();
                 assertThat(tableExists(connection, schema.name(), "module_business_event_listener_jobs")).isTrue();
                 assertThat(repairFlyway.info().current()).isNotNull();
-                assertThat(repairFlyway.info().current().getVersion().getVersion()).isEqualTo("109");
+                assertThat(repairFlyway.info().current().getVersion().getVersion()).isEqualTo(latestResolvedVersion(repairFlyway));
             }
         }
     }
@@ -92,7 +96,7 @@ class StartupSchemaRecoveryFlywayTest extends PostgresTestContainerSupport {
                 assertThat(tableExists(connection, schema.name(), "module_business_events")).isTrue();
                 assertThat(tableExists(connection, schema.name(), "module_business_event_listener_jobs")).isTrue();
                 assertThat(repairFlyway.info().current()).isNotNull();
-                assertThat(repairFlyway.info().current().getVersion().getVersion()).isEqualTo("109");
+                assertThat(repairFlyway.info().current().getVersion().getVersion()).isEqualTo(latestResolvedVersion(repairFlyway));
             }
         }
     }
@@ -216,6 +220,15 @@ class StartupSchemaRecoveryFlywayTest extends PostgresTestContainerSupport {
                 return rs.getLong(1);
             }
         }
+    }
+
+    private static String latestResolvedVersion(Flyway flyway) {
+        return Arrays.stream(flyway.info().all())
+                .map(MigrationInfo::getVersion)
+                .filter(Objects::nonNull)
+                .max(MigrationVersion::compareTo)
+                .map(MigrationVersion::getVersion)
+                .orElseThrow(() -> new IllegalStateException("No Flyway migrations were resolved"));
     }
 
         private record ManagedSchema(String name) implements AutoCloseable {

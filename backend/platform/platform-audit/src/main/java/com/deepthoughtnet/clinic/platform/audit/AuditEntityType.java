@@ -19,6 +19,11 @@ public final class AuditEntityType {
     public static final String AGENT_INTAKE_RUN = "AGENT_INTAKE_RUN";
     public static final String AGENT_INTAKE_ITEM = "AGENT_INTAKE_ITEM";
     public static final String PATIENT = "PATIENT";
+    public static final String COMMERCIAL_CAPABILITY = "COMMERCIAL_CAPABILITY";
+    public static final String COMMERCIAL_MODULE = "COMMERCIAL_MODULE";
+    public static final String COMMERCIAL_FEATURE = "COMMERCIAL_FEATURE";
+    public static final String COMMERCIAL_LIMIT_DEFINITION = "COMMERCIAL_LIMIT_DEFINITION";
+    public static final String COMMERCIAL_ADDON_OFFER = "COMMERCIAL_ADDON_OFFER";
 
     private AuditEntityType() {
     }

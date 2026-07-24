@@ -34,10 +34,10 @@ class CarePilotCampaignPostgresMappingTest extends AbstractPostgresDataJpaTest {
 
         executeSql("""
                 insert into carepilot_campaigns (
-                    id, tenant_id, name, campaign_type, status, trigger_type, audience_type,
+                    id, tenant_id, campaign_reference, name, campaign_type, status, trigger_type, audience_type,
                     template_id, is_active, notes, created_by, created_at, updated_at, version
                 ) values (
-                    '%s', '%s', 'Legacy audience campaign', 'CUSTOM', 'DRAFT', 'MANUAL', 'ALL_PATIENTS',
+                    '%s', '%s', 'CAM-2026-000001', 'Legacy audience campaign', 'CUSTOM', 'DRAFT', 'MANUAL', 'ALL_PATIENTS',
                     null, false, 'legacy row', '%s', '%s', '%s', 0
                 )
                 """.formatted(campaignId, tenantId, creatorId, createdAt, createdAt));

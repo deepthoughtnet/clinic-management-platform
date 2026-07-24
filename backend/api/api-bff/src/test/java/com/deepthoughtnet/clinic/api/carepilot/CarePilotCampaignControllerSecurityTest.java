@@ -3,6 +3,8 @@ package com.deepthoughtnet.clinic.api.carepilot;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.lang.reflect.Method;
+import java.util.Map;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.access.prepost.PreAuthorize;
 
@@ -25,7 +27,7 @@ class CarePilotCampaignControllerSecurityTest {
         Method activate = CarePilotCampaignController.class.getMethod("activate", java.util.UUID.class);
         Method deactivate = CarePilotCampaignController.class.getMethod("deactivate", java.util.UUID.class);
         Method resume = CarePilotCampaignController.class.getMethod("resume", java.util.UUID.class);
-        Method trigger = CarePilotCampaignController.class.getMethod("trigger", java.util.UUID.class);
+        Method trigger = CarePilotCampaignController.class.getMethod("trigger", UUID.class, String.class, Map.class);
 
         assertThat(create.getAnnotation(PreAuthorize.class).value()).contains("engage.campaign.manage");
         assertThat(submit.getAnnotation(PreAuthorize.class).value()).contains("engage.campaign.submit");
@@ -35,5 +37,6 @@ class CarePilotCampaignControllerSecurityTest {
         assertThat(resume.getAnnotation(PreAuthorize.class).value()).contains("engage.campaign.activate");
         assertThat(trigger.getAnnotation(PreAuthorize.class).value()).contains("engage.campaign.activate");
         assertThat(trigger.getAnnotation(PreAuthorize.class).value()).doesNotContain("engage.audit.view");
+        assertThat(trigger.getParameterTypes()).containsExactly(UUID.class, String.class, Map.class);
     }
 }

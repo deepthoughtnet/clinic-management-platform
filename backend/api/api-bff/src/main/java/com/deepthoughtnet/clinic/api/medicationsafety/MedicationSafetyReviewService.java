@@ -136,6 +136,9 @@ public class MedicationSafetyReviewService {
     @Transactional
     public MedicationSafetyEvaluationResult evaluateAndPersist(UUID tenantId, UUID consultationId, UUID actorAppUserId) {
         MedicationSafetyEvaluationResult current = medicationSafetyService.evaluateForConsultation(tenantId, consultationId, actorAppUserId);
+        if (current == null) {
+            throw new IllegalStateException("Medication safety evaluation returned no result while persisting the active draft");
+        }
         captureSnapshot(tenantId, consultationId, actorAppUserId, current);
         return current;
     }

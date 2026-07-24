@@ -11,6 +11,7 @@ import com.deepthoughtnet.clinic.ai.careai.task.CareAiReceptionistTaskService;
 import com.deepthoughtnet.clinic.ai.careai.task.db.CareAiReceptionistTaskEntity;
 import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
 import com.deepthoughtnet.clinic.platform.core.context.TenantId;
+import com.deepthoughtnet.clinic.platform.security.Permissions;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.lang.reflect.Method;
 import java.util.List;
@@ -61,10 +62,10 @@ class CareAiReceptionistTaskControllerTest {
     }
 
     @Test
-    void listEndpointAllowsReceptionistAuditorAndPlatformSupport() throws Exception {
+    void listEndpointRequiresReceptionOperateOrViewPermission() throws Exception {
         Method method = CareAiReceptionistTaskController.class.getMethod("list", com.deepthoughtnet.clinic.ai.careai.task.CareAiReceptionistTaskStatus.class, com.deepthoughtnet.clinic.ai.careai.task.CareAiReceptionistTaskType.class, com.deepthoughtnet.clinic.ai.careai.task.CareAiReceptionistTaskPriority.class, boolean.class, boolean.class, boolean.class, UUID.class);
         String guard = method.getAnnotation(PreAuthorize.class).value();
-        assertThat(guard).contains("CLINIC_ADMIN").contains("RECEPTIONIST").contains("AUDITOR").contains("PLATFORM_TENANT_SUPPORT");
+        assertThat(guard).contains(Permissions.ENGAGE_RECEPTION_OPERATE).contains(Permissions.ENGAGE_VIEW);
     }
 
     @Test

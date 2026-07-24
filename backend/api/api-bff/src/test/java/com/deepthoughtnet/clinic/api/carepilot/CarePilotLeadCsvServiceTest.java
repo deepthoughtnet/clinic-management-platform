@@ -3,6 +3,7 @@ package com.deepthoughtnet.clinic.api.carepilot;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -25,9 +26,11 @@ import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import org.apache.commons.csv.CSVFormat;
+import org.apache.commons.csv.CSVParser;
+import org.apache.commons.csv.CSVRecord;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -110,7 +113,7 @@ class CarePilotLeadCsvServiceTest {
                 OffsetDateTime.now(),
                 "EXISTING"
         )));
-        when(leadService.searchAll(eq(tenantId), any(ZoneId.class), any(LeadSearchCriteria.class))).thenReturn(List.of(new LeadRecord(
+        when(leadService.searchAll(eq(tenantId), any(ZoneId.class), any(LeadSearchCriteria.class), isNull(), eq(true))).thenReturn(List.of(new LeadRecord(
                 UUID.randomUUID(),
                 tenantId,
                 "Ava",
@@ -138,14 +141,38 @@ class CarePilotLeadCsvServiceTest {
                 OffsetDateTime.now(),
                 OffsetDateTime.now()
         )));
+        String csv = service.exportCsv(tenantId, ZoneId.of("Asia/Kolkata"), new LeadSearchCriteria(null, null, null, null, null, false, false, null, null));
+
+        try (CSVParser parser = CSVParser.parse(csv, CSVFormat.DEFAULT.builder().setHeader().setSkipHeaderRecord(true).build())) {
+            List<CSVRecord> records = parser.getRecords();
+            assertThat(records).hasSize(1);
+            CSVRecord row = records.getFirst();
+            assertThat(row.get("firstName")).isEqualTo("Ava");
+            assertThat(row.get("lastName")).isEqualTo("Smith");
+            assertThat(row.get("phone")).isEqualTo("+15550123");
+            assertThat(row.get("email")).isEqualTo("ava@example.com");
+            assertThat(row.get("source")).isEqualTo("Webinar");
+            assertThat(row.get("status")).isEqualTo("New");
+            assertThat(row.get("priority")).isEqualTo("Medium");
+            assertThat(row.get("campaignName")).isEqualTo("Spring Webinar");
+            assertThat(row.get("assignedTo")).isEqualTo("Owner");
+            assertThat(row.get("nextFollowUpAt")).isEqualTo("02 Aug 2026, 11:00 AM IST (UTC+05:30)");
+            assertThat(row.get("sourceDetails")).isEqualTo("registered");
+            assertThat(row.get("tags")).isEqualTo("tag");
+            assertThat(row.get("notes")).isEqualTo("note");
+        }
+    }
+
+    @Test
+    void exportCsvWithNoRowsReturnsHeaderOnly() throws Exception {
+        when(leadService.searchAll(eq(tenantId), any(ZoneId.class), any(LeadSearchCriteria.class), isNull(), eq(true))).thenReturn(List.of());
 
         String csv = service.exportCsv(tenantId, ZoneId.of("Asia/Kolkata"), new LeadSearchCriteria(null, null, null, null, null, false, false, null, null));
 
-        assertThat(csv).contains("campaignName").contains("assignedTo");
-        assertThat(csv).contains("Spring Webinar").contains("Owner");
-        assertThat(csv).contains("Webinar").contains("New").contains("Medium");
-        assertThat(csv).contains("02 Aug 2026, 11:00 AM IST (UTC+05:30)");
-        assertThat(csv).doesNotContain("WEBINAR,NEW,MEDIUM");
+        assertThat(csv).contains("firstName,lastName,phone,email,source,status,priority,campaignName,assignedTo,nextFollowUpAt,sourceDetails,tags,notes");
+        try (CSVParser parser = CSVParser.parse(csv, CSVFormat.DEFAULT.builder().setHeader().setSkipHeaderRecord(true).build())) {
+            assertThat(parser.getRecords()).isEmpty();
+        }
     }
 
     @Test

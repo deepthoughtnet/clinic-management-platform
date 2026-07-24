@@ -5802,6 +5802,265 @@ export async function createPlatformTenantAdminUser(token: string, tenantId: str
   return httpPost(`/api/platform/tenants/${tenantId}/admin-user`, body, { token, platformOperation: true });
 }
 
+export type CommercialCatalogStatus = "ACTIVE" | "INACTIVE" | "RETIRED";
+export type CommercialAddonType = "CAPABILITY" | "FEATURE" | "LIMIT_PACK" | "SERVICE";
+export type CommercialLimitValueType = "INTEGER" | "DECIMAL" | "BOOLEAN";
+export type CommercialLimitAggregationPeriod = "NONE" | "DAILY" | "MONTHLY" | "ANNUAL";
+export type CommercialLimitEnforcementMode = "INFORMATIONAL" | "SOFT" | "HARD";
+
+export type CommercialPage<T> = {
+  items: T[];
+  page: number;
+  size: number;
+  totalElements: number;
+  totalPages: number;
+};
+
+export type CommercialCapabilitySummary = {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  status: CommercialCatalogStatus;
+  displayOrder: number;
+  standaloneAllowed: boolean;
+  addonAllowed: boolean;
+  moduleCount: number;
+};
+
+export type CommercialCapabilityDetail = CommercialCapabilitySummary & {
+  modules: Array<{
+    moduleId: string;
+    moduleCode: string;
+    moduleName: string;
+    includedByDefault: boolean;
+    displayOrder: number;
+  }>;
+};
+
+export type CommercialModuleSummary = {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  status: CommercialCatalogStatus;
+  displayOrder: number;
+  runtimeModuleCode: string | null;
+  capabilityCount: number;
+};
+
+export type CommercialModuleDetail = CommercialModuleSummary & {
+  capabilities: Array<{
+    capabilityId: string;
+    capabilityCode: string;
+    capabilityName: string;
+    includedByDefault: boolean;
+    displayOrder: number;
+  }>;
+};
+
+export type CommercialFeatureSummary = {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  status: CommercialCatalogStatus;
+  displayOrder: number;
+  moduleId: string;
+  moduleCode: string;
+  moduleName: string;
+  runtimeFeatureKey: string | null;
+};
+
+export type CommercialFeatureDetail = CommercialFeatureSummary;
+
+export type CommercialLimitDefinitionSummary = {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  unit: string;
+  valueType: CommercialLimitValueType;
+  aggregationPeriod: CommercialLimitAggregationPeriod;
+  enforcementMode: CommercialLimitEnforcementMode;
+  status: CommercialCatalogStatus;
+  displayOrder: number;
+};
+
+export type CommercialLimitDefinitionDetail = CommercialLimitDefinitionSummary;
+
+export type CommercialAddonSummary = {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  status: CommercialCatalogStatus;
+  addonType: CommercialAddonType;
+  displayOrder: number;
+  repeatable: boolean;
+  capabilityCount: number;
+  moduleCount: number;
+  featureCount: number;
+  limitIncrementCount: number;
+};
+
+export type CommercialAddonDetail = CommercialAddonSummary & {
+  capabilities: Array<{ capabilityId: string; capabilityCode: string; capabilityName: string }>;
+  modules: Array<{ moduleId: string; moduleCode: string; moduleName: string }>;
+  features: Array<{ featureId: string; featureCode: string; featureName: string }>;
+  limitIncrements: Array<{ limitDefinitionId: string; limitDefinitionCode: string; limitDefinitionName: string; incrementValue: string }>;
+};
+
+export async function listCommercialCapabilities(token: string, query?: { search?: string; status?: CommercialCatalogStatus | null; page?: number; size?: number }) {
+  const params = new URLSearchParams();
+  if (query?.search) params.set("search", query.search);
+  if (query?.status) params.set("status", query.status);
+  if (query?.page != null) params.set("page", String(query.page));
+  if (query?.size != null) params.set("size", String(query.size));
+  const qs = params.toString();
+  return httpGet<CommercialPage<CommercialCapabilitySummary>>(`/api/platform/commercial-catalog/capabilities${qs ? `?${qs}` : ""}`, { token, platformOperation: true });
+}
+
+export async function getCommercialCapability(token: string, id: string) {
+  return httpGet<CommercialCapabilityDetail>(`/api/platform/commercial-catalog/capabilities/${id}`, { token, platformOperation: true });
+}
+
+export async function createCommercialCapability(token: string, body: Record<string, unknown>) {
+  return httpPost<CommercialCapabilityDetail>("/api/platform/commercial-catalog/capabilities", body, { token, platformOperation: true });
+}
+
+export async function updateCommercialCapability(token: string, id: string, body: Record<string, unknown>) {
+  return httpPut<CommercialCapabilityDetail>(`/api/platform/commercial-catalog/capabilities/${id}`, body, { token, platformOperation: true });
+}
+
+export async function retireCommercialCapability(token: string, id: string) {
+  return httpPost<CommercialCapabilityDetail>(`/api/platform/commercial-catalog/capabilities/${id}/retire`, {}, { token, platformOperation: true });
+}
+
+export async function updateCommercialCapabilityModules(token: string, id: string, body: { modules: Array<{ moduleId: string; includedByDefault?: boolean; displayOrder?: number }> }) {
+  return httpPut<CommercialCapabilityDetail>(`/api/platform/commercial-catalog/capabilities/${id}/modules`, body, { token, platformOperation: true });
+}
+
+export async function listCommercialModules(token: string, query?: { search?: string; status?: CommercialCatalogStatus | null; page?: number; size?: number }) {
+  const params = new URLSearchParams();
+  if (query?.search) params.set("search", query.search);
+  if (query?.status) params.set("status", query.status);
+  if (query?.page != null) params.set("page", String(query.page));
+  if (query?.size != null) params.set("size", String(query.size));
+  const qs = params.toString();
+  return httpGet<CommercialPage<CommercialModuleSummary>>(`/api/platform/commercial-catalog/modules${qs ? `?${qs}` : ""}`, { token, platformOperation: true });
+}
+
+export async function getCommercialModule(token: string, id: string) {
+  return httpGet<CommercialModuleDetail>(`/api/platform/commercial-catalog/modules/${id}`, { token, platformOperation: true });
+}
+
+export async function createCommercialModule(token: string, body: Record<string, unknown>) {
+  return httpPost<CommercialModuleDetail>("/api/platform/commercial-catalog/modules", body, { token, platformOperation: true });
+}
+
+export async function updateCommercialModule(token: string, id: string, body: Record<string, unknown>) {
+  return httpPut<CommercialModuleDetail>(`/api/platform/commercial-catalog/modules/${id}`, body, { token, platformOperation: true });
+}
+
+export async function retireCommercialModule(token: string, id: string) {
+  return httpPost<CommercialModuleDetail>(`/api/platform/commercial-catalog/modules/${id}/retire`, {}, { token, platformOperation: true });
+}
+
+export async function listCommercialFeatures(token: string, query?: { search?: string; status?: CommercialCatalogStatus | null; page?: number; size?: number }) {
+  const params = new URLSearchParams();
+  if (query?.search) params.set("search", query.search);
+  if (query?.status) params.set("status", query.status);
+  if (query?.page != null) params.set("page", String(query.page));
+  if (query?.size != null) params.set("size", String(query.size));
+  const qs = params.toString();
+  return httpGet<CommercialPage<CommercialFeatureSummary>>(`/api/platform/commercial-catalog/features${qs ? `?${qs}` : ""}`, { token, platformOperation: true });
+}
+
+export async function getCommercialFeature(token: string, id: string) {
+  return httpGet<CommercialFeatureDetail>(`/api/platform/commercial-catalog/features/${id}`, { token, platformOperation: true });
+}
+
+export async function createCommercialFeature(token: string, body: Record<string, unknown>) {
+  return httpPost<CommercialFeatureDetail>("/api/platform/commercial-catalog/features", body, { token, platformOperation: true });
+}
+
+export async function updateCommercialFeature(token: string, id: string, body: Record<string, unknown>) {
+  return httpPut<CommercialFeatureDetail>(`/api/platform/commercial-catalog/features/${id}`, body, { token, platformOperation: true });
+}
+
+export async function retireCommercialFeature(token: string, id: string) {
+  return httpPost<CommercialFeatureDetail>(`/api/platform/commercial-catalog/features/${id}/retire`, {}, { token, platformOperation: true });
+}
+
+export async function listCommercialLimits(token: string, query?: { search?: string; status?: CommercialCatalogStatus | null; page?: number; size?: number }) {
+  const params = new URLSearchParams();
+  if (query?.search) params.set("search", query.search);
+  if (query?.status) params.set("status", query.status);
+  if (query?.page != null) params.set("page", String(query.page));
+  if (query?.size != null) params.set("size", String(query.size));
+  const qs = params.toString();
+  return httpGet<CommercialPage<CommercialLimitDefinitionSummary>>(`/api/platform/commercial-catalog/limits${qs ? `?${qs}` : ""}`, { token, platformOperation: true });
+}
+
+export async function getCommercialLimit(token: string, id: string) {
+  return httpGet<CommercialLimitDefinitionDetail>(`/api/platform/commercial-catalog/limits/${id}`, { token, platformOperation: true });
+}
+
+export async function createCommercialLimit(token: string, body: Record<string, unknown>) {
+  return httpPost<CommercialLimitDefinitionDetail>("/api/platform/commercial-catalog/limits", body, { token, platformOperation: true });
+}
+
+export async function updateCommercialLimit(token: string, id: string, body: Record<string, unknown>) {
+  return httpPut<CommercialLimitDefinitionDetail>(`/api/platform/commercial-catalog/limits/${id}`, body, { token, platformOperation: true });
+}
+
+export async function retireCommercialLimit(token: string, id: string) {
+  return httpPost<CommercialLimitDefinitionDetail>(`/api/platform/commercial-catalog/limits/${id}/retire`, {}, { token, platformOperation: true });
+}
+
+export async function listCommercialAddons(token: string, query?: { search?: string; status?: CommercialCatalogStatus | null; page?: number; size?: number }) {
+  const params = new URLSearchParams();
+  if (query?.search) params.set("search", query.search);
+  if (query?.status) params.set("status", query.status);
+  if (query?.page != null) params.set("page", String(query.page));
+  if (query?.size != null) params.set("size", String(query.size));
+  const qs = params.toString();
+  return httpGet<CommercialPage<CommercialAddonSummary>>(`/api/platform/commercial-catalog/addons${qs ? `?${qs}` : ""}`, { token, platformOperation: true });
+}
+
+export async function getCommercialAddon(token: string, id: string) {
+  return httpGet<CommercialAddonDetail>(`/api/platform/commercial-catalog/addons/${id}`, { token, platformOperation: true });
+}
+
+export async function createCommercialAddon(token: string, body: Record<string, unknown>) {
+  return httpPost<CommercialAddonDetail>("/api/platform/commercial-catalog/addons", body, { token, platformOperation: true });
+}
+
+export async function updateCommercialAddon(token: string, id: string, body: Record<string, unknown>) {
+  return httpPut<CommercialAddonDetail>(`/api/platform/commercial-catalog/addons/${id}`, body, { token, platformOperation: true });
+}
+
+export async function retireCommercialAddon(token: string, id: string) {
+  return httpPost<CommercialAddonDetail>(`/api/platform/commercial-catalog/addons/${id}/retire`, {}, { token, platformOperation: true });
+}
+
+export async function updateCommercialAddonCapabilities(token: string, id: string, body: { capabilityIds: string[] }) {
+  return httpPut<CommercialAddonDetail>(`/api/platform/commercial-catalog/addons/${id}/capabilities`, body, { token, platformOperation: true });
+}
+
+export async function updateCommercialAddonModules(token: string, id: string, body: { moduleIds: string[] }) {
+  return httpPut<CommercialAddonDetail>(`/api/platform/commercial-catalog/addons/${id}/modules`, body, { token, platformOperation: true });
+}
+
+export async function updateCommercialAddonFeatures(token: string, id: string, body: { featureIds: string[] }) {
+  return httpPut<CommercialAddonDetail>(`/api/platform/commercial-catalog/addons/${id}/features`, body, { token, platformOperation: true });
+}
+
+export async function updateCommercialAddonLimitIncrements(token: string, id: string, body: { limitIncrements: Array<{ limitDefinitionId: string; incrementValue: string }> }) {
+  return httpPut<CommercialAddonDetail>(`/api/platform/commercial-catalog/addons/${id}/limit-increments`, body, { token, platformOperation: true });
+}
+
 type PatientDocumentListFilters = {
   documentType?: ClinicalDocumentType | null;
   reportDateFrom?: string | null;

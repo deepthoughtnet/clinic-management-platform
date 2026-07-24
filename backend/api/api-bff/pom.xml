@@ -118,6 +118,11 @@
     </dependency>
     <dependency>
       <groupId>com.deepthoughtnet.clinic</groupId>
+      <artifactId>commercial-domain</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.deepthoughtnet.clinic</groupId>
       <artifactId>platform-contracts</artifactId>
       <version>${project.version}</version>
     </dependency>

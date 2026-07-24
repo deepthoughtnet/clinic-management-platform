@@ -397,6 +397,7 @@ export function isRouteAccessibleForAuth(
     if (path === "/platform/help") return auth.rolesUpper.includes("PLATFORM_ADMIN");
     if (path === "/platform/product-implementation") return auth.rolesUpper.includes("PLATFORM_ADMIN");
     if (path === "/platform/plans") return auth.rolesUpper.includes("PLATFORM_ADMIN") || auth.rolesUpper.includes("PLATFORM_TENANT_SUPPORT");
+    if (path === "/platform/commercial-catalog") return auth.rolesUpper.includes("PLATFORM_ADMIN");
     if (path === "/platform/users") return auth.rolesUpper.includes("PLATFORM_ADMIN");
     return auth.rolesUpper.includes("PLATFORM_ADMIN");
   }

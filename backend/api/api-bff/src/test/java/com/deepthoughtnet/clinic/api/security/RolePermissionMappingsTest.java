@@ -190,6 +190,20 @@ class RolePermissionMappingsTest {
     }
 
     @Test
+    void engageReceptionOperateAndReadPermissionsRemainMappedToOperationalAndReadOnlyRoles() {
+        Set<String> receptionist = RolePermissionMappings.permissionsForRole(Roles.RECEPTIONIST);
+        Set<String> clinicAdmin = RolePermissionMappings.permissionsForRole(Roles.CLINIC_ADMIN);
+        Set<String> auditor = RolePermissionMappings.permissionsForRole(Roles.AUDITOR);
+        Set<String> platformSupport = RolePermissionMappings.permissionsForRole(Roles.PLATFORM_TENANT_SUPPORT);
+
+        assertThat(receptionist).contains(Permissions.ENGAGE_RECEPTION_OPERATE, Permissions.ENGAGE_VIEW);
+        assertThat(clinicAdmin).contains(Permissions.ENGAGE_RECEPTION_OPERATE, Permissions.ENGAGE_VIEW);
+        assertThat(auditor).contains(Permissions.ENGAGE_VIEW);
+        assertThat(platformSupport).contains(Permissions.ENGAGE_VIEW);
+        assertThat(platformSupport).doesNotContain(Permissions.ENGAGE_RECEPTION_OPERATE);
+    }
+
+    @Test
     void billingUserCanCollectPaymentsAndReadReportsWithoutClinicalEditingOrUserManagement() {
         Set<String> permissions = RolePermissionMappings.permissionsForRole(Roles.BILLING_USER);
 
