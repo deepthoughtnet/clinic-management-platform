@@ -3,11 +3,18 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { alpha } from "@mui/material/styles";
 import {
   AppBar,
+  Badge,
   Box,
   Button,
   Chip,
+  CircularProgress,
+  Divider,
   IconButton,
+  List,
+  ListItemButton,
+  ListItemText,
   MenuItem,
+  Popover,
   Select,
   Stack,
   Toolbar,
@@ -21,7 +28,12 @@ import HelpCenterRoundedIcon from "@mui/icons-material/HelpCenterRounded";
 import { useAuth } from "../auth/useAuth";
 import { HelpContext } from "../shared/components/help/HelpProvider";
 import { friendlyRoleLabel } from "../auth/moduleEntitlements";
-import { getPlatformTenants } from "../api/clinicApi";
+import {
+  getNotificationCenterPreview,
+  getNotificationCenterUnreadCount,
+  getPlatformTenants,
+  type NotificationCenterItem,
+} from "../api/clinicApi";
 import { openGlobalHelp } from "../shared/components/help/helpEvents";
 import BrandMark from "../shared/components/branding/BrandMark";
 
@@ -44,6 +56,7 @@ function formatPathLabel(pathname: string): string {
   if (pathname === "/pharmacy/reconciliation") return "Reconciliation";
   if (pathname === "/pharmacy/operations") return "Procurement";
   if (pathname === "/pharmacy/stock-movements") return "Reports & Audit";
+  if (pathname === "/notification-center") return "Notification Center";
   if (pathname === "/carepilot/ai-operations") return "AI Operations";
   if (pathname.startsWith("/platform/tenants")) return "Platform Tenants";
   if (pathname.startsWith("/platform/plans")) return "Plans / Modules";
@@ -55,6 +68,154 @@ function formatPathLabel(pathname: string): string {
 function isSystemTenantOption(tenant: { tenantId: string; tenantCode?: string | null; tenantName?: string | null }): boolean {
   const values = [tenant.tenantId, tenant.tenantCode, tenant.tenantName].map((value) => (value || "").toUpperCase());
   return values.some((value) => value.startsWith("DEFAULT-ROLES") || value.includes("DEFAULT-ROLES-"));
+}
+
+function formatNotificationCenterTime(value: string | null | undefined): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat(undefined, {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function NotificationBellMenu() {
+  const auth = useAuth();
+  const navigate = useNavigate();
+  const [anchorEl, setAnchorEl] = React.useState<HTMLElement | null>(null);
+  const [unreadCount, setUnreadCount] = React.useState(0);
+  const [items, setItems] = React.useState<NotificationCenterItem[]>([]);
+  const [loading, setLoading] = React.useState(false);
+
+  const tenantId = auth.selectedTenant?.id || auth.tenantId;
+  const canAccess = Boolean(auth.accessToken && tenantId && auth.permissions.includes("notification.center.read"));
+
+  const refresh = React.useCallback(async () => {
+    if (!canAccess || !auth.accessToken || !tenantId) {
+      setUnreadCount(0);
+      setItems([]);
+      return;
+    }
+    setLoading(true);
+    try {
+      const [countRes, previewRes] = await Promise.all([
+        getNotificationCenterUnreadCount(auth.accessToken, tenantId),
+        getNotificationCenterPreview(auth.accessToken, tenantId, 5),
+      ]);
+      setUnreadCount(countRes.count);
+      setItems(previewRes.items);
+    } catch {
+      setUnreadCount(0);
+      setItems([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [auth.accessToken, canAccess, tenantId]);
+
+  React.useEffect(() => {
+    void refresh();
+    const timer = window.setInterval(() => {
+      void refresh();
+    }, 60000);
+    return () => window.clearInterval(timer);
+  }, [refresh]);
+
+  if (!canAccess) {
+    return null;
+  }
+
+  const open = Boolean(anchorEl);
+
+  return (
+    <>
+      <Tooltip title="Notification Center">
+        <IconButton
+          color="inherit"
+          onClick={(event) => {
+            setAnchorEl(event.currentTarget);
+            void refresh();
+          }}
+          aria-label="Open notification center"
+        >
+          <Badge color="error" badgeContent={unreadCount} max={99}>
+            <NotificationsNoneRoundedIcon />
+          </Badge>
+        </IconButton>
+      </Tooltip>
+      <Popover
+        open={open}
+        anchorEl={anchorEl}
+        onClose={() => setAnchorEl(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+        transformOrigin={{ vertical: "top", horizontal: "right" }}
+        PaperProps={{ sx: { width: 380, maxWidth: "calc(100vw - 24px)", borderRadius: 3 } }}
+      >
+        <Box sx={{ p: 2 }}>
+          <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
+            <Box>
+              <Typography sx={{ fontWeight: 900 }}>Notification Center</Typography>
+              <Typography variant="body2" color="text.secondary">
+                Latest unread staff notifications
+              </Typography>
+            </Box>
+            <Chip size="small" color={unreadCount > 0 ? "error" : "default"} label={`${unreadCount} unread`} />
+          </Stack>
+          <Divider sx={{ my: 1.5 }} />
+          {loading ? (
+            <Box sx={{ py: 4, display: "grid", placeItems: "center" }}>
+              <CircularProgress size={24} />
+            </Box>
+          ) : items.length === 0 ? (
+            <Typography variant="body2" color="text.secondary" sx={{ py: 2 }}>
+              No unread notifications.
+            </Typography>
+          ) : (
+            <List disablePadding sx={{ display: "grid", gap: 0.5 }}>
+              {items.map((item) => (
+                <ListItemButton
+                  key={item.id}
+                  onClick={() => {
+                    setAnchorEl(null);
+                    navigate("/notification-center");
+                  }}
+                  sx={{ borderRadius: 2, alignItems: "flex-start" }}
+                >
+                  <ListItemText
+                    primary={item.title}
+                    secondary={
+                      <Stack spacing={0.25}>
+                        <Typography variant="body2" color="text.secondary" sx={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                          {item.preview}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {formatNotificationCenterTime(item.occurredAt)}
+                        </Typography>
+                      </Stack>
+                    }
+                  />
+                </ListItemButton>
+              ))}
+            </List>
+          )}
+          <Divider sx={{ my: 1.5 }} />
+          <Button
+            fullWidth
+            variant="contained"
+            onClick={() => {
+              setAnchorEl(null);
+              navigate("/notification-center");
+            }}
+          >
+            Open inbox
+          </Button>
+        </Box>
+      </Popover>
+    </>
+  );
 }
 
 export default function TopBar({ onToggleSidebar, drawerWidth, isMobile }: { onToggleSidebar: () => void; drawerWidth: number; isMobile: boolean }) {
@@ -240,11 +401,7 @@ export default function TopBar({ onToggleSidebar, drawerWidth, isMobile }: { onT
               variant="outlined"
             />
           </Tooltip>
-          <Tooltip title="Notifications">
-            <IconButton color="inherit" onClick={() => navigate("/notifications")} aria-label="Open notifications">
-              <NotificationsNoneRoundedIcon />
-            </IconButton>
-          </Tooltip>
+          <NotificationBellMenu />
           <Button
             type="button"
             size="small"

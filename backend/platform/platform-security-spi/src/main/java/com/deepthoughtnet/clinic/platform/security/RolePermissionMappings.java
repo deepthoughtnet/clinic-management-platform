@@ -47,7 +47,8 @@ public final class RolePermissionMappings {
             Permissions.NOTIFICATION_READ,
             Permissions.NOTIFICATION_MANAGE,
             Permissions.NOTIFICATION_SEND,
-            Permissions.NOTIFICATION_RETRY
+            Permissions.NOTIFICATION_RETRY,
+            Permissions.NOTIFICATION_CENTER_READ
     );
 
     private static final Set<String> CLINIC_GENERATION_MANAGER_PERMISSIONS = Set.of(
@@ -384,6 +385,7 @@ public final class RolePermissionMappings {
             Permissions.PATIENT_DOCUMENT_READ,
             Permissions.PATIENT_DOCUMENT_UPLOAD,
             Permissions.CLINICAL_INTAKE_READ,
+            Permissions.NOTIFICATION_CENTER_READ,
             Permissions.AI_COPILOT_CLINIC_READ,
             Permissions.AI_COPILOT_CLINIC_RUN,
             Permissions.AI_COPILOT_READ,
@@ -415,6 +417,7 @@ public final class RolePermissionMappings {
             Permissions.PRESCRIPTION_PRINT,
             Permissions.PRESCRIPTION_SEND,
             Permissions.NOTIFICATION_READ,
+            Permissions.NOTIFICATION_CENTER_READ,
             Permissions.CLINIC_DOCUMENT_UPLOAD,
             Permissions.CLINIC_DOCUMENT_READ,
             Permissions.PATIENT_DOCUMENT_READ,
@@ -442,6 +445,7 @@ public final class RolePermissionMappings {
             Permissions.BILLING_UPDATE,
             Permissions.BILLING_RECEIPT,
             Permissions.PAYMENT_COLLECT,
+            Permissions.NOTIFICATION_CENTER_READ,
             Permissions.REPORT_READ
     );
 
@@ -456,6 +460,7 @@ public final class RolePermissionMappings {
             Permissions.BILLING_READ,
             Permissions.BILLING_RECEIPT,
             Permissions.PAYMENT_COLLECT,
+            Permissions.NOTIFICATION_CENTER_READ,
             Permissions.INVENTORY_READ,
             Permissions.INVENTORY_MANAGE,
             Permissions.REPORT_READ
@@ -487,6 +492,7 @@ public final class RolePermissionMappings {
             Permissions.BILLING_READ,
             Permissions.BILLING_RECEIPT,
             Permissions.PAYMENT_COLLECT,
+            Permissions.NOTIFICATION_CENTER_READ,
             Permissions.REPORT_READ
     );
 
@@ -494,6 +500,7 @@ public final class RolePermissionMappings {
             Permissions.LAB_TEST_READ,
             Permissions.LAB_ORDER_READ,
             Permissions.LAB_ORDER_COLLECT_SAMPLE,
+            Permissions.NOTIFICATION_CENTER_READ,
             Permissions.PATIENT_DOCUMENT_READ
     );
 
@@ -502,6 +509,7 @@ public final class RolePermissionMappings {
             Permissions.LAB_ORDER_READ,
             Permissions.LAB_ORDER_CREATE,
             Permissions.LAB_ORDER_COLLECT_PAYMENT,
+            Permissions.NOTIFICATION_CENTER_READ,
             Permissions.PATIENT_CREATE,
             Permissions.PATIENT_READ,
             Permissions.PATIENT_DOCUMENT_READ
@@ -512,6 +520,7 @@ public final class RolePermissionMappings {
             Permissions.LAB_ORDER_READ,
             Permissions.LAB_ORDER_COLLECT_SAMPLE,
             Permissions.LAB_ORDER_RESULT_ENTRY,
+            Permissions.NOTIFICATION_CENTER_READ,
             Permissions.PATIENT_DOCUMENT_READ
     );
 
@@ -522,6 +531,7 @@ public final class RolePermissionMappings {
             Permissions.LAB_ORDER_GENERATE_REPORT,
             Permissions.REPORT_READ,
             Permissions.AUDIT_READ,
+            Permissions.NOTIFICATION_CENTER_READ,
             Permissions.PATIENT_DOCUMENT_READ,
             Permissions.PATIENT_DOCUMENT_UPLOAD
     );
@@ -548,6 +558,7 @@ public final class RolePermissionMappings {
                     Permissions.NOTIFICATION_MANAGE,
                     Permissions.NOTIFICATION_SEND,
                     Permissions.NOTIFICATION_RETRY,
+                    Permissions.NOTIFICATION_CENTER_READ,
                     Permissions.AUDIT_EXPORT,
                     Permissions.CLINIC_GENERATION_CUSTOMER_READ,
                     Permissions.CLINIC_GENERATION_CUSTOMER_MANAGE,
@@ -651,6 +662,7 @@ public final class RolePermissionMappings {
             Permissions.CLINIC_DOCTOR_READ,
             Permissions.CLINIC_DASHBOARD_READ,
             Permissions.NOTIFICATION_READ,
+            Permissions.NOTIFICATION_CENTER_READ,
             Permissions.AUDIT_READ,
             Permissions.AI_COPILOT_READ,
             Permissions.AI_COPILOT_CLINIC_READ,
@@ -709,7 +721,8 @@ public final class RolePermissionMappings {
             Permissions.ENGAGE_REMINDER_VIEW,
             Permissions.ENGAGE_ANALYTICS_VIEW,
             Permissions.ENGAGE_AUDIT_VIEW,
-            Permissions.ENGAGE_PROVIDER_VIEW
+            Permissions.ENGAGE_PROVIDER_VIEW,
+            Permissions.NOTIFICATION_CENTER_READ
     );
 
     private static final Map<String, Set<String>> ROLE_PERMISSIONS = Map.ofEntries(

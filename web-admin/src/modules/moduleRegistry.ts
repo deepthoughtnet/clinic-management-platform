@@ -375,6 +375,7 @@ export function isRouteAccessibleForAuth(
   if (path.startsWith("/consultations/")) return canAccessFeature(auth, "consultations") && doctorRole;
   if (path === "/prescriptions") return canAccessFeature(auth, "prescriptions");
   if (path === "/billing") return canAccessFeature(auth, "billing") && billingRole;
+  if (path === "/notification-center") return Boolean(auth.tenantId) && auth.permissions.includes("notification.center.read");
   if (path.startsWith("/finance/")) {
     if (path === "/finance/cash-counter") return canAccessFeature(auth, "cash-counter");
     if (path === "/finance/payments") return canAccessFeature(auth, "payments");

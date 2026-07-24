@@ -37,6 +37,54 @@ export type NotificationEventType =
   | "APPOINTMENT_REMINDER"
   | "PAYMENT_REMINDER"
   | "MISSED_APPOINTMENT_REMINDER";
+export type NotificationCenterCategory = "CLINICAL" | "APPOINTMENT" | "LAB" | "PHARMACY" | "BILLING" | "SYSTEM" | "PLATFORM" | "ENGAGE" | "AI";
+export type NotificationCenterPriority = "LOW" | "NORMAL" | "HIGH" | "CRITICAL";
+export type NotificationCenterQuery = {
+  readState?: "READ" | "UNREAD" | "ALL" | null;
+  category?: NotificationCenterCategory | null;
+  priority?: NotificationCenterPriority | null;
+  search?: string | null;
+  from?: string | null;
+  to?: string | null;
+  page?: number;
+  size?: number;
+};
+export type NotificationCenterItem = {
+  id: string;
+  notificationId: string;
+  tenantId: string;
+  title: string;
+  preview: string;
+  category: NotificationCenterCategory;
+  priority: NotificationCenterPriority;
+  businessReference: string | null;
+  sourceModule: string;
+  sourceEventType: string;
+  sourceEventLabel: string;
+  actionLabel: string | null;
+  actionRoute: string | null;
+  actionTargetId: string | null;
+  recipientDisplayName: string | null;
+  recipientRole: string | null;
+  matchedAudience: string | null;
+  read: boolean;
+  readAt: string | null;
+  occurredAt: string;
+  createdAt: string;
+  updatedAt: string;
+  correlationId: string | null;
+  causationId: string | null;
+  version: number;
+};
+export type NotificationCenterPage = {
+  items: NotificationCenterItem[];
+  page: number;
+  size: number;
+  totalElements: number;
+  totalPages: number;
+};
+export type NotificationCenterUnreadCount = { count: number };
+export type NotificationCenterPreview = { items: NotificationCenterItem[] };
 export type InventoryTransactionType =
   | "STOCK_IN"
   | "DISPENSED"
@@ -4771,6 +4819,48 @@ export async function markNotificationRead(token: string, tenantId: string, id: 
 
 export async function markNotificationUnread(token: string, tenantId: string, id: string) {
   return httpPost<NotificationHistory>(`/api/notifications/${id}/unread`, undefined, { token, tenantId });
+}
+
+export async function getNotificationCenterUnreadCount(token: string, tenantId: string) {
+  return httpGet<NotificationCenterUnreadCount>("/api/notification-center/unread-count", { token, tenantId });
+}
+
+export async function getNotificationCenterPreview(token: string, tenantId: string, size = 10) {
+  return httpGet<NotificationCenterPreview>(`/api/notification-center/preview?size=${encodeURIComponent(String(size))}`, { token, tenantId });
+}
+
+export async function getNotificationCenterInbox(
+  token: string,
+  tenantId: string,
+  params: NotificationCenterQuery = {},
+) {
+  const query = new URLSearchParams();
+  if (params.readState) query.set("readState", params.readState);
+  if (params.category) query.set("category", params.category);
+  if (params.priority) query.set("priority", params.priority);
+  if (params.search) query.set("search", params.search);
+  if (params.from) query.set("from", params.from);
+  if (params.to) query.set("to", params.to);
+  if (params.page !== null && params.page !== undefined) query.set("page", String(params.page));
+  if (params.size !== null && params.size !== undefined) query.set("size", String(params.size));
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return httpGet<NotificationCenterPage>(`/api/notification-center${suffix}`, { token, tenantId });
+}
+
+export async function getNotificationCenterItem(token: string, tenantId: string, id: string) {
+  return httpGet<NotificationCenterItem>(`/api/notification-center/${id}`, { token, tenantId });
+}
+
+export async function markNotificationCenterRead(token: string, tenantId: string, id: string) {
+  return httpPost<NotificationCenterItem>(`/api/notification-center/${id}/read`, undefined, { token, tenantId });
+}
+
+export async function markNotificationCenterUnread(token: string, tenantId: string, id: string) {
+  return httpPost<NotificationCenterItem>(`/api/notification-center/${id}/unread`, undefined, { token, tenantId });
+}
+
+export async function markNotificationCenterReadAll(token: string, tenantId: string) {
+  return httpPost<NotificationCenterUnreadCount>("/api/notification-center/read-all", undefined, { token, tenantId });
 }
 
 export async function getNotificationOperationsSummary(

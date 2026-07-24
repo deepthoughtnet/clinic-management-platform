@@ -98,6 +98,7 @@ public final class Permissions {
     public static final String NOTIFICATION_MANAGE = "notification.manage";
     public static final String NOTIFICATION_SEND = "notification.send";
     public static final String NOTIFICATION_RETRY = "notification.retry";
+    public static final String NOTIFICATION_CENTER_READ = "notification.center.read";
     public static final String AUDIT_READ = "audit.read";
     public static final String AUDIT_EXPORT = "audit.export";
     public static final String CLINIC_GENERATION_CUSTOMER_READ = "clinic_generation.customer.read";

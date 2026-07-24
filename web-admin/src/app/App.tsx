@@ -35,6 +35,7 @@ import CashCounterPage from "../pages/finance/CashCounterPage";
 import PaymentsPage from "../pages/finance/PaymentsPage";
 import RefundsPage from "../pages/finance/RefundsPage";
 import NotificationsPage from "../pages/notifications/NotificationsPage";
+import NotificationCenterPage from "../pages/notification-center/NotificationCenterPage";
 import InventoryPage from "../pages/inventory/InventoryPage";
 import PharmacyDashboardPage from "../pages/pharmacy/PharmacyDashboardPage";
 import MedicineMasterPage from "../pages/pharmacy/MedicineMasterPage";
@@ -555,6 +556,7 @@ function AuthedApp() {
         <Route path="/settings/users-roles" element={<UsersRolesPage />} />
         <Route path="/admin/templates" element={<TemplatesPage />} />
         <Route path="/admin/notification-settings" element={<NotificationSettingsPage />} />
+        <Route path="/notification-center" element={<PathnameKeyedRoute><NotificationCenterPage /></PathnameKeyedRoute>} />
         <Route path="/admin/integrations" element={<IntegrationsPage />} />
         <Route path="/admin/ai-ops" element={<ModuleGate moduleKey="aiCopilot"><AiOpsPage /></ModuleGate>} />
         <Route path="/admin/ai-reasoning-console" element={<ReasoningTestConsolePage />} />
@@ -583,6 +585,7 @@ function formatPageTitle(pathname: string): string {
   if (pathname === "/pharmacy/pos") return "POS Sale";
   if (pathname === "/pharmacy/operations") return "Procurement";
   if (pathname === "/admin/notification-operations") return "Notification Operations";
+  if (pathname === "/notification-center") return "Notification Center";
   if (pathname === "/carepilot/ai-operations") return "AI Operations";
   if (pathname.startsWith("/platform/product-implementation")) return "Product Implementation";
   const leaf = pathname.split("/").filter(Boolean).at(-1) || "Dashboard";
