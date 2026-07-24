@@ -4,8 +4,10 @@ import com.deepthoughtnet.clinic.notificationcenter.service.NotificationCenterDt
 import com.deepthoughtnet.clinic.notificationcenter.service.NotificationCenterDtos.NotificationCenterPage;
 import com.deepthoughtnet.clinic.notificationcenter.service.NotificationCenterDtos.NotificationCenterPreview;
 import com.deepthoughtnet.clinic.notificationcenter.service.NotificationCenterDtos.NotificationCenterQuery;
+import com.deepthoughtnet.clinic.notificationcenter.service.NotificationCenterDtos.NotificationCenterSummary;
 import com.deepthoughtnet.clinic.notificationcenter.service.NotificationCenterDtos.NotificationCenterUnreadCount;
 import com.deepthoughtnet.clinic.notificationcenter.service.NotificationCenterInboxService;
+import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.util.UUID;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -21,9 +23,11 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/notification-center")
 public class NotificationCenterController {
     private final NotificationCenterInboxService inboxService;
+    private final ClinicTimeZoneResolver clinicTimeZoneResolver;
 
-    public NotificationCenterController(NotificationCenterInboxService inboxService) {
+    public NotificationCenterController(NotificationCenterInboxService inboxService, ClinicTimeZoneResolver clinicTimeZoneResolver) {
         this.inboxService = inboxService;
+        this.clinicTimeZoneResolver = clinicTimeZoneResolver;
     }
 
     @GetMapping("/unread-count")
@@ -32,6 +36,14 @@ public class NotificationCenterController {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID appUserId = RequestContextHolder.require().appUserId();
         return inboxService.unreadCount(tenantId, appUserId);
+    }
+
+    @GetMapping("/summary")
+    @PreAuthorize("@permissionChecker.hasPermission('notification.center.read')")
+    public NotificationCenterSummary summary() {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID appUserId = RequestContextHolder.require().appUserId();
+        return inboxService.summary(tenantId, appUserId, clinicTimeZoneResolver.resolve(tenantId));
     }
 
     @GetMapping("/preview")

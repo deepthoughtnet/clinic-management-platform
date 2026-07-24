@@ -6,12 +6,15 @@ import com.deepthoughtnet.clinic.notificationcenter.service.NotificationCenterDt
 import com.deepthoughtnet.clinic.notificationcenter.service.NotificationCenterDtos.NotificationCenterPage;
 import com.deepthoughtnet.clinic.notificationcenter.service.NotificationCenterDtos.NotificationCenterPreview;
 import com.deepthoughtnet.clinic.notificationcenter.service.NotificationCenterDtos.NotificationCenterQuery;
+import com.deepthoughtnet.clinic.notificationcenter.service.NotificationCenterDtos.NotificationCenterSummary;
 import com.deepthoughtnet.clinic.notificationcenter.service.NotificationCenterDtos.NotificationCenterUnreadCount;
 import com.deepthoughtnet.clinic.platform.contracts.notificationcenter.NotificationCategory;
 import com.deepthoughtnet.clinic.platform.contracts.notificationcenter.NotificationPriority;
 import jakarta.persistence.criteria.Predicate;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -59,6 +62,24 @@ public class NotificationCenterInboxService {
                 Sort.by(Sort.Direction.DESC, "createdAt")
         );
         return toPage(recipientRepository.findAll(specification(tenantId, appUserId, query), pageable));
+    }
+
+    @Transactional(readOnly = true)
+    public NotificationCenterSummary summary(UUID tenantId, UUID appUserId, ZoneId zone) {
+        ZoneId effectiveZone = zone == null ? ZoneOffset.UTC : zone;
+        long unread = recipientRepository.countByTenantIdAndAppUserIdAndReadAtIsNull(tenantId, appUserId);
+        long requiresAction = recipientRepository.count(specification(tenantId, appUserId, new NotificationCenterQuery(null, null, null, Boolean.TRUE, null, null, null, 0, 0)));
+        long critical = recipientRepository.count(specification(tenantId, appUserId, new NotificationCenterQuery(null, null, "CRITICAL", null, null, null, null, 0, 0)));
+        LocalDate today = LocalDate.now(effectiveZone);
+        OffsetDateTime from = today.atStartOfDay(effectiveZone).toOffsetDateTime();
+        OffsetDateTime to = today.plusDays(1).atStartOfDay(effectiveZone).toOffsetDateTime();
+        long todayCount = recipientRepository.count((root, cq, cb) -> cb.and(
+                cb.equal(root.get("tenantId"), tenantId),
+                cb.equal(root.get("appUserId"), appUserId),
+                cb.greaterThanOrEqualTo(root.get("occurredAt"), from),
+                cb.lessThan(root.get("occurredAt"), to)
+        ));
+        return new NotificationCenterSummary(unread, requiresAction, critical, todayCount);
     }
 
     @Transactional(readOnly = true)
@@ -159,6 +180,12 @@ public class NotificationCenterInboxService {
                     if (priority != null) {
                         predicates.add(cb.equal(root.get("priority"), priority));
                     }
+                }
+                if (Boolean.TRUE.equals(query.requiresAction())) {
+                    predicates.add(cb.or(
+                            cb.isNotNull(root.get("actionRoute")),
+                            cb.isNotNull(root.get("actionLabel"))
+                    ));
                 }
                 if (StringUtils.hasText(query.search())) {
                     String search = "%" + query.search().trim().toLowerCase(Locale.ROOT) + "%";

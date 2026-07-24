@@ -14,6 +14,7 @@ public final class NotificationCenterDtos {
             String readState,
             String category,
             String priority,
+            Boolean requiresAction,
             String search,
             OffsetDateTime from,
             OffsetDateTime to,
@@ -62,6 +63,14 @@ public final class NotificationCenterDtos {
 
     public record NotificationCenterUnreadCount(
             long count
+    ) {
+    }
+
+    public record NotificationCenterSummary(
+            long unreadCount,
+            long requiresActionCount,
+            long criticalCount,
+            long todayCount
     ) {
     }
 

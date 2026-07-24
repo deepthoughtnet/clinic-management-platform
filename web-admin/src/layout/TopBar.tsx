@@ -2,40 +2,66 @@ import * as React from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { alpha } from "@mui/material/styles";
 import {
+  Alert,
   AppBar,
   Badge,
   Box,
   Button,
   Chip,
-  CircularProgress,
   Divider,
   IconButton,
   List,
   ListItemButton,
-  ListItemText,
   MenuItem,
   Popover,
   Select,
   Stack,
+  Skeleton,
   Toolbar,
   Tooltip,
   Typography,
+  Snackbar,
 } from "@mui/material";
-import NotificationsNoneRoundedIcon from "@mui/icons-material/NotificationsNoneRounded";
+import NotificationsRoundedIcon from "@mui/icons-material/NotificationsRounded";
 import MenuIcon from "@mui/icons-material/Menu";
 import HelpCenterRoundedIcon from "@mui/icons-material/HelpCenterRounded";
+import CalendarMonthRoundedIcon from "@mui/icons-material/CalendarMonthRounded";
+import LocalHospitalRoundedIcon from "@mui/icons-material/LocalHospitalRounded";
+import ScienceRoundedIcon from "@mui/icons-material/ScienceRounded";
+import MedicationRoundedIcon from "@mui/icons-material/MedicationRounded";
+import ReceiptLongRoundedIcon from "@mui/icons-material/ReceiptLongRounded";
+import CampaignRoundedIcon from "@mui/icons-material/CampaignRounded";
+import SmartToyRoundedIcon from "@mui/icons-material/SmartToyRounded";
+import NotificationsActiveRoundedIcon from "@mui/icons-material/NotificationsActiveRounded";
+import WarningAmberRoundedIcon from "@mui/icons-material/WarningAmberRounded";
+import LowPriorityRoundedIcon from "@mui/icons-material/LowPriorityRounded";
+import PriorityHighRoundedIcon from "@mui/icons-material/PriorityHighRounded";
+import TaskAltRoundedIcon from "@mui/icons-material/TaskAltRounded";
+import CircleRoundedIcon from "@mui/icons-material/CircleRounded";
+import OpenInNewRoundedIcon from "@mui/icons-material/OpenInNewRounded";
 
 import { useAuth } from "../auth/useAuth";
 import { HelpContext } from "../shared/components/help/HelpProvider";
 import { friendlyRoleLabel } from "../auth/moduleEntitlements";
 import {
+  getClinicClock,
   getNotificationCenterPreview,
-  getNotificationCenterUnreadCount,
+  getNotificationCenterSummary,
+  markNotificationCenterRead,
+  markNotificationCenterReadAll,
   getPlatformTenants,
   type NotificationCenterItem,
 } from "../api/clinicApi";
 import { openGlobalHelp } from "../shared/components/help/helpEvents";
 import BrandMark from "../shared/components/branding/BrandMark";
+import {
+  NOTIFICATION_CENTER_REFRESH_EVENT,
+  formatNotificationExactTimestamp,
+  formatNotificationRelativeTime,
+  getNotificationActionPresentation,
+  getNotificationCategoryPresentation,
+  getNotificationPriorityPresentation,
+} from "../pages/notification-center/notificationCenterModel.js";
 
 function formatPathLabel(pathname: string): string {
   if (pathname === "/") return "Dashboard";
@@ -56,7 +82,7 @@ function formatPathLabel(pathname: string): string {
   if (pathname === "/pharmacy/reconciliation") return "Reconciliation";
   if (pathname === "/pharmacy/operations") return "Procurement";
   if (pathname === "/pharmacy/stock-movements") return "Reports & Audit";
-  if (pathname === "/notification-center") return "Notification Center";
+  if (pathname === "/notification-center") return "My Notifications";
   if (pathname === "/carepilot/ai-operations") return "AI Operations";
   if (pathname.startsWith("/platform/tenants")) return "Platform Tenants";
   if (pathname.startsWith("/platform/plans")) return "Plans / Modules";
@@ -70,150 +96,388 @@ function isSystemTenantOption(tenant: { tenantId: string; tenantCode?: string | 
   return values.some((value) => value.startsWith("DEFAULT-ROLES") || value.includes("DEFAULT-ROLES-"));
 }
 
-function formatNotificationCenterTime(value: string | null | undefined): string {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  return new Intl.DateTimeFormat(undefined, {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(date);
+function categoryIcon(key: string) {
+  switch (key) {
+    case "calendar":
+      return <CalendarMonthRoundedIcon fontSize="small" />;
+    case "clinical":
+      return <LocalHospitalRoundedIcon fontSize="small" />;
+    case "lab":
+      return <ScienceRoundedIcon fontSize="small" />;
+    case "pharmacy":
+      return <MedicationRoundedIcon fontSize="small" />;
+    case "billing":
+      return <ReceiptLongRoundedIcon fontSize="small" />;
+    case "system":
+      return <NotificationsActiveRoundedIcon fontSize="small" />;
+    case "engage":
+      return <CampaignRoundedIcon fontSize="small" />;
+    case "ai":
+      return <SmartToyRoundedIcon fontSize="small" />;
+    default:
+      return <NotificationsRoundedIcon fontSize="small" />;
+  }
+}
+
+function priorityIcon(key: string) {
+  switch (key) {
+    case "critical":
+      return <PriorityHighRoundedIcon fontSize="small" />;
+    case "high":
+      return <WarningAmberRoundedIcon fontSize="small" />;
+    case "low":
+      return <LowPriorityRoundedIcon fontSize="small" />;
+    default:
+      return <TaskAltRoundedIcon fontSize="small" />;
+  }
 }
 
 function NotificationBellMenu() {
   const auth = useAuth();
   const navigate = useNavigate();
+  const buttonRef = React.useRef<HTMLButtonElement | null>(null);
+  const requestSeqRef = React.useRef(0);
+  const abortRef = React.useRef<AbortController | null>(null);
   const [anchorEl, setAnchorEl] = React.useState<HTMLElement | null>(null);
-  const [unreadCount, setUnreadCount] = React.useState(0);
+  const [summary, setSummary] = React.useState<{ unreadCount: number; requiresActionCount: number; criticalCount: number; todayCount: number } | null>(null);
   const [items, setItems] = React.useState<NotificationCenterItem[]>([]);
+  const [clinicNow, setClinicNow] = React.useState<string | null>(null);
+  const [clinicTimeZone, setClinicTimeZone] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(false);
+  const [toast, setToast] = React.useState<{ severity: "success" | "error"; message: string } | null>(null);
+  const [isVisible, setIsVisible] = React.useState(() => typeof document === "undefined" ? true : document.visibilityState !== "hidden");
 
   const tenantId = auth.selectedTenant?.id || auth.tenantId;
   const canAccess = Boolean(auth.accessToken && tenantId && auth.permissions.includes("notification.center.read"));
+  const unreadCount = summary?.unreadCount ?? 0;
+
+  const closePopover = React.useCallback(() => {
+    setAnchorEl(null);
+    window.setTimeout(() => buttonRef.current?.focus(), 0);
+  }, []);
 
   const refresh = React.useCallback(async () => {
     if (!canAccess || !auth.accessToken || !tenantId) {
-      setUnreadCount(0);
+      setSummary(null);
       setItems([]);
+      setClinicNow(null);
+      setClinicTimeZone(null);
       return;
     }
+
+    const currentSeq = requestSeqRef.current + 1;
+    requestSeqRef.current = currentSeq;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setLoading(true);
     try {
-      const [countRes, previewRes] = await Promise.all([
-        getNotificationCenterUnreadCount(auth.accessToken, tenantId),
-        getNotificationCenterPreview(auth.accessToken, tenantId, 5),
+      const [summaryRes, previewRes, clockRes] = await Promise.all([
+        getNotificationCenterSummary(auth.accessToken, tenantId, controller.signal),
+        getNotificationCenterPreview(auth.accessToken, tenantId, 8, controller.signal),
+        getClinicClock(auth.accessToken, tenantId, controller.signal),
       ]);
-      setUnreadCount(countRes.count);
+      if (controller.signal.aborted || requestSeqRef.current !== currentSeq) {
+        return;
+      }
+      setSummary(summaryRes);
       setItems(previewRes.items);
-    } catch {
-      setUnreadCount(0);
+      setClinicNow(clockRes.clinicNow);
+      setClinicTimeZone(clockRes.clinicTimeZone);
+    } catch (error) {
+      if (controller.signal.aborted || requestSeqRef.current !== currentSeq) {
+        return;
+      }
+      setSummary(null);
       setItems([]);
+      setClinicNow(null);
+      setClinicTimeZone(null);
+      setToast({
+        severity: "error",
+        message: error instanceof Error ? error.message : "Unable to load notifications.",
+      });
     } finally {
-      setLoading(false);
+      if (requestSeqRef.current === currentSeq) {
+        setLoading(false);
+      }
     }
   }, [auth.accessToken, canAccess, tenantId]);
 
   React.useEffect(() => {
+    if (!canAccess) {
+      abortRef.current?.abort();
+      setSummary(null);
+      setItems([]);
+      setClinicNow(null);
+      setClinicTimeZone(null);
+      return;
+    }
     void refresh();
+  }, [canAccess, refresh]);
+
+  React.useEffect(() => {
+    const onFocus = () => {
+      if (document.visibilityState !== "hidden") {
+        void refresh();
+      }
+    };
+    const onVisibilityChange = () => {
+      setIsVisible(document.visibilityState !== "hidden");
+      if (document.visibilityState !== "hidden") {
+        void refresh();
+      }
+    };
+    const onManualRefresh = () => {
+      void refresh();
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener(NOTIFICATION_CENTER_REFRESH_EVENT, onManualRefresh as EventListener);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener(NOTIFICATION_CENTER_REFRESH_EVENT, onManualRefresh as EventListener);
+    };
+  }, [refresh]);
+
+  React.useEffect(() => {
+    if (!canAccess || !isVisible) {
+      return;
+    }
     const timer = window.setInterval(() => {
       void refresh();
-    }, 60000);
+    }, 30_000);
     return () => window.clearInterval(timer);
-  }, [refresh]);
+  }, [canAccess, isVisible, refresh]);
+
+  React.useEffect(() => {
+    if (!canAccess) {
+      return;
+    }
+    const nextTenantId = auth.selectedTenant?.id || auth.tenantId || null;
+    return () => {
+      if (nextTenantId) {
+        abortRef.current?.abort();
+      }
+    };
+  }, [auth.selectedTenant?.id, auth.tenantId, canAccess]);
 
   if (!canAccess) {
     return null;
   }
 
   const open = Boolean(anchorEl);
+  const unreadLabel = unreadCount > 0 ? `${unreadCount} unread` : "no unread items";
+  const buttonLabel = `Notifications, ${unreadLabel}`;
+
+  const handleOpen = (event: React.MouseEvent<HTMLElement>) => {
+    setAnchorEl(event.currentTarget);
+    void refresh();
+  };
+
+  const handleItemClick = (item: NotificationCenterItem) => {
+    const action = getNotificationActionPresentation(item.actionRoute, item.actionLabel, item.actionTargetId);
+    const previousItems = items;
+    const previousSummary = summary;
+    closePopover();
+    if (!item.read) {
+      setItems((current) => current.filter((row) => row.id !== item.id));
+      setSummary((current) => (current ? { ...current, unreadCount: Math.max(0, current.unreadCount - 1) } : current));
+      void markNotificationCenterRead(auth.accessToken || "", tenantId || "", item.id)
+        .then((next) => {
+          setItems((current) => current.filter((row) => row.id !== next.id));
+          window.dispatchEvent(new Event(NOTIFICATION_CENTER_REFRESH_EVENT));
+        })
+        .catch(() => {
+          setItems(previousItems);
+          setSummary(previousSummary);
+          setToast({ severity: "error", message: "Unable to update read state." });
+          void refresh();
+        });
+    }
+    if (action) {
+      navigate(action.route);
+      return;
+    }
+    navigate(`/notification-center?notificationId=${encodeURIComponent(item.id)}`);
+  };
+
+  const handleMarkAllRead = async () => {
+    if (!auth.accessToken || !tenantId || unreadCount === 0) {
+      return;
+    }
+    const previousItems = items;
+    const previousSummary = summary;
+    try {
+      setLoading(true);
+      setItems([]);
+      setSummary((current) => (current ? { ...current, unreadCount: 0 } : current));
+      await markNotificationCenterReadAll(auth.accessToken, tenantId);
+      window.dispatchEvent(new Event(NOTIFICATION_CENTER_REFRESH_EVENT));
+      setToast({ severity: "success", message: "Marked all notifications as read." });
+    } catch (error) {
+      setItems(previousItems);
+      setSummary(previousSummary);
+      setToast({ severity: "error", message: error instanceof Error ? error.message : "Unable to mark all as read." });
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <>
-      <Tooltip title="Notification Center">
+      <Tooltip title={buttonLabel}>
         <IconButton
+          ref={buttonRef}
           color="inherit"
-          onClick={(event) => {
-            setAnchorEl(event.currentTarget);
-            void refresh();
-          }}
-          aria-label="Open notification center"
+          onClick={handleOpen}
+          aria-label={buttonLabel}
+          aria-haspopup="menu"
+          aria-expanded={open ? "true" : undefined}
+          aria-controls={open ? "notification-center-preview" : undefined}
         >
-          <Badge color="error" badgeContent={unreadCount} max={99}>
-            <NotificationsNoneRoundedIcon />
+          <Badge color="error" badgeContent={unreadCount} max={99} invisible={unreadCount === 0}>
+            <NotificationsRoundedIcon />
           </Badge>
         </IconButton>
       </Tooltip>
       <Popover
+        id="notification-center-preview"
         open={open}
         anchorEl={anchorEl}
-        onClose={() => setAnchorEl(null)}
+        onClose={closePopover}
         anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
         transformOrigin={{ vertical: "top", horizontal: "right" }}
-        PaperProps={{ sx: { width: 380, maxWidth: "calc(100vw - 24px)", borderRadius: 3 } }}
+        PaperProps={{ sx: { width: 420, maxWidth: "calc(100vw - 24px)", borderRadius: 3, maxHeight: "calc(100vh - 24px)" } }}
       >
-        <Box sx={{ p: 2 }}>
+        <Box sx={{ p: 2, display: "flex", flexDirection: "column", maxHeight: "calc(100vh - 24px)" }}>
           <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
             <Box>
-              <Typography sx={{ fontWeight: 900 }}>Notification Center</Typography>
+              <Typography sx={{ fontWeight: 900 }}>Notifications</Typography>
               <Typography variant="body2" color="text.secondary">
-                Latest unread staff notifications
+                Updates relevant to your work
               </Typography>
             </Box>
-            <Chip size="small" color={unreadCount > 0 ? "error" : "default"} label={`${unreadCount} unread`} />
+            <Stack direction="row" spacing={1} alignItems="center">
+              <Chip size="small" color={unreadCount > 0 ? "error" : "default"} label={unreadLabel} />
+              <Button size="small" variant="text" onClick={() => void handleMarkAllRead()} disabled={unreadCount === 0 || loading} startIcon={<TaskAltRoundedIcon fontSize="small" />}>
+                Mark all as read
+              </Button>
+            </Stack>
           </Stack>
           <Divider sx={{ my: 1.5 }} />
-          {loading ? (
-            <Box sx={{ py: 4, display: "grid", placeItems: "center" }}>
-              <CircularProgress size={24} />
-            </Box>
-          ) : items.length === 0 ? (
-            <Typography variant="body2" color="text.secondary" sx={{ py: 2 }}>
-              No unread notifications.
-            </Typography>
-          ) : (
-            <List disablePadding sx={{ display: "grid", gap: 0.5 }}>
-              {items.map((item) => (
-                <ListItemButton
-                  key={item.id}
-                  onClick={() => {
-                    setAnchorEl(null);
-                    navigate("/notification-center");
-                  }}
-                  sx={{ borderRadius: 2, alignItems: "flex-start" }}
-                >
-                  <ListItemText
-                    primary={item.title}
-                    secondary={
-                      <Stack spacing={0.25}>
-                        <Typography variant="body2" color="text.secondary" sx={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
-                          {item.preview}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          {formatNotificationCenterTime(item.occurredAt)}
-                        </Typography>
+          <Box sx={{ flex: "1 1 auto", minHeight: 0, overflow: "auto" }}>
+            {loading && items.length === 0 ? (
+              <Stack spacing={1.25} sx={{ py: 1 }}>
+                <Skeleton variant="rounded" height={64} />
+                <Skeleton variant="rounded" height={64} />
+                <Skeleton variant="rounded" height={64} />
+              </Stack>
+            ) : items.length === 0 ? (
+              <Box sx={{ py: 2 }}>
+                <Typography variant="body2" sx={{ fontWeight: 800 }}>
+                  No unread notifications.
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Open My Notifications for your full history and read state.
+                </Typography>
+              </Box>
+            ) : (
+              <List disablePadding sx={{ display: "grid", gap: 0.75 }}>
+                {items.map((item) => {
+                  const categoryPresentation = getNotificationCategoryPresentation(item.category);
+                  const priorityPresentation = getNotificationPriorityPresentation(item.priority);
+                  const relativeTime = formatNotificationRelativeTime(item.occurredAt, clinicTimeZone, clinicNow);
+                  const exactTime = formatNotificationExactTimestamp(item.occurredAt, clinicTimeZone);
+                  const action = getNotificationActionPresentation(item.actionRoute, item.actionLabel, item.actionTargetId);
+                  return (
+                    <ListItemButton
+                      key={item.id}
+                      onClick={() => handleItemClick(item)}
+                      sx={{
+                        borderRadius: 2,
+                        alignItems: "flex-start",
+                        py: 1.25,
+                        px: 1.25,
+                        border: "1px solid",
+                        borderColor: item.read ? "divider" : "primary.light",
+                        bgcolor: item.read ? "background.paper" : "action.hover",
+                      }}
+                      aria-label={`${item.title}. ${item.preview}. ${relativeTime || exactTime}`}
+                    >
+                      <Stack direction="row" spacing={1.25} sx={{ width: "100%" }} alignItems="flex-start">
+                        <Box
+                          sx={{
+                            width: 34,
+                            height: 34,
+                            borderRadius: "50%",
+                            display: "grid",
+                            placeItems: "center",
+                            bgcolor: item.read ? alpha("#64748b", 0.1) : alpha("#1976d2", 0.14),
+                            color: item.read ? "text.secondary" : "primary.main",
+                            flex: "0 0 auto",
+                          }}
+                        >
+                          {categoryIcon(categoryPresentation.iconKey)}
+                        </Box>
+                        <Stack spacing={0.4} sx={{ minWidth: 0, flex: "1 1 auto" }}>
+                          <Stack direction="row" spacing={0.75} justifyContent="space-between" alignItems="flex-start">
+                            <Box sx={{ minWidth: 0 }}>
+                              <Typography variant="body2" sx={{ fontWeight: 800, lineHeight: 1.2 }} noWrap title={item.title}>
+                                {item.title}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
+                                {categoryPresentation.label}
+                              </Typography>
+                            </Box>
+                            <Stack direction="row" spacing={0.5} alignItems="center" sx={{ flex: "0 0 auto", color: item.read ? "text.secondary" : "primary.main" }}>
+                              {!item.read ? <CircleRoundedIcon sx={{ fontSize: 8 }} /> : null}
+                            </Stack>
+                          </Stack>
+                          <Typography
+                            variant="body2"
+                            color="text.secondary"
+                            title={item.preview}
+                            sx={{
+                              display: "-webkit-box",
+                              WebkitLineClamp: 2,
+                              WebkitBoxOrient: "vertical",
+                              overflow: "hidden",
+                              lineHeight: 1.35,
+                            }}
+                          >
+                            {item.preview}
+                          </Typography>
+                          <Stack direction="row" spacing={0.75} flexWrap="wrap" alignItems="center">
+                            <Chip size="small" icon={priorityIcon(priorityPresentation.iconKey)} label={priorityPresentation.label} variant="outlined" sx={{ height: 24 }} />
+                            <Chip size="small" label={relativeTime || exactTime || "Just now"} variant="outlined" sx={{ height: 24 }} title={exactTime || undefined} />
+                            {action ? <Chip size="small" label={action.label} color="primary" variant="outlined" sx={{ height: 24 }} icon={<OpenInNewRoundedIcon fontSize="small" />} /> : null}
+                          </Stack>
+                        </Stack>
                       </Stack>
-                    }
-                  />
-                </ListItemButton>
-              ))}
-            </List>
-          )}
+                    </ListItemButton>
+                  );
+                })}
+              </List>
+            )}
+          </Box>
           <Divider sx={{ my: 1.5 }} />
           <Button
             fullWidth
             variant="contained"
             onClick={() => {
-              setAnchorEl(null);
+              closePopover();
               navigate("/notification-center");
             }}
           >
-            Open inbox
+            View all notifications
           </Button>
         </Box>
       </Popover>
+      <Snackbar open={Boolean(toast)} autoHideDuration={3500} onClose={() => setToast(null)} anchorOrigin={{ vertical: "bottom", horizontal: "center" }}>
+        {toast ? <Alert severity={toast.severity} variant="filled" sx={{ width: "100%" }}>{toast.message}</Alert> : <></>}
+      </Snackbar>
     </>
   );
 }

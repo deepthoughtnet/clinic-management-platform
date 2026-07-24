@@ -11,6 +11,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
+import java.time.ZoneId;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.any;
@@ -56,6 +57,19 @@ class NotificationCenterInboxServiceTest {
         assertThat(updated).isEqualTo(2L);
         verify(first).markRead();
         verify(second).markRead();
+    }
+
+    @Test
+    void summaryIncludesUnreadRequiresActionCriticalAndTodayCounts() {
+        NotificationCenterInboxService service = new NotificationCenterInboxService(recipientRepository);
+        UUID tenantId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+
+        when(recipientRepository.countByTenantIdAndAppUserIdAndReadAtIsNull(tenantId, userId)).thenReturn(4L);
+        when(recipientRepository.count(org.mockito.ArgumentMatchers.<org.springframework.data.jpa.domain.Specification<StaffNotificationRecipientEntity>>any())).thenReturn(2L, 1L, 3L);
+
+        assertThat(service.summary(tenantId, userId, ZoneId.of("UTC")))
+                .isEqualTo(new NotificationCenterDtos.NotificationCenterSummary(4L, 2L, 1L, 3L));
     }
 
     private StaffNotificationRecipientEntity mockRecipient(String title, String preview) {

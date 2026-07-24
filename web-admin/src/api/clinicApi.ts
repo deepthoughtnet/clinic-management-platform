@@ -43,6 +43,7 @@ export type NotificationCenterQuery = {
   readState?: "READ" | "UNREAD" | "ALL" | null;
   category?: NotificationCenterCategory | null;
   priority?: NotificationCenterPriority | null;
+  requiresAction?: boolean | null;
   search?: string | null;
   from?: string | null;
   to?: string | null;
@@ -84,6 +85,12 @@ export type NotificationCenterPage = {
   totalPages: number;
 };
 export type NotificationCenterUnreadCount = { count: number };
+export type NotificationCenterSummary = {
+  unreadCount: number;
+  requiresActionCount: number;
+  criticalCount: number;
+  todayCount: number;
+};
 export type NotificationCenterPreview = { items: NotificationCenterItem[] };
 export type InventoryTransactionType =
   | "STOCK_IN"
@@ -4821,46 +4828,52 @@ export async function markNotificationUnread(token: string, tenantId: string, id
   return httpPost<NotificationHistory>(`/api/notifications/${id}/unread`, undefined, { token, tenantId });
 }
 
-export async function getNotificationCenterUnreadCount(token: string, tenantId: string) {
-  return httpGet<NotificationCenterUnreadCount>("/api/notification-center/unread-count", { token, tenantId });
+export async function getNotificationCenterUnreadCount(token: string, tenantId: string, signal?: AbortSignal) {
+  return httpGet<NotificationCenterUnreadCount>("/api/notification-center/unread-count", { token, tenantId, signal });
 }
 
-export async function getNotificationCenterPreview(token: string, tenantId: string, size = 10) {
-  return httpGet<NotificationCenterPreview>(`/api/notification-center/preview?size=${encodeURIComponent(String(size))}`, { token, tenantId });
+export async function getNotificationCenterSummary(token: string, tenantId: string, signal?: AbortSignal) {
+  return httpGet<NotificationCenterSummary>("/api/notification-center/summary", { token, tenantId, signal });
+}
+
+export async function getNotificationCenterPreview(token: string, tenantId: string, size = 10, signal?: AbortSignal) {
+  return httpGet<NotificationCenterPreview>(`/api/notification-center/preview?size=${encodeURIComponent(String(size))}`, { token, tenantId, signal });
 }
 
 export async function getNotificationCenterInbox(
   token: string,
   tenantId: string,
   params: NotificationCenterQuery = {},
+  signal?: AbortSignal,
 ) {
   const query = new URLSearchParams();
   if (params.readState) query.set("readState", params.readState);
   if (params.category) query.set("category", params.category);
   if (params.priority) query.set("priority", params.priority);
+  if (params.requiresAction !== null && params.requiresAction !== undefined) query.set("requiresAction", String(params.requiresAction));
   if (params.search) query.set("search", params.search);
   if (params.from) query.set("from", params.from);
   if (params.to) query.set("to", params.to);
   if (params.page !== null && params.page !== undefined) query.set("page", String(params.page));
   if (params.size !== null && params.size !== undefined) query.set("size", String(params.size));
   const suffix = query.toString() ? `?${query.toString()}` : "";
-  return httpGet<NotificationCenterPage>(`/api/notification-center${suffix}`, { token, tenantId });
+  return httpGet<NotificationCenterPage>(`/api/notification-center${suffix}`, { token, tenantId, signal });
 }
 
-export async function getNotificationCenterItem(token: string, tenantId: string, id: string) {
-  return httpGet<NotificationCenterItem>(`/api/notification-center/${id}`, { token, tenantId });
+export async function getNotificationCenterItem(token: string, tenantId: string, id: string, signal?: AbortSignal) {
+  return httpGet<NotificationCenterItem>(`/api/notification-center/${id}`, { token, tenantId, signal });
 }
 
-export async function markNotificationCenterRead(token: string, tenantId: string, id: string) {
-  return httpPost<NotificationCenterItem>(`/api/notification-center/${id}/read`, undefined, { token, tenantId });
+export async function markNotificationCenterRead(token: string, tenantId: string, id: string, signal?: AbortSignal) {
+  return httpPost<NotificationCenterItem>(`/api/notification-center/${id}/read`, undefined, { token, tenantId, signal });
 }
 
-export async function markNotificationCenterUnread(token: string, tenantId: string, id: string) {
-  return httpPost<NotificationCenterItem>(`/api/notification-center/${id}/unread`, undefined, { token, tenantId });
+export async function markNotificationCenterUnread(token: string, tenantId: string, id: string, signal?: AbortSignal) {
+  return httpPost<NotificationCenterItem>(`/api/notification-center/${id}/unread`, undefined, { token, tenantId, signal });
 }
 
-export async function markNotificationCenterReadAll(token: string, tenantId: string) {
-  return httpPost<NotificationCenterUnreadCount>("/api/notification-center/read-all", undefined, { token, tenantId });
+export async function markNotificationCenterReadAll(token: string, tenantId: string, signal?: AbortSignal) {
+  return httpPost<NotificationCenterUnreadCount>("/api/notification-center/read-all", undefined, { token, tenantId, signal });
 }
 
 export async function getNotificationOperationsSummary(
@@ -7518,8 +7531,8 @@ export async function getAdminNotificationSettings(token: string, tenantId: stri
   return httpGet<AdminNotificationSettings>("/api/admin/notification-settings", { token, tenantId });
 }
 
-export async function getClinicClock(token: string, tenantId: string) {
-  return httpGet<ClinicClock>("/api/clinic/clock", { token, tenantId });
+export async function getClinicClock(token: string, tenantId: string, signal?: AbortSignal) {
+  return httpGet<ClinicClock>("/api/clinic/clock", { token, tenantId, signal });
 }
 
 export async function updateAdminNotificationSettings(

@@ -585,7 +585,7 @@ function formatPageTitle(pathname: string): string {
   if (pathname === "/pharmacy/pos") return "POS Sale";
   if (pathname === "/pharmacy/operations") return "Procurement";
   if (pathname === "/admin/notification-operations") return "Notification Operations";
-  if (pathname === "/notification-center") return "Notification Center";
+  if (pathname === "/notification-center") return "My Notifications";
   if (pathname === "/carepilot/ai-operations") return "AI Operations";
   if (pathname.startsWith("/platform/product-implementation")) return "Product Implementation";
   const leaf = pathname.split("/").filter(Boolean).at(-1) || "Dashboard";
