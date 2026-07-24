@@ -61,6 +61,8 @@ import {
   getNotificationActionPresentation,
   getNotificationCategoryPresentation,
   getNotificationPriorityPresentation,
+  normalizeNotificationPreview,
+  normalizeNotificationSummary,
 } from "../pages/notification-center/notificationCenterModel.js";
 
 function formatPathLabel(pathname: string): string {
@@ -181,8 +183,8 @@ function NotificationBellMenu() {
       if (controller.signal.aborted || requestSeqRef.current !== currentSeq) {
         return;
       }
-      setSummary(summaryRes);
-      setItems(previewRes.items);
+      setSummary(normalizeNotificationSummary(summaryRes));
+      setItems(normalizeNotificationPreview(previewRes).items as NotificationCenterItem[]);
       setClinicNow(clockRes.clinicNow);
       setClinicTimeZone(clockRes.clinicTimeZone);
     } catch (error) {
@@ -270,6 +272,8 @@ function NotificationBellMenu() {
   const open = Boolean(anchorEl);
   const unreadLabel = unreadCount > 0 ? `${unreadCount} unread` : "no unread items";
   const buttonLabel = `Notifications, ${unreadLabel}`;
+  const toastSeverity = toast?.severity ?? "info";
+  const toastMessage = toast?.message ?? "";
 
   const handleOpen = (event: React.MouseEvent<HTMLElement>) => {
     setAnchorEl(event.currentTarget);
@@ -476,7 +480,16 @@ function NotificationBellMenu() {
         </Box>
       </Popover>
       <Snackbar open={Boolean(toast)} autoHideDuration={3500} onClose={() => setToast(null)} anchorOrigin={{ vertical: "bottom", horizontal: "center" }}>
-        {toast ? <Alert severity={toast.severity} variant="filled" sx={{ width: "100%" }}>{toast.message}</Alert> : <></>}
+        <Alert
+          severity={toastSeverity}
+          variant="filled"
+          sx={{
+            width: "100%",
+            visibility: toast ? "visible" : "hidden",
+          }}
+        >
+          {toastMessage}
+        </Alert>
       </Snackbar>
     </>
   );

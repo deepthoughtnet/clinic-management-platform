@@ -54,6 +54,35 @@ export declare function getNotificationActionPresentation(
   actionLabel?: string | null | undefined,
   actionTargetId?: string | null | undefined,
 ): NotificationCenterActionPresentation | null;
+export declare function normalizeNotificationSummary(summary: Partial<{
+  unreadCount: number;
+  requiresActionCount: number;
+  criticalCount: number;
+  todayCount: number;
+}> | null | undefined): {
+  unreadCount: number;
+  requiresActionCount: number;
+  criticalCount: number;
+  todayCount: number;
+};
+export declare function normalizeNotificationPreview(preview: Partial<{
+  items: unknown[];
+}> | null | undefined): {
+  items: unknown[];
+};
+export declare function normalizeNotificationPage(page: Partial<{
+  items: unknown[];
+  page: number;
+  size: number;
+  totalElements: number;
+  totalPages: number;
+}> | null | undefined): {
+  items: unknown[];
+  page: number;
+  size: number;
+  totalElements: number;
+  totalPages: number;
+};
 export declare function formatNotificationExactTimestamp(value: string | null | undefined, timeZone?: string | null): string;
 export declare function formatNotificationRelativeTime(value: string | null | undefined, timeZone?: string | null, nowValue?: string | null): string;
 export declare function formatNotificationDateKey(value: string | null | undefined, timeZone?: string | null): string;

@@ -89,6 +89,8 @@ import {
   getNotificationActionPresentation,
   getNotificationCategoryPresentation,
   getNotificationPriorityPresentation,
+  normalizeNotificationPage,
+  normalizeNotificationSummary,
   parseNotificationCenterRouteState,
   type NotificationCenterRouteState,
   type NotificationCenterTab,
@@ -102,6 +104,8 @@ type NotificationStatusPresentation = {
   icon: React.ReactElement;
   tooltip: string;
 };
+
+const EMPTY_NOTIFICATION_ITEMS: NotificationCenterItem[] = [];
 
 function categoryIcon(key: string) {
   switch (key) {
@@ -168,6 +172,48 @@ function getNotificationStatusPresentation(read: boolean): NotificationStatusPre
         icon: <CircleRoundedIcon sx={{ fontSize: 8 }} />,
         tooltip: "Unread",
       };
+}
+
+function updateNotificationCenterPageItem(
+  page: NotificationCenterPageResponse | null,
+  notificationId: string,
+  updater: (item: NotificationCenterItem) => NotificationCenterItem,
+): NotificationCenterPageResponse | null {
+  if (!page || !Array.isArray(page.items)) {
+    return page;
+  }
+  let changed = false;
+  const items = page.items.map((item) => {
+    if (item.id !== notificationId) {
+      return item;
+    }
+    changed = true;
+    return updater(item);
+  });
+  return changed ? { ...page, items } : page;
+}
+
+function updateNotificationCenterPageMarkAll(
+  page: NotificationCenterPageResponse | null,
+  readAt: string,
+  unreadTab: boolean,
+): NotificationCenterPageResponse | null {
+  if (!page || !Array.isArray(page.items)) {
+    return page;
+  }
+  if (unreadTab) {
+    return {
+      ...page,
+      items: [],
+      totalElements: 0,
+      totalPages: 0,
+      page: 0,
+    };
+  }
+  return {
+    ...page,
+    items: page.items.map((item) => ({ ...item, read: true, readAt: item.readAt || readAt })),
+  };
 }
 
 function SummaryCard({
@@ -275,6 +321,9 @@ export default function NotificationCenterPage() {
     () => formatNotificationDateKey(currentNow || new Date().toISOString(), currentTimeZone),
     [currentNow, currentTimeZone],
   );
+  const pageItems = React.useMemo(() => pageData?.items ?? EMPTY_NOTIFICATION_ITEMS, [pageData]);
+  const snackbarSeverity = snackbar?.severity ?? "info";
+  const snackbarMessage = snackbar?.message ?? "";
 
   const commitRouteState = React.useCallback((patch: Partial<NotificationCenterRouteState>, preserveNotificationId = false) => {
     const next = {
@@ -331,16 +380,16 @@ export default function NotificationCenterPage() {
       if (controller.signal.aborted || loadSeqRef.current !== currentSeq) {
         return;
       }
-      setSummary(summaryRes);
-      setPageData(pageRes);
+      setSummary(normalizeNotificationSummary(summaryRes));
+      setPageData(normalizeNotificationPage(pageRes) as NotificationCenterPageResponse);
       setError(null);
     } catch (err) {
       if (controller.signal.aborted || loadSeqRef.current !== currentSeq) {
         return;
       }
       setError(err instanceof Error ? err.message : "Failed to load notifications.");
-      setSummary(null);
-      setPageData({ items: [], page: 0, size: routeState.size, totalElements: 0, totalPages: 0 });
+      setSummary(normalizeNotificationSummary(null));
+      setPageData(normalizeNotificationPage({ items: [], page: routeState.page, size: routeState.size, totalElements: 0, totalPages: 0 }) as NotificationCenterPageResponse);
     } finally {
       if (loadSeqRef.current === currentSeq) {
         setLoading(false);
@@ -402,7 +451,7 @@ export default function NotificationCenterPage() {
       return;
     }
 
-    const listMatch = pageData?.items.find((item) => item.id === notificationId);
+    const listMatch = pageItems.find((item) => item.id === notificationId);
     if (listMatch && detail?.id === notificationId) {
       setDetailError(null);
       setDetailLoading(false);
@@ -449,14 +498,15 @@ export default function NotificationCenterPage() {
       });
 
     return () => controller.abort();
-  }, [auth.accessToken, canRead, pageData?.items, routeState.notificationId, tenantId, detail?.id]);
+  }, [auth.accessToken, canRead, pageItems, routeState.notificationId, tenantId, detail?.id]);
 
   React.useEffect(() => {
     if (!pageData || loading) {
       return;
     }
-    if (pageData.totalPages > 0 && routeState.page >= pageData.totalPages) {
-      commitRouteState({ page: Math.max(0, (pageData.totalPages || 1) - 1), notificationId: "" }, false);
+    const maxPage = Math.max(0, (pageData.totalPages || 1) - 1);
+    if (routeState.page > maxPage) {
+      commitRouteState({ page: maxPage, notificationId: "" }, false);
     }
   }, [commitRouteState, loading, pageData, routeState.page]);
 
@@ -486,18 +536,16 @@ export default function NotificationCenterPage() {
     const previousPageData = pageData;
     const previousDetail = detail;
     setSummary((current) => (current
-      ? { ...current, unreadCount: Math.max(0, current.unreadCount + (nextRead ? -1 : 1)) }
-      : current));
-    setPageData((current) => (current
-      ? {
+      ? normalizeNotificationSummary({
         ...current,
-        items: current.items.map((row) => (
-          row.id === item.id
-            ? { ...row, read: nextRead, readAt: optimisticReadAt }
-            : row
-        )),
-      }
+        unreadCount: Math.max(0, current.unreadCount + (nextRead ? -1 : 1)),
+      })
       : current));
+    setPageData((current) => updateNotificationCenterPageItem(
+      current,
+      item.id,
+      (row) => ({ ...row, read: nextRead, readAt: optimisticReadAt }),
+    ));
     setDetail((current) => (current?.id === item.id
       ? { ...current, read: nextRead, readAt: optimisticReadAt }
       : current));
@@ -506,7 +554,7 @@ export default function NotificationCenterPage() {
         ? await markNotificationCenterUnread(auth.accessToken, tenantId, item.id)
         : await markNotificationCenterRead(auth.accessToken, tenantId, item.id);
       setDetail((current) => (current?.id === next.id ? next : current));
-      setPageData((current) => (current ? { ...current, items: current.items.map((row) => (row.id === next.id ? next : row)) } : current));
+      setPageData((current) => updateNotificationCenterPageItem(current, next.id, () => next));
       window.dispatchEvent(new Event(NOTIFICATION_CENTER_REFRESH_EVENT));
       setSnackbar({
         severity: "success",
@@ -534,13 +582,8 @@ export default function NotificationCenterPage() {
     const previousPageData = pageData;
     const previousDetail = detail;
     const optimisticReadAt = new Date().toISOString();
-    setSummary((current) => (current ? { ...current, unreadCount: 0 } : current));
-    setPageData((current) => (current
-      ? {
-        ...current,
-        items: current.items.map((item) => ({ ...item, read: true, readAt: item.readAt || optimisticReadAt })),
-      }
-      : current));
+    setSummary((current) => (current ? normalizeNotificationSummary({ ...current, unreadCount: 0 }) : current));
+    setPageData((current) => updateNotificationCenterPageMarkAll(current, optimisticReadAt, routeState.tab === "unread"));
     setDetail((current) => (current ? { ...current, read: true, readAt: current.readAt || optimisticReadAt } : current));
     try {
       await markNotificationCenterReadAll(auth.accessToken, tenantId);
@@ -557,7 +600,7 @@ export default function NotificationCenterPage() {
     } finally {
       setBusyId(null);
     }
-  }, [auth.accessToken, pageData, detail, summary, tenantId]);
+  }, [auth.accessToken, detail, routeState.tab, summary, tenantId]);
 
   const applyQuickFilter = React.useCallback((patch: Partial<NotificationCenterRouteState>) => {
     commitRouteState({ ...patch, page: 0 }, false);
@@ -589,8 +632,14 @@ export default function NotificationCenterPage() {
       subtitle: "Notifications will appear here when new events are projected for this user.",
     };
   }, [hasSearchFilters, routeState.tab]);
-  const activeDetail = detail || pageData?.items.find((item) => item.id === routeState.notificationId) || null;
+  const activeDetail = detail || pageItems.find((item) => item.id === routeState.notificationId) || null;
   const drawerOpen = Boolean(routeState.notificationId);
+  const safePage = React.useMemo(() => {
+    if (!pageData) {
+      return 0;
+    }
+    return Math.max(0, Math.min(routeState.page, Math.max(0, (pageData.totalPages || 1) - 1)));
+  }, [pageData, routeState.page]);
 
   const actionForDetail = activeDetail ? getNotificationActionPresentation(activeDetail.actionRoute, activeDetail.actionLabel, activeDetail.actionTargetId) : null;
 
@@ -660,7 +709,7 @@ export default function NotificationCenterPage() {
                 <Button variant="outlined" startIcon={<RefreshRoundedIcon />} onClick={() => void loadData()} disabled={loading}>
                   Refresh
                 </Button>
-                <Button variant="outlined" startIcon={<DoneAllRoundedIcon />} onClick={() => void markAllRead()} disabled={(summary?.unreadCount ?? 0) === 0 || loading}>
+                <Button variant="outlined" startIcon={<DoneAllRoundedIcon />} onClick={() => void markAllRead()} disabled={(summary?.unreadCount ?? 0) === 0 || loading || busyId === "__all__"}>
                   Mark all as read
                 </Button>
               </Stack>
@@ -785,7 +834,7 @@ export default function NotificationCenterPage() {
                       </Stack>
                     </CardContent>
                   </Card>
-                )) : pageData?.items.length ? pageData.items.map((item) => {
+                )) : pageItems.length ? pageItems.map((item) => {
                   const category = getNotificationCategoryPresentation(item.category);
                   const priority = getNotificationPriorityPresentation(item.priority);
                   const exactTime = formatNotificationExactTimestamp(item.occurredAt, currentTimeZone);
@@ -941,7 +990,7 @@ export default function NotificationCenterPage() {
                           <TableCell key={cellIndex}><Skeleton variant="text" /></TableCell>
                         ))}
                       </TableRow>
-                    )) : pageData?.items.length ? pageData.items.map((item) => {
+                    )) : pageItems.length ? pageItems.map((item) => {
                       const category = getNotificationCategoryPresentation(item.category);
                       const priority = getNotificationPriorityPresentation(item.priority);
                       const exactTime = formatNotificationExactTimestamp(item.occurredAt, currentTimeZone);
@@ -1081,7 +1130,7 @@ export default function NotificationCenterPage() {
             <TablePagination
               component="div"
               count={pageData?.totalElements ?? 0}
-              page={routeState.page}
+              page={safePage}
               rowsPerPage={routeState.size}
               onPageChange={(_, nextPage) => commitRouteState({ page: nextPage, notificationId: "" }, false)}
               onRowsPerPageChange={(event) => commitRouteState({ page: 0, size: Number(event.target.value), notificationId: "" }, false)}
@@ -1191,7 +1240,16 @@ export default function NotificationCenterPage() {
       </Drawer>
 
       <Snackbar open={Boolean(snackbar)} autoHideDuration={3500} onClose={() => setSnackbar(null)} anchorOrigin={{ vertical: "bottom", horizontal: "center" }}>
-        {snackbar ? <Alert severity={snackbar.severity} variant="filled" sx={{ width: "100%" }}>{snackbar.message}</Alert> : <></>}
+        <Alert
+          severity={snackbarSeverity}
+          variant="filled"
+          sx={{
+            width: "100%",
+            visibility: snackbar ? "visible" : "hidden",
+          }}
+        >
+          {snackbarMessage}
+        </Alert>
       </Snackbar>
     </Box>
   );

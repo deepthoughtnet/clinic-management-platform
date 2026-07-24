@@ -12,6 +12,9 @@ import {
   getNotificationActionPresentation,
   getNotificationCategoryPresentation,
   getNotificationPriorityPresentation,
+  normalizeNotificationPage,
+  normalizeNotificationPreview,
+  normalizeNotificationSummary,
   parseNotificationCenterRouteState,
 } from "../src/pages/notification-center/notificationCenterModel.js";
 import {
@@ -48,17 +51,25 @@ test("notification center page is URL-driven, summary-backed, and detail-capable
   assert.ok(page.includes("CompactEmptyState"));
   assert.ok(page.includes("CompactTableFrame"));
   assert.ok(page.includes("Reset filters"));
+  assert.ok(page.includes("normalizeNotificationSummary(summaryRes)"));
+  assert.ok(page.includes("normalizeNotificationPage(pageRes)"));
+  assert.ok(page.includes("updateNotificationCenterPageMarkAll"));
+  assert.ok(page.includes("routeState.page > maxPage"));
   assert.ok(page.includes("CardContent"));
   assert.ok(page.includes("useMediaQuery"));
   assert.ok(page.includes("CardActionArea") === false);
   assert.ok(app.includes('path="/notification-center"'));
   assert.ok(app.includes("My Notifications"));
+  assert.ok(app.includes("RouteErrorBoundary"));
+  assert.ok(app.indexOf("<AppShell>") < app.indexOf("<RouteErrorBoundary>"));
+  assert.ok(app.includes("Something went wrong"));
   assert.ok(topBar.includes("Mark all as read"));
   assert.ok(topBar.includes("Notifications,"));
 });
 
 test("top bar bell is accessible and keeps notification-center preview flow compact", () => {
   const topBar = readSource("layout/TopBar.tsx");
+  const page = readSource("pages/notification-center/NotificationCenterPage.tsx");
 
   assert.ok(topBar.includes("Notifications,"));
   assert.ok(topBar.includes("aria-label={buttonLabel}"));
@@ -72,6 +83,10 @@ test("top bar bell is accessible and keeps notification-center preview flow comp
   assert.ok(topBar.includes("formatNotificationExactTimestamp"));
   assert.ok(topBar.includes("setItems((current) => current.filter((row) => row.id !== item.id))"));
   assert.ok(topBar.includes("setItems([])"));
+  assert.ok(!topBar.includes('toast ? <Alert severity={toast.severity} variant="filled" sx={{ width: "100%" }}>{toast.message}</Alert> : <></>'));
+  assert.ok(topBar.includes('visibility: toast ? "visible" : "hidden"'));
+  assert.ok(!page.includes('snackbar ? <Alert severity={snackbar.severity} variant="filled" sx={{ width: "100%" }}>{snackbar.message}</Alert> : <></>'));
+  assert.ok(page.includes('visibility: snackbar ? "visible" : "hidden"'));
 });
 
 test("notification center helper model normalizes labels, routing, and time formatting", () => {
@@ -127,4 +142,56 @@ test("notification center helper model normalizes labels, routing, and time form
   const registryAction = getRegistryActionPresentation("OPEN_NOTIFICATION_DETAIL", null, "notif-123");
   assert.equal(registryAction?.route, "/notification-center?notificationId=notif-123");
   assert.equal(getRegistryActionPresentation("/patients", null, "patient-123")?.route, "/patients/patient-123");
+});
+
+test("notification center mark-all API handles 204 and empty 200 responses without JSON parse crashes", async () => {
+  const restClient = readSource("api/restClient.ts");
+  const clinicApi = readSource("api/clinicApi.ts");
+  assert.ok(restClient.includes("if (res.status === 204)"));
+  assert.ok(restClient.includes("return undefined as T;"));
+  assert.ok(clinicApi.includes('return httpPost<NotificationCenterUnreadCount>("/api/notification-center/read-all"'));
+});
+
+test("notification center helper model preserves response shapes for optimistic updates", () => {
+  assert.deepEqual(normalizeNotificationSummary(undefined), {
+    unreadCount: 0,
+    requiresActionCount: 0,
+    criticalCount: 0,
+    todayCount: 0,
+  });
+  assert.deepEqual(normalizeNotificationSummary({
+    unreadCount: "3",
+    requiresActionCount: null,
+    criticalCount: undefined,
+    todayCount: 7,
+  }), {
+    unreadCount: 3,
+    requiresActionCount: 0,
+    criticalCount: 0,
+    todayCount: 7,
+  });
+
+  assert.deepEqual(normalizeNotificationPreview({ items: null }).items, []);
+  assert.deepEqual(normalizeNotificationPreview({ items: [null, { id: "n1" }] }).items, [{ id: "n1" }]);
+
+  assert.deepEqual(normalizeNotificationPage(undefined), {
+    items: [],
+    page: 0,
+    size: 20,
+    totalElements: 0,
+    totalPages: 0,
+  });
+  assert.deepEqual(normalizeNotificationPage({
+    items: undefined,
+    page: "2",
+    size: "0",
+    totalElements: "5",
+    totalPages: "-1",
+  }), {
+    items: [],
+    page: 2,
+    size: 20,
+    totalElements: 5,
+    totalPages: 0,
+  });
 });

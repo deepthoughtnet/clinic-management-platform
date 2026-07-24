@@ -232,6 +232,48 @@ export function getNotificationActionPresentation(actionRoute, actionLabel, acti
   return resolveNotificationActionPresentation(actionRoute, actionLabel, actionTargetId);
 }
 
+function normalizeNotificationCount(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? Math.trunc(number) : 0;
+}
+
+function normalizeNotificationItems(items) {
+  return Array.isArray(items) ? items.filter(Boolean) : [];
+}
+
+export function normalizeNotificationSummary(summary) {
+  if (!summary) {
+    return {
+      unreadCount: 0,
+      requiresActionCount: 0,
+      criticalCount: 0,
+      todayCount: 0,
+    };
+  }
+  return {
+    unreadCount: normalizeNotificationCount(summary.unreadCount),
+    requiresActionCount: normalizeNotificationCount(summary.requiresActionCount),
+    criticalCount: normalizeNotificationCount(summary.criticalCount),
+    todayCount: normalizeNotificationCount(summary.todayCount),
+  };
+}
+
+export function normalizeNotificationPreview(preview) {
+  return {
+    items: normalizeNotificationItems(preview?.items),
+  };
+}
+
+export function normalizeNotificationPage(page) {
+  return {
+    items: normalizeNotificationItems(page?.items),
+    page: normalizeNotificationCount(page?.page),
+    size: Math.max(1, normalizeNotificationCount(page?.size) || 20),
+    totalElements: normalizeNotificationCount(page?.totalElements),
+    totalPages: normalizeNotificationCount(page?.totalPages),
+  };
+}
+
 export function formatNotificationExactTimestamp(value, timeZone) {
   if (!value) return "";
   const date = new Date(value);

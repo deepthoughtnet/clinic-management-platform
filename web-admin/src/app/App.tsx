@@ -308,6 +308,54 @@ function NotificationOperationsGate({ children }: { children: React.ReactNode })
   return <>{children}</>;
 }
 
+type RouteErrorBoundaryState = {
+  hasError: boolean;
+};
+
+class RouteErrorBoundary extends React.Component<{ children: React.ReactNode }, RouteErrorBoundaryState> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: unknown) {
+    if (typeof console !== "undefined" && console.error) {
+      console.error("Route rendering failed.", error);
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <Box sx={{ p: 3, maxWidth: 760 }}>
+          <Paper elevation={0} sx={{ p: 3, border: "1px solid", borderColor: "divider", borderRadius: 2 }}>
+            <Typography variant="h6" sx={{ fontWeight: 900, mb: 1.5 }}>
+              Something went wrong
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Reload the page or return to the dashboard.
+            </Typography>
+            <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+              <Button variant="contained" onClick={() => window.location.reload()}>
+                Retry
+              </Button>
+              <Button component={Link} to="/dashboard" variant="outlined">
+                Go to Dashboard
+              </Button>
+            </Box>
+          </Paper>
+        </Box>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
 function HomeRedirect() {
   const auth = useAuth();
   if (auth.rolesUpper.includes("PLATFORM_ADMIN") && !auth.tenantId) {
@@ -361,7 +409,8 @@ function AuthedApp() {
   return (
     <HelpProvider>
       <AppShell>
-        <Routes>
+        <RouteErrorBoundary>
+          <Routes>
         <Route path="/" element={<HomeRedirect />} />
         <Route path="/dashboard" element={<PathnameKeyedRoute><FeatureGate featureId="clinic-dashboard" title="Clinic dashboard unavailable"><DashboardPage /></FeatureGate></PathnameKeyedRoute>} />
         <Route path="/pharmacy/dashboard" element={<PathnameKeyedRoute><RouteAccessGate><FeatureGate featureId="pharmacy-dashboard" title="Pharmacy dashboard unavailable"><PharmacyDashboardPage /></FeatureGate></RouteAccessGate></PathnameKeyedRoute>} />
@@ -566,7 +615,8 @@ function AuthedApp() {
         <Route path="/doctors/availability" element={<FeatureGate featureId="doctor-availability"><DoctorAvailabilityPage /></FeatureGate>} />
         <Route path="/doctors/:id" element={<FeatureGate featureId="appointments"><DoctorDetailPage /></FeatureGate>} />
         <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+          </Routes>
+        </RouteErrorBoundary>
       </AppShell>
     </HelpProvider>
   );
