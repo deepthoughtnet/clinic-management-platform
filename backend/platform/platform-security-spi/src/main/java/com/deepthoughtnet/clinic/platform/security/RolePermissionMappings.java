@@ -44,6 +44,12 @@ public final class RolePermissionMappings {
     private static final Set<String> PLATFORM_ADMIN_BASE_PERMISSIONS = Set.of(
             Permissions.PLATFORM_TENANTS_READ,
             Permissions.PLATFORM_TENANTS_MANAGE,
+            Permissions.COMMERCIAL_VIEW,
+            Permissions.COMMERCIAL_CATALOG_MANAGE,
+            Permissions.COMMERCIAL_PLANS_MANAGE,
+            Permissions.COMMERCIAL_PLANS_PUBLISH,
+            Permissions.COMMERCIAL_SUBSCRIPTIONS_VIEW,
+            Permissions.COMMERCIAL_SUBSCRIPTIONS_MANAGE,
             Permissions.NOTIFICATION_READ,
             Permissions.NOTIFICATION_MANAGE,
             Permissions.NOTIFICATION_SEND,

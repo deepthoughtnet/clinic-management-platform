@@ -24,6 +24,11 @@ public final class AuditEntityType {
     public static final String COMMERCIAL_FEATURE = "COMMERCIAL_FEATURE";
     public static final String COMMERCIAL_LIMIT_DEFINITION = "COMMERCIAL_LIMIT_DEFINITION";
     public static final String COMMERCIAL_ADDON_OFFER = "COMMERCIAL_ADDON_OFFER";
+    public static final String COMMERCIAL_PLAN_TEMPLATE = "COMMERCIAL_PLAN_TEMPLATE";
+    public static final String COMMERCIAL_PLAN_DRAFT = "COMMERCIAL_PLAN_DRAFT";
+    public static final String COMMERCIAL_PLAN_VERSION = "COMMERCIAL_PLAN_VERSION";
+    public static final String COMMERCIAL_TENANT_SUBSCRIPTION = "COMMERCIAL_TENANT_SUBSCRIPTION";
+    public static final String COMMERCIAL_SUBSCRIPTION_EVENT = "COMMERCIAL_SUBSCRIPTION_EVENT";
 
     private AuditEntityType() {
     }

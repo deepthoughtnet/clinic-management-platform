@@ -36,6 +36,20 @@ class RolePermissionMappingsTest {
     }
 
     @Test
+    void platformAdminIncludesCommercialPlatformPermissions() {
+        Set<String> permissions = RolePermissionMappings.permissionsForRole(Roles.PLATFORM_ADMIN);
+
+        assertThat(permissions).contains(
+                Permissions.COMMERCIAL_VIEW,
+                Permissions.COMMERCIAL_CATALOG_MANAGE,
+                Permissions.COMMERCIAL_PLANS_MANAGE,
+                Permissions.COMMERCIAL_PLANS_PUBLISH,
+                Permissions.COMMERCIAL_SUBSCRIPTIONS_VIEW,
+                Permissions.COMMERCIAL_SUBSCRIPTIONS_MANAGE
+        );
+    }
+
+    @Test
     void doctorCanOpenAssignedWorkspaceAndUseAiCopilot() {
         Set<String> permissions = RolePermissionMappings.permissionsForRole(Roles.DOCTOR);
 

@@ -87,6 +87,10 @@ function formatPathLabel(pathname: string): string {
   if (pathname === "/notification-center") return "My Notifications";
   if (pathname === "/carepilot/ai-operations") return "AI Operations";
   if (pathname.startsWith("/platform/tenants")) return "Platform Tenants";
+  if (pathname.startsWith("/platform/commercial/subscriptions")) return "Subscriptions";
+  if (pathname.startsWith("/platform/commercial/plans")) return "Commercial Plans";
+  if (pathname.startsWith("/platform/commercial/catalog")) return "Commercial Catalog";
+  if (pathname.startsWith("/platform/commercial")) return "Commercial Platform";
   if (pathname.startsWith("/platform/plans")) return "Plans / Modules";
   if (pathname.startsWith("/platform/commercial-catalog")) return "Commercial Catalog";
   if (pathname.startsWith("/platform/users")) return "Users / Admins";

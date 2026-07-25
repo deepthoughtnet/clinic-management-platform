@@ -4,7 +4,6 @@ import {
   Box,
   Button,
   ButtonBase,
-  Checkbox,
   Chip,
   CircularProgress,
   Dialog,
@@ -245,6 +244,7 @@ export function RelationshipDialog({
       .filter((group) => group.items.length > 0);
   }, [filteredItems, kind]);
 
+  const summaryItems = React.useMemo(() => selectedIds.map((id) => selectableItems.find((item) => item.id === id)).filter((item): item is (typeof selectableItems)[number] => Boolean(item)), [selectableItems, selectedIds]);
   const dirty = React.useMemo(() => {
     if (kind === "addon-limits") {
       return !selectedIdsEqual(selectedIds, initialSelectedIds) || !sameRecord(incrementDrafts, initialIncrementDrafts);
@@ -429,7 +429,7 @@ export function RelationshipDialog({
               {copy.intro}
             </Typography>
             <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1.5, flexWrap: "wrap" }}>
-              <Chip label={summaryLabel} size="small" />
+              <Chip label={`Selected (${selectedIds.length})`} size="small" />
               <Box sx={{ flex: 1 }} />
               <TextField
                 value={search}
@@ -441,6 +441,33 @@ export function RelationshipDialog({
                 inputProps={{ "aria-label": copy.placeholder }}
               />
             </Stack>
+            {summaryItems.length > 0 ? (
+              <Stack direction="row" spacing={0.75} alignItems="center" sx={{ mt: 1.5, flexWrap: "wrap" }} useFlexGap>
+                {summaryItems.map((item) => (
+                  <Chip
+                    key={item.id}
+                    size="small"
+                    label={item.name}
+                    variant="outlined"
+                    onDelete={() => {
+                      if (kind === "addon-limits") {
+                        setSelectedIds((current) => {
+                          if (!current.includes(item.id)) return current;
+                          setIncrementDrafts((drafts) => {
+                            const next = { ...drafts };
+                            delete next[item.id];
+                            return next;
+                          });
+                          return current.filter((value) => value !== item.id);
+                        });
+                        return;
+                      }
+                      setSelectedIds((current) => current.filter((value) => value !== item.id));
+                    }}
+                  />
+                ))}
+              </Stack>
+            ) : null}
           </Box>
 
           <Box sx={{ flex: 1, overflowY: "auto", px: { xs: 2, sm: 3 }, py: 2 }}>
@@ -458,48 +485,54 @@ export function RelationshipDialog({
                         {group.label}
                       </Typography>
                     ) : null}
-                    <Stack spacing={1}>
-                      {group.items.map((item) => {
-                        const selected = isSelected(item.id);
-                        const disabled = item.status === "RETIRED";
-                        return (
-                          <Paper
-                            key={item.id}
-                            variant="outlined"
-                            sx={{
-                              borderColor: selected ? "primary.main" : "divider",
-                              bgcolor: selected ? "action.selected" : "background.paper",
-                              opacity: disabled ? 0.64 : 1,
-                              overflow: "hidden",
-                            }}
-                          >
-                            <ButtonBase
-                              onClick={() => {
-                                if (!disabled) {
-                                  if (activeDialog.kind === "addon-limits") {
+                  <Stack spacing={1}>
+                    {group.items.map((item) => {
+                      const selected = isSelected(item.id);
+                      const disabled = item.status === "RETIRED";
+                      return (
+                        <Paper
+                          key={item.id}
+                          variant="outlined"
+                          sx={{
+                            borderColor: selected ? "primary.main" : "divider",
+                            bgcolor: selected ? "action.selected" : "background.paper",
+                            opacity: disabled ? 0.64 : 1,
+                            overflow: "hidden",
+                            boxShadow: selected ? 2 : 0,
+                            transition: "border-color 120ms ease, background-color 120ms ease, box-shadow 120ms ease",
+                          }}
+                          aria-selected={selected}
+                        >
+                          <ButtonBase
+                            onClick={() => {
+                              if (!disabled) {
+                                if (activeDialog.kind === "addon-limits") {
                                     toggleLimitSelection(item.id);
                                   } else {
                                     toggleSelection(item.id);
                                   }
+                              }
+                            }}
+                            onKeyDown={(event) => {
+                              if (disabled) return;
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                if (activeDialog.kind === "addon-limits") {
+                                  toggleLimitSelection(item.id);
+                                } else {
+                                  toggleSelection(item.id);
                                 }
-                              }}
-                              disabled={disabled}
-                              sx={{ width: "100%", textAlign: "left", p: 1.5, display: "block" }}
-                            >
+                              }
+                            }}
+                            disabled={disabled}
+                            component="div"
+                            role="option"
+                            aria-selected={selected}
+                            tabIndex={disabled ? -1 : 0}
+                            sx={{ width: "100%", textAlign: "left", p: 0, display: "block", border: 0, background: "transparent", cursor: disabled ? "not-allowed" : "pointer" }}
+                          >
+                            <Box sx={{ p: 1.5 }}>
                               <Stack direction="row" spacing={1.5} alignItems="flex-start">
-                                <Checkbox
-                                  checked={selected}
-                                  disabled={disabled}
-                                  tabIndex={-1}
-                                  onClick={(event) => event.stopPropagation()}
-                                  onChange={() => {
-                                    if (activeDialog.kind === "addon-limits") {
-                                      toggleLimitSelection(item.id);
-                                    } else {
-                                      toggleSelection(item.id);
-                                    }
-                                  }}
-                                />
                                 <Box sx={{ minWidth: 0, flex: 1 }}>
                                   <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>
                                     {item.name}
@@ -528,17 +561,21 @@ export function RelationshipDialog({
                                     </Typography>
                                   ) : null}
                                 </Box>
-                                <Chip size="small" label={selected ? "Selected" : "Available"} color={selected ? "primary" : "default"} />
-                                {disabled ? <Chip size="small" label="Retired" color="default" /> : null}
+                                <Stack direction="row" spacing={0.75} alignItems="flex-start" flexWrap="wrap" justifyContent="flex-end">
+                                  <Chip size="small" label={item.status || "ACTIVE"} variant="outlined" />
+                                  <Chip size="small" label={selected ? "Selected" : "Available"} color={selected ? "primary" : "default"} />
+                                  {disabled ? <Chip size="small" label="Retired" color="default" /> : null}
+                                </Stack>
                               </Stack>
-                            </ButtonBase>
-                            {activeDialog.kind === "addon-limits" && selected ? (
-                              <Box sx={{ px: 1.5, pb: 1.5, pt: 0 }}>
-                                <TextField
-                                  size="small"
-                                  label="Increment value"
-                                  value={incrementDrafts[item.id] || "1"}
-                                  onChange={(event) => setIncrementDrafts((current) => ({ ...current, [item.id]: event.target.value }))}
+                            </Box>
+                          </ButtonBase>
+                          {activeDialog.kind === "addon-limits" && selected ? (
+                            <Box sx={{ px: 1.5, pb: 1.5, pt: 0 }} onClick={(event) => event.stopPropagation()}>
+                              <TextField
+                                size="small"
+                                label="Increment value"
+                                value={incrementDrafts[item.id] || "1"}
+                                onChange={(event) => setIncrementDrafts((current) => ({ ...current, [item.id]: event.target.value }))}
                                   sx={{ maxWidth: 200 }}
                                 />
                               </Box>

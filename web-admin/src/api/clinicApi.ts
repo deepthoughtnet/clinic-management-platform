@@ -6061,6 +6061,359 @@ export async function updateCommercialAddonLimitIncrements(token: string, id: st
   return httpPut<CommercialAddonDetail>(`/api/platform/commercial-catalog/addons/${id}/limit-increments`, body, { token, platformOperation: true });
 }
 
+export type CommercialPlatformOverview = {
+  kpis: Array<{ key: string; label: string; value: number; helperText: string }>;
+  lifecycle: Array<{ key: string; label: string; available: boolean; comingSoon: boolean }>;
+  actions: Array<{ key: string; label: string; path: string; available: boolean; primary: boolean }>;
+};
+
+export type CommercialSubscriptionStatus = "DRAFT" | "ACTIVE" | "SCHEDULED" | "PAUSED" | "EXPIRED" | "CANCELLED" | "SUPERSEDED";
+export type CommercialSubscriptionValidationSeverity = "INFO" | "WARNING" | "BLOCKING";
+export type CommercialSubscriptionValidationState = "NOT_VALIDATED" | "VALID" | "INVALID" | "STALE";
+
+export type CommercialSubscriptionValidationMessage = {
+  field: string;
+  code: string;
+  message: string;
+  remediation: string | null;
+  severity: CommercialSubscriptionValidationSeverity;
+  blocking: boolean;
+};
+
+export type CommercialSubscriptionValidationResult = {
+  validationState: CommercialSubscriptionValidationState;
+  readyToAssign: boolean;
+  blockingFindingCount: number;
+  warningFindingCount: number;
+  findings: CommercialSubscriptionValidationMessage[];
+  validatedAt: string | null;
+};
+
+export type CommercialSubscriptionHistoryEntry = {
+  id: string;
+  eventType: string;
+  previousStatus: string | null;
+  newStatus: string;
+  performedBy: string | null;
+  performedAt: string;
+  remarks: string | null;
+};
+
+export type CommercialSubscriptionSummary = {
+  id: string;
+  tenantId: string;
+  planTemplateId: string;
+  planTemplateCode: string;
+  planTemplateName: string;
+  publishedVersionId: string;
+  publishedVersionNumber: number;
+  publishedVersionLabel: string;
+  subscriptionStatus: CommercialSubscriptionStatus;
+  startDate: string;
+  endDate: string | null;
+  autoRenew: boolean;
+  displayName: string | null;
+  referenceNumber: string | null;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CommercialSubscriptionDetail = CommercialSubscriptionSummary & {
+  createdBy: string | null;
+  updatedBy: string | null;
+  history: CommercialSubscriptionHistoryEntry[];
+  validation: CommercialSubscriptionValidationResult;
+};
+
+export type CommercialSubscriptionStatusCounts = {
+  activeCount: number;
+  scheduledCount: number;
+  pausedCount: number;
+  expiredCount: number;
+  cancelledCount: number;
+};
+
+export type CommercialPlanTemplateStatus = "DRAFT" | "ACTIVE" | "RETIRED";
+export type CommercialPlanTargetSegment =
+  | "SOLO"
+  | "SMALL_CLINIC"
+  | "MULTI_DOCTOR_CLINIC"
+  | "SPECIALITY_CLINIC"
+  | "DIAGNOSTIC_CENTER"
+  | "PHARMACY"
+  | "ENTERPRISE"
+  | "CUSTOM";
+export type CommercialPlanDraftStatus = "DRAFT" | "READY_TO_PUBLISH" | "BLOCKED";
+export type CommercialPlanPublicationStatus = "PUBLISHED" | "RETIRED";
+export type CommercialPlanSelectionSource = "EXPLICIT" | "INHERITED";
+export type CommercialPlanSelectionState = "INCLUDED" | "AVAILABLE" | "UNAVAILABLE";
+export type CommercialPlanValidationSeverity = "INFO" | "WARNING" | "BLOCKING";
+export type CommercialPlanValidationState = "NOT_VALIDATED" | "VALID" | "INVALID" | "STALE";
+
+export type CommercialPlanValidationFinding = {
+  field: string;
+  code: string;
+  title: string;
+  message: string;
+  remediation: string | null;
+  severity: CommercialPlanValidationSeverity;
+  blocking: boolean;
+  category: string | null;
+  affectedItemType: string | null;
+  affectedItemCode: string | null;
+  affectedItemName: string | null;
+  expectedItemType: string | null;
+  expectedItemCode: string | null;
+  expectedItemName: string | null;
+  currentValue: string | null;
+  expectedValue: string | null;
+  targetBuilderTab: string | null;
+  actionLabel: string | null;
+};
+
+export type CommercialPlanValidationResult = {
+  validationState: CommercialPlanValidationState;
+  readyToPublish: boolean;
+  blockingFindingCount: number;
+  warningFindingCount: number;
+  findings: CommercialPlanValidationFinding[];
+  validatedDraftRevision: number;
+  validatedAt: string | null;
+};
+
+export type CommercialPlanTemplateSummary = {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  targetSegment: CommercialPlanTargetSegment;
+  status: CommercialPlanTemplateStatus;
+  displayOrder: number;
+  draftRevision: number;
+  latestPublishedVersionNumber: number | null;
+  draftStatus: CommercialPlanDraftStatus;
+  publicationReady: boolean;
+  validation: CommercialPlanValidationResult;
+  capabilityCount: number;
+  moduleCount: number;
+  featureCount: number;
+  limitCount: number;
+  addonCount: number;
+  updatedAt: string;
+  changeSummary: string | null;
+};
+
+export type CommercialPlanVersionSummary = {
+  id: string;
+  templateId: string;
+  versionNumber: number;
+  versionLabel: string;
+  status: CommercialPlanPublicationStatus;
+  publishedAt: string;
+  publishedBy: string | null;
+  publicationNotes: string | null;
+  sourceDraftRevision: number;
+  contentHash: string;
+  capabilityCount: number;
+  moduleCount: number;
+  featureCount: number;
+  limitCount: number;
+  addonCount: number;
+  changeSummary: string | null;
+};
+
+export type CommercialPlanVersionDetail = CommercialPlanVersionSummary & { snapshotJson: string };
+
+export type CommercialPlanValidationMessage = {
+  field: string;
+  code: string;
+  title: string;
+  message: string;
+  remediation: string | null;
+  severity: CommercialPlanValidationSeverity;
+  blocking: boolean;
+  category: string | null;
+  affectedItemType: string | null;
+  affectedItemCode: string | null;
+  affectedItemName: string | null;
+  expectedItemType: string | null;
+  expectedItemCode: string | null;
+  expectedItemName: string | null;
+  currentValue: string | null;
+  expectedValue: string | null;
+  targetBuilderTab: string | null;
+  actionLabel: string | null;
+};
+
+export type CommercialPlanDraftResponse = {
+  id: string;
+  templateId: string;
+  revision: number;
+  status: CommercialPlanDraftStatus;
+  draftNotes: string | null;
+  validationStatus: string;
+  publicationReady: boolean;
+  validation: CommercialPlanValidationResult;
+  updatedAt: string;
+  updatedBy: string | null;
+  configuration: {
+    capabilities: Array<{ capabilityId: string; capabilityCode: string; capabilityName: string; description: string | null; displayOrder: number; selected: boolean; retired: boolean }>;
+    modules: Array<{ moduleId: string; moduleCode: string; moduleName: string; description: string | null; runtimeModuleCode: string | null; displayOrder: number; selected: boolean; inherited: boolean; selectionSource: CommercialPlanSelectionSource; retired: boolean }>;
+    features: Array<{ featureId: string; featureCode: string; featureName: string; description: string | null; moduleId: string; moduleCode: string; moduleName: string; displayOrder: number; selected: boolean; retired: boolean }>;
+    limits: Array<{ limitDefinitionId: string; limitCode: string; limitName: string; description: string | null; unit: string; valueType: string; aggregationPeriod: string; enforcementMode: string; configuredValue: string | null; displayOrder: number; selected: boolean; retired: boolean }>;
+    addons: Array<{ addonId: string; addonCode: string; addonName: string; description: string | null; addonType: string; displayOrder: number; selectionState: CommercialPlanSelectionState; retired: boolean }>;
+  };
+  validationMessages: CommercialPlanValidationMessage[];
+};
+
+export type CommercialPlanTemplateDetail = {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  targetSegment: CommercialPlanTargetSegment;
+  status: CommercialPlanTemplateStatus;
+  displayOrder: number;
+  draftRevision: number;
+  latestPublishedVersionNumber: number | null;
+  draftStatus: CommercialPlanDraftStatus;
+  publicationReady: boolean;
+  validation: CommercialPlanValidationResult;
+  updatedAt: string;
+  draft: CommercialPlanDraftResponse;
+  latestPublishedVersion: CommercialPlanVersionSummary | null;
+};
+
+export type CommercialPlanVersionComparison = {
+  templateId: string;
+  templateCode: string;
+  templateName: string;
+  leftLabel: string;
+  rightLabel: string;
+  metadata: { changed: Array<{ code: string; name: string; detail: string | null }> };
+  capabilities: { added: Array<{ code: string; name: string; detail: string | null }>; removed: Array<{ code: string; name: string; detail: string | null }>; changed: Array<{ code: string; name: string; detail: string | null }> };
+  modules: { added: Array<{ code: string; name: string; detail: string | null }>; removed: Array<{ code: string; name: string; detail: string | null }>; changed: Array<{ code: string; name: string; detail: string | null }> };
+  features: { added: Array<{ code: string; name: string; detail: string | null }>; removed: Array<{ code: string; name: string; detail: string | null }>; changed: Array<{ code: string; name: string; detail: string | null }> };
+  limits: { added: Array<{ code: string; name: string; detail: string | null }>; removed: Array<{ code: string; name: string; detail: string | null }>; changed: Array<{ code: string; name: string; detail: string | null }> };
+  addons: { added: Array<{ code: string; name: string; detail: string | null }>; removed: Array<{ code: string; name: string; detail: string | null }>; changed: Array<{ code: string; name: string; detail: string | null }> };
+};
+
+export async function getCommercialPlatformOverview(token: string) {
+  return httpGet<CommercialPlatformOverview>("/api/platform/commercial/overview", { token, platformOperation: true });
+}
+
+export async function getCommercialSubscriptionStatusCounts(token: string) {
+  return httpGet<CommercialSubscriptionStatusCounts>("/api/platform/commercial/subscriptions/status-counts", { token, platformOperation: true });
+}
+
+export async function listCommercialSubscriptions(token: string, query?: { search?: string; tenantId?: string | null; planTemplateId?: string | null; status?: CommercialSubscriptionStatus | null; page?: number; size?: number }) {
+  const params = new URLSearchParams();
+  if (query?.search) params.set("search", query.search);
+  if (query?.tenantId) params.set("tenantId", query.tenantId);
+  if (query?.planTemplateId) params.set("planTemplateId", query.planTemplateId);
+  if (query?.status) params.set("status", query.status);
+  if (query?.page != null) params.set("page", String(query.page));
+  if (query?.size != null) params.set("size", String(query.size));
+  const qs = params.toString();
+  return httpGet<CommercialPage<CommercialSubscriptionSummary>>(`/api/platform/commercial/subscriptions${qs ? `?${qs}` : ""}`, { token, platformOperation: true });
+}
+
+export async function getCommercialSubscription(token: string, id: string) {
+  return httpGet<CommercialSubscriptionDetail>(`/api/platform/commercial/subscriptions/${id}`, { token, platformOperation: true });
+}
+
+export async function createCommercialSubscription(token: string, body: Record<string, unknown>) {
+  return httpPost<CommercialSubscriptionDetail>("/api/platform/commercial/subscriptions", body, { token, platformOperation: true });
+}
+
+export async function activateCommercialSubscription(token: string, id: string, body: Record<string, unknown> = {}) {
+  return httpPost<CommercialSubscriptionDetail>(`/api/platform/commercial/subscriptions/${id}/activate`, body, { token, platformOperation: true });
+}
+
+export async function pauseCommercialSubscription(token: string, id: string, body: Record<string, unknown> = {}) {
+  return httpPost<CommercialSubscriptionDetail>(`/api/platform/commercial/subscriptions/${id}/pause`, body, { token, platformOperation: true });
+}
+
+export async function resumeCommercialSubscription(token: string, id: string, body: Record<string, unknown> = {}) {
+  return httpPost<CommercialSubscriptionDetail>(`/api/platform/commercial/subscriptions/${id}/resume`, body, { token, platformOperation: true });
+}
+
+export async function cancelCommercialSubscription(token: string, id: string, body: Record<string, unknown> = {}) {
+  return httpPost<CommercialSubscriptionDetail>(`/api/platform/commercial/subscriptions/${id}/cancel`, body, { token, platformOperation: true });
+}
+
+export async function replaceCommercialSubscription(token: string, id: string, body: Record<string, unknown>) {
+  return httpPost<CommercialSubscriptionDetail>(`/api/platform/commercial/subscriptions/${id}/replace`, body, { token, platformOperation: true });
+}
+
+export async function getCommercialSubscriptionHistory(token: string, id: string) {
+  return httpGet<CommercialSubscriptionHistoryEntry[]>(`/api/platform/commercial/subscriptions/${id}/history`, { token, platformOperation: true });
+}
+
+export async function listCommercialPlanTemplates(token: string, query?: { search?: string; status?: CommercialPlanTemplateStatus | null; targetSegment?: CommercialPlanTargetSegment | null; page?: number; size?: number }) {
+  const params = new URLSearchParams();
+  if (query?.search) params.set("search", query.search);
+  if (query?.status) params.set("status", query.status);
+  if (query?.targetSegment) params.set("targetSegment", query.targetSegment);
+  if (query?.page != null) params.set("page", String(query.page));
+  if (query?.size != null) params.set("size", String(query.size));
+  const qs = params.toString();
+  return httpGet<CommercialPage<CommercialPlanTemplateSummary>>(`/api/platform/commercial/plan-templates${qs ? `?${qs}` : ""}`, { token, platformOperation: true });
+}
+
+export async function getCommercialPlanTemplate(token: string, templateId: string) {
+  return httpGet<CommercialPlanTemplateDetail>(`/api/platform/commercial/plan-templates/${templateId}`, { token, platformOperation: true });
+}
+
+export async function createCommercialPlanTemplate(token: string, body: Record<string, unknown>) {
+  return httpPost<CommercialPlanTemplateDetail>("/api/platform/commercial/plan-templates", body, { token, platformOperation: true });
+}
+
+export async function cloneCommercialPlanTemplate(token: string, sourceTemplateId: string, body: Record<string, unknown>) {
+  return httpPost<CommercialPlanTemplateDetail>(`/api/platform/commercial/plan-templates/${sourceTemplateId}/clone`, body, { token, platformOperation: true });
+}
+
+export async function updateCommercialPlanTemplate(token: string, templateId: string, body: Record<string, unknown>) {
+  return httpPut<CommercialPlanTemplateDetail>(`/api/platform/commercial/plan-templates/${templateId}`, body, { token, platformOperation: true });
+}
+
+export async function retireCommercialPlanTemplate(token: string, templateId: string) {
+  return httpPost<CommercialPlanTemplateDetail>(`/api/platform/commercial/plan-templates/${templateId}/retire`, {}, { token, platformOperation: true });
+}
+
+export async function getCommercialPlanDraft(token: string, templateId: string) {
+  return httpGet<CommercialPlanDraftResponse>(`/api/platform/commercial/plan-templates/${templateId}/draft`, { token, platformOperation: true });
+}
+
+export async function saveCommercialPlanDraft(token: string, templateId: string, body: Record<string, unknown>) {
+  return httpPut<CommercialPlanDraftResponse>(`/api/platform/commercial/plan-templates/${templateId}/draft`, body, { token, platformOperation: true });
+}
+
+export async function validateCommercialPlanDraft(token: string, templateId: string) {
+  return httpPost<{ draft: CommercialPlanDraftResponse; validation: CommercialPlanValidationResult; messages: CommercialPlanValidationMessage[]; publicationReady: boolean }>(`/api/platform/commercial/plan-templates/${templateId}/draft/validate`, {}, { token, platformOperation: true });
+}
+
+export async function publishCommercialPlanVersion(token: string, templateId: string, body: Record<string, unknown> | undefined = undefined) {
+  return httpPost<CommercialPlanVersionDetail>(`/api/platform/commercial/plan-templates/${templateId}/versions`, body || {}, { token, platformOperation: true });
+}
+
+export async function listCommercialPlanVersions(token: string, templateId: string) {
+  return httpGet<CommercialPage<CommercialPlanVersionSummary>>(`/api/platform/commercial/plan-templates/${templateId}/versions`, { token, platformOperation: true });
+}
+
+export async function getCommercialPlanVersion(token: string, templateId: string, versionId: string) {
+  return httpGet<CommercialPlanVersionDetail>(`/api/platform/commercial/plan-templates/${templateId}/versions/${versionId}`, { token, platformOperation: true });
+}
+
+export async function compareCommercialPlanVersions(token: string, templateId: string, query?: { leftVersionId?: string | null; rightVersionId?: string | null }) {
+  const params = new URLSearchParams();
+  if (query?.leftVersionId) params.set("leftVersionId", query.leftVersionId);
+  if (query?.rightVersionId) params.set("rightVersionId", query.rightVersionId);
+  const qs = params.toString();
+  return httpGet<CommercialPlanVersionComparison>(`/api/platform/commercial/plan-templates/${templateId}/compare${qs ? `?${qs}` : ""}`, { token, platformOperation: true });
+}
+
 type PatientDocumentListFilters = {
   documentType?: ClinicalDocumentType | null;
   reportDateFrom?: string | null;

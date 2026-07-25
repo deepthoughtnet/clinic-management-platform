@@ -57,6 +57,9 @@ import TenantDetailPage from "../pages/platform/TenantDetailPage";
 import PlansModulesPage from "../pages/platform/PlansModulesPage";
 import ProductImplementationPage from "../pages/platform/ProductImplementationPage";
 import CommercialCatalogPage from "../pages/platform/CommercialCatalogPage";
+import CommercialPlatformPage from "../pages/platform/CommercialPlatformPage";
+import CommercialPlansPage from "../pages/platform/CommercialPlansPage";
+import CommercialSubscriptionsPage from "../pages/platform/CommercialSubscriptionsPage";
 import CampaignsPage from "../products/carepilot/campaigns/CampaignsPage";
 import AnalyticsPage from "../products/carepilot/analytics/AnalyticsPage";
 import OpsConsolePage from "../products/carepilot/ops/OpsConsolePage";
@@ -464,7 +467,14 @@ function AuthedApp() {
         <Route path="/platform/help" element={<PathnameKeyedRoute><PlatformAdminGate><HelpCmsPage /></PlatformAdminGate></PathnameKeyedRoute>} />
         <Route path="/platform/tenants/:tenantId" element={<PathnameKeyedRoute><TenantDetailPage /></PathnameKeyedRoute>} />
         <Route path="/platform/plans" element={<PathnameKeyedRoute><PlansModulesPage /></PathnameKeyedRoute>} />
-        <Route path="/platform/commercial-catalog" element={<PathnameKeyedRoute><PlatformAdminGate><CommercialCatalogPage /></PlatformAdminGate></PathnameKeyedRoute>} />
+        <Route path="/platform/commercial" element={<PathnameKeyedRoute><PlatformAdminGate><CommercialPlatformPage /></PlatformAdminGate></PathnameKeyedRoute>} />
+        <Route path="/platform/commercial/catalog" element={<PathnameKeyedRoute><PlatformAdminGate><CommercialCatalogPage /></PlatformAdminGate></PathnameKeyedRoute>} />
+        <Route path="/platform/commercial/plans" element={<PathnameKeyedRoute><PlatformAdminGate><CommercialPlansPage /></PlatformAdminGate></PathnameKeyedRoute>} />
+        <Route path="/platform/commercial/plans/:templateId" element={<PathnameKeyedRoute><PlatformAdminGate><CommercialPlansPage /></PlatformAdminGate></PathnameKeyedRoute>} />
+        <Route path="/platform/commercial/plans/:templateId/versions/:versionId" element={<PathnameKeyedRoute><PlatformAdminGate><CommercialPlansPage /></PlatformAdminGate></PathnameKeyedRoute>} />
+        <Route path="/platform/commercial/subscriptions" element={<PathnameKeyedRoute><PlatformAdminGate><CommercialSubscriptionsPage /></PlatformAdminGate></PathnameKeyedRoute>} />
+        <Route path="/platform/commercial/subscriptions/:subscriptionId" element={<PathnameKeyedRoute><PlatformAdminGate><CommercialSubscriptionsPage /></PlatformAdminGate></PathnameKeyedRoute>} />
+        <Route path="/platform/commercial-catalog" element={<Navigate to="/platform/commercial/catalog" replace />} />
         <Route path="/platform/product-implementation" element={<PathnameKeyedRoute><PlatformAdminGate><ProductImplementationPage /></PlatformAdminGate></PathnameKeyedRoute>} />
         <Route
           path="/carepilot/campaigns"

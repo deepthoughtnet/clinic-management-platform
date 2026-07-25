@@ -13,16 +13,27 @@ test("commercial catalog route and legacy plans route remain registered", () => 
   const nav = readSource("layout/nav.ts");
   const registry = readSource("modules/moduleRegistry.ts");
 
+  assert.ok(app.includes('path="/platform/commercial"'));
+  assert.ok(app.includes('path="/platform/commercial/catalog"'));
+  assert.ok(app.includes('path="/platform/commercial/plans"'));
   assert.ok(app.includes('path="/platform/commercial-catalog"'));
   assert.ok(app.includes("PlatformAdminGate"));
   assert.ok(app.includes('path="/platform/plans"'));
 
   assert.ok(nav.includes('key: "platform-commercial-catalog"'));
-  assert.ok(nav.includes('path: "/platform/commercial-catalog"'));
-  assert.ok(nav.includes('label: "Commercial Catalog"'));
+  assert.ok(nav.includes('path: "/platform/commercial/catalog"'));
+  assert.ok(nav.includes('label: "Catalog"'));
+  assert.ok(nav.includes('key: "platform-commercial"'));
+  assert.ok(nav.includes('path: "/platform/commercial"'));
+  assert.ok(nav.includes('key: "platform-commercial-plans"'));
+  assert.ok(nav.includes('path: "/platform/commercial/plans"'));
   assert.ok(nav.includes('key: "platform-plans"'));
   assert.ok(nav.includes('path: "/platform/plans"'));
 
+  assert.ok(registry.includes('path === "/platform/commercial"'));
+  assert.ok(registry.includes('path === "/platform/commercial/catalog"'));
+  assert.ok(registry.includes('path === "/platform/commercial/plans"'));
+  assert.ok(registry.includes('path.startsWith("/platform/commercial/plans/")'));
   assert.ok(registry.includes('path === "/platform/commercial-catalog"'));
   assert.ok(registry.includes("PLATFORM_ADMIN"));
   assert.ok(registry.includes('path === "/platform/plans"'));
@@ -39,6 +50,7 @@ test("relationship dialogs are contextual, searchable, sticky, and business-name
   assert.ok(dialog.includes('Code: {header.parentCode}'));
   assert.ok(dialog.includes('Code: {item.code}'));
   assert.ok(dialog.includes('autoFocus'));
+  assert.ok(dialog.includes('Selected ('));
   assert.ok(dialog.includes('selectedCountLabel'));
   assert.ok(dialog.includes('placeholder={copy.placeholder}'));
   assert.ok(dialog.includes('height: "min(90vh, 920px)"'));
@@ -48,7 +60,9 @@ test("relationship dialogs are contextual, searchable, sticky, and business-name
   assert.ok(dialog.includes('Keep Editing'));
   assert.ok(dialog.includes('Discard Changes'));
   assert.ok(dialog.includes('ButtonBase'));
-  assert.ok(dialog.includes('onClick={() => {'));
+  assert.ok(dialog.includes('role="option"'));
+  assert.ok(dialog.includes('aria-selected={selected}'));
+  assert.ok(dialog.includes('onKeyDown={(event) => {'));
   assert.ok(dialog.includes('onClick={(event) => event.stopPropagation()}'));
   assert.ok(!dialog.includes('window.confirm'));
   assert.ok(!dialog.includes('confirm('));

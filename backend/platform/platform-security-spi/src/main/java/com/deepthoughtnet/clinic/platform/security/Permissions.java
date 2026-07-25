@@ -94,6 +94,12 @@ public final class Permissions {
     public static final String TENANT_USERS_RESET_PASSWORD = "tenant.users.reset.password";
     public static final String PLATFORM_TENANTS_READ = "platform.tenants.read";
     public static final String PLATFORM_TENANTS_MANAGE = "platform.tenants.manage";
+    public static final String COMMERCIAL_VIEW = "commercial.view";
+    public static final String COMMERCIAL_CATALOG_MANAGE = "commercial.catalog.manage";
+    public static final String COMMERCIAL_PLANS_MANAGE = "commercial.plans.manage";
+    public static final String COMMERCIAL_PLANS_PUBLISH = "commercial.plans.publish";
+    public static final String COMMERCIAL_SUBSCRIPTIONS_VIEW = "commercial.subscriptions.view";
+    public static final String COMMERCIAL_SUBSCRIPTIONS_MANAGE = "commercial.subscriptions.manage";
     public static final String NOTIFICATION_READ = "notification.read";
     public static final String NOTIFICATION_MANAGE = "notification.manage";
     public static final String NOTIFICATION_SEND = "notification.send";

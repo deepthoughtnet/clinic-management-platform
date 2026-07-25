@@ -10,3 +10,9 @@ Commercial Platform work is split into ordered batches:
 6. S6 Billing and Renewals
 
 Each future batch must have an approved specification before implementation.
+
+Approved specs:
+
+- [S1 Commercial Catalog Foundation](./S1_COMMERCIAL_CATALOG_FOUNDATION.md)
+- [S2 Plan Templates and Immutable Versions](./S2_PLAN_TEMPLATES_AND_VERSIONS.md)
+- [S3 Tenant Subscriptions & Assignment](./S3_TENANT_SUBSCRIPTIONS.md)
