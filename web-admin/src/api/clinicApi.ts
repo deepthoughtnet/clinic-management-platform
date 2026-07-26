@@ -1,4 +1,4 @@
-import { httpDelete, httpGet, httpGetText, httpPatch, httpPost, httpPostForm, httpPut, httpPutForm } from "./restClient";
+import { fetchAuthenticatedBlob, httpDelete, httpGet, httpGetText, httpPatch, httpPost, httpPostForm, httpPut, httpPutForm } from "./restClient";
 import { buildHelpRequestOptions } from "./helpClient";
 
 export type PatientGender = "MALE" | "FEMALE" | "OTHER" | "UNKNOWN";
@@ -6148,6 +6148,10 @@ export type CommercialPlanDraftStatus = "DRAFT" | "READY_TO_PUBLISH" | "BLOCKED"
 export type CommercialPlanPublicationStatus = "PUBLISHED" | "RETIRED";
 export type CommercialPlanSelectionSource = "EXPLICIT" | "INHERITED";
 export type CommercialPlanSelectionState = "INCLUDED" | "AVAILABLE" | "UNAVAILABLE";
+export type CommercialPlanPricingBillingCycle = "MONTHLY" | "ANNUAL" | "QUARTERLY" | "ONE_TIME" | "TRIAL";
+export type CommercialPlanPricingTaxModel = "EXCLUSIVE" | "INCLUSIVE" | "NONE";
+export type CommercialPlanPricingStatus = "DRAFT" | "PUBLISHED" | "RETIRED";
+export type CommercialPlanAddonPurchaseType = "MONTHLY" | "ANNUAL" | "ONE_TIME";
 export type CommercialPlanValidationSeverity = "INFO" | "WARNING" | "BLOCKING";
 export type CommercialPlanValidationState = "NOT_VALIDATED" | "VALID" | "INVALID" | "STALE";
 
@@ -6180,6 +6184,81 @@ export type CommercialPlanValidationResult = {
   findings: CommercialPlanValidationFinding[];
   validatedDraftRevision: number;
   validatedAt: string | null;
+};
+
+export type CommercialPlanPricingMeteredRate = {
+  id: string;
+  limitDefinitionId: string;
+  limitCode: string;
+  limitName: string;
+  includedQuantity: string;
+  overageEnabled: boolean;
+  unitPrice: string;
+  unitName: string;
+  billingRounding: string | null;
+  status: CommercialPlanPricingStatus;
+};
+
+export type CommercialPlanPricingAddon = {
+  id: string;
+  addonOfferId: string;
+  addonCode: string;
+  addonName: string;
+  purchaseType: CommercialPlanAddonPurchaseType;
+  monthlyPrice: string;
+  annualPrice: string;
+  oneTimePrice: string;
+  maxQuantity: number | null;
+  status: CommercialPlanPricingStatus;
+};
+
+export type CommercialPlanPricingSnapshot = {
+  currency: string | null;
+  billingCycle: CommercialPlanPricingBillingCycle | null;
+  monthlyPrice: string | null;
+  annualPrice: string | null;
+  setupFee: string | null;
+  trialDays: number | null;
+  taxModel: CommercialPlanPricingTaxModel | null;
+  taxPercentage: string | null;
+  discountAllowed: boolean;
+  meteredRates: CommercialPlanPricingMeteredRate[];
+  addonPricing: CommercialPlanPricingAddon[];
+};
+
+export type CommercialPlanPricingResponse = CommercialPlanPricingSnapshot & {
+  id: string | null;
+  publishedVersionId: string | null;
+  status: CommercialPlanPricingStatus;
+  createdAt: string | null;
+  createdBy: string | null;
+};
+
+export type CommercialPlanPricingValidationResult = {
+  validationState: CommercialPlanValidationState;
+  readyToPublish: boolean;
+  blockingFindingCount: number;
+  warningFindingCount: number;
+  findings: CommercialPlanValidationFinding[];
+  validatedDraftRevision: number;
+  validatedAt: string | null;
+};
+
+export type CommercialPlanPricingComparisonEntry = {
+  code: string;
+  name: string;
+  detail: string | null;
+};
+
+export type CommercialPlanPricingComparison = {
+  templateId: string;
+  templateCode: string;
+  templateName: string;
+  leftLabel: string;
+  rightLabel: string;
+  subscriptionPricing: CommercialPlanPricingComparisonEntry[];
+  meteredRates: CommercialPlanPricingComparisonEntry[];
+  addonPricing: CommercialPlanPricingComparisonEntry[];
 };
 
 export type CommercialPlanTemplateSummary = {
@@ -6223,7 +6302,7 @@ export type CommercialPlanVersionSummary = {
   changeSummary: string | null;
 };
 
-export type CommercialPlanVersionDetail = CommercialPlanVersionSummary & { snapshotJson: string };
+export type CommercialPlanVersionDetail = CommercialPlanVersionSummary & { snapshotJson: string; pricing: CommercialPlanPricingResponse | null };
 
 export type CommercialPlanValidationMessage = {
   field: string;
@@ -6263,6 +6342,7 @@ export type CommercialPlanDraftResponse = {
     features: Array<{ featureId: string; featureCode: string; featureName: string; description: string | null; moduleId: string; moduleCode: string; moduleName: string; displayOrder: number; selected: boolean; retired: boolean }>;
     limits: Array<{ limitDefinitionId: string; limitCode: string; limitName: string; description: string | null; unit: string; valueType: string; aggregationPeriod: string; enforcementMode: string; configuredValue: string | null; displayOrder: number; selected: boolean; retired: boolean }>;
     addons: Array<{ addonId: string; addonCode: string; addonName: string; description: string | null; addonType: string; displayOrder: number; selectionState: CommercialPlanSelectionState; retired: boolean }>;
+    pricing: CommercialPlanPricingSnapshot;
   };
   validationMessages: CommercialPlanValidationMessage[];
 };
@@ -6283,6 +6363,8 @@ export type CommercialPlanTemplateDetail = {
   updatedAt: string;
   draft: CommercialPlanDraftResponse;
   latestPublishedVersion: CommercialPlanVersionSummary | null;
+  pricing: CommercialPlanPricingResponse;
+  pricingValidation: CommercialPlanPricingValidationResult;
 };
 
 export type CommercialPlanVersionComparison = {
@@ -6297,6 +6379,7 @@ export type CommercialPlanVersionComparison = {
   features: { added: Array<{ code: string; name: string; detail: string | null }>; removed: Array<{ code: string; name: string; detail: string | null }>; changed: Array<{ code: string; name: string; detail: string | null }> };
   limits: { added: Array<{ code: string; name: string; detail: string | null }>; removed: Array<{ code: string; name: string; detail: string | null }>; changed: Array<{ code: string; name: string; detail: string | null }> };
   addons: { added: Array<{ code: string; name: string; detail: string | null }>; removed: Array<{ code: string; name: string; detail: string | null }>; changed: Array<{ code: string; name: string; detail: string | null }> };
+  pricing: CommercialPlanPricingComparison;
 };
 
 export type CommercialEntitlementSnapshotStatus = "CURRENT" | "SUPERSEDED" | "INVALID" | "PENDING_REGENERATION";
@@ -6495,8 +6578,12 @@ export type CommercialRuntimeDiffTenant = {
   tenantName: string;
   tenantCode: string;
   currentSubscription: string;
+  subscriptionName: string | null;
+  subscriptionStatus: string | null;
+  planTemplateName: string | null;
   publishedVersion: string;
   snapshotStatus: string;
+  validationState: string | null;
   generatedAt: string | null;
   comparisonStatus: string;
   moduleDifferences: number;
@@ -6505,7 +6592,11 @@ export type CommercialRuntimeDiffTenant = {
   activeOverrides: number;
   runtimeSource: string;
   rolloutReadiness: string;
+  readinessStatus: string;
+  readinessBlockers: string[];
+  readinessWarnings: string[];
   recommendation: string;
+  targetRoute: string;
   differences: string[];
 };
 
@@ -6613,6 +6704,10 @@ export async function getCommercialPlanTemplate(token: string, templateId: strin
   return httpGet<CommercialPlanTemplateDetail>(`/api/platform/commercial/plan-templates/${templateId}`, { token, platformOperation: true });
 }
 
+export async function getCommercialPlanPricing(token: string, templateId: string) {
+  return httpGet<CommercialPlanPricingResponse>(`/api/platform/commercial/plan-templates/${templateId}/pricing`, { token, platformOperation: true });
+}
+
 export async function createCommercialPlanTemplate(token: string, body: Record<string, unknown>) {
   return httpPost<CommercialPlanTemplateDetail>("/api/platform/commercial/plan-templates", body, { token, platformOperation: true });
 }
@@ -6637,8 +6732,16 @@ export async function saveCommercialPlanDraft(token: string, templateId: string,
   return httpPut<CommercialPlanDraftResponse>(`/api/platform/commercial/plan-templates/${templateId}/draft`, body, { token, platformOperation: true });
 }
 
+export async function saveCommercialPlanPricing(token: string, templateId: string, body: CommercialPlanPricingSnapshot) {
+  return httpPut<CommercialPlanPricingResponse>(`/api/platform/commercial/plan-templates/${templateId}/pricing`, { pricing: body }, { token, platformOperation: true });
+}
+
 export async function validateCommercialPlanDraft(token: string, templateId: string) {
   return httpPost<{ draft: CommercialPlanDraftResponse; validation: CommercialPlanValidationResult; messages: CommercialPlanValidationMessage[]; publicationReady: boolean }>(`/api/platform/commercial/plan-templates/${templateId}/draft/validate`, {}, { token, platformOperation: true });
+}
+
+export async function validateCommercialPlanPricing(token: string, templateId: string) {
+  return httpGet<CommercialPlanPricingValidationResult>(`/api/platform/commercial/plan-templates/${templateId}/pricing/validation`, { token, platformOperation: true });
 }
 
 export async function publishCommercialPlanVersion(token: string, templateId: string, body: Record<string, unknown> | undefined = undefined) {
@@ -6659,6 +6762,14 @@ export async function compareCommercialPlanVersions(token: string, templateId: s
   if (query?.rightVersionId) params.set("rightVersionId", query.rightVersionId);
   const qs = params.toString();
   return httpGet<CommercialPlanVersionComparison>(`/api/platform/commercial/plan-templates/${templateId}/compare${qs ? `?${qs}` : ""}`, { token, platformOperation: true });
+}
+
+export async function compareCommercialPlanPricing(token: string, templateId: string, query?: { leftVersionId?: string | null; rightVersionId?: string | null }) {
+  const params = new URLSearchParams();
+  if (query?.leftVersionId) params.set("leftVersionId", query.leftVersionId);
+  if (query?.rightVersionId) params.set("rightVersionId", query.rightVersionId);
+  const qs = params.toString();
+  return httpGet<CommercialPlanPricingComparison>(`/api/platform/commercial/plan-templates/${templateId}/pricing/compare${qs ? `?${qs}` : ""}`, { token, platformOperation: true });
 }
 
 export async function getCommercialEffectiveEntitlements(token: string, tenantId: string) {
@@ -7162,6 +7273,7 @@ export type PrescriptionTemplateConfig = {
   templateVersion: number;
   active: boolean;
   clinicLogoDocumentId: string | null;
+  logoUrl: string | null;
   headerText: string | null;
   footerText: string | null;
   primaryColor: string | null;
@@ -7197,6 +7309,20 @@ export async function getPrescriptionTemplateHistory(token: string, tenantId: st
 
 export async function updatePrescriptionTemplate(token: string, tenantId: string, body: PrescriptionTemplateInput) {
   return httpPut<PrescriptionTemplateConfig>("/api/settings/prescription-template", body, { token, tenantId });
+}
+
+export async function uploadPrescriptionTemplateLogo(token: string, tenantId: string, file: File) {
+  const formData = new FormData();
+  formData.append("file", file);
+  return httpPostForm<PrescriptionTemplateConfig>("/api/settings/prescription-template/logo", formData, { token, tenantId });
+}
+
+export async function removePrescriptionTemplateLogo(token: string, tenantId: string) {
+  return httpDelete<PrescriptionTemplateConfig>("/api/settings/prescription-template/logo", { token, tenantId });
+}
+
+export async function getPrescriptionTemplateLogo(token: string, tenantId: string) {
+  return fetchAuthenticatedBlob("/api/settings/prescription-template/logo", { token, tenantId });
 }
 
 export async function previewPrescriptionTemplate(token: string, tenantId: string, body: PrescriptionTemplateInput) {

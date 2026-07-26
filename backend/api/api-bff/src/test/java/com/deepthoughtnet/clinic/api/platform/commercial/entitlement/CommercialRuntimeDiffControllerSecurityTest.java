@@ -70,8 +70,12 @@ class CommercialRuntimeDiffControllerSecurityTest {
                 "Demo Clinic",
                 "demo-clinic",
                 "ACTIVE · solo-clinic",
+                "Demo Clinic Subscription",
+                "ACTIVE",
+                "Solo Clinic",
                 "Version 2",
                 "CURRENT",
+                "VALID",
                 OffsetDateTime.parse("2026-07-25T00:00:00Z"),
                 "MATCH",
                 0,
@@ -80,7 +84,11 @@ class CommercialRuntimeDiffControllerSecurityTest {
                 0,
                 "Legacy Runtime — Authoritative",
                 "READY",
+                "READY",
+                List.of(),
+                List.of(),
                 "Ready for shadow mode",
+                "/platform/commercial/runtime-diff",
                 List.of()
         );
         var comparison = new LegacyComparisonResponse(tenantId, List.of(new ComparisonResponse("APPOINTMENTS", "Appointments", "MATCH", "true", "true", "module")), List.of(), List.of());

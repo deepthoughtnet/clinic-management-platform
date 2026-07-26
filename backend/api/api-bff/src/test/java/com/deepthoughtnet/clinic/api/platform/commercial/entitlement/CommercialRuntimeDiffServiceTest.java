@@ -12,8 +12,11 @@ import com.deepthoughtnet.clinic.api.platform.commercial.entitlement.dto.Commerc
 import com.deepthoughtnet.clinic.api.platform.commercial.entitlement.dto.CommercialEntitlementDtos.RuntimeDiffSummaryResponse;
 import com.deepthoughtnet.clinic.api.platform.commercial.entitlement.dto.CommercialEntitlementDtos.RuntimeDiffTenantResponse;
 import com.deepthoughtnet.clinic.api.platform.service.PlatformTenantService;
-import com.deepthoughtnet.clinic.identity.db.TenantSubscriptionEntity;
 import com.deepthoughtnet.clinic.identity.service.model.PlatformTenantRecord;
+import com.deepthoughtnet.clinic.commercial.entitlement.CommercialEffectiveEntitlementModels;
+import com.deepthoughtnet.clinic.commercial.entitlement.CommercialTenantRuntimeContextService;
+import com.deepthoughtnet.clinic.commercial.entitlement.CommercialTenantRuntimeContextService.RuntimeContext;
+import com.deepthoughtnet.clinic.commercial.subscription.CommercialSubscriptionModels.SubscriptionSummaryResponse;
 import com.deepthoughtnet.clinic.platform.core.config.CommercialRuntimeProperties;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -28,6 +31,7 @@ import org.mockito.Mockito;
 class CommercialRuntimeDiffServiceTest {
     private PlatformTenantService platformTenantService;
     private CommercialEffectiveEntitlementApiService entitlementApiService;
+    private CommercialTenantRuntimeContextService runtimeContextService;
     private CommercialRuntimeProperties runtimeProperties;
     private CommercialRuntimeDiffApiService service;
 
@@ -35,8 +39,9 @@ class CommercialRuntimeDiffServiceTest {
     void setUp() {
         platformTenantService = Mockito.mock(PlatformTenantService.class);
         entitlementApiService = Mockito.mock(CommercialEffectiveEntitlementApiService.class);
+        runtimeContextService = Mockito.mock(CommercialTenantRuntimeContextService.class);
         runtimeProperties = new CommercialRuntimeProperties();
-        service = new CommercialRuntimeDiffApiService(platformTenantService, entitlementApiService, runtimeProperties);
+        service = new CommercialRuntimeDiffApiService(platformTenantService, entitlementApiService, runtimeContextService, runtimeProperties);
     }
 
     @Test
@@ -48,20 +53,27 @@ class CommercialRuntimeDiffServiceTest {
         UUID actorId = UUID.fromString("55555555-5555-5555-5555-555555555555");
 
         PlatformTenantRecord tenant = new PlatformTenantRecord(tenantId, "demo-clinic", "Demo Clinic", "solo-clinic", "ACTIVE", true, null, OffsetDateTime.parse("2026-07-25T00:00:00Z"), OffsetDateTime.parse("2026-07-25T00:00:00Z"));
-        TenantSubscriptionEntity subscription = Mockito.mock(TenantSubscriptionEntity.class);
-        when(subscription.getStatus()).thenReturn("ACTIVE");
-        when(subscription.getPlanId()).thenReturn("solo-clinic");
-
-        PlatformTenantService.PlatformTenantDetail detail = new PlatformTenantService.PlatformTenantDetail(
-                tenant,
+        SubscriptionSummaryResponse activeSubscription = new SubscriptionSummaryResponse(
+                subscriptionId,
+                tenantId,
+                UUID.fromString("66666666-6666-6666-6666-666666666666"),
+                "SOLO_CLINIC",
+                "Solo Clinic",
+                UUID.fromString("77777777-7777-7777-7777-777777777777"),
+                2,
+                "Version 2",
+                com.deepthoughtnet.clinic.commercial.subscription.CommercialSubscriptionEnums.SubscriptionStatus.ACTIVE,
+                LocalDate.parse("2026-07-01"),
                 null,
-                subscription,
-                Map.of("APPOINTMENTS", true),
-                4,
-                1L
+                true,
+                "Demo Clinic Subscription",
+                "SUB-001",
+                "Commercial subscription for Demo Clinic",
+                OffsetDateTime.parse("2026-07-25T00:00:00Z"),
+                OffsetDateTime.parse("2026-07-25T00:00:00Z")
         );
 
-        var snapshot = new EffectiveEntitlementSnapshotResponse(
+        var domainSnapshot = new CommercialEffectiveEntitlementModels.EffectiveEntitlementSnapshotResponse(
                 snapshotId,
                 tenantId,
                 subscriptionId,
@@ -76,7 +88,7 @@ class CommercialRuntimeDiffServiceTest {
                 List.of(),
                 List.of(),
                 List.of(),
-                List.of(new OverrideResponse(
+                List.of(new CommercialEffectiveEntitlementModels.OverrideResponse(
                         overrideId,
                         "MODULE",
                         "AI_COPILOT",
@@ -109,6 +121,47 @@ class CommercialRuntimeDiffServiceTest {
                 List.of()
         );
 
+        EffectiveEntitlementSnapshotResponse snapshot = new EffectiveEntitlementSnapshotResponse(
+                snapshotId,
+                tenantId,
+                subscriptionId,
+                UUID.fromString("66666666-6666-6666-6666-666666666666"),
+                UUID.fromString("77777777-7777-7777-7777-777777777777"),
+                2,
+                "ACTIVE",
+                OffsetDateTime.parse("2026-07-25T00:00:00Z"),
+                null,
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                "source-hash",
+                "content-hash",
+                OffsetDateTime.parse("2026-07-25T00:00:00Z"),
+                actorId.toString(),
+                "MANUAL_REGENERATE",
+                "CURRENT",
+                "VALID",
+                List.of()
+        );
+
+        RuntimeContext context = new RuntimeContext(
+                tenantId,
+                activeSubscription,
+                domainSnapshot,
+                "Legacy Runtime — Authoritative",
+                1L,
+                List.of(),
+                "READY",
+                List.of(),
+                List.of(),
+                "Ready for allowlisted commercial runtime pilot",
+                "/platform/commercial/runtime-diff"
+        );
+
         var comparison = new LegacyComparisonResponse(
                 tenantId,
                 List.of(new ComparisonResponse("APPOINTMENTS", "Appointments", "MATCH", "true", "true", "module")),
@@ -120,7 +173,8 @@ class CommercialRuntimeDiffServiceTest {
         runtimeProperties.setShadowCompareEnabled(false);
 
         when(platformTenantService.listTenants()).thenReturn(List.of(tenant));
-        when(platformTenantService.getTenant(tenantId)).thenReturn(detail);
+        when(platformTenantService.getTenant(tenantId)).thenReturn(new PlatformTenantService.PlatformTenantDetail(tenant, null, null, Map.of("APPOINTMENTS", true), 4, 1L));
+        when(runtimeContextService.resolve(tenantId)).thenReturn(context);
         when(entitlementApiService.getCurrentSnapshot(tenantId)).thenReturn(snapshot);
         when(entitlementApiService.compareWithLegacy(eq(tenantId), anyMap())).thenReturn(comparison);
 
@@ -138,10 +192,18 @@ class CommercialRuntimeDiffServiceTest {
 
         assertThat(row.tenantId()).isEqualTo(tenantId);
         assertThat(row.currentSubscription()).contains("ACTIVE");
+        assertThat(row.subscriptionName()).isEqualTo("Demo Clinic Subscription");
+        assertThat(row.subscriptionStatus()).isEqualTo("ACTIVE");
+        assertThat(row.planTemplateName()).isEqualTo("Solo Clinic");
         assertThat(row.publishedVersion()).isEqualTo("Version 2");
         assertThat(row.snapshotStatus()).isEqualTo("CURRENT");
+        assertThat(row.validationState()).isEqualTo("VALID");
         assertThat(row.comparisonStatus()).isEqualTo("MATCH");
         assertThat(row.rolloutReadiness()).isEqualTo("READY");
+        assertThat(row.readinessStatus()).isEqualTo("READY");
+        assertThat(row.readinessBlockers()).isEmpty();
+        assertThat(row.readinessWarnings()).isEmpty();
+        assertThat(row.targetRoute()).isEqualTo("/platform/commercial/runtime-diff");
         assertThat(row.runtimeSource()).isEqualTo("Legacy Runtime — Authoritative");
     }
 }

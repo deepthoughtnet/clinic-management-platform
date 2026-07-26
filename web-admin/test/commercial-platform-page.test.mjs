@@ -20,6 +20,8 @@ import * as esbuild from "esbuild";
     defaultTemplateForm,
     mapDraftResponseState,
     buildDraftSavePayload,
+    formatTrialDaysDisplay,
+    parseTrialDaysInput,
     toggleSelectedIds,
     filterSelectionItems,
   selectedSelectionItems,
@@ -47,8 +49,8 @@ async function buildCommercialPlatformBundle() {
       `import { CommercialPlanTemplateSummarySection, defaultTemplateForm } from "${path.join(srcRoot, "pages", "platform", "CommercialPlanTemplateEditor.tsx").replace(/\\/g, "/")}";\n` +
       `import CommercialPlanSelectionDialog, { toggleSelectedIds, filterSelectionItems, selectedSelectionItems, computeConfiguredCount, isDialogDirty } from "${path.join(srcRoot, "pages", "platform", "CommercialPlanSelectionDialog.tsx").replace(/\\/g, "/")}";\n` +
       `import { ValidationFindingCard } from "${path.join(srcRoot, "pages", "platform", "CommercialPlansPage.tsx").replace(/\\/g, "/")}";\n` +
-      `import { mapDraftResponseState, buildDraftSavePayload } from "${path.join(srcRoot, "pages", "platform", "CommercialPlansPage.tsx").replace(/\\/g, "/")}";\n` +
-      `export { AuthContext, CommercialPlansPage, CommercialPlatformPage, CommercialPlanTemplateCreateDialog, CommercialPlanTemplateFields, CommercialPlanTemplateSummarySection, CommercialPlanSelectionDialog, ValidationFindingCard, defaultTemplateForm, mapDraftResponseState, buildDraftSavePayload, toggleSelectedIds, filterSelectionItems, selectedSelectionItems, computeConfiguredCount, isDialogDirty };\n`,
+      `import { mapDraftResponseState, buildDraftSavePayload, formatTrialDaysDisplay, parseTrialDaysInput } from "${path.join(srcRoot, "pages", "platform", "CommercialPlansPage.tsx").replace(/\\/g, "/")}";\n` +
+      `export { AuthContext, CommercialPlansPage, CommercialPlatformPage, CommercialPlanTemplateCreateDialog, CommercialPlanTemplateFields, CommercialPlanTemplateSummarySection, CommercialPlanSelectionDialog, ValidationFindingCard, defaultTemplateForm, mapDraftResponseState, buildDraftSavePayload, formatTrialDaysDisplay, parseTrialDaysInput, toggleSelectedIds, filterSelectionItems, selectedSelectionItems, computeConfiguredCount, isDialogDirty };\n`,
     "utf8",
   );
   await esbuild.build({
@@ -131,6 +133,7 @@ test("commercial platform navigation and routes are registered", () => {
 test("commercial platform overview and plans workspace use URL state and typed APIs", () => {
   const overview = readSource("pages/platform/CommercialPlatformPage.tsx");
   const plans = readSource("pages/platform/CommercialPlansPage.tsx");
+  const pricing = readSource("pages/platform/CommercialPricingWorkspace.tsx");
   const editor = readSource("pages/platform/CommercialPlanTemplateEditor.tsx");
   const api = readSource("api/clinicApi.ts");
 
@@ -143,8 +146,6 @@ test("commercial platform overview and plans workspace use URL state and typed A
 
   assert.ok(plans.includes('Commercial Plans'));
   assert.ok(plans.includes('Create Plan Template'));
-  assert.ok(plans.includes('Save Draft'));
-  assert.ok(plans.includes('Publish Version'));
   assert.ok(plans.includes('Commercial Plan Builder'));
   assert.ok(plans.includes('value="validation"'));
   assert.ok(plans.includes('Run Validation'));
@@ -176,6 +177,10 @@ test("commercial platform overview and plans workspace use URL state and typed A
   assert.ok(plans.includes('validateCommercialPlanDraft'));
   assert.ok(plans.includes('Publishing creates an immutable commercial plan version.'));
   assert.ok(plans.includes('Existing tenant entitlement behavior remains authoritative.'));
+  assert.ok(plans.includes('No trial'));
+  assert.ok(plans.includes('formatTrialDaysDisplay'));
+  assert.ok(plans.includes('parseTrialDaysInput'));
+  assert.ok(plans.includes('trialDays: null'));
   assert.ok(plans.includes('Discard template changes?'));
   assert.ok(plans.includes('Create Plan Template'));
   assert.ok(plans.includes('navigate(`/platform/commercial/plans/${created.id}`, { replace: true })'));
@@ -186,6 +191,34 @@ test("commercial platform overview and plans workspace use URL state and typed A
   assert.ok(plans.includes('validationLabel('));
   assert.ok(plans.includes('templateDetail.validation.readyToPublish'));
   assert.ok(plans.includes('formatCommercialDateTime'));
+
+  assert.ok(pricing.includes('Pricing Status & Actions'));
+  assert.ok(pricing.includes('Billing Model'));
+  assert.ok(pricing.includes('Monthly Subscription'));
+  assert.ok(pricing.includes('Quarterly Subscription'));
+  assert.ok(pricing.includes('Trial-only Plan'));
+  assert.ok(pricing.includes('Subscription Pricing'));
+  assert.ok(pricing.includes('Metered Usage'));
+  assert.ok(pricing.includes('Add-on Pricing'));
+  assert.ok(pricing.includes('Pricing Validation'));
+  assert.ok(pricing.includes('No metered rates configured'));
+  assert.ok(pricing.includes('No add-on pricing configured'));
+  assert.ok(pricing.includes('Save Draft'));
+  assert.ok(pricing.includes('Validate Pricing'));
+  assert.ok(pricing.includes('Publish Plan'));
+  assert.ok(pricing.includes('Compare with latest published version'));
+  assert.ok(pricing.includes('Pricing is ready to publish. No blocking issues.'));
+  assert.ok(pricing.includes('No trial configured.'));
+  assert.ok(pricing.includes('Tax Exclusive'));
+  assert.ok(pricing.includes('Tax Inclusive'));
+  assert.ok(pricing.includes('No tax'));
+  assert.ok(pricing.includes('Allow Discounts'));
+  assert.ok(pricing.includes('No metered rates configured'));
+  assert.ok(pricing.includes('No add-on pricing configured'));
+  assert.ok(pricing.includes('Blocking Issues'));
+  assert.ok(pricing.includes('Pricing is ready to publish. No blocking issues.'));
+  assert.ok(pricing.includes('Compare with latest published version'));
+  assert.ok(pricing.includes('Published pricing snapshots remain immutable.'));
 
   assert.ok(editor.includes('Name *'));
   assert.ok(editor.includes('Code *'));
@@ -212,6 +245,17 @@ test("commercial platform overview and plans workspace use URL state and typed A
   assert.ok(api.includes('saveCommercialPlanDraft'));
   assert.ok(api.includes('publishCommercialPlanVersion'));
   assert.ok(api.includes('compareCommercialPlanVersions'));
+});
+
+test("commercial pricing null trial days helpers are stable", () => {
+  assert.equal(formatTrialDaysDisplay(null), "No trial");
+  assert.equal(formatTrialDaysDisplay(undefined), "No trial");
+  assert.equal(formatTrialDaysDisplay(0), "0 days");
+  assert.equal(formatTrialDaysDisplay(30), "30 days");
+  assert.equal(parseTrialDaysInput(""), null);
+  assert.equal(parseTrialDaysInput("  "), null);
+  assert.equal(parseTrialDaysInput("30"), 30);
+  assert.equal(parseTrialDaysInput("-1"), -1);
 });
 
 test("commercial plan editor and selection dialog avoid browser-native prompts and show business metadata", () => {
@@ -319,6 +363,7 @@ test("commercial plan draft payload and response mapping keep selections stable 
       { addonId: "addon-1", selectionState: "INCLUDED" },
       { addonId: "addon-2", selectionState: "AVAILABLE" },
     ],
+    pricing: state.pricing,
   });
 });
 

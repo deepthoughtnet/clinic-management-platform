@@ -5,15 +5,19 @@ import com.deepthoughtnet.clinic.api.platform.commercial.dto.CommercialPlatformD
 import com.deepthoughtnet.clinic.api.platform.commercial.dto.CommercialPlatformDtos.CreatePlanTemplateRequest;
 import com.deepthoughtnet.clinic.api.platform.commercial.dto.CommercialPlatformDtos.PageResponse;
 import com.deepthoughtnet.clinic.api.platform.commercial.dto.CommercialPlatformDtos.PlanDraftResponse;
+import com.deepthoughtnet.clinic.api.platform.commercial.dto.CommercialPlatformDtos.PlanPricingResponse;
 import com.deepthoughtnet.clinic.api.platform.commercial.dto.CommercialPlatformDtos.PlanVersionDetailResponse;
 import com.deepthoughtnet.clinic.api.platform.commercial.dto.CommercialPlatformDtos.PlanVersionSummaryResponse;
 import com.deepthoughtnet.clinic.api.platform.commercial.dto.CommercialPlatformDtos.PublishPlanVersionRequest;
 import com.deepthoughtnet.clinic.api.platform.commercial.dto.CommercialPlatformDtos.SavePlanDraftRequest;
+import com.deepthoughtnet.clinic.api.platform.commercial.dto.CommercialPlatformDtos.SavePlanPricingRequest;
 import com.deepthoughtnet.clinic.api.platform.commercial.dto.CommercialPlatformDtos.TemplateDetailResponse;
 import com.deepthoughtnet.clinic.api.platform.commercial.dto.CommercialPlatformDtos.TemplateSummaryResponse;
 import com.deepthoughtnet.clinic.api.platform.commercial.dto.CommercialPlatformDtos.UpdatePlanTemplateRequest;
 import com.deepthoughtnet.clinic.api.platform.commercial.dto.CommercialPlatformDtos.ValidatePlanDraftResponse;
 import com.deepthoughtnet.clinic.api.platform.commercial.dto.CommercialPlatformDtos.OverviewResponse;
+import com.deepthoughtnet.clinic.api.platform.commercial.dto.CommercialPlatformDtos.PricingComparisonResponse;
+import com.deepthoughtnet.clinic.api.platform.commercial.dto.CommercialPlatformDtos.PricingValidationResultResponse;
 import com.deepthoughtnet.clinic.commercial.platform.CommercialPlatformEnums.TargetSegment;
 import com.deepthoughtnet.clinic.commercial.platform.CommercialPlatformEnums.TemplateStatus;
 import com.deepthoughtnet.clinic.commercial.platform.CommercialPlatformModels;
@@ -45,6 +49,10 @@ public class CommercialPlatformApiService {
         return map(delegate.getTemplate(templateId), TemplateDetailResponse.class);
     }
 
+    public PlanPricingResponse getPricing(UUID templateId) {
+        return map(delegate.getPricing(templateId), PlanPricingResponse.class);
+    }
+
     public TemplateDetailResponse createTemplate(CreatePlanTemplateRequest request) {
         return map(delegate.createTemplate(map(request, com.deepthoughtnet.clinic.commercial.platform.CommercialPlatformModels.CreatePlanTemplateRequest.class)), TemplateDetailResponse.class);
     }
@@ -69,8 +77,16 @@ public class CommercialPlatformApiService {
         return map(delegate.saveDraft(templateId, map(request, com.deepthoughtnet.clinic.commercial.platform.CommercialPlatformModels.SavePlanDraftRequest.class)), PlanDraftResponse.class);
     }
 
+    public PlanPricingResponse savePricing(UUID templateId, SavePlanPricingRequest request) {
+        return map(delegate.savePricing(templateId, map(request, com.deepthoughtnet.clinic.commercial.platform.CommercialPlatformModels.SavePlanPricingRequest.class)), PlanPricingResponse.class);
+    }
+
     public ValidatePlanDraftResponse validateDraft(UUID templateId) {
         return map(delegate.validateDraft(templateId), ValidatePlanDraftResponse.class);
+    }
+
+    public PricingValidationResultResponse validatePricing(UUID templateId) {
+        return map(delegate.validatePricing(templateId), PricingValidationResultResponse.class);
     }
 
     public PlanVersionDetailResponse publishVersion(UUID templateId, PublishPlanVersionRequest request) {
@@ -87,6 +103,10 @@ public class CommercialPlatformApiService {
 
     public CompareVersionsResponse compareVersions(UUID templateId, UUID leftVersionId, UUID rightVersionId) {
         return map(delegate.compareVersions(templateId, leftVersionId, rightVersionId), CompareVersionsResponse.class);
+    }
+
+    public PricingComparisonResponse comparePricing(UUID templateId, UUID leftVersionId, UUID rightVersionId) {
+        return map(delegate.comparePricing(templateId, leftVersionId, rightVersionId), PricingComparisonResponse.class);
     }
 
     private <S, T> T map(S source, Class<T> targetClass) {

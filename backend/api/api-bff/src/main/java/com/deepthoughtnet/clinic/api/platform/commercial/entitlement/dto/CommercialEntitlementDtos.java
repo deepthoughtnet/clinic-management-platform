@@ -172,8 +172,12 @@ public final class CommercialEntitlementDtos {
             String tenantName,
             String tenantCode,
             String currentSubscription,
+            String subscriptionName,
+            String subscriptionStatus,
+            String planTemplateName,
             String publishedVersion,
             String snapshotStatus,
+            String validationState,
             OffsetDateTime generatedAt,
             String comparisonStatus,
             long moduleDifferences,
@@ -182,7 +186,11 @@ public final class CommercialEntitlementDtos {
             long activeOverrides,
             String runtimeSource,
             String rolloutReadiness,
+            String readinessStatus,
+            List<String> readinessBlockers,
+            List<String> readinessWarnings,
             String recommendation,
+            String targetRoute,
             List<String> differences
     ) {
     }

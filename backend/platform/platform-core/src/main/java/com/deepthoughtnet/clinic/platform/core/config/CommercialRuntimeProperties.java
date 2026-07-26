@@ -7,6 +7,7 @@ public class CommercialRuntimeProperties {
     private boolean enabled = false;
     private boolean shadowCompareEnabled = false;
     private boolean fallbackToLegacyEnabled = false;
+    private boolean overrideApprovalRequired = false;
     private Set<String> tenantAllowlist = new LinkedHashSet<>();
 
     public boolean isEnabled() {
@@ -31,6 +32,14 @@ public class CommercialRuntimeProperties {
 
     public void setFallbackToLegacyEnabled(boolean fallbackToLegacyEnabled) {
         this.fallbackToLegacyEnabled = fallbackToLegacyEnabled;
+    }
+
+    public boolean isOverrideApprovalRequired() {
+        return overrideApprovalRequired;
+    }
+
+    public void setOverrideApprovalRequired(boolean overrideApprovalRequired) {
+        this.overrideApprovalRequired = overrideApprovalRequired;
     }
 
     public Set<String> getTenantAllowlist() {

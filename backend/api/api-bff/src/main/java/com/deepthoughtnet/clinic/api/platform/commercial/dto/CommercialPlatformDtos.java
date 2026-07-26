@@ -8,6 +8,10 @@ import com.deepthoughtnet.clinic.commercial.platform.CommercialPlatformEnums.Tar
 import com.deepthoughtnet.clinic.commercial.platform.CommercialPlatformEnums.TemplateStatus;
 import com.deepthoughtnet.clinic.commercial.platform.CommercialPlatformEnums.ValidationState;
 import com.deepthoughtnet.clinic.commercial.platform.CommercialPlatformEnums.ValidationSeverity;
+import com.deepthoughtnet.clinic.commercial.platform.CommercialPricingEnums.AddonPurchaseType;
+import com.deepthoughtnet.clinic.commercial.platform.CommercialPricingEnums.BillingCycle;
+import com.deepthoughtnet.clinic.commercial.platform.CommercialPricingEnums.PricingStatus;
+import com.deepthoughtnet.clinic.commercial.platform.CommercialPricingEnums.TaxModel;
 import com.deepthoughtnet.clinic.commercial.catalog.CommercialCatalogEnums.AddonType;
 import com.deepthoughtnet.clinic.commercial.catalog.CommercialCatalogEnums.AggregationPeriod;
 import com.deepthoughtnet.clinic.commercial.catalog.CommercialCatalogEnums.EnforcementMode;
@@ -84,13 +88,106 @@ public final class CommercialPlatformDtos {
     public record DraftAddonResponse(UUID addonId, String addonCode, String addonName, String description, AddonType addonType, int displayOrder, SelectionState selectionState, boolean retired) {
     }
 
+    public record PlanPricingMeteredRateResponse(
+            UUID id,
+            UUID limitDefinitionId,
+            String limitCode,
+            String limitName,
+            String includedQuantity,
+            boolean overageEnabled,
+            String unitPrice,
+            String unitName,
+            String billingRounding,
+            PricingStatus status
+    ) {
+    }
+
+    public record PlanPricingAddonResponse(
+            UUID id,
+            UUID addonOfferId,
+            String addonCode,
+            String addonName,
+            AddonPurchaseType purchaseType,
+            String monthlyPrice,
+            String annualPrice,
+            String oneTimePrice,
+            Integer maxQuantity,
+            PricingStatus status
+    ) {
+    }
+
+    public record PlanPricingSnapshot(
+            String currency,
+            BillingCycle billingCycle,
+            String monthlyPrice,
+            String annualPrice,
+            String setupFee,
+            Integer trialDays,
+            TaxModel taxModel,
+            String taxPercentage,
+            boolean discountAllowed,
+            List<PlanPricingMeteredRateResponse> meteredRates,
+            List<PlanPricingAddonResponse> addonPricing
+    ) {
+    }
+
+    public record PlanPricingResponse(
+            UUID id,
+            UUID publishedVersionId,
+            String currency,
+            BillingCycle billingCycle,
+            String monthlyPrice,
+            String annualPrice,
+            String setupFee,
+            Integer trialDays,
+            TaxModel taxModel,
+            String taxPercentage,
+            boolean discountAllowed,
+            PricingStatus status,
+            OffsetDateTime createdAt,
+            UUID createdBy,
+            List<PlanPricingMeteredRateResponse> meteredRates,
+            List<PlanPricingAddonResponse> addonPricing
+    ) {
+    }
+
+    public record PricingValidationResultResponse(
+            ValidationState validationState,
+            boolean readyToPublish,
+            int blockingFindingCount,
+            int warningFindingCount,
+            List<ValidationMessageResponse> findings,
+            int validatedDraftRevision,
+            OffsetDateTime validatedAt
+    ) {
+    }
+
+    public record PricingComparisonEntry(String code, String name, String detail) {
+    }
+
+    public record PricingComparisonResponse(
+            UUID templateId,
+            String templateCode,
+            String templateName,
+            String leftLabel,
+            String rightLabel,
+            List<PricingComparisonEntry> subscriptionPricing,
+            List<PricingComparisonEntry> meteredRates,
+            List<PricingComparisonEntry> addonPricing
+    ) {
+    }
+
     public record DraftConfigurationResponse(
             List<DraftCapabilityResponse> capabilities,
             List<DraftModuleResponse> modules,
             List<DraftFeatureResponse> features,
             List<DraftLimitResponse> limits,
-            List<DraftAddonResponse> addons
+            List<DraftAddonResponse> addons,
+            PlanPricingSnapshot pricing
     ) {
+        public DraftConfigurationResponse(List<DraftCapabilityResponse> capabilities, List<DraftModuleResponse> modules, List<DraftFeatureResponse> features, List<DraftLimitResponse> limits, List<DraftAddonResponse> addons) {
+            this(capabilities, modules, features, limits, addons, new PlanPricingSnapshot(null, null, null, null, null, null, null, null, false, List.of(), List.of()));
+        }
     }
 
     public record PlanDraftResponse(
@@ -121,8 +218,15 @@ public final class CommercialPlatformDtos {
             List<SelectedModuleRequest> modules,
             List<SelectedFeatureRequest> features,
             List<ConfiguredLimitRequest> limits,
-            List<SelectedAddonRequest> addons
+            List<SelectedAddonRequest> addons,
+            PlanPricingSnapshot pricing
     ) {
+        public SavePlanDraftRequest(String draftNotes, List<SelectedCapabilityRequest> capabilities, List<SelectedModuleRequest> modules, List<SelectedFeatureRequest> features, List<ConfiguredLimitRequest> limits, List<SelectedAddonRequest> addons) {
+            this(draftNotes, capabilities, modules, features, limits, addons, new PlanPricingSnapshot(null, null, null, null, null, null, null, null, false, List.of(), List.of()));
+        }
+    }
+
+    public record SavePlanPricingRequest(PlanPricingSnapshot pricing) {
     }
 
     public record ValidatePlanDraftResponse(PlanDraftResponse draft, PlanValidationResultResponse validation, List<ValidationMessageResponse> messages, boolean publicationReady) {
@@ -181,8 +285,13 @@ public final class CommercialPlatformDtos {
             PlanValidationResultResponse validation,
             OffsetDateTime updatedAt,
             PlanDraftResponse draft,
-            PlanVersionSummaryResponse latestPublishedVersion
+            PlanVersionSummaryResponse latestPublishedVersion,
+            PlanPricingResponse pricing,
+            PricingValidationResultResponse pricingValidation
     ) {
+        public TemplateDetailResponse(UUID id, String code, String name, String description, TargetSegment targetSegment, TemplateStatus status, int displayOrder, int draftRevision, Integer latestPublishedVersionNumber, DraftStatus draftStatus, boolean publicationReady, PlanValidationResultResponse validation, OffsetDateTime updatedAt, PlanDraftResponse draft, PlanVersionSummaryResponse latestPublishedVersion) {
+            this(id, code, name, description, targetSegment, status, displayOrder, draftRevision, latestPublishedVersionNumber, draftStatus, publicationReady, validation, updatedAt, draft, latestPublishedVersion, new PlanPricingResponse(null, null, null, null, null, null, null, null, null, null, false, PricingStatus.DRAFT, null, null, List.of(), List.of()), null);
+        }
     }
 
     public record PlanVersionSummaryResponse(
@@ -221,8 +330,12 @@ public final class CommercialPlatformDtos {
             int featureCount,
             int limitCount,
             int addonCount,
-            String snapshotJson
+            String snapshotJson,
+            PlanPricingResponse pricing
     ) {
+        public PlanVersionDetailResponse(UUID id, UUID templateId, int versionNumber, String versionLabel, PublicationStatus status, OffsetDateTime publishedAt, UUID publishedBy, String publicationNotes, int sourceDraftRevision, String contentHash, int capabilityCount, int moduleCount, int featureCount, int limitCount, int addonCount, String snapshotJson) {
+            this(id, templateId, versionNumber, versionLabel, status, publishedAt, publishedBy, publicationNotes, sourceDraftRevision, contentHash, capabilityCount, moduleCount, featureCount, limitCount, addonCount, snapshotJson, new PlanPricingResponse(null, null, null, null, null, null, null, null, null, null, false, PricingStatus.DRAFT, null, null, List.of(), List.of()));
+        }
     }
 
     public record ComparisonEntryResponse(String code, String name, String detail) {
@@ -245,8 +358,12 @@ public final class CommercialPlatformDtos {
             ComparisonSectionResponse modules,
             ComparisonSectionResponse features,
             ComparisonSectionResponse limits,
-            ComparisonSectionResponse addons
+            ComparisonSectionResponse addons,
+            PricingComparisonResponse pricing
     ) {
+        public CompareVersionsResponse(UUID templateId, String templateCode, String templateName, String leftLabel, String rightLabel, TemplateMetadataComparisonResponse metadata, ComparisonSectionResponse capabilities, ComparisonSectionResponse modules, ComparisonSectionResponse features, ComparisonSectionResponse limits, ComparisonSectionResponse addons) {
+            this(templateId, templateCode, templateName, leftLabel, rightLabel, metadata, capabilities, modules, features, limits, addons, new PricingComparisonResponse(templateId, templateCode, templateName, leftLabel, rightLabel, List.of(), List.of(), List.of()));
+        }
     }
 
     public record SelectedCapabilityRequest(UUID capabilityId) {

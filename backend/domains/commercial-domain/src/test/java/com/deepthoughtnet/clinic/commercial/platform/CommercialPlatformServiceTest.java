@@ -55,6 +55,7 @@ import com.deepthoughtnet.clinic.commercial.platform.CommercialPlatformModels.Va
 import com.deepthoughtnet.clinic.commercial.platform.CommercialPlatformModels.ValidatePlanDraftResponse;
 import com.deepthoughtnet.clinic.commercial.platform.CommercialPlatformEnums.ValidationState;
 import com.deepthoughtnet.clinic.commercial.entitlement.CommercialEffectiveEntitlementService;
+import com.deepthoughtnet.clinic.commercial.platform.CommercialPricingService;
 import com.deepthoughtnet.clinic.commercial.subscription.CommercialSubscriptionService;
 import com.deepthoughtnet.clinic.commercial.subscription.CommercialSubscriptionModels.SubscriptionStatusCountsResponse;
 import com.deepthoughtnet.clinic.platform.core.config.CommercialRuntimeProperties;
@@ -92,6 +93,7 @@ class CommercialPlatformServiceTest {
     private CommercialPlanTemplateRepository templateRepository;
     private CommercialPlanDraftRepository draftRepository;
     private CommercialPlanVersionRepository versionRepository;
+    private CommercialPricingService pricingService;
     private CommercialSubscriptionService subscriptionService;
     private CommercialEffectiveEntitlementService effectiveEntitlementService;
     private CommercialRuntimeProperties runtimeProperties;
@@ -110,6 +112,7 @@ class CommercialPlatformServiceTest {
         templateRepository = mock(CommercialPlanTemplateRepository.class);
         draftRepository = mock(CommercialPlanDraftRepository.class);
         versionRepository = mock(CommercialPlanVersionRepository.class);
+        pricingService = mock(CommercialPricingService.class);
         subscriptionService = mock(CommercialSubscriptionService.class);
         effectiveEntitlementService = mock(CommercialEffectiveEntitlementService.class);
         runtimeProperties = new CommercialRuntimeProperties();
@@ -124,6 +127,7 @@ class CommercialPlatformServiceTest {
                 templateRepository,
                 draftRepository,
                 versionRepository,
+                pricingService,
                 subscriptionService,
                 effectiveEntitlementService,
                 runtimeProperties,
@@ -176,7 +180,8 @@ class CommercialPlatformServiceTest {
                 "Snapshot Generation Failures",
                 "Active Overrides",
                 "Legacy/Commercial Mismatches",
-                "Commercial Runtime Enabled"
+                "Commercial Runtime Enabled",
+                "Override Approval Required"
         );
         assertThat(response.lifecycle()).extracting(LifecycleStageResponse::label).containsExactly(
                 "Catalog",

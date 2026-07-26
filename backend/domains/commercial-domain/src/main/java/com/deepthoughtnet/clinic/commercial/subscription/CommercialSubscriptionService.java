@@ -85,12 +85,18 @@ public class CommercialSubscriptionService {
     @Transactional(readOnly = true)
     public SubscriptionStatusCountsResponse getStatusCounts() {
         return new SubscriptionStatusCountsResponse(
-                subscriptionRepository.countBySubscriptionStatus(SubscriptionStatus.ACTIVE),
-                subscriptionRepository.countBySubscriptionStatus(SubscriptionStatus.SCHEDULED),
-                subscriptionRepository.countBySubscriptionStatus(SubscriptionStatus.PAUSED),
-                subscriptionRepository.countBySubscriptionStatus(SubscriptionStatus.EXPIRED),
-                subscriptionRepository.countBySubscriptionStatus(SubscriptionStatus.CANCELLED)
+                subscriptionRepository.countDistinctTenantsBySubscriptionStatus(SubscriptionStatus.ACTIVE),
+                subscriptionRepository.countDistinctTenantsBySubscriptionStatus(SubscriptionStatus.SCHEDULED),
+                subscriptionRepository.countDistinctTenantsBySubscriptionStatus(SubscriptionStatus.PAUSED),
+                subscriptionRepository.countDistinctTenantsBySubscriptionStatus(SubscriptionStatus.EXPIRED),
+                subscriptionRepository.countDistinctTenantsBySubscriptionStatus(SubscriptionStatus.CANCELLED)
         );
+    }
+
+    @Transactional(readOnly = true)
+    public SubscriptionSummaryResponse getActiveSubscription(UUID tenantId) {
+        CommercialTenantSubscriptionEntity entity = subscriptionRepository.findTopByTenantIdAndSubscriptionStatusOrderByCreatedAtDesc(tenantId, SubscriptionStatus.ACTIVE).orElse(null);
+        return entity == null ? null : toSummary(entity);
     }
 
     @Transactional(readOnly = true)

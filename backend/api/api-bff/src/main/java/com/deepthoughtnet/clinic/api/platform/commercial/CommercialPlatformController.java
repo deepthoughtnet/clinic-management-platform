@@ -5,15 +5,19 @@ import com.deepthoughtnet.clinic.api.platform.commercial.dto.CommercialPlatformD
 import com.deepthoughtnet.clinic.api.platform.commercial.dto.CommercialPlatformDtos.CreatePlanTemplateRequest;
 import com.deepthoughtnet.clinic.api.platform.commercial.dto.CommercialPlatformDtos.PageResponse;
 import com.deepthoughtnet.clinic.api.platform.commercial.dto.CommercialPlatformDtos.PlanDraftResponse;
+import com.deepthoughtnet.clinic.api.platform.commercial.dto.CommercialPlatformDtos.PlanPricingResponse;
 import com.deepthoughtnet.clinic.api.platform.commercial.dto.CommercialPlatformDtos.PlanVersionDetailResponse;
 import com.deepthoughtnet.clinic.api.platform.commercial.dto.CommercialPlatformDtos.PlanVersionSummaryResponse;
 import com.deepthoughtnet.clinic.api.platform.commercial.dto.CommercialPlatformDtos.PublishPlanVersionRequest;
 import com.deepthoughtnet.clinic.api.platform.commercial.dto.CommercialPlatformDtos.SavePlanDraftRequest;
+import com.deepthoughtnet.clinic.api.platform.commercial.dto.CommercialPlatformDtos.SavePlanPricingRequest;
 import com.deepthoughtnet.clinic.api.platform.commercial.dto.CommercialPlatformDtos.TemplateDetailResponse;
 import com.deepthoughtnet.clinic.api.platform.commercial.dto.CommercialPlatformDtos.TemplateSummaryResponse;
 import com.deepthoughtnet.clinic.api.platform.commercial.dto.CommercialPlatformDtos.UpdatePlanTemplateRequest;
 import com.deepthoughtnet.clinic.api.platform.commercial.dto.CommercialPlatformDtos.ValidatePlanDraftResponse;
 import com.deepthoughtnet.clinic.api.platform.commercial.dto.CommercialPlatformDtos.OverviewResponse;
+import com.deepthoughtnet.clinic.api.platform.commercial.dto.CommercialPlatformDtos.PricingComparisonResponse;
+import com.deepthoughtnet.clinic.api.platform.commercial.dto.CommercialPlatformDtos.PricingValidationResultResponse;
 import com.deepthoughtnet.clinic.commercial.platform.CommercialPlatformEnums.TargetSegment;
 import com.deepthoughtnet.clinic.commercial.platform.CommercialPlatformEnums.TemplateStatus;
 import java.util.UUID;
@@ -58,6 +62,11 @@ public class CommercialPlatformController {
         return service.getTemplate(templateId);
     }
 
+    @GetMapping("/plan-templates/{templateId}/pricing")
+    public PlanPricingResponse getPricing(@PathVariable UUID templateId) {
+        return service.getPricing(templateId);
+    }
+
     @PostMapping("/plan-templates")
     @PreAuthorize("@permissionChecker.hasPermission('commercial.plans.manage')")
     public TemplateDetailResponse createTemplate(@RequestBody CreatePlanTemplateRequest request) {
@@ -93,10 +102,21 @@ public class CommercialPlatformController {
         return service.saveDraft(templateId, request);
     }
 
+    @PutMapping("/plan-templates/{templateId}/pricing")
+    @PreAuthorize("@permissionChecker.hasPermission('commercial.plans.manage')")
+    public PlanPricingResponse savePricing(@PathVariable UUID templateId, @RequestBody SavePlanPricingRequest request) {
+        return service.savePricing(templateId, request);
+    }
+
     @PostMapping("/plan-templates/{templateId}/draft/validate")
     @PreAuthorize("@permissionChecker.hasPermission('commercial.plans.manage')")
     public ValidatePlanDraftResponse validateDraft(@PathVariable UUID templateId) {
         return service.validateDraft(templateId);
+    }
+
+    @GetMapping("/plan-templates/{templateId}/pricing/validation")
+    public PricingValidationResultResponse validatePricing(@PathVariable UUID templateId) {
+        return service.validatePricing(templateId);
     }
 
     @PostMapping("/plan-templates/{templateId}/versions")
@@ -122,5 +142,14 @@ public class CommercialPlatformController {
             @RequestParam(required = false) UUID rightVersionId
     ) {
         return service.compareVersions(templateId, leftVersionId, rightVersionId);
+    }
+
+    @GetMapping("/plan-templates/{templateId}/pricing/compare")
+    public PricingComparisonResponse comparePricing(
+            @PathVariable UUID templateId,
+            @RequestParam(required = false) UUID leftVersionId,
+            @RequestParam(required = false) UUID rightVersionId
+    ) {
+        return service.comparePricing(templateId, leftVersionId, rightVersionId);
     }
 }

@@ -104,6 +104,7 @@ public class CommercialPlatformService {
     private final CommercialPlanTemplateRepository templateRepository;
     private final CommercialPlanDraftRepository draftRepository;
     private final CommercialPlanVersionRepository versionRepository;
+    private final CommercialPricingService pricingService;
     private final CommercialSubscriptionService subscriptionService;
     private final CommercialEffectiveEntitlementService effectiveEntitlementService;
     private final CommercialRuntimeProperties runtimeProperties;
@@ -119,6 +120,7 @@ public class CommercialPlatformService {
             CommercialPlanTemplateRepository templateRepository,
             CommercialPlanDraftRepository draftRepository,
             CommercialPlanVersionRepository versionRepository,
+            CommercialPricingService pricingService,
             CommercialSubscriptionService subscriptionService,
             CommercialEffectiveEntitlementService effectiveEntitlementService,
             CommercialRuntimeProperties runtimeProperties,
@@ -133,6 +135,7 @@ public class CommercialPlatformService {
         this.templateRepository = templateRepository;
         this.draftRepository = draftRepository;
         this.versionRepository = versionRepository;
+        this.pricingService = pricingService;
         this.subscriptionService = subscriptionService;
         this.effectiveEntitlementService = effectiveEntitlementService;
         this.runtimeProperties = runtimeProperties;
@@ -174,7 +177,8 @@ public class CommercialPlatformService {
                         new KpiCardResponse("snapshot-failures", "Snapshot Generation Failures", generationFailures, "Commercial entitlement generations that need attention"),
                         new KpiCardResponse("active-overrides", "Active Overrides", activeOverrides, "Tenant-level commercial overrides currently in effect"),
                         new KpiCardResponse("legacy-commercial-mismatches", "Legacy/Commercial Mismatches", runtimeMismatches, "Shadow compare differences captured"),
-                        new KpiCardResponse("commercial-runtime-enabled", "Commercial Runtime Enabled", runtimeProperties.isEnabled() ? 1 : 0, "Commercial effective entitlements are authoritative when enabled")
+                        new KpiCardResponse("commercial-runtime-enabled", "Commercial Runtime Enabled", runtimeProperties.isEnabled() ? 1 : 0, "Commercial effective entitlements are authoritative when enabled"),
+                        new KpiCardResponse("override-approval-required", "Override Approval Required", runtimeProperties.isOverrideApprovalRequired() ? 1 : 0, "Maker-checker approval is required before overrides become active")
                 ),
                 List.of(
                         new LifecycleStageResponse("catalog", "Catalog", true, false),
@@ -397,12 +401,33 @@ public class CommercialPlatformService {
                 currentActor()
         );
         versionRepository.save(version);
+        pricingService.freezePricing(version, snapshot.pricing(), now, currentActor());
         template.markPublished(nextVersion, now, currentActor());
         templateRepository.save(template);
         draft.markPublished(now, currentActor());
         draftRepository.save(draft);
         audit(template.getId(), AuditEntityType.COMMERCIAL_PLAN_VERSION, AuditEventAction.COMMERCIAL_PLAN_VERSION_PUBLISHED, "Published commercial plan version", Map.of("code", template.getCode(), "version", nextVersion, "contentHash", contentHash));
         return toVersionDetail(version);
+    }
+
+    @Transactional(readOnly = true)
+    public PlanPricingResponse getPricing(UUID templateId) {
+        return pricingService.getPricing(templateId);
+    }
+
+    @Transactional
+    public PlanPricingResponse savePricing(UUID templateId, SavePlanPricingRequest request) {
+        return pricingService.savePricing(templateId, request);
+    }
+
+    @Transactional(readOnly = true)
+    public PricingValidationResultResponse validatePricing(UUID templateId) {
+        return pricingService.validatePricing(templateId);
+    }
+
+    @Transactional(readOnly = true)
+    public PricingComparisonResponse comparePricing(UUID templateId, UUID leftVersionId, UUID rightVersionId) {
+        return pricingService.comparePricing(templateId, leftVersionId, rightVersionId);
     }
 
     @Transactional(readOnly = true)
@@ -459,7 +484,8 @@ public class CommercialPlatformService {
                 compareSection(leftSnapshot.modules(), rightSnapshot.modules(), SelectedModule::moduleCode, SelectedModule::moduleName, SelectedModule::description, "module"),
                 compareSection(leftSnapshot.features(), rightSnapshot.features(), SelectedFeature::featureCode, SelectedFeature::featureName, SelectedFeature::description, "feature"),
                 compareLimitSection(leftSnapshot.limits(), rightSnapshot.limits()),
-                compareAddonSection(leftSnapshot.addons(), rightSnapshot.addons())
+                compareAddonSection(leftSnapshot.addons(), rightSnapshot.addons()),
+                pricingService.comparePricing(templateId, leftVersionId, rightVersionId)
         );
     }
 
@@ -1013,7 +1039,8 @@ public class CommercialPlatformService {
                 mapModules(request == null ? List.of() : request.modules()),
                 mapFeatures(request == null ? List.of() : request.features()),
                 mapLimits(request == null ? List.of() : request.limits()),
-                mapAddons(request == null ? List.of() : request.addons())
+                mapAddons(request == null ? List.of() : request.addons()),
+                request == null || request.pricing() == null ? new PlanPricingSnapshot(null, null, null, null, null, null, null, null, false, List.of(), List.of()) : request.pricing()
         );
     }
 
@@ -1029,7 +1056,8 @@ public class CommercialPlatformService {
                 snapshot.modules(),
                 snapshot.features(),
                 snapshot.limits(),
-                snapshot.addons()
+                snapshot.addons(),
+                snapshot.pricing() == null ? new PlanPricingSnapshot(null, null, null, null, null, null, null, null, false, List.of(), List.of()) : snapshot.pricing()
         );
     }
 
@@ -1125,7 +1153,8 @@ public class CommercialPlatformService {
                 snapshot.modules() == null ? List.of() : snapshot.modules().stream().map(this::toModuleDraft).sorted(Comparator.comparing(DraftModuleResponse::moduleCode)).toList(),
                 snapshot.features() == null ? List.of() : snapshot.features().stream().map(this::toFeatureDraft).sorted(Comparator.comparing(DraftFeatureResponse::featureCode)).toList(),
                 snapshot.limits() == null ? List.of() : snapshot.limits().stream().map(this::toLimitDraft).sorted(Comparator.comparing(DraftLimitResponse::limitCode)).toList(),
-                snapshot.addons() == null ? List.of() : snapshot.addons().stream().map(this::toAddonDraft).sorted(Comparator.comparing(DraftAddonResponse::addonCode)).toList()
+                snapshot.addons() == null ? List.of() : snapshot.addons().stream().map(this::toAddonDraft).sorted(Comparator.comparing(DraftAddonResponse::addonCode)).toList(),
+                snapshot.pricing() == null ? new PlanPricingSnapshot(null, null, null, null, null, null, null, null, false, List.of(), List.of()) : snapshot.pricing()
         );
     }
 
@@ -1209,7 +1238,9 @@ public class CommercialPlatformService {
                 validation.toResponse(),
                 template.getUpdatedAt(),
                 toDraftResponse(template, draft, validation),
-                latestVersion == null ? null : toVersionSummary(latestVersion, null)
+                latestVersion == null ? null : toVersionSummary(latestVersion, null),
+                pricingService.getPricing(template.getId()),
+                pricingService.validatePricing(template.getId())
         );
     }
 
@@ -1251,7 +1282,8 @@ public class CommercialPlatformService {
                 version.getFeatureCount(),
                 version.getLimitCount(),
                 version.getAddonCount(),
-                version.getSnapshotJson()
+                version.getSnapshotJson(),
+                pricingService.getPublishedPricing(version.getId()).orElse(null)
         );
     }
 
@@ -1401,7 +1433,8 @@ public class CommercialPlatformService {
                     List.of(),
                     List.of(),
                     List.of(),
-                    List.of()
+                    List.of(),
+                    new PlanPricingSnapshot(null, null, null, null, null, null, null, null, false, List.of(), List.of())
             );
             List<ValidationMessageResponse> findings = validateDraftConfiguration(template, snapshot, template.getCurrentDraftRevision(), false);
             CommercialPlanDraftEntity created = CommercialPlanDraftEntity.create(
@@ -1648,10 +1681,13 @@ public class CommercialPlatformService {
 
     private PlanConfigurationSnapshot parseSnapshot(String json) {
         if (!StringUtils.hasText(json)) {
-            return new PlanConfigurationSnapshot(null, null, null, null, null, null, List.of(), List.of(), List.of(), List.of(), List.of());
+            return new PlanConfigurationSnapshot(null, null, null, null, null, null, List.of(), List.of(), List.of(), List.of(), List.of(), new PlanPricingSnapshot(null, null, null, null, null, null, null, null, false, List.of(), List.of()));
         }
         try {
-            return objectMapper.readValue(json, PlanConfigurationSnapshot.class);
+            PlanConfigurationSnapshot snapshot = objectMapper.readValue(json, PlanConfigurationSnapshot.class);
+            return snapshot.pricing() == null
+                    ? new PlanConfigurationSnapshot(snapshot.templateCode(), snapshot.templateName(), snapshot.templateDescription(), snapshot.targetSegment(), snapshot.templateStatus(), snapshot.displayOrder(), snapshot.capabilities(), snapshot.modules(), snapshot.features(), snapshot.limits(), snapshot.addons(), new PlanPricingSnapshot(null, null, null, null, null, null, null, null, false, List.of(), List.of()))
+                    : snapshot;
         } catch (Exception ex) {
             throw new IllegalStateException("Unable to parse commercial plan snapshot", ex);
         }

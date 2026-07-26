@@ -747,11 +747,11 @@ public class CommercialEffectiveEntitlementService {
 
     private PlanConfigurationSnapshot resolveBaseSnapshot(CommercialTenantSubscriptionEntity subscription) {
         if (subscription == null || subscription.getPublishedVersion() == null) {
-            return new PlanConfigurationSnapshot(null, null, null, null, null, null, List.of(), List.of(), List.of(), List.of(), List.of());
+            return new PlanConfigurationSnapshot(null, null, null, null, null, null, List.of(), List.of(), List.of(), List.of(), List.of(), new CommercialPlatformModels.PlanPricingSnapshot(null, null, null, null, null, null, null, null, false, List.of(), List.of()));
         }
         CommercialPlanVersionEntity version = versionRepository.findById(subscription.getPublishedVersion().getId()).orElse(subscription.getPublishedVersion());
         if (version == null) {
-            return new PlanConfigurationSnapshot(null, null, null, null, null, null, List.of(), List.of(), List.of(), List.of(), List.of());
+            return new PlanConfigurationSnapshot(null, null, null, null, null, null, List.of(), List.of(), List.of(), List.of(), List.of(), new CommercialPlatformModels.PlanPricingSnapshot(null, null, null, null, null, null, null, null, false, List.of(), List.of()));
         }
         try {
             return objectMapper.readValue(version.getSnapshotJson(), PlanConfigurationSnapshot.class);

@@ -1,5 +1,6 @@
 import * as React from "react";
 import {
+  Autocomplete,
   Alert,
   Box,
   Accordion,
@@ -30,6 +31,7 @@ import {
   Typography,
 } from "@mui/material";
 import ExpandMoreRoundedIcon from "@mui/icons-material/ExpandMoreRounded";
+import { useSearchParams } from "react-router-dom";
 
 import { useAuth } from "../../auth/useAuth";
 import {
@@ -55,17 +57,22 @@ import {
   getCommercialEntitlementOverrideHistory,
   updateCommercialEntitlementOverride,
   type CommercialEffectiveEntitlementAddOn,
+  type CommercialEffectiveEntitlementCapability,
   type CommercialEffectiveEntitlementComparison,
+  type CommercialEffectiveEntitlementFeature,
   type CommercialEffectiveEntitlementOverrideHistory,
   type CommercialEffectiveEntitlementOverride,
   type CommercialEffectiveEntitlementOverridePreview,
+  type CommercialEffectiveEntitlementModule,
   type CommercialEffectiveEntitlementSnapshot,
   type CommercialEffectiveEntitlementLimitResponse,
+  type CommercialEffectiveEntitlementLimit,
   type CommercialPlatformOverview,
   type CommercialRuntimeDiffSummary,
   type PlatformTenant,
   type CommercialSubscriptionSummary,
 } from "../../api/clinicApi";
+import CommercialTenantSearchSelector from "../../shared/components/commercial/CommercialTenantSearchSelector";
 
 type OverrideDraft = {
   targetType: "CAPABILITY" | "MODULE" | "FEATURE" | "LIMIT" | "ADD_ON";
@@ -80,6 +87,14 @@ type OverrideDraft = {
 };
 
 type LookupResult = CommercialEffectiveEntitlementLimitResponse | null;
+
+type OverrideTargetOption = {
+  code: string;
+  name: string;
+  status: string | null;
+  source: string;
+  details: string;
+};
 
 const DEFAULT_DRAFT: OverrideDraft = {
   targetType: "MODULE",
@@ -173,6 +188,63 @@ function previewAction(snapshot: CommercialEffectiveEntitlementSnapshot | null, 
   };
 }
 
+function buildTargetOptions(snapshot: CommercialEffectiveEntitlementSnapshot | null, targetType: OverrideDraft["targetType"]): OverrideTargetOption[] {
+  if (!snapshot) return [];
+  if (targetType === "CAPABILITY") {
+    return snapshot.capabilities.map((item: CommercialEffectiveEntitlementCapability) => ({
+      code: item.code,
+      name: item.name,
+      status: item.enabled ? "Enabled" : "Disabled",
+      source: item.source,
+      details: item.reason || "Catalog capability",
+    }));
+  }
+  if (targetType === "MODULE") {
+    return snapshot.modules.map((item: CommercialEffectiveEntitlementModule) => ({
+      code: item.code,
+      name: item.name,
+      status: item.enabled ? "Enabled" : "Disabled",
+      source: item.source,
+      details: item.reason || item.runtimeModuleCode || "Catalog module",
+    }));
+  }
+  if (targetType === "FEATURE") {
+    return snapshot.features.map((item: CommercialEffectiveEntitlementFeature) => ({
+      code: item.code,
+      name: item.name,
+      status: item.enabled ? "Enabled" : "Disabled",
+      source: item.source,
+      details: item.reason || item.parentModuleCode || "Catalog feature",
+    }));
+  }
+  if (targetType === "LIMIT") {
+    return snapshot.limits.map((item: CommercialEffectiveEntitlementLimit) => ({
+      code: item.code,
+      name: item.name,
+      status: item.unlimited ? "Unlimited" : item.configuredValue || "Configured",
+      source: item.source,
+      details: item.overrideSource || item.enforcementType || "Catalog limit",
+    }));
+  }
+  return snapshot.addOns.map((item) => ({
+    code: item.code,
+    name: item.name,
+    status: item.state,
+    source: item.source,
+    details: item.appliedContributions.length ? item.appliedContributions.join(" · ") : "Catalog add-on",
+  }));
+}
+
+function allowedOperations(targetType: OverrideDraft["targetType"]): OverrideDraft["operation"][] {
+  if (targetType === "LIMIT") {
+    return ["SET_VALUE", "SET_UNLIMITED"];
+  }
+  if (targetType === "ADD_ON") {
+    return ["SET_ADDON_STATE"];
+  }
+  return ["ENABLE", "DISABLE"];
+}
+
 function tokenSummary(token: string | null | undefined) {
   if (!token) return "—";
   return token.length > 10 ? `${token.slice(0, 10)}…` : token;
@@ -208,12 +280,12 @@ function runtimeSourceDetail(runtimeEnabled: boolean, shadowCompare: boolean) {
   };
 }
 
-function snapshotIssue(snapshot: CommercialEffectiveEntitlementSnapshot | null) {
+function snapshotIssue(snapshot: CommercialEffectiveEntitlementSnapshot | null, subscription: CommercialSubscriptionSummary | null) {
   if (!snapshot) {
     return {
       title: "Snapshot unavailable",
-      reason: "No active commercial subscription exists for this tenant.",
-      action: "Assign and activate a published commercial plan, then regenerate the snapshot.",
+      reason: subscription ? "The effective snapshot could not be loaded for the active commercial subscription." : "No active commercial subscription exists for this tenant.",
+      action: subscription ? "Review the subscription and regenerate the snapshot." : "Assign and activate a published commercial plan, then regenerate the snapshot.",
     };
   }
   if (snapshot.snapshotStatus === "INVALID") {
@@ -262,12 +334,11 @@ function renderList<T>(items: T[], render: (item: T) => React.ReactNode, emptyMe
 
 export default function CommercialEffectiveEntitlementsPage() {
   const auth = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [platformOverview, setPlatformOverview] = React.useState<CommercialPlatformOverview | null>(null);
   const [runtimeSummary, setRuntimeSummary] = React.useState<CommercialRuntimeDiffSummary | null>(null);
   const [tenants, setTenants] = React.useState<PlatformTenant[]>([]);
   const [subscriptions, setSubscriptions] = React.useState<CommercialSubscriptionSummary[]>([]);
-  const [tenantSearch, setTenantSearch] = React.useState("");
-  const [selectedTenantId, setSelectedTenantId] = React.useState<string>("");
   const [snapshot, setSnapshot] = React.useState<CommercialEffectiveEntitlementSnapshot | null>(null);
   const [history, setHistory] = React.useState<CommercialEffectiveEntitlementSnapshot[]>([]);
   const [overrides, setOverrides] = React.useState<CommercialEffectiveEntitlementOverride[]>([]);
@@ -286,6 +357,8 @@ export default function CommercialEffectiveEntitlementsPage() {
   const canViewDiagnostics = auth.hasPermission("commercial.runtime.diagnostics.view");
   const canManageOverrides = auth.hasPermission("commercial.overrides.manage");
   const canReviewOverrides = auth.hasPermission("commercial.overrides.review");
+  const selectedTenantParam = searchParams.get("tenant") || "";
+  const selectedTenantId = selectedTenantParam;
   const runtimeEnabled = React.useMemo(() => {
     if (runtimeSummary) {
       return runtimeSummary.commercialRuntimeEnabled;
@@ -296,17 +369,38 @@ export default function CommercialEffectiveEntitlementsPage() {
   }, [platformOverview, runtimeSummary]);
   const shadowCompareEnabled = runtimeSummary?.shadowComparisonEnabled ?? false;
   const runtimeSource = runtimeSourceDetail(runtimeEnabled, shadowCompareEnabled);
-  const filteredTenants = React.useMemo(() => {
-    const needle = tenantSearch.trim().toLowerCase();
-    if (!needle) return tenants;
-    return tenants.filter((tenant) => [tenant.name, tenant.code].some((value) => value.toLowerCase().includes(needle)));
-  }, [tenantSearch, tenants]);
+  const overrideApprovalRequired = React.useMemo(
+    () => (platformOverview?.kpis.find((item) => item.key === "override-approval-required")?.value || 0) > 0,
+    [platformOverview],
+  );
   const selectedTenant = React.useMemo(() => tenants.find((tenant) => tenant.id === selectedTenantId) || null, [selectedTenantId, tenants]);
   const selectedSubscription = React.useMemo(
-    () => subscriptions.find((subscription) => subscription.tenantId === selectedTenantId) || null,
+    () => subscriptions.find((subscription) => subscription.tenantId === selectedTenantId && subscription.subscriptionStatus === "ACTIVE")
+      || subscriptions.find((subscription) => subscription.tenantId === selectedTenantId) || null,
     [selectedTenantId, subscriptions],
   );
-  const snapshotIssueCard = snapshotIssue(snapshot);
+  const tenantOptions = React.useMemo(
+    () => tenants.map((tenant) => {
+      const currentSubscription = subscriptions.find((subscription) => subscription.tenantId === tenant.id && subscription.subscriptionStatus === "ACTIVE")
+        || subscriptions.find((subscription) => subscription.tenantId === tenant.id)
+        || null;
+      return {
+        ...tenant,
+        subscriptionName: currentSubscription?.displayName || null,
+        subscriptionStatus: currentSubscription?.subscriptionStatus || null,
+        planTemplateName: currentSubscription?.planTemplateName || null,
+        publishedVersionLabel: currentSubscription?.publishedVersionLabel || null,
+      };
+    }),
+    [subscriptions, tenants],
+  );
+  const targetOptions = React.useMemo(() => buildTargetOptions(snapshot, draft.targetType), [draft.targetType, snapshot]);
+  const selectedTargetOption = React.useMemo(
+    () => targetOptions.find((option) => option.code === draft.targetCode) || null,
+    [draft.targetCode, targetOptions],
+  );
+  const operationOptions = React.useMemo(() => allowedOperations(draft.targetType), [draft.targetType]);
+  const snapshotIssueCard = snapshotIssue(snapshot, selectedSubscription);
 
   React.useEffect(() => {
     if (!auth.accessToken) return;
@@ -325,7 +419,9 @@ export default function CommercialEffectiveEntitlementsPage() {
         setTenants(tenantRows);
         setSubscriptions(subscriptionRows.items);
         setRuntimeSummary(runtime);
-        setSelectedTenantId((current) => current || tenantRows[0]?.id || "");
+        if (!selectedTenantParam && tenantRows[0]?.id) {
+          setSearchParams({ tenant: tenantRows[0].id }, { replace: true });
+        }
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : "Failed to load commercial entitlements");
@@ -336,7 +432,7 @@ export default function CommercialEffectiveEntitlementsPage() {
     return () => {
       cancelled = true;
     };
-  }, [auth.accessToken]);
+  }, [auth.accessToken, selectedTenantParam, setSearchParams]);
 
   React.useEffect(() => {
     if (!auth.accessToken || !selectedTenantId) return;
@@ -494,7 +590,7 @@ export default function CommercialEffectiveEntitlementsPage() {
     }
   }
 
-  async function saveOverride() {
+  async function saveOverride(applyImmediately = false) {
     if (!auth.accessToken || !selectedTenantId || !draft.reason.trim()) return;
     const accessToken = auth.accessToken;
     try {
@@ -511,9 +607,15 @@ export default function CommercialEffectiveEntitlementsPage() {
         subscriptionId: snapshot?.subscriptionId || null,
       };
       if (editingOverride) {
-        await updateCommercialEntitlementOverride(accessToken, selectedTenantId, editingOverride.id, payload);
+        const updated = await updateCommercialEntitlementOverride(accessToken, selectedTenantId, editingOverride.id, payload);
+        if (applyImmediately && updated.status !== "ACTIVE") {
+          await activateCommercialEntitlementOverride(accessToken, selectedTenantId, updated.id);
+        }
       } else {
-        await createCommercialEntitlementOverride(accessToken, selectedTenantId, payload);
+        const created = await createCommercialEntitlementOverride(accessToken, selectedTenantId, payload);
+        if (applyImmediately && created.status !== "ACTIVE") {
+          await activateCommercialEntitlementOverride(accessToken, selectedTenantId, created.id);
+        }
       }
       setToast("Override saved.");
       setOverrideOpen(false);
@@ -678,27 +780,19 @@ export default function CommercialEffectiveEntitlementsPage() {
             </Button>
           </Stack>
 
-          <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
-            <TextField
-              fullWidth
-              label="Search tenants"
-              value={tenantSearch}
-              onChange={(event) => setTenantSearch(event.target.value)}
-              placeholder="Tenant name or code"
-            />
-            <TextField
-              select
-              fullWidth
-              label="Tenant"
+          <Stack spacing={1.5}>
+            <Typography variant="subtitle2" color="text.secondary" sx={{ fontWeight: 700 }}>
+              Commercial tenant under review
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              This page uses its own URL-driven commercial tenant context. The global header tenant does not control the entitlement workspace.
+            </Typography>
+            <CommercialTenantSearchSelector
+              tenants={tenantOptions}
               value={selectedTenantId}
-              onChange={(event) => setSelectedTenantId(event.target.value)}
-            >
-              {filteredTenants.map((tenant) => (
-                <MenuItem key={tenant.id} value={tenant.id}>
-                  {tenant.name} ({tenant.code})
-                </MenuItem>
-              ))}
-            </TextField>
+              onChange={(tenantId) => setSearchParams(tenantId ? { tenant: tenantId } : {}, { replace: true })}
+              loading={!tenants.length && !error}
+            />
           </Stack>
         </Stack>
       </Paper>
@@ -730,11 +824,11 @@ export default function CommercialEffectiveEntitlementsPage() {
       </Accordion>
 
       <Grid container spacing={2}>
-          {[
-            { label: "Tenant", value: selectedTenant ? `${selectedTenant.name} (${selectedTenant.code})` : "—" },
-          { label: "Active Subscription", value: selectedSubscription ? `${selectedSubscription.displayName || selectedSubscription.planTemplateName} · ${selectedSubscription.subscriptionStatus}` : snapshot?.subscriptionStatus || "—" },
+        {[
+          { label: "Tenant", value: selectedTenant ? `${selectedTenant.name} (${selectedTenant.code})` : "—" },
+          { label: "Active Subscription", value: selectedSubscription ? `${selectedSubscription.displayName || selectedSubscription.planTemplateName} · ${selectedSubscription.subscriptionStatus}` : "None" },
           { label: "Published Version", value: selectedSubscription?.publishedVersionLabel || (snapshot?.publishedVersionNumber ? `Version ${snapshot.publishedVersionNumber}` : "—") },
-          { label: "Snapshot Status", value: snapshot?.snapshotStatus || "—" },
+          { label: "Snapshot Status", value: snapshotStateLabel(snapshot) },
           { label: "Generated At", value: formatDateTime(snapshot?.generatedAt) },
           { label: "Content Hash", value: hashPreview(snapshot?.contentHash) },
         ].map((card) => (
@@ -909,9 +1003,13 @@ export default function CommercialEffectiveEntitlementsPage() {
                         <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
                           <Chip size="small" label={item.status} color={statusTone(item.status)} variant="outlined" />
                           <Button size="small" onClick={() => openEditOverride(item)} disabled={!canManageOverrides || item.status === "APPROVED" || item.status === "ACTIVE"}>Edit</Button>
-                          <Button size="small" onClick={() => void submitOverrideAction(item)} disabled={!canManageOverrides || item.status !== "DRAFT"}>Submit</Button>
-                          <Button size="small" onClick={() => void approveOverrideAction(item)} disabled={!canReviewOverrides || item.status !== "PENDING_APPROVAL" && item.status !== "CHANGES_REQUESTED"}>Approve</Button>
-                          <Button size="small" onClick={() => void requestChangesAction(item)} disabled={!canReviewOverrides || item.status !== "PENDING_APPROVAL" && item.status !== "APPROVED"}>Request Changes</Button>
+                          {overrideApprovalRequired ? (
+                            <>
+                              <Button size="small" onClick={() => void submitOverrideAction(item)} disabled={!canManageOverrides || item.status !== "DRAFT"}>Submit</Button>
+                              <Button size="small" onClick={() => void approveOverrideAction(item)} disabled={!canReviewOverrides || item.status !== "PENDING_APPROVAL" && item.status !== "CHANGES_REQUESTED"}>Approve</Button>
+                              <Button size="small" onClick={() => void requestChangesAction(item)} disabled={!canReviewOverrides || item.status !== "PENDING_APPROVAL" && item.status !== "APPROVED"}>Request Changes</Button>
+                            </>
+                          ) : null}
                           <Button size="small" onClick={() => void toggleOverride(item, "activate")} disabled={!canManageOverrides || (item.status !== "APPROVED" && item.status !== "SCHEDULED")}>Activate</Button>
                           <Button size="small" onClick={() => void toggleOverride(item, "cancel")} disabled={!canManageOverrides || item.status === "CANCELLED"}>Cancel</Button>
                           <Button size="small" onClick={() => void rollbackOverrideAction(item)} disabled={!canManageOverrides}>Rollback</Button>
@@ -962,7 +1060,7 @@ export default function CommercialEffectiveEntitlementsPage() {
                   <Chip size="small" label={item.blocking ? "Blocking" : "Advisory"} color={item.blocking ? "error" : "warning"} variant="outlined" />
                 </Stack>
               </Paper>
-            ), snapshot?.validationFindings?.length ? "Snapshot is valid. No blocking or warning findings were reported." : "Snapshot validation has not run.")}
+            ), snapshot?.validationState === "VALID" ? "Snapshot is valid. No blocking or warning findings were reported." : "Snapshot validation has not run.")}
           </Stack>
         </CardContent>
       </Card>
@@ -1042,7 +1140,16 @@ export default function CommercialEffectiveEntitlementsPage() {
                   labelId="override-target-type"
                   label="Target Type"
                   value={draft.targetType}
-                  onChange={(event) => setDraft((current) => ({ ...current, targetType: event.target.value as OverrideDraft["targetType"] }))}
+                  onChange={(event) => {
+                    const nextType = event.target.value as OverrideDraft["targetType"];
+                    const nextOperations = allowedOperations(nextType);
+                    setDraft((current) => ({
+                      ...current,
+                      targetType: nextType,
+                      targetCode: "",
+                      operation: nextOperations.includes(current.operation) ? current.operation : nextOperations[0],
+                    }));
+                  }}
                 >
                   <MenuItem value="CAPABILITY">Capability</MenuItem>
                   <MenuItem value="MODULE">Module</MenuItem>
@@ -1051,12 +1158,39 @@ export default function CommercialEffectiveEntitlementsPage() {
                   <MenuItem value="ADD_ON">Add-on</MenuItem>
                 </Select>
               </FormControl>
-              <TextField
+              <Autocomplete
                 fullWidth
-                label="Target Code"
-                value={draft.targetCode}
-                onChange={(event) => setDraft((current) => ({ ...current, targetCode: event.target.value.toUpperCase() }))}
-                helperText="Use the commercial business code."
+                options={targetOptions}
+                value={selectedTargetOption}
+                inputValue={draft.targetCode}
+                onInputChange={(_, value) => setDraft((current) => ({ ...current, targetCode: value.toUpperCase() }))}
+                onChange={(_, value) => setDraft((current) => ({ ...current, targetCode: value?.code || "" }))}
+                getOptionLabel={(option) => `${option.name} (${option.code})`}
+                isOptionEqualToValue={(option, value) => option.code === value.code}
+                noOptionsText="No catalog items found"
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label="Target Item"
+                    helperText="Search by business name or code. Only catalog-backed items can be selected."
+                  />
+                )}
+                renderOption={(props, option) => (
+                  <li {...props} key={option.code}>
+                    <Stack spacing={0.25} sx={{ py: 0.5, width: "100%" }}>
+                      <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
+                        <Typography sx={{ fontWeight: 800 }}>{option.name}</Typography>
+                        <Chip size="small" label={option.status || "—"} variant="outlined" />
+                      </Stack>
+                      <Typography variant="body2" color="text.secondary">
+                        Code: {option.code}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        Source: {option.source} · {option.details}
+                      </Typography>
+                    </Stack>
+                  </li>
+                )}
               />
             </Stack>
 
@@ -1069,11 +1203,11 @@ export default function CommercialEffectiveEntitlementsPage() {
                   value={draft.operation}
                   onChange={(event) => setDraft((current) => ({ ...current, operation: event.target.value as OverrideDraft["operation"] }))}
                 >
-                  <MenuItem value="ENABLE">Enable</MenuItem>
-                  <MenuItem value="DISABLE">Disable</MenuItem>
-                  <MenuItem value="SET_VALUE">Set Value</MenuItem>
-                  <MenuItem value="SET_UNLIMITED">Set Unlimited</MenuItem>
-                  <MenuItem value="SET_ADDON_STATE">Set Add-on State</MenuItem>
+                  {operationOptions.map((operation) => (
+                    <MenuItem key={operation} value={operation}>
+                      {operation === "ENABLE" ? "Enable" : operation === "DISABLE" ? "Disable" : operation === "SET_VALUE" ? "Set Value" : operation === "SET_UNLIMITED" ? "Set Unlimited" : "Set Add-on State"}
+                    </MenuItem>
+                  ))}
                 </Select>
               </FormControl>
               <TextField
@@ -1082,6 +1216,7 @@ export default function CommercialEffectiveEntitlementsPage() {
                 value={draft.reason}
                 onChange={(event) => setDraft((current) => ({ ...current, reason: event.target.value }))}
                 required
+                helperText="Examples: customer purchased AI add-on, temporary pilot access, contractual exception, emergency operational access, migration compatibility override."
               />
             </Stack>
 
@@ -1165,8 +1300,8 @@ export default function CommercialEffectiveEntitlementsPage() {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setOverrideOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={() => void saveOverride()} disabled={!draft.reason.trim() || !draft.targetCode.trim()}>
-            Save Draft
+          <Button variant="contained" onClick={() => void saveOverride(!overrideApprovalRequired)} disabled={!draft.reason.trim() || !draft.targetCode.trim()}>
+            {overrideApprovalRequired ? "Save Draft" : "Apply Override"}
           </Button>
         </DialogActions>
       </Dialog>

@@ -5,6 +5,8 @@ import com.deepthoughtnet.clinic.api.platform.commercial.entitlement.dto.Commerc
 import com.deepthoughtnet.clinic.api.platform.commercial.entitlement.dto.CommercialEntitlementDtos.RuntimeDiffSummaryResponse;
 import com.deepthoughtnet.clinic.api.platform.commercial.entitlement.dto.CommercialEntitlementDtos.RuntimeDiffTenantResponse;
 import com.deepthoughtnet.clinic.api.platform.service.PlatformTenantService;
+import com.deepthoughtnet.clinic.commercial.entitlement.CommercialTenantRuntimeContextService;
+import com.deepthoughtnet.clinic.commercial.entitlement.CommercialTenantRuntimeContextService.RuntimeContext;
 import com.deepthoughtnet.clinic.platform.core.config.CommercialRuntimeProperties;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -19,22 +21,25 @@ import org.springframework.stereotype.Service;
 public class CommercialRuntimeDiffApiService {
     private final PlatformTenantService platformTenantService;
     private final CommercialEffectiveEntitlementApiService entitlementApiService;
+    private final CommercialTenantRuntimeContextService runtimeContextService;
     private final CommercialRuntimeProperties runtimeProperties;
 
     public CommercialRuntimeDiffApiService(
             PlatformTenantService platformTenantService,
             CommercialEffectiveEntitlementApiService entitlementApiService,
+            CommercialTenantRuntimeContextService runtimeContextService,
             CommercialRuntimeProperties runtimeProperties
     ) {
         this.platformTenantService = platformTenantService;
         this.entitlementApiService = entitlementApiService;
+        this.runtimeContextService = runtimeContextService;
         this.runtimeProperties = runtimeProperties;
     }
 
     public RuntimeDiffSummaryResponse summary() {
         List<RuntimeDiffTenantResponse> tenants = tenants();
-        long activeCommercialSubscriptions = tenants.stream().filter(row -> row.currentSubscription() != null && row.currentSubscription().startsWith("ACTIVE")).count();
-        long currentValidSnapshots = tenants.stream().filter(row -> "CURRENT".equals(row.snapshotStatus()) && "VALID".equalsIgnoreCase(extractValidationState(row))).count();
+        long activeCommercialSubscriptions = tenants.stream().filter(row -> "ACTIVE".equalsIgnoreCase(row.subscriptionStatus())).count();
+        long currentValidSnapshots = tenants.stream().filter(row -> "CURRENT".equals(row.snapshotStatus()) && "VALID".equalsIgnoreCase(row.validationState())).count();
         long missingSnapshots = tenants.stream().filter(row -> "MISSING".equals(row.snapshotStatus())).count();
         long invalidSnapshots = tenants.stream().filter(row -> "INVALID".equals(row.snapshotStatus())).count();
         long exactMatches = tenants.stream().filter(row -> "MATCH".equals(row.comparisonStatus())).count();
@@ -79,7 +84,7 @@ public class CommercialRuntimeDiffApiService {
     }
 
     private RuntimeDiffTenantResponse toRow(com.deepthoughtnet.clinic.identity.service.model.PlatformTenantRecord tenant) {
-        PlatformTenantService.PlatformTenantDetail detail = platformTenantService.getTenant(tenant.id());
+        RuntimeContext context = runtimeContextService.resolve(tenant.id());
         EffectiveEntitlementSnapshotResponse snapshot;
         try {
             snapshot = entitlementApiService.getCurrentSnapshot(tenant.id());
@@ -99,29 +104,38 @@ public class CommercialRuntimeDiffApiService {
         long moduleDifferences = comparison == null ? 0 : comparison.modules().stream().filter(item -> !"MATCH".equals(item.category())).count();
         long featureDifferences = comparison == null ? 0 : comparison.features().stream().filter(item -> !"MATCH".equals(item.category())).count();
         long limitDifferences = comparison == null ? 0 : comparison.limits().stream().filter(item -> !"MATCH".equals(item.category())).count();
-        long activeOverrides = snapshot == null ? 0 : snapshot.overrides().stream().filter(item -> "ACTIVE".equals(item.status()) || "APPROVED".equals(item.status()) || "SCHEDULED".equals(item.status())).count();
+        long activeOverrides = context.activeOverrideCount();
         List<String> differences = new ArrayList<>();
         if (comparison != null) {
             differences.addAll(comparison.modules().stream().filter(item -> !"MATCH".equals(item.category())).map(this::differenceText).toList());
             differences.addAll(comparison.features().stream().filter(item -> !"MATCH".equals(item.category())).map(this::differenceText).toList());
             differences.addAll(comparison.limits().stream().filter(item -> !"MATCH".equals(item.category())).map(this::differenceText).toList());
         }
+        ReadinessProjection readiness = readiness(context, snapshot, comparison);
         return new RuntimeDiffTenantResponse(
                 tenant.id(),
                 tenant.name(),
                 tenant.code(),
-                describeSubscription(detail),
-                snapshot == null || snapshot.publishedVersionNumber() == null ? "—" : "Version " + snapshot.publishedVersionNumber(),
+                describeSubscription(context.activeSubscription(), snapshot),
+                context.activeSubscription() == null ? null : context.activeSubscription().displayName(),
+                context.activeSubscription() == null ? "NONE" : String.valueOf(context.activeSubscription().subscriptionStatus()),
+                context.activeSubscription() == null ? null : context.activeSubscription().planTemplateName(),
+                context.activeSubscription() == null ? (snapshot == null || snapshot.publishedVersionNumber() == null ? "—" : "Version " + snapshot.publishedVersionNumber()) : context.activeSubscription().publishedVersionLabel(),
                 snapshotStatus,
+                validationState,
                 snapshot == null ? null : snapshot.generatedAt(),
                 comparisonStatus,
                 moduleDifferences,
                 featureDifferences,
                 limitDifferences,
                 activeOverrides,
-                runtimeSource(tenant.id(), snapshotStatus),
-                rolloutReadiness(detail, snapshot, comparison),
-                recommendation(detail, snapshot, comparison),
+                context.runtimeSource(),
+                readiness.status(),
+                readiness.status(),
+                readiness.blockers(),
+                readiness.warnings(),
+                readiness.recommendation(),
+                readiness.targetRoute(),
                 differences
         );
     }
@@ -130,11 +144,12 @@ public class CommercialRuntimeDiffApiService {
         return "CURRENT".equals(row.snapshotStatus()) ? "VALID" : row.snapshotStatus();
     }
 
-    private String describeSubscription(PlatformTenantService.PlatformTenantDetail detail) {
-        if (detail.latestSubscription() == null) {
+    private String describeSubscription(com.deepthoughtnet.clinic.commercial.subscription.CommercialSubscriptionModels.SubscriptionSummaryResponse subscription, EffectiveEntitlementSnapshotResponse snapshot) {
+        if (subscription == null) {
             return "None";
         }
-        return detail.latestSubscription().getStatus() + " · " + detail.latestSubscription().getPlanId();
+        String version = subscription.publishedVersionLabel() != null ? subscription.publishedVersionLabel() : (snapshot != null && snapshot.publishedVersionNumber() != null ? "Version " + snapshot.publishedVersionNumber() : "—");
+        return subscription.displayName() + " · " + subscription.planTemplateName() + " · " + version + " · " + subscription.subscriptionStatus();
     }
 
     private String deriveComparisonStatus(LegacyComparisonResponse comparison, String snapshotStatus, String validationState) {
@@ -162,45 +177,39 @@ public class CommercialRuntimeDiffApiService {
         };
     }
 
-    private String runtimeSource(UUID tenantId, String snapshotStatus) {
-        if (runtimeProperties.isEnabled() && (runtimeProperties.getTenantAllowlist() == null || runtimeProperties.getTenantAllowlist().isEmpty() || runtimeProperties.getTenantAllowlist().contains(String.valueOf(tenantId)))) {
-            return "Commercial Runtime — Authoritative";
+    private ReadinessProjection readiness(RuntimeContext context, EffectiveEntitlementSnapshotResponse snapshot, LegacyComparisonResponse comparison) {
+        if (context.activeSubscription() == null) {
+            return new ReadinessProjection("BLOCKED", List.of("No active commercial subscription"), List.copyOf(context.integrityWarnings()), "Assign and activate a commercial subscription", "/platform/commercial/subscriptions");
         }
-        if (!runtimeProperties.isEnabled() && runtimeProperties.isShadowCompareEnabled()) {
-            return "Shadow Comparison — Enabled";
+        if (snapshot == null) {
+            return new ReadinessProjection("BLOCKED", List.of("No current effective entitlement snapshot"), List.copyOf(context.integrityWarnings()), "Generate an effective entitlement snapshot", "/platform/commercial/entitlements");
         }
-        return "Legacy Runtime — Authoritative";
-    }
-
-    private String rolloutReadiness(PlatformTenantService.PlatformTenantDetail detail, EffectiveEntitlementSnapshotResponse snapshot, LegacyComparisonResponse comparison) {
-        if (detail.latestSubscription() == null || !"ACTIVE".equalsIgnoreCase(detail.latestSubscription().getStatus())) {
-            return "BLOCKED";
-        }
-        if (snapshot == null || !"CURRENT".equals(snapshot.snapshotStatus()) || !"VALID".equalsIgnoreCase(snapshot.validationState())) {
-            return "BLOCKED";
+        if (!"CURRENT".equals(snapshot.snapshotStatus()) || !"VALID".equalsIgnoreCase(snapshot.validationState())) {
+            String remediation = snapshot.validationFindings().isEmpty() ? "Resolve snapshot validation findings and regenerate" : snapshot.validationFindings().get(0).remediation();
+            return new ReadinessProjection("BLOCKED", List.of(snapshotIssue(snapshot)), List.copyOf(context.integrityWarnings()), remediation == null || remediation.isBlank() ? "Resolve snapshot validation findings and regenerate" : remediation, "/platform/commercial/entitlements");
         }
         if (comparison == null) {
-            return "NOT_EVALUATED";
+            return new ReadinessProjection("NOT_EVALUATED", List.of("Legacy comparison not run"), List.copyOf(context.integrityWarnings()), "Run legacy comparison", "/platform/commercial/runtime-diff");
         }
         boolean anyDifferences = comparison.modules().stream().anyMatch(item -> !"MATCH".equals(item.category()))
                 || comparison.features().stream().anyMatch(item -> !"MATCH".equals(item.category()))
                 || comparison.limits().stream().anyMatch(item -> !"MATCH".equals(item.category()));
-        return anyDifferences ? "READY_WITH_WARNINGS" : "READY";
+        if (anyDifferences) {
+            return new ReadinessProjection("READY_WITH_WARNINGS", List.of(), List.copyOf(context.integrityWarnings()), "Review differences before rollout", "/platform/commercial/runtime-diff");
+        }
+        return new ReadinessProjection("READY", List.of(), List.copyOf(context.integrityWarnings()), runtimeProperties.isEnabled() ? "Commercial runtime is authoritative" : "Ready for allowlisted commercial runtime pilot", "/platform/commercial/runtime-diff");
     }
 
-    private String recommendation(PlatformTenantService.PlatformTenantDetail detail, EffectiveEntitlementSnapshotResponse snapshot, LegacyComparisonResponse comparison) {
-        if (detail.latestSubscription() == null || !"ACTIVE".equalsIgnoreCase(detail.latestSubscription().getStatus())) {
-            return "Assign Subscription";
+    private String snapshotIssue(EffectiveEntitlementSnapshotResponse snapshot) {
+        if (snapshot == null) {
+            return "No current effective entitlement snapshot";
         }
-        if (snapshot == null || !"CURRENT".equals(snapshot.snapshotStatus()) || !"VALID".equalsIgnoreCase(snapshot.validationState())) {
-            return "Regenerate Snapshot";
+        if ("INVALID".equals(snapshot.snapshotStatus())) {
+            return snapshot.validationFindings().isEmpty() ? "Snapshot generation failed" : snapshot.validationFindings().get(0).message();
         }
-        if (comparison == null) {
-            return "Review Differences";
-        }
-        boolean anyDifferences = comparison.modules().stream().anyMatch(item -> !"MATCH".equals(item.category()))
-                || comparison.features().stream().anyMatch(item -> !"MATCH".equals(item.category()))
-                || comparison.limits().stream().anyMatch(item -> !"MATCH".equals(item.category()));
-        return anyDifferences ? "Enable Shadow Compare" : "Ready for shadow mode";
+        return "Snapshot is not current";
+    }
+
+    private record ReadinessProjection(String status, List<String> blockers, List<String> warnings, String recommendation, String targetRoute) {
     }
 }

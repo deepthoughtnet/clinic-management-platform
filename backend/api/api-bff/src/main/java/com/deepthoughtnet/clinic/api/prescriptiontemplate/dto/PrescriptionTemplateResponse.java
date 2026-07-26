@@ -6,6 +6,7 @@ public record PrescriptionTemplateResponse(
         int templateVersion,
         boolean active,
         String clinicLogoDocumentId,
+        String logoUrl,
         String headerText,
         String footerText,
         String primaryColor,

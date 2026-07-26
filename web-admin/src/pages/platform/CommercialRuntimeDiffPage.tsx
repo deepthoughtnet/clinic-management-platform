@@ -22,18 +22,22 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import { useSearchParams } from "react-router-dom";
 
 import { useAuth } from "../../auth/useAuth";
 import {
   compareCommercialEffectiveEntitlements,
   getCommercialEffectiveEntitlementHistory,
   getCommercialRuntimeDiffSummary,
+  getPlatformTenants,
   listCommercialRuntimeDiffTenants,
   type CommercialEffectiveEntitlementComparison,
   type CommercialEffectiveEntitlementSnapshot,
   type CommercialRuntimeDiffSummary,
   type CommercialRuntimeDiffTenant,
+  type PlatformTenant,
 } from "../../api/clinicApi";
+import CommercialTenantSearchSelector from "../../shared/components/commercial/CommercialTenantSearchSelector";
 
 function chipTone(value: string | null | undefined) {
   if (!value) return "default" as const;
@@ -71,16 +75,47 @@ function summaryCard(label: string, value: number | string | boolean, helperText
   );
 }
 
+function comparisonLabel(category: string) {
+  switch (category) {
+    case "MATCH":
+      return "Match";
+    case "LEGACY_ONLY":
+      return "Legacy Only";
+    case "COMMERCIAL_ONLY":
+      return "Commercial Only";
+    case "DIFFERENT":
+      return "Different";
+    case "LIMIT_DIFFERENCE":
+      return "Different";
+    case "SNAPSHOT_MISSING":
+      return "Snapshot Missing";
+    case "SNAPSHOT_INVALID":
+      return "Snapshot Invalid";
+    default:
+      return category;
+  }
+}
+
+function comparisonStatusTone(category: string) {
+  if (category === "MATCH") return "success" as const;
+  if (category === "DIFFERENT") return "warning" as const;
+  if (category === "LEGACY_ONLY" || category === "COMMERCIAL_ONLY" || category === "LIMIT_DIFFERENCE") return "info" as const;
+  return "default" as const;
+}
+
 export default function CommercialRuntimeDiffPage() {
   const auth = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [summary, setSummary] = React.useState<CommercialRuntimeDiffSummary | null>(null);
   const [tenants, setTenants] = React.useState<CommercialRuntimeDiffTenant[]>([]);
-  const [selectedTenantId, setSelectedTenantId] = React.useState<string>("");
+  const [tenantDirectory, setTenantDirectory] = React.useState<PlatformTenant[]>([]);
   const [comparison, setComparison] = React.useState<CommercialEffectiveEntitlementComparison | null>(null);
   const [history, setHistory] = React.useState<CommercialEffectiveEntitlementSnapshot[]>([]);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [statusFilter, setStatusFilter] = React.useState("ALL");
+  const selectedTenantParam = searchParams.get("tenant") || "";
+  const selectedTenantId = selectedTenantParam;
 
   React.useEffect(() => {
     if (!auth.accessToken) return;
@@ -88,14 +123,18 @@ export default function CommercialRuntimeDiffPage() {
     let cancelled = false;
     async function load() {
       try {
-        const [summaryResult, tenantRows] = await Promise.all([
+        const [summaryResult, tenantRows, tenantRowsDirectory] = await Promise.all([
           getCommercialRuntimeDiffSummary(accessToken),
           listCommercialRuntimeDiffTenants(accessToken),
+          getPlatformTenants(accessToken),
         ]);
         if (cancelled) return;
         setSummary(summaryResult);
         setTenants(tenantRows);
-        setSelectedTenantId((current) => current || tenantRows[0]?.tenantId || "");
+        setTenantDirectory(tenantRowsDirectory);
+        if (!selectedTenantParam && tenantRows[0]?.tenantId) {
+          setSearchParams({ tenant: tenantRows[0].tenantId }, { replace: true });
+        }
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : "Failed to load runtime diff");
@@ -106,7 +145,7 @@ export default function CommercialRuntimeDiffPage() {
     return () => {
       cancelled = true;
     };
-  }, [auth.accessToken]);
+  }, [auth.accessToken, selectedTenantParam, setSearchParams]);
 
   React.useEffect(() => {
     if (!auth.accessToken || !selectedTenantId) return;
@@ -144,6 +183,44 @@ export default function CommercialRuntimeDiffPage() {
 
   const filteredTenants = tenants.filter((tenant) => statusFilter === "ALL" || tenant.rolloutReadiness === statusFilter);
   const selectedTenant = tenants.find((tenant) => tenant.tenantId === selectedTenantId) || null;
+  const selectedTenantDirectory = tenantDirectory.find((tenant) => tenant.id === selectedTenantId) || null;
+  const tenantOptions = tenantDirectory.map((tenant) => {
+    const runtimeTenant = tenants.find((row) => row.tenantId === tenant.id) || null;
+    return {
+      ...tenant,
+      subscriptionName: runtimeTenant?.subscriptionName || runtimeTenant?.currentSubscription || null,
+      subscriptionStatus: runtimeTenant?.subscriptionStatus || null,
+      planTemplateName: runtimeTenant?.planTemplateName || null,
+      publishedVersionLabel: runtimeTenant?.publishedVersion || null,
+    };
+  });
+  const comparisonRows = React.useMemo(() => {
+    const rows = [
+      ...(comparison?.modules || []).map((item) => ({ section: "Modules", ...item })),
+      ...(comparison?.features || []).map((item) => ({ section: "Features", ...item })),
+      ...(comparison?.limits || []).map((item) => ({ section: "Limits", ...item })),
+    ];
+    return rows.sort((left, right) => `${left.section}:${left.label}`.localeCompare(`${right.section}:${right.label}`));
+  }, [comparison]);
+  const comparisonMetrics = React.useMemo(() => {
+    const moduleRows = comparison?.modules || [];
+    const featureRows = comparison?.features || [];
+    const limitRows = comparison?.limits || [];
+    return {
+      legacyModules: moduleRows.filter((item) => item.category === "LEGACY_ONLY" || item.category === "MATCH" || item.category === "DIFFERENT").length,
+      commercialModules: moduleRows.filter((item) => item.category === "COMMERCIAL_ONLY" || item.category === "MATCH" || item.category === "DIFFERENT").length,
+      matchingModules: moduleRows.filter((item) => item.category === "MATCH").length,
+      legacyOnlyModules: moduleRows.filter((item) => item.category === "LEGACY_ONLY").length,
+      commercialOnlyModules: moduleRows.filter((item) => item.category === "COMMERCIAL_ONLY").length,
+      moduleCoverage: moduleRows.length ? Math.round((moduleRows.filter((item) => item.category === "MATCH").length / moduleRows.length) * 100) : 0,
+      legacyFeatures: featureRows.filter((item) => item.category === "LEGACY_ONLY" || item.category === "MATCH" || item.category === "DIFFERENT").length,
+      commercialFeatures: featureRows.filter((item) => item.category === "COMMERCIAL_ONLY" || item.category === "MATCH" || item.category === "DIFFERENT").length,
+      matchingFeatures: featureRows.filter((item) => item.category === "MATCH").length,
+      featureDifferences: featureRows.filter((item) => item.category !== "MATCH").length,
+      limitDifferences: limitRows.filter((item) => item.category !== "MATCH").length,
+      criticalDifferences: [...moduleRows, ...featureRows, ...limitRows].filter((item) => item.category === "DIFFERENT" || item.category === "LIMIT_DIFFERENCE").length,
+    };
+  }, [comparison]);
 
   return (
     <Stack spacing={2.5}>
@@ -175,6 +252,49 @@ export default function CommercialRuntimeDiffPage() {
             ]
           : null}
       </Grid>
+
+      {comparison ? (
+        <Grid container spacing={2}>
+          {[
+            summaryCard("Legacy Modules", comparisonMetrics.legacyModules, "Modules visible in the legacy runtime projection"),
+            summaryCard("Commercial Modules", comparisonMetrics.commercialModules, "Modules visible in the commercial snapshot"),
+            summaryCard("Matching Modules", comparisonMetrics.matchingModules, "Modules that match across both models"),
+            summaryCard("Legacy-Only Modules", comparisonMetrics.legacyOnlyModules, "Modules granted only by legacy runtime"),
+            summaryCard("Commercial-Only Modules", comparisonMetrics.commercialOnlyModules, "Modules granted only by commercial snapshot"),
+            summaryCard("Module Coverage %", `${comparisonMetrics.moduleCoverage}%`, "Share of module rows that match"),
+            summaryCard("Legacy Features", comparisonMetrics.legacyFeatures, "Features visible in the legacy runtime projection"),
+            summaryCard("Commercial Features", comparisonMetrics.commercialFeatures, "Features visible in the commercial snapshot"),
+            summaryCard("Matching Features", comparisonMetrics.matchingFeatures, "Features that match across both models"),
+            summaryCard("Feature Differences", comparisonMetrics.featureDifferences, "Features that differ between models"),
+            summaryCard("Limit Differences", comparisonMetrics.limitDifferences, "Configured limit differences"),
+            summaryCard("Critical Differences", comparisonMetrics.criticalDifferences, "Differences that need review before rollout"),
+          ]}
+        </Grid>
+      ) : null}
+
+      <Card variant="outlined">
+        <CardContent>
+          <Stack spacing={1.5}>
+            <Typography variant="h6" sx={{ fontWeight: 900 }}>
+              Commercial tenant under review
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              This workspace uses a URL-driven commercial tenant context. The header tenant does not control the runtime diff view.
+            </Typography>
+            <CommercialTenantSearchSelector
+              tenants={tenantOptions}
+              value={selectedTenantId}
+              onChange={(tenantId) => setSearchParams(tenantId ? { tenant: tenantId } : {}, { replace: true })}
+              loading={!tenantDirectory.length && !error}
+            />
+            {selectedTenantDirectory ? (
+              <Typography variant="body2" color="text.secondary">
+                Selected commercial tenant: {selectedTenantDirectory.name} ({selectedTenantDirectory.code})
+              </Typography>
+            ) : null}
+          </Stack>
+        </CardContent>
+      </Card>
 
       <Card variant="outlined">
         <CardContent>
@@ -214,14 +334,19 @@ export default function CommercialRuntimeDiffPage() {
                 </TableHead>
                 <TableBody>
                   {filteredTenants.map((tenant) => (
-                    <TableRow key={tenant.tenantId} hover selected={tenant.tenantId === selectedTenantId} onClick={() => setSelectedTenantId(tenant.tenantId)} sx={{ cursor: "pointer" }}>
+                    <TableRow key={tenant.tenantId} hover selected={tenant.tenantId === selectedTenantId} onClick={() => setSearchParams({ tenant: tenant.tenantId }, { replace: true })} sx={{ cursor: "pointer" }}>
                       <TableCell>
                         <Stack spacing={0.25}>
                           <Typography sx={{ fontWeight: 800 }}>{tenant.tenantName}</Typography>
                           <Typography variant="body2" color="text.secondary">{tenant.tenantCode}</Typography>
                         </Stack>
                       </TableCell>
-                      <TableCell>{tenant.currentSubscription}</TableCell>
+                      <TableCell>
+                        <Stack spacing={0.25}>
+                          <Typography sx={{ fontWeight: 700 }}>{tenant.subscriptionName || tenant.currentSubscription || "None"}</Typography>
+                          <Typography variant="body2" color="text.secondary">{tenant.subscriptionStatus || "—"}</Typography>
+                        </Stack>
+                      </TableCell>
                       <TableCell>{tenant.publishedVersion}</TableCell>
                       <TableCell><Chip size="small" label={tenant.snapshotStatus} color={chipTone(tenant.snapshotStatus)} variant="outlined" /></TableCell>
                       <TableCell><Chip size="small" label={tenant.comparisonStatus} color={chipTone(tenant.comparisonStatus)} variant="outlined" /></TableCell>
@@ -253,30 +378,35 @@ export default function CommercialRuntimeDiffPage() {
                     <Typography variant="body2" color="text.secondary">
                       {selectedTenant.tenantName} · {selectedTenant.tenantCode} · {selectedTenant.rolloutReadiness}
                     </Typography>
-                    <Box>
-                      <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 1 }}>Modules</Typography>
-                      <Stack spacing={0.75}>
-                        {comparison?.modules.map((item) => (
-                          <Chip key={item.code} label={`${item.label} · ${item.category}`} variant="outlined" />
-                        )) || null}
-                      </Stack>
-                    </Box>
-                    <Box>
-                      <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 1 }}>Features</Typography>
-                      <Stack spacing={0.75}>
-                        {comparison?.features.map((item) => (
-                          <Chip key={item.code} label={`${item.label} · ${item.category}`} variant="outlined" />
-                        )) || null}
-                      </Stack>
-                    </Box>
-                    <Box>
-                      <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 1 }}>Limits</Typography>
-                      <Stack spacing={0.75}>
-                        {comparison?.limits.map((item) => (
-                          <Chip key={item.code} label={`${item.label} · ${item.category}`} variant="outlined" />
-                        )) || null}
-                      </Stack>
-                    </Box>
+                    <TableContainer component={Paper} variant="outlined">
+                      <Table size="small">
+                        <TableHead>
+                          <TableRow>
+                            <TableCell>Entitlement</TableCell>
+                            <TableCell>Legacy</TableCell>
+                            <TableCell>Commercial</TableCell>
+                            <TableCell>Result</TableCell>
+                            <TableCell>Commercial Source</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {comparisonRows.map((item) => (
+                            <TableRow key={`${item.section}-${item.code}`}>
+                              <TableCell>
+                                <Stack spacing={0.25}>
+                                  <Typography sx={{ fontWeight: 800 }}>{item.label}</Typography>
+                                  <Typography variant="body2" color="text.secondary">{item.code} · {item.section}</Typography>
+                                </Stack>
+                              </TableCell>
+                              <TableCell>{item.legacyValue || "—"}</TableCell>
+                              <TableCell>{item.commercialValue || "—"}</TableCell>
+                              <TableCell><Chip size="small" label={comparisonLabel(item.category)} color={comparisonStatusTone(item.category)} variant="outlined" /></TableCell>
+                              <TableCell>{item.detail || "—"}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
                   </Stack>
                 ) : (
                   <Typography variant="body2" color="text.secondary">Select a tenant to review comparison details.</Typography>
@@ -295,15 +425,35 @@ export default function CommercialRuntimeDiffPage() {
                 </Typography>
                 {selectedTenant ? (
                   <>
-                    <Alert severity={chipTone(selectedTenant.rolloutReadiness) === "error" ? "error" : chipTone(selectedTenant.rolloutReadiness) === "warning" ? "warning" : "success"} variant="outlined">
+                    <Alert severity={selectedTenant.readinessStatus === "BLOCKED" ? "error" : selectedTenant.readinessStatus === "READY_WITH_WARNINGS" ? "warning" : "success"} variant="outlined">
                       <Stack spacing={0.5}>
-                        <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>{selectedTenant.rolloutReadiness}</Typography>
+                        <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>{selectedTenant.readinessStatus || selectedTenant.rolloutReadiness}</Typography>
                         <Typography variant="body2">Recommendation: {selectedTenant.recommendation}</Typography>
                       </Stack>
                     </Alert>
                     <Typography variant="body2" color="text.secondary">
                       Generated: {formatDateTime(selectedTenant.generatedAt)} · Snapshot: {selectedTenant.snapshotStatus}
                     </Typography>
+                    <Stack spacing={0.75}>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Checklist</Typography>
+                      <Typography variant="body2" color="text.secondary">Subscription: {selectedTenant.subscriptionStatus || "NONE"}</Typography>
+                      <Typography variant="body2" color="text.secondary">Published Version: {selectedTenant.publishedVersion}</Typography>
+                      <Typography variant="body2" color="text.secondary">Snapshot: {selectedTenant.snapshotStatus} / {selectedTenant.validationState || "—"}</Typography>
+                      <Typography variant="body2" color="text.secondary">Comparison: {selectedTenant.comparisonStatus}</Typography>
+                      <Typography variant="body2" color="text.secondary">Overrides: {selectedTenant.activeOverrides}</Typography>
+                      <Typography variant="body2" color="text.secondary">Runtime Source: {selectedTenant.runtimeSource}</Typography>
+                      {selectedTenant.readinessBlockers.length ? (
+                        <Typography variant="body2" color="text.secondary">
+                          Blockers: {selectedTenant.readinessBlockers.join(" · ")}
+                        </Typography>
+                      ) : null}
+                      {selectedTenant.readinessWarnings.length ? (
+                        <Typography variant="body2" color="text.secondary">
+                          Warnings: {selectedTenant.readinessWarnings.join(" · ")}
+                        </Typography>
+                      ) : null}
+                      <Typography variant="body2" color="text.secondary">Next action: {selectedTenant.targetRoute}</Typography>
+                    </Stack>
                   </>
                 ) : (
                   <Typography variant="body2" color="text.secondary">Select a tenant to see rollout guidance.</Typography>

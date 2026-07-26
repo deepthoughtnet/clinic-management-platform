@@ -6,8 +6,9 @@ Commercial Platform work is split into ordered batches:
 2. S2 Plan Templates and Immutable Versions
 3. S3 Tenant Subscription Assignment
 4. S4 Effective Entitlements and Safe Runtime Cutover
-5. S5 Usage Metering and Quotas
-6. S6 Billing and Renewals
+5. S5 Commercial Pricing and Rating
+6. S6 Usage Metering and Quotas
+7. S7 Billing and Renewals
 
 Each future batch must have an approved specification before implementation.
 
@@ -17,6 +18,7 @@ Approved specs:
 - [S2 Plan Templates and Immutable Versions](./S2_PLAN_TEMPLATES_AND_VERSIONS.md)
 - [S3 Tenant Subscriptions & Assignment](./S3_TENANT_SUBSCRIPTIONS.md)
 - [S4 Effective Entitlements and Safe Runtime Cutover](./S4_EFFECTIVE_ENTITLEMENTS.md)
+- [S5 Commercial Pricing and Rating Foundation](./S5_PRICING_AND_RATING.md)
 
 S4 covers:
 

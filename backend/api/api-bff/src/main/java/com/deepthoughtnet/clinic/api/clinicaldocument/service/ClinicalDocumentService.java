@@ -30,7 +30,7 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 public class ClinicalDocumentService {
     private static final long MAX_SIZE_BYTES = 25L * 1024L * 1024L;
-    private static final Set<String> ALLOWED_EXTENSIONS = Set.of("pdf", "jpg", "jpeg", "png");
+    private static final Set<String> ALLOWED_EXTENSIONS = Set.of("pdf", "jpg", "jpeg", "png", "webp");
     private static final Set<String> BLOCKED_EXTENSIONS = Set.of(
             "exe", "dll", "bat", "cmd", "com", "msi", "ps1", "vbs", "js", "jar", "sh", "php", "pl", "scr", "hta", "apk", "bin"
     );
@@ -449,6 +449,7 @@ public class ClinicalDocumentService {
             case "pdf" -> "application/pdf";
             case "jpg", "jpeg" -> "image/jpeg";
             case "png" -> "image/png";
+            case "webp" -> "image/webp";
             default -> "application/octet-stream";
         };
     }
@@ -461,12 +462,13 @@ public class ClinicalDocumentService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Executable files are not allowed");
         }
         if (!ALLOWED_EXTENSIONS.contains(extension)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only PDF, JPG, JPEG, and PNG files are allowed");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only PDF, JPG, JPEG, PNG, and WEBP files are allowed");
         }
         String expectedMediaType = switch (extension) {
             case "pdf" -> "application/pdf";
             case "jpg", "jpeg" -> "image/jpeg";
             case "png" -> "image/png";
+            case "webp" -> "image/webp";
             default -> "application/octet-stream";
         };
         if (!expectedMediaType.equals(mediaType)) {

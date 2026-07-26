@@ -32,7 +32,9 @@ import {
   compareCommercialPlanVersions,
   cloneCommercialPlanTemplate,
   createCommercialPlanTemplate,
+  compareCommercialPlanPricing,
   getCommercialPlanTemplate,
+  getCommercialPlanPricing,
   getCommercialPlanVersion,
   listCommercialAddons,
   listCommercialCapabilities,
@@ -44,7 +46,9 @@ import {
   publishCommercialPlanVersion,
   retireCommercialPlanTemplate,
   saveCommercialPlanDraft,
+  saveCommercialPlanPricing,
   updateCommercialPlanTemplate,
+  validateCommercialPlanPricing,
   validateCommercialPlanDraft,
   type CommercialAddonSummary,
   type CommercialCapabilitySummary,
@@ -56,11 +60,22 @@ import {
   type CommercialPlanVersionDetail,
   type CommercialPlanVersionSummary,
   type CommercialPlanTemplateSummary,
+  type CommercialPlanPricingSnapshot,
+  type CommercialPlanPricingBillingCycle,
+  type CommercialPlanPricingTaxModel,
+  type CommercialPlanAddonPurchaseType,
+  type CommercialPlanPricingMeteredRate,
+  type CommercialPlanPricingAddon,
+  type CommercialPlanPricingResponse,
+  type CommercialPlanPricingValidationResult,
+  type CommercialPlanPricingComparison,
   type CommercialPlanValidationResult,
+  type CommercialPlanValidationFinding,
   type CommercialPlanSelectionSource,
   type CommercialPlanSelectionState,
 } from "../../api/clinicApi";
 import CommercialPlanSelectionDialog from "./CommercialPlanSelectionDialog";
+import CommercialPricingWorkspace from "./CommercialPricingWorkspace";
 import {
   CommercialPlanTemplateCreateDialog,
   CommercialPlanTemplateSummarySection,
@@ -70,8 +85,8 @@ import {
   templateFormFromDetail,
 } from "./CommercialPlanTemplateEditor";
 
-type WorkspaceTab = "summary" | "capabilities" | "modules" | "features" | "limits" | "addons" | "validation" | "versions" | "compare";
-const WORKSPACE_TABS: WorkspaceTab[] = ["summary", "capabilities", "modules", "features", "limits", "addons", "validation", "versions", "compare"];
+type WorkspaceTab = "summary" | "capabilities" | "modules" | "features" | "limits" | "pricing" | "addons" | "validation" | "versions" | "compare";
+const WORKSPACE_TABS: WorkspaceTab[] = ["summary", "capabilities", "modules", "features", "limits", "pricing", "addons", "validation", "versions", "compare"];
 
 type ModuleSelection = {
   moduleId: string;
@@ -90,14 +105,49 @@ type AddonSelection = {
   selectionState: CommercialPlanSelectionState;
 };
 
+type PricingState = CommercialPlanPricingSnapshot;
+
 type BuilderState = {
   capabilities: string[];
   modules: ModuleSelection[];
   features: string[];
   limits: LimitSelection[];
   addons: AddonSelection[];
+  pricing: PricingState;
   draftNotes: string;
 };
+
+export function formatTrialDaysDisplay(trialDays: number | null | undefined): string {
+  if (trialDays == null) {
+    return "No trial";
+  }
+  return `${trialDays} day${trialDays === 1 ? "" : "s"}`;
+}
+
+export function parseTrialDaysInput(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const parsed = Number(trimmed);
+  return Number.isInteger(parsed) ? parsed : null;
+}
+
+function emptyPricingState(): PricingState {
+  return {
+    currency: "INR",
+    billingCycle: "MONTHLY",
+    monthlyPrice: "",
+    annualPrice: "",
+    setupFee: "",
+    trialDays: null,
+    taxModel: "NONE",
+    taxPercentage: "",
+    discountAllowed: false,
+    meteredRates: [],
+    addonPricing: [],
+  };
+}
 
 function parseTab(value: string | null): WorkspaceTab {
   return WORKSPACE_TABS.includes(value as WorkspaceTab) ? (value as WorkspaceTab) : "summary";
@@ -188,6 +238,194 @@ function validationTabLabel(tab: string | null | undefined) {
     default:
       return "Review Validation";
   }
+}
+
+type PricingValidationGroupKey = "subscription" | "currency" | "trial" | "tax" | "metered" | "addons";
+
+const PRICING_MODEL_OPTIONS: Array<{
+  value: CommercialPlanPricingBillingCycle;
+  label: string;
+  description: string;
+}> = [
+  { value: "MONTHLY", label: "Monthly Subscription", description: "Billed every month." },
+  { value: "ANNUAL", label: "Annual Subscription", description: "Billed once per year." },
+  { value: "QUARTERLY", label: "Quarterly Subscription", description: "Billed every three months." },
+  { value: "ONE_TIME", label: "One-time Purchase", description: "A single non-recurring charge." },
+  { value: "TRIAL", label: "Trial-only Plan", description: "Trial period only." },
+];
+
+function pricingModelLabel(value: CommercialPlanPricingBillingCycle | null | undefined) {
+  return PRICING_MODEL_OPTIONS.find((option) => option.value === value)?.label || "Pricing not set";
+}
+
+function pricingModelDescription(value: CommercialPlanPricingBillingCycle | null | undefined) {
+  return PRICING_MODEL_OPTIONS.find((option) => option.value === value)?.description || "Choose how customers pay for this plan.";
+}
+
+function pricingCurrencySymbol(currency: string | null | undefined) {
+  switch ((currency || "").trim().toUpperCase()) {
+    case "USD":
+      return "$";
+    case "EUR":
+      return "€";
+    case "INR":
+    default:
+      return "₹";
+  }
+}
+
+function normalizeMoneyText(value: string) {
+  const trimmed = value.replace(/,/g, "").trim();
+  if (!trimmed) {
+    return "";
+  }
+  let next = "";
+  let seenDecimal = false;
+  for (const char of trimmed) {
+    if (char >= "0" && char <= "9") {
+      next += char;
+      continue;
+    }
+    if (char === "." && !seenDecimal) {
+      next += char;
+      seenDecimal = true;
+    }
+  }
+  return next;
+}
+
+function formatMoneyPreview(value: string | null | undefined, currency: string | null | undefined) {
+  if (!value) {
+    return "—";
+  }
+  return `${pricingCurrencySymbol(currency)}${value}`;
+}
+
+function taxModelLabel(value: CommercialPlanPricingTaxModel | null | undefined) {
+  switch (value) {
+    case "EXCLUSIVE":
+      return "Tax Exclusive";
+    case "INCLUSIVE":
+      return "Tax Inclusive";
+    case "NONE":
+    default:
+      return "No tax";
+  }
+}
+
+function taxModelDescription(value: CommercialPlanPricingTaxModel | null | undefined) {
+  switch (value) {
+    case "EXCLUSIVE":
+      return "Tax is added on top of the listed price.";
+    case "INCLUSIVE":
+      return "Displayed prices already include tax.";
+    case "NONE":
+    default:
+      return "No tax applied.";
+  }
+}
+
+function addonPurchaseTypeLabel(value: CommercialPlanAddonPurchaseType | null | undefined) {
+  switch (value) {
+    case "MONTHLY":
+      return "Monthly";
+    case "ANNUAL":
+      return "Annual";
+    case "ONE_TIME":
+      return "One-time";
+    default:
+      return "Purchase type";
+  }
+}
+
+function pricingValidationGroup(finding: CommercialPlanValidationFinding): PricingValidationGroupKey {
+  const field = finding.field || "";
+  if (field.includes("meteredRates") || finding.targetBuilderTab === "limits") {
+    return "metered";
+  }
+  if (field.includes("addonPricing") || finding.targetBuilderTab === "addons" || finding.category === "ADDON_COMPATIBILITY") {
+    return "addons";
+  }
+  if (field.includes("currency")) {
+    return "currency";
+  }
+  if (field.includes("trial")) {
+    return "trial";
+  }
+  if (field.includes("tax")) {
+    return "tax";
+  }
+  return "subscription";
+}
+
+function pricingComparisonHighlights(comparison: CommercialPlanPricingComparison | null | undefined) {
+  if (!comparison) {
+    return [];
+  }
+  const labels = new Set<string>();
+  for (const item of comparison.subscriptionPricing || []) {
+    switch (item.code) {
+      case "monthly":
+        labels.add("Monthly price changed");
+        break;
+      case "annual":
+        labels.add("Annual price changed");
+        break;
+      case "currency":
+        labels.add("Currency changed");
+        break;
+      case "trial":
+        labels.add("Trial changed");
+        break;
+      case "setup":
+        labels.add("Setup fee changed");
+        break;
+      case "tax":
+        labels.add("Tax model changed");
+        break;
+      case "taxPercentage":
+        labels.add("Tax percentage changed");
+        break;
+      default:
+        break;
+    }
+  }
+  if ((comparison.meteredRates || []).length > 0) {
+    labels.add("Metered usage changed");
+  }
+  if ((comparison.addonPricing || []).length > 0) {
+    labels.add("Add-on pricing changed");
+  }
+  return Array.from(labels);
+}
+
+function pricingDraftStateLabel(pricing: CommercialPlanPricingSnapshot, dirty: boolean, validation: CommercialPlanPricingValidationResult | null) {
+  if (dirty) {
+    return "Unsaved Changes";
+  }
+  if (validation?.validationState === "VALID" && validation.readyToPublish) {
+    return "Configured";
+  }
+  if (validation?.validationState === "INVALID" || validation?.validationState === "STALE") {
+    return "Incomplete";
+  }
+  return "Incomplete";
+}
+
+function pricingValidationStateLabel(validation: CommercialPlanPricingValidationResult | null, dirty: boolean) {
+  if (!validation) {
+    return "Ready";
+  }
+  if (dirty && validation.validationState === "VALID") {
+    return "Ready";
+  }
+  if (validation.blockingFindingCount > 0) {
+    return "Blocking Issues";
+  }
+  if (validation.warningFindingCount > 0) {
+    return "Warnings";
+  }
+  return "Ready";
 }
 
 function validationSecondaryTab(finding: CommercialPlanValidationResult["findings"][number]) {
@@ -330,6 +568,7 @@ function mapSummaryState(detail: CommercialPlanTemplateDetail | null) {
       addonId: item.addonId,
       selectionState: item.selectionState,
     })) ?? [],
+    pricing: draft?.configuration.pricing || detail?.pricing || emptyPricingState(),
     draftNotes: draft?.draftNotes || "",
   };
 }
@@ -356,6 +595,7 @@ export function mapDraftResponseState(draft: CommercialPlanTemplateDetail["draft
       addonId: item.addonId,
       selectionState: item.selectionState,
     })),
+    pricing: draft.configuration.pricing || emptyPricingState(),
     draftNotes: draft.draftNotes || "",
   };
 }
@@ -379,6 +619,7 @@ export function buildDraftSavePayload(nextState: BuilderState) {
       addonId: addon.addonId,
       selectionState: addon.selectionState,
     })),
+    pricing: nextState.pricing,
   };
 }
 
@@ -601,6 +842,20 @@ export default function CommercialPlansPage() {
     }
   }
 
+  async function validatePricing() {
+    if (!auth.accessToken || !templateDetail) return;
+    setSaving(true);
+    try {
+      const result = await validateCommercialPlanPricing(auth.accessToken, templateDetail.id);
+      setTemplateDetail((current) => (current ? { ...current, pricingValidation: result } : current));
+      setToast(result.readyToPublish ? "Pricing is ready to publish." : "Pricing validation completed.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to validate pricing");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function publishDraft() {
     if (!auth.accessToken || !templateDetail) return;
     setSaving(true);
@@ -709,11 +964,34 @@ export default function CommercialPlansPage() {
   const configuredLimitValues = React.useMemo(() => Object.fromEntries(state.limits.map((item) => [item.limitDefinitionId, item.configuredValue])), [state.limits]);
   const configuredAddonSelectionStates = React.useMemo(() => addonSelectionStateMap(state.addons), [state.addons]);
   const configuredAddonCount = selectedAddonIdList.length;
+  const pricing = state.pricing;
+  const pricingValidation = templateDetail?.pricingValidation || null;
+  const pricingSavedSnapshot = templateDetail?.draft.configuration.pricing || null;
+  const pricingDirty = JSON.stringify(pricing) !== JSON.stringify(pricingSavedSnapshot);
+  const pricingValidationDirty = Boolean(templateDetail && pricingValidation && pricingValidation.validatedDraftRevision !== templateDetail.draftRevision);
+  const pricingStatusLabel = pricingDraftStateLabel(pricing, pricingDirty, pricingValidation);
+  const pricingValidationLabel = pricingValidationStateLabel(pricingValidation, pricingValidationDirty);
+  const pricingCurrentPublishedLabel = templateDetail?.latestPublishedVersionNumber ? `v${templateDetail.latestPublishedVersionNumber}` : "None";
+  const pricingRuntimeImpact = "None - legacy runtime remains authoritative";
+  const billingCycle = pricing.billingCycle || "MONTHLY";
+  const pricingComparisonSummary = pricingComparisonHighlights(comparison?.pricing);
+  const pricingValidationGroups = React.useMemo(() => {
+    const findings = pricingValidation?.findings || [];
+    return findings.reduce<Record<PricingValidationGroupKey, typeof findings>>((groups, finding) => {
+      const group = pricingValidationGroup(finding);
+      groups[group] = [...(groups[group] || []), finding];
+      return groups;
+    }, { subscription: [], currency: [], trial: [], tax: [], metered: [], addons: [] });
+  }, [pricingValidation]);
   const publishDisabledReason = templateDetail
     ? templateDetail.validation.validationState === "STALE"
       ? `Validation is outdated for draft revision ${templateDetail.validation.validatedDraftRevision}. Run validation again before publishing.`
       : templateDetail.validation.blockingFindingCount > 0
         ? `Publishing is blocked because ${templateDetail.validation.blockingFindingCount} validation issue${templateDetail.validation.blockingFindingCount === 1 ? "" : "s"} remain. Review Validation to resolve them.`
+        : pricingValidation?.validationState === "STALE"
+          ? `Pricing validation is outdated for draft revision ${pricingValidation.validatedDraftRevision}. Run Validate Pricing again before publishing.`
+          : pricingValidation?.blockingFindingCount
+            ? `Publishing is blocked because ${pricingValidation.blockingFindingCount} pricing issue${pricingValidation.blockingFindingCount === 1 ? "" : "s"} remain. Review Pricing Validation to resolve them.`
         : templateDetail.validation.validationState === "NOT_VALIDATED"
           ? "Run validation before publishing."
           : null
@@ -724,10 +1002,57 @@ export default function CommercialPlansPage() {
     { key: "modules", label: "Modules", state: state.modules.length > 0 ? "complete" : "incomplete" },
     { key: "features", label: "Features", state: state.features.length > 0 ? "complete" : "optional" },
     { key: "limits", label: "Limits", state: state.limits.length > 0 ? "complete" : "optional" },
+    { key: "pricing", label: "Pricing", state: pricing.monthlyPrice && pricing.annualPrice ? "complete" : "incomplete" },
     { key: "addons", label: "Add-ons", state: configuredAddonCount > 0 ? "complete" : "optional" },
     { key: "validation", label: "Validate", state: workflowValidation?.blockingFindingCount ? "blocking" : workflowValidation?.validationState === "VALID" ? "complete" : "incomplete" },
     { key: "versions", label: "Publish", state: workflowValidation?.readyToPublish ? "complete" : "incomplete" },
   ] : [];
+
+  function updatePricingState(updater: (current: PricingState) => PricingState) {
+    setState((current) => ({ ...current, pricing: updater(current.pricing) }));
+  }
+
+  function updateMeteredRate(index: number, next: Partial<CommercialPlanPricingMeteredRate>) {
+    updatePricingState((current) => ({
+      ...current,
+      meteredRates: current.meteredRates.map((rate, rateIndex) => (rateIndex === index ? { ...rate, ...next } : rate)),
+    }));
+  }
+
+  function addMeteredRate() {
+    updatePricingState((current) => ({
+      ...current,
+      meteredRates: [
+        ...current.meteredRates,
+        { id: "", limitDefinitionId: "", limitCode: "", limitName: "", includedQuantity: "0", overageEnabled: false, unitPrice: "", unitName: "", billingRounding: "", status: "DRAFT" },
+      ],
+    }));
+  }
+
+  function removeMeteredRate(index: number) {
+    updatePricingState((current) => ({ ...current, meteredRates: current.meteredRates.filter((_, rateIndex) => rateIndex !== index) }));
+  }
+
+  function updateAddonPricing(index: number, next: Partial<CommercialPlanPricingAddon>) {
+    updatePricingState((current) => ({
+      ...current,
+      addonPricing: current.addonPricing.map((addon, addonIndex) => (addonIndex === index ? { ...addon, ...next } : addon)),
+    }));
+  }
+
+  function addAddonPricing() {
+    updatePricingState((current) => ({
+      ...current,
+      addonPricing: [
+        ...current.addonPricing,
+        { id: "", addonOfferId: "", addonCode: "", addonName: "", purchaseType: "MONTHLY", monthlyPrice: "", annualPrice: "", oneTimePrice: "", maxQuantity: null, status: "DRAFT" },
+      ],
+    }));
+  }
+
+  function removeAddonPricing(index: number) {
+    updatePricingState((current) => ({ ...current, addonPricing: current.addonPricing.filter((_, addonIndex) => addonIndex !== index) }));
+  }
 
   return (
     <Stack spacing={2.5}>
@@ -846,14 +1171,15 @@ export default function CommercialPlansPage() {
         <>
           <Tabs value={tab} onChange={(_, next) => setSearchParams({ tab: next }, { replace: true })} variant="scrollable" scrollButtons="auto">
             <Tab value="summary" label="Summary" />
-            <Tab value="capabilities" label="Capabilities" />
-            <Tab value="modules" label="Modules" />
-            <Tab value="features" label="Features" />
-            <Tab value="limits" label="Limits" />
-            <Tab value="addons" label="Add-ons" />
-            <Tab value="validation" label="Validation" />
-            <Tab value="versions" label="Versions" />
-            <Tab value="compare" label="Compare" />
+          <Tab value="capabilities" label="Capabilities" />
+          <Tab value="modules" label="Modules" />
+          <Tab value="features" label="Features" />
+          <Tab value="limits" label="Limits" />
+          <Tab value="pricing" label="Pricing" />
+          <Tab value="addons" label="Add-ons" />
+          <Tab value="validation" label="Validation" />
+          <Tab value="versions" label="Versions" />
+          <Tab value="compare" label="Compare" />
           </Tabs>
 
           {templateDetail ? (
@@ -910,6 +1236,30 @@ export default function CommercialPlansPage() {
                     </Grid>
                   </Grid>
                 </Stack>
+              ) : null}
+
+              {tab === "pricing" ? (
+                <CommercialPricingWorkspace
+                  templateName={templateDetail.name}
+                  templateCode={templateDetail.code}
+                  pricing={pricing}
+                  pricingMeta={templateDetail.pricing}
+                  pricingValidation={pricingValidation}
+                  pricingComparison={comparison?.pricing || null}
+                  savedPricingSnapshot={pricingSavedSnapshot}
+                  pricingDraftRevision={templateDetail.draftRevision}
+                  latestPublishedVersionNumber={templateDetail.latestPublishedVersionNumber}
+                  templateUpdatedAt={templateDetail.updatedAt}
+                  publishDisabledReason={publishDisabledReason}
+                  saving={saving}
+                  limits={limits}
+                  addons={addons}
+                  onUpdatePricing={updatePricingState}
+                  onSaveDraft={saveDraft}
+                  onValidatePricing={validatePricing}
+                  onPublishPlan={() => setPublishOpen(true)}
+                  onComparePricing={() => navigateToTab("compare")}
+                />
               ) : null}
 
               {(["capabilities", "modules", "features", "limits", "addons"] as const).includes(tab as any) ? (
@@ -1085,6 +1435,15 @@ export default function CommercialPlansPage() {
                     ["Features", comparison.features],
                     ["Limits", comparison.limits],
                     ["Add-ons", comparison.addons],
+                    ["Pricing", {
+                      added: comparison.pricing.subscriptionPricing.filter((item) => item.detail?.startsWith("Added") || item.detail?.includes("->") ? false : true),
+                      removed: [],
+                      changed: [
+                        ...comparison.pricing.subscriptionPricing,
+                        ...comparison.pricing.meteredRates,
+                        ...comparison.pricing.addonPricing,
+                      ],
+                    }],
                   ] as const).map(([title, section]) => (
                     <Grid key={title} size={{ xs: 12, md: 6 }}>
                       <Paper variant="outlined" sx={{ p: 2 }}>
