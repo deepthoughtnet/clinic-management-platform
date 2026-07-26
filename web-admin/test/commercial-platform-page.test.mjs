@@ -102,17 +102,23 @@ test("commercial platform navigation and routes are registered", () => {
   assert.ok(app.includes('path="/platform/commercial/plans/:templateId/versions/:versionId"'));
   assert.ok(app.includes('path="/platform/commercial/subscriptions"'));
   assert.ok(app.includes('path="/platform/commercial/subscriptions/:subscriptionId"'));
+  assert.ok(app.includes('path="/platform/commercial/entitlements"'));
+  assert.ok(app.includes('path="/platform/commercial/runtime-diff"'));
   assert.ok(app.includes('to="/platform/commercial/catalog"'));
 
   assert.ok(nav.includes('label: "Commercial Platform"'));
   assert.ok(nav.includes('label: "Catalog"'));
   assert.ok(nav.includes('label: "Plans"'));
   assert.ok(nav.includes('label: "Subscriptions"'));
+  assert.ok(nav.includes('label: "Effective Entitlements"'));
+  assert.ok(nav.includes('label: "Runtime Diff"'));
   assert.ok(nav.includes('label: "Usage"'));
   assert.ok(nav.includes('label: "Billing"'));
 
   assert.ok(topBar.includes('pathname.startsWith("/platform/commercial/plans")'));
   assert.ok(topBar.includes('pathname.startsWith("/platform/commercial/subscriptions")'));
+  assert.ok(topBar.includes('pathname.startsWith("/platform/commercial/entitlements")'));
+  assert.ok(topBar.includes('pathname.startsWith("/platform/commercial/runtime-diff")'));
   assert.ok(topBar.includes('pathname.startsWith("/platform/commercial/catalog")'));
   assert.ok(topBar.includes('pathname.startsWith("/platform/commercial")'));
 
@@ -129,7 +135,8 @@ test("commercial platform overview and plans workspace use URL state and typed A
   const api = readSource("api/clinicApi.ts");
 
   assert.ok(overview.includes('Commercial Platform'));
-  assert.ok(overview.includes('Catalog only. Tenant access still comes from the existing legacy plan and module entitlement path.'));
+  assert.ok(overview.includes('entitlement diagnostics'));
+  assert.ok(overview.includes('Commercial runtime is disabled by default'));
   assert.ok(overview.includes('getCommercialPlatformOverview'));
   assert.ok(overview.includes('(overview?.kpis || []).map'));
   assert.ok(overview.includes('(overview?.lifecycle || []).map'));
@@ -518,5 +525,5 @@ test("commercial platform routes render under the current browser-router archite
   assert.ok(plansMarkup.includes("No plan templates yet"));
   assert.ok(plansMarkup.includes("Create Plan Template"));
   assert.ok(platformMarkup.includes("Commercial Platform"));
-  assert.ok(platformMarkup.includes("Catalog only. Tenant access still comes from the existing legacy plan and module entitlement path."));
+  assert.ok(platformMarkup.includes("Legacy tenant access stays authoritative until runtime cutover is enabled."));
 });

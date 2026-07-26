@@ -88,6 +88,8 @@ function formatPathLabel(pathname: string): string {
   if (pathname === "/carepilot/ai-operations") return "AI Operations";
   if (pathname.startsWith("/platform/tenants")) return "Platform Tenants";
   if (pathname.startsWith("/platform/commercial/subscriptions")) return "Subscriptions";
+  if (pathname.startsWith("/platform/commercial/entitlements")) return "Effective Entitlements";
+  if (pathname.startsWith("/platform/commercial/runtime-diff")) return "Runtime Diff";
   if (pathname.startsWith("/platform/commercial/plans")) return "Commercial Plans";
   if (pathname.startsWith("/platform/commercial/catalog")) return "Commercial Catalog";
   if (pathname.startsWith("/platform/commercial")) return "Commercial Platform";

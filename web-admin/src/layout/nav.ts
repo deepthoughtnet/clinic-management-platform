@@ -142,6 +142,8 @@ export const NAV_GROUPS: NavGroup[] = [
       { key: "platform-commercial-catalog", label: "Catalog", path: "/platform/commercial/catalog", platformOnly: true },
       { key: "platform-commercial-plans", label: "Plans", path: "/platform/commercial/plans", platformOnly: true },
       { key: "platform-subscriptions", label: "Subscriptions", path: "/platform/commercial/subscriptions", platformOnly: true },
+      { key: "platform-entitlements", label: "Effective Entitlements", path: "/platform/commercial/entitlements", platformOnly: true },
+      { key: "platform-runtime-diff", label: "Runtime Diff", path: "/platform/commercial/runtime-diff", platformOnly: true },
       { key: "platform-usage", label: "Usage", disabled: true, future: true, badge: "Coming soon", platformOnly: true },
       { key: "platform-billing", label: "Billing", disabled: true, future: true, badge: "Coming soon", platformOnly: true },
       { key: "platform-analytics", label: "Platform Analytics", disabled: true, future: true, badge: "Coming soon", platformOnly: true },

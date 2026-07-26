@@ -57,12 +57,12 @@ export default function CommercialPlatformPage() {
           Commercial Platform
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 840 }}>
-          This workspace manages commercial packaging and the product catalog. It does not change tenant runtime access.
+          This workspace manages commercial packaging, plan publishing, and entitlement diagnostics. Legacy tenant access stays authoritative until runtime cutover is enabled.
         </Typography>
       </Stack>
 
       <Alert severity="info" variant="outlined">
-        Catalog only. Tenant access still comes from the existing legacy plan and module entitlement path.
+        Commercial runtime is disabled by default, so tenant access still comes from the existing legacy plan and module entitlement path.
       </Alert>
 
       {error ? <Alert severity="error">{error}</Alert> : null}

@@ -45,7 +45,12 @@ class RolePermissionMappingsTest {
                 Permissions.COMMERCIAL_PLANS_MANAGE,
                 Permissions.COMMERCIAL_PLANS_PUBLISH,
                 Permissions.COMMERCIAL_SUBSCRIPTIONS_VIEW,
-                Permissions.COMMERCIAL_SUBSCRIPTIONS_MANAGE
+                Permissions.COMMERCIAL_SUBSCRIPTIONS_MANAGE,
+                Permissions.COMMERCIAL_ENTITLEMENTS_VIEW,
+                Permissions.COMMERCIAL_ENTITLEMENTS_REGENERATE,
+                Permissions.COMMERCIAL_OVERRIDES_VIEW,
+                Permissions.COMMERCIAL_OVERRIDES_MANAGE,
+                Permissions.COMMERCIAL_RUNTIME_DIAGNOSTICS_VIEW
         );
     }
 

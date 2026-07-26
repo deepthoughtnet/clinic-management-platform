@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 import com.deepthoughtnet.clinic.commercial.platform.CommercialPlatformEnums.PublicationStatus;
 import com.deepthoughtnet.clinic.commercial.platform.CommercialPlatformEnums.TargetSegment;
 import com.deepthoughtnet.clinic.commercial.platform.CommercialPlatformEnums.TemplateStatus;
+import com.deepthoughtnet.clinic.commercial.entitlement.CommercialEffectiveEntitlementService;
 import com.deepthoughtnet.clinic.commercial.platform.db.CommercialPlanTemplateEntity;
 import com.deepthoughtnet.clinic.commercial.platform.db.CommercialPlanTemplateRepository;
 import com.deepthoughtnet.clinic.commercial.platform.db.CommercialPlanVersionEntity;
@@ -43,6 +44,7 @@ class CommercialSubscriptionServiceTest {
     private CommercialSubscriptionEventRepository eventRepository;
     private CommercialPlanTemplateRepository templateRepository;
     private CommercialPlanVersionRepository versionRepository;
+    private CommercialEffectiveEntitlementService effectiveEntitlementService;
     private AuditEventPublisher auditEventPublisher;
     private CommercialSubscriptionService service;
     private UUID actorId;
@@ -53,8 +55,9 @@ class CommercialSubscriptionServiceTest {
         eventRepository = org.mockito.Mockito.mock(CommercialSubscriptionEventRepository.class);
         templateRepository = org.mockito.Mockito.mock(CommercialPlanTemplateRepository.class);
         versionRepository = org.mockito.Mockito.mock(CommercialPlanVersionRepository.class);
+        effectiveEntitlementService = org.mockito.Mockito.mock(CommercialEffectiveEntitlementService.class);
         auditEventPublisher = org.mockito.Mockito.mock(AuditEventPublisher.class);
-        service = new CommercialSubscriptionService(subscriptionRepository, eventRepository, templateRepository, versionRepository, auditEventPublisher, new ObjectMapper().findAndRegisterModules());
+        service = new CommercialSubscriptionService(subscriptionRepository, eventRepository, templateRepository, versionRepository, effectiveEntitlementService, auditEventPublisher, new ObjectMapper().findAndRegisterModules());
         actorId = UUID.randomUUID();
         RequestContextHolder.set(new RequestContext(TenantId.of(UUID.randomUUID()), actorId, "platform.admin@jeeva.test", Set.of("PLATFORM_ADMIN"), "PLATFORM_ADMIN", "commercial-subscription-test"));
         when(auditEventPublisher.record(any())).thenReturn(UUID.randomUUID());

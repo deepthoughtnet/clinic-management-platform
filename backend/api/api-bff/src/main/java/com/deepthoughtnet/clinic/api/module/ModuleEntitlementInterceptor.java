@@ -1,6 +1,6 @@
 package com.deepthoughtnet.clinic.api.module;
 
-import com.deepthoughtnet.clinic.identity.service.TenantSubscriptionService;
+import com.deepthoughtnet.clinic.api.module.runtime.TenantRuntimeEntitlementProvider;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -10,21 +10,21 @@ import org.springframework.web.servlet.HandlerInterceptor;
 
 @Component
 public class ModuleEntitlementInterceptor implements HandlerInterceptor {
-    private final TenantSubscriptionService tenantSubscriptionService;
+    private final TenantRuntimeEntitlementProvider tenantRuntimeEntitlementProvider;
     private final ModuleRouteRegistry routeRegistry;
 
     public ModuleEntitlementInterceptor(
-            TenantSubscriptionService tenantSubscriptionService,
+            TenantRuntimeEntitlementProvider tenantRuntimeEntitlementProvider,
             ModuleRouteRegistry routeRegistry
     ) {
-        this.tenantSubscriptionService = tenantSubscriptionService;
+        this.tenantRuntimeEntitlementProvider = tenantRuntimeEntitlementProvider;
         this.routeRegistry = routeRegistry;
     }
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
         var tenantId = RequestContextHolder.requireTenantId();
-        tenantSubscriptionService.requireTenantActive(tenantId);
+        tenantRuntimeEntitlementProvider.requireTenantActive(tenantId);
         if (isDeterministicAiRead(request)) {
             return true;
         }
@@ -32,7 +32,7 @@ public class ModuleEntitlementInterceptor implements HandlerInterceptor {
         if (moduleKey == null) {
             return true;
         }
-        tenantSubscriptionService.requireModuleEnabled(tenantId, moduleKey);
+        tenantRuntimeEntitlementProvider.requireModuleEnabled(tenantId, moduleKey);
         return true;
     }
 

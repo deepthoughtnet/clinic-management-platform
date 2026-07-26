@@ -5,7 +5,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
-import com.deepthoughtnet.clinic.identity.service.TenantSubscriptionService;
+import com.deepthoughtnet.clinic.api.module.runtime.TenantRuntimeEntitlementProvider;
 import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
 import com.deepthoughtnet.clinic.platform.core.context.TenantId;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
@@ -23,9 +23,9 @@ class ModuleEntitlementInterceptorTest {
 
     @Test
     void requiresCarePilotModuleForCarePilotPath() {
-        TenantSubscriptionService tenantSubscriptionService = mock(TenantSubscriptionService.class);
+        TenantRuntimeEntitlementProvider tenantRuntimeEntitlementProvider = mock(TenantRuntimeEntitlementProvider.class);
         ModuleRouteRegistry registry = new ModuleRouteRegistry();
-        ModuleEntitlementInterceptor interceptor = new ModuleEntitlementInterceptor(tenantSubscriptionService, registry);
+        ModuleEntitlementInterceptor interceptor = new ModuleEntitlementInterceptor(tenantRuntimeEntitlementProvider, registry);
         UUID tenantId = UUID.randomUUID();
         RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), UUID.randomUUID(), "sub", Set.of("CLINIC_ADMIN"), "CLINIC_ADMIN", "cid"));
 
@@ -35,16 +35,16 @@ class ModuleEntitlementInterceptorTest {
 
         interceptor.preHandle(request, response, new Object());
 
-        verify(tenantSubscriptionService).requireTenantActive(tenantId);
-        verify(tenantSubscriptionService).requireModuleEnabled(tenantId, "CAREPILOT");
-        verifyNoMoreInteractions(tenantSubscriptionService);
+        verify(tenantRuntimeEntitlementProvider).requireTenantActive(tenantId);
+        verify(tenantRuntimeEntitlementProvider).requireModuleEnabled(tenantId, "CAREPILOT");
+        verifyNoMoreInteractions(tenantRuntimeEntitlementProvider);
     }
 
     @Test
     void requiresReportsModuleForReportsPath() {
-        TenantSubscriptionService tenantSubscriptionService = mock(TenantSubscriptionService.class);
+        TenantRuntimeEntitlementProvider tenantRuntimeEntitlementProvider = mock(TenantRuntimeEntitlementProvider.class);
         ModuleRouteRegistry registry = new ModuleRouteRegistry();
-        ModuleEntitlementInterceptor interceptor = new ModuleEntitlementInterceptor(tenantSubscriptionService, registry);
+        ModuleEntitlementInterceptor interceptor = new ModuleEntitlementInterceptor(tenantRuntimeEntitlementProvider, registry);
         UUID tenantId = UUID.randomUUID();
         RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), UUID.randomUUID(), "sub", Set.of("CLINIC_ADMIN"), "CLINIC_ADMIN", "cid"));
 
@@ -54,16 +54,16 @@ class ModuleEntitlementInterceptorTest {
 
         interceptor.preHandle(request, response, new Object());
 
-        verify(tenantSubscriptionService).requireTenantActive(tenantId);
-        verify(tenantSubscriptionService).requireModuleEnabled(tenantId, "REPORTS");
-        verifyNoMoreInteractions(tenantSubscriptionService);
+        verify(tenantRuntimeEntitlementProvider).requireTenantActive(tenantId);
+        verify(tenantRuntimeEntitlementProvider).requireModuleEnabled(tenantId, "REPORTS");
+        verifyNoMoreInteractions(tenantRuntimeEntitlementProvider);
     }
 
     @Test
     void requiresPatientsModuleForPatientsPath() {
-        TenantSubscriptionService tenantSubscriptionService = mock(TenantSubscriptionService.class);
+        TenantRuntimeEntitlementProvider tenantRuntimeEntitlementProvider = mock(TenantRuntimeEntitlementProvider.class);
         ModuleRouteRegistry registry = new ModuleRouteRegistry();
-        ModuleEntitlementInterceptor interceptor = new ModuleEntitlementInterceptor(tenantSubscriptionService, registry);
+        ModuleEntitlementInterceptor interceptor = new ModuleEntitlementInterceptor(tenantRuntimeEntitlementProvider, registry);
         UUID tenantId = UUID.randomUUID();
         RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), UUID.randomUUID(), "sub", Set.of("CLINIC_ADMIN"), "CLINIC_ADMIN", "cid"));
 
@@ -73,16 +73,16 @@ class ModuleEntitlementInterceptorTest {
 
         interceptor.preHandle(request, response, new Object());
 
-        verify(tenantSubscriptionService).requireTenantActive(tenantId);
-        verify(tenantSubscriptionService).requireModuleEnabled(tenantId, "PATIENTS");
-        verifyNoMoreInteractions(tenantSubscriptionService);
+        verify(tenantRuntimeEntitlementProvider).requireTenantActive(tenantId);
+        verify(tenantRuntimeEntitlementProvider).requireModuleEnabled(tenantId, "PATIENTS");
+        verifyNoMoreInteractions(tenantRuntimeEntitlementProvider);
     }
 
     @Test
     void onlyChecksTenantActivityForUnmappedPath() {
-        TenantSubscriptionService tenantSubscriptionService = mock(TenantSubscriptionService.class);
+        TenantRuntimeEntitlementProvider tenantRuntimeEntitlementProvider = mock(TenantRuntimeEntitlementProvider.class);
         ModuleRouteRegistry registry = new ModuleRouteRegistry();
-        ModuleEntitlementInterceptor interceptor = new ModuleEntitlementInterceptor(tenantSubscriptionService, registry);
+        ModuleEntitlementInterceptor interceptor = new ModuleEntitlementInterceptor(tenantRuntimeEntitlementProvider, registry);
         UUID tenantId = UUID.randomUUID();
         RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), UUID.randomUUID(), "sub", Set.of("CLINIC_ADMIN"), "CLINIC_ADMIN", "cid"));
 
@@ -92,15 +92,15 @@ class ModuleEntitlementInterceptorTest {
 
         interceptor.preHandle(request, response, new Object());
 
-        verify(tenantSubscriptionService).requireTenantActive(tenantId);
-        verifyNoMoreInteractions(tenantSubscriptionService);
+        verify(tenantRuntimeEntitlementProvider).requireTenantActive(tenantId);
+        verifyNoMoreInteractions(tenantRuntimeEntitlementProvider);
     }
 
     @Test
     void allowsDeterministicAiStatusReadWithoutModuleCheck() {
-        TenantSubscriptionService tenantSubscriptionService = mock(TenantSubscriptionService.class);
+        TenantRuntimeEntitlementProvider tenantRuntimeEntitlementProvider = mock(TenantRuntimeEntitlementProvider.class);
         ModuleRouteRegistry registry = new ModuleRouteRegistry();
-        ModuleEntitlementInterceptor interceptor = new ModuleEntitlementInterceptor(tenantSubscriptionService, registry);
+        ModuleEntitlementInterceptor interceptor = new ModuleEntitlementInterceptor(tenantRuntimeEntitlementProvider, registry);
         UUID tenantId = UUID.randomUUID();
         RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), UUID.randomUUID(), "sub", Set.of("CLINIC_ADMIN"), "CLINIC_ADMIN", "cid"));
 
@@ -111,15 +111,15 @@ class ModuleEntitlementInterceptorTest {
 
         interceptor.preHandle(request, response, new Object());
 
-        verify(tenantSubscriptionService).requireTenantActive(tenantId);
-        verifyNoMoreInteractions(tenantSubscriptionService);
+        verify(tenantRuntimeEntitlementProvider).requireTenantActive(tenantId);
+        verifyNoMoreInteractions(tenantRuntimeEntitlementProvider);
     }
 
     @Test
     void allowsDeterministicClinicalContextReadWithoutModuleCheck() {
-        TenantSubscriptionService tenantSubscriptionService = mock(TenantSubscriptionService.class);
+        TenantRuntimeEntitlementProvider tenantRuntimeEntitlementProvider = mock(TenantRuntimeEntitlementProvider.class);
         ModuleRouteRegistry registry = new ModuleRouteRegistry();
-        ModuleEntitlementInterceptor interceptor = new ModuleEntitlementInterceptor(tenantSubscriptionService, registry);
+        ModuleEntitlementInterceptor interceptor = new ModuleEntitlementInterceptor(tenantRuntimeEntitlementProvider, registry);
         UUID tenantId = UUID.randomUUID();
         RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), UUID.randomUUID(), "sub", Set.of("CLINIC_ADMIN"), "CLINIC_ADMIN", "cid"));
 
@@ -130,7 +130,7 @@ class ModuleEntitlementInterceptorTest {
 
         interceptor.preHandle(request, response, new Object());
 
-        verify(tenantSubscriptionService).requireTenantActive(tenantId);
-        verifyNoMoreInteractions(tenantSubscriptionService);
+        verify(tenantRuntimeEntitlementProvider).requireTenantActive(tenantId);
+        verifyNoMoreInteractions(tenantRuntimeEntitlementProvider);
     }
 }

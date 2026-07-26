@@ -54,8 +54,10 @@ import com.deepthoughtnet.clinic.commercial.platform.CommercialPlatformModels.Te
 import com.deepthoughtnet.clinic.commercial.platform.CommercialPlatformModels.ValidationMessageResponse;
 import com.deepthoughtnet.clinic.commercial.platform.CommercialPlatformModels.ValidatePlanDraftResponse;
 import com.deepthoughtnet.clinic.commercial.platform.CommercialPlatformEnums.ValidationState;
+import com.deepthoughtnet.clinic.commercial.entitlement.CommercialEffectiveEntitlementService;
 import com.deepthoughtnet.clinic.commercial.subscription.CommercialSubscriptionService;
 import com.deepthoughtnet.clinic.commercial.subscription.CommercialSubscriptionModels.SubscriptionStatusCountsResponse;
+import com.deepthoughtnet.clinic.platform.core.config.CommercialRuntimeProperties;
 import com.deepthoughtnet.clinic.commercial.platform.db.CommercialPlanDraftEntity;
 import com.deepthoughtnet.clinic.commercial.platform.db.CommercialPlanDraftRepository;
 import com.deepthoughtnet.clinic.commercial.platform.db.CommercialPlanTemplateEntity;
@@ -91,6 +93,8 @@ class CommercialPlatformServiceTest {
     private CommercialPlanDraftRepository draftRepository;
     private CommercialPlanVersionRepository versionRepository;
     private CommercialSubscriptionService subscriptionService;
+    private CommercialEffectiveEntitlementService effectiveEntitlementService;
+    private CommercialRuntimeProperties runtimeProperties;
     private AuditEventPublisher auditEventPublisher;
     private CommercialPlatformService service;
     private ObjectMapper objectMapper;
@@ -107,6 +111,8 @@ class CommercialPlatformServiceTest {
         draftRepository = mock(CommercialPlanDraftRepository.class);
         versionRepository = mock(CommercialPlanVersionRepository.class);
         subscriptionService = mock(CommercialSubscriptionService.class);
+        effectiveEntitlementService = mock(CommercialEffectiveEntitlementService.class);
+        runtimeProperties = new CommercialRuntimeProperties();
         auditEventPublisher = mock(AuditEventPublisher.class);
         objectMapper = new ObjectMapper().findAndRegisterModules();
         service = new CommercialPlatformService(
@@ -119,6 +125,8 @@ class CommercialPlatformServiceTest {
                 draftRepository,
                 versionRepository,
                 subscriptionService,
+                effectiveEntitlementService,
+                runtimeProperties,
                 auditEventPublisher,
                 objectMapper
         );
@@ -143,6 +151,10 @@ class CommercialPlatformServiceTest {
         when(versionRepository.countByStatus(com.deepthoughtnet.clinic.commercial.platform.CommercialPlatformEnums.PublicationStatus.PUBLISHED)).thenReturn(7L);
         when(draftRepository.count()).thenReturn(2L);
         when(subscriptionService.getStatusCounts()).thenReturn(new SubscriptionStatusCountsResponse(5L, 2L, 1L, 3L, 4L));
+        when(effectiveEntitlementService.countCurrentSnapshots()).thenReturn(9L);
+        when(effectiveEntitlementService.countGenerationFailures()).thenReturn(1L);
+        when(effectiveEntitlementService.countActiveOverrides()).thenReturn(2L);
+        when(effectiveEntitlementService.countRuntimeMismatches()).thenReturn(3L);
 
         OverviewResponse response = service.getOverview();
 
@@ -159,7 +171,12 @@ class CommercialPlatformServiceTest {
                 "Scheduled",
                 "Paused",
                 "Expired",
-                "Cancelled"
+                "Cancelled",
+                "Tenants with Current Snapshots",
+                "Snapshot Generation Failures",
+                "Active Overrides",
+                "Legacy/Commercial Mismatches",
+                "Commercial Runtime Enabled"
         );
         assertThat(response.lifecycle()).extracting(LifecycleStageResponse::label).containsExactly(
                 "Catalog",
@@ -175,7 +192,8 @@ class CommercialPlatformServiceTest {
                 "/platform/commercial/plans",
                 "/platform/commercial/plans",
                 "/platform/commercial/plans",
-                "/platform/commercial/subscriptions"
+                "/platform/commercial/subscriptions",
+                "/platform/commercial/entitlements"
         );
     }
 

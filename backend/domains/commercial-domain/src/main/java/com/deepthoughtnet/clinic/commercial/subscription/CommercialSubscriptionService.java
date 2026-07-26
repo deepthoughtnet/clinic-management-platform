@@ -5,6 +5,8 @@ import com.deepthoughtnet.clinic.commercial.platform.db.CommercialPlanTemplateEn
 import com.deepthoughtnet.clinic.commercial.platform.db.CommercialPlanTemplateRepository;
 import com.deepthoughtnet.clinic.commercial.platform.db.CommercialPlanVersionEntity;
 import com.deepthoughtnet.clinic.commercial.platform.db.CommercialPlanVersionRepository;
+import com.deepthoughtnet.clinic.commercial.entitlement.CommercialEffectiveEntitlementEnums.GenerationReason;
+import com.deepthoughtnet.clinic.commercial.entitlement.CommercialEffectiveEntitlementService;
 import com.deepthoughtnet.clinic.commercial.subscription.CommercialSubscriptionEnums.SubscriptionStatus;
 import com.deepthoughtnet.clinic.commercial.subscription.CommercialSubscriptionEnums.ValidationState;
 import com.deepthoughtnet.clinic.commercial.subscription.CommercialSubscriptionModels.CreateSubscriptionRequest;
@@ -58,6 +60,7 @@ public class CommercialSubscriptionService {
     private final CommercialSubscriptionEventRepository eventRepository;
     private final CommercialPlanTemplateRepository planTemplateRepository;
     private final CommercialPlanVersionRepository planVersionRepository;
+    private final CommercialEffectiveEntitlementService effectiveEntitlementService;
     private final AuditEventPublisher auditEventPublisher;
     private final ObjectMapper objectMapper;
 
@@ -66,6 +69,7 @@ public class CommercialSubscriptionService {
             CommercialSubscriptionEventRepository eventRepository,
             CommercialPlanTemplateRepository planTemplateRepository,
             CommercialPlanVersionRepository planVersionRepository,
+            CommercialEffectiveEntitlementService effectiveEntitlementService,
             AuditEventPublisher auditEventPublisher,
             ObjectMapper objectMapper
     ) {
@@ -73,6 +77,7 @@ public class CommercialSubscriptionService {
         this.eventRepository = eventRepository;
         this.planTemplateRepository = planTemplateRepository;
         this.planVersionRepository = planVersionRepository;
+        this.effectiveEntitlementService = effectiveEntitlementService;
         this.auditEventPublisher = auditEventPublisher;
         this.objectMapper = objectMapper.copy().findAndRegisterModules();
     }
@@ -135,6 +140,9 @@ public class CommercialSubscriptionService {
         subscriptionRepository.save(entity);
         recordEvent(entity, initialStatus == SubscriptionStatus.SCHEDULED ? AuditEventAction.COMMERCIAL_SUBSCRIPTION_SCHEDULED : AuditEventAction.COMMERCIAL_SUBSCRIPTION_CREATED, null, initialStatus, request == null ? null : request.notes());
         audit(entity.getId(), AuditEntityType.COMMERCIAL_TENANT_SUBSCRIPTION, AuditEventAction.COMMERCIAL_SUBSCRIPTION_CREATED, "Created commercial subscription", Map.of("tenantId", entity.getTenantId(), "version", entity.getPublishedVersion().getVersionNumber(), "status", entity.getSubscriptionStatus().name()));
+        if (entity.getSubscriptionStatus() == SubscriptionStatus.ACTIVE || entity.getSubscriptionStatus() == SubscriptionStatus.SCHEDULED) {
+            effectiveEntitlementService.handleSubscriptionLifecycleEvent(entity.getTenantId(), entity.getSubscriptionStatus() == SubscriptionStatus.ACTIVE ? GenerationReason.SUBSCRIPTION_ACTIVATED : GenerationReason.MANUAL_REGENERATE);
+        }
         return toDetail(entity, validate(entity));
     }
 
@@ -153,6 +161,7 @@ public class CommercialSubscriptionService {
         subscriptionRepository.save(entity);
         recordEvent(entity, AuditEventAction.COMMERCIAL_SUBSCRIPTION_ACTIVATED, previous, SubscriptionStatus.ACTIVE, remarks(request));
         audit(entity.getId(), AuditEntityType.COMMERCIAL_TENANT_SUBSCRIPTION, AuditEventAction.COMMERCIAL_SUBSCRIPTION_ACTIVATED, "Activated commercial subscription", Map.of("tenantId", entity.getTenantId(), "status", entity.getSubscriptionStatus().name()));
+        effectiveEntitlementService.handleSubscriptionLifecycleEvent(entity.getTenantId(), GenerationReason.SUBSCRIPTION_ACTIVATED);
         return toDetail(entity, validate(entity));
     }
 
@@ -170,6 +179,7 @@ public class CommercialSubscriptionService {
         subscriptionRepository.save(entity);
         recordEvent(entity, AuditEventAction.COMMERCIAL_SUBSCRIPTION_PAUSED, previous, SubscriptionStatus.PAUSED, remarks(request));
         audit(entity.getId(), AuditEntityType.COMMERCIAL_TENANT_SUBSCRIPTION, AuditEventAction.COMMERCIAL_SUBSCRIPTION_PAUSED, "Paused commercial subscription", Map.of("tenantId", entity.getTenantId(), "status", entity.getSubscriptionStatus().name()));
+        effectiveEntitlementService.handleSubscriptionLifecycleEvent(entity.getTenantId(), GenerationReason.MANUAL_REGENERATE);
         return toDetail(entity, validate(entity));
     }
 
@@ -191,6 +201,7 @@ public class CommercialSubscriptionService {
         subscriptionRepository.save(entity);
         recordEvent(entity, AuditEventAction.COMMERCIAL_SUBSCRIPTION_RESUMED, previous, SubscriptionStatus.ACTIVE, remarks(request));
         audit(entity.getId(), AuditEntityType.COMMERCIAL_TENANT_SUBSCRIPTION, AuditEventAction.COMMERCIAL_SUBSCRIPTION_RESUMED, "Resumed commercial subscription", Map.of("tenantId", entity.getTenantId(), "status", entity.getSubscriptionStatus().name()));
+        effectiveEntitlementService.handleSubscriptionLifecycleEvent(entity.getTenantId(), GenerationReason.SUBSCRIPTION_RESUMED);
         return toDetail(entity, validate(entity));
     }
 
@@ -205,6 +216,7 @@ public class CommercialSubscriptionService {
         subscriptionRepository.save(entity);
         recordEvent(entity, AuditEventAction.COMMERCIAL_SUBSCRIPTION_CANCELLED, previous, SubscriptionStatus.CANCELLED, remarks(request));
         audit(entity.getId(), AuditEntityType.COMMERCIAL_TENANT_SUBSCRIPTION, AuditEventAction.COMMERCIAL_SUBSCRIPTION_CANCELLED, "Cancelled commercial subscription", Map.of("tenantId", entity.getTenantId(), "status", entity.getSubscriptionStatus().name()));
+        effectiveEntitlementService.handleSubscriptionLifecycleEvent(entity.getTenantId(), GenerationReason.SUBSCRIPTION_CANCELLED);
         return toDetail(entity, validate(entity));
     }
 
@@ -222,6 +234,7 @@ public class CommercialSubscriptionService {
         subscriptionRepository.save(entity);
         recordEvent(entity, AuditEventAction.COMMERCIAL_SUBSCRIPTION_EXPIRED, previous, SubscriptionStatus.EXPIRED, remarks(request));
         audit(entity.getId(), AuditEntityType.COMMERCIAL_TENANT_SUBSCRIPTION, AuditEventAction.COMMERCIAL_SUBSCRIPTION_EXPIRED, "Expired commercial subscription", Map.of("tenantId", entity.getTenantId(), "status", entity.getSubscriptionStatus().name()));
+        effectiveEntitlementService.handleSubscriptionLifecycleEvent(entity.getTenantId(), GenerationReason.SUBSCRIPTION_EXPIRED);
         return toDetail(entity, validate(entity));
     }
 
@@ -260,6 +273,7 @@ public class CommercialSubscriptionService {
         recordEvent(current, AuditEventAction.COMMERCIAL_SUBSCRIPTION_REPLACED, previous, SubscriptionStatus.SUPERSEDED, request == null ? null : request.notes());
         recordEvent(replacement, replacement.getSubscriptionStatus() == SubscriptionStatus.SCHEDULED ? AuditEventAction.COMMERCIAL_SUBSCRIPTION_SCHEDULED : AuditEventAction.COMMERCIAL_SUBSCRIPTION_CREATED, null, replacement.getSubscriptionStatus(), request == null ? null : request.notes());
         audit(replacement.getId(), AuditEntityType.COMMERCIAL_TENANT_SUBSCRIPTION, AuditEventAction.COMMERCIAL_SUBSCRIPTION_REPLACED, "Replaced commercial subscription", Map.of("tenantId", replacement.getTenantId(), "replacedSubscriptionId", current.getId(), "status", replacement.getSubscriptionStatus().name()));
+        effectiveEntitlementService.handleSubscriptionLifecycleEvent(replacement.getTenantId(), GenerationReason.SUBSCRIPTION_REPLACED);
         return toDetail(replacement, validate(replacement));
     }
 

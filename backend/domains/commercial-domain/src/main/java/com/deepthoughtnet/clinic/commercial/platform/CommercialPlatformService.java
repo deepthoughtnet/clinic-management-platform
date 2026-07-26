@@ -28,6 +28,8 @@ import com.deepthoughtnet.clinic.commercial.platform.CommercialPlatformEnums.Tem
 import com.deepthoughtnet.clinic.commercial.platform.CommercialPlatformEnums.ValidationState;
 import com.deepthoughtnet.clinic.commercial.platform.CommercialPlatformEnums.ValidationSeverity;
 import com.deepthoughtnet.clinic.commercial.platform.CommercialPlatformModels.*;
+import com.deepthoughtnet.clinic.commercial.entitlement.CommercialEffectiveEntitlementService;
+import com.deepthoughtnet.clinic.platform.core.config.CommercialRuntimeProperties;
 import com.deepthoughtnet.clinic.commercial.subscription.CommercialSubscriptionEnums.SubscriptionStatus;
 import com.deepthoughtnet.clinic.commercial.subscription.CommercialSubscriptionService;
 import com.deepthoughtnet.clinic.commercial.subscription.CommercialSubscriptionModels.SubscriptionStatusCountsResponse;
@@ -103,6 +105,8 @@ public class CommercialPlatformService {
     private final CommercialPlanDraftRepository draftRepository;
     private final CommercialPlanVersionRepository versionRepository;
     private final CommercialSubscriptionService subscriptionService;
+    private final CommercialEffectiveEntitlementService effectiveEntitlementService;
+    private final CommercialRuntimeProperties runtimeProperties;
     private final AuditEventPublisher auditEventPublisher;
     private final ObjectMapper objectMapper;
 
@@ -116,6 +120,8 @@ public class CommercialPlatformService {
             CommercialPlanDraftRepository draftRepository,
             CommercialPlanVersionRepository versionRepository,
             CommercialSubscriptionService subscriptionService,
+            CommercialEffectiveEntitlementService effectiveEntitlementService,
+            CommercialRuntimeProperties runtimeProperties,
             AuditEventPublisher auditEventPublisher,
             ObjectMapper objectMapper
     ) {
@@ -128,6 +134,8 @@ public class CommercialPlatformService {
         this.draftRepository = draftRepository;
         this.versionRepository = versionRepository;
         this.subscriptionService = subscriptionService;
+        this.effectiveEntitlementService = effectiveEntitlementService;
+        this.runtimeProperties = runtimeProperties;
         this.auditEventPublisher = auditEventPublisher;
         this.objectMapper = objectMapper.copy().findAndRegisterModules().configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true);
     }
@@ -143,6 +151,10 @@ public class CommercialPlatformService {
         SubscriptionStatusCountsResponse subscriptionCounts = subscriptionService.getStatusCounts();
         long planTemplates = templateRepository.count();
         long draftPlans = draftRepository.count();
+        long currentSnapshots = effectiveEntitlementService.countCurrentSnapshots();
+        long generationFailures = effectiveEntitlementService.countGenerationFailures();
+        long activeOverrides = effectiveEntitlementService.countActiveOverrides();
+        long runtimeMismatches = effectiveEntitlementService.countRuntimeMismatches();
         return new OverviewResponse(
                 List.of(
                         new KpiCardResponse("active-capabilities", "Active Capabilities", activeCapabilities, "Catalog records currently available"),
@@ -157,7 +169,12 @@ public class CommercialPlatformService {
                         new KpiCardResponse("scheduled-subscriptions", "Scheduled", subscriptionCounts.scheduledCount(), "Commercial subscriptions scheduled for future activation"),
                         new KpiCardResponse("paused-subscriptions", "Paused", subscriptionCounts.pausedCount(), "Commercial subscriptions temporarily paused"),
                         new KpiCardResponse("expired-subscriptions", "Expired", subscriptionCounts.expiredCount(), "Commercial subscriptions that have ended"),
-                        new KpiCardResponse("cancelled-subscriptions", "Cancelled", subscriptionCounts.cancelledCount(), "Commercial subscriptions that were cancelled")
+                        new KpiCardResponse("cancelled-subscriptions", "Cancelled", subscriptionCounts.cancelledCount(), "Commercial subscriptions that were cancelled"),
+                        new KpiCardResponse("current-snapshots", "Tenants with Current Snapshots", currentSnapshots, "Commercial effective entitlement snapshots currently current"),
+                        new KpiCardResponse("snapshot-failures", "Snapshot Generation Failures", generationFailures, "Commercial entitlement generations that need attention"),
+                        new KpiCardResponse("active-overrides", "Active Overrides", activeOverrides, "Tenant-level commercial overrides currently in effect"),
+                        new KpiCardResponse("legacy-commercial-mismatches", "Legacy/Commercial Mismatches", runtimeMismatches, "Shadow compare differences captured"),
+                        new KpiCardResponse("commercial-runtime-enabled", "Commercial Runtime Enabled", runtimeProperties.isEnabled() ? 1 : 0, "Commercial effective entitlements are authoritative when enabled")
                 ),
                 List.of(
                         new LifecycleStageResponse("catalog", "Catalog", true, false),
@@ -165,7 +182,7 @@ public class CommercialPlatformService {
                         new LifecycleStageResponse("draft-configuration", "Draft Configuration", true, false),
                         new LifecycleStageResponse("published-version", "Published Version", true, false),
                         new LifecycleStageResponse("tenant-subscription", "Tenant Subscription", true, false),
-                        new LifecycleStageResponse("effective-entitlements", "Effective Entitlements", false, true),
+                        new LifecycleStageResponse("effective-entitlements", "Effective Entitlements", true, false),
                         new LifecycleStageResponse("usage-billing", "Usage and Billing", false, true)
                 ),
                 List.of(
@@ -173,7 +190,8 @@ public class CommercialPlatformService {
                         new QuickActionResponse("create-plan-template", "Create Plan Template", "/platform/commercial/plans", true, true),
                         new QuickActionResponse("review-draft-plans", "Review Draft Plans", "/platform/commercial/plans", true, false),
                         new QuickActionResponse("view-published-versions", "View Published Versions", "/platform/commercial/plans", true, false),
-                        new QuickActionResponse("manage-subscriptions", "Manage Subscriptions", "/platform/commercial/subscriptions", true, false)
+                        new QuickActionResponse("manage-subscriptions", "Manage Subscriptions", "/platform/commercial/subscriptions", true, false),
+                        new QuickActionResponse("effective-entitlements", "Effective Entitlements", "/platform/commercial/entitlements", true, false)
                 )
         );
     }

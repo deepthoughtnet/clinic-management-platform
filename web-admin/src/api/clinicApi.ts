@@ -6299,6 +6299,253 @@ export type CommercialPlanVersionComparison = {
   addons: { added: Array<{ code: string; name: string; detail: string | null }>; removed: Array<{ code: string; name: string; detail: string | null }>; changed: Array<{ code: string; name: string; detail: string | null }> };
 };
 
+export type CommercialEntitlementSnapshotStatus = "CURRENT" | "SUPERSEDED" | "INVALID" | "PENDING_REGENERATION";
+export type CommercialEntitlementGenerationReason =
+  | "SUBSCRIPTION_ACTIVATED"
+  | "SUBSCRIPTION_RESUMED"
+  | "SUBSCRIPTION_REPLACED"
+  | "SUBSCRIPTION_CANCELLED"
+  | "SUBSCRIPTION_EXPIRED"
+  | "OVERRIDE_CREATED"
+  | "OVERRIDE_UPDATED"
+  | "OVERRIDE_RETIRED"
+  | "MANUAL_REGENERATE"
+  | "BACKFILL"
+  | "SHADOW_COMPARE";
+export type CommercialEntitlementOverrideTargetType = "CAPABILITY" | "MODULE" | "FEATURE" | "LIMIT" | "ADD_ON";
+export type CommercialEntitlementOverrideOperation = "ENABLE" | "DISABLE" | "SET_VALUE" | "SET_UNLIMITED" | "SET_ADDON_STATE";
+export type CommercialEntitlementOverrideStatus = "DRAFT" | "PENDING_APPROVAL" | "CHANGES_REQUESTED" | "APPROVED" | "ACTIVE" | "SCHEDULED" | "EXPIRED" | "CANCELLED" | "SUPERSEDED";
+
+export type CommercialEffectiveEntitlementPage<T> = {
+  items: T[];
+  page: number;
+  size: number;
+  totalElements: number;
+  totalPages: number;
+};
+
+export type CommercialEffectiveEntitlementCapability = {
+  code: string;
+  name: string;
+  enabled: boolean;
+  source: "PLAN" | "ADD_ON" | "OVERRIDE";
+  reason: string | null;
+};
+
+export type CommercialEffectiveEntitlementModule = {
+  code: string;
+  name: string;
+  runtimeModuleCode: string | null;
+  enabled: boolean;
+  source: "PLAN" | "ADD_ON" | "OVERRIDE";
+  reason: string | null;
+  relatedCapabilityCode: string | null;
+};
+
+export type CommercialEffectiveEntitlementFeature = {
+  code: string;
+  name: string;
+  runtimeFeatureKey: string | null;
+  parentModuleCode: string | null;
+  enabled: boolean;
+  source: "PLAN" | "ADD_ON" | "OVERRIDE";
+  reason: string | null;
+};
+
+export type CommercialEffectiveEntitlementLimit = {
+  code: string;
+  name: string;
+  valueType: string;
+  configuredValue: string | null;
+  unlimited: boolean;
+  unit: string | null;
+  period: string | null;
+  enforcementType: string | null;
+  source: "PLAN" | "ADD_ON" | "OVERRIDE";
+  overrideSource: string | null;
+};
+
+export type CommercialEffectiveEntitlementAddOn = {
+  code: string;
+  name: string;
+  state: "INCLUDED" | "AVAILABLE_FOR_PURCHASE" | "UNAVAILABLE";
+  source: "PLAN" | "ADD_ON" | "OVERRIDE";
+  appliedContributions: string[];
+};
+
+export type CommercialEffectiveEntitlementOverride = {
+  id: string;
+  targetType: CommercialEntitlementOverrideTargetType;
+  targetCode: string;
+  operation: CommercialEntitlementOverrideOperation;
+  value: string | null;
+  addOnState: string | null;
+  effectiveFrom: string;
+  effectiveUntil: string | null;
+  status: CommercialEntitlementOverrideStatus;
+  reason: string | null;
+  submittedAt: string | null;
+  submittedBy: string | null;
+  reviewedAt: string | null;
+  reviewedBy: string | null;
+  reviewRemarks: string | null;
+  createdAt: string;
+  createdBy: string | null;
+  updatedAt: string;
+  updatedBy: string | null;
+  version: number;
+};
+
+export type CommercialEffectiveEntitlementOverrideHistory = {
+  overrideId: string;
+  revision: string;
+  previousStatus: string | null;
+  newStatus: string | null;
+  action: string | null;
+  changedAt: string;
+  changedBy: string | null;
+  remarks: string | null;
+  snapshotHash: string | null;
+};
+
+export type CommercialEffectiveEntitlementProvenance = {
+  itemType: string;
+  code: string;
+  source: string;
+  reason: string;
+  details: string | null;
+};
+
+export type CommercialEffectiveEntitlementValidationFinding = {
+  code: string;
+  title: string;
+  message: string;
+  blocking: boolean;
+  remediation: string | null;
+  affectedCode: string | null;
+  source: string | null;
+};
+
+export type CommercialEffectiveEntitlementSnapshot = {
+  snapshotId: string;
+  tenantId: string;
+  subscriptionId: string | null;
+  planTemplateId: string | null;
+  publishedVersionId: string | null;
+  publishedVersionNumber: number | null;
+  subscriptionStatus: string | null;
+  effectiveFrom: string | null;
+  effectiveUntil: string | null;
+  capabilities: CommercialEffectiveEntitlementCapability[];
+  modules: CommercialEffectiveEntitlementModule[];
+  features: CommercialEffectiveEntitlementFeature[];
+  limits: CommercialEffectiveEntitlementLimit[];
+  addOns: CommercialEffectiveEntitlementAddOn[];
+  overrides: CommercialEffectiveEntitlementOverride[];
+  provenance: CommercialEffectiveEntitlementProvenance[];
+  sourceHash: string | null;
+  contentHash: string;
+  generatedAt: string;
+  generatedBy: string | null;
+  generationReason: CommercialEntitlementGenerationReason;
+  snapshotStatus: CommercialEntitlementSnapshotStatus;
+  validationState: string | null;
+  validationFindings: CommercialEffectiveEntitlementValidationFinding[];
+};
+
+export type CommercialEffectiveEntitlementComparison = {
+  tenantId: string;
+  modules: Array<{ code: string; label: string; category: string; legacyValue: string | null; commercialValue: string | null; detail: string | null }>;
+  features: Array<{ code: string; label: string; category: string; legacyValue: string | null; commercialValue: string | null; detail: string | null }>;
+  limits: Array<{ code: string; label: string; category: string; legacyValue: string | null; commercialValue: string | null; detail: string | null }>;
+};
+
+export type CommercialEffectiveEntitlementOverridePreview = {
+  tenantId: string;
+  subscriptionId: string | null;
+  targetType: string | null;
+  targetCode: string | null;
+  operation: string | null;
+  beforeValue: string | null;
+  afterValue: string | null;
+  source: string | null;
+  runtimeImpact: string | null;
+  dependentEffects: string[];
+  findings: CommercialEffectiveEntitlementValidationFinding[];
+};
+
+export type CommercialRuntimeDiffSummary = {
+  tenantsWithActiveCommercialSubscriptions: number;
+  tenantsWithCurrentValidSnapshots: number;
+  missingSnapshots: number;
+  invalidSnapshots: number;
+  exactMatches: number;
+  tenantsWithDifferences: number;
+  legacyOnlyEntitlements: number;
+  commercialOnlyEntitlements: number;
+  activeOverrides: number;
+  snapshotGenerationFailures: number;
+  commercialRuntimeEnabled: boolean;
+  shadowComparisonEnabled: boolean;
+  allowlistedTenants: number;
+};
+
+export type CommercialRuntimeDiffTenant = {
+  tenantId: string;
+  tenantName: string;
+  tenantCode: string;
+  currentSubscription: string;
+  publishedVersion: string;
+  snapshotStatus: string;
+  generatedAt: string | null;
+  comparisonStatus: string;
+  moduleDifferences: number;
+  featureDifferences: number;
+  limitDifferences: number;
+  activeOverrides: number;
+  runtimeSource: string;
+  rolloutReadiness: string;
+  recommendation: string;
+  differences: string[];
+};
+
+export type CommercialEffectiveEntitlementLimitResponse = {
+  code: string;
+  name: string;
+  configuredValue: string | null;
+  unlimited: boolean;
+  unit: string | null;
+  period: string | null;
+  enforcementType: string | null;
+  snapshotId: string;
+  generatedAt: string;
+  source: string;
+};
+
+type CommercialEffectiveEntitlementMutation = {
+  targetType: CommercialEntitlementOverrideTargetType;
+  targetCode: string;
+  operation: CommercialEntitlementOverrideOperation;
+  value?: string | null;
+  addOnState?: string | null;
+  effectiveFrom: string;
+  effectiveUntil?: string | null;
+  reason: string;
+  internalNotes?: string | null;
+  subscriptionId?: string | null;
+};
+
+function buildCommercialEntitlementParams(query?: Record<string, string | number | null | undefined>) {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query || {})) {
+    if (value !== null && value !== undefined && value !== "") {
+      params.set(key, String(value));
+    }
+  }
+  const qs = params.toString();
+  return qs ? `?${qs}` : "";
+}
+
 export async function getCommercialPlatformOverview(token: string) {
   return httpGet<CommercialPlatformOverview>("/api/platform/commercial/overview", { token, platformOperation: true });
 }
@@ -6412,6 +6659,95 @@ export async function compareCommercialPlanVersions(token: string, templateId: s
   if (query?.rightVersionId) params.set("rightVersionId", query.rightVersionId);
   const qs = params.toString();
   return httpGet<CommercialPlanVersionComparison>(`/api/platform/commercial/plan-templates/${templateId}/compare${qs ? `?${qs}` : ""}`, { token, platformOperation: true });
+}
+
+export async function getCommercialEffectiveEntitlements(token: string, tenantId: string) {
+  return httpGet<CommercialEffectiveEntitlementSnapshot>(`/api/platform/commercial/tenants/${tenantId}/effective-entitlements`, { token, platformOperation: true });
+}
+
+export async function regenerateCommercialEffectiveEntitlements(token: string, tenantId: string, reason?: CommercialEntitlementGenerationReason) {
+  const qs = buildCommercialEntitlementParams({ reason });
+  return httpPost<CommercialEffectiveEntitlementSnapshot>(`/api/platform/commercial/tenants/${tenantId}/effective-entitlements/regenerate${qs}`, {}, { token, platformOperation: true });
+}
+
+export async function getCommercialEffectiveEntitlementHistory(token: string, tenantId: string, query?: { page?: number; size?: number }) {
+  const qs = buildCommercialEntitlementParams(query);
+  return httpGet<CommercialEffectiveEntitlementPage<CommercialEffectiveEntitlementSnapshot>>(`/api/platform/commercial/tenants/${tenantId}/effective-entitlements/history${qs}`, { token, platformOperation: true });
+}
+
+export async function compareCommercialEffectiveEntitlements(token: string, tenantId: string) {
+  return httpGet<CommercialEffectiveEntitlementComparison>(`/api/platform/commercial/tenants/${tenantId}/effective-entitlements/legacy-comparison`, { token, platformOperation: true });
+}
+
+export async function listCommercialEntitlementOverrides(token: string, tenantId: string) {
+  return httpGet<CommercialEffectiveEntitlementOverride[]>(`/api/platform/commercial/tenants/${tenantId}/overrides`, { token, platformOperation: true });
+}
+
+export async function createCommercialEntitlementOverride(token: string, tenantId: string, body: CommercialEffectiveEntitlementMutation) {
+  return httpPost<CommercialEffectiveEntitlementOverride>(`/api/platform/commercial/tenants/${tenantId}/overrides`, body, { token, platformOperation: true });
+}
+
+export async function updateCommercialEntitlementOverride(token: string, tenantId: string, overrideId: string, body: CommercialEffectiveEntitlementMutation) {
+  return httpPut<CommercialEffectiveEntitlementOverride>(`/api/platform/commercial/tenants/${tenantId}/overrides/${overrideId}`, body, { token, platformOperation: true });
+}
+
+export async function activateCommercialEntitlementOverride(token: string, tenantId: string, overrideId: string) {
+  return httpPost<CommercialEffectiveEntitlementOverride>(`/api/platform/commercial/tenants/${tenantId}/overrides/${overrideId}/activate`, {}, { token, platformOperation: true });
+}
+
+export async function cancelCommercialEntitlementOverride(token: string, tenantId: string, overrideId: string) {
+  return httpPost<CommercialEffectiveEntitlementOverride>(`/api/platform/commercial/tenants/${tenantId}/overrides/${overrideId}/cancel`, {}, { token, platformOperation: true });
+}
+
+export async function submitCommercialEntitlementOverride(token: string, tenantId: string, overrideId: string) {
+  return httpPost<CommercialEffectiveEntitlementOverride>(`/api/platform/commercial/tenants/${tenantId}/overrides/${overrideId}/submit`, {}, { token, platformOperation: true });
+}
+
+export async function withdrawCommercialEntitlementOverride(token: string, tenantId: string, overrideId: string) {
+  return httpPost<CommercialEffectiveEntitlementOverride>(`/api/platform/commercial/tenants/${tenantId}/overrides/${overrideId}/withdraw`, {}, { token, platformOperation: true });
+}
+
+export async function approveCommercialEntitlementOverride(token: string, tenantId: string, overrideId: string, remarks?: string | null) {
+  const qs = buildCommercialEntitlementParams({ remarks });
+  return httpPost<CommercialEffectiveEntitlementOverride>(`/api/platform/commercial/tenants/${tenantId}/overrides/${overrideId}/approve${qs}`, {}, { token, platformOperation: true });
+}
+
+export async function requestCommercialEntitlementOverrideChanges(token: string, tenantId: string, overrideId: string, remarks?: string | null) {
+  const qs = buildCommercialEntitlementParams({ remarks });
+  return httpPost<CommercialEffectiveEntitlementOverride>(`/api/platform/commercial/tenants/${tenantId}/overrides/${overrideId}/request-changes${qs}`, {}, { token, platformOperation: true });
+}
+
+export async function rollbackCommercialEntitlementOverride(token: string, tenantId: string, overrideId: string, reason?: string | null) {
+  const qs = buildCommercialEntitlementParams({ reason });
+  return httpPost<CommercialEffectiveEntitlementOverride>(`/api/platform/commercial/tenants/${tenantId}/overrides/${overrideId}/rollback${qs}`, {}, { token, platformOperation: true });
+}
+
+export async function getCommercialEntitlementOverrideHistory(token: string, tenantId: string, overrideId: string) {
+  return httpGet<CommercialEffectiveEntitlementOverrideHistory[]>(`/api/platform/commercial/tenants/${tenantId}/overrides/${overrideId}/history`, { token, platformOperation: true });
+}
+
+export async function previewCommercialEntitlementOverride(token: string, tenantId: string, body: CommercialEffectiveEntitlementMutation) {
+  return httpPost<CommercialEffectiveEntitlementOverridePreview>(`/api/platform/commercial/tenants/${tenantId}/overrides/impact-preview`, body, { token, platformOperation: true });
+}
+
+export async function getCommercialRuntimeDiffSummary(token: string) {
+  return httpGet<CommercialRuntimeDiffSummary>("/api/platform/commercial/runtime-diff/summary", { token, platformOperation: true });
+}
+
+export async function listCommercialRuntimeDiffTenants(token: string) {
+  return httpGet<CommercialRuntimeDiffTenant[]>("/api/platform/commercial/runtime-diff/tenants", { token, platformOperation: true });
+}
+
+export async function getCommercialRuntimeDiffTenant(token: string, tenantId: string) {
+  return httpGet<CommercialRuntimeDiffTenant>(`/api/platform/commercial/runtime-diff/tenants/${tenantId}`, { token, platformOperation: true });
+}
+
+export async function compareCommercialRuntimeDiffTenant(token: string, tenantId: string) {
+  return httpPost<CommercialEffectiveEntitlementComparison>(`/api/platform/commercial/runtime-diff/tenants/${tenantId}/compare`, {}, { token, platformOperation: true });
+}
+
+export async function getCommercialEffectiveLimit(token: string, tenantId: string, limitCode: string) {
+  return httpGet<CommercialEffectiveEntitlementLimitResponse>(`/api/platform/commercial/tenants/${tenantId}/limits/${limitCode}`, { token, platformOperation: true });
 }
 
 type PatientDocumentListFilters = {
