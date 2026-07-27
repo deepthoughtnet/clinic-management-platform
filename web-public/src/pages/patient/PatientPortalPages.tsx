@@ -733,7 +733,7 @@ export function PatientPortalShell({
       <div className="patient-portal-shell">
         <aside className="patient-sidebar">
           <div className="patient-sidebar-card">
-            <span className="eyebrow">Jeevanam Healthcare Patient Portal</span>
+            <span className="eyebrow">Jeevanam Care</span>
             <h2>{session.patientLabel}</h2>
             <p>{session.phone}</p>
           </div>
@@ -759,7 +759,7 @@ export function PatientPortalShell({
           {className?.includes("patient-careai-page") ? null : (
             <div className="patient-topbar">
               <div>
-                <span className="eyebrow">Patient Portal</span>
+                <span className="eyebrow">Jeevanam Care</span>
                 <h1>{title}</h1>
                 <p>{subtitle}</p>
               </div>
@@ -852,7 +852,7 @@ function PatientAccessBoundary({
               Go to patient login
             </Link>
             <Link className="ghost-button" to="/">
-              Back to public home
+              Back to Jeevanam Care
             </Link>
           </div>
         </div>

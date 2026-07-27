@@ -70,11 +70,12 @@ test("public booking entry is an external Care handoff and does not implement bo
   assert.ok(!components.includes("/api/patient-portal/appointments"));
 });
 
-test("Phase 2 keeps web-public sources intact for temporary duplicated discovery", () => {
+test("Discover keeps migrated pages while Care redirects legacy public routes after Phase 3A", () => {
   const webPublicApp = fs.readFileSync(path.join(root, "../web-public/src/App.tsx"), "utf8");
 
-  assert.ok(webPublicApp.includes("PublicHomePage"));
-  assert.ok(webPublicApp.includes("PublicDoctorsPage"));
-  assert.ok(webPublicApp.includes("PublicClinicsPage"));
+  assert.ok(webPublicApp.includes("LegacyDiscoverRedirectPage"));
+  assert.ok(webPublicApp.includes('path="/doctors" element={<LegacyDiscoverRedirectPage />}'));
+  assert.ok(webPublicApp.includes('path="/clinics" element={<LegacyDiscoverRedirectPage />}'));
+  assert.ok(webPublicApp.includes('path="/specialities" element={<LegacyDiscoverRedirectPage />}'));
   assert.ok(webPublicApp.includes("PatientLoginPage"));
 });

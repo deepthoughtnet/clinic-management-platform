@@ -15,8 +15,14 @@ test("global patient header and location context are shared", () => {
   assert.ok(appSource.includes("PublicLocationProvider"));
   assert.ok(appSource.includes('path="/ai-assistant/*"'));
   assert.ok(headerSource.includes("Patient Login"));
-  assert.ok(headerSource.includes("Demo Links"));
-  assert.ok(headerSource.includes("global-location-pill"));
+  assert.ok(headerSource.includes("Find Care"));
+  assert.ok(headerSource.includes("Clinic / Hospital Login"));
+  assert.ok(headerSource.includes('aria-label="Care navigation"'));
+  assert.ok(!headerSource.includes("Demo Links"));
+  assert.ok(!headerSource.includes("global-location-pill"));
+  assert.ok(!headerSource.includes('label: "Doctors"'));
+  assert.ok(!headerSource.includes('label: "Clinics"'));
+  assert.ok(!headerSource.includes('label: "Specialities"'));
   assert.ok(headerSource.includes("patientPortalHomePath"));
   assert.ok(locationSource.includes("PUBLIC_LOCATION_OPTIONS"));
   assert.ok(locationSource.includes("PUBLIC_DEFAULT_LOCATION"));
@@ -51,20 +57,23 @@ test("booking pages still wire clinic and slot selection", () => {
 test("public nav and footer branding are cleaned up", () => {
   const source = readSource("App.tsx");
   const headerSource = readSource("components/GlobalPatientHeader.tsx");
+  const brandingSource = readSource("branding.ts");
   const portalSource = readSource("pages/patient/PatientPortalPages.tsx");
   assert.ok(headerSource.includes('label: "AIVA"'));
   assert.ok(headerSource.includes('label: "Patient Login"'));
   assert.ok(!source.includes('label: "AI Assistant"'));
   assert.ok(source.includes("GlobalPatientHeader"));
   assert.ok(source.includes("path=\"/ai-assistant/*\""));
-  assert.ok(headerSource.includes('brand-badge">JH</span>'));
+  assert.ok(headerSource.includes('brand-badge">JC</span>'));
+  assert.ok(brandingSource.includes('"Jeevanam Care"'));
   assert.ok(source.includes("footer-brand-line"));
-  assert.ok(source.includes("footer-environment-line"));
+  assert.ok(!source.includes("footer-environment-line"));
   assert.ok(source.includes('Link to="/patient/login"'));
   assert.ok(source.includes('Link to="/contact"'));
   assert.ok(source.includes('Link to="/privacy-policy"'));
-  assert.ok(headerSource.includes("Demo Links"));
-  assert.ok(portalSource.includes("Jeevanam Healthcare Patient Portal"));
+  assert.ok(!headerSource.includes("Demo Links"));
+  assert.ok(portalSource.includes("Jeevanam Care"));
+  assert.ok(!portalSource.includes("Jeevanam Healthcare Patient Portal"));
   assert.ok(portalSource.includes("GlobalPatientHeader"));
   assert.ok(portalSource.includes("patient-appointments-page"));
   assert.ok(portalSource.includes("patient-appointments-toolbar"));
@@ -84,14 +93,30 @@ test("patient registration session cleanup is centralized", () => {
   assert.ok(source.includes("clearPublicBookingContext"));
 });
 
-test("homepage location selector persists common cities", () => {
-  const source = readSource("pages/public/PublicDiscoveryPages.tsx");
+test("legacy public discovery routes redirect to Discover and root is Care-focused", () => {
+  const appSource = readSource("App.tsx");
+  const configSource = readSource("config.ts");
+
+  assert.ok(appSource.includes("CareHomePage"));
+  assert.ok(appSource.includes("LegacyDiscoverRedirectPage"));
+  assert.ok(appSource.includes("buildDiscoverRedirect"));
+  assert.ok(appSource.includes('path="/" element={<CareHomePage session={session} />}'));
+  assert.ok(appSource.includes('path="/doctors" element={<LegacyDiscoverRedirectPage />}'));
+  assert.ok(appSource.includes('path="/doctors/:doctorSlug" element={<LegacyDiscoverRedirectPage />}'));
+  assert.ok(appSource.includes('path="/clinics" element={<LegacyDiscoverRedirectPage />}'));
+  assert.ok(appSource.includes('path="/clinics/:clinicSlug" element={<LegacyDiscoverRedirectPage />}'));
+  assert.ok(appSource.includes('path="/specialities" element={<LegacyDiscoverRedirectPage />}'));
+  assert.ok(appSource.includes('path="/specialities/:specialitySlug" element={<LegacyDiscoverRedirectPage />}'));
+  assert.ok(appSource.includes('path="/careai" element={<Navigate to="/patient/careai" replace />}'));
+  assert.ok(appSource.includes("safeRedirectParams"));
+  assert.ok(!appSource.includes("patientSessionToken") || appSource.includes("parsed.patientSessionToken"));
+  assert.ok(configSource.includes("VITE_DISCOVER_APP_URL"));
+  assert.ok(configSource.includes("https://jeevanam.deepthoughtnet.com"));
+  assert.ok(configSource.includes("5177"));
+});
+
+test("public location context remains available for patient booking compatibility", () => {
   const locationSource = readSource("context/publicLocation.tsx");
-  assert.ok(source.includes("smart-location-selector"));
-  assert.ok(source.includes("smart-location-actions"));
-  assert.ok(source.includes("readStoredPublicLocation"));
-  assert.ok(source.includes("selectedLocation"));
-  assert.ok(source.includes("Use my current location"));
   assert.ok(locationSource.includes("savePublicLocation"));
   assert.ok(locationSource.includes("Current location selected"));
   assert.ok(locationSource.includes("PUBLIC_LOCATION_STORAGE_KEY"));

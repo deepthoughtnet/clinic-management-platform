@@ -1,3 +1,5 @@
+import { careConfig } from "../config";
+
 type PatientPortalSessionBase = {
   mode: "otp";
   tenantCode: string;
@@ -316,7 +318,7 @@ export type PatientPortalCareAiResetResponse = {
   message: string;
 };
 
-const apiBaseUrl = import.meta.env.VITE_PUBLIC_API_BASE_URL?.trim() ?? "";
+const apiBaseUrl = careConfig.apiBaseUrl;
 const careAiRuntimeUrl = import.meta.env.VITE_CAREAI_RUNTIME_URL?.trim() ?? "";
 
 function buildUrl(path: string) {

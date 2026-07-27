@@ -1,3 +1,4 @@
+import { careConfig } from "../config";
 import {
   type PatientPortalSession,
   isPatientPortalPatientSession,
@@ -97,7 +98,7 @@ export type PublicSearchResponse = {
   specialities: PublicSpecialitySummaryResponse[];
 };
 
-const apiBaseUrl = import.meta.env.VITE_PUBLIC_API_BASE_URL?.trim() ?? "";
+const apiBaseUrl = careConfig.apiBaseUrl;
 
 function buildUrl(path: string, params?: Record<string, string | number | undefined | null>) {
   const url = new URL(`${apiBaseUrl}${path}`, window.location.origin);

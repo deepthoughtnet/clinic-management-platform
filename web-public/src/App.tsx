@@ -1,16 +1,6 @@
 import { type ReactNode, useEffect, useState } from "react";
 import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import {
-  PublicCareAiPage,
-  PublicClinicDetailPage,
-  PublicClinicsPage,
-  PublicDoctorDetailPage,
-  PublicDoctorsPage,
-  PublicHomePage,
-  PublicSpecialitiesPage,
-  PublicSpecialityDetailPage,
-} from "./pages/public/PublicDiscoveryPages";
-import {
   PatientAppointmentsPage,
   PatientBillsPage,
   PatientBookAppointmentPage,
@@ -25,11 +15,13 @@ import {
 import PatientLabPage from "./pages/patient/PatientLabPage";
 import {
   type PatientPortalSession,
+  isPatientPortalPatientSession,
   isPatientPortalRegistrationSession,
   patientPortalHomePath,
 } from "./api/patientPortal";
 import { branding, footerBrandingLine, productAndTagline, productTitle } from "./branding";
 import { GlobalPatientHeader } from "./components/GlobalPatientHeader";
+import { careConfig, externalAppUrl } from "./config";
 import { PublicLocationProvider } from "./context/publicLocation";
 import {
   PATIENT_PORTAL_SESSION_STORAGE_KEY,
@@ -39,25 +31,22 @@ import {
   isStoredPatientSessionActive,
 } from "./pages/patient/patientPortalSessionState";
 
-function deriveClinicLoginUrl() {
-  const url = new URL(window.location.origin);
-  if (url.hostname === "portal.deepthoughtnet.com") {
-    url.hostname = "arogia.deepthoughtnet.com";
-  } else if (url.port === "5175") {
-    url.port = "5174";
-  }
-  return url.toString().replace(/\/$/, "");
-}
-
-const clinicLoginUrl = import.meta.env.VITE_CLINIC_LOGIN_URL?.trim() || deriveClinicLoginUrl();
-const aivaAppUrl = import.meta.env.VITE_AIVA_APP_URL?.trim() || new URL("/careai", window.location.origin).toString();
+const clinicLoginUrl = careConfig.healthcareAppUrl;
+const aivaAppUrl = careConfig.aivaAppUrl || new URL("/patient/careai", window.location.origin).toString();
 
 function pageTitleForPath(pathname: string) {
   if (pathname === "/") return productTitle();
-  if (pathname === "/doctors") return `Doctors | ${branding.productName}`;
-  if (pathname === "/clinics") return `Clinics | ${branding.productName}`;
-  if (pathname === "/specialities") return `Specialities | ${branding.productName}`;
-  if (pathname.startsWith("/patient")) return `Patient Portal | ${branding.productName}`;
+  if (pathname === "/patient/login") return `Login | ${branding.productName}`;
+  if (pathname === "/patient/register") return `Register | ${branding.productName}`;
+  if (pathname === "/patient/dashboard") return `Dashboard | ${branding.productName}`;
+  if (pathname === "/patient/appointments") return `Appointments | ${branding.productName}`;
+  if (pathname === "/patient/prescriptions") return `Prescriptions | ${branding.productName}`;
+  if (pathname === "/patient/lab") return `Reports | ${branding.productName}`;
+  if (pathname === "/patient/bills") return `Bills | ${branding.productName}`;
+  if (pathname === "/patient/notifications") return `Notifications | ${branding.productName}`;
+  if (pathname === "/patient/careai") return `AIVA | ${branding.productName}`;
+  if (pathname === "/patient/profile") return `Profile | ${branding.productName}`;
+  if (pathname.startsWith("/patient")) return `${branding.productName}`;
   if (pathname === "/careai") return `AIVA | ${branding.productName}`;
   if (pathname.startsWith("/aiva")) return `AIVA | ${branding.productName}`;
   if (pathname === "/contact") return `Contact | ${branding.productName}`;
@@ -68,15 +57,88 @@ function pageTitleForPath(pathname: string) {
 }
 
 function descriptionForPath(pathname: string) {
-  if (pathname === "/") return `${branding.productName} is the ${branding.tagline} for clinics and hospitals.`;
-  if (pathname === "/careai") return `${branding.productName} connects patients to guided care navigation powered by ${branding.aiPlatformName}.`;
-  if (pathname.startsWith("/patient")) return `${branding.productName} patient portal for verified appointments, prescriptions, bills, and reports.`;
+  if (pathname === "/") return `${branding.productName}: ${branding.tagline}`;
+  if (pathname === "/careai") return `${branding.productName} routes patients to care-specific AIVA access.`;
+  if (pathname.startsWith("/patient")) return `${branding.productName} for verified appointments, prescriptions, bills, lab reports, notifications, profile, and AIVA.`;
   if (pathname.startsWith("/aiva")) return `${branding.productName} AI voice and assistant platform powered by ${branding.aiPlatformName}.`;
   if (pathname === "/contact") return `${branding.productName} contact page.`;
   if (pathname === "/help-centre") return `${branding.productName} help centre.`;
   if (pathname === "/privacy-policy") return `${branding.productName} privacy policy.`;
   if (pathname === "/terms") return `${branding.productName} terms and conditions.`;
   return `${branding.productName} by ${branding.companyName}.`;
+}
+
+const safeRedirectParams = new Set(["q", "city", "area", "speciality", "clinic", "clinicSlug", "page", "size"]);
+
+function buildDiscoverRedirect(pathname: string, search: string) {
+  const safeSearch = new URLSearchParams();
+  const incoming = new URLSearchParams(search);
+  incoming.forEach((value, key) => {
+    if (safeRedirectParams.has(key) && value.trim()) {
+      safeSearch.set(key, value.trim());
+    }
+  });
+  return externalAppUrl(careConfig.discoverAppUrl, pathname, safeSearch.toString() ? `?${safeSearch.toString()}` : "");
+}
+
+function ExternalRedirectPage({ to }: { to: string }) {
+  useEffect(() => {
+    window.location.replace(to);
+  }, [to]);
+  return (
+    <section className="page-section narrow-page">
+      <div className="login-placeholder">
+        <span className="eyebrow">Jeevanam Discover</span>
+        <h1>Opening public discovery.</h1>
+        <p>This public discovery page now lives in Jeevanam Discover.</p>
+        <a className="primary-button" href={to}>
+          Open Jeevanam Discover
+        </a>
+      </div>
+    </section>
+  );
+}
+
+function LegacyDiscoverRedirectPage() {
+  const location = useLocation();
+  return <ExternalRedirectPage to={buildDiscoverRedirect(location.pathname, location.search)} />;
+}
+
+function CareHomePage({ session }: { session: PatientPortalSession | null }) {
+  if (isPatientPortalPatientSession(session)) {
+    return <Navigate to="/patient/dashboard" replace />;
+  }
+  if (isPatientPortalRegistrationSession(session)) {
+    return <Navigate to="/patient/register" replace />;
+  }
+  return (
+    <section className="page-section care-home-page">
+      <div className="care-home-hero">
+        <div>
+          <span className="eyebrow">Jeevanam Care</span>
+          <h1>Your appointments, prescriptions, reports, and care journey in one place.</h1>
+          <p>
+            Sign in with phone OTP to access your private care workspace, continue bookings, view clinic-shared records,
+            and use AIVA for your care.
+          </p>
+          <div className="cta-row">
+            <Link className="primary-button" to="/patient/login">Patient Login</Link>
+            <Link className="secondary-button" to="/patient/register">Complete Registration</Link>
+            <a className="ghost-button" href={careConfig.discoverAppUrl}>Find a doctor or clinic</a>
+          </div>
+        </div>
+        <article className="care-home-card" aria-label="Jeevanam Care capabilities">
+          <strong>Care workspace</strong>
+          <ul className="plain-list">
+            <li>Book and manage appointments</li>
+            <li>View prescriptions and lab reports shared by clinics</li>
+            <li>Review bills, receipts, notifications, and reminders</li>
+            <li>Use AIVA with your patient context after login</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+  );
 }
 
 function StaticSupportPage({
@@ -233,34 +295,28 @@ function AppShell({
           <div className="footer-grid">
             <section className="footer-brand-block">
               <strong>{branding.productName}</strong>
-              <p>Intelligent Healthcare Platform for clinics, patients, and teams.</p>
+              <p>{branding.tagline}</p>
             </section>
 
             <section className="footer-column">
-              <strong>Patients</strong>
+              <strong>Jeevanam Care</strong>
               <div className="footer-link-list">
                 <Link to="/patient/login">Patient Login</Link>
-                <Link to={patientPortalHomePath(portalNavSession)}>Patient Portal</Link>
+                <Link to={patientPortalHomePath(portalNavSession)}>Dashboard</Link>
                 <Link to="/patient/book-appointment">Book Appointment</Link>
                 <Link to="/patient/appointments">Appointments</Link>
-                <Link to="/patient/lab">Lab Reports</Link>
+                <Link to="/patient/prescriptions">Prescriptions</Link>
+                <Link to="/patient/lab">Reports</Link>
                 <Link to="/patient/bills">Bills</Link>
               </div>
             </section>
 
             <section className="footer-column">
-              <strong>Discover</strong>
+              <strong>Jeevanam Platform</strong>
               <div className="footer-link-list">
-                <Link to="/doctors">Doctors</Link>
-                <Link to="/clinics">Clinics</Link>
-                <Link to="/specialities">Specialities</Link>
-              </div>
-            </section>
-
-            <section className="footer-column">
-              <strong>Platform</strong>
-              <div className="footer-link-list">
-                <Link to="/careai">AIVA</Link>
+                <a href={careConfig.discoverAppUrl}>Find Care</a>
+                <a href={careConfig.healthcareAppUrl}>Clinic / Hospital Login</a>
+                <Link to="/patient/careai">AIVA for your care</Link>
               </div>
             </section>
 
@@ -275,7 +331,6 @@ function AppShell({
             </section>
           </div>
           <div className="footer-brand-line">{footerBrandingLine()}</div>
-          <div className="footer-environment-line">Demo / UAT Environment</div>
           <div className="footer-bottom">
             <p>© 2026 DeepThoughtNet.</p>
           </div>
@@ -329,14 +384,14 @@ export function App() {
         <Routes>
           <Route path="/ai-assistant/*" element={<Navigate to="/aiva" replace />} />
           <Route path="/aiva/*" element={<AivaRedirectPage />} />
-          <Route path="/" element={<PublicHomePage session={session} />} />
-          <Route path="/doctors" element={<PublicDoctorsPage session={session} />} />
-          <Route path="/doctors/:doctorSlug" element={<PublicDoctorDetailPage session={session} />} />
-          <Route path="/clinics" element={<PublicClinicsPage session={session} />} />
-          <Route path="/clinics/:clinicSlug" element={<PublicClinicDetailPage session={session} />} />
-          <Route path="/specialities" element={<PublicSpecialitiesPage />} />
-          <Route path="/specialities/:specialitySlug" element={<PublicSpecialityDetailPage session={session} />} />
-          <Route path="/careai" element={<PublicCareAiPage session={session} />} />
+          <Route path="/" element={<CareHomePage session={session} />} />
+          <Route path="/doctors" element={<LegacyDiscoverRedirectPage />} />
+          <Route path="/doctors/:doctorSlug" element={<LegacyDiscoverRedirectPage />} />
+          <Route path="/clinics" element={<LegacyDiscoverRedirectPage />} />
+          <Route path="/clinics/:clinicSlug" element={<LegacyDiscoverRedirectPage />} />
+          <Route path="/specialities" element={<LegacyDiscoverRedirectPage />} />
+          <Route path="/specialities/:specialitySlug" element={<LegacyDiscoverRedirectPage />} />
+          <Route path="/careai" element={<Navigate to="/patient/careai" replace />} />
           <Route
             path="/patient/login"
             element={
