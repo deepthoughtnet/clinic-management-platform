@@ -15,6 +15,8 @@ Proposed for review. No application migration has been implemented by this docum
 
 `web-public/nginx/default.conf` proxies `/api/` and `/ws/` to `clinic-management-api`. Docker compose currently defines only one public web service, so separating Discover and Care requires new service entries, host routing, CORS updates, and environment variables.
 
+Target frontend applications are `web-discover`, `web-care`, and `web-admin`. Platform Administration remains inside `web-admin`, deployed as Jeevanam Healthcare, and is exposed as privileged platform mode through platform roles, route authorization, and tenant-context selection. A separate platform-admin frontend product, deployment, or authentication client is out of scope unless future security or deployment isolation requirements justify it.
+
 ## Route Ownership Matrix
 
 | Route | Component | Auth | API dependencies | Current nav | Future app | Complexity | Notes |
@@ -81,8 +83,7 @@ Target clients:
 |---|---|
 | `jeevanam-discover` | Anonymous-first app; optional provider onboarding identity only. |
 | `jeevanam-care` | Patient OTP flow now; later can federate to patient OIDC without changing Care route ownership. |
-| `jeevanam-healthcare` | Clinic operations; current `clinic-web-admin` successor. |
-| `jeevanam-platform-admin` | Platform-only administration if split from healthcare operations later. |
+| `jeevanam-healthcare` | Clinic operations and Platform Administration privileged mode; current `clinic-web-admin` successor. |
 
 Provider registration accounts must be isolated from Healthcare operational users. A verified provider onboarding account may own a Discover application, but it must not receive clinic tenant roles until Healthcare onboarding/subscription activation is approved.
 
@@ -205,7 +206,7 @@ Final recommendation: choose Option A. Rename/refocus current `web-public` as `w
 |---|---|
 | `web-care` | Current `web-public` patient portal refocused to Care. |
 | `web-discover` | New anonymous-first public discovery and provider onboarding app. |
-| `web-admin` | Healthcare operations and platform administration. |
+| `web-admin` | Healthcare operations and Platform Administration privileged mode in the same deployed app. |
 | `web-aiva` | AIVA microsite/runtime surface if retained. |
 | `frontend/packages/ui-kit` | Future shared design primitives only if duplication becomes real. |
 | `frontend/packages/healthcare-api-types` | Generated or shared DTO types, not business logic. |
@@ -237,7 +238,7 @@ Avoid sharing patient route guards, provider page authoring, or operational tena
 | `care.deepthoughtnet.com` | `web-care` |
 | `healthcare.deepthoughtnet.com` | `web-admin` |
 
-Required deployment work: add compose services, update nginx/ingress host routing, configure API CORS for all three domains, add Keycloak redirect URIs for Healthcare and future provider onboarding client, define logout redirects, set CSP/media origins, and ensure `/ws/patient-portal/careai` is available only for Care.
+Required deployment work: add Discover and Care compose services or aliases, update nginx/ingress host routing, configure API CORS for the three product domains, add Keycloak redirect URIs for Healthcare and the future provider-onboarding identity, define logout redirects, set CSP/media origins, and ensure `/ws/patient-portal/careai` is available only for Care. Platform Administration continues to route through `healthcare.deepthoughtnet.com` and the `web-admin` application.
 
 ## SEO Assessment
 
