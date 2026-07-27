@@ -1,7 +1,7 @@
 package com.deepthoughtnet.clinic.api.notifications;
 
 import com.deepthoughtnet.clinic.appointment.service.AppointmentService;
-import com.deepthoughtnet.clinic.api.prescriptiontemplate.service.PrescriptionTemplateService;
+import com.deepthoughtnet.clinic.api.prescriptiontemplate.service.PrescriptionBrandingDocumentResolver;
 import com.deepthoughtnet.clinic.billing.service.BillingService;
 import com.deepthoughtnet.clinic.billing.service.model.BillPdf;
 import com.deepthoughtnet.clinic.billing.service.model.BillRecord;
@@ -60,7 +60,7 @@ public class NotificationActionService {
     private final PlatformTenantManagementService tenantManagementService;
     private final PatientRepository patientRepository;
     private final NotificationProvider notificationProvider;
-    private final PrescriptionTemplateService prescriptionTemplateService;
+    private final PrescriptionBrandingDocumentResolver brandingDocumentResolver;
     private final ModuleBusinessEventPublisher moduleBusinessEventPublisher;
 
     public NotificationActionService(
@@ -73,7 +73,7 @@ public class NotificationActionService {
             PlatformTenantManagementService tenantManagementService,
             PatientRepository patientRepository,
             NotificationProvider notificationProvider,
-            PrescriptionTemplateService prescriptionTemplateService,
+            PrescriptionBrandingDocumentResolver brandingDocumentResolver,
             ModuleBusinessEventPublisher moduleBusinessEventPublisher
     ) {
         this.notificationHistoryService = notificationHistoryService;
@@ -85,7 +85,7 @@ public class NotificationActionService {
         this.tenantManagementService = tenantManagementService;
         this.patientRepository = patientRepository;
         this.notificationProvider = notificationProvider;
-        this.prescriptionTemplateService = prescriptionTemplateService;
+        this.brandingDocumentResolver = brandingDocumentResolver;
         this.moduleBusinessEventPublisher = moduleBusinessEventPublisher;
     }
 
@@ -110,7 +110,7 @@ public class NotificationActionService {
                 actorAppUserId
         );
         if ("email".equals(normalizedChannel)) {
-            PrescriptionPdf pdf = prescriptionService.generatePdf(tenantId, prescriptionId, actorAppUserId, prescriptionTemplateService.toPdfConfig(prescriptionTemplateService.getActive(tenantId)));
+            PrescriptionPdf pdf = prescriptionService.generatePdf(tenantId, prescriptionId, actorAppUserId, brandingDocumentResolver.resolveActive(tenantId));
             notificationProvider.send(new NotificationMessage(
                     tenantId,
                     "EMAIL",

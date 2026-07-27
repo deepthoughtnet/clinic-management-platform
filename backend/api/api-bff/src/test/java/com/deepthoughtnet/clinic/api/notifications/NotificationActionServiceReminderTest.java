@@ -21,7 +21,7 @@ import com.deepthoughtnet.clinic.notification.service.model.NotificationQueueRes
 import com.deepthoughtnet.clinic.patient.db.PatientEntity;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.prescription.service.PrescriptionService;
-import com.deepthoughtnet.clinic.api.prescriptiontemplate.service.PrescriptionTemplateService;
+import com.deepthoughtnet.clinic.api.prescriptiontemplate.service.PrescriptionBrandingDocumentResolver;
 import com.deepthoughtnet.clinic.notify.NotificationProvider;
 import com.deepthoughtnet.clinic.consultation.service.ConsultationService;
 import com.deepthoughtnet.clinic.vaccination.service.VaccinationService;
@@ -51,7 +51,7 @@ class NotificationActionServiceReminderTest {
         PlatformTenantManagementService tenantManagementService = Mockito.mock(PlatformTenantManagementService.class);
         PatientRepository patientRepository = Mockito.mock(PatientRepository.class);
         NotificationProvider notificationProvider = Mockito.mock(NotificationProvider.class);
-        PrescriptionTemplateService prescriptionTemplateService = Mockito.mock(PrescriptionTemplateService.class);
+        PrescriptionBrandingDocumentResolver brandingDocumentResolver = Mockito.mock(PrescriptionBrandingDocumentResolver.class);
         ModuleBusinessEventPublisher moduleBusinessEventPublisher = Mockito.mock(ModuleBusinessEventPublisher.class);
 
         NotificationActionService service = new NotificationActionService(
@@ -64,7 +64,7 @@ class NotificationActionServiceReminderTest {
                 tenantManagementService,
                 patientRepository,
                 notificationProvider,
-                prescriptionTemplateService,
+                brandingDocumentResolver,
                 moduleBusinessEventPublisher
         );
 
@@ -101,7 +101,7 @@ class NotificationActionServiceReminderTest {
         PlatformTenantManagementService tenantManagementService = Mockito.mock(PlatformTenantManagementService.class);
         PatientRepository patientRepository = Mockito.mock(PatientRepository.class);
         NotificationProvider notificationProvider = Mockito.mock(NotificationProvider.class);
-        PrescriptionTemplateService prescriptionTemplateService = Mockito.mock(PrescriptionTemplateService.class);
+        PrescriptionBrandingDocumentResolver brandingDocumentResolver = Mockito.mock(PrescriptionBrandingDocumentResolver.class);
         ModuleBusinessEventPublisher moduleBusinessEventPublisher = Mockito.mock(ModuleBusinessEventPublisher.class);
 
         NotificationActionService service = new NotificationActionService(
@@ -114,7 +114,7 @@ class NotificationActionServiceReminderTest {
                 tenantManagementService,
                 patientRepository,
                 notificationProvider,
-                prescriptionTemplateService,
+                brandingDocumentResolver,
                 moduleBusinessEventPublisher
         );
 

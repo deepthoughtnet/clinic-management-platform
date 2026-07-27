@@ -3,6 +3,7 @@ package com.deepthoughtnet.clinic.api.prescriptiontemplate;
 import com.deepthoughtnet.clinic.api.prescriptiontemplate.db.PrescriptionTemplateSettings;
 import com.deepthoughtnet.clinic.api.prescriptiontemplate.dto.PrescriptionTemplateRequest;
 import com.deepthoughtnet.clinic.api.prescriptiontemplate.dto.PrescriptionTemplateResponse;
+import com.deepthoughtnet.clinic.api.prescriptiontemplate.service.PrescriptionBrandingDocumentResolver;
 import com.deepthoughtnet.clinic.api.prescriptiontemplate.service.PrescriptionTemplateRecord;
 import com.deepthoughtnet.clinic.api.prescriptiontemplate.service.PrescriptionTemplateService;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
@@ -14,6 +15,7 @@ import org.springframework.http.ContentDisposition;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.http.MediaTypeFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -30,10 +32,16 @@ import org.springframework.web.multipart.MultipartFile;
 @RequestMapping("/api/settings/prescription-template")
 public class PrescriptionTemplateController {
     private final PrescriptionTemplateService templateService;
+    private final PrescriptionBrandingDocumentResolver brandingDocumentResolver;
     private final PrescriptionService prescriptionService;
 
-    public PrescriptionTemplateController(PrescriptionTemplateService templateService, PrescriptionService prescriptionService) {
+    public PrescriptionTemplateController(
+            PrescriptionTemplateService templateService,
+            PrescriptionBrandingDocumentResolver brandingDocumentResolver,
+            PrescriptionService prescriptionService
+    ) {
         this.templateService = templateService;
+        this.brandingDocumentResolver = brandingDocumentResolver;
         this.prescriptionService = prescriptionService;
     }
 
@@ -54,7 +62,8 @@ public class PrescriptionTemplateController {
     public PrescriptionTemplateResponse save(@RequestBody PrescriptionTemplateRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
-        return toResponse(templateService.save(tenantId, actorAppUserId, settings(request)));
+        PrescriptionTemplateRecord current = templateService.getActive(tenantId);
+        return toResponse(templateService.save(tenantId, actorAppUserId, settings(mergeSaveRequest(current, request))));
     }
 
     @PostMapping(value = "/preview", produces = MediaType.APPLICATION_PDF_VALUE)
@@ -62,7 +71,8 @@ public class PrescriptionTemplateController {
     public ResponseEntity<byte[]> preview(@RequestBody PrescriptionTemplateRequest request, @RequestParam(required = false) UUID prescriptionId) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
-        PrescriptionPdf pdf = prescriptionService.generateTemplatePreviewPdf(tenantId, prescriptionId, actorAppUserId, templateService.toPdfConfig(new PrescriptionTemplateRecord(null, tenantId, 0, true, parseUuid(request.clinicLogoDocumentId()), request.headerText(), request.footerText(), request.primaryColor(), request.accentColor(), request.disclaimer(), request.doctorSignatureText(), request.showQrCode() == null || request.showQrCode(), request.watermarkText(), actorAppUserId, null, null)));
+        PrescriptionTemplateRecord merged = mergePreviewTemplate(tenantId, request, actorAppUserId);
+        PrescriptionPdf pdf = prescriptionService.generateTemplatePreviewPdf(tenantId, prescriptionId, actorAppUserId, brandingDocumentResolver.resolve(tenantId, merged));
         return ResponseEntity.ok()
                 .contentType(MediaType.APPLICATION_PDF)
                 .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.inline().filename(pdf.filename()).build().toString())
@@ -77,7 +87,7 @@ public class PrescriptionTemplateController {
         return toResponse(templateService.uploadLogo(tenantId, actorAppUserId, file));
     }
 
-    @GetMapping(value = "/logo", produces = {MediaType.IMAGE_PNG_VALUE, MediaType.IMAGE_JPEG_VALUE, "image/webp"})
+    @GetMapping("/logo")
     @PreAuthorize("@permissionChecker.hasPermission('clinic.profile.read')")
     public ResponseEntity<byte[]> getLogo() {
         UUID tenantId = RequestContextHolder.requireTenantId();
@@ -89,7 +99,7 @@ public class PrescriptionTemplateController {
                 .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.NOT_FOUND, "Logo not found"));
         return ResponseEntity.ok()
                 .cacheControl(CacheControl.noCache().cachePrivate())
-                .contentType(MediaType.parseMediaType(asset.contentType()))
+                .contentType(resolveLogoContentType(asset.contentType(), asset.fileName()))
                 .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.inline().filename(asset.fileName() == null ? "clinic-logo" : asset.fileName()).build().toString())
                 .body(asset.bytes());
     }
@@ -104,6 +114,45 @@ public class PrescriptionTemplateController {
 
     private PrescriptionTemplateSettings settings(PrescriptionTemplateRequest request) {
         return new PrescriptionTemplateSettings(parseUuid(request.clinicLogoDocumentId()), request.headerText(), request.footerText(), request.primaryColor(), request.accentColor(), request.disclaimer(), request.doctorSignatureText(), request.showQrCode() == null || request.showQrCode(), request.watermarkText());
+    }
+
+    private PrescriptionTemplateRequest mergeSaveRequest(PrescriptionTemplateRecord current, PrescriptionTemplateRequest request) {
+        if (request == null) {
+            return null;
+        }
+        return new PrescriptionTemplateRequest(
+                request.clinicLogoDocumentId() != null ? request.clinicLogoDocumentId() : current == null || current.clinicLogoDocumentId() == null ? null : current.clinicLogoDocumentId().toString(),
+                request.headerText() != null ? request.headerText() : current == null ? null : current.headerText(),
+                request.footerText() != null ? request.footerText() : current == null ? null : current.footerText(),
+                request.primaryColor() != null ? request.primaryColor() : current == null ? null : current.primaryColor(),
+                request.accentColor() != null ? request.accentColor() : current == null ? null : current.accentColor(),
+                request.disclaimer() != null ? request.disclaimer() : current == null ? null : current.disclaimer(),
+                request.doctorSignatureText() != null ? request.doctorSignatureText() : current == null ? null : current.doctorSignatureText(),
+                request.showQrCode() != null ? request.showQrCode() : current == null ? null : current.showQrCode(),
+                request.watermarkText() != null ? request.watermarkText() : current == null ? null : current.watermarkText()
+        );
+    }
+
+    private PrescriptionTemplateRecord mergePreviewTemplate(UUID tenantId, PrescriptionTemplateRequest request, UUID actorAppUserId) {
+        PrescriptionTemplateRecord current = templateService.getActive(tenantId);
+        return new PrescriptionTemplateRecord(
+                current == null ? null : current.id(),
+                tenantId,
+                current == null ? 0 : current.templateVersion(),
+                true,
+                request.clinicLogoDocumentId() != null ? parseUuid(request.clinicLogoDocumentId()) : current == null ? null : current.clinicLogoDocumentId(),
+                request.headerText() != null ? request.headerText() : current == null ? null : current.headerText(),
+                request.footerText() != null ? request.footerText() : current == null ? null : current.footerText(),
+                request.primaryColor() != null ? request.primaryColor() : current == null ? null : current.primaryColor(),
+                request.accentColor() != null ? request.accentColor() : current == null ? null : current.accentColor(),
+                request.disclaimer() != null ? request.disclaimer() : current == null ? null : current.disclaimer(),
+                request.doctorSignatureText() != null ? request.doctorSignatureText() : current == null ? null : current.doctorSignatureText(),
+                request.showQrCode() == null ? current == null || current.showQrCode() : request.showQrCode(),
+                request.watermarkText() != null ? request.watermarkText() : current == null ? null : current.watermarkText(),
+                actorAppUserId,
+                current == null ? null : current.createdAt(),
+                current == null ? null : current.updatedAt()
+        );
     }
 
     private UUID parseUuid(String value) {
@@ -139,5 +188,16 @@ public class PrescriptionTemplateController {
         }
         long version = record.updatedAt().toInstant().toEpochMilli();
         return "/api/settings/prescription-template/logo?v=%d".formatted(version);
+    }
+
+    private MediaType resolveLogoContentType(String contentType, String fileName) {
+        if (contentType != null && !contentType.isBlank()) {
+            try {
+                return MediaType.parseMediaType(contentType);
+            } catch (IllegalArgumentException ignored) {
+                // Fall through to filename-based inference below.
+            }
+        }
+        return MediaTypeFactory.getMediaType(fileName).orElse(MediaType.APPLICATION_OCTET_STREAM);
     }
 }

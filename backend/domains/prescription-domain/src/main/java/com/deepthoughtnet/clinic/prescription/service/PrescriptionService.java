@@ -23,6 +23,7 @@ import com.deepthoughtnet.clinic.prescription.service.model.MedicineType;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionMedicineCommand;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionMedicineRecord;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionPdf;
+import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionBrandingDocument;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionRecord;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionStatus;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionTemplateConfig;
@@ -34,9 +35,15 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionLogoAsset;
-import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.awt.BasicStroke;
+import java.awt.Color;
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
+import java.awt.geom.Ellipse2D;
+import java.awt.geom.RoundRectangle2D;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
@@ -56,16 +63,35 @@ import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.font.PDFont;
 import org.apache.pdfbox.pdmodel.font.PDType1Font;
 import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
-import org.apache.pdfbox.pdmodel.graphics.image.LosslessFactory;
 import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
+import org.apache.pdfbox.pdmodel.graphics.image.LosslessFactory;
 import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 @Service
 public class PrescriptionService {
+    static {
+        System.setProperty("java.awt.headless", "true");
+    }
+
+    private static final Logger log = LoggerFactory.getLogger(PrescriptionService.class);
     private static final String ENTITY_TYPE = "PRESCRIPTION";
+    private static final float HEADER_LOGO_BOX_WIDTH = 68f;
+    private static final float HEADER_LOGO_BOX_HEIGHT = 52f;
+    private static final float HEADER_LOGO_BOX_PADDING = 5f;
+    private static final float HEADER_LOGO_TEXT_GAP = 16f;
+    private static final float HEADER_ACCENT_BAR_HEIGHT = 10f;
+    private static final float HEADER_ACCENT_GAP = 14f;
+    private static final float HEADER_BOTTOM_PADDING = 14f;
+    private static final Color DEFAULT_PLACEHOLDER_FILL = new Color(244, 248, 247);
+    private static final Color DEFAULT_PLACEHOLDER_BORDER = new Color(16, 109, 103);
+    private static final Color DEFAULT_PLACEHOLDER_ACCENT = new Color(25, 130, 121);
+    private static final Color DEFAULT_PLACEHOLDER_STROKE = new Color(255, 255, 255, 220);
 
     private final PrescriptionRepository prescriptionRepository;
     private final PrescriptionMedicineRepository medicineRepository;
@@ -78,7 +104,6 @@ public class PrescriptionService {
     private final ModuleBusinessEventPublisher moduleBusinessEventPublisher;
     private final ObjectMapper objectMapper;
     private final BrandingProperties brandingProperties;
-    private final PrescriptionLogoResolver prescriptionLogoResolver;
 
     public PrescriptionService(
             PrescriptionRepository prescriptionRepository,
@@ -91,8 +116,7 @@ public class PrescriptionService {
             AuditEventPublisher auditEventPublisher,
             ModuleBusinessEventPublisher moduleBusinessEventPublisher,
             ObjectMapper objectMapper,
-            BrandingProperties brandingProperties,
-            PrescriptionLogoResolver prescriptionLogoResolver
+            BrandingProperties brandingProperties
     ) {
         this.prescriptionRepository = prescriptionRepository;
         this.medicineRepository = medicineRepository;
@@ -105,7 +129,6 @@ public class PrescriptionService {
         this.moduleBusinessEventPublisher = moduleBusinessEventPublisher;
         this.objectMapper = objectMapper;
         this.brandingProperties = brandingProperties;
-        this.prescriptionLogoResolver = prescriptionLogoResolver;
     }
 
     @Transactional(readOnly = true)
@@ -306,27 +329,36 @@ public class PrescriptionService {
         PrescriptionEntity entity = findEntity(tenantId, id);
         PrescriptionData data = tenantData(tenantId);
         audit(tenantId, entity, "prescription.pdf_generated", actorAppUserId, "Generated prescription PDF");
-        return createPdf(data.tenantName(), entity, data, PrescriptionTemplateConfig.defaults(), false);
+        return createPdf(data.tenantName(), entity, data, PrescriptionBrandingDocument.defaults(), false);
     }
 
     @Transactional
     public PrescriptionPdf generatePdf(UUID tenantId, UUID id, UUID actorAppUserId, PrescriptionTemplateConfig templateConfig) {
+        return generatePdf(tenantId, id, actorAppUserId, PrescriptionBrandingDocument.fromTemplateConfig(templateConfig));
+    }
+
+    @Transactional
+    public PrescriptionPdf generatePdf(UUID tenantId, UUID id, UUID actorAppUserId, PrescriptionBrandingDocument brandingDocument) {
         PrescriptionEntity entity = findEntity(tenantId, id);
         PrescriptionData data = tenantData(tenantId);
         audit(tenantId, entity, "prescription.pdf_generated", actorAppUserId, "Generated branded prescription PDF");
-        return createPdf(data.tenantName(), entity, data, templateConfig == null ? PrescriptionTemplateConfig.defaults() : templateConfig, false);
+        return createPdf(data.tenantName(), entity, data, brandingDocument == null ? PrescriptionBrandingDocument.defaults() : brandingDocument, false);
     }
 
-    @Transactional(readOnly = true)
     public PrescriptionPdf generateTemplatePreviewPdf(UUID tenantId, UUID prescriptionId, UUID actorAppUserId, PrescriptionTemplateConfig templateConfig) {
+        return generateTemplatePreviewPdf(tenantId, prescriptionId, actorAppUserId, PrescriptionBrandingDocument.fromTemplateConfig(templateConfig));
+    }
+
+    public PrescriptionPdf generateTemplatePreviewPdf(UUID tenantId, UUID prescriptionId, UUID actorAppUserId, PrescriptionBrandingDocument brandingDocument) {
         PrescriptionEntity entity = prescriptionId == null
                 ? null
                 : prescriptionRepository.findByTenantIdAndId(tenantId, prescriptionId).orElse(null);
         PrescriptionData data = tenantData(tenantId);
+        PrescriptionBrandingDocument safeBranding = brandingDocument == null ? PrescriptionBrandingDocument.defaults() : brandingDocument;
         if (entity != null) {
-            return createPdf(data.tenantName(), entity, data, templateConfig == null ? PrescriptionTemplateConfig.defaults() : templateConfig, true);
+            return createPdf(data.tenantName(), entity, data, safeBranding, true);
         }
-        return createSamplePdf(data.tenantName(), data, templateConfig == null ? PrescriptionTemplateConfig.defaults() : templateConfig);
+        return createSamplePdf(tenantId, data.tenantName(), data, safeBranding);
     }
 
     private PrescriptionEntity findEntity(UUID tenantId, UUID id) {
@@ -650,7 +682,9 @@ public class PrescriptionService {
         throw new IllegalStateException("Unable to generate unique prescription number");
     }
 
-    private PrescriptionPdf createPdf(String tenantName, PrescriptionEntity entity, PrescriptionData data, PrescriptionTemplateConfig template, boolean preview) {
+    private PrescriptionPdf createPdf(String tenantName, PrescriptionEntity entity, PrescriptionData data, PrescriptionBrandingDocument branding, boolean preview) {
+        PrescriptionBrandingDocument safeBranding = branding == null ? PrescriptionBrandingDocument.defaults() : branding;
+        PrescriptionTemplateConfig template = safeBranding.templateConfig();
         PrescriptionRecord record = toRecord(entity, data);
         ConsultationRecord consultation = consultationService.findById(entity.getTenantId(), entity.getConsultationId()).orElse(null);
         ConsultationRecord previousConsultation = consultationService.listByPatient(entity.getTenantId(), entity.getPatientId()).stream()
@@ -666,7 +700,7 @@ public class PrescriptionService {
             PdfRenderState state = new PdfRenderState(document, margin, primary, accent);
             try {
                 state.startPage();
-                state.y = drawPremiumHeader(document, state, vm, template, loadClinicLogo(entity.getTenantId(), template));
+                state.y = drawPremiumHeader(document, state, vm, template, logoAsset(safeBranding), entity.getTenantId(), safeBranding.logoFallbackReason());
                 state.y = drawPatientInfoGrid(state, vm, contentWidth);
 
                 state.y = drawSectionHeader(state, "History & Previous Records", contentWidth);
@@ -714,11 +748,11 @@ public class PrescriptionService {
         }
     }
 
-    private PrescriptionPdf createSamplePdf(String tenantName, PrescriptionData data, PrescriptionTemplateConfig template) {
-        PrescriptionEntity sample = PrescriptionEntity.create(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), null, "RX-PREVIEW");
+    private PrescriptionPdf createSamplePdf(UUID tenantId, String tenantName, PrescriptionData data, PrescriptionBrandingDocument branding) {
+        PrescriptionEntity sample = PrescriptionEntity.create(tenantId, UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), null, "RX-PREVIEW");
         sample.update("Sample diagnosis", "Hydration, rest, and follow-up if symptoms worsen.", LocalDate.now().plusDays(7));
         PrescriptionData emptyData = new PrescriptionData(Map.of(), Map.of(), data.tenantName(), data.clinicDisplayName(), data.clinicDisplayName(), data.clinicAddress(), data.clinicPhone(), data.clinicEmail(), data.registrationNumber());
-        return createPdf(tenantName, sample, emptyData, template, true);
+        return createPdf(tenantName, sample, emptyData, branding, true);
     }
 
     private float[] parseRgb(String hex, int fallbackR, int fallbackG, int fallbackB) {
@@ -805,45 +839,27 @@ public class PrescriptionService {
         }
         return pieces;
     }
-    private float drawPremiumHeader(PDDocument document, PdfRenderState state, PrescriptionPdfViewModel vm, PrescriptionTemplateConfig template, BufferedImage clinicLogo) throws IOException {
-        float logoSize = clinicLogo == null ? 0f : 46f;
-        float headerHeight = clinicLogo == null ? 108f : 118f;
-        state.ensureSpace(headerHeight);
-        PDPageContentStream content = state.content;
-        float y = state.y;
+    private float drawPremiumHeader(PDDocument document, PdfRenderState state, PrescriptionPdfViewModel vm, PrescriptionTemplateConfig template, Optional<PrescriptionLogoAsset> clinicLogoAsset, UUID tenantId, String fallbackReason) throws IOException {
+        HeaderLogoImage logoImage = createHeaderLogoImage(document, tenantId, clinicLogoAsset, fallbackReason);
+        PDFont clinicFont = new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD);
+        PDFont detailBoldFont = new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD);
+        PDFont detailFont = new PDType1Font(Standard14Fonts.FontName.HELVETICA);
+        float headerTop = state.y;
         float x = state.margin;
         float width = state.page.getMediaBox().getWidth() - (state.margin * 2);
-
-        content.setNonStrokingColor(1f, 1f, 1f);
-        content.addRect(x, y - headerHeight + 6, width, headerHeight - 6);
-        content.fill();
-        content.setStrokingColor(state.primary[0], state.primary[1], state.primary[2]);
-        content.addRect(x, y - headerHeight + 6, width, headerHeight - 6);
-        content.stroke();
-        content.setNonStrokingColor(state.primary[0], state.primary[1], state.primary[2]);
-        content.addRect(x, y - 10, width, 10);
-        content.fill();
-        content.setNonStrokingColor(0, 0, 0);
-
-        float textX = x + 6;
-        float textTop = y - 28;
-        if (clinicLogo != null) {
-            PDImageXObject image = LosslessFactory.createFromImage(document, clinicLogo);
-            content.drawImage(image, x + 6, y - 6 - logoSize, logoSize, logoSize);
-            textX = x + logoSize + 18f;
-            textTop = y - 20;
+        float logoBoxX = x;
+        float contentTop = headerTop - HEADER_ACCENT_BAR_HEIGHT - HEADER_ACCENT_GAP;
+        float textX = logoBoxX + HEADER_LOGO_BOX_WIDTH + HEADER_LOGO_TEXT_GAP;
+        float textWidth = width - (textX - x);
+        List<String> clinicNameLines = wrap(cleanText(vm.clinicName()), clinicFont, 16f, textWidth);
+        if (clinicNameLines.isEmpty()) {
+            clinicNameLines = List.of("Clinic");
         }
-
-        writeLine(content, cleanText(vm.clinicName()), 17f, textX, textTop, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
         String doctorName = cleanText(vm.doctorName());
         String doctorLine = StringUtils.hasText(doctorName) ? "Dr. " + doctorName : "Doctor";
-        writeLine(content, doctorLine, 10.4f, textX, textTop - 16, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
-
+        List<String> doctorLines = wrap(doctorLine, detailBoldFont, 10.2f, textWidth);
         String signature = cleanText(template.doctorSignatureText());
-        if (StringUtils.hasText(signature)) {
-            writeLine(content, signature, 9f, textX, textTop - 28, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
-        }
-
+        List<String> signatureLines = StringUtils.hasText(signature) ? wrap(signature, detailFont, 9f, textWidth) : List.of();
         List<String> contactParts = Stream.of(
                         cleanText(vm.clinicRegistrationNumber()),
                         cleanText(vm.clinicAddress()),
@@ -851,14 +867,88 @@ public class PrescriptionService {
                         cleanText(vm.clinicEmail()))
                 .filter(StringUtils::hasText)
                 .toList();
-        if (!contactParts.isEmpty()) {
-            state.y = textTop - 36;
-            state.y = writeWrapped(state, String.join("  •  ", contactParts), 8.7f, textX, width - (textX - x) - 8, false);
-        } else {
-            state.y = textTop - 40;
+        List<String> contactLines = contactParts.isEmpty()
+                ? List.of()
+                : wrap(String.join("  •  ", contactParts), detailFont, 8.6f, textWidth);
+        float textBlockHeight = (clinicNameLines.size() * 18f)
+                + 5f
+                + (doctorLines.size() * 12f)
+                + (signatureLines.isEmpty() ? 0f : 4f + (signatureLines.size() * 11f))
+                + (contactLines.isEmpty() ? 0f : 5f + (contactLines.size() * 10f));
+        float bodyHeight = Math.max(HEADER_LOGO_BOX_HEIGHT, textBlockHeight);
+        float headerHeight = HEADER_ACCENT_BAR_HEIGHT + HEADER_ACCENT_GAP + bodyHeight + HEADER_BOTTOM_PADDING + 4f;
+        state.ensureSpace(headerHeight);
+        PDPageContentStream content = state.content;
+        float y = state.y;
+
+        content.setNonStrokingColor(state.primary[0], state.primary[1], state.primary[2]);
+        content.addRect(x, y - HEADER_ACCENT_BAR_HEIGHT, width, HEADER_ACCENT_BAR_HEIGHT);
+        content.fill();
+        content.setNonStrokingColor(0, 0, 0);
+
+        float logoBoxY = contentTop - ((bodyHeight - HEADER_LOGO_BOX_HEIGHT) / 2f) - HEADER_LOGO_BOX_HEIGHT;
+        drawHeaderLogoBox(content, logoBoxX, logoBoxY, HEADER_LOGO_BOX_WIDTH, HEADER_LOGO_BOX_HEIGHT);
+        float drawWidth = logoImage.image().getWidth();
+        float drawHeight = logoImage.image().getHeight();
+        float insetWidth = HEADER_LOGO_BOX_WIDTH - (HEADER_LOGO_BOX_PADDING * 2f);
+        float insetHeight = HEADER_LOGO_BOX_HEIGHT - (HEADER_LOGO_BOX_PADDING * 2f);
+        float scale = Math.min(insetWidth / drawWidth, insetHeight / drawHeight);
+        float scaledWidth = drawWidth * scale;
+        float scaledHeight = drawHeight * scale;
+        float drawX = logoBoxX + HEADER_LOGO_BOX_PADDING + ((insetWidth - scaledWidth) / 2f);
+        float drawY = logoBoxY + HEADER_LOGO_BOX_PADDING + ((insetHeight - scaledHeight) / 2f);
+        content.drawImage(logoImage.image(), drawX, drawY, scaledWidth, scaledHeight);
+        log.debug(
+                "prescription.pdf.logo.draw tenantId={} customConfigured={} fallbackReason={} width={} height={} drawWidth={} drawHeight={}",
+                tenantId,
+                logoImage.customLogoConfigured(),
+                logoImage.fallbackReason(),
+                drawWidth,
+                drawHeight,
+                scaledWidth,
+                scaledHeight
+        );
+
+        float textBaseline = contentTop - 13f;
+        for (String line : clinicNameLines) {
+            writeLine(content, line, 16f, textX, textBaseline, clinicFont);
+            textBaseline -= 18f;
         }
-        state.y -= 10;
+        textBaseline -= 5f;
+        for (String line : doctorLines) {
+            writeLine(content, line, 10.2f, textX, textBaseline, detailBoldFont);
+            textBaseline -= 12f;
+        }
+        if (!signatureLines.isEmpty()) {
+            textBaseline -= 4f;
+            for (String line : signatureLines) {
+                writeLine(content, line, 9f, textX, textBaseline, detailFont);
+                textBaseline -= 11f;
+            }
+        }
+        if (!contactLines.isEmpty()) {
+            textBaseline -= 5f;
+            for (String line : contactLines) {
+                writeLine(content, line, 8.6f, textX, textBaseline, detailFont);
+                textBaseline -= 10f;
+            }
+        }
+
+        float dividerY = y - headerHeight + 4f;
+        content.setStrokingColor(state.accent[0], state.accent[1], state.accent[2]);
+        content.moveTo(x, dividerY);
+        content.lineTo(x + width, dividerY);
+        content.stroke();
+        content.setNonStrokingColor(0, 0, 0);
+        state.y = dividerY - 12f;
         return state.y;
+    }
+
+    private void drawHeaderLogoBox(PDPageContentStream content, float x, float y, float width, float height) throws IOException {
+        content.setNonStrokingColor(1f, 1f, 1f);
+        content.addRect(x, y, width, height);
+        content.fill();
+        content.setNonStrokingColor(0, 0, 0);
     }
 
     private float drawPatientInfoGrid(PdfRenderState state, PrescriptionPdfViewModel vm, float width) throws IOException {
@@ -1211,27 +1301,122 @@ public class PrescriptionService {
         state.content.setNonStrokingColor(0, 0, 0);
     }
 
-    private BufferedImage loadClinicLogo(UUID tenantId, PrescriptionTemplateConfig template) {
-        if (template == null || !StringUtils.hasText(template.clinicLogoDocumentId())) {
-            return null;
+    private Optional<PrescriptionLogoAsset> logoAsset(PrescriptionBrandingDocument branding) {
+        if (branding == null || branding.logoBytes() == null || branding.logoBytes().length == 0) {
+            return Optional.empty();
         }
+        return Optional.of(new PrescriptionLogoAsset(branding.logoBytes(), branding.logoContentType(), branding.logoFileName()));
+    }
+
+    private HeaderLogoImage createHeaderLogoImage(PDDocument document, UUID tenantId, Optional<PrescriptionLogoAsset> clinicLogoAsset, String fallbackReason) throws IOException {
+        if (clinicLogoAsset == null || clinicLogoAsset.isEmpty()) {
+            return new HeaderLogoImage(createDefaultClinicLogoImage(document), false, fallbackReason == null ? "NOT_CONFIGURED" : fallbackReason);
+        }
+        PrescriptionLogoAsset asset = clinicLogoAsset.get();
+        byte[] bytes = asset.bytes();
+        if (bytes == null || bytes.length == 0) {
+            log.warn("prescription.pdf.logo.empty-bytes tenantId={} fileName={}", tenantId, asset.fileName());
+            return new HeaderLogoImage(createDefaultClinicLogoImage(document), true, "empty-logo-bytes");
+        }
+        String contentType = normalizeLogoContentType(asset.contentType(), asset.fileName());
         try {
-            UUID logoDocumentId = UUID.fromString(template.clinicLogoDocumentId().trim());
-            return prescriptionLogoResolver.resolve(tenantId, logoDocumentId)
-                    .map(asset -> {
-                        try {
-                            if (asset.bytes() == null || asset.bytes().length == 0) {
-                                return null;
-                            }
-                            return ImageIO.read(new java.io.ByteArrayInputStream(asset.bytes()));
-                        } catch (IOException ex) {
-                            return null;
-                        }
-                    })
-                    .orElse(null);
-        } catch (IllegalArgumentException ex) {
-            return null;
+            BufferedImage decoded = ImageIO.read(new ByteArrayInputStream(bytes));
+            if (decoded == null) {
+                log.warn(
+                        "prescription.pdf.logo.decode-failed tenantId={} contentType={} fileName={} reason=unreadable-bytes",
+                        tenantId,
+                        contentType,
+                        asset.fileName()
+                );
+                return new HeaderLogoImage(createDefaultClinicLogoImage(document), true, "unreadable-logo-bytes");
+            }
+            PDImageXObject image = LosslessFactory.createFromImage(document, decoded);
+            log.debug(
+                    "prescription.pdf.logo.decoded tenantId={} contentType={} fileName={} width={} height={} bytes={}",
+                    tenantId,
+                    contentType,
+                    asset.fileName(),
+                    decoded.getWidth(),
+                    decoded.getHeight(),
+                    bytes.length
+            );
+            log.debug("prescription.pdf.logo.selection tenantId={} selectedSource=CUSTOM_LOGO", tenantId);
+            return new HeaderLogoImage(image, true, null);
+        } catch (IOException | RuntimeException ex) {
+            log.warn(
+                    "prescription.pdf.logo.decode-failed tenantId={} contentType={} fileName={} cause={}",
+                    tenantId,
+                    contentType,
+                    asset.fileName(),
+                    ex.getClass().getSimpleName()
+            );
+            return new HeaderLogoImage(createDefaultClinicLogoImage(document), true, "decode-failed:" + ex.getClass().getSimpleName());
         }
+    }
+
+    private PDImageXObject createDefaultClinicLogoImage(PDDocument document) throws IOException {
+        BufferedImage placeholder = new BufferedImage(240, 180, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D graphics = placeholder.createGraphics();
+        try {
+            graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            graphics.setColor(new Color(255, 255, 255, 0));
+            graphics.fillRect(0, 0, placeholder.getWidth(), placeholder.getHeight());
+
+            int margin = 22;
+            int boxWidth = placeholder.getWidth() - (margin * 2);
+            int boxHeight = placeholder.getHeight() - (margin * 2);
+            RoundRectangle2D outer = new RoundRectangle2D.Float(margin, margin, boxWidth, boxHeight, 34, 34);
+            graphics.setColor(DEFAULT_PLACEHOLDER_FILL);
+            graphics.fill(outer);
+            graphics.setColor(DEFAULT_PLACEHOLDER_BORDER);
+            graphics.setStroke(new BasicStroke(6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            graphics.draw(outer);
+
+            int centerX = placeholder.getWidth() / 2;
+            int centerY = placeholder.getHeight() / 2;
+            int verticalArm = 46;
+            int horizontalArm = 46;
+            graphics.setColor(DEFAULT_PLACEHOLDER_ACCENT);
+            graphics.setStroke(new BasicStroke(14f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            graphics.drawLine(centerX, centerY - verticalArm / 2, centerX, centerY + verticalArm / 2);
+            graphics.drawLine(centerX - horizontalArm / 2, centerY, centerX + horizontalArm / 2, centerY);
+
+            graphics.setColor(DEFAULT_PLACEHOLDER_STROKE);
+            graphics.fill(new Ellipse2D.Float(centerX - 16f, centerY - 16f, 32f, 32f));
+            graphics.setColor(DEFAULT_PLACEHOLDER_BORDER);
+            graphics.setStroke(new BasicStroke(5f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            graphics.draw(new Ellipse2D.Float(centerX - 16f, centerY - 16f, 32f, 32f));
+        } finally {
+            graphics.dispose();
+        }
+        return LosslessFactory.createFromImage(document, placeholder);
+    }
+
+    private String normalizeLogoContentType(String contentType, String fileName) {
+        if (StringUtils.hasText(contentType)) {
+            String normalized = contentType.trim().toLowerCase();
+            if ("image/jpg".equals(normalized)) {
+                return "image/jpeg";
+            }
+            return normalized;
+        }
+        if (!StringUtils.hasText(fileName)) {
+            return "application/octet-stream";
+        }
+        String lower = fileName.trim().toLowerCase();
+        if (lower.endsWith(".png")) {
+            return "image/png";
+        }
+        if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) {
+            return "image/jpeg";
+        }
+        if (lower.endsWith(".webp")) {
+            return "image/webp";
+        }
+        return "application/octet-stream";
+    }
+
+    private record HeaderLogoImage(PDImageXObject image, boolean customLogoConfigured, String fallbackReason) {
     }
 
 

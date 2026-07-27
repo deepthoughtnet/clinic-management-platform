@@ -32,7 +32,7 @@ import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.billing.events.PaymentReminderEvent;
 import com.deepthoughtnet.clinic.platform.modulith.events.ModuleBusinessEventPublisher;
 import com.deepthoughtnet.clinic.prescription.service.PrescriptionService;
-import com.deepthoughtnet.clinic.api.prescriptiontemplate.service.PrescriptionTemplateService;
+import com.deepthoughtnet.clinic.api.prescriptiontemplate.service.PrescriptionBrandingDocumentResolver;
 import com.deepthoughtnet.clinic.vaccination.service.VaccinationService;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -76,7 +76,7 @@ class NotificationActionServiceTest {
                 mock(PlatformTenantManagementService.class),
                 patientRepository,
                 notificationProvider,
-                mock(PrescriptionTemplateService.class),
+                mock(PrescriptionBrandingDocumentResolver.class),
                 moduleBusinessEventPublisher
         );
 

@@ -4,11 +4,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.deepthoughtnet.clinic.api.clinicaldocument.db.ClinicalDocumentType;
 import com.deepthoughtnet.clinic.api.clinicaldocument.service.ClinicalDocumentRecord;
 import com.deepthoughtnet.clinic.api.clinicaldocument.service.ClinicalDocumentService;
+import com.deepthoughtnet.clinic.api.clinicaldocument.service.ClinicalDocumentUploadCommand;
 import com.deepthoughtnet.clinic.api.prescriptiontemplate.db.PrescriptionTemplateEntity;
 import com.deepthoughtnet.clinic.api.prescriptiontemplate.db.PrescriptionTemplateRepository;
 import com.deepthoughtnet.clinic.api.prescriptiontemplate.db.PrescriptionTemplateSettings;
@@ -29,7 +32,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.web.server.ResponseStatusException;
-import org.springframework.web.server.ResponseStatusException;
+import org.mockito.ArgumentCaptor;
 
 class PrescriptionTemplateServiceTest {
     private static final UUID TENANT_ID = UUID.randomUUID();
@@ -78,6 +81,35 @@ class PrescriptionTemplateServiceTest {
         assertThat(saved.active()).isTrue();
         assertThat(history).hasSize(1);
         assertThat(history.get(0).getClinicLogoDocumentId()).isEqualTo(DOCUMENT_ID);
+        ArgumentCaptor<ClinicalDocumentUploadCommand> captor = ArgumentCaptor.forClass(ClinicalDocumentUploadCommand.class);
+        verify(clinicalDocumentService).upload(captor.capture());
+        assertThat(captor.getValue().mediaType()).isEqualTo("image/png");
+        assertThat(captor.getValue().originalFilename()).isEqualTo("clinic-logo.png");
+        assertThat(ImageIO.read(new java.io.ByteArrayInputStream(captor.getValue().bytes()))).isNotNull();
+    }
+
+    @Test
+    void uploadLogoNormalizesJpegToPngForPdfRendering() throws Exception {
+        MockMultipartFile file = new MockMultipartFile("file", "clinic-logo.jpg", "image/jpeg", jpegBytes());
+        when(clinicalDocumentService.upload(any())).thenReturn(clinicalDocumentRecord(DOCUMENT_ID, TENANT_ID, ACTOR_ID, "clinic-logo.png", "image/png"));
+
+        service.uploadLogo(TENANT_ID, ACTOR_ID, file);
+
+        ArgumentCaptor<ClinicalDocumentUploadCommand> captor = ArgumentCaptor.forClass(ClinicalDocumentUploadCommand.class);
+        verify(clinicalDocumentService).upload(captor.capture());
+        assertThat(captor.getValue().mediaType()).isEqualTo("image/png");
+        assertThat(captor.getValue().originalFilename()).isEqualTo("clinic-logo.png");
+        assertThat(ImageIO.read(new java.io.ByteArrayInputStream(captor.getValue().bytes()))).isNotNull();
+    }
+
+    @Test
+    void uploadLogoRejectsCorruptSupportedMimeBeforePersistence() {
+        MockMultipartFile file = new MockMultipartFile("file", "clinic-logo.png", "image/png", new byte[] {1, 2, 3, 4});
+
+        assertThatThrownBy(() -> service.uploadLogo(TENANT_ID, ACTOR_ID, file))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("corrupt or unsupported");
+        verify(clinicalDocumentService, never()).upload(any());
     }
 
     @Test
@@ -131,19 +163,51 @@ class PrescriptionTemplateServiceTest {
     }
 
     @Test
-    void resolvePropagatesDatabaseFailuresWithoutRollingBackTheCaller() {
-        when(clinicalDocumentService.get(TENANT_ID, DOCUMENT_ID)).thenThrow(new DataAccessResourceFailureException("database unavailable"));
+    void resolveLoadsBytesFromStorageWithoutRepairWrite() {
+        ClinicalDocumentRecord document = clinicalDocumentRecord(DOCUMENT_ID, TENANT_ID, ACTOR_ID, "clinic-logo.png", "image/png");
+        byte[] bytes = pngBytes();
+        when(clinicalDocumentService.get(TENANT_ID, DOCUMENT_ID)).thenReturn(document);
+        when(objectStorageService.getObjectBytes("storage-key")).thenReturn(bytes);
+
+        assertThat(service.resolve(TENANT_ID, DOCUMENT_ID))
+                .hasValueSatisfying(asset -> {
+                    assertThat(asset.bytes()).isEqualTo(bytes);
+                    assertThat(asset.contentType()).isEqualTo("image/png");
+                    assertThat(asset.fileName()).isEqualTo("clinic-logo.png");
+                });
+        verify(clinicalDocumentService, never()).downloadBytes(TENANT_ID, DOCUMENT_ID);
+    }
+
+    @Test
+    void resolvePropagatesStorageFailuresWithoutConvertingThemToMissingLogo() {
+        when(clinicalDocumentService.get(TENANT_ID, DOCUMENT_ID)).thenReturn(clinicalDocumentRecord(DOCUMENT_ID, TENANT_ID, ACTOR_ID, "clinic-logo.png", "image/png"));
+        when(objectStorageService.getObjectBytes("storage-key")).thenThrow(new DataAccessResourceFailureException("storage unavailable"));
 
         assertThatThrownBy(() -> service.resolve(TENANT_ID, DOCUMENT_ID))
                 .isInstanceOf(DataAccessResourceFailureException.class)
-                .hasMessageContaining("database unavailable");
+                .hasMessageContaining("storage unavailable");
     }
 
-    private static byte[] pngBytes() throws Exception {
-        BufferedImage image = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
-        ByteArrayOutputStream output = new ByteArrayOutputStream();
-        ImageIO.write(image, "png", output);
-        return output.toByteArray();
+    private static byte[] pngBytes() {
+        try {
+            BufferedImage image = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            ImageIO.write(image, "png", output);
+            return output.toByteArray();
+        } catch (Exception ex) {
+            throw new IllegalStateException("Unable to create test PNG", ex);
+        }
+    }
+
+    private static byte[] jpegBytes() {
+        try {
+            BufferedImage image = new BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB);
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            ImageIO.write(image, "jpg", output);
+            return output.toByteArray();
+        } catch (Exception ex) {
+            throw new IllegalStateException("Unable to create test JPEG", ex);
+        }
     }
 
     private static ClinicalDocumentRecord clinicalDocumentRecord(UUID id, UUID tenantId, UUID uploadedBy, String fileName, String mediaType) {

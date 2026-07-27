@@ -24,6 +24,7 @@ import com.deepthoughtnet.clinic.api.lab.service.LabService;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderResultRecord;
 import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
+import com.deepthoughtnet.clinic.api.prescriptiontemplate.service.PrescriptionBrandingDocumentResolver;
 import com.deepthoughtnet.clinic.appointment.service.AppointmentService;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentPriority;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentRecord;
@@ -104,6 +105,7 @@ public class PatientPortalService {
     private final LabService labService;
     private final NotificationHistoryService notificationHistoryService;
     private final NotificationActionService notificationActionService;
+    private final PrescriptionBrandingDocumentResolver brandingDocumentResolver;
 
     @Autowired
     public PatientPortalService(
@@ -121,7 +123,8 @@ public class PatientPortalService {
             BillingService billingService,
             LabService labService,
             NotificationHistoryService notificationHistoryService,
-            NotificationActionService notificationActionService
+            NotificationActionService notificationActionService,
+            PrescriptionBrandingDocumentResolver brandingDocumentResolver
     ) {
         this.appUserRepository = appUserRepository;
         this.tenantRepository = tenantRepository;
@@ -138,6 +141,44 @@ public class PatientPortalService {
         this.labService = labService;
         this.notificationHistoryService = notificationHistoryService;
         this.notificationActionService = notificationActionService;
+        this.brandingDocumentResolver = brandingDocumentResolver;
+    }
+
+    public PatientPortalService(
+            AppUserRepository appUserRepository,
+            TenantRepository tenantRepository,
+            PatientRepository patientRepository,
+            ClinicProfileService clinicProfileService,
+            TenantUserManagementService tenantUserManagementService,
+            DoctorProfileService doctorProfileService,
+            PatientService patientService,
+            AppUserProvisioner appUserProvisioner,
+            ClinicTimeZoneResolver clinicTimeZoneResolver,
+            AppointmentService appointmentService,
+            PrescriptionService prescriptionService,
+            BillingService billingService,
+            LabService labService,
+            NotificationHistoryService notificationHistoryService,
+            NotificationActionService notificationActionService
+    ) {
+        this(
+                appUserRepository,
+                tenantRepository,
+                patientRepository,
+                clinicProfileService,
+                tenantUserManagementService,
+                doctorProfileService,
+                patientService,
+                appUserProvisioner,
+                clinicTimeZoneResolver,
+                appointmentService,
+                prescriptionService,
+                billingService,
+                labService,
+                notificationHistoryService,
+                notificationActionService,
+                null
+        );
     }
 
     public PatientPortalService(
@@ -167,6 +208,7 @@ public class PatientPortalService {
                 appointmentService,
                 prescriptionService,
                 billingService,
+                null,
                 null,
                 null,
                 null
@@ -664,7 +706,10 @@ public class PatientPortalService {
     public PrescriptionPdf prescriptionPdf(String prescriptionNumber) {
         PatientAccess access = requireCurrentPatientAccess();
         PrescriptionRecord record = findAccessiblePrescription(resolveAccessiblePatientAccesses(access), prescriptionNumber);
-        return prescriptionService.generatePdf(record.tenantId(), record.id(), requireActorAppUserId());
+        if (brandingDocumentResolver == null) {
+            return prescriptionService.generatePdf(record.tenantId(), record.id(), requireActorAppUserId());
+        }
+        return prescriptionService.generatePdf(record.tenantId(), record.id(), requireActorAppUserId(), brandingDocumentResolver.resolveActive(record.tenantId()));
     }
 
     public com.deepthoughtnet.clinic.api.lab.service.model.LabOrderResultPdf labReportPdf(String orderNumber) {

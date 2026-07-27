@@ -10,9 +10,10 @@ import com.deepthoughtnet.clinic.platform.audit.AuditEntityType;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventCommand;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
 import com.deepthoughtnet.clinic.platform.storage.ObjectStorageService;
-import com.deepthoughtnet.clinic.prescription.service.PrescriptionLogoResolver;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionTemplateConfig;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionLogoAsset;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -28,7 +29,7 @@ import javax.imageio.ImageIO;
 import java.io.ByteArrayInputStream;
 
 @Service
-public class PrescriptionTemplateService implements PrescriptionLogoResolver {
+public class PrescriptionTemplateService {
     private static final long MAX_LOGO_SIZE_BYTES = 2L * 1024L * 1024L;
     private static final java.util.Set<String> ALLOWED_LOGO_MIME_TYPES = java.util.Set.of("image/png", "image/jpeg", "image/webp");
 
@@ -88,17 +89,10 @@ public class PrescriptionTemplateService implements PrescriptionLogoResolver {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "actorAppUserId is required");
         }
         validateLogo(file);
-        byte[] bytes = file.getBytes();
+        byte[] bytes = normalizeLogoBytes(file.getBytes());
         String originalFilename = sanitize(file.getOriginalFilename());
-        String mediaType = normalizeLogoContentType(file.getContentType(), originalFilename);
-        validateLogoBytes(mediaType, bytes);
-        if ("image/webp".equals(mediaType)) {
-            if (!looksLikeWebp(bytes)) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Logo file appears to be corrupt or unsupported.");
-            }
-        } else if (ImageIO.read(new ByteArrayInputStream(bytes)) == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Logo file appears to be corrupt or unsupported.");
-        }
+        String mediaType = "image/png";
+        String storedFilename = normalizedLogoFilename(originalFilename);
         ClinicalDocumentRecord document = clinicalDocumentService.upload(new com.deepthoughtnet.clinic.api.clinicaldocument.service.ClinicalDocumentUploadCommand(
                 tenantId,
                 tenantId,
@@ -111,7 +105,7 @@ public class PrescriptionTemplateService implements PrescriptionLogoResolver {
                 "PRESCRIPTION_TEMPLATE",
                 "branding-logo",
                 "INTERNAL_ONLY",
-                originalFilename == null ? "clinic-logo" : originalFilename,
+                storedFilename,
                 mediaType,
                 bytes,
                 "Prescription branding logo"
@@ -124,14 +118,17 @@ public class PrescriptionTemplateService implements PrescriptionLogoResolver {
         return saveLogoReference(tenantId, actorAppUserId, null);
     }
 
-    @Override
     public java.util.Optional<PrescriptionLogoAsset> resolve(UUID tenantId, UUID logoDocumentId) {
         if (tenantId == null || logoDocumentId == null) {
             return java.util.Optional.empty();
         }
         try {
             ClinicalDocumentRecord record = clinicalDocumentService.get(tenantId, logoDocumentId);
-            byte[] bytes = clinicalDocumentService.downloadBytes(tenantId, logoDocumentId);
+            String storageKey = record.storageKey();
+            if (!StringUtils.hasText(storageKey)) {
+                return java.util.Optional.empty();
+            }
+            byte[] bytes = objectStorageService.getObjectBytes(storageKey);
             if (bytes == null || bytes.length == 0) {
                 return java.util.Optional.empty();
             }
@@ -142,10 +139,6 @@ public class PrescriptionTemplateService implements PrescriptionLogoResolver {
                 return java.util.Optional.empty();
             }
             throw ex;
-        } catch (IllegalStateException ex) {
-            return java.util.Optional.empty();
-        } catch (IllegalArgumentException ex) {
-            return java.util.Optional.empty();
         }
     }
 
@@ -229,30 +222,33 @@ public class PrescriptionTemplateService implements PrescriptionLogoResolver {
         }
     }
 
-    private void validateLogoBytes(String mediaType, byte[] bytes) {
+    private byte[] normalizeLogoBytes(byte[] bytes) throws IOException {
         if (bytes == null || bytes.length == 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Logo file cannot be empty");
         }
-        if (!StringUtils.hasText(mediaType)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Logo MIME type is required");
+        BufferedImage decoded = ImageIO.read(new ByteArrayInputStream(bytes));
+        if (decoded == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Logo file appears to be corrupt or unsupported.");
         }
-        if (!ALLOWED_LOGO_MIME_TYPES.contains(mediaType.toLowerCase(Locale.ROOT))) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Logo must be PNG, JPG, JPEG, or WEBP");
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        if (!ImageIO.write(decoded, "png", output)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Logo file could not be normalized for prescription PDFs.");
         }
+        return output.toByteArray();
     }
 
-    private boolean looksLikeWebp(byte[] bytes) {
-        if (bytes == null || bytes.length < 12) {
-            return false;
+    private String normalizedLogoFilename(String originalFilename) {
+        String name = sanitize(originalFilename);
+        if (!StringUtils.hasText(name)) {
+            return "clinic-logo.png";
         }
-        return bytes[0] == 'R'
-                && bytes[1] == 'I'
-                && bytes[2] == 'F'
-                && bytes[3] == 'F'
-                && bytes[8] == 'W'
-                && bytes[9] == 'E'
-                && bytes[10] == 'B'
-                && bytes[11] == 'P';
+        int dot = name.lastIndexOf('.');
+        String base = dot > 0 ? name.substring(0, dot) : name;
+        String cleaned = base.replaceAll("[^A-Za-z0-9._-]", "-");
+        if (!StringUtils.hasText(cleaned)) {
+            cleaned = "clinic-logo";
+        }
+        return cleaned + ".png";
     }
 
     private String normalizeLogoContentType(String contentType, String originalFilename) {

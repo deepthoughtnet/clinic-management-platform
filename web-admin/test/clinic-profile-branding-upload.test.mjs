@@ -46,3 +46,9 @@ test("clinic profile branding upload API stays multipart and uses the file field
   assert.ok(source.includes('httpPostForm<PrescriptionTemplateConfig>("/api/settings/prescription-template/logo", formData, { token, tenantId })'));
   assert.ok(source.includes('logoUrl: string | null;'));
 });
+
+test("authenticated blob fetches use a generic accept header", () => {
+  const source = readWebAdminSource("api/restClient.ts");
+
+  assert.ok(source.includes('headers: buildHeaders(path, { ...opts, accept: opts?.accept || "*/*" }, false),'));
+});

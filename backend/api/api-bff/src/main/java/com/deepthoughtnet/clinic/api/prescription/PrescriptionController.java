@@ -5,7 +5,7 @@ import com.deepthoughtnet.clinic.api.prescription.dto.PrescriptionMedicineReques
 import com.deepthoughtnet.clinic.api.prescription.dto.PrescriptionTestRequest;
 import com.deepthoughtnet.clinic.api.prescription.dto.PrescriptionResponse;
 import com.deepthoughtnet.clinic.api.medicationsafety.MedicationSafetyReviewService;
-import com.deepthoughtnet.clinic.api.prescriptiontemplate.service.PrescriptionTemplateService;
+import com.deepthoughtnet.clinic.api.prescriptiontemplate.service.PrescriptionBrandingDocumentResolver;
 import com.deepthoughtnet.clinic.api.security.DoctorAssignmentSecurityService;
 import com.deepthoughtnet.clinic.api.notifications.NotificationActionService;
 import com.deepthoughtnet.clinic.prescription.service.PrescriptionService;
@@ -45,20 +45,20 @@ public class PrescriptionController {
     private final NotificationActionService notificationActionService;
     private final MedicationSafetyReviewService medicationSafetyReviewService;
     private final DoctorAssignmentSecurityService doctorAssignmentSecurityService;
-    private final PrescriptionTemplateService prescriptionTemplateService;
+    private final PrescriptionBrandingDocumentResolver brandingDocumentResolver;
 
     public PrescriptionController(
             PrescriptionService prescriptionService,
             NotificationActionService notificationActionService,
             MedicationSafetyReviewService medicationSafetyReviewService,
             DoctorAssignmentSecurityService doctorAssignmentSecurityService,
-            PrescriptionTemplateService prescriptionTemplateService
+            PrescriptionBrandingDocumentResolver brandingDocumentResolver
     ) {
         this.prescriptionService = prescriptionService;
         this.notificationActionService = notificationActionService;
         this.medicationSafetyReviewService = medicationSafetyReviewService;
         this.doctorAssignmentSecurityService = doctorAssignmentSecurityService;
-        this.prescriptionTemplateService = prescriptionTemplateService;
+        this.brandingDocumentResolver = brandingDocumentResolver;
     }
 
     @GetMapping
@@ -204,7 +204,7 @@ public class PrescriptionController {
     public ResponseEntity<byte[]> downloadPdf(@PathVariable UUID id) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
-        PrescriptionPdf pdf = prescriptionService.generatePdf(tenantId, id, actorAppUserId, prescriptionTemplateService.toPdfConfig(prescriptionTemplateService.getActive(tenantId)));
+        PrescriptionPdf pdf = prescriptionService.generatePdf(tenantId, id, actorAppUserId, brandingDocumentResolver.resolveActive(tenantId));
         return ResponseEntity.ok()
                 .contentType(MediaType.APPLICATION_PDF)
                 .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment().filename(pdf.filename()).build().toString())

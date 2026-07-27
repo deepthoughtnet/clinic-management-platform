@@ -228,7 +228,7 @@ export async function httpGetText(path: string, opts?: ApiOpts): Promise<string>
 export async function fetchAuthenticatedBlob(path: string, opts?: ApiOpts): Promise<Blob> {
   const res = await fetch(`${baseUrl(opts?.apiBase)}${path}`, {
     method: "GET",
-    headers: buildHeaders(path, opts, false),
+    headers: buildHeaders(path, { ...opts, accept: opts?.accept || "*/*" }, false),
     signal: opts?.signal,
   });
   if (!res.ok) {

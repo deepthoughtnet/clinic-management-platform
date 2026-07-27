@@ -11,6 +11,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
+import com.deepthoughtnet.clinic.clinic.service.model.ClinicProfileRecord;
 import com.deepthoughtnet.clinic.consultation.service.ConsultationService;
 import com.deepthoughtnet.clinic.consultation.service.model.ConsultationRecord;
 import com.deepthoughtnet.clinic.consultation.service.model.ConsultationStatus;
@@ -32,14 +33,20 @@ import com.deepthoughtnet.clinic.prescription.db.PrescriptionTestRepository;
 import com.deepthoughtnet.clinic.prescription.service.model.MedicineType;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionMedicineCommand;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionMedicineRecord;
+import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionBrandingDocument;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionRecord;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionStatus;
+import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionTemplateConfig;
+import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionLogoAsset;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionTestCommand;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionUpsertCommand;
 import com.deepthoughtnet.clinic.prescription.service.model.Timing;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -47,11 +54,17 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.apache.pdfbox.Loader;
+import org.apache.pdfbox.cos.COSName;
 import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDResources;
+import org.apache.pdfbox.pdmodel.graphics.PDXObject;
+import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
 import org.apache.pdfbox.text.PDFTextStripper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import javax.imageio.ImageIO;
+import org.springframework.transaction.annotation.Transactional;
 
 class PrescriptionServiceTest {
     private static final UUID TENANT_ID = UUID.randomUUID();
@@ -74,7 +87,6 @@ class PrescriptionServiceTest {
     private ClinicProfileService clinicProfileService;
     private AuditEventPublisher auditEventPublisher;
     private ModuleBusinessEventPublisher moduleBusinessEventPublisher;
-    private PrescriptionLogoResolver prescriptionLogoResolver;
     private PrescriptionService service;
 
     @BeforeEach
@@ -88,8 +100,6 @@ class PrescriptionServiceTest {
         clinicProfileService = mock(ClinicProfileService.class);
         auditEventPublisher = mock(AuditEventPublisher.class);
         moduleBusinessEventPublisher = mock(ModuleBusinessEventPublisher.class);
-        prescriptionLogoResolver = mock(PrescriptionLogoResolver.class);
-        lenient().when(prescriptionLogoResolver.resolve(any(), any())).thenReturn(Optional.empty());
 
         service = new PrescriptionService(
                 prescriptionRepository,
@@ -102,8 +112,7 @@ class PrescriptionServiceTest {
                 auditEventPublisher,
                 moduleBusinessEventPublisher,
                 new ObjectMapper(),
-                new BrandingProperties(),
-                prescriptionLogoResolver
+                new BrandingProperties()
         );
 
         lenient().when(prescriptionRepository.save(any(PrescriptionEntity.class))).thenAnswer(invocation -> {
@@ -450,6 +459,157 @@ class PrescriptionServiceTest {
     }
 
     @Test
+    void generateTemplatePreviewPdfIsNotTransactionalAndRendersWithoutWrites() throws Exception {
+        PrescriptionEntity entity = PrescriptionEntity.create(TENANT_ID, PATIENT_ID, DOCTOR_ID, CONSULTATION_ID, APPOINTMENT_ID, "RX-PREVIEW");
+        entity.update("Dx", "Advice", LocalDate.now().plusDays(2));
+        prescriptions.put(entity.getId(), entity);
+        Method method = PrescriptionService.class.getMethod(
+                "generateTemplatePreviewPdf",
+                UUID.class,
+                UUID.class,
+                UUID.class,
+                PrescriptionBrandingDocument.class
+        );
+        assertThat(method.getAnnotation(Transactional.class)).isNull();
+
+        byte[] pdf = service.generateTemplatePreviewPdf(
+                TENANT_ID,
+                entity.getId(),
+                ACTOR_ID,
+                brandingWithLogo(new PrescriptionLogoAsset(pngBytes(), "image/png", "clinic-logo.png"))
+        ).content();
+
+        assertThat(pdf).isNotEmpty();
+        verify(prescriptionRepository, times(0)).save(any());
+    }
+
+    @Test
+    void generatedPdfIncludesClinicLogoImageResourceWhenConfigured() throws Exception {
+        PrescriptionEntity entity = PrescriptionEntity.create(TENANT_ID, PATIENT_ID, DOCTOR_ID, CONSULTATION_ID, APPOINTMENT_ID, "RX-LOGO");
+        entity.update("Dx", "Advice", LocalDate.now().plusDays(2));
+        prescriptions.put(entity.getId(), entity);
+        byte[] pdf = service.generatePdf(
+                TENANT_ID,
+                entity.getId(),
+                ACTOR_ID,
+                brandingWithLogo(new PrescriptionLogoAsset(pngBytes(), "image/png", "clinic-logo.png"))
+        ).content();
+
+        assertThat(pageHasImage(pdf)).isTrue();
+        assertThat(firstImageDimensions(pdf)).isEqualTo(new PdfImageDimensions(1, 1));
+    }
+
+    @Test
+    void generatedPdfIncludesClinicLogoForJpegAssets() throws Exception {
+        PrescriptionEntity entity = PrescriptionEntity.create(TENANT_ID, PATIENT_ID, DOCTOR_ID, CONSULTATION_ID, APPOINTMENT_ID, "RX-JPEG-LOGO");
+        entity.update("Dx", "Advice", LocalDate.now().plusDays(2));
+        prescriptions.put(entity.getId(), entity);
+        byte[] pdf = service.generatePdf(
+                TENANT_ID,
+                entity.getId(),
+                ACTOR_ID,
+                brandingWithLogo(new PrescriptionLogoAsset(jpegBytes(), "image/jpeg", "clinic-logo.jpg"))
+        ).content();
+
+        assertThat(pageHasImage(pdf)).isTrue();
+        assertThat(firstImageDimensions(pdf)).isEqualTo(new PdfImageDimensions(1, 1));
+    }
+
+    @Test
+    void templatePreviewAndActualPdfUseSameHeaderLogoGeometry() throws Exception {
+        PrescriptionEntity entity = PrescriptionEntity.create(TENANT_ID, PATIENT_ID, DOCTOR_ID, CONSULTATION_ID, APPOINTMENT_ID, "RX-SAME-HEADER");
+        entity.update("Dx", "Advice", LocalDate.now().plusDays(2));
+        prescriptions.put(entity.getId(), entity);
+        PrescriptionBrandingDocument branding = brandingWithLogo(new PrescriptionLogoAsset(pngBytes(), "image/png", "clinic-logo.png"));
+
+        byte[] actual = service.generatePdf(TENANT_ID, entity.getId(), ACTOR_ID, branding).content();
+        byte[] preview = service.generateTemplatePreviewPdf(TENANT_ID, entity.getId(), ACTOR_ID, branding).content();
+
+        assertThat(firstImageDimensions(actual)).isEqualTo(new PdfImageDimensions(1, 1));
+        assertThat(firstImageDimensions(preview)).isEqualTo(new PdfImageDimensions(1, 1));
+        assertThat(extractPdfText(actual)).contains("Doctor One");
+        assertThat(extractPdfText(preview)).contains("Doctor One");
+    }
+
+    @Test
+    void headerHandlesLongClinicNameAndContactDetails() throws Exception {
+        PrescriptionEntity entity = PrescriptionEntity.create(TENANT_ID, PATIENT_ID, DOCTOR_ID, CONSULTATION_ID, APPOINTMENT_ID, "RX-LONG-HEADER");
+        entity.update("Dx", "Advice", LocalDate.now().plusDays(2));
+        prescriptions.put(entity.getId(), entity);
+        when(clinicProfileService.findByTenantId(TENANT_ID)).thenReturn(Optional.of(clinicProfile(
+                "Jeevanam Advanced Multispeciality Family Clinic and Integrated Care Centre",
+                "Jeevanam Advanced Multispeciality Family Clinic and Integrated Care Centre",
+                "Plot 42, Long Healthcare Avenue, Integrated Medical District",
+                "care-team-long-address@exampleclinic.local"
+        )));
+
+        byte[] pdf = service.generatePdf(
+                TENANT_ID,
+                entity.getId(),
+                ACTOR_ID,
+                brandingWithLogo(new PrescriptionLogoAsset(widePngBytes(), "image/png", "wide-logo.png"))
+        ).content();
+        String text = extractPdfText(pdf);
+
+        assertThat(pageHasImage(pdf)).isTrue();
+        assertThat(firstImageDimensions(pdf)).isEqualTo(new PdfImageDimensions(8, 2));
+        assertThat(text).contains("Jeevanam Advanced Multispeciality Family Clinic");
+        assertThat(text).contains("Patient Name");
+    }
+
+    @Test
+    void generatedPdfUsesDefaultPlaceholderWhenNoPreResolvedLogoIsProvided() throws Exception {
+        PrescriptionEntity entity = PrescriptionEntity.create(TENANT_ID, PATIENT_ID, DOCTOR_ID, CONSULTATION_ID, APPOINTMENT_ID, "RX-BRANDING-LOGO");
+        entity.update("Dx", "Advice", LocalDate.now().plusDays(2));
+        prescriptions.put(entity.getId(), entity);
+
+        byte[] pdf = service.generatePdf(
+                TENANT_ID,
+                entity.getId(),
+                ACTOR_ID,
+                new PrescriptionTemplateConfig(null, null, null, "#0f766e", "#14b8a6", null, null, true, null)
+        ).content();
+
+        assertThat(pageHasImage(pdf)).isTrue();
+        assertThat(firstImageDimensions(pdf).width()).isGreaterThan(1);
+        assertThat(firstImageDimensions(pdf).height()).isGreaterThan(1);
+    }
+
+    @Test
+    void generatedPdfWithoutLogoRendersDefaultPlaceholderImageResource() throws Exception {
+        PrescriptionEntity entity = PrescriptionEntity.create(TENANT_ID, PATIENT_ID, DOCTOR_ID, CONSULTATION_ID, APPOINTMENT_ID, "RX-NO-LOGO");
+        entity.update("Dx", "Advice", LocalDate.now().plusDays(2));
+        prescriptions.put(entity.getId(), entity);
+
+        byte[] pdf = service.generatePdf(
+                TENANT_ID,
+                entity.getId(),
+                ACTOR_ID,
+                new PrescriptionTemplateConfig(null, null, null, "#0f766e", "#14b8a6", null, null, true, null)
+        ).content();
+
+        assertThat(pageHasImage(pdf)).isTrue();
+        assertThat(firstImageDimensions(pdf).width()).isGreaterThan(1);
+        assertThat(firstImageDimensions(pdf).height()).isGreaterThan(1);
+    }
+
+    @Test
+    void generatedPdfWithCorruptConfiguredLogoFallsBackToDefaultPlaceholder() throws Exception {
+        PrescriptionEntity entity = PrescriptionEntity.create(TENANT_ID, PATIENT_ID, DOCTOR_ID, CONSULTATION_ID, APPOINTMENT_ID, "RX-CORRUPT-LOGO");
+        entity.update("Dx", "Advice", LocalDate.now().plusDays(2));
+        prescriptions.put(entity.getId(), entity);
+        byte[] pdf = service.generatePdf(
+                TENANT_ID,
+                entity.getId(),
+                ACTOR_ID,
+                brandingWithLogo(new PrescriptionLogoAsset(new byte[]{1, 2, 3, 4}, "image/png", "corrupt-logo.png"))
+        ).content();
+
+        assertThat(pageHasImage(pdf)).isTrue();
+        assertThat(firstImageDimensions(pdf).width()).isGreaterThan(1);
+    }
+
+    @Test
     void generatedPdfDoesNotLeakRawJsonForConsultationFields() throws Exception {
         PrescriptionEntity entity = PrescriptionEntity.create(TENANT_ID, PATIENT_ID, DOCTOR_ID, CONSULTATION_ID, APPOINTMENT_ID, "RX-JSON");
         entity.update("{\"diagnosis\":\"RawJsonDiagnosis\"}", "[{\"advice\":\"hydrate\"}]", LocalDate.now().plusDays(2));
@@ -681,5 +841,93 @@ class PrescriptionServiceTest {
         try (PDDocument doc = Loader.loadPDF(pdfBytes)) {
             return new PDFTextStripper().getText(doc);
         }
+    }
+
+    private boolean pageHasImage(byte[] pdfBytes) throws Exception {
+        try (PDDocument doc = Loader.loadPDF(pdfBytes)) {
+            PDResources resources = doc.getPage(0).getResources();
+            if (resources == null) {
+                return false;
+            }
+            for (COSName name : resources.getXObjectNames()) {
+                PDXObject object = resources.getXObject(name);
+                if (object instanceof PDImageXObject) {
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
+
+    private PdfImageDimensions firstImageDimensions(byte[] pdfBytes) throws Exception {
+        try (PDDocument doc = Loader.loadPDF(pdfBytes)) {
+            PDResources resources = doc.getPage(0).getResources();
+            if (resources == null) {
+                throw new IllegalStateException("No page resources found");
+            }
+            for (COSName name : resources.getXObjectNames()) {
+                PDXObject object = resources.getXObject(name);
+                if (object instanceof PDImageXObject image) {
+                    return new PdfImageDimensions(image.getWidth(), image.getHeight());
+                }
+            }
+            throw new IllegalStateException("No image resource found");
+        }
+    }
+
+    private static PrescriptionBrandingDocument brandingWithLogo(PrescriptionLogoAsset logo) {
+        return PrescriptionBrandingDocument.withLogo(
+                new PrescriptionTemplateConfig(null, null, null, "#0f766e", "#14b8a6", null, null, true, null),
+                logo
+        );
+    }
+
+    private static ClinicProfileRecord clinicProfile(String clinicName, String displayName, String addressLine1, String email) {
+        return new ClinicProfileRecord(
+                UUID.randomUUID(),
+                TENANT_ID,
+                clinicName,
+                displayName,
+                "9999999999",
+                email,
+                addressLine1,
+                null,
+                "Bengaluru",
+                "Karnataka",
+                "India",
+                "560001",
+                "REG-12345",
+                null,
+                null,
+                true,
+                true,
+                "clinic",
+                OffsetDateTime.now(),
+                OffsetDateTime.now()
+        );
+    }
+
+    private static byte[] pngBytes() throws Exception {
+        BufferedImage image = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        ImageIO.write(image, "png", output);
+        return output.toByteArray();
+    }
+
+    private static byte[] jpegBytes() throws Exception {
+        BufferedImage image = new BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB);
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        ImageIO.write(image, "jpg", output);
+        return output.toByteArray();
+    }
+
+    private static byte[] widePngBytes() throws Exception {
+        BufferedImage image = new BufferedImage(8, 2, BufferedImage.TYPE_INT_ARGB);
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        ImageIO.write(image, "png", output);
+        return output.toByteArray();
+    }
+
+    private record PdfImageDimensions(int width, int height) {
     }
 }
