@@ -53,7 +53,7 @@ import {
   type NotificationCenterItem,
 } from "../api/clinicApi";
 import { openGlobalHelp } from "../shared/components/help/helpEvents";
-import BrandMark from "../shared/components/branding/BrandMark";
+import TenantHeaderBrand from "../shared/components/branding/TenantHeaderBrand";
 import {
   NOTIFICATION_CENTER_REFRESH_EVENT,
   formatNotificationExactTimestamp,
@@ -570,10 +570,10 @@ export default function TopBar({ onToggleSidebar, drawerWidth, isMobile }: { onT
           position: "relative",
           zIndex: 1,
           display: "grid",
-          gridTemplateColumns: { xs: "1fr", md: "minmax(0, 1fr) auto minmax(0, 1fr)" },
+          gridTemplateColumns: { xs: "1fr", md: "minmax(0, 1fr) auto" },
           gridTemplateAreas: {
-            xs: `"left" "center" "right"`,
-            md: `"left center right"`,
+            xs: `"left" "right"`,
+            md: `"left right"`,
           },
           rowGap: { xs: 1, md: 0 },
           columnGap: 1.25,
@@ -587,8 +587,8 @@ export default function TopBar({ onToggleSidebar, drawerWidth, isMobile }: { onT
           <IconButton color="inherit" onClick={onToggleSidebar}>
             <MenuIcon />
           </IconButton>
-          <Stack direction="row" spacing={1.25} alignItems="center" sx={{ minWidth: 0, flex: "1 1 280px" }}>
-            <BrandMark size={42} showCopy title="Jeevanam Healthcare" subtitle="Intelligent Healthcare Platform" />
+          <Stack direction="row" spacing={1.25} alignItems="center" sx={{ minWidth: 0, flex: "1 1 280px", flexWrap: "wrap" }}>
+            <TenantHeaderBrand />
             <Chip
               size="small"
               variant="outlined"
@@ -603,28 +603,6 @@ export default function TopBar({ onToggleSidebar, drawerWidth, isMobile }: { onT
               }}
             />
           </Stack>
-        </Box>
-
-        <Box
-          sx={{
-            gridArea: "center",
-            display: "flex",
-            justifyContent: "center",
-            alignItems: "center",
-            minWidth: 0,
-          }}
-        >
-          <Chip
-            label="DEMO / UAT"
-            color="warning"
-            size="small"
-            sx={{
-              fontWeight: 800,
-              letterSpacing: 0.4,
-              pointerEvents: "none",
-              whiteSpace: "nowrap",
-            }}
-          />
         </Box>
 
         <Box
@@ -678,13 +656,6 @@ export default function TopBar({ onToggleSidebar, drawerWidth, isMobile }: { onT
             </>
           ) : null}
 
-          <Tooltip title={auth.selectedTenant?.id || "No tenant selected"}>
-            <Chip
-              label={auth.selectedTenant?.name || "No tenant selected"}
-              color={auth.selectedTenant ? "secondary" : "default"}
-              variant="outlined"
-            />
-          </Tooltip>
           <NotificationBellMenu />
           <Button
             type="button"

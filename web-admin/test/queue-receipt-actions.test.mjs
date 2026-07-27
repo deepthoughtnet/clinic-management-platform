@@ -18,7 +18,8 @@ test("queue collects consultation fees in place and exposes receipt actions", ()
   assert.ok(source.includes("WhatsApp Receipt"));
   assert.ok(source.includes("MoreVertRoundedIcon"));
   assert.ok(source.includes("listBillPayments"));
-  assert.ok(source.includes("getReceiptPdf"));
+  assert.equal(source.includes("getReceiptPdf"), false);
+  assert.ok(source.includes("openReceiptPrintPreview(row, true)"));
   assert.ok(source.includes("sendReceipt"));
   assert.ok(source.includes("receiptRecordsByAppointmentId"));
   assert.ok(source.includes("const loadReceiptRecords = React.useCallback"));

@@ -42,7 +42,6 @@ import { useAuth } from "../../auth/useAuth";
 import {
   collectConsultationFee,
   getClinicProfile,
-  getReceiptPdf,
   getClinicUsers,
   listBillPayments,
   reorderDoctorQueueToday,
@@ -947,27 +946,9 @@ export default function QueuePage() {
     setReceiptAutoPrint(autoPrint);
   }, [buildReceiptPrintData, getQueueReceiptRecord]);
 
-  const handleReceiptDownload = React.useCallback(async (row: QueueViewRow) => {
-    const record = getQueueReceiptRecord(row);
-    if (!auth.accessToken || !auth.tenantId || !record?.payment.receiptId) return;
-    setReceiptActionLoading(true);
-    setError(null);
-    try {
-      const file = await getReceiptPdf(auth.accessToken, auth.tenantId, record.payment.receiptId);
-      const url = URL.createObjectURL(file.blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = file.filename || `${record.payment.receiptNumber || row.consultationBill?.billNumber || row.id}-receipt.pdf`;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to download receipt PDF");
-    } finally {
-      setReceiptActionLoading(false);
-    }
-  }, [auth.accessToken, auth.tenantId, getQueueReceiptRecord]);
+  const handleReceiptDownload = React.useCallback((row: QueueViewRow) => {
+    openReceiptPrintPreview(row, true);
+  }, [openReceiptPrintPreview]);
 
   const handleReceiptSend = React.useCallback(async (row: QueueViewRow, channel: "EMAIL" | "WHATSAPP") => {
     const record = getQueueReceiptRecord(row);

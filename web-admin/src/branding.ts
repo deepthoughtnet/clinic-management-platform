@@ -20,5 +20,5 @@ export function poweredByLine() {
 }
 
 export function footerBrandingLine() {
-  return `${branding.productName} · ${branding.tagline} · Powered by ${branding.aiPlatformName}`;
+  return `${branding.productName} · ${branding.tagline}`;
 }

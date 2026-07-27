@@ -73,7 +73,9 @@ test("vaccinations page keeps billing and receipt flow inline", () => {
   assert.ok(source.includes("Payment successful"));
   assert.ok(source.includes("listBillPayments"));
   assert.ok(source.includes("listBillReceipts"));
-  assert.ok(source.includes("getReceiptPdf"));
+  assert.equal(source.includes("getReceiptPdf"), false);
+  assert.ok(source.includes("openVaccinationReceiptPreview(true)"));
+  assert.ok(source.includes("setReceiptAutoPrint(true)"));
   assert.ok(source.includes("sendReceipt"));
 });
 

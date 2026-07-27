@@ -32,7 +32,6 @@ import {
   getBill,
   getClinicProfile,
   getConsultation,
-  getReceiptPdf,
   listPaymentsLedger,
   getPatient,
   sendReceipt,
@@ -184,19 +183,11 @@ export default function PaymentsPage() {
   }, [auth.accessToken, auth.tenantId, clinicProfile]);
 
   async function handleDownloadReceipt(row: PaymentLedgerRow) {
-    if (!auth.accessToken || !auth.tenantId || !row.receiptId) return;
+    if (!row.receiptId) return;
     setWorkingId(row.id);
     setError(null);
     try {
-      const file = await getReceiptPdf(auth.accessToken, auth.tenantId, row.receiptId);
-      const url = URL.createObjectURL(file.blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = file.filename;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(url);
+      await loadReceiptPreview(row, true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to download receipt");
     } finally {

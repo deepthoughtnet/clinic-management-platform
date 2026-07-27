@@ -73,7 +73,6 @@ import {
   getDoctorProfile,
   getConsultation,
   getPatientBillingContext,
-  getReceiptPdf,
   getPatient,
   issueBill,
   listBillPayments,
@@ -1456,7 +1455,7 @@ export default function BillsPage() {
       setError("Receipt is not available for this bill yet.");
       return;
     }
-    await openReceiptPdf(resolved.receipt);
+    await openReceiptPreviewAction(resolved.receipt, resolved.payment, true);
   }, [resolveBillReceipt]);
 
   const sendBillReceiptEmail = React.useCallback(async (bill: Bill) => {
@@ -1674,12 +1673,6 @@ export default function BillsPage() {
 
   const openInvoicePreviewAction = async (bill: Bill, autoPrint = false) => {
     await loadInvoicePreview(bill, autoPrint);
-  };
-
-  const openReceiptPdf = async (receipt: Receipt) => {
-    if (!auth.accessToken || !auth.tenantId) return;
-    try { const { blob } = await getReceiptPdf(auth.accessToken, auth.tenantId, receipt.id); const url = URL.createObjectURL(blob); window.open(url, "_blank", "noopener,noreferrer"); window.setTimeout(() => URL.revokeObjectURL(url), 60000); }
-    catch (err) { setError(err instanceof Error ? err.message : "Failed to open receipt PDF"); }
   };
 
   const openReceiptPreviewAction = async (receipt: Receipt, payment: Payment | null, autoPrint = false) => {

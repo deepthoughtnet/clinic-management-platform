@@ -174,10 +174,9 @@ test("top bar uses a branded lockup and sticky shell", () => {
   assert.ok(source.includes("zIndex: (theme) => theme.zIndex.drawer + 2"));
   assert.ok(source.includes("minHeight: 84"));
   assert.ok(source.includes("drawerWidth"));
-  assert.ok(source.includes("BrandMark"));
-  assert.ok(source.includes('showCopy'));
-  assert.ok(source.includes('subtitle="Intelligent Healthcare Platform"'));
-  assert.equal(source.split('label="DEMO / UAT"').length - 1, 1);
+  assert.ok(source.includes("TenantHeaderBrand"));
+  assert.ok(!source.includes('Jeevanam Healthcare'));
+  assert.ok(!source.includes('label="DEMO / UAT"'));
 });
 
 test("app shell offsets the main content below the fixed header", () => {
@@ -193,12 +192,26 @@ test("sidebar header reuses the branded lockup", () => {
   assert.ok(source.includes("BrandMark"));
 });
 
+test("tenant header brand resolves active tenant branding and fallback states", () => {
+  const source = fs.readFileSync(path.join(process.cwd(), "src", "shared", "components", "branding", "TenantHeaderBrand.tsx"), "utf8");
+  assert.ok(source.includes("getClinicProfile"));
+  assert.ok(source.includes("getPrescriptionTemplate"));
+  assert.ok(source.includes("useAuthenticatedImage"));
+  assert.ok(source.includes("TENANT_BRANDING_UPDATED_EVENT"));
+  assert.ok(source.includes("Clinic Workspace"));
+  assert.ok(source.includes("LocalHospitalRoundedIcon"));
+  assert.ok(source.includes("BrandMark"));
+});
+
 test("footer layout keeps version text and centered branding", () => {
   const source = fs.readFileSync(path.join(process.cwd(), "src", "layout", "Footer.tsx"), "utf8");
-  assert.ok(source.includes("versionLabel"));
   assert.ok(source.includes("footerBrandingLine()"));
-  assert.ok(source.includes('textAlign: "center"'));
-  assert.ok(source.includes("Demo / UAT Environment"));
+  assert.ok(source.includes("normalizedVersion"));
+  assert.ok(source.includes('justifyContent: "center"'));
+  assert.ok(!source.includes("Demo / UAT Environment"));
+  assert.ok(!source.includes("Powered by AIVA"));
+  assert.ok(!source.includes('|| "v0.0.0"'));
+  assert.ok(!source.includes('|| "0.0.0"'));
 });
 
 test("engage routes resolve to the Engage help pages", () => {

@@ -2,7 +2,10 @@ import { Box, Typography } from "@mui/material";
 import { footerBrandingLine } from "../branding";
 
 export default function Footer() {
-  const versionLabel = import.meta.env.VITE_APP_VERSION?.trim() || "v0.0.0";
+  const rawVersion = import.meta.env.VITE_APP_VERSION?.trim() || "";
+  const normalizedVersion = rawVersion && rawVersion !== "0.0.0" && rawVersion !== "v0.0.0"
+    ? (rawVersion.startsWith("v") ? rawVersion : `v${rawVersion}`)
+    : "";
 
   return (
     <Box
@@ -16,24 +19,21 @@ export default function Footer() {
     >
       <Box
         sx={{
-          display: "grid",
-          gridTemplateColumns: { xs: "1fr", md: "auto 1fr auto" },
+          display: "flex",
           alignItems: "center",
+          justifyContent: "center",
           gap: 1,
+          flexWrap: "wrap",
         }}
       >
-        <Typography variant="caption" color="text.secondary" sx={{ minWidth: 64, fontWeight: 700 }}>
-          {versionLabel}
-        </Typography>
-        <Box sx={{ minWidth: 0, textAlign: "center", px: { xs: 0, md: 2 }, display: "grid", gap: 0.5 }}>
+        {normalizedVersion ? (
           <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700 }}>
-            {footerBrandingLine()}
+            {normalizedVersion}
           </Typography>
-          <Typography variant="caption" color="warning.main" sx={{ fontWeight: 800, letterSpacing: 0.3 }}>
-            Demo / UAT Environment
-          </Typography>
-        </Box>
-        <Box sx={{ display: { xs: "none", md: "block" }, minWidth: 64 }} />
+        ) : null}
+        <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700, textAlign: "center" }}>
+          {footerBrandingLine()}
+        </Typography>
       </Box>
     </Box>
   );

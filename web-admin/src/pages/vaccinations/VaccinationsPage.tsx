@@ -80,7 +80,6 @@ import {
   getStocks,
   getPatientNotifications,
   getOverdueVaccinations,
-  getReceiptPdf,
   getVaccinationHistory,
   getVaccinationRecommendations,
   generateVaccinationCertificate,
@@ -2270,28 +2269,9 @@ export default function VaccinationsPage() {
     setReceiptAutoPrint(autoPrint);
   }, [vaccinationReceiptPanel]);
 
-  const handleVaccinationReceiptDownload = React.useCallback(async () => {
-    if (!auth.accessToken || !auth.tenantId || !vaccinationReceiptPanel?.receipt.id) {
-      return;
-    }
-    setReceiptActionLoading(true);
-    setError(null);
-    try {
-      const file = await getReceiptPdf(auth.accessToken, auth.tenantId, vaccinationReceiptPanel.receipt.id);
-      const url = URL.createObjectURL(file.blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = file.filename || `${vaccinationReceiptPanel.receipt.receiptNumber || vaccinationReceiptPanel.bill.billNumber}-receipt.pdf`;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to download receipt PDF");
-    } finally {
-      setReceiptActionLoading(false);
-    }
-  }, [auth.accessToken, auth.tenantId, vaccinationReceiptPanel]);
+  const handleVaccinationReceiptDownload = React.useCallback(() => {
+    openVaccinationReceiptPreview(true);
+  }, [openVaccinationReceiptPreview]);
 
   const handleVaccinationReceiptSend = React.useCallback(async (channel: "EMAIL" | "WHATSAPP") => {
     if (!auth.accessToken || !auth.tenantId || !vaccinationReceiptPanel?.receipt.id) {
@@ -2395,15 +2375,8 @@ export default function VaccinationsPage() {
     setError(null);
     try {
       const context = await resolveVaccinationReceiptContext(row);
-      const file = await getReceiptPdf(auth.accessToken!, auth.tenantId!, context.receipt.id);
-      const url = URL.createObjectURL(file.blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = file.filename || `${context.receipt.receiptNumber || context.bill.billNumber}-receipt.pdf`;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(url);
+      setReceiptPreview(context.receiptPrintData);
+      setReceiptAutoPrint(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to download receipt PDF");
     } finally {

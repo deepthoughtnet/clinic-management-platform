@@ -70,7 +70,6 @@ import {
   getLabOrderAttachmentBlob,
   getLabOrders,
   getLabTests,
-  getReceiptPdf,
   listBillPayments,
   listBillReceipts,
   importLabTestsCsv,
@@ -1387,27 +1386,8 @@ export default function LabPage() {
   };
 
   const openReceiptPdf = async () => {
-    if (!auth.accessToken || !auth.tenantId || !receiptPreview) return;
-    setReceiptActionLoading(true);
-    setReceiptActionError(null);
-    try {
-      const { blob, filename } = await getReceiptPdf(auth.accessToken, auth.tenantId, receiptPreview.receipt.id);
-      if (!blob.size) {
-        throw new Error("Receipt PDF is empty.");
-      }
-      const objectUrl = window.URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = objectUrl;
-      anchor.download = filename || `${receiptPreview.receipt.receiptNumber || receiptPreview.order.orderNumber}-receipt.pdf`;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      window.setTimeout(() => window.URL.revokeObjectURL(objectUrl), 60_000);
-    } catch (err) {
-      setReceiptActionError(err instanceof Error ? err.message : "Failed to download receipt PDF");
-    } finally {
-      setReceiptActionLoading(false);
-    }
+    if (!receiptPreview) return;
+    await loadReceiptPrintData(true);
   };
 
   const openOrderReceiptPreview = async (order: LabOrder, autoPrint = false) => {
@@ -1415,29 +1395,7 @@ export default function LabPage() {
   };
 
   const downloadOrderReceipt = async (order: LabOrder) => {
-    const receiptSummary = buildReceiptPaymentSummary(order);
-    const receiptId = receiptSummary?.receiptId || order.receiptId;
-    if (!auth.accessToken || !auth.tenantId || !receiptId) return;
-    setReceiptActionLoading(true);
-    setReceiptActionError(null);
-    try {
-      const { blob, filename } = await getReceiptPdf(auth.accessToken, auth.tenantId, receiptId);
-      if (!blob.size) {
-        throw new Error("Receipt PDF is empty.");
-      }
-      const objectUrl = window.URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = objectUrl;
-      anchor.download = filename || `${receiptSummary?.receiptNumber || order.receiptNumber || order.orderNumber}-receipt.pdf`;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      window.setTimeout(() => window.URL.revokeObjectURL(objectUrl), 60_000);
-    } catch (err) {
-      setReceiptActionError(err instanceof Error ? err.message : "Failed to download receipt PDF");
-    } finally {
-      setReceiptActionLoading(false);
-    }
+    await openOrderReceiptPreview(order, true);
   };
 
   const sendReceiptAction = async (channel: "email" | "whatsapp") => {
