@@ -5,6 +5,7 @@ import java.util.List;
 public record PublicSearchResponse(
         PublicPageResponse<PublicDoctorSummaryResponse> doctors,
         PublicPageResponse<PublicClinicSummaryResponse> clinics,
+        PublicPageResponse<PublicHospitalSummaryResponse> hospitals,
         List<PublicSpecialitySummaryResponse> specialities
 ) {
 }

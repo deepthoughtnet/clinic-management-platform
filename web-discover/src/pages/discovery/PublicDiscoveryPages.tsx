@@ -1,10 +1,12 @@
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import type {
   PublicClinicDetailResponse,
   PublicClinicSummaryResponse,
   PublicDoctorDetailResponse,
   PublicDoctorSummaryResponse,
+  PublicHospitalDetailResponse,
+  PublicHospitalSummaryResponse,
   PublicPageResponse,
   PublicSpecialityDetailResponse,
   PublicSpecialitySummaryResponse,
@@ -16,6 +18,7 @@ import {
   DirectoryState,
   DoctorCard,
   InlineDirectoryState,
+  HospitalCard,
   PaginationBar,
   QueryToolbar,
   careBookingUrl,
@@ -33,7 +36,7 @@ import {
   type PublicLocationCoordinates,
   usePublicLocation,
 } from "../../context/PublicLocationContext";
-import { DISCOVER_ROUTES } from "../../routes";
+import { DISCOVER_DETAIL_PATHS, DISCOVER_ROUTES } from "../../routes";
 import {
   discoveryEmptyMessage,
   matchesDiscoveryQuery,
@@ -85,8 +88,8 @@ const TRUST_SIGNALS = [
 const HEALTHCARE_SERVICES = [
   { title: "Doctor consultations", body: "Find doctors by speciality, clinic and location.", to: DISCOVER_ROUTES.doctors.path, state: "Explore →" },
   { title: "Clinic appointments", body: "Browse clinics and start appointment booking.", to: DISCOVER_ROUTES.clinics.path, state: "Explore →" },
+  { title: "Hospital discovery", body: "Explore hospital profiles, departments and facilities.", to: DISCOVER_ROUTES.hospitals.path, state: "Explore →" },
   { title: "Speciality search", body: "Start with the medical speciality you need.", to: DISCOVER_ROUTES.specialities.path, state: "Explore →" },
-  { title: "Hospital discovery", body: "Hospital pages are being prepared for Discover.", to: DISCOVER_ROUTES.hospitals.path, state: "Coming Soon" },
 ] as const;
 
 const WHY_JEEVANAM = [
@@ -543,7 +546,7 @@ export function PublicHomePage() {
         {homeSpecialities.length ? (
           <div className="speciality-card-grid">
             {homeSpecialities.slice(0, 8).map((speciality) => (
-              <Link className="speciality-card" key={speciality.specialitySlug} to={`/specialities/${speciality.specialitySlug}`}>
+              <Link className="speciality-card" key={speciality.specialitySlug} to={DISCOVER_DETAIL_PATHS.speciality(speciality.specialitySlug)}>
                 <span className="speciality-icon" aria-hidden="true">＋</span>
                 <strong>{speciality.speciality}</strong>
                 <span>
@@ -564,7 +567,7 @@ export function PublicHomePage() {
             <h2>Doctors you can explore</h2>
             <p>Review experience, specialities and available booking options.</p>
           </div>
-          <Link className="text-button" to={`/doctors?city=${encodeURIComponent(searchableLocation)}`}>View all doctors</Link>
+          <Link className="text-button" to={DISCOVER_ROUTES.doctors.path}>View all doctors</Link>
         </div>
         <InlineDirectoryState
           loading={doctors.loading}
@@ -592,7 +595,7 @@ export function PublicHomePage() {
             <h2>Clinics near you</h2>
             <p>{displayLocation ? "Explore clinics, services and doctors available in your selected location." : "Explore clinics and the services they offer."}</p>
           </div>
-          <Link className="text-button" to={`/clinics?city=${encodeURIComponent(searchableLocation)}`}>View all clinics</Link>
+          <Link className="text-button" to={DISCOVER_ROUTES.clinics.path}>View all clinics</Link>
         </div>
         <InlineDirectoryState
           loading={clinics.loading}
@@ -771,7 +774,12 @@ export function PublicDoctorsPage() {
 
 export function PublicDoctorDetailPage() {
   const { doctorSlug = "" } = useParams();
+  const location = useLocation();
   const detail = usePublicResource<PublicDoctorDetailResponse | null>(`/api/public/doctors/${doctorSlug}`, {}, null);
+
+  if (detail.data?.publicPath && detail.data.publicPath !== location.pathname) {
+    return <Navigate replace to={`${detail.data.publicPath}${location.search}`} />;
+  }
 
   return (
     <section className="page-section">
@@ -824,7 +832,7 @@ export function PublicDoctorDetailPage() {
                 <div className="panel-heading"><h2>Clinic</h2></div>
                 <div className="subcard-list">
                   {detail.data.clinics.map((clinic) => (
-                    <Link key={clinic.clinicSlug} className="subcard" to={`/clinics/${clinic.clinicSlug}`}>
+                    <Link key={clinic.clinicSlug} className="subcard" to={DISCOVER_DETAIL_PATHS.clinic(clinic.clinicSlug)}>
                       <strong>{clinic.clinicDisplayName}</strong>
                       <span>{clinic.area ?? clinic.city ?? "Clinic profile"}{clinic.area && clinic.city ? ` · ${clinic.city}` : ""}</span>
                     </Link>
@@ -928,7 +936,12 @@ export function PublicClinicsPage() {
 
 export function PublicClinicDetailPage() {
   const { clinicSlug = "" } = useParams();
+  const location = useLocation();
   const detail = usePublicResource<PublicClinicDetailResponse | null>(`/api/public/clinics/${clinicSlug}`, {}, null);
+
+  if (detail.data?.publicPath && detail.data.publicPath !== location.pathname) {
+    return <Navigate replace to={`${detail.data.publicPath}${location.search}`} />;
+  }
 
   return (
     <section className="page-section">
@@ -960,7 +973,7 @@ export function PublicClinicDetailPage() {
               <div className="directory-badge-row">
                 {detail.data.availableToday ? <span className="status-pill">Available today</span> : null}
                 {detail.data.specialities.slice(0, 4).map((speciality) => (
-                  <Link key={speciality} className="chip" to={`/specialities/${slugify(speciality)}`}>{speciality}</Link>
+                  <Link key={speciality} className="chip" to={DISCOVER_DETAIL_PATHS.speciality(slugify(speciality))}>{speciality}</Link>
                 ))}
               </div>
               <div className="directory-action-row">
@@ -982,6 +995,145 @@ export function PublicClinicDetailPage() {
                   ) : (
                     <div className="state-card compact">Clinic timings will appear when this clinic shares appointment hours.</div>
                   )}
+                </div>
+              </article>
+              <article className="result-panel">
+                <div className="panel-heading"><h2>Doctors</h2></div>
+                <div className="public-card-stack">
+                  {detail.data.doctors.map((doctor) => <DoctorCard key={doctor.doctorSlug} doctor={doctor} />)}
+                </div>
+              </article>
+            </div>
+          </div>
+        ) : null}
+      </DirectoryState>
+    </section>
+  );
+}
+
+export function PublicHospitalsPage() {
+  const filters = useDirectoryFilters();
+  const speciality = filters.searchParams.get("speciality");
+  const hospitals = usePublicResource<PublicPageResponse<PublicHospitalSummaryResponse>>(
+    "/api/public/hospitals",
+    {
+      q: filters.searchParams.get("q"),
+      city: filters.searchParams.get("city"),
+      area: filters.searchParams.get("area"),
+      speciality,
+      page: filters.page,
+      size: filters.size,
+    },
+    { items: [], page: 0, size: filters.size, totalItems: 0, totalPages: 0 },
+  );
+  const visibleHospitals = useMemo(
+    () => [...hospitals.data.items].sort((left, right) => normalizeDiscoveryText(left.hospitalDisplayName).localeCompare(normalizeDiscoveryText(right.hospitalDisplayName))),
+    [hospitals.data.items],
+  );
+
+  return (
+    <section className="page-section">
+      <div className="section-heading compact-page-hero">
+        <span className="eyebrow">Hospital directory</span>
+        <h1>Find hospitals and specialty care</h1>
+        <p>Explore hospital profiles, departments and facilities before you continue to booking.</p>
+      </div>
+      <QueryToolbar
+        actionLabel="Search hospitals"
+        query={filters.query}
+        setQuery={filters.setQuery}
+        city={filters.city}
+        setCity={filters.setCity}
+        area={filters.area}
+        setArea={filters.setArea}
+        onSubmit={(event) => {
+          event.preventDefault();
+          filters.submit(DISCOVER_ROUTES.hospitals.path, { speciality });
+        }}
+      />
+      <DirectoryState
+        loading={hospitals.loading}
+        error={hospitals.error}
+        empty={visibleHospitals.length === 0}
+        emptyIcon="H"
+        emptyTitle={`No hospitals found for ${filters.city || PUBLIC_DEFAULT_LOCATION}`}
+        emptyMessage="Try another location or search by department or speciality."
+        primaryAction="Browse clinics"
+        primaryTo={DISCOVER_ROUTES.clinics.path}
+        secondaryAction="Browse specialities"
+        secondaryTo={DISCOVER_ROUTES.specialities.path}
+        errorTitle="We could not load hospitals right now."
+      >
+        <div className="public-directory-grid">
+          {visibleHospitals.map((hospital) => <HospitalCard key={hospital.hospitalSlug} hospital={hospital} />)}
+        </div>
+        <PaginationBar
+          page={hospitals.data.page}
+          totalPages={hospitals.data.totalPages}
+          onPageChange={(nextPage) => filters.changePage(DISCOVER_ROUTES.hospitals.path, nextPage, { speciality })}
+        />
+      </DirectoryState>
+    </section>
+  );
+}
+
+export function PublicHospitalDetailPage() {
+  const { hospitalSlug = "" } = useParams();
+  const location = useLocation();
+  const detail = usePublicResource<PublicHospitalDetailResponse | null>(`/api/public/hospitals/${hospitalSlug}`, {}, null);
+
+  if (detail.data?.publicPath && detail.data.publicPath !== location.pathname) {
+    return <Navigate replace to={`${detail.data.publicPath}${location.search}`} />;
+  }
+
+  return (
+    <section className="page-section">
+      <DirectoryState
+        loading={detail.loading}
+        error={detail.error}
+        empty={!detail.data}
+        emptyIcon="H"
+        emptyTitle="Hospital profile unavailable"
+        emptyMessage="This hospital profile is not available in Discover right now."
+        primaryAction="Browse hospitals"
+        primaryTo={DISCOVER_ROUTES.hospitals.path}
+        secondaryAction="Find clinics"
+        secondaryTo={DISCOVER_ROUTES.clinics.path}
+      >
+        {detail.data ? (
+          <div className="public-detail-shell">
+            <article className="result-panel public-detail-hero">
+              <div className="directory-card-top">
+                <div className="directory-avatar directory-avatar-large" aria-hidden="true">
+                  {detail.data.logoUrl ? <img src={detail.data.logoUrl} alt="" /> : <span>{initials(detail.data.hospitalDisplayName)}</span>}
+                </div>
+                <div className="directory-card-heading">
+                  <strong>{detail.data.hospitalDisplayName}</strong>
+                  <span>{detail.data.area ?? detail.data.city ?? "Hospital profile"}</span>
+                  <p>{detail.data.address ?? "Hospital address shared after onboarding"}</p>
+                </div>
+              </div>
+              <div className="directory-badge-row">
+                {detail.data.emergencyAvailable ? <span className="status-pill">Emergency available</span> : null}
+                {detail.data.departments.slice(0, 4).map((department) => (
+                  <span key={department} className="chip">{department}</span>
+                ))}
+              </div>
+              <div className="directory-action-row">
+                <a className="primary-button" href={careBookingUrl({ hospitalSlug: detail.data.hospitalSlug })}>Start booking</a>
+                <Link className="secondary-button" to={DISCOVER_ROUTES.hospitals.path}>Back to hospitals</Link>
+              </div>
+            </article>
+            <div className="public-detail-grid">
+              <article className="result-panel">
+                <div className="panel-heading"><h2>Facilities</h2></div>
+                <div className="subcard-list">
+                  {detail.data.facilities.length ? detail.data.facilities.map((facility) => (
+                    <div key={facility} className="subcard">
+                      <strong>{facility}</strong>
+                      <span>Shared by the hospital for public discovery.</span>
+                    </div>
+                  )) : <div className="state-card compact">Hospital facilities will appear when the profile is published.</div>}
                 </div>
               </article>
               <article className="result-panel">
@@ -1045,7 +1197,7 @@ export function PublicSpecialitiesPage() {
               <p>{speciality.doctorsCount} doctor{speciality.doctorsCount === 1 ? "" : "s"} across {speciality.clinicsCount} clinic{speciality.clinicsCount === 1 ? "" : "s"}.</p>
               <span>{speciality.doctorsCount > 0 ? "Search and book from this speciality." : "Provider details will appear once available."}</span>
               <div className="directory-action-row">
-                <Link className="secondary-button" to={`/specialities/${speciality.specialitySlug}`}>Search doctors</Link>
+                <Link className="secondary-button" to={DISCOVER_DETAIL_PATHS.speciality(speciality.specialitySlug)}>Search doctors</Link>
                 <a className="text-button" href={careBookingUrl({ speciality: speciality.specialitySlug })}>Start booking</a>
               </div>
             </article>
@@ -1093,7 +1245,7 @@ export function PublicSpecialityDetailPage() {
         setArea={filters.setArea}
         onSubmit={(event) => {
           event.preventDefault();
-          filters.submit(`/specialities/${specialitySlug}`);
+          filters.submit(DISCOVER_DETAIL_PATHS.speciality(specialitySlug));
         }}
       />
       <DirectoryState
@@ -1122,7 +1274,7 @@ export function PublicSpecialityDetailPage() {
             <div className="public-directory-grid">
               {visibleDoctors.map((doctor) => <DoctorCard key={doctor.doctorSlug} doctor={doctor} />)}
             </div>
-            <PaginationBar page={detail.data.doctors.page} totalPages={detail.data.doctors.totalPages} onPageChange={(nextPage) => filters.changePage(`/specialities/${specialitySlug}`, nextPage)} />
+            <PaginationBar page={detail.data.doctors.page} totalPages={detail.data.doctors.totalPages} onPageChange={(nextPage) => filters.changePage(DISCOVER_DETAIL_PATHS.speciality(specialitySlug), nextPage)} />
           </>
         ) : null}
       </DirectoryState>

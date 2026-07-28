@@ -30,6 +30,7 @@ import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderStatusHistoryEnt
 import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderStatusHistoryRepository;
 import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderSubmissionEntity;
 import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderSubmissionRepository;
+import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService;
 import com.deepthoughtnet.clinic.platform.storage.ObjectStorageService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
@@ -60,6 +61,7 @@ class ProviderOnboardingServiceTest {
         ProviderSubmissionRepository submissionRepository = Mockito.mock(ProviderSubmissionRepository.class);
         ProviderStatusHistoryRepository historyRepository = Mockito.mock(ProviderStatusHistoryRepository.class);
         ProviderChangeRequestRepository changeRequestRepository = Mockito.mock(ProviderChangeRequestRepository.class);
+        ProviderPublicProfileService publicProfileService = Mockito.mock(ProviderPublicProfileService.class);
         storage = Mockito.mock(ObjectStorageService.class);
         ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
 
@@ -118,7 +120,7 @@ class ProviderOnboardingServiceTest {
         });
         when(storage.buildDocumentStorageKey(any(), any())).thenReturn("tenants/discover/onboarding/logo.png");
 
-        service = new ProviderOnboardingService(applicationRepository, locationRepository, serviceRepository, documentRepository, submissionRepository, historyRepository, changeRequestRepository, storage, objectMapper);
+        service = new ProviderOnboardingService(applicationRepository, locationRepository, serviceRepository, documentRepository, submissionRepository, historyRepository, changeRequestRepository, storage, objectMapper, publicProfileService);
     }
 
     @Test

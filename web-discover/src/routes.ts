@@ -9,11 +9,11 @@ export type DiscoverRoute = {
 
 export const DISCOVER_ROUTES = {
   home: { path: "/", label: "Home", nav: true },
-  doctors: { path: "/doctors", label: "Doctors", nav: true, footer: true },
-  clinics: { path: "/clinics", label: "Clinics", nav: true, footer: true },
-  hospitals: { path: "/hospitals", label: "Hospitals", nav: true, footer: true },
-  specialities: { path: "/specialities", label: "Specialities", nav: true, footer: true },
-  services: { path: "/services", label: "Services", footer: true },
+  doctors: { path: "/discover/doctors", label: "Doctors", nav: true, footer: true },
+  clinics: { path: "/discover/clinics", label: "Clinics", nav: true, footer: true },
+  hospitals: { path: "/discover/hospitals", label: "Hospitals", nav: true, footer: true },
+  specialities: { path: "/discover/specialities", label: "Specialities", nav: true, footer: true },
+  services: { path: "/discover/services", label: "Services", footer: true },
   healthcare: { path: "/healthcare", label: "Jeevanam Healthcare", footer: true },
   pricing: { path: "/pricing", label: "Pricing", nav: true, footer: true },
   listPractice: { path: "/list-your-practice", label: "For Providers", nav: true, footer: true },
@@ -49,6 +49,20 @@ export const footerRoutes = [
   DISCOVER_ROUTES.privacy,
   DISCOVER_ROUTES.terms,
 ];
+
+export const DISCOVER_DETAIL_PATHS = {
+  doctor: (slug: string) => `/discover/doctors/${slug}`,
+  clinic: (slug: string) => `/discover/clinics/${slug}`,
+  hospital: (slug: string) => `/discover/hospitals/${slug}`,
+  speciality: (slug: string) => `/discover/specialities/${slug}`,
+} as const;
+
+export const LEGACY_DETAIL_PATHS = {
+  doctor: (slug: string) => `/doctors/${slug}`,
+  clinic: (slug: string) => `/clinics/${slug}`,
+  hospital: (slug: string) => `/hospitals/${slug}`,
+  speciality: (slug: string) => `/specialities/${slug}`,
+} as const;
 
 export type RoutePage = {
   route: DiscoverRoute;

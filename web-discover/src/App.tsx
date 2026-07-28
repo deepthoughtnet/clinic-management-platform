@@ -1,5 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode, useEffect, useState } from "react";
-import { Link, NavLink, Route, Routes, useLocation } from "react-router-dom";
+import { Link, Navigate, NavLink, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { discoverBrand } from "./branding";
 import { DiscoverEmptyState } from "./components/DiscoveryComponents";
 import { discoverConfig } from "./config";
@@ -10,6 +10,8 @@ import {
   PublicDoctorDetailPage,
   PublicDoctorsPage,
   PublicHomePage,
+  PublicHospitalDetailPage,
+  PublicHospitalsPage,
   PublicSpecialitiesPage,
   PublicSpecialityDetailPage,
 } from "./pages/discovery/PublicDiscoveryPages";
@@ -78,7 +80,16 @@ const routeMeta: Record<string, { title: string; description: string }> = {
 };
 
 function updateDocumentMetadata(pathname: string) {
-  const meta = routeMeta[pathname] ?? {
+  const detailMeta = pathname.startsWith("/discover/doctors/")
+    ? { title: "Doctor Profile | Jeevanam Discover", description: "View public doctor profiles, booking options, and practice information." }
+    : pathname.startsWith("/discover/clinics/")
+      ? { title: "Clinic Profile | Jeevanam Discover", description: "View public clinic pages, services, doctors, and locations." }
+      : pathname.startsWith("/discover/hospitals/")
+        ? { title: "Hospital Profile | Jeevanam Discover", description: "View public hospital pages, departments, facilities, and locations." }
+        : pathname.startsWith("/discover/specialities/")
+          ? { title: "Speciality | Jeevanam Discover", description: "Browse providers for this medical speciality." }
+          : null;
+  const meta = detailMeta ?? routeMeta[pathname] ?? {
     title: "Jeevanam Discover",
     description: "Jeevanam Discover helps people find trusted healthcare providers and services.",
   };
@@ -248,6 +259,35 @@ function ShellPage({ eyebrow, title, body, stateIcon, stateTitle, stateBody, cta
   );
 }
 
+function LegacyRedirect({ to }: { to: string }) {
+  const location = useLocation();
+  return <Navigate replace to={`${to}${location.search}`} />;
+}
+
+function LegacyDoctorRedirect() {
+  const { doctorSlug = "" } = useParams();
+  const location = useLocation();
+  return <Navigate replace to={`${DISCOVER_ROUTES.doctors.path}/${doctorSlug}${location.search}`} />;
+}
+
+function LegacyClinicRedirect() {
+  const { clinicSlug = "" } = useParams();
+  const location = useLocation();
+  return <Navigate replace to={`${DISCOVER_ROUTES.clinics.path}/${clinicSlug}${location.search}`} />;
+}
+
+function LegacyHospitalRedirect() {
+  const { hospitalSlug = "" } = useParams();
+  const location = useLocation();
+  return <Navigate replace to={`${DISCOVER_ROUTES.hospitals.path}/${hospitalSlug}${location.search}`} />;
+}
+
+function LegacySpecialityRedirect() {
+  const { specialitySlug = "" } = useParams();
+  const location = useLocation();
+  return <Navigate replace to={`${DISCOVER_ROUTES.specialities.path}/${specialitySlug}${location.search}`} />;
+}
+
 function ProviderEntryPage() {
   const stages = [
     ["Create account", "Start with basic contact and practice information."],
@@ -353,12 +393,21 @@ function App() {
           <Routes>
           <Route path={DISCOVER_ROUTES.home.path} element={<PublicHomePage />} />
           <Route path={DISCOVER_ROUTES.doctors.path} element={<PublicDoctorsPage />} />
-          <Route path="/doctors/:doctorSlug" element={<PublicDoctorDetailPage />} />
+          <Route path="/doctors" element={<LegacyRedirect to={DISCOVER_ROUTES.doctors.path} />} />
+          <Route path="/doctors/:doctorSlug" element={<LegacyDoctorRedirect />} />
+          <Route path={`${DISCOVER_ROUTES.doctors.path}/:doctorSlug`} element={<PublicDoctorDetailPage />} />
           <Route path={DISCOVER_ROUTES.clinics.path} element={<PublicClinicsPage />} />
-          <Route path="/clinics/:clinicSlug" element={<PublicClinicDetailPage />} />
-          <Route path={DISCOVER_ROUTES.hospitals.path} element={<ShellPage eyebrow="Hospitals" title="Hospital discovery is coming to Jeevanam Discover" body="Hospitals will be able to publish departments, facilities, doctors and appointment information in a future release." stateIcon="H" ctaLabel="Explore clinics" ctaTo={DISCOVER_ROUTES.clinics.path} secondaryLabel="Register a hospital" secondaryTo={DISCOVER_ROUTES.registerHospital.path} />} />
+          <Route path="/clinics" element={<LegacyRedirect to={DISCOVER_ROUTES.clinics.path} />} />
+          <Route path="/clinics/:clinicSlug" element={<LegacyClinicRedirect />} />
+          <Route path={`${DISCOVER_ROUTES.clinics.path}/:clinicSlug`} element={<PublicClinicDetailPage />} />
+          <Route path={DISCOVER_ROUTES.hospitals.path} element={<PublicHospitalsPage />} />
+          <Route path="/hospitals" element={<LegacyRedirect to={DISCOVER_ROUTES.hospitals.path} />} />
+          <Route path="/hospitals/:hospitalSlug" element={<LegacyHospitalRedirect />} />
+          <Route path={`${DISCOVER_ROUTES.hospitals.path}/:hospitalSlug`} element={<PublicHospitalDetailPage />} />
           <Route path={DISCOVER_ROUTES.specialities.path} element={<PublicSpecialitiesPage />} />
-          <Route path="/specialities/:specialitySlug" element={<PublicSpecialityDetailPage />} />
+          <Route path="/specialities" element={<LegacyRedirect to={DISCOVER_ROUTES.specialities.path} />} />
+          <Route path="/specialities/:specialitySlug" element={<LegacySpecialityRedirect />} />
+          <Route path={`${DISCOVER_ROUTES.specialities.path}/:specialitySlug`} element={<PublicSpecialityDetailPage />} />
           <Route path={DISCOVER_ROUTES.services.path} element={<ShellPage eyebrow="Services" title="Explore healthcare services" body="Start with doctor consultations, clinic appointments and speciality search while the service directory expands." stateIcon="＋" ctaLabel="Find doctors" ctaTo={DISCOVER_ROUTES.doctors.path} secondaryLabel="Browse specialities" secondaryTo={DISCOVER_ROUTES.specialities.path} />} />
           <Route path={DISCOVER_ROUTES.healthcare.path} element={<ShellPage eyebrow="Jeevanam Healthcare" title="Operations platform for clinics and hospitals." body="Jeevanam Healthcare supports reception, queue, EMR, care documentation, lab, pharmacy, revenue workflows, vaccination, and administration." ctaLabel="Clinic / Hospital Login" ctaTo={DISCOVER_ROUTES.login.path} />} />
           <Route path={DISCOVER_ROUTES.pricing.path} element={<ShellPage eyebrow="Plans and pricing" title="Plan information for healthcare providers" body="Choose the right path for your practice and connect with Jeevanam for current plan guidance." stateIcon="₹" ctaLabel="Contact Jeevanam" ctaTo={DISCOVER_ROUTES.contact.path} secondaryLabel="List your practice" secondaryTo={DISCOVER_ROUTES.listPractice.path} />} />

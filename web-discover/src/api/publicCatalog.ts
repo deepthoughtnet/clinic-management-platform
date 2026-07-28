@@ -9,6 +9,7 @@ export type PublicPageResponse<T> = {
 export type PublicDoctorSummaryResponse = {
   publicDoctorId: string;
   doctorSlug: string;
+  publicPath?: string;
   doctorDisplayName: string;
   photoUrl: string | null;
   speciality: string | null;
@@ -19,18 +20,28 @@ export type PublicDoctorSummaryResponse = {
   clinicSlug: string;
   area: string | null;
   city: string | null;
+  subtitle?: string | null;
+  summary?: string | null;
   availableToday: boolean;
   nextAvailableSlotSummary: string | null;
 };
 
 export type PublicClinicSummaryResponse = {
   clinicSlug: string;
+  publicPath?: string;
   clinicDisplayName: string;
   logoUrl: string | null;
+  coverUrl?: string | null;
   address: string | null;
   area: string | null;
   city: string | null;
   doctorsCount: number;
+  serviceCount?: number;
+  departmentCount?: number;
+  galleryCount?: number;
+  emergencyAvailable?: boolean;
+  subtitle?: string | null;
+  summary?: string | null;
   availableToday: boolean;
   specialities: string[];
 };
@@ -47,12 +58,35 @@ export type PublicDoctorClinicSummaryResponse = PublicClinicMiniResponse;
 export type PublicDoctorDetailResponse = {
   publicDoctorId: string;
   doctorSlug: string;
+  canonicalSlug?: string;
+  publicPath?: string;
   doctorDisplayName: string;
   photoUrl: string | null;
   qualification: string | null;
+  medicalCouncil?: string | null;
   yearsOfExperience: number | null;
+  summary?: string | null;
+  biography?: string | null;
   specialities: string[];
+  subSpecialities?: string[];
   languages: string[];
+  consultationModes?: string[];
+  services?: string[];
+  locations?: PublicProviderLocationResponse[];
+  galleryImageUrls?: string[];
+  coverUrl?: string | null;
+  logoUrl?: string | null;
+  contactPhone?: string | null;
+  contactEmail?: string | null;
+  website?: string | null;
+  area?: string | null;
+  city?: string | null;
+  state?: string | null;
+  country?: string | null;
+  primarySpeciality?: string | null;
+  reviewsComingSoon?: boolean;
+  subtitle?: string | null;
+  bookingSummary?: string | null;
   clinics: PublicDoctorClinicSummaryResponse[];
   availableDays: string[];
   nextAvailableSlots: string[];
@@ -61,15 +95,88 @@ export type PublicDoctorDetailResponse = {
 
 export type PublicClinicDetailResponse = {
   clinicSlug: string;
+  canonicalSlug?: string;
+  publicPath?: string;
   clinicDisplayName: string;
   logoUrl: string | null;
+  coverUrl?: string | null;
   address: string | null;
   area: string | null;
   city: string | null;
+  summary?: string | null;
+  description?: string | null;
+  services?: string[];
+  departments?: string[];
+  facilities?: string[];
+  consultationModes?: string[];
+  locations?: PublicProviderLocationResponse[];
+  galleryImageUrls?: string[];
+  contactPhone?: string | null;
+  contactEmail?: string | null;
+  website?: string | null;
   timings: string[];
   doctors: PublicDoctorSummaryResponse[];
   specialities: string[];
   availableToday: boolean;
+  reviewsComingSoon?: boolean;
+  subtitle?: string | null;
+};
+
+export type PublicProviderLocationResponse = {
+  label: string | null;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  country: string | null;
+  pinCode: string | null;
+  workingHours: string | null;
+  parkingAvailable: boolean;
+  accessibilityAvailable: boolean;
+};
+
+export type PublicHospitalSummaryResponse = {
+  hospitalSlug: string;
+  publicPath?: string;
+  hospitalDisplayName: string;
+  logoUrl: string | null;
+  coverUrl?: string | null;
+  area: string | null;
+  city: string | null;
+  doctorsCount: number;
+  serviceCount?: number;
+  departmentCount?: number;
+  galleryCount?: number;
+  emergencyAvailable: boolean;
+  departments: string[];
+  subtitle?: string | null;
+  summary?: string | null;
+};
+
+export type PublicHospitalDetailResponse = {
+  hospitalSlug: string;
+  canonicalSlug?: string;
+  publicPath?: string;
+  hospitalDisplayName: string;
+  logoUrl: string | null;
+  coverUrl?: string | null;
+  address: string | null;
+  area: string | null;
+  city: string | null;
+  summary?: string | null;
+  description?: string | null;
+  departments: string[];
+  facilities: string[];
+  services: string[];
+  consultationModes: string[];
+  locations: PublicProviderLocationResponse[];
+  galleryImageUrls: string[];
+  doctors: PublicDoctorSummaryResponse[];
+  contactPhone?: string | null;
+  contactEmail?: string | null;
+  website?: string | null;
+  emergencyAvailable: boolean;
+  reviewsComingSoon: boolean;
+  subtitle?: string | null;
 };
 
 export type PublicSpecialitySummaryResponse = {
@@ -77,6 +184,7 @@ export type PublicSpecialitySummaryResponse = {
   specialitySlug: string;
   doctorsCount: number;
   clinicsCount: number;
+  hospitalsCount?: number;
 };
 
 export type PublicSpecialityDetailResponse = {
@@ -88,6 +196,7 @@ export type PublicSpecialityDetailResponse = {
 export type PublicSearchResponse = {
   doctors: PublicPageResponse<PublicDoctorSummaryResponse>;
   clinics: PublicPageResponse<PublicClinicSummaryResponse>;
+  hospitals?: PublicPageResponse<PublicHospitalSummaryResponse>;
   specialities: PublicSpecialitySummaryResponse[];
 };
 

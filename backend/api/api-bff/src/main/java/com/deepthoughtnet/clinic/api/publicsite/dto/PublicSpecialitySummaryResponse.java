@@ -4,6 +4,7 @@ public record PublicSpecialitySummaryResponse(
         String speciality,
         String specialitySlug,
         long doctorsCount,
-        long clinicsCount
+        long clinicsCount,
+        long hospitalsCount
 ) {
 }

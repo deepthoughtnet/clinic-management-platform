@@ -34,6 +34,7 @@ import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderStatusHistoryEnt
 import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderStatusHistoryRepository;
 import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderSubmissionEntity;
 import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderSubmissionRepository;
+import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService;
 import com.deepthoughtnet.clinic.platform.storage.ObjectStorageService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -79,6 +80,7 @@ public class ProviderOnboardingService {
     private final ProviderChangeRequestRepository changeRequests;
     private final ObjectStorageService storageService;
     private final ObjectMapper objectMapper;
+    private final ProviderPublicProfileService publicProfileService;
 
     public ProviderOnboardingService(
             ProviderApplicationRepository applications,
@@ -89,7 +91,8 @@ public class ProviderOnboardingService {
             ProviderStatusHistoryRepository history,
             ProviderChangeRequestRepository changeRequests,
             ObjectStorageService storageService,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            ProviderPublicProfileService publicProfileService
     ) {
         this.applications = applications;
         this.locations = locations;
@@ -100,6 +103,7 @@ public class ProviderOnboardingService {
         this.changeRequests = changeRequests;
         this.storageService = storageService;
         this.objectMapper = objectMapper;
+        this.publicProfileService = publicProfileService;
     }
 
     @Transactional
@@ -291,6 +295,10 @@ public class ProviderOnboardingService {
         ProviderApplicationEntity entity = requireById(id);
         require(entity.getStatus() == ProviderLifecycleStatus.UNDER_REVIEW, "provider application must be under review before approval");
         transition(entity, ProviderLifecycleStatus.APPROVED, firstText(reason, "Approved for publication readiness"));
+        ProviderSubmissionEntity latestSubmission = submissions.findFirstByProviderIdOrderByVersionNumberDesc(entity.getId())
+                .orElseThrow(() -> new IllegalStateException("provider application must be submitted before approval"));
+        publicProfileService.publishApprovedApplication(entity, latestSubmission, firstText(reason, "Approved for publication readiness"));
+        transition(entity, ProviderLifecycleStatus.PUBLISHED, "Public profile published");
         applications.save(entity);
         return toRecord(entity, null);
     }

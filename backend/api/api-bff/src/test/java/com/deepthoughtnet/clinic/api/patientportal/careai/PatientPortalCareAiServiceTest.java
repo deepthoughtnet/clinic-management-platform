@@ -248,15 +248,18 @@ class PatientPortalCareAiServiceTest {
                         new PublicDoctorSummaryResponse(
                                 "doctor-vikas",
                                 "vikas-mehta",
+                                "/discover/doctors/vikas-mehta",
                                 "Dr Vikas Mehta",
                                 null,
                                 "General Medicine",
                                 12,
                                 List.of(),
-                                "Sunrise Clinic",
-                                "curapilot-demo-clinic",
                                 "Andheri",
                                 "Mumbai",
+                                "General Medicine",
+                                "Doctor summary",
+                                "Sunrise Clinic",
+                                "curapilot-demo-clinic",
                                 true,
                                 "Tomorrow"
                         )
@@ -310,15 +313,18 @@ class PatientPortalCareAiServiceTest {
                         new PublicDoctorSummaryResponse(
                                 "doctor-vikas",
                                 "vikas-mehta",
+                                "/discover/doctors/vikas-mehta",
                                 "Dr Vikas Mehta",
                                 null,
                                 "General Medicine",
                                 12,
                                 List.of(),
-                                "Sunrise Clinic",
-                                "curapilot-demo-clinic",
                                 "Andheri",
                                 "Mumbai",
+                                "General Medicine",
+                                "Doctor summary",
+                                "Sunrise Clinic",
+                                "curapilot-demo-clinic",
                                 true,
                                 "Tomorrow"
                         )
@@ -2125,15 +2131,18 @@ class PatientPortalCareAiServiceTest {
         return new PublicDoctorSummaryResponse(
                 publicDoctorId,
                 doctorSlug,
+                "/discover/doctors/" + doctorSlug,
                 doctorDisplayName,
                 null,
                 speciality,
                 12,
                 List.of(),
-                clinicDisplayName,
-                clinicSlug,
                 "Andheri",
                 "Mumbai",
+                speciality,
+                "Doctor summary",
+                clinicDisplayName,
+                clinicSlug,
                 true,
                 "Tomorrow"
         );

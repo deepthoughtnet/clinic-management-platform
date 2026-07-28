@@ -2,13 +2,12 @@ package com.deepthoughtnet.clinic.api.publicsite.dto;
 
 import java.util.List;
 
-public record PublicClinicSummaryResponse(
-        String clinicSlug,
+public record PublicHospitalSummaryResponse(
+        String hospitalSlug,
         String publicPath,
-        String clinicDisplayName,
+        String hospitalDisplayName,
         String logoUrl,
         String coverUrl,
-        String address,
         String area,
         String city,
         int doctorsCount,
@@ -16,9 +15,8 @@ public record PublicClinicSummaryResponse(
         int departmentCount,
         int galleryCount,
         boolean emergencyAvailable,
-        List<String> specialities,
+        List<String> departments,
         String subtitle,
-        String summary,
-        boolean availableToday
+        String summary
 ) {
 }

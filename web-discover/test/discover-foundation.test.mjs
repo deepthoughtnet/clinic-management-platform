@@ -43,11 +43,11 @@ test("required public routes are defined and patient routes are absent", () => {
   const app = read("src/App.tsx");
   const requiredRoutes = [
     'path: "/"',
-    'path: "/doctors"',
-    'path: "/clinics"',
-    'path: "/hospitals"',
-    'path: "/specialities"',
-    'path: "/services"',
+    'path: "/discover/doctors"',
+    'path: "/discover/clinics"',
+    'path: "/discover/hospitals"',
+    'path: "/discover/specialities"',
+    'path: "/discover/services"',
     'path: "/healthcare"',
     'path: "/pricing"',
     'path: "/list-your-practice"',
@@ -64,6 +64,10 @@ test("required public routes are defined and patient routes are absent", () => {
   for (const route of requiredRoutes) {
     assert.ok(routes.includes(route), `${route} should be present`);
   }
+  assert.ok(app.includes('path="/doctors"'));
+  assert.ok(app.includes('path="/clinics"'));
+  assert.ok(app.includes('path="/hospitals"'));
+  assert.ok(app.includes('path="/specialities"'));
   assert.ok(app.includes('path="*"'));
   assert.ok(!routes.includes("/patient"));
   assert.ok(!app.includes("/patient/"));
@@ -146,6 +150,6 @@ test("deployment and documentation foundation are present", () => {
   assert.ok(dockerfile.includes("VITE_CARE_APP_URL"));
   assert.ok(nginx.includes("try_files $uri $uri/ /index.html"));
   assert.ok(index.includes("/favicon.svg"));
-  assert.ok(readme.includes("Phase 2"));
+  assert.ok(readme.includes("Phase 3B"));
   assert.ok(readme.includes("The local development server uses port `5177`."));
 });

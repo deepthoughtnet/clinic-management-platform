@@ -9,7 +9,7 @@ function read(relPath) {
   return fs.readFileSync(path.join(root, relPath), "utf8");
 }
 
-test("Phase 2 migrates real anonymous discovery pages into web-discover", () => {
+test("Phase 4 publishes doctor, clinic, hospital, and speciality discovery pages", () => {
   const app = read("src/App.tsx");
   const pages = read("src/pages/discovery/PublicDiscoveryPages.tsx");
 
@@ -18,17 +18,20 @@ test("Phase 2 migrates real anonymous discovery pages into web-discover", () => 
   assert.ok(app.includes("<PublicDoctorDetailPage />"));
   assert.ok(app.includes("<PublicClinicsPage />"));
   assert.ok(app.includes("<PublicClinicDetailPage />"));
+  assert.ok(app.includes("<PublicHospitalsPage />"));
+  assert.ok(app.includes("<PublicHospitalDetailPage />"));
   assert.ok(app.includes("<PublicSpecialitiesPage />"));
   assert.ok(app.includes("<PublicSpecialityDetailPage />"));
   assert.ok(pages.includes("Doctors you can explore"));
   assert.ok(pages.includes("Clinics near you"));
+  assert.ok(pages.includes("Find hospitals and specialty care"));
   assert.ok(pages.includes("Browse by speciality"));
   assert.ok(pages.includes("Compare doctor profiles and continue to booking when you find the right care option."));
   assert.ok(pages.includes("Explore clinic locations, specialities and doctor teams before you book."));
   assert.ok(pages.includes("Browse healthcare specialities and find relevant doctors and clinics."));
 });
 
-test("Phase 2 reuses existing public catalog APIs without backend or auth changes", () => {
+test("published profiles reuse public catalog APIs without backend or auth changes", () => {
   const api = read("src/api/publicCatalog.ts");
   const pages = read("src/pages/discovery/PublicDiscoveryPages.tsx");
 
@@ -36,6 +39,8 @@ test("Phase 2 reuses existing public catalog APIs without backend or auth change
   assert.ok(pages.includes("`/api/public/doctors/${doctorSlug}`"));
   assert.ok(pages.includes('"/api/public/clinics"'));
   assert.ok(pages.includes("`/api/public/clinics/${clinicSlug}`"));
+  assert.ok(pages.includes('"/api/public/hospitals"'));
+  assert.ok(pages.includes("`/api/public/hospitals/${hospitalSlug}`"));
   assert.ok(pages.includes('"/api/public/specialities"'));
   assert.ok(pages.includes("`/api/public/specialities/${specialitySlug}`"));
   assert.ok(api.includes("VITE_API_BASE_URL"));
@@ -44,7 +49,7 @@ test("Phase 2 reuses existing public catalog APIs without backend or auth change
   assert.ok(!api.includes("keycloak"));
 });
 
-test("migrated discovery has no patient session, portal, or dashboard dependency", () => {
+test("published discovery has no patient session, portal, or dashboard dependency", () => {
   const migrated = [
     read("src/api/publicCatalog.ts"),
     read("src/components/DiscoveryComponents.tsx"),
@@ -71,9 +76,14 @@ test("public booking entry is an external Care handoff and does not implement bo
   assert.ok(!components.includes("/api/patient-portal/appointments"));
 });
 
-test("Discover keeps migrated pages while Care redirects legacy public routes after Phase 3A", () => {
+test("Discover exposes canonical /discover routes while Care keeps legacy redirects", () => {
+  const app = read("src/App.tsx");
   const webCareApp = fs.readFileSync(path.join(root, "../web-care/src/App.tsx"), "utf8");
 
+  assert.ok(app.includes('path="/doctors" element={<LegacyRedirect to={DISCOVER_ROUTES.doctors.path} />}'));
+  assert.ok(app.includes('path="/clinics" element={<LegacyRedirect to={DISCOVER_ROUTES.clinics.path} />}'));
+  assert.ok(app.includes('path="/hospitals" element={<LegacyRedirect to={DISCOVER_ROUTES.hospitals.path} />}'));
+  assert.ok(app.includes('path="/specialities" element={<LegacyRedirect to={DISCOVER_ROUTES.specialities.path} />}'));
   assert.ok(webCareApp.includes("LegacyDiscoverRedirectPage"));
   assert.ok(webCareApp.includes('path="/doctors" element={<LegacyDiscoverRedirectPage />}'));
   assert.ok(webCareApp.includes('path="/clinics" element={<LegacyDiscoverRedirectPage />}'));

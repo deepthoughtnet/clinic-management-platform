@@ -3,9 +3,11 @@ import { Link } from "react-router-dom";
 import type {
   PublicClinicSummaryResponse,
   PublicDoctorSummaryResponse,
+  PublicHospitalSummaryResponse,
   PublicPageResponse,
 } from "../api/publicCatalog";
 import { discoverConfig } from "../config";
+import { DISCOVER_DETAIL_PATHS } from "../routes";
 import { slugify } from "../utils/publicDiscovery";
 
 export type FetchState<T> = {
@@ -23,6 +25,14 @@ export const emptyDoctorsPage: PublicPageResponse<PublicDoctorSummaryResponse> =
 };
 
 export const emptyClinicsPage: PublicPageResponse<PublicClinicSummaryResponse> = {
+  items: [],
+  page: 0,
+  size: 12,
+  totalItems: 0,
+  totalPages: 0,
+};
+
+export const emptyHospitalsPage: PublicPageResponse<PublicHospitalSummaryResponse> = {
   items: [],
   page: 0,
   size: 12,
@@ -365,7 +375,7 @@ export function DoctorCard({ doctor }: { doctor: PublicDoctorSummaryResponse }) 
         {doctor.nextAvailableSlotSummary ? <span className="chip">{doctor.nextAvailableSlotSummary}</span> : null}
       </div>
       <div className="directory-action-row">
-        <Link className="secondary-button" to={`/doctors/${doctor.doctorSlug}`}>
+        <Link className="secondary-button" to={doctor.publicPath ?? DISCOVER_DETAIL_PATHS.doctor(doctor.doctorSlug)}>
           View profile
         </Link>
         <a
@@ -403,16 +413,50 @@ export function ClinicCard({ clinic }: { clinic: PublicClinicSummaryResponse }) 
       <div className="directory-badge-row">
         {clinic.availableToday ? <span className="status-pill">Available today</span> : <span className="chip">Appointment entry available</span>}
         {clinic.specialities.slice(0, 2).map((item) => (
-          <Link key={item} className="chip" to={`/specialities/${slugify(item)}`}>
+          <Link key={item} className="chip" to={DISCOVER_DETAIL_PATHS.speciality(slugify(item))}>
             {item}
           </Link>
         ))}
       </div>
       <div className="directory-action-row">
-        <Link className="secondary-button" to={`/clinics/${clinic.clinicSlug}`}>
+        <Link className="secondary-button" to={clinic.publicPath ?? DISCOVER_DETAIL_PATHS.clinic(clinic.clinicSlug)}>
           View clinic
         </Link>
         <a className="primary-button" href={careBookingUrl({ clinicSlug: clinic.clinicSlug })}>
+          Book appointment
+        </a>
+      </div>
+    </article>
+  );
+}
+
+export function HospitalCard({ hospital }: { hospital: PublicHospitalSummaryResponse }) {
+  return (
+    <article className="public-directory-card hospital-directory-card">
+      <div className="clinic-card-media hospital-card-media">
+        <div className="directory-avatar clinic-avatar" aria-hidden="true">
+          {hospital.logoUrl ? <img src={hospital.logoUrl} alt="" loading="lazy" /> : <span>{initials(hospital.hospitalDisplayName)}</span>}
+        </div>
+      </div>
+      <div className="directory-card-top">
+        <div className="directory-card-heading">
+          <strong>{hospital.hospitalDisplayName}</strong>
+          <span>{hospital.area ?? hospital.city ?? "Hospital"}</span>
+        </div>
+      </div>
+      <div className="directory-meta-list">
+        <span>{hospital.summary ?? "Hospital profile published for Discover"}</span>
+        {hospital.departments.length ? <span>{hospital.departments.slice(0, 3).join(" · ")}</span> : null}
+      </div>
+      <div className="directory-badge-row">
+        {hospital.emergencyAvailable ? <span className="status-pill">Emergency available</span> : <span className="chip">Review services</span>}
+        {hospital.coverUrl ? <span className="chip">Cover image</span> : null}
+      </div>
+      <div className="directory-action-row">
+        <Link className="secondary-button" to={hospital.publicPath ?? DISCOVER_DETAIL_PATHS.hospital(hospital.hospitalSlug)}>
+          View hospital
+        </Link>
+        <a className="primary-button" href={careBookingUrl({ hospitalSlug: hospital.hospitalSlug })}>
           Book appointment
         </a>
       </div>

@@ -49,8 +49,9 @@ test("homepage includes production discovery sections without fabricated metrics
 test("homepage cards route to profiles and Care booking without exposing raw IDs as labels", () => {
   const components = read("src/components/DiscoveryComponents.tsx");
 
-  assert.ok(components.includes('to={`/doctors/${doctor.doctorSlug}`'));
-  assert.ok(components.includes('to={`/clinics/${clinic.clinicSlug}`'));
+  assert.ok(components.includes("DISCOVER_DETAIL_PATHS.doctor(doctor.doctorSlug)"));
+  assert.ok(components.includes("DISCOVER_DETAIL_PATHS.clinic(clinic.clinicSlug)"));
+  assert.ok(components.includes("DISCOVER_DETAIL_PATHS.speciality(slugify(item))"));
   assert.ok(components.includes("Book appointment"));
   assert.ok(components.includes("careBookingUrl"));
   assert.ok(!components.includes("{doctor.publicDoctorId}</"));
@@ -103,11 +104,11 @@ test("visual refinement removes architecture panel and duplicate final CTA", () 
   assert.ok(!styles.includes("final-cta"));
   assert.ok(page.includes("Dr. Anjali Sharma"));
   assert.ok(page.includes("Sunrise Family Clinic"));
+  assert.ok(page.includes("Hospital discovery"));
   assert.ok(page.includes('className="visually-hidden">Search'));
   assert.ok(page.includes('className="visually-hidden">Location'));
   assert.ok(page.includes("hero-profile-card"));
   assert.ok(page.includes("hero-clinic-card"));
-  assert.ok(page.includes('<article className="service-card service-card-disabled"'));
   assert.ok(!components.includes("clinic-card-pattern"));
   assert.ok(styles.includes("grid-template-columns: minmax(0, 3fr) minmax(150px, 1fr) minmax(132px, 1fr);"));
 });
@@ -117,7 +118,8 @@ test("provider onboarding routes render governed wizard instead of technical pla
   const portal = read("src/pages/provider/ProviderOnboardingPage.tsx");
   const api = read("src/api/providerOnboarding.ts");
 
-  assert.ok(app.includes("Hospital discovery is coming to Jeevanam Discover"));
+  assert.ok(app.includes("PublicHospitalsPage"));
+  assert.ok(app.includes("PublicHospitalDetailPage"));
   assert.ok(app.includes('<ProviderOnboardingPage type="doctor"'));
   assert.ok(app.includes('<ProviderOnboardingPage type="clinic"'));
   assert.ok(app.includes('<ProviderOnboardingPage type="hospital"'));

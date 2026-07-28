@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   loadProviderDashboard,
   resubmitProviderApplication,
@@ -49,8 +49,7 @@ function statusLabel(status: ProviderStatus) {
 }
 
 export function ProviderDashboardPage() {
-  const navigate = useNavigate();
-  const [token, setToken] = useState(() => readStoredToken());
+  const [token] = useState(() => readStoredToken());
   const [dashboard, setDashboard] = useState<ProviderDashboard | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -74,8 +73,6 @@ export function ProviderDashboardPage() {
       })
       .finally(() => setLoading(false));
   }, [token]);
-
-  const activeRequest = useMemo(() => dashboard?.changeRequests.find((item) => !item.resolved) ?? null, [dashboard]);
 
   async function resubmit() {
     if (!dashboard || !token) return;

@@ -4,6 +4,8 @@ import com.deepthoughtnet.clinic.api.publicsite.dto.PublicClinicDetailResponse;
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicClinicSummaryResponse;
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicDoctorDetailResponse;
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicDoctorSummaryResponse;
+import com.deepthoughtnet.clinic.api.publicsite.dto.PublicHospitalDetailResponse;
+import com.deepthoughtnet.clinic.api.publicsite.dto.PublicHospitalSummaryResponse;
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicPageResponse;
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicSearchResponse;
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicSpecialityDetailResponse;
@@ -59,6 +61,24 @@ public class PublicCatalogController {
     @GetMapping("/doctors/{doctorSlug}")
     public PublicDoctorDetailResponse doctor(@PathVariable String doctorSlug) {
         return publicCatalogFacade.doctorDetail(doctorSlug);
+    }
+
+    @GetMapping("/hospitals")
+    public PublicPageResponse<PublicHospitalSummaryResponse> hospitals(
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) String city,
+            @RequestParam(required = false) String area,
+            @RequestParam(required = false) String speciality,
+            @RequestParam(required = false) String tenantCode,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "12") int size
+    ) {
+        return publicCatalogFacade.listHospitals(q, city, area, speciality, tenantCode, page, size);
+    }
+
+    @GetMapping("/hospitals/{hospitalSlug}")
+    public PublicHospitalDetailResponse hospital(@PathVariable String hospitalSlug) {
+        return publicCatalogFacade.hospitalDetail(hospitalSlug);
     }
 
     @GetMapping("/specialities")

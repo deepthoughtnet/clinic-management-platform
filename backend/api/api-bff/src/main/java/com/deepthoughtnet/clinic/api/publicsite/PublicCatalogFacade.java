@@ -5,77 +5,36 @@ import com.deepthoughtnet.clinic.api.publicsite.dto.PublicClinicMiniResponse;
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicClinicSummaryResponse;
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicDoctorDetailResponse;
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicDoctorSummaryResponse;
+import com.deepthoughtnet.clinic.api.publicsite.dto.PublicHospitalDetailResponse;
+import com.deepthoughtnet.clinic.api.publicsite.dto.PublicHospitalSummaryResponse;
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicPageResponse;
+import com.deepthoughtnet.clinic.api.publicsite.dto.PublicProviderLocationResponse;
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicSearchResponse;
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicSpecialityDetailResponse;
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicSpecialitySummaryResponse;
-import com.deepthoughtnet.clinic.api.appointment.AppointmentTimingRules;
-import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
-import com.deepthoughtnet.clinic.appointment.service.AppointmentService;
-import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityRecord;
-import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotRecord;
-import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
-import com.deepthoughtnet.clinic.clinic.service.DoctorProfileService;
-import com.deepthoughtnet.clinic.clinic.service.model.ClinicProfileRecord;
-import com.deepthoughtnet.clinic.clinic.service.model.DoctorProfileRecord;
-import com.deepthoughtnet.clinic.identity.service.PlatformTenantManagementService;
-import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
-import com.deepthoughtnet.clinic.identity.service.model.PlatformTenantRecord;
-import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
-import java.time.DayOfWeek;
-import java.time.LocalDate;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
-import java.time.format.DateTimeFormatter;
-import java.time.format.TextStyle;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Comparator;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
+import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderType;
+import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderLocationSnapshot;
+import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderProfileDetailRecord;
+import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderProfileSummaryRecord;
+import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicSpecialitySummaryRecord;
+import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderSearchCriteria;
+import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
-import java.util.UUID;
-import java.util.function.Function;
-import java.util.function.Predicate;
+import java.util.stream.Stream;
 import java.util.stream.Collectors;
+import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.util.StringUtils;
 import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class PublicCatalogFacade {
-    private static final int MAX_PAGE_SIZE = 24;
-    private static final int SLOT_LOOKAHEAD_DAYS = 14;
-    private static final int SLOT_SUGGESTION_LIMIT = 5;
-    private static final DateTimeFormatter SLOT_DATE_FORMAT = DateTimeFormatter.ofPattern("EEE, d MMM", Locale.ENGLISH);
-    private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("h:mm a", Locale.ENGLISH);
+    private final ProviderPublicProfileService publicProfileService;
 
-    private final PlatformTenantManagementService platformTenantManagementService;
-    private final ClinicProfileService clinicProfileService;
-    private final TenantUserManagementService tenantUserManagementService;
-    private final DoctorProfileService doctorProfileService;
-    private final AppointmentService appointmentService;
-    private final ClinicTimeZoneResolver clinicTimeZoneResolver;
-
-    public PublicCatalogFacade(
-            PlatformTenantManagementService platformTenantManagementService,
-            ClinicProfileService clinicProfileService,
-            TenantUserManagementService tenantUserManagementService,
-            DoctorProfileService doctorProfileService,
-            AppointmentService appointmentService,
-            ClinicTimeZoneResolver clinicTimeZoneResolver
-    ) {
-        this.platformTenantManagementService = platformTenantManagementService;
-        this.clinicProfileService = clinicProfileService;
-        this.tenantUserManagementService = tenantUserManagementService;
-        this.doctorProfileService = doctorProfileService;
-        this.appointmentService = appointmentService;
-        this.clinicTimeZoneResolver = clinicTimeZoneResolver;
+    public PublicCatalogFacade(ProviderPublicProfileService publicProfileService) {
+        this.publicProfileService = publicProfileService;
     }
 
     public PublicPageResponse<PublicClinicSummaryResponse> listClinics(
@@ -87,47 +46,21 @@ public class PublicCatalogFacade {
             int page,
             int size
     ) {
-        String normalizedQuery = normalize(q);
-        String normalizedCity = normalize(city);
-        String normalizedArea = normalize(area);
-        String normalizedSpeciality = normalize(speciality);
-
-        List<TenantSnapshot> matches = loadTenantSnapshots(tenantCode).stream()
-                .filter(snapshot -> matchesClinic(snapshot, normalizedQuery, normalizedCity, normalizedArea, normalizedSpeciality))
-                .sorted(Comparator.comparing(snapshot -> clinicName(snapshot.clinicProfile()), String.CASE_INSENSITIVE_ORDER))
-                .toList();
-
-        return paginate(
-                matches,
-                page,
-                size,
-                this::toClinicSummary
-        );
+        return pageOf(mapClinicSummaries(
+                publicProfileService.listProfiles(new PublicProviderSearchCriteria(
+                        ProviderType.CLINIC,
+                        mergeQuery(q, null),
+                        city,
+                        area,
+                        speciality,
+                        null
+                ), page, size)
+        ));
     }
 
     public PublicClinicDetailResponse clinicDetail(String clinicSlug) {
-        TenantSnapshot snapshot = loadTenantSnapshots(null).stream()
-                .filter(item -> slugForClinic(item.clinicProfile()).equalsIgnoreCase(cleanSlug(clinicSlug)))
-                .findFirst()
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Clinic not found"));
-
-        List<PublicDoctorSummaryResponse> doctors = snapshot.doctors().stream()
-                .sorted(Comparator.comparing(doctor -> doctor.user().displayName(), String.CASE_INSENSITIVE_ORDER))
-                .map(doctor -> toDoctorSummary(snapshot, doctor))
-                .toList();
-
-        return new PublicClinicDetailResponse(
-                slugForClinic(snapshot.clinicProfile()),
-                clinicName(snapshot.clinicProfile()),
-                null,
-                fullAddress(snapshot.clinicProfile()),
-                areaLabel(snapshot.clinicProfile()),
-                snapshot.clinicProfile().city(),
-                clinicTimings(snapshot),
-                doctors,
-                clinicSpecialities(snapshot),
-                doctors.stream().anyMatch(PublicDoctorSummaryResponse::availableToday)
-        );
+        PublicProviderProfileDetailRecord detail = findDetail(clinicSlug, ProviderType.CLINIC);
+        return toClinicDetail(detail);
     }
 
     public PublicPageResponse<PublicDoctorSummaryResponse> listDoctors(
@@ -140,83 +73,58 @@ public class PublicCatalogFacade {
             int page,
             int size
     ) {
-        String normalizedQuery = normalize(q);
-        String normalizedCity = normalize(city);
-        String normalizedArea = normalize(area);
-        String normalizedSpeciality = normalize(speciality);
-        String normalizedClinic = normalize(clinic);
-
-        List<DoctorCandidate> candidates = loadTenantSnapshots(tenantCode).stream()
-                .flatMap(snapshot -> snapshot.doctors().stream().map(doctor -> new DoctorCandidate(snapshot, doctor)))
-                .filter(candidate -> matchesDoctor(candidate, normalizedQuery, normalizedCity, normalizedArea, normalizedSpeciality, normalizedClinic))
-                .sorted(Comparator.comparing(candidate -> candidate.doctor().user().displayName(), String.CASE_INSENSITIVE_ORDER))
-                .toList();
-
-        return paginate(
-                candidates,
-                page,
-                size,
-                candidate -> toDoctorSummary(candidate.snapshot(), candidate.doctor())
-        );
+        return pageOf(mapDoctorSummaries(
+                publicProfileService.listProfiles(new PublicProviderSearchCriteria(
+                        ProviderType.INDIVIDUAL_DOCTOR,
+                        mergeQuery(q, clinic),
+                        city,
+                        area,
+                        speciality,
+                        clinic
+                ), page, size)
+        ));
     }
 
     public PublicDoctorDetailResponse doctorDetail(String doctorSlug) {
-        DoctorCandidate candidate = loadTenantSnapshots(null).stream()
-                .flatMap(snapshot -> snapshot.doctors().stream().map(doctor -> new DoctorCandidate(snapshot, doctor)))
-                .filter(item -> slugForDoctor(item.doctor()).equalsIgnoreCase(cleanSlug(doctorSlug)))
-                .findFirst()
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Doctor not found"));
+        PublicProviderProfileDetailRecord detail = findDetail(doctorSlug, ProviderType.INDIVIDUAL_DOCTOR);
+        return toDoctorDetail(detail);
+    }
 
-        SlotSummary slotSummary = slotSummary(candidate.snapshot().tenant().id(), candidate.doctor().user().appUserId());
-        return new PublicDoctorDetailResponse(
-                candidate.doctor().user().appUserId().toString(),
-                slugForDoctor(candidate.doctor()),
-                candidate.doctor().user().displayName(),
-                null,
-                candidate.doctor().profile().qualification(),
-                candidate.doctor().profile().yearsOfExperience(),
-                splitSpecialities(candidate.doctor().profile().specialization()),
-                List.of(),
-                List.of(new PublicClinicMiniResponse(
-                        slugForClinic(candidate.snapshot().clinicProfile()),
-                        clinicName(candidate.snapshot().clinicProfile()),
-                        areaLabel(candidate.snapshot().clinicProfile()),
-                        candidate.snapshot().clinicProfile().city()
-                )),
-                availableDays(candidate.snapshot().tenant().id(), candidate.doctor().user().appUserId()),
-                slotSummary.nextSlots(),
-                slotSummary.availableToday()
-        );
+    public PublicPageResponse<PublicHospitalSummaryResponse> listHospitals(
+            String q,
+            String city,
+            String area,
+            String speciality,
+            String tenantCode,
+            int page,
+            int size
+    ) {
+        return pageOf(mapHospitalSummaries(
+                publicProfileService.listProfiles(new PublicProviderSearchCriteria(
+                        ProviderType.HOSPITAL,
+                        q,
+                        city,
+                        area,
+                        speciality,
+                        null
+                ), page, size)
+        ));
+    }
+
+    public PublicHospitalDetailResponse hospitalDetail(String hospitalSlug) {
+        PublicProviderProfileDetailRecord detail = findDetail(hospitalSlug, ProviderType.HOSPITAL);
+        return toHospitalDetail(detail);
     }
 
     public List<PublicSpecialitySummaryResponse> listSpecialities(String q, String city, String tenantCode) {
-        String normalizedQuery = normalize(q);
-        String normalizedCity = normalize(city);
-        Map<String, SpecialityAggregate> aggregates = new LinkedHashMap<>();
-
-        for (TenantSnapshot snapshot : loadTenantSnapshots(tenantCode)) {
-            for (DoctorSnapshot doctor : snapshot.doctors()) {
-                if (StringUtils.hasText(normalizedCity) && !containsIgnoreCase(snapshot.clinicProfile().city(), normalizedCity)) {
-                    continue;
-                }
-                for (String speciality : splitSpecialities(doctor.profile().specialization())) {
-                    if (StringUtils.hasText(normalizedQuery) && !containsIgnoreCase(speciality, normalizedQuery)) {
-                        continue;
-                    }
-                    aggregates.computeIfAbsent(speciality.toLowerCase(Locale.ROOT), key -> new SpecialityAggregate(speciality))
-                            .add(snapshot.clinicProfile().tenantId(), doctor.user().appUserId());
-                }
-            }
-        }
-
-        return aggregates.values().stream()
-                .map(aggregate -> new PublicSpecialitySummaryResponse(
-                        aggregate.label(),
-                        slugify(aggregate.label()),
-                        aggregate.doctorIds().size(),
-                        aggregate.clinicIds().size()
+        return publicProfileService.listSpecialities(q, city).stream()
+                .map(item -> new PublicSpecialitySummaryResponse(
+                        item.speciality(),
+                        item.specialitySlug(),
+                        item.doctorsCount(),
+                        item.clinicsCount(),
+                        item.hospitalsCount()
                 ))
-                .sorted(Comparator.comparing(PublicSpecialitySummaryResponse::speciality, String.CASE_INSENSITIVE_ORDER))
                 .toList();
     }
 
@@ -230,403 +138,284 @@ public class PublicCatalogFacade {
             int page,
             int size
     ) {
-        String resolved = resolveSpecialityLabel(specialitySlug, tenantCode)
+        String speciality = resolveSpecialityLabel(specialitySlug)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Speciality not found"));
-
-        PublicPageResponse<PublicDoctorSummaryResponse> doctors = listDoctors(
-                q,
-                city,
-                area,
-                resolved,
-                clinic,
-                tenantCode,
-                page,
-                size
-        );
-
-        return new PublicSpecialityDetailResponse(resolved, slugify(resolved), doctors);
+        PublicPageResponse<PublicDoctorSummaryResponse> doctors = pageOf(mapDoctorSummaries(
+                publicProfileService.listProfiles(new PublicProviderSearchCriteria(
+                        ProviderType.INDIVIDUAL_DOCTOR,
+                        mergeQuery(q, clinic),
+                        city,
+                        area,
+                        speciality,
+                        clinic
+                ), page, size)
+        ));
+        return new PublicSpecialityDetailResponse(speciality, slugify(speciality), doctors);
     }
 
     public PublicSearchResponse search(String q, String city, String area, String tenantCode, int page, int size) {
         return new PublicSearchResponse(
                 listDoctors(q, city, area, null, null, tenantCode, page, size),
                 listClinics(q, city, area, null, tenantCode, page, size),
+                listHospitals(q, city, area, null, tenantCode, page, size),
                 listSpecialities(q, city, tenantCode)
         );
     }
 
-    private List<TenantSnapshot> loadTenantSnapshots(String tenantCode) {
-        String normalizedTenantCode = normalize(tenantCode);
-        return platformTenantManagementService.list().stream()
-                .filter(this::isActiveTenant)
-                .filter(tenant -> !StringUtils.hasText(normalizedTenantCode) || containsIgnoreCase(tenant.code(), normalizedTenantCode))
-                .map(this::toSnapshot)
-                .flatMap(Optional::stream)
+    private PublicProviderProfileDetailRecord findDetail(String slug, ProviderType providerType) {
+        PublicProviderProfileDetailRecord detail = publicProfileService.findBySlug(slug)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Public profile not found"));
+        if (detail.providerType() != providerType) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Public profile not found");
+        }
+        return detail;
+    }
+
+    private PublicDoctorDetailResponse toDoctorDetail(PublicProviderProfileDetailRecord detail) {
+        List<String> gallery = detail.gallery().stream()
+                .map(image -> publicProfileService.resolveDocumentUrl(image.documentId()).orElse(null))
+                .filter(url -> url != null && !url.isBlank())
                 .toList();
-    }
-
-    private Optional<TenantSnapshot> toSnapshot(PlatformTenantRecord tenant) {
-        Optional<ClinicProfileRecord> clinicProfile = clinicProfileService.findByTenantId(tenant.id())
-                .filter(ClinicProfileRecord::active)
-                .filter(ClinicProfileRecord::publicListingEnabled);
-        if (clinicProfile.isEmpty()) {
-            return Optional.empty();
-        }
-
-        List<DoctorSnapshot> doctors = tenantUserManagementService.list(tenant.id()).stream()
-                .filter(this::isActiveDoctorUser)
-                .map(user -> doctorProfileService.findByDoctorUserId(tenant.id(), user.appUserId())
-                        .filter(DoctorProfileRecord::active)
-                        .filter(DoctorProfileRecord::publicListingEnabled)
-                        .filter(profile -> StringUtils.hasText(profile.specialization()))
-                        .map(profile -> new DoctorSnapshot(user, profile)))
-                .flatMap(Optional::stream)
-                .sorted(Comparator.comparing(snapshot -> snapshot.user().displayName(), String.CASE_INSENSITIVE_ORDER))
-                .toList();
-
-        return Optional.of(new TenantSnapshot(tenant, clinicProfile.get(), doctors));
-    }
-
-    private boolean isActiveTenant(PlatformTenantRecord tenant) {
-        return tenant != null
-                && "ACTIVE".equalsIgnoreCase(tenant.status());
-    }
-
-    private boolean isActiveDoctorUser(TenantUserRecord user) {
-        return user != null
-                && "DOCTOR".equalsIgnoreCase(user.membershipRole())
-                && "ACTIVE".equalsIgnoreCase(user.userStatus())
-                && "ACTIVE".equalsIgnoreCase(user.membershipStatus());
-    }
-
-    private boolean matchesClinic(TenantSnapshot snapshot, String q, String city, String area, String speciality) {
-        List<String> specialities = clinicSpecialities(snapshot);
-        if (StringUtils.hasText(speciality) && specialities.stream().noneMatch(item -> containsIgnoreCase(item, speciality))) {
-            return false;
-        }
-        return matchesCommon(
-                q,
-                city,
-                area,
-                snapshot.clinicProfile().city(),
-                areaLabel(snapshot.clinicProfile()),
-                List.of(
-                        clinicName(snapshot.clinicProfile()),
-                        fullAddress(snapshot.clinicProfile()),
-                        String.join(" ", specialities)
-                )
-        );
-    }
-
-    private boolean matchesDoctor(DoctorCandidate candidate, String q, String city, String area, String speciality, String clinic) {
-        if (StringUtils.hasText(speciality) && splitSpecialities(candidate.doctor().profile().specialization()).stream().noneMatch(item -> containsIgnoreCase(item, speciality))) {
-            return false;
-        }
-        if (StringUtils.hasText(clinic) && !containsIgnoreCase(clinicName(candidate.snapshot().clinicProfile()), clinic)) {
-            return false;
-        }
-        return matchesCommon(
-                q,
-                city,
-                area,
-                candidate.snapshot().clinicProfile().city(),
-                areaLabel(candidate.snapshot().clinicProfile()),
-                List.of(
-                        candidate.doctor().user().displayName(),
-                        candidate.doctor().profile().specialization(),
-                        clinicName(candidate.snapshot().clinicProfile())
-                )
-        );
-    }
-
-    private boolean matchesCommon(
-            String q,
-            String cityFilter,
-            String areaFilter,
-            String cityValue,
-            String areaValue,
-            List<String> fields
-    ) {
-        if (StringUtils.hasText(cityFilter) && !containsIgnoreCase(cityValue, cityFilter)) {
-            return false;
-        }
-        if (StringUtils.hasText(areaFilter) && !containsIgnoreCase(areaValue, areaFilter)) {
-            return false;
-        }
-        if (!StringUtils.hasText(q)) {
-            return true;
-        }
-        return fields.stream().anyMatch(field -> containsIgnoreCase(field, q));
-    }
-
-    private PublicClinicSummaryResponse toClinicSummary(TenantSnapshot snapshot) {
-        List<PublicDoctorSummaryResponse> doctors = snapshot.doctors().stream()
-                .map(doctor -> toDoctorSummary(snapshot, doctor))
-                .toList();
-        return new PublicClinicSummaryResponse(
-                slugForClinic(snapshot.clinicProfile()),
-                clinicName(snapshot.clinicProfile()),
-                null,
-                fullAddress(snapshot.clinicProfile()),
-                areaLabel(snapshot.clinicProfile()),
-                snapshot.clinicProfile().city(),
-                doctors.size(),
-                doctors.stream().anyMatch(PublicDoctorSummaryResponse::availableToday),
-                clinicSpecialities(snapshot)
-        );
-    }
-
-    private PublicDoctorSummaryResponse toDoctorSummary(TenantSnapshot snapshot, DoctorSnapshot doctor) {
-        SlotSummary slotSummary = slotSummary(snapshot.tenant().id(), doctor.user().appUserId());
-        return new PublicDoctorSummaryResponse(
-                doctor.user().appUserId().toString(),
-                slugForDoctor(doctor),
-                doctor.user().displayName(),
-                null,
-                firstSpeciality(doctor.profile().specialization()),
-                doctor.profile().yearsOfExperience(),
-                List.of(),
-                clinicName(snapshot.clinicProfile()),
-                slugForClinic(snapshot.clinicProfile()),
-                areaLabel(snapshot.clinicProfile()),
-                snapshot.clinicProfile().city(),
-                slotSummary.availableToday(),
-                slotSummary.firstSummary()
-        );
-    }
-
-    private List<String> clinicSpecialities(TenantSnapshot snapshot) {
-        return snapshot.doctors().stream()
-                .flatMap(doctor -> splitSpecialities(doctor.profile().specialization()).stream())
-                .filter(distinctIgnoreCase())
-                .toList();
-    }
-
-    private List<String> clinicTimings(TenantSnapshot snapshot) {
-        Map<DayOfWeek, List<DoctorAvailabilityRecord>> byDay = snapshot.doctors().stream()
-                .flatMap(doctor -> appointmentService.listDoctorAvailabilities(snapshot.tenant().id(), doctor.user().appUserId()).stream())
-                .filter(DoctorAvailabilityRecord::active)
-                .collect(Collectors.groupingBy(
-                        DoctorAvailabilityRecord::dayOfWeek,
-                        LinkedHashMap::new,
-                        Collectors.toList()
+        List<PublicClinicMiniResponse> clinics = detail.locations().isEmpty()
+                ? List.of()
+                : List.of(new PublicClinicMiniResponse(
+                        slugify(detail.locations().get(0).label() == null ? detail.canonicalSlug() : detail.locations().get(0).label()),
+                        firstNonBlank(detail.locations().get(0).label(), detail.displayName()),
+                        detail.locations().get(0).city(),
+                        detail.city()
                 ));
+        return new PublicDoctorDetailResponse(
+                detail.providerId().toString(),
+                detail.slug(),
+                detail.canonicalSlug(),
+                detail.publicPath(),
+                detail.displayName(),
+                detail.imageUrl(),
+                detail.qualification(),
+                detail.medicalCouncil(),
+                detail.yearsOfExperience(),
+                detail.summary(),
+                detail.biography(),
+                detail.specialities(),
+                detail.subSpecialities(),
+                detail.languages(),
+                detail.consultationModes(),
+                detail.services(),
+                detail.locations().stream().map(this::toLocationResponse).toList(),
+                gallery,
+                detail.coverUrl(),
+                detail.logoUrl(),
+                detail.contactPhone(),
+                detail.contactEmail(),
+                detail.website(),
+                detail.area(),
+                detail.city(),
+                detail.state(),
+                detail.country(),
+                detail.primarySpeciality(),
+                detail.reviewsComingSoon(),
+                detail.subtitle(),
+                detail.summary(),
+                clinics,
+                List.of(),
+                List.of(),
+                false
+        );
+    }
 
-        return byDay.entrySet().stream()
-                .sorted(Map.Entry.comparingByKey())
-                .map(entry -> {
-                    var earliest = entry.getValue().stream().map(DoctorAvailabilityRecord::startTime).filter(Objects::nonNull).min(Comparator.naturalOrder());
-                    var latest = entry.getValue().stream().map(DoctorAvailabilityRecord::endTime).filter(Objects::nonNull).max(Comparator.naturalOrder());
-                    String day = entry.getKey().getDisplayName(TextStyle.SHORT, Locale.ENGLISH);
-                    if (earliest.isPresent() && latest.isPresent()) {
-                        return day + ": " + TIME_FORMAT.format(earliest.get()) + " - " + TIME_FORMAT.format(latest.get());
-                    }
-                    return day;
-                })
+    private PublicClinicDetailResponse toClinicDetail(PublicProviderProfileDetailRecord detail) {
+        List<String> gallery = detail.gallery().stream()
+                .map(image -> publicProfileService.resolveDocumentUrl(image.documentId()).orElse(null))
+                .filter(url -> url != null && !url.isBlank())
                 .toList();
+        return new PublicClinicDetailResponse(
+                detail.slug(),
+                detail.canonicalSlug(),
+                detail.publicPath(),
+                detail.displayName(),
+                detail.logoUrl(),
+                detail.coverUrl(),
+                firstNonBlank(detail.locations().stream().findFirst().map(PublicProviderLocationSnapshot::address).orElse(null), detail.summary()),
+                detail.area(),
+                detail.city(),
+                detail.summary(),
+                detail.biography(),
+                detail.specialities(),
+                detail.services(),
+                detail.departments(),
+                detail.facilities(),
+                detail.consultationModes(),
+                detail.locations().stream().map(this::toLocationResponse).toList(),
+                gallery,
+                List.of(),
+                detail.contactPhone(),
+                detail.contactEmail(),
+                detail.website(),
+                detail.locations().stream()
+                        .map(PublicProviderLocationSnapshot::workingHours)
+                        .filter(value -> value != null && !value.isBlank())
+                        .distinct()
+                        .toList(),
+                false,
+                detail.reviewsComingSoon(),
+                detail.subtitle()
+        );
     }
 
-    private List<String> availableDays(UUID tenantId, UUID doctorUserId) {
-        return appointmentService.listDoctorAvailabilities(tenantId, doctorUserId).stream()
-                .filter(DoctorAvailabilityRecord::active)
-                .map(DoctorAvailabilityRecord::dayOfWeek)
-                .filter(Objects::nonNull)
-                .distinct()
-                .sorted()
-                .map(day -> day.getDisplayName(TextStyle.FULL, Locale.ENGLISH))
+    private PublicHospitalDetailResponse toHospitalDetail(PublicProviderProfileDetailRecord detail) {
+        List<String> gallery = detail.gallery().stream()
+                .map(image -> publicProfileService.resolveDocumentUrl(image.documentId()).orElse(null))
+                .filter(url -> url != null && !url.isBlank())
                 .toList();
+        return new PublicHospitalDetailResponse(
+                detail.slug(),
+                detail.canonicalSlug(),
+                detail.publicPath(),
+                detail.displayName(),
+                detail.logoUrl(),
+                detail.coverUrl(),
+                firstNonBlank(detail.locations().stream().findFirst().map(PublicProviderLocationSnapshot::address).orElse(null), detail.summary()),
+                detail.area(),
+                detail.city(),
+                detail.summary(),
+                detail.biography(),
+                detail.departments(),
+                detail.facilities(),
+                detail.services(),
+                detail.consultationModes(),
+                detail.locations().stream().map(this::toLocationResponse).toList(),
+                gallery,
+                List.of(),
+                detail.contactPhone(),
+                detail.contactEmail(),
+                detail.website(),
+                detail.emergencyAvailable(),
+                detail.reviewsComingSoon(),
+                detail.subtitle()
+        );
     }
 
-    private SlotSummary slotSummary(UUID tenantId, UUID doctorUserId) {
-        ZoneId bookingZone = clinicTimeZoneResolver.resolve(tenantId);
-        LocalDate today = LocalDate.now(bookingZone);
-        ZonedDateTime clinicNow = ZonedDateTime.now(bookingZone);
-        List<String> nextSlots = new ArrayList<>();
-        boolean availableToday = false;
-
-        for (int offset = 0; offset < SLOT_LOOKAHEAD_DAYS && nextSlots.size() < SLOT_SUGGESTION_LIMIT; offset++) {
-            LocalDate date = today.plusDays(offset);
-            List<DoctorAvailabilitySlotRecord> slots = appointmentService.listSlots(tenantId, doctorUserId, date, bookingZone).stream()
-                    .filter(slot -> AppointmentTimingRules.isSlotBookableForPatient(slot.appointmentDate(), slot.slotTime(), bookingZone, clinicNow))
-                    .filter(DoctorAvailabilitySlotRecord::selectable)
-                    .sorted(Comparator.comparing(DoctorAvailabilitySlotRecord::slotTime))
-                    .toList();
-            if (offset == 0 && !slots.isEmpty()) {
-                availableToday = true;
-            }
-            for (DoctorAvailabilitySlotRecord slot : slots) {
-                nextSlots.add(formatSlot(slot, today));
-                if (nextSlots.size() >= SLOT_SUGGESTION_LIMIT) {
-                    break;
-                }
-            }
-        }
-
-        return new SlotSummary(availableToday, nextSlots);
+    private PublicProviderLocationResponse toLocationResponse(PublicProviderLocationSnapshot location) {
+        return new PublicProviderLocationResponse(
+                location.label(),
+                location.address(),
+                location.city(),
+                location.state(),
+                location.country(),
+                location.pinCode(),
+                location.workingHours(),
+                location.parkingAvailable(),
+                location.accessibilityAvailable()
+        );
     }
 
-    private String formatSlot(DoctorAvailabilitySlotRecord slot, LocalDate today) {
-        String prefix = slot.appointmentDate().equals(today) ? "Today" : SLOT_DATE_FORMAT.format(slot.appointmentDate());
-        return prefix + " · " + TIME_FORMAT.format(slot.slotTime());
+    private PublicDoctorSummaryResponse toDoctorSummary(PublicProviderProfileSummaryRecord record) {
+        return new PublicDoctorSummaryResponse(
+                record.providerId().toString(),
+                record.canonicalSlug(),
+                record.publicPath(),
+                record.displayName(),
+                record.imageUrl(),
+                record.primarySpeciality(),
+                null,
+                List.of(),
+                record.area(),
+                record.city(),
+                record.subtitle(),
+                record.summary(),
+                firstNonBlank(record.subtitle(), record.primarySpeciality(), record.displayName()),
+                slugify(firstNonBlank(record.area(), record.city(), record.displayName())),
+                false,
+                null
+        );
     }
 
-    private Optional<String> resolveSpecialityLabel(String specialitySlug, String tenantCode) {
-        String cleanSlug = cleanSlug(specialitySlug);
-        return listSpecialities(null, null, tenantCode).stream()
-                .filter(item -> item.specialitySlug().equalsIgnoreCase(cleanSlug))
-                .map(PublicSpecialitySummaryResponse::speciality)
+    private PublicClinicSummaryResponse toClinicSummary(PublicProviderProfileSummaryRecord record) {
+        return new PublicClinicSummaryResponse(
+                record.canonicalSlug(),
+                record.publicPath(),
+                record.displayName(),
+                record.imageUrl(),
+                record.coverUrl(),
+                record.area(),
+                record.area(),
+                record.city(),
+                record.doctorCount(),
+                record.serviceCount(),
+                record.departmentCount(),
+                record.galleryCount(),
+                record.emergencyAvailable(),
+                record.tags(),
+                record.subtitle(),
+                record.summary(),
+                false
+        );
+    }
+
+    private PublicHospitalSummaryResponse toHospitalSummary(PublicProviderProfileSummaryRecord record) {
+        return new PublicHospitalSummaryResponse(
+                record.canonicalSlug(),
+                record.publicPath(),
+                record.displayName(),
+                record.imageUrl(),
+                record.coverUrl(),
+                record.area(),
+                record.city(),
+                record.doctorCount(),
+                record.serviceCount(),
+                record.departmentCount(),
+                record.galleryCount(),
+                record.emergencyAvailable(),
+                record.tags(),
+                record.subtitle(),
+                record.summary()
+        );
+    }
+
+    private Page<PublicDoctorSummaryResponse> mapDoctorSummaries(Page<PublicProviderProfileSummaryRecord> page) {
+        return page.map(this::toDoctorSummary);
+    }
+
+    private Page<PublicClinicSummaryResponse> mapClinicSummaries(Page<PublicProviderProfileSummaryRecord> page) {
+        return page.map(this::toClinicSummary);
+    }
+
+    private Page<PublicHospitalSummaryResponse> mapHospitalSummaries(Page<PublicProviderProfileSummaryRecord> page) {
+        return page.map(this::toHospitalSummary);
+    }
+
+    private <T> PublicPageResponse<T> pageOf(Page<T> page) {
+        return new PublicPageResponse<>(page.getContent(), page.getNumber(), page.getSize(), page.getTotalElements(), page.getTotalPages());
+    }
+
+    private String mergeQuery(String query, String extra) {
+        return Stream.of(query, extra)
+                .filter(value -> value != null && !value.isBlank())
+                .collect(Collectors.joining(" "))
+                .trim();
+    }
+
+    private Optional<String> resolveSpecialityLabel(String specialitySlug) {
+        String normalized = slugify(specialitySlug);
+        return publicProfileService.listSpecialities(null, null).stream()
+                .filter(item -> slugify(item.speciality()).equalsIgnoreCase(normalized))
+                .map(PublicSpecialitySummaryRecord::speciality)
                 .findFirst();
     }
 
-    private String clinicName(ClinicProfileRecord clinicProfile) {
-        return firstNonBlank(clinicProfile.displayName(), clinicProfile.clinicName());
-    }
-
-    private String areaLabel(ClinicProfileRecord clinicProfile) {
-        return firstNonBlank(clinicProfile.addressLine2(), clinicProfile.addressLine1());
-    }
-
-    private String fullAddress(ClinicProfileRecord clinicProfile) {
-        LinkedHashSet<String> parts = new LinkedHashSet<>();
-        addIfText(parts, clinicProfile.addressLine1());
-        addIfText(parts, clinicProfile.addressLine2());
-        addIfText(parts, clinicProfile.city());
-        addIfText(parts, clinicProfile.state());
-        addIfText(parts, clinicProfile.country());
-        return String.join(", ", parts);
-    }
-
-    private void addIfText(Collection<String> parts, String value) {
-        if (StringUtils.hasText(value)) {
-            parts.add(value.trim());
-        }
-    }
-
-    private List<String> splitSpecialities(String raw) {
-        if (!StringUtils.hasText(raw)) {
-            return List.of();
-        }
-        List<String> values = new ArrayList<>();
-        for (String token : raw.split("[,;]")) {
-            String normalized = normalizeDisplay(token);
-            if (StringUtils.hasText(normalized)) {
-                values.add(normalized);
-            }
-        }
-        if (values.isEmpty()) {
-            return List.of(normalizeDisplay(raw));
-        }
-        return values;
-    }
-
-    private String firstSpeciality(String raw) {
-        return splitSpecialities(raw).stream().findFirst().orElse(null);
-    }
-
-    private Predicate<String> distinctIgnoreCase() {
-        Map<String, Boolean> seen = new LinkedHashMap<>();
-        return value -> seen.putIfAbsent(value.toLowerCase(Locale.ROOT), Boolean.TRUE) == null;
-    }
-
-    private boolean containsIgnoreCase(String source, String term) {
-        return StringUtils.hasText(source)
-                && StringUtils.hasText(term)
-                && source.toLowerCase(Locale.ROOT).contains(term.toLowerCase(Locale.ROOT));
-    }
-
-    private String normalize(String value) {
-        return StringUtils.hasText(value) ? value.trim() : null;
-    }
-
-    private String normalizeDisplay(String value) {
-        return value == null ? null : value.trim();
-    }
-
-    private String slugForClinic(ClinicProfileRecord clinicProfile) {
-        if (StringUtils.hasText(clinicProfile.slug())) {
-            return cleanSlug(clinicProfile.slug());
-        }
-        return slugify(clinicName(clinicProfile));
-    }
-
-    private String slugForDoctor(DoctorSnapshot doctor) {
-        if (StringUtils.hasText(doctor.profile().slug())) {
-            return cleanSlug(doctor.profile().slug());
-        }
-        return slugify(doctor.user().displayName());
-    }
-
-    private String cleanSlug(String value) {
-        return slugify(value == null ? "" : value);
-    }
-
     private String slugify(String value) {
-        String normalized = value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
-        String slug = normalized
-                .replaceAll("[^a-z0-9]+", "-")
-                .replaceAll("(^-|-$)", "");
-        return StringUtils.hasText(slug) ? slug : "listing";
+        return value == null ? "" : value.trim().toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", "-").replaceAll("(^-|-$)", "");
     }
 
     private String firstNonBlank(String... values) {
+        if (values == null) {
+            return null;
+        }
         for (String value : values) {
-            if (StringUtils.hasText(value)) {
+            if (value != null && !value.isBlank()) {
                 return value.trim();
             }
         }
-        return "";
-    }
-
-    private <T, R> PublicPageResponse<R> paginate(List<T> values, int page, int size, Function<T, R> mapper) {
-        int safeSize = Math.max(1, Math.min(size, MAX_PAGE_SIZE));
-        int safePage = Math.max(page, 0);
-        int fromIndex = Math.min(safePage * safeSize, values.size());
-        int toIndex = Math.min(fromIndex + safeSize, values.size());
-        List<R> items = values.subList(fromIndex, toIndex).stream().map(mapper).toList();
-        int totalPages = values.isEmpty() ? 0 : (int) Math.ceil((double) values.size() / safeSize);
-        return new PublicPageResponse<>(items, safePage, safeSize, values.size(), totalPages);
-    }
-
-    private record TenantSnapshot(
-            PlatformTenantRecord tenant,
-            ClinicProfileRecord clinicProfile,
-            List<DoctorSnapshot> doctors
-    ) {}
-
-    private record DoctorSnapshot(TenantUserRecord user, DoctorProfileRecord profile) {}
-
-    private record DoctorCandidate(TenantSnapshot snapshot, DoctorSnapshot doctor) {}
-
-    private record SlotSummary(boolean availableToday, List<String> nextSlots) {
-        private String firstSummary() {
-            return nextSlots.isEmpty() ? null : nextSlots.get(0);
-        }
-    }
-
-    private static final class SpecialityAggregate {
-        private final String label;
-        private final LinkedHashSet<UUID> clinicIds = new LinkedHashSet<>();
-        private final LinkedHashSet<UUID> doctorIds = new LinkedHashSet<>();
-
-        private SpecialityAggregate(String label) {
-            this.label = label;
-        }
-
-        private void add(UUID clinicId, UUID doctorId) {
-            clinicIds.add(clinicId);
-            doctorIds.add(doctorId);
-        }
-
-        private String label() {
-            return label;
-        }
-
-        private LinkedHashSet<UUID> clinicIds() {
-            return clinicIds;
-        }
-
-        private LinkedHashSet<UUID> doctorIds() {
-            return doctorIds;
-        }
+        return null;
     }
 }

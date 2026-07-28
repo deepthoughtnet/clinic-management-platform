@@ -2,11 +2,11 @@ package com.deepthoughtnet.clinic.api.publicsite.dto;
 
 import java.util.List;
 
-public record PublicClinicDetailResponse(
-        String clinicSlug,
+public record PublicHospitalDetailResponse(
+        String hospitalSlug,
         String canonicalSlug,
         String publicPath,
-        String clinicDisplayName,
+        String hospitalDisplayName,
         String logoUrl,
         String coverUrl,
         String address,
@@ -14,10 +14,9 @@ public record PublicClinicDetailResponse(
         String city,
         String summary,
         String description,
-        List<String> specialities,
-        List<String> services,
         List<String> departments,
         List<String> facilities,
+        List<String> services,
         List<String> consultationModes,
         List<PublicProviderLocationResponse> locations,
         List<String> galleryImageUrls,
@@ -25,8 +24,7 @@ public record PublicClinicDetailResponse(
         String contactPhone,
         String contactEmail,
         String website,
-        List<String> timings,
-        boolean availableToday,
+        boolean emergencyAvailable,
         boolean reviewsComingSoon,
         String subtitle
 ) {
