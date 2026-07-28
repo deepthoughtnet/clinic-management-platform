@@ -192,6 +192,9 @@ export function ProviderDashboardPage() {
             <Link className="secondary-button" to={`/provider/onboarding/${application.id}/${continueStep}`}>Continue registration</Link>
             <Link className="secondary-button" to={`/provider/onboarding/${application.id}/preview`}>Preview profile</Link>
             <Link className="primary-button" to={`/provider/onboarding/${application.id}/submit`}>Submit</Link>
+            {application.status === "PUBLISHED" ? (
+              <Link className="secondary-button" to={DISCOVER_ROUTES.providerLandingPage.path}>Landing page</Link>
+            ) : null}
           </div>
           {dashboard.nextRecommendedAction === "Address requested changes" && !readOnly ? (
             <button className="primary-button" type="button" onClick={() => void resubmit()} disabled={loading}>

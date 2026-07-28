@@ -18,6 +18,7 @@ export const DISCOVER_ROUTES = {
   pricing: { path: "/pricing", label: "Pricing", nav: true, footer: true },
   listPractice: { path: "/list-your-practice", label: "For Providers", nav: true, footer: true },
   providerDashboard: { path: "/provider/dashboard", label: "Provider Dashboard" },
+  providerLandingPage: { path: "/provider/landing-page", label: "Landing Page" },
   providerOnboarding: { path: "/provider/onboarding/:applicationId/:step", label: "Provider Onboarding" },
   registerDoctor: { path: "/register/doctor", label: "Register as Doctor" },
   registerClinic: { path: "/register/clinic", label: "Register a Clinic" },
@@ -55,6 +56,12 @@ export const DISCOVER_DETAIL_PATHS = {
   clinic: (slug: string) => `/discover/clinics/${slug}`,
   hospital: (slug: string) => `/discover/hospitals/${slug}`,
   speciality: (slug: string) => `/discover/specialities/${slug}`,
+} as const;
+
+export const DISCOVER_LANDING_PATHS = {
+  doctor: (slug: string) => `/discover/doctors/${slug}/home`,
+  clinic: (slug: string) => `/discover/clinics/${slug}/home`,
+  hospital: (slug: string) => `/discover/hospitals/${slug}/home`,
 } as const;
 
 export const LEGACY_DETAIL_PATHS = {

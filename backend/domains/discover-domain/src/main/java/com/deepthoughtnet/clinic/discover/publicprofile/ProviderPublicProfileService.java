@@ -182,6 +182,19 @@ public class ProviderPublicProfileService {
     }
 
     @Transactional(readOnly = true)
+    public Optional<PublicProviderProfileDetailRecord> findByProviderId(UUID providerId) {
+        if (providerId == null) {
+            return Optional.empty();
+        }
+        Optional<DiscoverPublicProviderProfileEntity> profile = profiles.findByProviderId(providerId);
+        Optional<DiscoverPublicProviderProfileVersionEntity> version = versions.findFirstByProviderIdOrderByVersionNumberDesc(providerId);
+        if (profile.isEmpty() || version.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(toDetail(profile.get(), version.get(), profile.get().getCanonicalSlug(), readSnapshot(version.get().getSnapshotJson())));
+    }
+
+    @Transactional(readOnly = true)
     public List<PublicSpecialitySummaryRecord> listSpecialities(String q, String city) {
         String normalizedQuery = normalize(q);
         String normalizedCity = normalize(city);

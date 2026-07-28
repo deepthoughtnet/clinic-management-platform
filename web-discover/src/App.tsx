@@ -15,7 +15,9 @@ import {
   PublicSpecialitiesPage,
   PublicSpecialityDetailPage,
 } from "./pages/discovery/PublicDiscoveryPages";
+import { LandingPagePage } from "./pages/public/LandingPagePage";
 import { ProviderDashboardPage } from "./pages/provider/ProviderDashboardPage";
+import { ProviderLandingPagePage } from "./pages/provider/ProviderLandingPagePage";
 import { ProviderOnboardingPage } from "./pages/provider/ProviderOnboardingPage";
 import { DISCOVER_ROUTES, primaryNavigationRoutes } from "./routes";
 
@@ -77,9 +79,20 @@ const routeMeta: Record<string, { title: string; description: string }> = {
     title: "Provider Dashboard | Jeevanam Discover",
     description: "Continue your provider onboarding, review status, and submit your public profile.",
   },
+  [DISCOVER_ROUTES.providerLandingPage.path]: {
+    title: "Landing Page Builder | Jeevanam Discover",
+    description: "Configure structured sections, themes, and published landing-page versions.",
+  },
 };
 
 function updateDocumentMetadata(pathname: string) {
+  const landingMeta = pathname.startsWith("/discover/doctors/") && pathname.endsWith("/home")
+    ? { title: "Doctor Landing Page | Jeevanam Discover", description: "View the structured public landing page for this doctor." }
+    : pathname.startsWith("/discover/clinics/") && pathname.endsWith("/home")
+      ? { title: "Clinic Landing Page | Jeevanam Discover", description: "View the structured public landing page for this clinic." }
+      : pathname.startsWith("/discover/hospitals/") && pathname.endsWith("/home")
+        ? { title: "Hospital Landing Page | Jeevanam Discover", description: "View the structured public landing page for this hospital." }
+        : null;
   const detailMeta = pathname.startsWith("/discover/doctors/")
     ? { title: "Doctor Profile | Jeevanam Discover", description: "View public doctor profiles, booking options, and practice information." }
     : pathname.startsWith("/discover/clinics/")
@@ -89,7 +102,7 @@ function updateDocumentMetadata(pathname: string) {
         : pathname.startsWith("/discover/specialities/")
           ? { title: "Speciality | Jeevanam Discover", description: "Browse providers for this medical speciality." }
           : null;
-  const meta = detailMeta ?? routeMeta[pathname] ?? {
+  const meta = landingMeta ?? detailMeta ?? routeMeta[pathname] ?? {
     title: "Jeevanam Discover",
     description: "Jeevanam Discover helps people find trusted healthcare providers and services.",
   };
@@ -400,10 +413,13 @@ function App() {
           <Route path="/clinics" element={<LegacyRedirect to={DISCOVER_ROUTES.clinics.path} />} />
           <Route path="/clinics/:clinicSlug" element={<LegacyClinicRedirect />} />
           <Route path={`${DISCOVER_ROUTES.clinics.path}/:clinicSlug`} element={<PublicClinicDetailPage />} />
+          <Route path="/discover/clinics/:clinicSlug/home" element={<LandingPagePage param="clinicSlug" />} />
           <Route path={DISCOVER_ROUTES.hospitals.path} element={<PublicHospitalsPage />} />
           <Route path="/hospitals" element={<LegacyRedirect to={DISCOVER_ROUTES.hospitals.path} />} />
           <Route path="/hospitals/:hospitalSlug" element={<LegacyHospitalRedirect />} />
           <Route path={`${DISCOVER_ROUTES.hospitals.path}/:hospitalSlug`} element={<PublicHospitalDetailPage />} />
+          <Route path="/discover/hospitals/:hospitalSlug/home" element={<LandingPagePage param="hospitalSlug" />} />
+          <Route path="/discover/doctors/:doctorSlug/home" element={<LandingPagePage param="doctorSlug" />} />
           <Route path={DISCOVER_ROUTES.specialities.path} element={<PublicSpecialitiesPage />} />
           <Route path="/specialities" element={<LegacyRedirect to={DISCOVER_ROUTES.specialities.path} />} />
           <Route path="/specialities/:specialitySlug" element={<LegacySpecialityRedirect />} />
@@ -416,6 +432,7 @@ function App() {
           <Route path={DISCOVER_ROUTES.registerClinic.path} element={<ProviderOnboardingPage type="clinic" />} />
           <Route path={DISCOVER_ROUTES.registerHospital.path} element={<ProviderOnboardingPage type="hospital" />} />
           <Route path={DISCOVER_ROUTES.providerDashboard.path} element={<ProviderDashboardPage />} />
+          <Route path={DISCOVER_ROUTES.providerLandingPage.path} element={<ProviderLandingPagePage />} />
           <Route path="/provider/onboarding/:applicationId/:step" element={<ProviderOnboardingPage />} />
           <Route path={DISCOVER_ROUTES.login.path} element={<LoginChooserPage />} />
           <Route path={DISCOVER_ROUTES.about.path} element={<ShellPage eyebrow="About" title="About Jeevanam." body="Jeevanam connects public discovery, patient care access, and healthcare operations through focused applications." ctaLabel="Find Care" ctaTo={`${DISCOVER_ROUTES.home.path}#find-care`} />} />

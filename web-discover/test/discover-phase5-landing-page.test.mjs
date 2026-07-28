@@ -1,0 +1,48 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+
+const root = process.cwd();
+
+function read(relPath) {
+  return fs.readFileSync(path.join(root, relPath), "utf8");
+}
+
+test("phase 5 landing page builder routes and preview are wired", () => {
+  const app = read("src/App.tsx");
+  const routes = read("src/routes.ts");
+  const builder = read("src/pages/provider/ProviderLandingPagePage.tsx");
+  const publicPage = read("src/pages/public/LandingPagePage.tsx");
+  const renderer = read("src/components/landing/LandingPageRenderer.tsx");
+  const styles = read("src/styles.css");
+  const api = read("src/api/providerLandingPage.ts");
+
+  assert.ok(routes.includes('providerLandingPage: { path: "/provider/landing-page"'));
+  assert.ok(routes.includes('clinic: (slug: string) => `/discover/clinics/${slug}/home`'));
+  assert.ok(routes.includes('hospital: (slug: string) => `/discover/hospitals/${slug}/home`'));
+  assert.ok(routes.includes('doctor: (slug: string) => `/discover/doctors/${slug}/home`'));
+  assert.ok(app.includes('path="/provider/landing-page"'));
+  assert.ok(app.includes('path="/discover/clinics/:clinicSlug/home"'));
+  assert.ok(app.includes('path="/discover/hospitals/:hospitalSlug/home"'));
+  assert.ok(app.includes('path="/discover/doctors/:doctorSlug/home"'));
+  assert.ok(builder.includes("Save draft"));
+  assert.ok(builder.includes("Publish landing page"));
+  assert.ok(builder.includes("Revert to published"));
+  assert.ok(builder.includes("LandingPageRenderer"));
+  assert.ok(builder.includes("device-frame"));
+  assert.ok(publicPage.includes("loadPublicLandingPage"));
+  assert.ok(renderer.includes("LandingHero"));
+  assert.ok(renderer.includes("LandingAbout"));
+  assert.ok(renderer.includes("LandingServices"));
+  assert.ok(renderer.includes("LandingDoctors"));
+  assert.ok(renderer.includes("LandingGallery"));
+  assert.ok(renderer.includes("LandingFAQ"));
+  assert.ok(renderer.includes("LandingContact"));
+  assert.ok(styles.includes(".landing-page"));
+  assert.ok(styles.includes(".landing-builder-layout"));
+  assert.ok(styles.includes(".device-frame"));
+  assert.ok(api.includes("loadLandingPage"));
+  assert.ok(api.includes("publishLandingPage"));
+  assert.ok(api.includes("compareLandingPageVersions"));
+});
