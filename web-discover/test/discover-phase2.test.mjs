@@ -20,17 +20,18 @@ test("Phase 2 migrates real anonymous discovery pages into web-discover", () => 
   assert.ok(app.includes("<PublicClinicDetailPage />"));
   assert.ok(app.includes("<PublicSpecialitiesPage />"));
   assert.ok(app.includes("<PublicSpecialityDetailPage />"));
-  assert.ok(pages.includes("Featured providers"));
-  assert.ok(pages.includes("Browse public doctor profiles."));
-  assert.ok(pages.includes("Browse public clinic profiles."));
-  assert.ok(pages.includes("Explore specialities across public providers."));
+  assert.ok(pages.includes("Doctors you can explore"));
+  assert.ok(pages.includes("Clinics near you"));
+  assert.ok(pages.includes("Browse by speciality"));
+  assert.ok(pages.includes("Compare doctor profiles and continue to booking when you find the right care option."));
+  assert.ok(pages.includes("Explore clinic locations, specialities and doctor teams before you book."));
+  assert.ok(pages.includes("Browse healthcare specialities and find relevant doctors and clinics."));
 });
 
 test("Phase 2 reuses existing public catalog APIs without backend or auth changes", () => {
   const api = read("src/api/publicCatalog.ts");
   const pages = read("src/pages/discovery/PublicDiscoveryPages.tsx");
 
-  assert.ok(pages.includes('"/api/public/search"'));
   assert.ok(pages.includes('"/api/public/doctors"'));
   assert.ok(pages.includes("`/api/public/doctors/${doctorSlug}`"));
   assert.ok(pages.includes('"/api/public/clinics"'));
@@ -71,11 +72,11 @@ test("public booking entry is an external Care handoff and does not implement bo
 });
 
 test("Discover keeps migrated pages while Care redirects legacy public routes after Phase 3A", () => {
-  const webPublicApp = fs.readFileSync(path.join(root, "../web-public/src/App.tsx"), "utf8");
+  const webCareApp = fs.readFileSync(path.join(root, "../web-care/src/App.tsx"), "utf8");
 
-  assert.ok(webPublicApp.includes("LegacyDiscoverRedirectPage"));
-  assert.ok(webPublicApp.includes('path="/doctors" element={<LegacyDiscoverRedirectPage />}'));
-  assert.ok(webPublicApp.includes('path="/clinics" element={<LegacyDiscoverRedirectPage />}'));
-  assert.ok(webPublicApp.includes('path="/specialities" element={<LegacyDiscoverRedirectPage />}'));
-  assert.ok(webPublicApp.includes("PatientLoginPage"));
+  assert.ok(webCareApp.includes("LegacyDiscoverRedirectPage"));
+  assert.ok(webCareApp.includes('path="/doctors" element={<LegacyDiscoverRedirectPage />}'));
+  assert.ok(webCareApp.includes('path="/clinics" element={<LegacyDiscoverRedirectPage />}'));
+  assert.ok(webCareApp.includes('path="/specialities" element={<LegacyDiscoverRedirectPage />}'));
+  assert.ok(webCareApp.includes("PatientLoginPage"));
 });

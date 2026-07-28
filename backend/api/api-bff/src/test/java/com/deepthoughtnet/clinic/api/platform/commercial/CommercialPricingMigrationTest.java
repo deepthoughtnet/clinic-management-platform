@@ -5,8 +5,11 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.util.Arrays;
 import java.util.UUID;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.MigrationInfo;
+import org.flywaydb.core.api.MigrationVersion;
 import org.testcontainers.DockerClientFactory;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -35,7 +38,7 @@ class CommercialPricingMigrationTest {
                     assertThat(columnNullable(connection, schema.name(), "commercial_plan_pricing", "trial_days")).isTrue();
                     assertThat(countRows(connection, schema.name(), "commercial_plan_pricing")).isZero();
                     assertThat(flyway.info().current()).isNotNull();
-                    assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("123");
+                    assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo(latestResolvedVersion(flyway));
                 }
             }
         }
@@ -104,6 +107,15 @@ class CommercialPricingMigrationTest {
                 return rs.next() && "YES".equalsIgnoreCase(rs.getString(1));
             }
         }
+    }
+
+    private static String latestResolvedVersion(Flyway flyway) {
+        return Arrays.stream(flyway.info().all())
+                .map(MigrationInfo::getVersion)
+                .filter(version -> version != null)
+                .max(MigrationVersion::compareTo)
+                .map(MigrationVersion::getVersion)
+                .orElseThrow(() -> new IllegalStateException("No Flyway migrations were resolved"));
     }
 
     private record ManagedSchema(String name) implements AutoCloseable {

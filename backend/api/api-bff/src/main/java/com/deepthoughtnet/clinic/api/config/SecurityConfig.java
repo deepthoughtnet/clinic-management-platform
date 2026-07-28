@@ -71,6 +71,7 @@ public class SecurityConfig {
                 .requestMatchers("/graphiql", "/graphiql/**").permitAll()
                 .requestMatchers("/favicon.ico").permitAll()
                 .requestMatchers("/api/public/**").permitAll()
+                .requestMatchers("/api/provider-registration/**").permitAll()
                 .requestMatchers("/api/patient-portal/auth/**").permitAll()
                 .requestMatchers("/api/carepilot/webhooks/**").permitAll()
                 .requestMatchers("/ws/voice/**").permitAll()

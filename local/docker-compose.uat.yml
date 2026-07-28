@@ -208,11 +208,11 @@ services:
       clinic-management-api:
         condition: service_healthy
 
-  web-public:
+  web-care:
     profiles: ["frontend"]
     build:
       context: ..
-      dockerfile: web-public/Dockerfile
+      dockerfile: web-care/Dockerfile
       args:
         VITE_API_BASE_URL: ${VITE_API_BASE_URL}
         VITE_PUBLIC_API_BASE_URL: ${VITE_PUBLIC_API_BASE_URL}
@@ -222,10 +222,10 @@ services:
         VITE_SUPPORT_URL: ${VITE_SUPPORT_URL:-}
         VITE_AIVA_APP_URL: ${VITE_AIVA_APP_URL}
         VITE_CAREAI_RUNTIME_URL: ${VITE_CAREAI_RUNTIME_URL}
-    container_name: ${CONTAINER_NAME_PREFIX:-jeevanam-uat}-web-public
+    container_name: ${CONTAINER_NAME_PREFIX:-jeevanam-uat}-web-care
     restart: unless-stopped
     ports:
-      - "${WEB_PUBLIC_PORT:-5176}:80"
+      - "${WEB_CARE_PORT:-${WEB_PUBLIC_PORT:-5176}}:80"
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1/"]
       interval: 20s

@@ -51,7 +51,7 @@ CareAI is beyond prototype level. It already supports real patient workflows for
 
 ```text
 Patient
-  -> web-public Patient Portal UI
+  -> web-care Patient Portal UI
   -> Chat (REST) or Voice (WebSocket)
   -> Patient Portal API / Patient Voice WebSocket
   -> PatientPortalCareAiService
@@ -63,7 +63,7 @@ Patient
 ```
 
 ### Component responsibilities
-- `web-public`: patient UI for OTP login, self-registration, chat, and voice.
+- `web-care`: patient UI for OTP login, self-registration, chat, and voice.
 - `PatientPortalController`: REST endpoints for dashboard, profile, appointments, CareAI chat, and reset.
 - `PatientPortalVoiceWebSocketHandler`: patient voice transport, turn buffering, event emission.
 - `PatientPortalVoiceAssistantService`: STT -> CareAI -> TTS pipeline for one voice turn.
@@ -76,9 +76,9 @@ Patient
 ## 3. Voice Flow End-to-End
 
 ### Step-by-step sequence
-1. Patient clicks `Talk to CareAI` in `web-public`.
+1. Patient clicks `Talk to CareAI` in `web-care`.
 2. Browser creates or reuses a same-origin WebSocket to `/ws/patient-portal/careai?sessionToken=...`.
-3. `web-public` nginx proxies `/ws/` to `clinic-management-api:8089`.
+3. `web-care` nginx proxies `/ws/` to `clinic-management-api:8089`.
 4. `PatientPortalVoiceWebSocketAuthInterceptor` validates the signed patient session token and resolves tenant, patient, app user, and roles.
 5. `PatientPortalVoiceWebSocketHandler` accepts the socket and returns `session.connected` / `session.started`.
 6. Browser microphone starts. VAD monitors RMS/peak levels and detects speech start/end.
@@ -623,6 +623,6 @@ Primary code areas reviewed for this report:
 - `backend/api/api-bff/src/main/java/com/deepthoughtnet/clinic/api/realtime/websocket/*`
 - `backend/api/api-bff/src/main/java/com/deepthoughtnet/clinic/api/config/*`
 - `backend/domains/ai-domain/*`
-- `web-public/src/api/patientPortal.ts`
-- `web-public/src/pages/patient/PatientPortalPages.tsx`
+- `web-care/src/api/patientPortal.ts`
+- `web-care/src/pages/patient/PatientPortalPages.tsx`
 - `web-admin/src/pages/ai/VoiceTestPage.tsx`

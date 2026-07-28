@@ -4,23 +4,22 @@ import java.sql.Connection;
 import java.sql.Statement;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.Assertions;
+import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
+@org.testcontainers.junit.jupiter.Testcontainers(disabledWithoutDocker = true)
 public abstract class PostgresTestContainerSupport {
     protected static final String TEST_DATABASE = "clinic_management_test";
     protected static final String TEST_USER = "clinic_test";
     protected static final String TEST_PASSWORD = "clinic_test";
 
+    @Container
     protected static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>(DockerImageName.parse("postgres:15-alpine"))
             .withDatabaseName(TEST_DATABASE)
             .withUsername(TEST_USER)
             .withPassword(TEST_PASSWORD);
-
-    static {
-        POSTGRES.start();
-    }
 
     protected static DataSource dataSource() {
         DriverManagerDataSource dataSource = new DriverManagerDataSource();

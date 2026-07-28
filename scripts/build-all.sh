@@ -20,9 +20,9 @@ section "Web Admin"
 run_in_repo bash -lc 'cd web-admin && npm run build'
 printf 'web-admin build completed.\n'
 
-section "Web Public"
-run_in_repo bash -lc 'cd web-public && npm run build'
-printf 'web-public build completed.\n'
+section "Web Care"
+run_in_repo bash -lc 'cd web-care && npm run build'
+printf 'web-care build completed.\n'
 
 section "Result"
 printf 'build-all completed successfully.\n'

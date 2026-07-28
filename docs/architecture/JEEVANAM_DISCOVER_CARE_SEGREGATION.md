@@ -2,18 +2,18 @@
 
 ## Status
 
-Proposed for review. No application migration has been implemented by this document.
+Accepted. Phase 3B has renamed the patient application directory and deployment service from `web-public` to `web-care`; no route, authentication, backend API, or booking behavior change is part of that rename.
 
 ## Current Frontend Inventory
 
 | Application | Path | Stack | Current route roots | Current deployment | Authentication |
 |---|---|---|---|---|---|
-| Public web / patient portal | `web-public` | Vite, React 19, React Router, MUI | `/`, `/doctors`, `/clinics`, `/specialities`, `/careai`, `/patient/*`, `/aiva/*`, static support pages | `web-public` container, nginx SPA, local port `5175`, UAT port `5176` | Patient OTP session headers for `/patient/*`; anonymous public catalog; no Keycloak browser client |
+| Jeevanam Care patient app | `web-care` | Vite, React 19, React Router, MUI | `/`, legacy discovery redirects, `/careai`, `/patient/*`, `/aiva/*`, static support pages | `web-care` container, nginx SPA, local port `5175`, UAT port `5176` | Patient OTP session headers for `/patient/*`; no Keycloak browser client |
 | Healthcare operations | `web-admin` | Vite, React 19, React Router, MUI | operational clinic routes, `/platform/*`, `/carepilot/*`, commercial platform | `web-admin` container, local port `5174`, UAT port `5175` | Keycloak OIDC client `clinic-web-admin` |
 | AIVA microsite | `web-aiva` | Vite, React 19, React Router, MUI | AIVA product/runtime microsite | `web-aiva` container, local port `5176`, UAT port `5177` | No dedicated Keycloak client found |
-| Shared package | `frontend/packages/form-validation-kit` | TypeScript package | validation utilities | consumed by `web-public` and `web-admin` | none |
+| Shared package | `frontend/packages/form-validation-kit` | TypeScript package | validation utilities | consumed by `web-care` and `web-admin` | none |
 
-`web-public/nginx/default.conf` proxies `/api/` and `/ws/` to `clinic-management-api`. Docker compose currently defines only one public web service, so separating Discover and Care requires new service entries, host routing, CORS updates, and environment variables.
+`web-care/nginx/default.conf` proxies `/api/` and `/ws/` to `clinic-management-api`. Docker compose defines separate `web-care` and `web-discover` frontend services. `web-care` was previously named `web-public`; patient session storage keys may retain old compatibility names until an explicit patient-session migration is approved.
 
 Target frontend applications are `web-discover`, `web-care`, and `web-admin`. Platform Administration remains inside `web-admin`, deployed as Jeevanam Healthcare, and is exposed as privileged platform mode through platform roles, route authorization, and tenant-context selection. A separate platform-admin frontend product, deployment, or authentication client is out of scope unless future security or deployment isolation requirements justify it.
 
@@ -29,7 +29,7 @@ Target frontend applications are `web-discover`, `web-care`, and `web-admin`. Pl
 | `/specialities` | `PublicSpecialitiesPage` | anonymous | `/api/public/specialities` | Specialities | Discover | Low | Move directly. |
 | `/specialities/:specialitySlug` | `PublicSpecialityDetailPage` | anonymous, session-aware booking links | `/api/public/specialities/{slug}` | Specialities | Discover | Medium | Move with public catalog client. |
 | `/careai` | `PublicCareAiPage` | anonymous, can route to patient | public AIVA prompts and patient booking links | AIVA | Shared transition | Medium | Decide whether public care guidance lives in Discover or separate AIVA app; patient-specific AIVA stays Care. |
-| `/aiva/*` | `AivaRedirectPage` | anonymous | `VITE_AIVA_APP_URL` | AIVA | Product marketing / obsolete in web-public | Low | Keep redirect during transition, then remove from Care. |
+| `/aiva/*` | `AivaRedirectPage` | anonymous | `VITE_AIVA_APP_URL` | AIVA | Product marketing / obsolete in Care | Low | Keep redirect during transition, then remove from Care. |
 | `/patient/login` | `PatientLoginPage` | OTP request/verify | `/api/patient-portal/auth/otp/request`, `/verify` | Patient Login | Care | High if moved | Strong evidence for keeping current app as Care. |
 | `/patient/register` | `PatientRegistrationPage` | registration session | `/api/patient-portal/registration/complete` | patient flow | Care | High if moved | Coupled to OTP registration session. |
 | `/patient/dashboard` | `PatientDashboardPage` | `X-Patient-Session`, `X-Tenant-Id` | `/api/patient-portal/dashboard` | Patient Portal | Care | High if moved | Patient clinical read model. |
@@ -59,7 +59,7 @@ Current public API classes are under `api-bff`, with orchestration into domain s
 | `/api/public/specialities` | public speciality list | public discovery | Move to Discover projection. |
 | `/api/public/search` | homepage search | public discovery | Move to Discover search/index boundary. |
 | `/api/patient-portal/auth/otp/*` | Care login | patient authenticated bootstrap | Rename eventually to `/api/patient/auth/otp/*` behind adapter. |
-| `/api/patient-portal/**` | Care dashboard, appointments, prescriptions, bills, lab, AIVA | patient authenticated | Keep current behavior during web-public to web-care rename; introduce `/api/patient/**` alias later. |
+| `/api/patient-portal/**` | Care dashboard, appointments, prescriptions, bills, lab, AIVA | patient authenticated | Keep current behavior during the `web-care` rename; introduce `/api/patient/**` alias later. |
 | `/api/platform/commercial/**` | `web-admin` commercial platform | platform/commercial | Not for public apps except public-safe S5 pricing projection. |
 | `/api/carepilot/**`, `/api/careai/**` | Healthcare operations | healthcare operational | Must remain out of Discover and Care except patient-safe AIVA endpoints. |
 
@@ -75,7 +75,7 @@ Recommended long-term API namespaces:
 
 ## Authentication Analysis
 
-Current staff/admin authentication uses Keycloak realm `clinic-management` and client `clinic-web-admin`. The realm export does not define `web-public`, `jeevanam-care`, or `jeevanam-discover` clients. Patient portal authentication is custom OTP based: `/api/patient-portal/auth/otp/**` is public, and subsequent patient APIs use `X-Patient-Session` plus `X-Tenant-Id`; `PatientPortalSessionAuthenticationFilter` grants `ROLE_PATIENT` or `ROLE_PATIENT_REGISTRATION`.
+Current staff/admin authentication uses Keycloak realm `clinic-management` and client `clinic-web-admin`. The realm export does not define `jeevanam-care` or `jeevanam-discover` clients. Patient portal authentication is custom OTP based: `/api/patient-portal/auth/otp/**` is public, and subsequent patient APIs use `X-Patient-Session` plus `X-Tenant-Id`; `PatientPortalSessionAuthenticationFilter` grants `ROLE_PATIENT` or `ROLE_PATIENT_REGISTRATION`.
 
 Target clients:
 
@@ -89,9 +89,9 @@ Provider registration accounts must be isolated from Healthcare operational user
 
 ## Patient Integration Depth
 
-Patient functionality is deeply embedded in `web-public`: local storage session management, OTP request/verify, registration sessions, patient route guards, appointment booking, appointment filters, prescriptions, bills, lab reports, notifications, profile editing, patient AIVA chat, patient AIVA voice WebSocket, and clinic context handoff helpers. Moving that to a new app would require a high-risk transplant across routes, session state, styles, tests, and API clients.
+Patient functionality is deeply embedded in `web-care`: local storage session management, OTP request/verify, registration sessions, patient route guards, appointment booking, appointment filters, prescriptions, bills, lab reports, notifications, profile editing, patient AIVA chat, patient AIVA voice WebSocket, and clinic context handoff helpers. Moving that to a different app would require a high-risk transplant across routes, session state, styles, tests, and API clients.
 
-Conclusion: the lowest-risk path is to evolve current `web-public` into `web-care`.
+Conclusion: the lowest-risk path was to evolve current `web-public` into `web-care`.
 
 ## Discovery Implementation Depth
 
@@ -204,7 +204,7 @@ Final recommendation: choose Option A. Rename/refocus current `web-public` as `w
 
 | Package/app | Responsibility |
 |---|---|
-| `web-care` | Current `web-public` patient portal refocused to Care. |
+| `web-care` | Current patient portal refocused to Care; previously named `web-public`. |
 | `web-discover` | New anonymous-first public discovery and provider onboarding app. |
 | `web-admin` | Healthcare operations and Platform Administration privileged mode in the same deployed app. |
 | `web-aiva` | AIVA microsite/runtime surface if retained. |
@@ -219,9 +219,9 @@ Avoid sharing patient route guards, provider page authoring, or operational tena
 
 | Phase | Scope | API/migrations | Tests | Rollback | Completion |
 |---|---|---|---|---|---|
-| 0 Inventory and tests | Freeze route/API inventory, add source tests guarding current behavior | none | `web-public` tests, API controller tests | no production change | current app behavior documented and guarded |
+| 0 Inventory and tests | Freeze route/API inventory, add source tests guarding current behavior | none | `web-care` tests, API controller tests | no production change | current app behavior documented and guarded |
 | 1 Explicit route ownership | Add route classification constants and navigation labels inside current app | none | route ownership tests | revert nav labels/constants | every route marked Care/Discover/Shared |
-| 2 Rename/refocus to Care | Rename Docker/package/service aliases, keep compatibility image/name initially | env and compose aliases only | OTP, dashboard, prescriptions, lab, bills, AIVA | keep old `web-public` deployment | Care domain works at `care.deepthoughtnet.com` |
+| 2 Rename/refocus to Care | Rename Docker/package/service aliases, keep patient-session compatibility keys | env and compose aliases only | OTP, dashboard, prescriptions, lab, bills, AIVA | rebuild using `web-care`; no route changes | Care domain works at `care.deepthoughtnet.com` |
 | 3 Create Discover shell | New `web-discover` Vite app, move public pages/client, remove patient session coupling | new service/env/CORS | anonymous navigation/search/detail tests | route `jeevanam.deepthoughtnet.com` back to old public app | public search/detail parity |
 | 4 Provider self-registration | Add onboarding account and application lifecycle | additive Discover/domain migrations | draft/resume/contact verification/submit tests | hide entry points | draft and submit work without Healthcare access |
 | 5 Page builder | Controlled templates, media, preview, validation | page/version/block tables | page draft/publish validation tests | disable builder, keep profiles | safe preview and submitted page version |
@@ -242,7 +242,7 @@ Required deployment work: add Discover and Care compose services or aliases, upd
 
 ## SEO Assessment
 
-Current `web-public` is client-rendered Vite React. That is acceptable for patient Care, but weak for Discover SEO. Before Discover production launch, evaluate SSR/prerendering. Conservative options:
+Current `web-care` is client-rendered Vite React. That is acceptable for patient Care, but weak for Discover SEO. Before Discover production launch, evaluate SSR/prerendering. Conservative options:
 
 | Option | Fit |
 |---|---|

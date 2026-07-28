@@ -99,7 +99,7 @@ Use the host and ports you set in `local/.env.uat-arogia`.
 
 - API health: `http://SERVER_IP:8089/actuator/health`
 - Web admin: `http://SERVER_IP:5175`
-- Patient portal/public app: `http://SERVER_IP:5176`
+- Jeevanam Care patient app: `http://SERVER_IP:5176`
 - Keycloak: `http://SERVER_IP:8090`
 
 If you expose the AIVA microsite through `WEB_AIVA_PORT`, test that URL too.
@@ -112,7 +112,7 @@ The UAT example uses:
 
 - `API_PORT=8089`
 - `WEB_ADMIN_PORT=5175`
-- `WEB_PUBLIC_PORT=5176`
+- `WEB_CARE_PORT=5176`
 - `WEB_AIVA_PORT=5177`
 - `POSTGRES_PORT=5437`
 - `REDIS_PORT=6380`

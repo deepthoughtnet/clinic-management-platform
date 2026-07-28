@@ -5,8 +5,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.deepthoughtnet.clinic.api.support.PostgresTestContainerSupport;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.util.Arrays;
 import java.util.UUID;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.MigrationInfo;
+import org.flywaydb.core.api.MigrationVersion;
 import org.junit.jupiter.api.Test;
 
 class CommercialEffectiveEntitlementMigrationTest extends PostgresTestContainerSupport {
@@ -29,7 +32,7 @@ class CommercialEffectiveEntitlementMigrationTest extends PostgresTestContainerS
                 assertThat(indexExists(connection, schema.name(), "uq_commercial_effective_snapshots_current_per_tenant")).isTrue();
                 assertThat(indexExists(connection, schema.name(), "uq_commercial_entitlement_overrides_active_window")).isTrue();
                 assertThat(flyway.info().current()).isNotNull();
-                assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("121");
+                assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo(latestResolvedVersion(flyway));
             }
         }
     }
@@ -104,6 +107,15 @@ class CommercialEffectiveEntitlementMigrationTest extends PostgresTestContainerS
                 return rs.next();
             }
         }
+    }
+
+    private static String latestResolvedVersion(Flyway flyway) {
+        return Arrays.stream(flyway.info().all())
+                .map(MigrationInfo::getVersion)
+                .filter(version -> version != null)
+                .max(MigrationVersion::compareTo)
+                .map(MigrationVersion::getVersion)
+                .orElseThrow(() -> new IllegalStateException("No Flyway migrations were resolved"));
     }
 
     private record ManagedSchema(String name) implements AutoCloseable {

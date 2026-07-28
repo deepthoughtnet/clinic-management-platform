@@ -27,13 +27,15 @@ test("discover brand, public navigation, and homepage sections are present", () 
   const branding = read("src/branding.ts");
 
   assert.ok(branding.includes("Jeevanam Discover"));
-  assert.ok(homepage.includes("Find the right doctor, clinic, or hospital."));
-  assert.ok(homepage.includes("Search trusted healthcare providers"));
-  assert.ok(homepage.includes("Discovery categories"));
-  assert.ok(homepage.includes("Grow your healthcare presence with Jeevanam."));
-  assert.ok(homepage.includes("One Jeevanam ecosystem, three focused applications."));
-  assert.ok(app.includes("Find Care"));
-  assert.ok(app.includes("List Your Practice"));
+  assert.ok(homepage.includes("Find trusted doctors, clinics and hospitals near you."));
+  assert.ok(homepage.includes("Search healthcare providers, compare services and book appointments with confidence."));
+  assert.ok(homepage.includes("Browse by speciality"));
+  assert.ok(homepage.includes("Doctors you can explore"));
+  assert.ok(homepage.includes("Clinics near you"));
+  assert.ok(homepage.includes("Grow your practice with Jeevanam"));
+  assert.ok(homepage.includes("One connected healthcare experience"));
+  assert.ok(app.includes("Patient Login"));
+  assert.ok(app.includes("For Providers"));
 });
 
 test("required public routes are defined and patient routes are absent", () => {
@@ -75,11 +77,11 @@ test("provider registration entry and placeholder routes are present", () => {
   assert.ok(app.includes("Individual Doctor"));
   assert.ok(app.includes("Clinic"));
   assert.ok(app.includes("Hospital"));
-  assert.ok(app.includes("Register"));
-  assert.ok(app.includes("Complete Profile"));
-  assert.ok(app.includes("Create Public Page"));
-  assert.ok(app.includes("Submit for Review"));
+  assert.ok(app.includes("Create account"));
+  assert.ok(app.includes("Complete profile"));
+  assert.ok(app.includes("Submit for review"));
   assert.ok(app.includes("Publish"));
+  assert.ok(app.includes("Once approved, your profile can be published in Discover."));
   assert.ok(app.includes('type="doctor"'));
   assert.ok(app.includes('type="clinic"'));
   assert.ok(app.includes('type="hospital"'));
@@ -113,7 +115,7 @@ test("shell has accessibility basics and mobile navigation support", () => {
   assert.ok(components.includes('role="status"'));
   assert.ok(styles.includes(":focus-visible"));
   assert.ok(styles.includes("@media (max-width: 980px)"));
-  assert.ok(styles.includes("width: min(1180px, calc(100% - 32px))"));
+  assert.ok(styles.includes("--discover-container: 1200px"));
   assert.ok(styles.includes("grid-template-columns: 1fr"));
 });
 

@@ -7,7 +7,7 @@
   </style>
   <defs><marker id="m" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 z" fill="#4b5563"/></marker></defs>
   <rect x="40" y="280" width="140" height="60" class="box" fill="#dae8fc" stroke="#6c8ebf"/><text x="110" y="317" text-anchor="middle" class="t">Patient</text>
-  <rect x="240" y="260" width="180" height="100" class="box" fill="#d5e8d4" stroke="#82b366"/><text x="330" y="305" text-anchor="middle" class="t">web-public</text><text x="330" y="333" text-anchor="middle" class="s">Chat + Voice UI</text>
+  <rect x="240" y="260" width="180" height="100" class="box" fill="#d5e8d4" stroke="#82b366"/><text x="330" y="305" text-anchor="middle" class="t">web-care</text><text x="330" y="333" text-anchor="middle" class="s">Chat + Voice UI</text>
   <rect x="500" y="210" width="170" height="70" class="box" fill="#fff2cc" stroke="#d6b656"/><text x="585" y="248" text-anchor="middle" class="s">REST /api/patient-portal/*</text>
   <rect x="500" y="320" width="170" height="70" class="box" fill="#fff2cc" stroke="#d6b656"/><text x="585" y="358" text-anchor="middle" class="s">WS /ws/patient-portal/careai</text>
   <rect x="740" y="210" width="170" height="70" class="box" fill="#f8cecc" stroke="#b85450"/><text x="825" y="248" text-anchor="middle" class="s">PatientPortalController</text>

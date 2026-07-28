@@ -48,7 +48,7 @@ fi
 
 check_container "API container" "clinic-management-api"
 check_container "Frontend container" "clinic-web-admin"
-check_container "Public frontend" "clinic-web-public"
+check_container "Care frontend" "clinic-web-care"
 check_container "Keycloak container" "clinic-keycloak"
 check_container "PostgreSQL container" "clinic-postgres"
 

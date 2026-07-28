@@ -1,18 +1,18 @@
 FROM node:22-alpine AS build
 WORKDIR /workspace
 
-COPY web-public/package*.json ./web-public/
+COPY web-care/package*.json ./web-care/
 COPY frontend/packages/form-validation-kit/package*.json ./frontend/packages/form-validation-kit/
 COPY frontend/packages/form-validation-kit ./frontend/packages/form-validation-kit
 
-WORKDIR /workspace/web-public
+WORKDIR /workspace/web-care
 RUN npm ci
 
 WORKDIR /workspace
-COPY web-public ./web-public
+COPY web-care ./web-care
 
 RUN mkdir -p /workspace/frontend/packages/form-validation-kit && \
-    ln -s /workspace/web-public/node_modules /workspace/frontend/packages/form-validation-kit/node_modules
+    ln -s /workspace/web-care/node_modules /workspace/frontend/packages/form-validation-kit/node_modules
 
 ARG VITE_PUBLIC_API_BASE_URL=
 ENV VITE_PUBLIC_API_BASE_URL=${VITE_PUBLIC_API_BASE_URL}
@@ -31,12 +31,12 @@ ENV VITE_AIVA_APP_URL=${VITE_AIVA_APP_URL}
 ARG VITE_CAREAI_RUNTIME_URL=
 ENV VITE_CAREAI_RUNTIME_URL=${VITE_CAREAI_RUNTIME_URL}
 
-WORKDIR /workspace/web-public
+WORKDIR /workspace/web-care
 RUN npm run build
 
 FROM nginx:1.27-alpine
-COPY web-public/nginx/default.conf /etc/nginx/conf.d/default.conf
-COPY --from=build /workspace/web-public/dist /usr/share/nginx/html
+COPY web-care/nginx/default.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /workspace/web-care/dist /usr/share/nginx/html
 
 EXPOSE 80
 HEALTHCHECK --interval=20s --timeout=5s --retries=5 --start-period=25s \

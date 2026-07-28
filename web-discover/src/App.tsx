@@ -1,6 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode, useEffect, useState } from "react";
 import { Link, NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { discoverBrand } from "./branding";
+import { DiscoverEmptyState } from "./components/DiscoveryComponents";
 import { discoverConfig } from "./config";
 import { PublicLocationProvider } from "./context/PublicLocationContext";
 import {
@@ -12,12 +13,17 @@ import {
   PublicSpecialitiesPage,
   PublicSpecialityDetailPage,
 } from "./pages/discovery/PublicDiscoveryPages";
-import { DISCOVER_ROUTES, footerRoutes, primaryNavigationRoutes } from "./routes";
+import { ProviderDashboardPage } from "./pages/provider/ProviderDashboardPage";
+import { ProviderOnboardingPage } from "./pages/provider/ProviderOnboardingPage";
+import { DISCOVER_ROUTES, primaryNavigationRoutes } from "./routes";
 
 type ShellPageProps = {
   eyebrow: string;
   title: string;
   body: string;
+  stateIcon?: string;
+  stateTitle?: string;
+  stateBody?: string;
   ctaLabel?: string;
   ctaTo?: string;
   secondaryLabel?: string;
@@ -55,7 +61,7 @@ const routeMeta: Record<string, { title: string; description: string }> = {
   },
   [DISCOVER_ROUTES.pricing.path]: {
     title: "Pricing | Jeevanam Discover",
-    description: "Review public-safe Jeevanam Healthcare plan information when published.",
+    description: "Explore Jeevanam Healthcare plan information for clinics and hospitals.",
   },
   [DISCOVER_ROUTES.listPractice.path]: {
     title: "List Your Practice | Jeevanam Discover",
@@ -64,6 +70,10 @@ const routeMeta: Record<string, { title: string; description: string }> = {
   [DISCOVER_ROUTES.login.path]: {
     title: "Login | Jeevanam Discover",
     description: "Choose Jeevanam Care for patients or Jeevanam Healthcare for clinic and hospital teams.",
+  },
+  [DISCOVER_ROUTES.providerDashboard.path]: {
+    title: "Provider Dashboard | Jeevanam Discover",
+    description: "Continue your provider onboarding, review status, and submit your public profile.",
   },
 };
 
@@ -113,10 +123,12 @@ class DiscoverErrorBoundary extends Component<{ children: ReactNode }, { hasErro
 function BrandLockup() {
   return (
     <Link className="brand-lockup" to={DISCOVER_ROUTES.home.path} aria-label="Jeevanam Discover home">
-      <span className="brand-mark" aria-hidden="true">JD</span>
+      <span className="brand-mark" aria-hidden="true">
+        <img src="/favicon.svg" alt="" />
+      </span>
       <span>
         <strong>{discoverBrand.productName}</strong>
-        <small>{discoverBrand.shortTagline}</small>
+        <small>Find trusted healthcare</small>
       </span>
     </Link>
   );
@@ -155,11 +167,11 @@ function Shell({ children }: { children: ReactNode }) {
             ))}
           </nav>
           <div className="header-actions">
-            <Link className="secondary-button" to={`${DISCOVER_ROUTES.home.path}#find-care`}>
-              Find Care
-            </Link>
+            <a className="ghost-button" href={discoverConfig.careAppUrl}>
+              Patient Login
+            </a>
             <Link className="primary-button" to={DISCOVER_ROUTES.listPractice.path}>
-              List Your Practice
+              For Providers
             </Link>
           </div>
         </div>
@@ -169,21 +181,45 @@ function Shell({ children }: { children: ReactNode }) {
 
       <footer className="site-footer">
         <div className="footer-inner">
-          <section className="footer-brand">
-            <strong>{discoverBrand.productName}</strong>
-            <p>{discoverBrand.tagline}</p>
+          <section className="footer-brand" aria-label="Jeevanam Discover">
+            <div className="footer-brand-row">
+              <span className="brand-mark" aria-hidden="true">
+                <img src="/favicon.svg" alt="" />
+              </span>
+              <div>
+                <strong>{discoverBrand.productName}</strong>
+                <p>{discoverBrand.tagline}</p>
+              </div>
+            </div>
           </section>
-          <nav className="footer-links" aria-label="Discover footer navigation">
-            {footerRoutes.map((route) => (
-              <Link key={route.path} to={route.path}>
-                {route.label}
-              </Link>
-            ))}
+          <nav className="footer-column" aria-label="Patients">
+            <strong>Patients</strong>
+            <Link to={DISCOVER_ROUTES.doctors.path}>Find doctors</Link>
+            <Link to={DISCOVER_ROUTES.clinics.path}>Find clinics</Link>
+            <Link to={DISCOVER_ROUTES.hospitals.path}>Find hospitals</Link>
+            <Link to={DISCOVER_ROUTES.specialities.path}>Browse specialities</Link>
+            <a href={discoverConfig.careAppUrl}>Patient login</a>
           </nav>
-          <section className="footer-login-links" aria-label="Related Jeevanam applications">
-            <a href={discoverConfig.careAppUrl}>Patient Login</a>
-            <a href={discoverConfig.healthcareAppUrl}>Clinic / Hospital Login</a>
-            {discoverConfig.aivaAppUrl ? <a href={discoverConfig.aivaAppUrl}>AIVA</a> : null}
+          <nav className="footer-column" aria-label="Providers">
+            <strong>Providers</strong>
+            <Link to={DISCOVER_ROUTES.listPractice.path}>Register practice</Link>
+            <Link to={DISCOVER_ROUTES.healthcare.path}>Provider information</Link>
+            <Link to={DISCOVER_ROUTES.pricing.path}>Pricing</Link>
+            <a href={discoverConfig.healthcareAppUrl}>Clinic / Hospital login</a>
+          </nav>
+          <nav className="footer-column" aria-label="Support">
+            <strong>Support</strong>
+            <Link to={DISCOVER_ROUTES.about.path}>About</Link>
+            <Link to={DISCOVER_ROUTES.contact.path}>Contact</Link>
+            <Link to={DISCOVER_ROUTES.privacy.path}>Privacy</Link>
+            <Link to={DISCOVER_ROUTES.terms.path}>Terms</Link>
+          </nav>
+          <section className="footer-bottom">
+            <span>© {new Date().getFullYear()} Jeevanam. Public healthcare discovery for patients and providers.</span>
+            <div>
+              <Link to={DISCOVER_ROUTES.privacy.path}>Privacy</Link>
+              <Link to={DISCOVER_ROUTES.terms.path}>Terms</Link>
+            </div>
           </section>
         </div>
       </footer>
@@ -191,90 +227,86 @@ function Shell({ children }: { children: ReactNode }) {
   );
 }
 
-function ShellPage({ eyebrow, title, body, ctaLabel, ctaTo, secondaryLabel, secondaryTo }: ShellPageProps) {
+function ShellPage({ eyebrow, title, body, stateIcon, stateTitle, stateBody, ctaLabel, ctaTo, secondaryLabel, secondaryTo }: ShellPageProps) {
   return (
-    <section className="page-section narrow-page">
-      <span className="eyebrow">{eyebrow}</span>
-      <h1>{title}</h1>
-      <p>{body}</p>
-      <div className="empty-state">
-        <strong>Planned for the next implementation phase</strong>
-        <span>This route is established now so navigation, deployment, and ownership can be validated before feature migration.</span>
+    <section className="page-section compact-page">
+      <div className="compact-page-hero">
+        <span className="eyebrow">{eyebrow}</span>
+        <h1>{title}</h1>
+        <p>{body}</p>
       </div>
-      <div className="cta-row">
-        {ctaLabel && ctaTo ? <Link className="primary-button" to={ctaTo}>{ctaLabel}</Link> : null}
-        {secondaryLabel && secondaryTo ? <Link className="secondary-button" to={secondaryTo}>{secondaryLabel}</Link> : null}
-      </div>
+      <DiscoverEmptyState
+        icon={stateIcon}
+        title={stateTitle ?? title}
+        description={stateBody ?? body}
+        primaryAction={ctaLabel}
+        primaryTo={ctaTo}
+        secondaryAction={secondaryLabel}
+        secondaryTo={secondaryTo}
+      />
     </section>
   );
 }
 
 function ProviderEntryPage() {
-  const stages = ["Register", "Complete Profile", "Create Public Page", "Submit for Review", "Publish"];
+  const stages = [
+    ["Create account", "Start with basic contact and practice information."],
+    ["Complete profile", "Add doctors, specialities, services and locations."],
+    ["Submit for review", "Share your profile for Jeevanam review."],
+    ["Publish", "Once approved, your profile can be published in Discover."],
+  ] as const;
   const cards = [
     {
       title: "Individual Doctor",
-      body: "For independent doctors building a verified professional profile and public page.",
-      details: "Profile, registration details, qualifications, specialities, fees, locations, timings, and biography.",
+      icon: "DR",
+      body: "Create a professional profile for patients looking for your speciality.",
+      details: "Best for independent doctors and consultants.",
       to: DISCOVER_ROUTES.registerDoctor.path,
     },
     {
       title: "Clinic",
-      body: "For outpatient practices that need a public organisation page and doctor directory.",
-      details: "Business details, locations, doctors, services, timings, facilities, branding, gallery, and review submission.",
+      icon: "CL",
+      body: "Present your clinic, doctor team, services, locations and appointment options.",
+      details: "Best for outpatient practices and care centres.",
       to: DISCOVER_ROUTES.registerClinic.path,
     },
     {
       title: "Hospital",
-      body: "For hospitals preparing public departments, facilities, doctors, and location information.",
-      details: "Organisation details, accreditations, departments, facilities, emergency availability, branding, and gallery.",
+      icon: "H",
+      body: "Prepare a hospital presence with departments, facilities and doctor information.",
+      details: "Best for hospitals and multi-speciality organisations.",
       to: DISCOVER_ROUTES.registerHospital.path,
     },
   ];
 
   return (
     <section className="page-section">
-      <div className="section-heading">
+      <div className="section-heading compact-page-hero">
         <span className="eyebrow">Provider registration</span>
-        <h1>List your practice on Jeevanam Discover.</h1>
-        <p>Start a governed provider application and prepare a public page for verification and publication.</p>
+        <h1>List your practice on Jeevanam Discover</h1>
+        <p>Create a public presence for your practice and help patients understand the care you offer.</p>
       </div>
       <div className="provider-card-grid">
         {cards.map((card) => (
-          <article className="provider-card" key={card.title}>
+          <article className="provider-card onboarding-option-card" key={card.title}>
+            <span className="onboarding-icon" aria-hidden="true">{card.icon}</span>
             <h2>{card.title}</h2>
             <p>{card.body}</p>
             <span>{card.details}</span>
-            <Link className="primary-button" to={card.to}>Start {card.title}</Link>
+            <Link className="primary-button" to={card.to}>Start {card.title.toLowerCase()} registration</Link>
           </article>
         ))}
       </div>
-      <div className="lifecycle-strip" aria-label="Provider registration lifecycle">
-        {stages.map((stage, index) => (
-          <span key={stage}>{index + 1}. {stage}</span>
+      <div className="onboarding-process" aria-label="Provider registration lifecycle">
+        {stages.map(([stage, detail], index) => (
+          <article key={stage}>
+            <span>{index + 1}</span>
+            <strong>{stage}</strong>
+            <p>{detail}</p>
+          </article>
         ))}
       </div>
     </section>
-  );
-}
-
-function RegistrationPlaceholder({ type }: { type: "doctor" | "clinic" | "hospital" }) {
-  const labels = {
-    doctor: ["Doctor registration", "Prepare an individual professional profile for review."],
-    clinic: ["Clinic registration", "Prepare an organisation profile, doctors, services, locations, and branding for review."],
-    hospital: ["Hospital registration", "Prepare departments, facilities, doctors, emergency availability, and public page details for review."],
-  };
-  const [title, body] = labels[type];
-  return (
-    <ShellPage
-      eyebrow="Provider onboarding"
-      title={title}
-      body={body}
-      ctaLabel="Back to provider options"
-      ctaTo={DISCOVER_ROUTES.listPractice.path}
-      secondaryLabel="Book Demo"
-      secondaryTo={DISCOVER_ROUTES.contact.path}
-    />
   );
 }
 
@@ -324,21 +356,23 @@ function App() {
           <Route path="/doctors/:doctorSlug" element={<PublicDoctorDetailPage />} />
           <Route path={DISCOVER_ROUTES.clinics.path} element={<PublicClinicsPage />} />
           <Route path="/clinics/:clinicSlug" element={<PublicClinicDetailPage />} />
-          <Route path={DISCOVER_ROUTES.hospitals.path} element={<ShellPage eyebrow="Hospitals" title="Find hospitals by department and facility." body="Hospital discovery is reserved for public hospital listings and does not require hospital operations modules in this phase." ctaLabel="Register a Hospital" ctaTo={DISCOVER_ROUTES.registerHospital.path} />} />
+          <Route path={DISCOVER_ROUTES.hospitals.path} element={<ShellPage eyebrow="Hospitals" title="Hospital discovery is coming to Jeevanam Discover" body="Hospitals will be able to publish departments, facilities, doctors and appointment information in a future release." stateIcon="H" ctaLabel="Explore clinics" ctaTo={DISCOVER_ROUTES.clinics.path} secondaryLabel="Register a hospital" secondaryTo={DISCOVER_ROUTES.registerHospital.path} />} />
           <Route path={DISCOVER_ROUTES.specialities.path} element={<PublicSpecialitiesPage />} />
           <Route path="/specialities/:specialitySlug" element={<PublicSpecialityDetailPage />} />
-          <Route path={DISCOVER_ROUTES.services.path} element={<ShellPage eyebrow="Services" title="Discover healthcare services." body="Service discovery will cover consultations, diagnostics, vaccinations, pharmacy-linked services, and approved provider offerings." ctaLabel="Find Care" ctaTo={`${DISCOVER_ROUTES.home.path}#find-care`} />} />
+          <Route path={DISCOVER_ROUTES.services.path} element={<ShellPage eyebrow="Services" title="Explore healthcare services" body="Start with doctor consultations, clinic appointments and speciality search while the service directory expands." stateIcon="＋" ctaLabel="Find doctors" ctaTo={DISCOVER_ROUTES.doctors.path} secondaryLabel="Browse specialities" secondaryTo={DISCOVER_ROUTES.specialities.path} />} />
           <Route path={DISCOVER_ROUTES.healthcare.path} element={<ShellPage eyebrow="Jeevanam Healthcare" title="Operations platform for clinics and hospitals." body="Jeevanam Healthcare supports reception, queue, EMR, care documentation, lab, pharmacy, revenue workflows, vaccination, and administration." ctaLabel="Clinic / Hospital Login" ctaTo={DISCOVER_ROUTES.login.path} />} />
-          <Route path={DISCOVER_ROUTES.pricing.path} element={<ShellPage eyebrow="Plans and pricing" title="Plan information for healthcare providers." body="Public-safe pricing will use approved commercial plan projections after the pricing publication surface is ready." ctaLabel="Book Demo" ctaTo={DISCOVER_ROUTES.contact.path} secondaryLabel="List Your Practice" secondaryTo={DISCOVER_ROUTES.listPractice.path} />} />
+          <Route path={DISCOVER_ROUTES.pricing.path} element={<ShellPage eyebrow="Plans and pricing" title="Plan information for healthcare providers" body="Choose the right path for your practice and connect with Jeevanam for current plan guidance." stateIcon="₹" ctaLabel="Contact Jeevanam" ctaTo={DISCOVER_ROUTES.contact.path} secondaryLabel="List your practice" secondaryTo={DISCOVER_ROUTES.listPractice.path} />} />
           <Route path={DISCOVER_ROUTES.listPractice.path} element={<ProviderEntryPage />} />
-          <Route path={DISCOVER_ROUTES.registerDoctor.path} element={<RegistrationPlaceholder type="doctor" />} />
-          <Route path={DISCOVER_ROUTES.registerClinic.path} element={<RegistrationPlaceholder type="clinic" />} />
-          <Route path={DISCOVER_ROUTES.registerHospital.path} element={<RegistrationPlaceholder type="hospital" />} />
+          <Route path={DISCOVER_ROUTES.registerDoctor.path} element={<ProviderOnboardingPage type="doctor" />} />
+          <Route path={DISCOVER_ROUTES.registerClinic.path} element={<ProviderOnboardingPage type="clinic" />} />
+          <Route path={DISCOVER_ROUTES.registerHospital.path} element={<ProviderOnboardingPage type="hospital" />} />
+          <Route path={DISCOVER_ROUTES.providerDashboard.path} element={<ProviderDashboardPage />} />
+          <Route path="/provider/onboarding/:applicationId/:step" element={<ProviderOnboardingPage />} />
           <Route path={DISCOVER_ROUTES.login.path} element={<LoginChooserPage />} />
           <Route path={DISCOVER_ROUTES.about.path} element={<ShellPage eyebrow="About" title="About Jeevanam." body="Jeevanam connects public discovery, patient care access, and healthcare operations through focused applications." ctaLabel="Find Care" ctaTo={`${DISCOVER_ROUTES.home.path}#find-care`} />} />
-          <Route path={DISCOVER_ROUTES.contact.path} element={<ShellPage eyebrow="Contact" title="Contact Jeevanam." body="Use this route for provider enquiries, product demos, and public support. Lead capture will be added in a later Discover phase." ctaLabel="List Your Practice" ctaTo={DISCOVER_ROUTES.listPractice.path} />} />
-          <Route path={DISCOVER_ROUTES.privacy.path} element={<ShellPage eyebrow="Privacy" title="Privacy." body="Approved privacy content will be published here before public launch." ctaLabel="Return home" ctaTo={DISCOVER_ROUTES.home.path} />} />
-          <Route path={DISCOVER_ROUTES.terms.path} element={<ShellPage eyebrow="Terms" title="Terms." body="Approved terms for public discovery, provider registration, and booking initiation will be published here before public launch." ctaLabel="Return home" ctaTo={DISCOVER_ROUTES.home.path} />} />
+          <Route path={DISCOVER_ROUTES.contact.path} element={<ShellPage eyebrow="Contact" title="Contact Jeevanam" body="Reach Jeevanam for provider enquiries, product demos and public support." stateIcon="@" ctaLabel="List your practice" ctaTo={DISCOVER_ROUTES.listPractice.path} />} />
+          <Route path={DISCOVER_ROUTES.privacy.path} element={<ShellPage eyebrow="Privacy" title="Privacy" body="Jeevanam is preparing privacy information for patients, providers and public discovery visitors." stateIcon="◇" ctaLabel="Return home" ctaTo={DISCOVER_ROUTES.home.path} />} />
+          <Route path={DISCOVER_ROUTES.terms.path} element={<ShellPage eyebrow="Terms" title="Terms" body="Jeevanam is preparing terms for public discovery, provider registration and appointment discovery." stateIcon="§" ctaLabel="Return home" ctaTo={DISCOVER_ROUTES.home.path} />} />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
         </Shell>

@@ -17,6 +17,8 @@ export const DISCOVER_ROUTES = {
   healthcare: { path: "/healthcare", label: "Jeevanam Healthcare", footer: true },
   pricing: { path: "/pricing", label: "Pricing", nav: true, footer: true },
   listPractice: { path: "/list-your-practice", label: "For Providers", nav: true, footer: true },
+  providerDashboard: { path: "/provider/dashboard", label: "Provider Dashboard" },
+  providerOnboarding: { path: "/provider/onboarding/:applicationId/:step", label: "Provider Onboarding" },
   registerDoctor: { path: "/register/doctor", label: "Register as Doctor" },
   registerClinic: { path: "/register/clinic", label: "Register a Clinic" },
   registerHospital: { path: "/register/hospital", label: "Register a Hospital" },
@@ -28,14 +30,10 @@ export const DISCOVER_ROUTES = {
 } satisfies Record<string, DiscoverRoute>;
 
 export const primaryNavigationRoutes = [
-  DISCOVER_ROUTES.home,
   DISCOVER_ROUTES.doctors,
   DISCOVER_ROUTES.clinics,
   DISCOVER_ROUTES.hospitals,
   DISCOVER_ROUTES.specialities,
-  DISCOVER_ROUTES.listPractice,
-  DISCOVER_ROUTES.pricing,
-  DISCOVER_ROUTES.login,
 ];
 
 export const footerRoutes = [

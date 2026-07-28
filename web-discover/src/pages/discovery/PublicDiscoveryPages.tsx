@@ -6,15 +6,16 @@ import type {
   PublicDoctorDetailResponse,
   PublicDoctorSummaryResponse,
   PublicPageResponse,
-  PublicSearchResponse,
   PublicSpecialityDetailResponse,
   PublicSpecialitySummaryResponse,
 } from "../../api/publicCatalog";
 import { fetchPublicJson } from "../../api/publicCatalog";
+import { discoverConfig } from "../../config";
 import {
   ClinicCard,
   DirectoryState,
   DoctorCard,
+  InlineDirectoryState,
   PaginationBar,
   QueryToolbar,
   careBookingUrl,
@@ -22,7 +23,6 @@ import {
   emptyDoctorsPage,
   formatExperience,
   initials,
-  noPublicProfilesMessage,
 } from "../../components/DiscoveryComponents";
 import {
   PUBLIC_CURRENT_LOCATION_LABEL,
@@ -48,12 +48,6 @@ type FetchState<T> = {
   error: string | null;
 };
 
-const emptySearchResponse: PublicSearchResponse = {
-  doctors: { ...emptyDoctorsPage, size: 6 },
-  clinics: { ...emptyClinicsPage, size: 6 },
-  specialities: [],
-};
-
 const POPULAR_SEARCHES = [
   "Cardiologist",
   "Pediatrician",
@@ -65,40 +59,66 @@ const POPULAR_SEARCHES = [
   "Pharmacy",
 ] as const;
 
-const CATEGORY_CARDS = [
+const TRUST_SIGNALS = [
   {
-    title: "Doctors",
-    body: "Browse individual medical professionals by speciality, clinic, language, and public availability.",
-    to: DISCOVER_ROUTES.doctors.path,
+    title: "Provider Information",
+    body: "Specialities, experience and locations.",
+    icon: "◎",
   },
   {
-    title: "Clinics",
-    body: "Explore local care centres, doctor teams, specialities, and public timings.",
-    to: DISCOVER_ROUTES.clinics.path,
+    title: "Easy Booking",
+    body: "Search and book in fewer steps.",
+    icon: "↗",
   },
   {
-    title: "Hospitals",
-    body: "Hospital discovery foundations are ready for departments, facilities, and public pages.",
-    to: DISCOVER_ROUTES.hospitals.path,
+    title: "Your Care Workspace",
+    body: "Appointments, reports and bills.",
+    icon: "＋",
   },
   {
-    title: "Specialities",
-    body: "Start with the type of care needed, then compare public doctors and clinics.",
-    to: DISCOVER_ROUTES.specialities.path,
-  },
-  {
-    title: "Services",
-    body: "Service discovery will cover consultations, diagnostics, vaccination, and approved provider offerings.",
-    to: DISCOVER_ROUTES.services.path,
+    title: "Clinics & Hospitals",
+    body: "Browse trusted healthcare providers.",
+    icon: "⌂",
   },
 ] as const;
 
-const TRUST_SIGNALS = [
-  "Public-safe provider profiles",
-  "Verified publication workflow",
-  "No private health data required to search",
-  "Booking starts through Jeevanam Care",
+const HEALTHCARE_SERVICES = [
+  { title: "Doctor consultations", body: "Find doctors by speciality, clinic and location.", to: DISCOVER_ROUTES.doctors.path, state: "Explore →" },
+  { title: "Clinic appointments", body: "Browse clinics and start appointment booking.", to: DISCOVER_ROUTES.clinics.path, state: "Explore →" },
+  { title: "Speciality search", body: "Start with the medical speciality you need.", to: DISCOVER_ROUTES.specialities.path, state: "Explore →" },
+  { title: "Hospital discovery", body: "Hospital pages are being prepared for Discover.", to: DISCOVER_ROUTES.hospitals.path, state: "Coming Soon" },
 ] as const;
+
+const WHY_JEEVANAM = [
+  {
+    icon: "◎",
+    title: "Find care confidently",
+    body: "Verified public healthcare information.",
+  },
+  {
+    icon: "↗",
+    title: "Choose with confidence",
+    body: "Compare providers and services.",
+  },
+  {
+    icon: "＋",
+    title: "Continue your journey",
+    body: "Manage appointments inside Care.",
+  },
+  {
+    icon: "⌂",
+    title: "Connected healthcare",
+    body: "Participating clinics stay connected.",
+  },
+] as const;
+
+function homepageParams(selectedLocation: string, size: number) {
+  return {
+    city: selectedLocation === PUBLIC_CURRENT_LOCATION_LABEL ? PUBLIC_DEFAULT_LOCATION : selectedLocation,
+    page: 0,
+    size,
+  };
+}
 
 function usePublicResource<T>(path: string, params: Record<string, string | number | undefined | null>, initialValue: T): FetchState<T> {
   const [state, setState] = useState<FetchState<T>>({
@@ -291,32 +311,34 @@ export function PublicHomePage() {
   const [locationMessage, setLocationMessage] = useState<string | null>(null);
   const [locationBusy, setLocationBusy] = useState(false);
   const hasHydratedLocation = useRef(false);
-  const hasQuery = Boolean(filters.searchParams.get("q") || filters.searchParams.get("city") || filters.searchParams.get("area"));
-  const search = usePublicResource<PublicSearchResponse>(
-    "/api/public/search",
-    {
-      q: filters.searchParams.get("q"),
-      city: filters.searchParams.get("city"),
-      area: filters.searchParams.get("area"),
-      page: filters.page,
-      size: filters.size,
-    },
-    emptySearchResponse,
-  );
   const displayLocation = selectedLocation;
   const searchableLocation = displayLocation === PUBLIC_CURRENT_LOCATION_LABEL ? PUBLIC_DEFAULT_LOCATION : displayLocation;
-  const submittedQuery = search.data ? filters.searchParams.get("q") ?? "" : "";
+  const doctors = usePublicResource<PublicPageResponse<PublicDoctorSummaryResponse>>(
+    "/api/public/doctors",
+    homepageParams(searchableLocation, 4),
+    { ...emptyDoctorsPage, size: 4 },
+  );
+  const clinics = usePublicResource<PublicPageResponse<PublicClinicSummaryResponse>>(
+    "/api/public/clinics",
+    homepageParams(searchableLocation, 3),
+    { ...emptyClinicsPage, size: 3 },
+  );
+  const specialities = usePublicResource<PublicSpecialitySummaryResponse[]>(
+    "/api/public/specialities",
+    { city: searchableLocation },
+    [],
+  );
   const homeDoctors = useMemo(
-    () => filterAndSortDoctorResults(search.data.doctors.items, submittedQuery, searchableLocation),
-    [search.data.doctors.items, searchableLocation, submittedQuery],
+    () => filterAndSortDoctorResults(doctors.data.items, "", searchableLocation),
+    [doctors.data.items, searchableLocation],
   );
   const homeClinics = useMemo(
-    () => filterAndSortClinicResults(search.data.clinics.items, submittedQuery, searchableLocation),
-    [search.data.clinics.items, searchableLocation, submittedQuery],
+    () => filterAndSortClinicResults(clinics.data.items, "", searchableLocation),
+    [clinics.data.items, searchableLocation],
   );
   const homeSpecialities = useMemo(
-    () => filterAndSortSpecialities(search.data.specialities, submittedQuery),
-    [search.data.specialities, submittedQuery],
+    () => filterAndSortSpecialities(specialities.data, ""),
+    [specialities.data],
   );
 
   useEffect(() => {
@@ -395,143 +417,239 @@ export function PublicHomePage() {
       <section className="hero-section hero-discovery">
         <div className="hero-grid">
           <div className="hero-copy">
-            <span className="eyebrow">Jeevanam public discovery</span>
-            <h1>Find the right doctor, clinic, or hospital.</h1>
-            <p>Search trusted healthcare providers, explore services, and start your care journey with Jeevanam.</p>
-            <div className="cta-row">
-              <Link className="primary-button" to={DISCOVER_ROUTES.doctors.path}>Find a Doctor</Link>
-              <Link className="secondary-button" to={DISCOVER_ROUTES.clinics.path}>Find a Clinic</Link>
-              <Link className="text-button" to={DISCOVER_ROUTES.listPractice.path}>List Your Practice</Link>
-            </div>
-            <div className="trust-strip" aria-label="Jeevanam Discover trust signals">
-              {TRUST_SIGNALS.map((item) => (
-                <span key={item}>{item}</span>
-              ))}
-            </div>
-          </div>
-
-          <form id="find-care" className="search-panel smart-search-form" aria-label="Discover care search" onSubmit={submitHeroSearch}>
-            <div className="smart-search-header">
-              <div>
-                <span className="eyebrow">Public search</span>
-                <h2>Search doctor, clinic, symptom, speciality, or service</h2>
-              </div>
-              <button className="location-pill" type="button" onClick={() => setLocationPickerOpen((current) => !current)}>
-                {displayLocation}
-              </button>
-            </div>
-            <label>
-              <span>What are you looking for?</span>
-              <input
-                value={filters.query}
-                onChange={(event) => filters.setQuery(event.target.value)}
-                placeholder="Doctor, speciality, service, clinic, or hospital"
-                autoComplete="off"
-              />
-            </label>
-            <label>
-              <span>Area</span>
-              <input value={filters.area} onChange={(event) => filters.setArea(event.target.value)} placeholder="Baner, Kothrud, Andheri" autoComplete="off" />
-            </label>
-            {locationPickerOpen ? (
-              <div className="location-selector" role="dialog" aria-label="Select location">
-                <label>
-                  <span>City or locality</span>
-                  <input value={locationDraft} onChange={(event) => setLocationDraft(normalizePublicLocation(event.target.value))} placeholder="Pune" />
-                </label>
-                <div className="chip-row" role="list" aria-label="Popular locations">
-                  {PUBLIC_LOCATION_OPTIONS.map((location) => (
-                    <button key={location} className="chip-button" type="button" onClick={() => commitSelectedLocation(location)}>
-                      {location}
-                    </button>
-                  ))}
-                </div>
-                <div className="cta-row">
-                  <button className="secondary-button" type="button" onClick={() => commitSelectedLocation(locationDraft)} disabled={!normalizePublicLocation(locationDraft)}>
-                    Save location
-                  </button>
-                  <button className="text-button" type="button" onClick={handleCurrentLocation} disabled={locationBusy}>
-                    {locationBusy ? "Detecting..." : "Use my current location"}
-                  </button>
-                </div>
-                {locationMessage ? <p className="form-note" role="status">{locationMessage}</p> : null}
-              </div>
-            ) : null}
-            <div className="chip-row" aria-label="Popular searches">
-              {POPULAR_SEARCHES.map((item) => (
-                <button key={item} className="chip-button" type="button" onClick={() => applyPopularSearch(item)}>
-                  {item}
+            <span className="eyebrow">Jeevanam Discover</span>
+            <h1>Find trusted doctors, clinics and hospitals near you.</h1>
+            <p>Search healthcare providers, compare services and book appointments with confidence.</p>
+            <form id="find-care" className="hero-search-panel" aria-label="Discover care search" onSubmit={submitHeroSearch}>
+              <label className="hero-search-field hero-search-query">
+                <span className="visually-hidden">Search</span>
+                <input
+                  value={filters.query}
+                  onChange={(event) => filters.setQuery(event.target.value)}
+                  placeholder="Search doctors, specialities, clinics or treatments"
+                  autoComplete="off"
+                  aria-label="Search doctors, specialities, clinics or treatments"
+                />
+              </label>
+              <label className="hero-search-field">
+                <span className="visually-hidden">Location</span>
+                <button className="location-select-button" type="button" onClick={() => setLocationPickerOpen((current) => !current)} aria-label={`Change location, currently ${displayLocation}`}>
+                  {displayLocation}
                 </button>
-              ))}
+              </label>
+              <button className="primary-button hero-search-button" type="submit" aria-label="Search healthcare providers">
+                <span aria-hidden="true">⌕</span>
+                Search
+              </button>
+              {locationPickerOpen ? (
+                <div className="location-selector hero-location-selector" role="dialog" aria-label="Select location">
+                  <label>
+                    <span>City or locality</span>
+                    <input value={locationDraft} onChange={(event) => setLocationDraft(normalizePublicLocation(event.target.value))} placeholder="Pune" />
+                  </label>
+                  <div className="chip-row" role="list" aria-label="Popular locations">
+                    {PUBLIC_LOCATION_OPTIONS.map((location) => (
+                      <button key={location} className="chip-button" type="button" onClick={() => commitSelectedLocation(location)}>
+                        {location}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="cta-row">
+                    <button className="secondary-button" type="button" onClick={() => commitSelectedLocation(locationDraft)} disabled={!normalizePublicLocation(locationDraft)}>
+                      Save location
+                    </button>
+                    <button className="text-button" type="button" onClick={handleCurrentLocation} disabled={locationBusy}>
+                      {locationBusy ? "Detecting..." : "Use my current location"}
+                    </button>
+                  </div>
+                  {locationMessage ? <p className="form-note" role="status">{locationMessage}</p> : null}
+                </div>
+              ) : null}
+            </form>
+            <div className="popular-searches" aria-label="Popular searches">
+              <span>Popular searches</span>
+              <div className="chip-row">
+                {POPULAR_SEARCHES.slice(0, 5).map((item) => (
+                  <button key={item} className="chip-button" type="button" onClick={() => applyPopularSearch(item)}>
+                    {item}
+                  </button>
+                ))}
+              </div>
             </div>
-            <button className="primary-button" type="submit">Search</button>
-          </form>
-        </div>
-      </section>
-
-      <section className="page-section">
-        <div className="section-heading">
-          <span className="eyebrow">{hasQuery ? "Search results" : "Featured providers"}</span>
-          <h2>{hasQuery ? "Matching doctors, clinics, and specialities" : "Explore public healthcare discovery"}</h2>
-          <p>Public search uses provider information approved for public discovery. Private health records and operational data are not part of Discover.</p>
-        </div>
-        <DirectoryState
-          loading={search.loading}
-          error={search.error}
-          empty={homeDoctors.length === 0 && homeClinics.length === 0 && homeSpecialities.length === 0}
-          emptyMessage={discoveryEmptyMessage({
-            query: submittedQuery || filters.searchParams.get("city") || filters.searchParams.get("area"),
-            selectedLocation: displayLocation,
-            defaultMessage: noPublicProfilesMessage,
-          })}
-        >
-          <div className="public-preview-grid">
-            <article className="result-panel">
-              <div className="panel-heading">
-                <h2>Doctors</h2>
-                <Link to={`/doctors?${filters.searchParams.toString()}`}>View all</Link>
-              </div>
-              <div className="public-card-stack">
-                {homeDoctors.slice(0, 3).map((doctor) => <DoctorCard key={doctor.doctorSlug} doctor={doctor} />)}
-              </div>
-            </article>
-            <article className="result-panel">
-              <div className="panel-heading">
-                <h2>Clinics</h2>
-                <Link to={`/clinics?${filters.searchParams.toString()}`}>View all</Link>
-              </div>
-              <div className="public-card-stack">
-                {homeClinics.slice(0, 3).map((clinic) => <ClinicCard key={clinic.clinicSlug} clinic={clinic} />)}
-              </div>
-            </article>
           </div>
-          <article className="result-panel">
-            <div className="panel-heading">
-              <h2>Specialities</h2>
-              <Link to={DISCOVER_ROUTES.specialities.path}>Browse all</Link>
+
+          <div className="hero-visual" aria-label="Jeevanam Discover provider preview">
+            <div className="hero-profile-card">
+              <div className="hero-profile-header">
+                <div className="hero-visual-avatar" aria-hidden="true">AS</div>
+                <div>
+                  <strong>Dr. Anjali Sharma</strong>
+                  <span>General Physician</span>
+                </div>
+              </div>
+              <div className="hero-profile-meta">
+                <span>15 Years Experience</span>
+                <span aria-label="Five star rating">★★★★★</span>
+              </div>
+              <div className="hero-profile-footer">
+                <span className="hero-availability-pill">Available Today</span>
+                <span className="primary-button hero-consult-button">Book Consultation</span>
+              </div>
             </div>
-            <div className="chip-row">
-              {homeSpecialities.slice(0, 10).map((speciality) => (
-                <Link key={speciality.specialitySlug} className="chip" to={`/specialities/${speciality.specialitySlug}`}>
-                  {speciality.speciality}
-                </Link>
-              ))}
+            <div className="hero-clinic-card">
+              <span className="mini-avatar clinic" aria-hidden="true">CL</span>
+              <div>
+                <strong>Sunrise Family Clinic</strong>
+                <small>Open Today · Appointments Available</small>
+              </div>
             </div>
-          </article>
-        </DirectoryState>
+          </div>
+        </div>
+      </section>
+
+      <section className="page-section">
+        <div className="trust-grid" aria-label="Jeevanam Discover trust indicators">
+          {TRUST_SIGNALS.map((item) => (
+            <article className="trust-card" key={item.title}>
+              <span aria-hidden="true">{item.icon}</span>
+              <strong>{item.title}</strong>
+              <p>{item.body}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="page-section">
+        <div className="section-heading section-heading-row">
+          <div>
+            <span className="eyebrow">Specialities</span>
+            <h2>Browse by speciality</h2>
+            <p>Find care based on the medical speciality you need.</p>
+          </div>
+          <Link className="text-button" to={DISCOVER_ROUTES.specialities.path}>View all specialities</Link>
+        </div>
+        <InlineDirectoryState
+          loading={specialities.loading}
+          error={specialities.error}
+          empty={homeSpecialities.length === 0}
+          emptyIcon="＋"
+          emptyTitle="Specialities are being prepared"
+          emptyMessage="Published provider specialities will appear here as the directory grows."
+          primaryAction="Browse clinics"
+          primaryTo={DISCOVER_ROUTES.clinics.path}
+          secondaryAction="List your practice"
+          secondaryTo={DISCOVER_ROUTES.listPractice.path}
+        />
+        {homeSpecialities.length ? (
+          <div className="speciality-card-grid">
+            {homeSpecialities.slice(0, 8).map((speciality) => (
+              <Link className="speciality-card" key={speciality.specialitySlug} to={`/specialities/${speciality.specialitySlug}`}>
+                <span className="speciality-icon" aria-hidden="true">＋</span>
+                <strong>{speciality.speciality}</strong>
+                <span>
+                  {speciality.doctorsCount || speciality.clinicsCount
+                    ? `${speciality.doctorsCount} doctors · ${speciality.clinicsCount} clinics`
+                    : "Explore providers"}
+                </span>
+              </Link>
+            ))}
+          </div>
+        ) : null}
+      </section>
+
+      <section className="page-section">
+        <div className="section-heading section-heading-row">
+          <div>
+            <span className="eyebrow">Doctors</span>
+            <h2>Doctors you can explore</h2>
+            <p>Review experience, specialities and available booking options.</p>
+          </div>
+          <Link className="text-button" to={`/doctors?city=${encodeURIComponent(searchableLocation)}`}>View all doctors</Link>
+        </div>
+        <InlineDirectoryState
+          loading={doctors.loading}
+          error={doctors.error}
+          empty={homeDoctors.length === 0}
+          emptyIcon="DR"
+          emptyTitle={`No doctors found for ${searchableLocation}`}
+          emptyMessage="Try another location or broaden your search."
+          primaryAction="Change location"
+          primaryTo={`${DISCOVER_ROUTES.home.path}#find-care`}
+          secondaryAction="View clinics"
+          secondaryTo={DISCOVER_ROUTES.clinics.path}
+        />
+        {homeDoctors.length ? (
+          <div className="homepage-doctor-grid">
+            {homeDoctors.slice(0, 4).map((doctor) => <DoctorCard key={doctor.doctorSlug} doctor={doctor} />)}
+          </div>
+        ) : null}
+      </section>
+
+      <section className="page-section surface-band">
+        <div className="section-heading section-heading-row">
+          <div>
+            <span className="eyebrow">Clinics</span>
+            <h2>Clinics near you</h2>
+            <p>{displayLocation ? "Explore clinics, services and doctors available in your selected location." : "Explore clinics and the services they offer."}</p>
+          </div>
+          <Link className="text-button" to={`/clinics?city=${encodeURIComponent(searchableLocation)}`}>View all clinics</Link>
+        </div>
+        <InlineDirectoryState
+          loading={clinics.loading}
+          error={clinics.error}
+          empty={homeClinics.length === 0}
+          emptyIcon="CL"
+          emptyTitle={`No clinics found for ${searchableLocation}`}
+          emptyMessage="Try another location or browse doctors by speciality."
+          primaryAction="Change location"
+          primaryTo={`${DISCOVER_ROUTES.home.path}#find-care`}
+          secondaryAction="Browse specialities"
+          secondaryTo={DISCOVER_ROUTES.specialities.path}
+        />
+        {homeClinics.length ? (
+          <div className="homepage-clinic-grid">
+            {homeClinics.slice(0, 3).map((clinic) => <ClinicCard key={clinic.clinicSlug} clinic={clinic} />)}
+          </div>
+        ) : null}
       </section>
 
       <section className="page-section">
         <div className="section-heading">
-          <span className="eyebrow">Discovery categories</span>
-          <h2>Start from the route that matches your care need.</h2>
+          <span className="eyebrow">Services</span>
+          <h2>Explore healthcare services</h2>
+          <p>Start with the care paths currently available in Jeevanam Discover.</p>
         </div>
-        <div className="category-grid">
-          {CATEGORY_CARDS.map((category) => (
-            <Link className="category-card" to={category.to} key={category.title}>
-              <strong>{category.title}</strong>
-              <span>{category.body}</span>
-            </Link>
+        <div className="service-grid">
+          {HEALTHCARE_SERVICES.map((service) => (
+            service.state === "Explore →" ? (
+              <Link className="service-card" to={service.to} key={service.title}>
+                <strong>{service.title}</strong>
+                <span>{service.body}</span>
+                <small>{service.state}</small>
+              </Link>
+            ) : (
+              <article className="service-card service-card-disabled" key={service.title} aria-label={`${service.title}: ${service.state}`}>
+                <strong>{service.title}</strong>
+                <span>{service.body}</span>
+                <small>{service.state}</small>
+              </article>
+            )
+          ))}
+        </div>
+      </section>
+
+      <section className="page-section">
+        <div className="section-heading">
+          <span className="eyebrow">Why Jeevanam</span>
+          <h2>A simpler way to find and manage care</h2>
+        </div>
+        <div className="feature-grid">
+          {WHY_JEEVANAM.map((feature) => (
+            <article className="feature-card" key={feature.title}>
+              <span aria-hidden="true">{feature.icon}</span>
+              <strong>{feature.title}</strong>
+              <p>{feature.body}</p>
+            </article>
           ))}
         </div>
       </section>
@@ -539,43 +657,44 @@ export function PublicHomePage() {
       <section className="provider-band">
         <div>
           <span className="eyebrow">For providers</span>
-          <h2>Grow your healthcare presence with Jeevanam.</h2>
-          <p>Create a public profile, prepare a provider page, and move toward verified publication.</p>
+          <h2>Grow your practice with Jeevanam</h2>
+          <p>Create a public profile, present your services and connect appointment discovery with your clinic operations.</p>
+          <ul className="provider-benefits">
+            <li>Publish your practice profile</li>
+            <li>Present doctors and services</li>
+            <li>Receive appointment enquiries</li>
+          </ul>
         </div>
         <div className="cta-row">
-          <Link className="primary-button" to={DISCOVER_ROUTES.registerDoctor.path}>Register as Doctor</Link>
-          <Link className="secondary-button" to={DISCOVER_ROUTES.registerClinic.path}>Register a Clinic</Link>
-          <Link className="secondary-button" to={DISCOVER_ROUTES.registerHospital.path}>Register a Hospital</Link>
+          <Link className="primary-button light-button" to={DISCOVER_ROUTES.listPractice.path}>List your practice</Link>
+          <Link className="secondary-button light-outline-button" to={DISCOVER_ROUTES.healthcare.path}>Explore Jeevanam Healthcare</Link>
         </div>
       </section>
 
       <section className="page-section">
         <div className="section-heading">
-          <span className="eyebrow">Product family</span>
-          <h2>One Jeevanam ecosystem, three focused applications.</h2>
+          <span className="eyebrow">Ecosystem</span>
+          <h2>One connected healthcare experience</h2>
         </div>
-        <div className="product-grid">
-          <article>
+        <div className="ecosystem-grid">
+          <article className="ecosystem-card ecosystem-discover">
+            <span className="ecosystem-icon" aria-hidden="true">◎</span>
             <strong>Jeevanam Discover</strong>
-            <p>Public search, provider pages, registration entry, product information, and booking initiation.</p>
+            <p>Find doctors, clinics, hospitals and appointment options.</p>
+            <Link className="text-button" to={`${DISCOVER_ROUTES.home.path}#find-care`}>Explore care →</Link>
           </article>
-          <article>
+          <article className="ecosystem-card ecosystem-care">
+            <span className="ecosystem-icon" aria-hidden="true">＋</span>
             <strong>Jeevanam Care</strong>
-            <p>Private personal care access after authentication in the dedicated Care application.</p>
+            <p>Manage appointments, prescriptions, reports, bills and your care journey.</p>
+            <a className="text-button" href={discoverConfig.careAppUrl}>Open Care →</a>
           </article>
-          <article>
+          <article className="ecosystem-card ecosystem-healthcare">
+            <span className="ecosystem-icon" aria-hidden="true">⌂</span>
             <strong>Jeevanam Healthcare</strong>
-            <p>Clinic and hospital operations, administration, platform mode, and commercial management.</p>
+            <p>Run connected clinical and administrative workflows for clinics and hospitals.</p>
+            <a className="text-button" href={discoverConfig.healthcareAppUrl}>Clinic / Hospital Login →</a>
           </article>
-        </div>
-      </section>
-
-      <section className="final-cta">
-        <h2>Start with the right next step.</h2>
-        <div className="cta-row">
-          <Link className="primary-button" to={`${DISCOVER_ROUTES.home.path}#find-care`}>Find Care</Link>
-          <Link className="secondary-button" to={DISCOVER_ROUTES.listPractice.path}>List Your Practice</Link>
-          <Link className="text-button" to={DISCOVER_ROUTES.contact.path}>Book Demo</Link>
         </div>
       </section>
     </>
@@ -606,10 +725,10 @@ export function PublicDoctorsPage() {
 
   return (
     <section className="page-section">
-      <div className="section-heading">
+      <div className="section-heading compact-page-hero">
         <span className="eyebrow">Doctor directory</span>
-        <h1>Browse public doctor profiles.</h1>
-        <p>Doctor cards show public-safe details: speciality, experience, clinic context, fee when published, and next availability summary.</p>
+        <h1>Find doctors by speciality, clinic and location</h1>
+        <p>Compare doctor profiles and continue to booking when you find the right care option.</p>
       </div>
       <QueryToolbar
         actionLabel="Search doctors"
@@ -628,11 +747,14 @@ export function PublicDoctorsPage() {
         loading={doctors.loading}
         error={doctors.error}
         empty={visibleDoctors.length === 0}
-        emptyMessage={discoveryEmptyMessage({
-          query: filters.query || filters.city || filters.area,
-          selectedLocation: filters.city,
-          defaultMessage: noPublicProfilesMessage,
-        })}
+        emptyIcon="DR"
+        emptyTitle={`No doctors found for ${filters.city || PUBLIC_DEFAULT_LOCATION}`}
+        emptyMessage="Try another location or broaden your search."
+        primaryAction="Change search"
+        primaryTo={`${DISCOVER_ROUTES.home.path}#find-care`}
+        secondaryAction="View clinics"
+        secondaryTo={DISCOVER_ROUTES.clinics.path}
+        errorTitle="We could not load doctors right now."
       >
         <div className="public-directory-grid">
           {visibleDoctors.map((doctor) => <DoctorCard key={doctor.doctorSlug} doctor={doctor} />)}
@@ -653,7 +775,18 @@ export function PublicDoctorDetailPage() {
 
   return (
     <section className="page-section">
-      <DirectoryState loading={detail.loading} error={detail.error} empty={!detail.data} emptyMessage="This doctor profile is not available for public discovery.">
+      <DirectoryState
+        loading={detail.loading}
+        error={detail.error}
+        empty={!detail.data}
+        emptyIcon="DR"
+        emptyTitle="Doctor profile unavailable"
+        emptyMessage="This doctor profile is not available in Discover right now."
+        primaryAction="Browse doctors"
+        primaryTo={DISCOVER_ROUTES.doctors.path}
+        secondaryAction="View clinics"
+        secondaryTo={DISCOVER_ROUTES.clinics.path}
+      >
         {detail.data ? (
           <div className="public-detail-shell">
             <article className="result-panel public-detail-hero">
@@ -715,7 +848,7 @@ export function PublicDoctorDetailPage() {
                       </div>
                     ))
                   ) : (
-                    <div className="state-card compact">Next available slots will appear when the clinic publishes public-safe availability.</div>
+                    <div className="state-card compact">Availability will appear when this provider shares appointment options.</div>
                   )}
                 </div>
               </article>
@@ -749,10 +882,10 @@ export function PublicClinicsPage() {
 
   return (
     <section className="page-section">
-      <div className="section-heading">
+      <div className="section-heading compact-page-hero">
         <span className="eyebrow">Clinic directory</span>
-        <h1>Browse public clinic profiles.</h1>
-        <p>Public clinic cards show location, doctor count, visible specialities, and public appointment entry points.</p>
+        <h1>Find clinics and appointment options near you</h1>
+        <p>Explore clinic locations, specialities and doctor teams before you book.</p>
       </div>
       <QueryToolbar
         actionLabel="Search clinics"
@@ -771,11 +904,14 @@ export function PublicClinicsPage() {
         loading={clinics.loading}
         error={clinics.error}
         empty={visibleClinics.length === 0}
-        emptyMessage={discoveryEmptyMessage({
-          query: filters.query || filters.city || filters.area,
-          selectedLocation: filters.city,
-          defaultMessage: noPublicProfilesMessage,
-        })}
+        emptyIcon="CL"
+        emptyTitle={`No clinics found for ${filters.city || PUBLIC_DEFAULT_LOCATION}`}
+        emptyMessage="Try another location or browse doctors by speciality."
+        primaryAction="Change search"
+        primaryTo={`${DISCOVER_ROUTES.home.path}#find-care`}
+        secondaryAction="Browse specialities"
+        secondaryTo={DISCOVER_ROUTES.specialities.path}
+        errorTitle="We could not load clinics right now."
       >
         <div className="public-directory-grid">
           {visibleClinics.map((clinic) => <ClinicCard key={clinic.clinicSlug} clinic={clinic} />)}
@@ -796,7 +932,18 @@ export function PublicClinicDetailPage() {
 
   return (
     <section className="page-section">
-      <DirectoryState loading={detail.loading} error={detail.error} empty={!detail.data} emptyMessage="This clinic profile is not available for public discovery.">
+      <DirectoryState
+        loading={detail.loading}
+        error={detail.error}
+        empty={!detail.data}
+        emptyIcon="CL"
+        emptyTitle="Clinic profile unavailable"
+        emptyMessage="This clinic profile is not available in Discover right now."
+        primaryAction="Browse clinics"
+        primaryTo={DISCOVER_ROUTES.clinics.path}
+        secondaryAction="Find doctors"
+        secondaryTo={DISCOVER_ROUTES.doctors.path}
+      >
         {detail.data ? (
           <div className="public-detail-shell">
             <article className="result-panel public-detail-hero">
@@ -829,11 +976,11 @@ export function PublicClinicDetailPage() {
                     detail.data.timings.map((timing) => (
                       <div key={timing} className="subcard">
                         <strong>{timing}</strong>
-                        <span>Published from visible doctor schedules only.</span>
+                        <span>Shared by the clinic for patient planning.</span>
                       </div>
                     ))
                   ) : (
-                    <div className="state-card compact">Clinic timings will appear when visible doctor schedules are published.</div>
+                    <div className="state-card compact">Clinic timings will appear when this clinic shares appointment hours.</div>
                   )}
                 </div>
               </article>
@@ -862,10 +1009,10 @@ export function PublicSpecialitiesPage() {
 
   return (
     <section className="page-section">
-      <div className="section-heading">
+      <div className="section-heading compact-page-hero">
         <span className="eyebrow">Specialities</span>
-        <h1>Explore specialities across public providers.</h1>
-        <p>Use speciality pages to narrow down visible doctors and clinics that match the care you need.</p>
+        <h1>Explore specialities</h1>
+        <p>Browse healthcare specialities and find relevant doctors and clinics.</p>
       </div>
       <form className="toolbar-card public-toolbar-card" onSubmit={(event) => { event.preventDefault(); filters.submit(DISCOVER_ROUTES.specialities.path); }}>
         <label className="toolbar-field">
@@ -882,18 +1029,21 @@ export function PublicSpecialitiesPage() {
         loading={specialities.loading}
         error={specialities.error}
         empty={visibleSpecialities.length === 0}
-        emptyMessage={discoveryEmptyMessage({
-          query: filters.query || filters.city,
-          selectedLocation: filters.city,
-          defaultMessage: noPublicProfilesMessage,
-        })}
+        emptyIcon="＋"
+        emptyTitle="Specialities are being prepared"
+        emptyMessage="Published provider specialities will appear here as the directory grows."
+        primaryAction="Browse clinics"
+        primaryTo={DISCOVER_ROUTES.clinics.path}
+        secondaryAction="List your practice"
+        secondaryTo={DISCOVER_ROUTES.listPractice.path}
+        errorTitle="We could not load specialities right now."
       >
         <div className="public-directory-grid speciality-directory-grid">
           {visibleSpecialities.map((speciality) => (
             <article key={speciality.specialitySlug} className="public-directory-card feature-card speciality-card">
               <strong>{speciality.speciality}</strong>
               <p>{speciality.doctorsCount} doctor{speciality.doctorsCount === 1 ? "" : "s"} across {speciality.clinicsCount} clinic{speciality.clinicsCount === 1 ? "" : "s"}.</p>
-              <span>{speciality.doctorsCount > 0 ? "Search and book from this speciality." : "Public profile details will appear once available."}</span>
+              <span>{speciality.doctorsCount > 0 ? "Search and book from this speciality." : "Provider details will appear once available."}</span>
               <div className="directory-action-row">
                 <Link className="secondary-button" to={`/specialities/${speciality.specialitySlug}`}>Search doctors</Link>
                 <a className="text-button" href={careBookingUrl({ speciality: speciality.specialitySlug })}>Start booking</a>
@@ -931,7 +1081,7 @@ export function PublicSpecialityDetailPage() {
       <div className="section-heading">
         <span className="eyebrow">Speciality detail</span>
         <h1>{detail.data?.speciality ?? "Speciality"}</h1>
-        <p>Browse public doctor profiles for this speciality, then continue to Jeevanam Care when you are ready to book.</p>
+        <p>Browse doctor profiles for this speciality, then continue to Jeevanam Care when you are ready to book.</p>
       </div>
       <QueryToolbar
         actionLabel="Filter doctors"
@@ -953,8 +1103,14 @@ export function PublicSpecialityDetailPage() {
         emptyMessage={discoveryEmptyMessage({
           query: filters.query || filters.city || filters.area,
           selectedLocation: filters.city,
-          defaultMessage: "No public doctors matched this speciality filter.",
+          defaultMessage: "No doctors matched this speciality filter.",
         })}
+        emptyIcon="DR"
+        emptyTitle="No doctors found for this speciality"
+        primaryAction="Browse all specialities"
+        primaryTo={DISCOVER_ROUTES.specialities.path}
+        secondaryAction="View clinics"
+        secondaryTo={DISCOVER_ROUTES.clinics.path}
       >
         {detail.data ? (
           <>

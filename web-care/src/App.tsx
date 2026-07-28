@@ -439,7 +439,7 @@ export function App() {
               <StaticSupportPage
                 eyebrow="Support"
                 title="Help Centre"
-                subtitle="Find quick answers for public-web usage."
+                subtitle="Find quick answers for Jeevanam Care usage."
                 body="This page can be replaced with your deployment-specific help content when ready."
               />
             }

@@ -7,7 +7,7 @@
         <mxCell id="2" value="Patient" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
           <mxGeometry x="40" y="280" width="140" height="60" as="geometry"/>
         </mxCell>
-        <mxCell id="3" value="web-public Patient Portal&#xa;Chat + Voice UI" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+        <mxCell id="3" value="web-care Patient Portal&#xa;Chat + Voice UI" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
           <mxGeometry x="240" y="260" width="180" height="100" as="geometry"/>
         </mxCell>
         <mxCell id="4" value="REST&#xa;/api/patient-portal/*" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">

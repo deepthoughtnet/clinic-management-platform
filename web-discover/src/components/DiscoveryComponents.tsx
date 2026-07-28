@@ -31,7 +31,7 @@ export const emptyClinicsPage: PublicPageResponse<PublicClinicSummaryResponse> =
 };
 
 export const noPublicProfilesMessage =
-  "No public profiles are enabled yet. Healthcare teams can publish public-safe profiles after verification.";
+  "Published provider profiles will appear here as the directory grows.";
 
 export function formatExperience(value: number | null | undefined) {
   if (value == null) {
@@ -101,8 +101,8 @@ export function QueryToolbar({
   return (
     <form className="toolbar-card public-toolbar-card" onSubmit={onSubmit}>
       <label className="toolbar-field">
-        <span>Search</span>
-        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Doctor name, speciality, clinic, or area" />
+        <span>Keyword</span>
+        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Doctor, speciality, clinic or area" />
       </label>
       <label className="toolbar-field">
         <span>City</span>
@@ -119,29 +119,195 @@ export function QueryToolbar({
   );
 }
 
+export function DiscoverEmptyState({
+  icon = "＋",
+  title,
+  description,
+  primaryAction,
+  primaryTo,
+  primaryHref,
+  secondaryAction,
+  secondaryTo,
+  secondaryHref,
+  variant = "full",
+}: {
+  icon?: string;
+  title: string;
+  description: string;
+  primaryAction?: string;
+  primaryTo?: string;
+  primaryHref?: string;
+  secondaryAction?: string;
+  secondaryTo?: string;
+  secondaryHref?: string;
+  variant?: "full" | "compact";
+}) {
+  const primary = primaryAction
+    ? primaryTo
+      ? <Link className="primary-button" to={primaryTo}>{primaryAction}</Link>
+      : primaryHref
+        ? <a className="primary-button" href={primaryHref}>{primaryAction}</a>
+        : null
+    : null;
+  const secondary = secondaryAction
+    ? secondaryTo
+      ? <Link className="secondary-button" to={secondaryTo}>{secondaryAction}</Link>
+      : secondaryHref
+        ? <a className="secondary-button" href={secondaryHref}>{secondaryAction}</a>
+        : null
+    : null;
+
+  return (
+    <div className={`discover-empty-state ${variant === "compact" ? "is-compact" : ""}`}>
+      <span className="empty-state-icon" aria-hidden="true">{icon}</span>
+      <strong>{title}</strong>
+      <p>{description}</p>
+      {primary || secondary ? (
+        <div className="cta-row">
+          {primary}
+          {secondary}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function DirectoryState({
   loading,
   error,
   empty,
   emptyMessage,
+  emptyTitle,
+  emptyIcon,
+  primaryAction,
+  primaryTo,
+  primaryHref,
+  secondaryAction,
+  secondaryTo,
+  secondaryHref,
+  errorTitle,
   children,
 }: {
   loading: boolean;
   error: string | null;
   empty: boolean;
   emptyMessage: string;
+  emptyTitle?: string;
+  emptyIcon?: string;
+  primaryAction?: string;
+  primaryTo?: string;
+  primaryHref?: string;
+  secondaryAction?: string;
+  secondaryTo?: string;
+  secondaryHref?: string;
+  errorTitle?: string;
   children: ReactNode;
 }) {
   if (loading) {
-    return <div className="state-card" role="status">Loading public discovery results...</div>;
+    return (
+      <div className="directory-result-area" role="status" aria-label="Loading discovery results">
+        <div className="skeleton-grid">
+          <span className="skeleton-card" />
+          <span className="skeleton-card" />
+          <span className="skeleton-card" />
+        </div>
+      </div>
+    );
   }
   if (error) {
-    return <div className="state-card">Unable to load public discovery data: {error}</div>;
+    return (
+      <div className="directory-result-area">
+        <DiscoverEmptyState
+          icon="!"
+          title={errorTitle ?? "We could not load this directory right now."}
+          description="Please try again or continue browsing another section of Jeevanam Discover."
+          primaryAction="Try again"
+          primaryHref={typeof window !== "undefined" ? window.location.href : undefined}
+          secondaryAction="Browse clinics"
+          secondaryTo="/clinics"
+        />
+      </div>
+    );
   }
   if (empty) {
-    return <div className="state-card">{emptyMessage}</div>;
+    return (
+      <div className="directory-result-area">
+        <DiscoverEmptyState
+          icon={emptyIcon}
+          title={emptyTitle ?? "No matching results yet"}
+          description={emptyMessage}
+          primaryAction={primaryAction}
+          primaryTo={primaryTo}
+          primaryHref={primaryHref}
+          secondaryAction={secondaryAction}
+          secondaryTo={secondaryTo}
+          secondaryHref={secondaryHref}
+        />
+      </div>
+    );
   }
   return <>{children}</>;
+}
+
+export function InlineDirectoryState({
+  loading,
+  error,
+  empty,
+  emptyMessage,
+  emptyTitle,
+  emptyIcon,
+  primaryAction,
+  primaryTo,
+  secondaryAction,
+  secondaryTo,
+}: {
+  loading: boolean;
+  error: string | null;
+  empty: boolean;
+  emptyMessage: string;
+  emptyTitle?: string;
+  emptyIcon?: string;
+  primaryAction?: string;
+  primaryTo?: string;
+  secondaryAction?: string;
+  secondaryTo?: string;
+}) {
+  if (loading) {
+    return (
+      <div className="skeleton-grid" role="status" aria-label="Loading discovery data">
+        <span className="skeleton-card" />
+        <span className="skeleton-card" />
+        <span className="skeleton-card" />
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <DiscoverEmptyState
+        icon="!"
+        title="This section could not be loaded"
+        description="Other discovery options remain available while you continue browsing."
+        primaryAction="Browse clinics"
+        primaryTo="/clinics"
+        variant="compact"
+      />
+    );
+  }
+  if (empty) {
+    return (
+      <DiscoverEmptyState
+        icon={emptyIcon}
+        title={emptyTitle ?? "Nothing to show yet"}
+        description={emptyMessage}
+        primaryAction={primaryAction}
+        primaryTo={primaryTo}
+        secondaryAction={secondaryAction}
+        secondaryTo={secondaryTo}
+        variant="compact"
+      />
+    );
+  }
+  return null;
 }
 
 export function PaginationBar({
@@ -177,7 +343,7 @@ export function DoctorCard({ doctor }: { doctor: PublicDoctorSummaryResponse }) 
     <article className="public-directory-card doctor-directory-card">
       <div className="directory-card-top">
         <div className="directory-avatar" aria-hidden="true">
-          {doctor.photoUrl ? <img src={doctor.photoUrl} alt="" /> : <span>{initials(doctor.doctorDisplayName)}</span>}
+          {doctor.photoUrl ? <img src={doctor.photoUrl} alt="" loading="lazy" /> : <span>{initials(doctor.doctorDisplayName)}</span>}
         </div>
         <div className="directory-card-heading">
           <strong>{doctor.doctorDisplayName}</strong>
@@ -191,25 +357,25 @@ export function DoctorCard({ doctor }: { doctor: PublicDoctorSummaryResponse }) 
           {doctor.area ? ` · ${doctor.area}` : ""}
           {doctor.city ? ` · ${doctor.city}` : ""}
         </span>
-        {consultationFee ? <span>Fee: {consultationFee}</span> : null}
+        {consultationFee ? <span>Consultation fee: {consultationFee}</span> : <span>Fee available on profile</span>}
         {doctor.languages.length ? <span>Languages: {doctor.languages.join(", ")}</span> : null}
       </div>
       <div className="directory-badge-row">
         {doctor.availableToday ? <span className="status-pill">Available today</span> : <span className="chip">Check next slot</span>}
-        <span className="chip">{doctor.nextAvailableSlotSummary ?? "Clinic shares next slot after review"}</span>
+        {doctor.nextAvailableSlotSummary ? <span className="chip">{doctor.nextAvailableSlotSummary}</span> : null}
       </div>
       <div className="directory-action-row">
         <Link className="secondary-button" to={`/doctors/${doctor.doctorSlug}`}>
           View profile
         </Link>
         <a
-          className="text-button"
+          className="primary-button"
           href={careBookingUrl({
             doctorId: doctor.publicDoctorId,
             clinicSlug: doctor.clinicSlug,
           })}
         >
-          Start booking
+          Book appointment
         </a>
       </div>
     </article>
@@ -219,18 +385,20 @@ export function DoctorCard({ doctor }: { doctor: PublicDoctorSummaryResponse }) 
 export function ClinicCard({ clinic }: { clinic: PublicClinicSummaryResponse }) {
   return (
     <article className="public-directory-card clinic-directory-card">
-      <div className="directory-card-top">
-        <div className="directory-avatar" aria-hidden="true">
-          {clinic.logoUrl ? <img src={clinic.logoUrl} alt="" /> : <span>{initials(clinic.clinicDisplayName)}</span>}
+      <div className="clinic-card-media">
+        <div className="directory-avatar clinic-avatar" aria-hidden="true">
+          {clinic.logoUrl ? <img src={clinic.logoUrl} alt="" loading="lazy" /> : <span>{initials(clinic.clinicDisplayName)}</span>}
         </div>
+      </div>
+      <div className="directory-card-top">
         <div className="directory-card-heading">
           <strong>{clinic.clinicDisplayName}</strong>
-          <span>{clinic.area ?? clinic.city ?? "Clinic profile"}</span>
+          <span>{clinic.area ?? clinic.city ?? "Clinic"}</span>
         </div>
       </div>
       <div className="directory-meta-list">
         <span>{clinic.address ?? "Address shared after clinic onboarding"}</span>
-        <span>{clinic.doctorsCount} doctor{clinic.doctorsCount === 1 ? "" : "s"}</span>
+        {clinic.doctorsCount > 0 ? <span>{clinic.doctorsCount} doctor{clinic.doctorsCount === 1 ? "" : "s"}</span> : null}
       </div>
       <div className="directory-badge-row">
         {clinic.availableToday ? <span className="status-pill">Available today</span> : <span className="chip">Appointment entry available</span>}
@@ -244,8 +412,8 @@ export function ClinicCard({ clinic }: { clinic: PublicClinicSummaryResponse }) 
         <Link className="secondary-button" to={`/clinics/${clinic.clinicSlug}`}>
           View clinic
         </Link>
-        <a className="text-button" href={careBookingUrl({ clinicSlug: clinic.clinicSlug })}>
-          Start booking
+        <a className="primary-button" href={careBookingUrl({ clinicSlug: clinic.clinicSlug })}>
+          Book appointment
         </a>
       </div>
     </article>

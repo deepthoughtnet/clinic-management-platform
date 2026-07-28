@@ -4,7 +4,7 @@ Jeevanam Discover is the public-facing frontend for provider discovery, provider
 
 ## Current Phase
 
-Phase 2 keeps `web-public` unchanged and migrates the anonymous public discovery experience into this standalone Discover app. It reuses the existing public catalog APIs and does not change backend APIs, authentication, booking completion, or patient/private Care workflows.
+Phase 3B renamed the patient application directory from `web-public` to `web-care` after the Phase 3A Care refocus. Discover continues to own anonymous public discovery and reuses the existing public catalog APIs without changing backend APIs, authentication, booking completion, or patient/private Care workflows.
 
 ## Responsibilities
 
@@ -86,5 +86,5 @@ The local development server uses port `5177`.
 ## Application Relationship
 
 - `web-discover`: public discovery, public provider pages, product marketing, and provider registration entry.
-- `web-public`: remains unchanged in this phase and is the future Jeevanam Care application.
+- `web-care`: Jeevanam Care patient application, previously named `web-public`.
 - `web-admin`: remains Jeevanam Healthcare, including clinic/hospital operations and Platform Administration mode.
