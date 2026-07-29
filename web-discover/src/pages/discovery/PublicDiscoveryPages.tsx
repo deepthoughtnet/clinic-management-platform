@@ -44,6 +44,7 @@ import {
   scoreDiscoveryLocation,
   slugify,
 } from "../../utils/publicDiscovery";
+import { LocationDisplayMap } from "../../components/location";
 
 type FetchState<T> = {
   data: T;
@@ -980,6 +981,13 @@ export function PublicClinicDetailPage() {
                 <a className="primary-button" href={careBookingUrl({ clinicSlug: detail.data.clinicSlug })}>Start booking</a>
                 <Link className="secondary-button" to={DISCOVER_ROUTES.clinics.path}>Back to clinics</Link>
               </div>
+              <LocationDisplayMap
+                providerName={detail.data.clinicDisplayName}
+                locations={detail.data.locations}
+                compact
+                title="Locations"
+                directionsLabel="Get directions"
+              />
             </article>
             <div className="public-detail-grid">
               <article className="result-panel">
@@ -1123,6 +1131,13 @@ export function PublicHospitalDetailPage() {
                 <a className="primary-button" href={careBookingUrl({ hospitalSlug: detail.data.hospitalSlug })}>Start booking</a>
                 <Link className="secondary-button" to={DISCOVER_ROUTES.hospitals.path}>Back to hospitals</Link>
               </div>
+              <LocationDisplayMap
+                providerName={detail.data.hospitalDisplayName}
+                locations={detail.data.locations}
+                compact
+                title="Locations"
+                directionsLabel="Get directions"
+              />
             </article>
             <div className="public-detail-grid">
               <article className="result-panel">

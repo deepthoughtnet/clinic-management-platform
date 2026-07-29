@@ -152,8 +152,9 @@ class PublicCatalogFacadeTest {
                         List.of(),
                         List.of(),
                         List.of("In-person"),
-                        List.of(new PublicProviderLocationSnapshot("Primary", "Baner Road", "Pune", "Maharashtra", "India", "411045", "Mon-Sat 9 AM-5 PM", true, true)),
+                        List.of(new PublicProviderLocationSnapshot("Primary", "Baner Road", "Pune", "Maharashtra", "India", "411045", "Mon-Sat 9 AM-5 PM", true, true, new BigDecimal("18.520400"), new BigDecimal("73.856700"))),
                         List.of(),
+                        List.of("https://example.com/doctor-gallery.jpg"),
                         "https://example.com/doctor.jpg",
                         "https://example.com/doctor-cover.jpg",
                         null,
@@ -185,6 +186,10 @@ class PublicCatalogFacadeTest {
         assertThat(detail.canonicalSlug()).isEqualTo("dr-asha-menon");
         assertThat(detail.reviewsComingSoon()).isTrue();
         assertThat(detail.availableToday()).isFalse();
+        assertThat(detail.locations()).singleElement().satisfies(location -> {
+            assertThat(location.latitude()).isEqualByComparingTo(new BigDecimal("18.520400"));
+            assertThat(location.longitude()).isEqualByComparingTo(new BigDecimal("73.856700"));
+        });
     }
 
     private static PublicProviderProfileSummaryRecord summaryRecord(
@@ -252,6 +257,7 @@ class PublicCatalogFacadeTest {
             List<String> consultationModes,
             List<PublicProviderLocationSnapshot> locations,
             List<?> gallery,
+            List<String> galleryImageUrls,
             String imageUrl,
             String coverUrl,
             String logoUrl,
@@ -304,6 +310,7 @@ class PublicCatalogFacadeTest {
                 consultationModes,
                 locations,
                 typedGallery,
+                galleryImageUrls,
                 imageUrl,
                 coverUrl,
                 logoUrl,

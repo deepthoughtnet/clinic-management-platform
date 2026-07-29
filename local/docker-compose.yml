@@ -273,7 +273,7 @@ services:
       CLINIC_MINIO_SECRET_KEY: ${CLINIC_MINIO_SECRET_KEY:-minio123}
       CLINIC_KEYCLOAK_ADMIN_PASSWORD: ${CLINIC_KEYCLOAK_ADMIN_PASSWORD:-admin}
       CLINIC_PATIENT_PORTAL_SESSION_SECRET: ${CLINIC_PATIENT_PORTAL_SESSION_SECRET:-local-patient-portal-session-secret}
-      CLINIC_CORS_ALLOWED_ORIGINS: ${CLINIC_CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:5174,http://localhost:5175,http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:5175}
+      CLINIC_CORS_ALLOWED_ORIGINS: ${CLINIC_CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:5174,http://localhost:5175,http://localhost:5177,http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:5175,http://127.0.0.1:5177}
       CLINIC_JWT_ISSUER_URI: ${CLINIC_JWT_ISSUER_URI:-https://arogia.deepthoughtnet.com/auth/realms/clinic-management}
       CLINIC_JWT_JWK_SET_URI: ${CLINIC_JWT_JWK_SET_URI:-http://keycloak:8080/auth/realms/clinic-management/protocol/openid-connect/certs}
       CLINIC_KEYCLOAK_SERVER_URL: ${CLINIC_KEYCLOAK_SERVER_URL:-http://keycloak:8080/auth}
@@ -393,6 +393,15 @@ services:
         VITE_ENV_NAME: ${VITE_ENV_NAME:-}
         VITE_ANALYTICS_ID: ${VITE_ANALYTICS_ID:-}
         VITE_ANALYTICS_ENABLED: ${VITE_ANALYTICS_ENABLED:-false}
+        VITE_MAP_TILE_URL: ${VITE_MAP_TILE_URL:-https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png}
+        VITE_MAP_TILE_ATTRIBUTION: ${VITE_MAP_TILE_ATTRIBUTION:-&copy; OpenStreetMap contributors}
+        VITE_MAP_DEFAULT_LATITUDE: ${VITE_MAP_DEFAULT_LATITUDE:-18.5204}
+        VITE_MAP_DEFAULT_LONGITUDE: ${VITE_MAP_DEFAULT_LONGITUDE:-73.8567}
+        VITE_MAP_DEFAULT_ZOOM: ${VITE_MAP_DEFAULT_ZOOM:-15}
+        VITE_MAP_DIRECTIONS_URL_TEMPLATE: ${VITE_MAP_DIRECTIONS_URL_TEMPLATE:-https://www.openstreetmap.org/directions?from=&to={latitude}%2C{longitude}}
+        VITE_GEOCODING_PROVIDER: ${VITE_GEOCODING_PROVIDER:-nominatim}
+        VITE_GEOCODING_BASE_URL: ${VITE_GEOCODING_BASE_URL:-https://nominatim.openstreetmap.org}
+        VITE_GEOCODING_SEARCH_PATH: ${VITE_GEOCODING_SEARCH_PATH:-/search}
     container_name: ${CONTAINER_NAME_PREFIX:-clinic}-web-discover
     restart: unless-stopped
     ports:

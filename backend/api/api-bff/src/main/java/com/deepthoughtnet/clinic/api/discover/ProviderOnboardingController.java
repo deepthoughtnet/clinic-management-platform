@@ -5,6 +5,8 @@ import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.Pro
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderType;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.BrandingCommand;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.CreateProviderApplicationCommand;
+import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.ContactVerificationStatusRecord;
+import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.DocumentContentRecord;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.ProviderChangeRequestRecord;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.ProviderCompletionRecord;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.ProviderDashboardRecord;
@@ -12,10 +14,14 @@ import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.Lo
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.ProviderApplicationRecord;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.ProviderPreviewRecord;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.ServiceCommand;
+import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.VerificationChallengeRecord;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.UpdateProviderApplicationCommand;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.UploadedDocumentCommand;
+import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingDocumentNotFoundException;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingService;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.DecimalMax;
+import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -27,6 +33,7 @@ import java.util.List;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -39,6 +46,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.server.ResponseStatusException;
 
 @RestController
 @RequestMapping("/api/provider-registration/providers")
@@ -129,6 +137,45 @@ public class ProviderOnboardingController {
         return service.preview(id, token);
     }
 
+    @GetMapping("/{id}/contact-verification")
+    public ContactVerificationStatusRecord contactVerification(@PathVariable UUID id, @RequestHeader(TOKEN_HEADER) String token) {
+        return service.contactVerification(id, token);
+    }
+
+    @PostMapping("/{id}/contact-verification/email/request")
+    public VerificationChallengeRecord requestEmailVerification(@PathVariable UUID id, @RequestHeader(TOKEN_HEADER) String token) {
+        return service.requestEmailVerification(id, token);
+    }
+
+    @PostMapping("/{id}/contact-verification/email/verify")
+    public ContactVerificationStatusRecord verifyEmail(@PathVariable UUID id, @RequestHeader(TOKEN_HEADER) String token, @RequestBody VerificationCodeRequest request) {
+        return service.verifyEmail(id, token, request.code());
+    }
+
+    @PostMapping("/{id}/contact-verification/phone/request")
+    public VerificationChallengeRecord requestPhoneVerification(@PathVariable UUID id, @RequestHeader(TOKEN_HEADER) String token) {
+        return service.requestPhoneVerification(id, token);
+    }
+
+    @PostMapping("/{id}/contact-verification/phone/verify")
+    public ContactVerificationStatusRecord verifyPhone(@PathVariable UUID id, @RequestHeader(TOKEN_HEADER) String token, @RequestBody VerificationCodeRequest request) {
+        return service.verifyPhone(id, token, request.code());
+    }
+
+    @GetMapping("/{id}/documents/{documentId}/content")
+    public ResponseEntity<byte[]> documentContent(@PathVariable UUID id, @PathVariable UUID documentId, @RequestHeader(TOKEN_HEADER) String token) {
+        DocumentContentRecord content;
+        try {
+            content = service.downloadDocument(id, token, documentId);
+        } catch (ProviderOnboardingDocumentNotFoundException ex) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, ex.getMessage());
+        }
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(content.contentType() == null || content.contentType().isBlank() ? "application/octet-stream" : content.contentType()))
+                .header("Content-Disposition", "inline; filename=\"" + content.originalFilename() + "\"")
+                .body(content.bytes());
+    }
+
     @PostMapping("/{id}/review/start")
     @PreAuthorize("hasAnyRole('PLATFORM_ADMIN','ADMIN')")
     public ProviderApplicationRecord startReview(@PathVariable UUID id, @RequestBody(required = false) ReviewTransitionRequest request) {
@@ -210,9 +257,25 @@ public class ProviderOnboardingController {
     public record ResubmitRequest(String providerResponseNote) {
     }
 
-    public record LocationRequest(UUID id, String label, String address, String city, String state, String country, String pinCode, String workingHours, Boolean parkingAvailable, Boolean accessibilityAvailable) {
+    public record VerificationCodeRequest(@NotBlank String code) {
+    }
+
+    public record LocationRequest(
+            UUID id,
+            String label,
+            String address,
+            String city,
+            String state,
+            String country,
+            String pinCode,
+            String workingHours,
+            Boolean parkingAvailable,
+            Boolean accessibilityAvailable,
+            @DecimalMin(value = "-90.0", inclusive = true) @DecimalMax(value = "90.0", inclusive = true) java.math.BigDecimal latitude,
+            @DecimalMin(value = "-180.0", inclusive = true) @DecimalMax(value = "180.0", inclusive = true) java.math.BigDecimal longitude
+    ) {
         LocationCommand toCommand() {
-            return new LocationCommand(id, label, address, city, state, country, pinCode, workingHours, parkingAvailable, accessibilityAvailable);
+            return new LocationCommand(id, label, address, city, state, country, pinCode, workingHours, parkingAvailable, accessibilityAvailable, latitude, longitude);
         }
     }
 

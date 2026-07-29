@@ -305,7 +305,9 @@ public class PublicCatalogFacade {
                 location.pinCode(),
                 location.workingHours(),
                 location.parkingAvailable(),
-                location.accessibilityAvailable()
+                location.accessibilityAvailable(),
+                location.latitude(),
+                location.longitude()
         );
     }
 

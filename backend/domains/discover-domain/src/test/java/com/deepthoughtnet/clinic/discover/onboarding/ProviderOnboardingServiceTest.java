@@ -19,6 +19,8 @@ import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.Up
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.UploadedDocumentCommand;
 import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderApplicationEntity;
 import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderApplicationRepository;
+import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderContactVerificationEntity;
+import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderContactVerificationRepository;
 import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderChangeRequestRepository;
 import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderDocumentEntity;
 import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderDocumentRepository;
@@ -31,6 +33,13 @@ import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderStatusHistoryRep
 import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderSubmissionEntity;
 import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderSubmissionRepository;
 import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService;
+import com.deepthoughtnet.clinic.discover.verification.DiscoverVerificationService;
+import com.deepthoughtnet.clinic.discover.verification.VerificationChallengeResult;
+import com.deepthoughtnet.clinic.discover.verification.VerificationChannel;
+import com.deepthoughtnet.clinic.discover.verification.VerificationChallengeRequest;
+import com.deepthoughtnet.clinic.discover.verification.VerificationPurpose;
+import com.deepthoughtnet.clinic.discover.verification.DiscoverVerificationService.VerificationVerificationRequest;
+import com.deepthoughtnet.clinic.discover.verification.VerificationVerificationResult;
 import com.deepthoughtnet.clinic.platform.storage.ObjectStorageService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
@@ -38,6 +47,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -48,6 +58,7 @@ class ProviderOnboardingServiceTest {
     private final List<ProviderDocumentEntity> documents = new ArrayList<>();
     private final List<ProviderStatusHistoryEntity> history = new ArrayList<>();
     private final List<ProviderSubmissionEntity> submissions = new ArrayList<>();
+    private final AtomicReference<ProviderContactVerificationEntity> contactVerification = new AtomicReference<>();
     private ProviderApplicationEntity application;
     private ProviderOnboardingService service;
     private ObjectStorageService storage;
@@ -61,13 +72,23 @@ class ProviderOnboardingServiceTest {
         ProviderSubmissionRepository submissionRepository = Mockito.mock(ProviderSubmissionRepository.class);
         ProviderStatusHistoryRepository historyRepository = Mockito.mock(ProviderStatusHistoryRepository.class);
         ProviderChangeRequestRepository changeRequestRepository = Mockito.mock(ProviderChangeRequestRepository.class);
+        ProviderContactVerificationRepository contactVerificationRepository = Mockito.mock(ProviderContactVerificationRepository.class);
         ProviderPublicProfileService publicProfileService = Mockito.mock(ProviderPublicProfileService.class);
+        DiscoverVerificationService verificationService = Mockito.mock(DiscoverVerificationService.class);
         storage = Mockito.mock(ObjectStorageService.class);
         ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
 
         when(applicationRepository.save(any(ProviderApplicationEntity.class))).thenAnswer(invocation -> {
             application = invocation.getArgument(0);
             return application;
+        });
+        when(applicationRepository.saveAndFlush(any(ProviderApplicationEntity.class))).thenAnswer(invocation -> {
+            ProviderApplicationEntity saved = invocation.getArgument(0);
+            if (application != null) {
+                advanceRowVersion(saved);
+            }
+            application = saved;
+            return saved;
         });
         when(applicationRepository.findById(any(UUID.class))).thenAnswer(invocation -> {
             UUID id = invocation.getArgument(0);
@@ -76,6 +97,17 @@ class ProviderOnboardingServiceTest {
         when(applicationRepository.findByTokenHash(any())).thenAnswer(invocation -> {
             String hash = invocation.getArgument(0);
             return application != null && application.getTokenHash().equals(hash) ? Optional.of(application) : Optional.empty();
+        });
+        when(applicationRepository.findByReferenceNumber(any())).thenAnswer(invocation -> {
+            String referenceNumber = invocation.getArgument(0);
+            return application != null && application.getReferenceNumber().equals(referenceNumber) ? Optional.of(application) : Optional.empty();
+        });
+        when(applicationRepository.findByStatusIn(any())).thenAnswer(invocation -> {
+            List<ProviderLifecycleStatus> statuses = invocation.getArgument(0);
+            if (application == null || statuses == null || !statuses.contains(application.getStatus())) {
+                return List.of();
+            }
+            return List.of(application);
         });
         when(locationRepository.findByProviderIdOrderByLabelAsc(any())).thenReturn(locations);
         when(locationRepository.saveAll(any())).thenAnswer(invocation -> {
@@ -92,6 +124,10 @@ class ProviderOnboardingServiceTest {
             return services;
         });
         when(documentRepository.findByProviderIdOrderByUploadedAtDesc(any())).thenReturn(documents);
+        when(documentRepository.findById(any(UUID.class))).thenAnswer(invocation -> {
+            UUID id = invocation.getArgument(0);
+            return documents.stream().filter(document -> document.getId().equals(id)).findFirst();
+        });
         when(documentRepository.save(any(ProviderDocumentEntity.class))).thenAnswer(invocation -> {
             ProviderDocumentEntity document = invocation.getArgument(0);
             documents.add(0, document);
@@ -106,6 +142,33 @@ class ProviderOnboardingServiceTest {
         when(changeRequestRepository.findByProviderIdOrderByRequestedAtDesc(any())).thenReturn(List.of());
         when(changeRequestRepository.findFirstByProviderIdAndResolvedAtIsNullOrderByRequestedAtDesc(any())).thenReturn(Optional.empty());
         when(changeRequestRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(contactVerificationRepository.findByProviderId(any())).thenAnswer(invocation -> {
+            ProviderContactVerificationEntity current = contactVerification.get();
+            UUID providerId = invocation.getArgument(0);
+            return current != null && current.getProviderId().equals(providerId) ? Optional.of(current) : Optional.empty();
+        });
+        when(contactVerificationRepository.save(any(ProviderContactVerificationEntity.class))).thenAnswer(invocation -> {
+            ProviderContactVerificationEntity row = invocation.getArgument(0);
+            contactVerification.set(row);
+            return row;
+        });
+        when(verificationService.requestChallenge(any(VerificationChallengeRequest.class))).thenReturn(
+                new VerificationChallengeResult("Verification code sent", "123456", 300, 30, "LOCAL", "delivery-reference"));
+        when(verificationService.verifyChallenge(any(VerificationVerificationRequest.class))).thenAnswer(invocation -> {
+            VerificationVerificationRequest request = invocation.getArgument(0);
+            ProviderContactVerificationEntity current = contactVerification.get();
+            if (current != null) {
+                if (request.channel() == VerificationChannel.EMAIL) {
+                    current.markEmailVerified();
+                } else {
+                    current.markPhoneVerified();
+                }
+            }
+            if (application != null) {
+                application.setContactVerified(true);
+            }
+            return new VerificationVerificationResult(true, "Verification successful", UUID.randomUUID(), true, true, request.normalizedRecipient(), request.purpose(), request.channel());
+        });
         when(submissionRepository.countByProviderId(any())).thenAnswer(invocation -> submissions.size());
         when(submissionRepository.findByProviderIdOrderByVersionNumberDesc(any())).thenReturn(submissions);
         when(submissionRepository.findFirstByProviderIdOrderByVersionNumberDesc(any())).thenAnswer(invocation -> submissions.isEmpty() ? Optional.empty() : Optional.of(submissions.get(0)));
@@ -120,7 +183,7 @@ class ProviderOnboardingServiceTest {
         });
         when(storage.buildDocumentStorageKey(any(), any())).thenReturn("tenants/discover/onboarding/logo.png");
 
-        service = new ProviderOnboardingService(applicationRepository, locationRepository, serviceRepository, documentRepository, submissionRepository, historyRepository, changeRequestRepository, storage, objectMapper, publicProfileService);
+        service = new ProviderOnboardingService(applicationRepository, locationRepository, serviceRepository, documentRepository, submissionRepository, historyRepository, changeRequestRepository, contactVerificationRepository, storage, objectMapper, publicProfileService, verificationService);
     }
 
     @Test
@@ -128,10 +191,22 @@ class ProviderOnboardingServiceTest {
         var created = service.create(new CreateProviderApplicationCommand(ProviderType.INDIVIDUAL_DOCTOR, "Doctor@Example.COM", "9999999999", "password-123", true, true));
 
         assertThat(created.onboardingToken()).isNotBlank();
-        assertThat(created.referenceNumber()).startsWith("JDN-");
+        assertThat(created.referenceNumber()).startsWith("JDR-");
+        assertThat(created.providerType()).isEqualTo(ProviderType.INDIVIDUAL_DOCTOR);
         assertThat(created.status()).isEqualTo(ProviderLifecycleStatus.DRAFT);
         assertThat(created.email()).isEqualTo("Doctor@Example.COM");
         assertThat(history).singleElement().satisfies(row -> assertThat(row.getToStatus()).isEqualTo(ProviderLifecycleStatus.DRAFT));
+    }
+
+    @Test
+    void persistsEachRequestedProviderTypeWithoutFallback() {
+        var clinic = service.create(new CreateProviderApplicationCommand(ProviderType.CLINIC, "clinic@example.com", "9999999999", "password-123", true, true));
+        var hospital = service.create(new CreateProviderApplicationCommand(ProviderType.HOSPITAL, "hospital@example.com", "9999999999", "password-123", true, true));
+
+        assertThat(clinic.providerType()).isEqualTo(ProviderType.CLINIC);
+        assertThat(hospital.providerType()).isEqualTo(ProviderType.HOSPITAL);
+        assertThat(clinic.referenceNumber()).startsWith("JCL-");
+        assertThat(hospital.referenceNumber()).startsWith("JHS-");
     }
 
     @Test
@@ -157,6 +232,205 @@ class ProviderOnboardingServiceTest {
     }
 
     @Test
+    void persistsLocationCoordinatesAndProjectsThemIntoSnapshots() {
+        var created = service.create(new CreateProviderApplicationCommand(ProviderType.CLINIC, "clinic@example.com", "9999999999", "password-123", true, true));
+
+        service.update(created.id(), created.onboardingToken(), new UpdateProviderApplicationCommand(
+                0L,
+                null,
+                null,
+                true,
+                true,
+                true,
+                "Sunrise Family Clinic",
+                "Sunrise Family Clinic",
+                "Private clinic",
+                "CLIN-100",
+                null,
+                "https://example.com",
+                null,
+                null,
+                List.of("English"),
+                "Primary care clinic.",
+                null,
+                null,
+                null,
+                List.of("General Medicine"),
+                List.of(),
+                null,
+                true,
+                15,
+                "Private",
+                null,
+                null,
+                false,
+                null,
+                List.of(),
+                List.of("Parking"),
+                List.of(),
+                List.of(new LocationCommand(null, "Primary", "Baner Road", "Pune", "Maharashtra", "India", "411045", "Mon-Sat 9 AM-5 PM", true, true, new BigDecimal("18.520400"), new BigDecimal("73.856700"))),
+                List.of(new ServiceCommand(null, ProviderServiceType.CONSULTATIONS, "Consultations", "OPD and follow-up consultations", true)),
+                null
+        ));
+
+        var loaded = service.get(created.id(), created.onboardingToken());
+        var preview = service.preview(created.id(), created.onboardingToken());
+
+        assertThat(loaded.locations()).singleElement().satisfies(location -> {
+            assertThat(location.latitude()).isEqualByComparingTo(new BigDecimal("18.520400"));
+            assertThat(location.longitude()).isEqualByComparingTo(new BigDecimal("73.856700"));
+        });
+        assertThat(preview.locationSummary()).isEqualTo("Pune, Maharashtra");
+    }
+
+    @Test
+    void preservesNullLocationCoordinatesForHistoricalLocations() {
+        var created = service.create(new CreateProviderApplicationCommand(ProviderType.CLINIC, "clinic-null@example.com", "9999999999", "password-123", true, true));
+
+        service.update(created.id(), created.onboardingToken(), new UpdateProviderApplicationCommand(
+                0L,
+                null,
+                null,
+                true,
+                true,
+                true,
+                "Jeevanam Family Clinic",
+                "Jeevanam Family Clinic",
+                "Private clinic",
+                "CLIN-101",
+                null,
+                "https://example.com",
+                null,
+                null,
+                List.of("English"),
+                "Primary care clinic.",
+                null,
+                null,
+                null,
+                List.of("General Medicine"),
+                List.of(),
+                null,
+                true,
+                15,
+                "Private",
+                null,
+                null,
+                false,
+                null,
+                List.of(),
+                List.of("Parking"),
+                List.of(),
+                List.of(new LocationCommand(null, "Primary", "Jeevanam Family Clinic", "Kharadi", "Maharashtra", "India", "411014", "Mon-Sat 9 AM-5 PM", true, true, null, null)),
+                List.of(new ServiceCommand(null, ProviderServiceType.CONSULTATIONS, "Consultations", "OPD and follow-up consultations", true)),
+                null
+        ));
+
+        var loaded = service.get(created.id(), created.onboardingToken());
+
+        assertThat(loaded.locations()).singleElement().satisfies(location -> {
+            assertThat(location.latitude()).isNull();
+            assertThat(location.longitude()).isNull();
+        });
+    }
+
+    @Test
+    void listReviewApplicationsTreatsBlankSearchAsOptional() {
+        var created = service.create(new CreateProviderApplicationCommand(ProviderType.CLINIC, "review@example.com", "9999999999", "password-123", true, true));
+        application.setStatus(ProviderLifecycleStatus.SUBMITTED);
+
+        var rows = service.listReviewApplications(List.of(ProviderLifecycleStatus.SUBMITTED), null, null);
+
+        assertThat(rows).singleElement().satisfies(row -> {
+            assertThat(row.referenceNumber()).isEqualTo(created.referenceNumber());
+            assertThat(row.status()).isEqualTo(ProviderLifecycleStatus.SUBMITTED);
+        });
+    }
+
+    @Test
+    void updateReturnsFreshVersionAndRejectsStaleOptimisticLocksWithConflict() {
+        var created = service.create(new CreateProviderApplicationCommand(ProviderType.CLINIC, "clinic@example.com", "9999999999", "password-123", true, true));
+
+        var updated = service.update(created.id(), created.onboardingToken(), new UpdateProviderApplicationCommand(
+                0L,
+                null,
+                null,
+                true,
+                true,
+                true,
+                "Sunrise Family Clinic",
+                "Sunrise Family Clinic",
+                "Private clinic",
+                "CLIN-100",
+                null,
+                "https://example.com",
+                null,
+                null,
+                List.of("English"),
+                "Primary care clinic.",
+                null,
+                null,
+                null,
+                List.of("General Medicine"),
+                List.of(),
+                null,
+                true,
+                15,
+                "Private",
+                null,
+                null,
+                false,
+                null,
+                List.of(),
+                List.of("Parking"),
+                List.of(),
+                List.of(new LocationCommand(null, "Primary", "Baner Road", "Pune", "Maharashtra", "India", "411045", "Mon-Sat 9 AM-5 PM", true, true, null, null)),
+                List.of(new ServiceCommand(null, ProviderServiceType.CONSULTATIONS, "Consultations", "OPD and follow-up consultations", true)),
+                null
+        ));
+
+        assertThat(updated.version()).isEqualTo(1L);
+        assertThatThrownBy(() -> service.update(created.id(), created.onboardingToken(), new UpdateProviderApplicationCommand(
+                0L,
+                null,
+                null,
+                true,
+                true,
+                true,
+                "Sunrise Family Clinic",
+                "Sunrise Family Clinic",
+                "Private clinic",
+                "CLIN-100",
+                null,
+                "https://example.com",
+                null,
+                null,
+                List.of("English"),
+                "Primary care clinic.",
+                null,
+                null,
+                null,
+                List.of("General Medicine"),
+                List.of(),
+                null,
+                true,
+                15,
+                "Private",
+                null,
+                null,
+                false,
+                null,
+                List.of(),
+                List.of("Parking"),
+                List.of(),
+                List.of(new LocationCommand(null, "Primary", "Baner Road", "Pune", "Maharashtra", "India", "411045", "Mon-Sat 9 AM-5 PM", true, true, null, null)),
+                List.of(new ServiceCommand(null, ProviderServiceType.CONSULTATIONS, "Consultations", "OPD and follow-up consultations", true)),
+                null
+        )))
+                .isInstanceOf(ProviderOnboardingConflictException.class)
+                .hasMessage("provider application changed in another session");
+    }
+
+    @Test
     void uploadsDocumentThroughObjectStorageAndLinksBrandingReference() {
         var created = service.create(new CreateProviderApplicationCommand(ProviderType.CLINIC, "clinic@example.com", "9999999999", "password-123", true, true));
 
@@ -169,6 +443,34 @@ class ProviderOnboardingServiceTest {
     }
 
     @Test
+    void reviewerDocumentContentReturnsPrivateVerificationDocumentBytesForOwnedApplication() {
+        var created = service.create(new CreateProviderApplicationCommand(ProviderType.CLINIC, "clinic@example.com", "9999999999", "password-123", true, true));
+        var uploaded = service.uploadDocument(created.id(), created.onboardingToken(), new UploadedDocumentCommand(ProviderDocumentType.REGISTRATION_CERTIFICATE, "registration.pdf", "application/pdf", 4, new byte[] {1, 2, 3, 4}));
+        when(storage.getObjectBytes("tenants/discover/onboarding/logo.png")).thenReturn(new byte[] {1, 2, 3, 4});
+
+        var content = service.reviewDocumentContent(created.id(), uploaded.id());
+
+        assertThat(content.documentId()).isEqualTo(uploaded.id());
+        assertThat(content.contentType()).isEqualTo("application/pdf");
+        assertThat(content.originalFilename()).isEqualTo("registration.pdf");
+        assertThat(content.bytes()).containsExactly(1, 2, 3, 4);
+    }
+
+    @Test
+    void reviewerDocumentContentBlocksSecurityScannedInfectedFiles() throws Exception {
+        var created = service.create(new CreateProviderApplicationCommand(ProviderType.CLINIC, "clinic@example.com", "9999999999", "password-123", true, true));
+        var uploaded = service.uploadDocument(created.id(), created.onboardingToken(), new UploadedDocumentCommand(ProviderDocumentType.REGISTRATION_CERTIFICATE, "registration.pdf", "application/pdf", 4, new byte[] {1, 2, 3, 4}));
+        var infected = documents.stream().filter(document -> document.getId().equals(uploaded.id())).findFirst().orElseThrow();
+        var virusScanStatus = ProviderDocumentEntity.class.getDeclaredField("virusScanStatus");
+        virusScanStatus.setAccessible(true);
+        virusScanStatus.set(infected, "INFECTED");
+
+        assertThatThrownBy(() -> service.reviewDocumentContent(created.id(), uploaded.id()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("This document was blocked by the security scan.");
+    }
+
+    @Test
     void submissionRequiresCompletedMandatoryProfileAndDocuments() {
         var created = service.create(new CreateProviderApplicationCommand(ProviderType.HOSPITAL, "hospital@example.com", "9999999999", "password-123", true, true));
 
@@ -178,9 +480,27 @@ class ProviderOnboardingServiceTest {
     }
 
     @Test
+    void contactVerificationFlowIssuesChallengeAndSatisfiesSubmissionGate() {
+        var created = service.create(new CreateProviderApplicationCommand(ProviderType.CLINIC, "clinic@example.com", "9999999999", "password-123", true, true));
+
+        var challenge = service.requestEmailVerification(created.id(), created.onboardingToken());
+        assertThat(challenge.devCode()).isNotBlank();
+        assertThat(challenge.message()).contains("Verification code");
+
+        var verified = service.verifyEmail(created.id(), created.onboardingToken(), challenge.devCode());
+        assertThat(verified.requirementSatisfied()).isTrue();
+        assertThat(verified.emailStatus()).isEqualTo("VERIFIED");
+
+        var loaded = service.get(created.id(), created.onboardingToken());
+        assertThat(loaded.contactVerified()).isTrue();
+        assertThat(loaded.contactVerification().requirementSatisfied()).isTrue();
+    }
+
+    @Test
     void completedApplicationSubmitsAndCreatesSubmissionHistory() {
         var created = service.create(new CreateProviderApplicationCommand(ProviderType.INDIVIDUAL_DOCTOR, "doctor@example.com", "9999999999", "password-123", true, true));
         service.update(created.id(), created.onboardingToken(), completeDoctorCommand(0L));
+        verifyEmailContact(created.id(), created.onboardingToken());
         service.uploadDocument(created.id(), created.onboardingToken(), new UploadedDocumentCommand(ProviderDocumentType.DOCTOR_PHOTO, "photo.png", "image/png", 4, new byte[] {1, 2, 3, 4}));
         service.uploadDocument(created.id(), created.onboardingToken(), new UploadedDocumentCommand(ProviderDocumentType.REGISTRATION_CERTIFICATE, "registration.pdf", "application/pdf", 4, new byte[] {1, 2, 3, 4}));
 
@@ -198,6 +518,7 @@ class ProviderOnboardingServiceTest {
     void reviewerTransitionsAreAuditedAndDoNotOverwriteSubmissionHistory() {
         var created = service.create(new CreateProviderApplicationCommand(ProviderType.INDIVIDUAL_DOCTOR, "doctor@example.com", "9999999999", "password-123", true, true));
         service.update(created.id(), created.onboardingToken(), completeDoctorCommand(0L));
+        verifyEmailContact(created.id(), created.onboardingToken());
         service.uploadDocument(created.id(), created.onboardingToken(), new UploadedDocumentCommand(ProviderDocumentType.DOCTOR_PHOTO, "photo.png", "image/png", 4, new byte[] {1, 2, 3, 4}));
         service.uploadDocument(created.id(), created.onboardingToken(), new UploadedDocumentCommand(ProviderDocumentType.REGISTRATION_CERTIFICATE, "registration.pdf", "application/pdf", 4, new byte[] {1, 2, 3, 4}));
         service.submit(created.id(), created.onboardingToken());
@@ -246,10 +567,12 @@ class ProviderOnboardingServiceTest {
     @Test
     void resubmissionCreatesNewSubmissionVersionAfterChangeRequests() {
         var created = service.create(new CreateProviderApplicationCommand(ProviderType.INDIVIDUAL_DOCTOR, "doctor@example.com", "9999999999", "password-123", true, true));
-        service.update(created.id(), created.onboardingToken(), completeDoctorCommand(0L));
+        var updated = service.update(created.id(), created.onboardingToken(), completeDoctorCommand(0L));
+        verifyEmailContact(created.id(), created.onboardingToken());
         service.uploadDocument(created.id(), created.onboardingToken(), new UploadedDocumentCommand(ProviderDocumentType.DOCTOR_PHOTO, "photo.png", "image/png", 4, new byte[] {1, 2, 3, 4}));
         service.uploadDocument(created.id(), created.onboardingToken(), new UploadedDocumentCommand(ProviderDocumentType.REGISTRATION_CERTIFICATE, "registration.pdf", "application/pdf", 4, new byte[] {1, 2, 3, 4}));
-        service.update(created.id(), created.onboardingToken(), completeDoctorCommand(0L));
+        var refreshed = service.get(created.id(), created.onboardingToken());
+        service.update(created.id(), created.onboardingToken(), completeDoctorCommand(refreshed.version()));
         service.submit(created.id(), created.onboardingToken());
         service.requestChanges(created.id(), "Add clearer registration document", List.of("DOCUMENTS"));
         service.resubmit(created.id(), created.onboardingToken(), "Updated registration document");
@@ -299,9 +622,26 @@ class ProviderOnboardingServiceTest {
                 List.of(),
                 List.of("Parking"),
                 List.of(),
-                List.of(new LocationCommand(null, "Primary", "Baner Road", "Pune", "Maharashtra", "India", "411045", "Mon-Sat 9 AM-5 PM", true, true)),
+                List.of(new LocationCommand(null, "Primary", "Baner Road", "Pune", "Maharashtra", "India", "411045", "Mon-Sat 9 AM-5 PM", true, true, null, null)),
                 List.of(new ServiceCommand(null, ProviderServiceType.CONSULTATIONS, "Consultations", "OPD and follow-up consultations", true)),
                 null
         );
+    }
+
+    private static void advanceRowVersion(ProviderApplicationEntity entity) {
+        try {
+            var field = ProviderApplicationEntity.class.getDeclaredField("rowVersion");
+            field.setAccessible(true);
+            field.setLong(entity, entity.getRowVersion() + 1);
+        } catch (ReflectiveOperationException ex) {
+            throw new IllegalStateException("Could not advance provider application row version", ex);
+        }
+    }
+
+    private void verifyEmailContact(UUID providerId, String token) {
+        var challenge = service.requestEmailVerification(providerId, token);
+        assertThat(challenge.devCode()).isNotBlank();
+        var verified = service.verifyEmail(providerId, token, challenge.devCode());
+        assertThat(verified.requirementSatisfied()).isTrue();
     }
 }

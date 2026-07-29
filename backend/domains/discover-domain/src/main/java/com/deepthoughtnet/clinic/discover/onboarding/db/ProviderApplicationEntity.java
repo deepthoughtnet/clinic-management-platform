@@ -97,6 +97,8 @@ public class ProviderApplicationEntity {
     private UUID coverImageDocumentId;
     @Column(name = "doctor_photo_document_id")
     private UUID doctorPhotoDocumentId;
+    @Column(name = "provider_account_id")
+    private UUID providerAccountId;
     @Column(name = "primary_color", length = 24)
     private String primaryColor;
     @Column(length = 256)
@@ -228,6 +230,8 @@ public class ProviderApplicationEntity {
     public void setCoverImageDocumentId(UUID coverImageDocumentId) { this.coverImageDocumentId = coverImageDocumentId; }
     public UUID getDoctorPhotoDocumentId() { return doctorPhotoDocumentId; }
     public void setDoctorPhotoDocumentId(UUID doctorPhotoDocumentId) { this.doctorPhotoDocumentId = doctorPhotoDocumentId; }
+    public UUID getProviderAccountId() { return providerAccountId; }
+    public void setProviderAccountId(UUID providerAccountId) { this.providerAccountId = providerAccountId; }
     public String getPrimaryColor() { return primaryColor; }
     public void setPrimaryColor(String primaryColor) { this.primaryColor = primaryColor; }
     public String getTagline() { return tagline; }

@@ -4,6 +4,7 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import java.math.BigDecimal;
 import java.util.UUID;
 
 @Entity
@@ -31,11 +32,15 @@ public class ProviderLocationEntity {
     private boolean parkingAvailable;
     @Column(name = "accessibility_available", nullable = false)
     private boolean accessibilityAvailable;
+    @Column(precision = 10, scale = 6)
+    private BigDecimal latitude;
+    @Column(precision = 10, scale = 6)
+    private BigDecimal longitude;
 
     protected ProviderLocationEntity() {
     }
 
-    public ProviderLocationEntity(UUID id, UUID providerId, String label, String address, String city, String state, String country, String pinCode, String workingHours, boolean parkingAvailable, boolean accessibilityAvailable) {
+    public ProviderLocationEntity(UUID id, UUID providerId, String label, String address, String city, String state, String country, String pinCode, String workingHours, boolean parkingAvailable, boolean accessibilityAvailable, BigDecimal latitude, BigDecimal longitude) {
         this.id = id == null ? UUID.randomUUID() : id;
         this.providerId = providerId;
         this.label = label;
@@ -47,6 +52,8 @@ public class ProviderLocationEntity {
         this.workingHours = workingHours;
         this.parkingAvailable = parkingAvailable;
         this.accessibilityAvailable = accessibilityAvailable;
+        this.latitude = latitude;
+        this.longitude = longitude;
     }
     public UUID getId() { return id; }
     public UUID getProviderId() { return providerId; }
@@ -59,4 +66,6 @@ public class ProviderLocationEntity {
     public String getWorkingHours() { return workingHours; }
     public boolean isParkingAvailable() { return parkingAvailable; }
     public boolean isAccessibilityAvailable() { return accessibilityAvailable; }
+    public BigDecimal getLatitude() { return latitude; }
+    public BigDecimal getLongitude() { return longitude; }
 }

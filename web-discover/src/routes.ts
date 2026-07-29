@@ -17,7 +17,9 @@ export const DISCOVER_ROUTES = {
   healthcare: { path: "/healthcare", label: "Jeevanam Healthcare", footer: true },
   pricing: { path: "/pricing", label: "Pricing", nav: true, footer: true },
   listPractice: { path: "/list-your-practice", label: "For Providers", nav: true, footer: true },
+  providerLogin: { path: "/provider/login", label: "Provider Login" },
   providerDashboard: { path: "/provider/dashboard", label: "Provider Dashboard" },
+  providerWorkspace: { path: "/provider/workspace", label: "Provider Workspace" },
   providerLandingPage: { path: "/provider/landing-page", label: "Landing Page" },
   providerOnboarding: { path: "/provider/onboarding/:applicationId/:step", label: "Provider Onboarding" },
   registerDoctor: { path: "/register/doctor", label: "Register as Doctor" },
@@ -62,6 +64,12 @@ export const DISCOVER_LANDING_PATHS = {
   doctor: (slug: string) => `/discover/doctors/${slug}/home`,
   clinic: (slug: string) => `/discover/clinics/${slug}/home`,
   hospital: (slug: string) => `/discover/hospitals/${slug}/home`,
+} as const;
+
+export const REGISTRATION_PROVIDER_TYPE_BY_ROUTE = {
+  doctor: "INDIVIDUAL_DOCTOR",
+  clinic: "CLINIC",
+  hospital: "HOSPITAL",
 } as const;
 
 export const LEGACY_DETAIL_PATHS = {

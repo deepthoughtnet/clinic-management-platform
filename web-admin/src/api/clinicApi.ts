@@ -9684,3 +9684,256 @@ export async function sendReceptionistTestMessage(token: string, tenantId: strin
     { token, tenantId }
   );
 }
+
+export type DiscoverProviderApplicationStatus =
+  | "DRAFT"
+  | "CONTACT_VERIFIED"
+  | "PROFILE_INCOMPLETE"
+  | "READY_FOR_REVIEW"
+  | "SUBMITTED"
+  | "UNDER_REVIEW"
+  | "CHANGES_REQUESTED"
+  | "APPROVED"
+  | "PUBLISHED"
+  | "SUSPENDED"
+  | "ARCHIVED";
+
+export type DiscoverProviderType = "INDIVIDUAL_DOCTOR" | "CLINIC" | "HOSPITAL";
+
+export type DiscoverProviderBranding = {
+  logoDocumentId: string | null;
+  coverImageDocumentId: string | null;
+  doctorPhotoDocumentId: string | null;
+  primaryColor: string | null;
+  tagline: string | null;
+  galleryDocumentIds: string[];
+};
+
+export type DiscoverProviderLocation = {
+  id: string;
+  label: string;
+  address: string;
+  city: string;
+  state: string;
+  country: string;
+  pinCode: string;
+  workingHours: string;
+  parkingAvailable: boolean;
+  accessibilityAvailable: boolean;
+  latitude: number | null;
+  longitude: number | null;
+};
+
+export type DiscoverProviderService = {
+  id: string;
+  serviceType: string;
+  label: string;
+  description: string;
+  enabled: boolean;
+};
+
+export type DiscoverProviderDocument = {
+  id: string;
+  documentType: string;
+  originalFilename: string;
+  contentType: string;
+  sizeBytes: number;
+  uploadedAt: string;
+  virusScanStatus: string | null;
+};
+
+export type DiscoverProviderStatusHistory = {
+  id: string;
+  fromStatus: DiscoverProviderApplicationStatus | null;
+  toStatus: DiscoverProviderApplicationStatus;
+  reason: string | null;
+  createdAt: string;
+};
+
+export type DiscoverProviderContactVerification = {
+  email: {
+    value: string | null;
+    status: string;
+    verifiedAt: string | null;
+    pending: boolean;
+  };
+  phone: {
+    value: string | null;
+    status: string;
+    verifiedAt: string | null;
+    pending: boolean;
+  };
+  requirementSatisfied: boolean;
+};
+
+export type DiscoverProviderApplication = {
+  id: string;
+  referenceNumber: string;
+  providerType: DiscoverProviderType;
+  status: DiscoverProviderApplicationStatus;
+  version: number;
+  completionPercent: number;
+  currentStep: string;
+  email: string;
+  phone: string;
+  contactVerified: boolean;
+  termsAccepted: boolean;
+  privacyAccepted: boolean;
+  displayName: string | null;
+  legalName: string | null;
+  organisationType: string | null;
+  registrationNumber: string | null;
+  gstNumber: string | null;
+  website: string | null;
+  gender: string | null;
+  dateOfBirth: string | null;
+  languages: string[];
+  biography: string | null;
+  medicalCouncil: string | null;
+  qualification: string | null;
+  yearsOfExperience: number | null;
+  specialities: string[];
+  subSpecialities: string[];
+  consultationFee: number | null;
+  onlineConsultation: boolean;
+  appointmentDurationMinutes: number | null;
+  ownership: string | null;
+  hospitalType: string | null;
+  beds: number | null;
+  emergencyAvailable: boolean;
+  medicalDirector: string | null;
+  departments: string[];
+  facilities: string[];
+  accreditations: string[];
+  branding: DiscoverProviderBranding;
+  locations: DiscoverProviderLocation[];
+  services: DiscoverProviderService[];
+  documents: DiscoverProviderDocument[];
+  statusHistory: DiscoverProviderStatusHistory[];
+  missingItems: string[];
+  contactVerification: DiscoverProviderContactVerification;
+  lastSavedAt: string | null;
+  submittedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  onboardingToken: string | null;
+};
+
+export type DiscoverProviderChangeRequest = {
+  id: string;
+  submissionVersionNumber: number | null;
+  requestedSections: string[];
+  reviewerMessage: string | null;
+  providerResponseNote: string | null;
+  requestedAt: string;
+  resolvedAt: string | null;
+  resolved: boolean;
+};
+
+export type DiscoverProviderTimelineEvent = {
+  label: string;
+  description: string | null;
+  actorCategory: string | null;
+  timestamp: string;
+};
+
+export type DiscoverProviderCompletion = {
+  completionPercentage: number;
+  completedSteps: string[];
+  incompleteSteps: string[];
+  missingRequiredFields: string[];
+  missingRequiredDocuments: string[];
+  validationWarnings: string[];
+  blockingErrors: string[];
+  canSubmit: boolean;
+  recommendedNextStep: string;
+  currentStep: string;
+  readOnly: boolean;
+};
+
+export type DiscoverProviderPreview = {
+  providerId: string;
+  providerType: DiscoverProviderType;
+  displayName: string;
+  subtitle: string | null;
+  locationSummary: string | null;
+  services: string[];
+  specialities: string[];
+  biography: string | null;
+  branding: DiscoverProviderBranding;
+  completionPercent: number;
+  readyForSubmission: boolean;
+  missingItems: string[];
+};
+
+export type DiscoverProviderReviewSummary = {
+  id: string;
+  referenceNumber: string;
+  providerType: DiscoverProviderType;
+  status: DiscoverProviderApplicationStatus;
+  version: number;
+  displayName: string;
+  registrationNumber: string | null;
+  email: string;
+  phone: string;
+  contactVerified: boolean;
+  city: string | null;
+  state: string | null;
+  country: string | null;
+  submittedAt: string | null;
+  updatedAt: string;
+};
+
+export type DiscoverProviderReviewDetail = {
+  application: DiscoverProviderApplication;
+  completion: DiscoverProviderCompletion;
+  preview: DiscoverProviderPreview;
+  timeline: DiscoverProviderTimelineEvent[];
+  changeRequests: DiscoverProviderChangeRequest[];
+  publicProfilePath: string | null;
+  published: boolean;
+};
+
+export async function listDiscoverProviderApplications(
+  token: string,
+  filters?: {
+    status?: DiscoverProviderApplicationStatus[];
+    providerType?: DiscoverProviderType | null;
+    search?: string | null;
+  },
+) {
+  const query = new URLSearchParams();
+  filters?.status?.forEach((value) => query.append("status", value));
+  if (filters?.providerType) query.set("providerType", filters.providerType);
+  if (filters?.search?.trim()) query.set("search", filters.search.trim());
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return httpGet<DiscoverProviderReviewSummary[]>(`/api/platform/discover/provider-applications${suffix}`, { token, platformOperation: true });
+}
+
+export async function getDiscoverProviderApplicationReview(token: string, referenceNumber: string) {
+  return httpGet<DiscoverProviderReviewDetail>(`/api/platform/discover/provider-applications/${encodeURIComponent(referenceNumber)}`, { token, platformOperation: true });
+}
+
+export async function startDiscoverProviderReview(token: string, referenceNumber: string, reason?: string | null) {
+  return httpPost<DiscoverProviderApplication>(`/api/platform/discover/provider-applications/${encodeURIComponent(referenceNumber)}/start-review`, reason ? { reason } : {}, { token, platformOperation: true });
+}
+
+export async function requestChangesDiscoverProviderReview(
+  token: string,
+  referenceNumber: string,
+  body: { reason: string; requestedSections: string[] },
+) {
+  return httpPost<DiscoverProviderApplication>(`/api/platform/discover/provider-applications/${encodeURIComponent(referenceNumber)}/request-changes`, body, { token, platformOperation: true });
+}
+
+export async function approveDiscoverProviderApplication(token: string, referenceNumber: string, reason?: string | null) {
+  return httpPost<DiscoverProviderApplication>(`/api/platform/discover/provider-applications/${encodeURIComponent(referenceNumber)}/approve`, reason ? { reason } : {}, { token, platformOperation: true });
+}
+
+export async function publishDiscoverProviderApplication(token: string, referenceNumber: string, reason?: string | null) {
+  return httpPost<DiscoverProviderApplication>(`/api/platform/discover/provider-applications/${encodeURIComponent(referenceNumber)}/publish`, reason ? { reason } : {}, { token, platformOperation: true });
+}
+
+export async function getDiscoverProviderReviewDocumentBlob(token: string, referenceNumber: string, documentId: string) {
+  return fetchAuthenticatedBlob(`/api/platform/discover/provider-applications/${encodeURIComponent(referenceNumber)}/documents/${documentId}/content`, { token, platformOperation: true });
+}

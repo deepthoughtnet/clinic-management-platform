@@ -17,8 +17,10 @@ import {
 } from "./pages/discovery/PublicDiscoveryPages";
 import { LandingPagePage } from "./pages/public/LandingPagePage";
 import { ProviderDashboardPage } from "./pages/provider/ProviderDashboardPage";
+import { ProviderLoginPage } from "./pages/provider/ProviderLoginPage";
 import { ProviderLandingPagePage } from "./pages/provider/ProviderLandingPagePage";
 import { ProviderOnboardingPage } from "./pages/provider/ProviderOnboardingPage";
+import { ProviderWorkspacePage } from "./pages/provider/ProviderWorkspacePage";
 import { DISCOVER_ROUTES, primaryNavigationRoutes } from "./routes";
 
 type ShellPageProps = {
@@ -78,6 +80,14 @@ const routeMeta: Record<string, { title: string; description: string }> = {
   [DISCOVER_ROUTES.providerDashboard.path]: {
     title: "Provider Dashboard | Jeevanam Discover",
     description: "Continue your provider onboarding, review status, and submit your public profile.",
+  },
+  [DISCOVER_ROUTES.providerLogin.path]: {
+    title: "Provider Login | Jeevanam Discover",
+    description: "Sign in with a verification code to manage your provider workspace.",
+  },
+  [DISCOVER_ROUTES.providerWorkspace.path]: {
+    title: "Provider Workspace | Jeevanam Discover",
+    description: "View your provider applications and public profiles.",
   },
   [DISCOVER_ROUTES.providerLandingPage.path]: {
     title: "Landing Page Builder | Jeevanam Discover",
@@ -194,6 +204,9 @@ function Shell({ children }: { children: ReactNode }) {
             <a className="ghost-button" href={discoverConfig.careAppUrl}>
               Patient Login
             </a>
+            <Link className="ghost-button" to={DISCOVER_ROUTES.providerLogin.path}>
+              Provider Login
+            </Link>
             <Link className="primary-button" to={DISCOVER_ROUTES.listPractice.path}>
               For Providers
             </Link>
@@ -431,8 +444,10 @@ function App() {
           <Route path={DISCOVER_ROUTES.registerDoctor.path} element={<ProviderOnboardingPage type="doctor" />} />
           <Route path={DISCOVER_ROUTES.registerClinic.path} element={<ProviderOnboardingPage type="clinic" />} />
           <Route path={DISCOVER_ROUTES.registerHospital.path} element={<ProviderOnboardingPage type="hospital" />} />
-          <Route path={DISCOVER_ROUTES.providerDashboard.path} element={<ProviderDashboardPage />} />
-          <Route path={DISCOVER_ROUTES.providerLandingPage.path} element={<ProviderLandingPagePage />} />
+        <Route path={DISCOVER_ROUTES.providerDashboard.path} element={<ProviderDashboardPage />} />
+        <Route path={DISCOVER_ROUTES.providerLogin.path} element={<ProviderLoginPage />} />
+        <Route path={DISCOVER_ROUTES.providerWorkspace.path} element={<ProviderWorkspacePage />} />
+        <Route path={DISCOVER_ROUTES.providerLandingPage.path} element={<ProviderLandingPagePage />} />
           <Route path="/provider/onboarding/:applicationId/:step" element={<ProviderOnboardingPage />} />
           <Route path={DISCOVER_ROUTES.login.path} element={<LoginChooserPage />} />
           <Route path={DISCOVER_ROUTES.about.path} element={<ShellPage eyebrow="About" title="About Jeevanam." body="Jeevanam connects public discovery, patient care access, and healthcare operations through focused applications." ctaLabel="Find Care" ctaTo={`${DISCOVER_ROUTES.home.path}#find-care`} />} />

@@ -43,6 +43,8 @@ export type ProviderLocationPayload = {
   workingHours?: string;
   parkingAvailable?: boolean;
   accessibilityAvailable?: boolean;
+  latitude?: number | null;
+  longitude?: number | null;
 };
 
 export type ProviderServicePayload = {
@@ -97,6 +99,23 @@ export type ProviderApplicationPayload = {
   };
 };
 
+export type ContactVerificationStatus = {
+  email: string;
+  emailStatus: "NOT_VERIFIED" | "PENDING" | "VERIFIED";
+  emailVerifiedAt: string | null;
+  phone: string;
+  phoneStatus: "NOT_VERIFIED" | "PENDING" | "VERIFIED";
+  phoneVerifiedAt: string | null;
+  requirementSatisfied: boolean;
+};
+
+export type VerificationChallenge = {
+  message: string;
+  devCode: string | null;
+  expiresInSeconds: number;
+  resendAfterSeconds: number;
+};
+
 export type ProviderApplication = ProviderApplicationPayload & {
   id: string;
   referenceNumber: string;
@@ -129,6 +148,7 @@ export type ProviderApplication = ProviderApplicationPayload & {
     createdAt: string;
   }>;
   missingItems: string[];
+  contactVerification: ContactVerificationStatus;
   lastSavedAt: string;
   submittedAt?: string | null;
   onboardingToken?: string;
@@ -184,6 +204,14 @@ export type ProviderPreview = {
   services: string[];
   specialities: string[];
   biography?: string | null;
+  branding: {
+    logoDocumentId: string | null;
+    coverImageDocumentId: string | null;
+    doctorPhotoDocumentId: string | null;
+    galleryDocumentIds: string[];
+    primaryColor: string | null;
+    tagline: string | null;
+  };
   completionPercent: number;
   readyForSubmission: boolean;
   missingItems: string[];
@@ -216,6 +244,21 @@ async function request<T>(path: string, options: RequestInit = {}, token?: strin
     throw new Error(await parseError(response));
   }
   return response.json() as Promise<T>;
+}
+
+async function requestBlob(path: string, options: RequestInit = {}, token?: string): Promise<Blob> {
+  const response = await fetch(buildUrl(path), {
+    ...options,
+    headers: {
+      Accept: "application/octet-stream,image/*,*/*",
+      ...(token ? { "X-Provider-Onboarding-Token": token } : {}),
+      ...options.headers,
+    },
+  });
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+  return response.blob();
 }
 
 export function createProviderApplication(input: { providerType: ProviderType; email: string; phone: string; password: string; termsAccepted: boolean; privacyAccepted: boolean }) {
@@ -269,6 +312,40 @@ export function resubmitProviderApplication(id: string, token: string, providerR
 
 export function loadProviderPreview(id: string, token: string) {
   return request<ProviderPreview>(`/api/provider-registration/providers/${id}/preview`, {}, token);
+}
+
+export function loadProviderContactVerification(id: string, token: string) {
+  return request<ContactVerificationStatus>(`/api/provider-registration/providers/${id}/contact-verification`, {}, token);
+}
+
+export function requestProviderEmailVerification(id: string, token: string) {
+  return request<VerificationChallenge>(`/api/provider-registration/providers/${id}/contact-verification/email/request`, { method: "POST" }, token);
+}
+
+export function verifyProviderEmail(id: string, token: string, code: string) {
+  return request<ContactVerificationStatus>(`/api/provider-registration/providers/${id}/contact-verification/email/verify`, {
+    method: "POST",
+    body: JSON.stringify({ code }),
+  }, token);
+}
+
+export function requestProviderPhoneVerification(id: string, token: string) {
+  return request<VerificationChallenge>(`/api/provider-registration/providers/${id}/contact-verification/phone/request`, { method: "POST" }, token);
+}
+
+export function verifyProviderPhone(id: string, token: string, code: string) {
+  return request<ContactVerificationStatus>(`/api/provider-registration/providers/${id}/contact-verification/phone/verify`, {
+    method: "POST",
+    body: JSON.stringify({ code }),
+  }, token);
+}
+
+export function providerDocumentContentPath(providerId: string, documentId: string) {
+  return `/api/provider-registration/providers/${providerId}/documents/${documentId}/content`;
+}
+
+export function fetchProviderDocumentBlob(path: string, token: string, signal?: AbortSignal) {
+  return requestBlob(path, { method: "GET", signal }, token);
 }
 
 export function uploadProviderDocument(id: string, token: string, documentType: ProviderDocumentType, file: File) {

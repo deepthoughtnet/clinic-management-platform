@@ -71,6 +71,8 @@ export type LandingProfileLocation = {
   workingHours: string | null;
   parkingAvailable: boolean;
   accessibilityAvailable: boolean;
+  latitude: number | null;
+  longitude: number | null;
 };
 
 export type LandingProfile = {
@@ -97,6 +99,7 @@ export type LandingProfile = {
   consultationModes: string[];
   locations: LandingProfileLocation[];
   gallery: Array<{ documentId: string; caption: string | null }>;
+  galleryImageUrls: string[];
   imageUrl: string | null;
   coverUrl: string | null;
   logoUrl: string | null;
@@ -138,6 +141,23 @@ export type LandingPageResponse = {
   profile: LandingProfile;
   templates: LandingTemplate[];
   versions: LandingVersion[];
+};
+
+export type LandingPageRenderable = {
+  displayName: string;
+  canonicalSlug: string;
+  publicPath: string;
+  profile: LandingProfile;
+  draft?: LandingSnapshot | null;
+  publishedSnapshot?: LandingSnapshot | null;
+};
+
+export type PublicLandingPageResponse = LandingPageRenderable & {
+  providerId: string;
+  providerType: LandingProviderType;
+  published: boolean;
+  publishedVersionNumber: number | null;
+  publishedAt: string | null;
 };
 
 export type LandingPageUpdate = {
@@ -215,5 +235,5 @@ export function compareLandingPageVersions(token: string, leftVersion: number, r
 }
 
 export function loadPublicLandingPage(slug: string) {
-  return request<LandingPageResponse>(`/api/public/landing/${slug}`);
+  return request<PublicLandingPageResponse>(`/api/public/landing/${slug}`);
 }

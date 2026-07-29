@@ -78,7 +78,9 @@ public final class ProviderOnboardingModels {
             String pinCode,
             String workingHours,
             Boolean parkingAvailable,
-            Boolean accessibilityAvailable
+            Boolean accessibilityAvailable,
+            BigDecimal latitude,
+            BigDecimal longitude
     ) {
     }
 
@@ -97,6 +99,25 @@ public final class ProviderOnboardingModels {
             UUID doctorPhotoDocumentId,
             String primaryColor,
             String tagline
+    ) {
+    }
+
+    public record ContactVerificationStatusRecord(
+            String email,
+            String emailStatus,
+            OffsetDateTime emailVerifiedAt,
+            String phone,
+            String phoneStatus,
+            OffsetDateTime phoneVerifiedAt,
+            boolean requirementSatisfied
+    ) {
+    }
+
+    public record VerificationChallengeRecord(
+            String message,
+            String devCode,
+            long expiresInSeconds,
+            long resendAfterSeconds
     ) {
     }
 
@@ -154,6 +175,7 @@ public final class ProviderOnboardingModels {
             List<DocumentRecord> documents,
             List<StatusHistoryRecord> statusHistory,
             List<String> missingItems,
+            ContactVerificationStatusRecord contactVerification,
             OffsetDateTime lastSavedAt,
             OffsetDateTime submittedAt,
             OffsetDateTime createdAt,
@@ -207,6 +229,36 @@ public final class ProviderOnboardingModels {
     ) {
     }
 
+    public record ProviderReviewSummaryRecord(
+            UUID id,
+            String referenceNumber,
+            ProviderType providerType,
+            ProviderLifecycleStatus status,
+            long version,
+            String displayName,
+            String registrationNumber,
+            String email,
+            String phone,
+            boolean contactVerified,
+            String city,
+            String state,
+            String country,
+            OffsetDateTime submittedAt,
+            OffsetDateTime updatedAt
+    ) {
+    }
+
+    public record ProviderReviewDetailRecord(
+            ProviderApplicationRecord application,
+            ProviderCompletionRecord completion,
+            ProviderPreviewRecord preview,
+            List<ProviderTimelineEventRecord> timeline,
+            List<ProviderChangeRequestRecord> changeRequests,
+            String publicProfilePath,
+            boolean published
+    ) {
+    }
+
     public record LocationRecord(
             UUID id,
             String label,
@@ -217,7 +269,9 @@ public final class ProviderOnboardingModels {
             String pinCode,
             String workingHours,
             boolean parkingAvailable,
-            boolean accessibilityAvailable
+            boolean accessibilityAvailable,
+            BigDecimal latitude,
+            BigDecimal longitude
     ) {
     }
 
@@ -235,7 +289,8 @@ public final class ProviderOnboardingModels {
             UUID coverImageDocumentId,
             UUID doctorPhotoDocumentId,
             String primaryColor,
-            String tagline
+            String tagline,
+            List<UUID> galleryDocumentIds
     ) {
     }
 
@@ -247,6 +302,14 @@ public final class ProviderOnboardingModels {
             long sizeBytes,
             OffsetDateTime uploadedAt,
             String virusScanStatus
+    ) {
+    }
+
+    public record DocumentContentRecord(
+            UUID documentId,
+            String contentType,
+            String originalFilename,
+            byte[] bytes
     ) {
     }
 

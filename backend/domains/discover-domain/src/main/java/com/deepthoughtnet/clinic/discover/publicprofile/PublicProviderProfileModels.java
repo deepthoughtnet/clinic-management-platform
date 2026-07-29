@@ -19,7 +19,9 @@ public final class PublicProviderProfileModels {
             String pinCode,
             String workingHours,
             boolean parkingAvailable,
-            boolean accessibilityAvailable
+            boolean accessibilityAvailable,
+            BigDecimal latitude,
+            BigDecimal longitude
     ) {
     }
 
@@ -53,6 +55,7 @@ public final class PublicProviderProfileModels {
             List<String> consultationModes,
             List<PublicProviderLocationSnapshot> locations,
             List<PublicProviderGalleryImageSnapshot> gallery,
+            List<String> galleryImageUrls,
             UUID logoDocumentId,
             UUID coverImageDocumentId,
             UUID doctorPhotoDocumentId,
@@ -129,6 +132,7 @@ public final class PublicProviderProfileModels {
             List<String> consultationModes,
             List<PublicProviderLocationSnapshot> locations,
             List<PublicProviderGalleryImageSnapshot> gallery,
+            List<String> galleryImageUrls,
             String imageUrl,
             String coverUrl,
             String logoUrl,

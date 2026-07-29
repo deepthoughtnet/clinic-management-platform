@@ -1,12 +1,18 @@
 package com.deepthoughtnet.clinic.api.discover;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.when;
 
 import com.deepthoughtnet.clinic.api.support.PostgresTestContainerSupport;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderType;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingService;
 import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderApplicationEntity;
 import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderApplicationRepository;
+import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderDocumentEntity;
+import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderDocumentRepository;
+import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderDocumentType;
 import com.deepthoughtnet.clinic.discover.landingpage.db.LandingPageRepository;
 import com.deepthoughtnet.clinic.discover.landingpage.db.LandingPageVersionRepository;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderGalleryImageSnapshot;
@@ -18,6 +24,8 @@ import com.deepthoughtnet.clinic.discover.publicprofile.db.DiscoverPublicProvide
 import com.deepthoughtnet.clinic.discover.publicprofile.db.DiscoverPublicProviderProfileVersionRepository;
 import com.deepthoughtnet.clinic.platform.storage.ObjectStorageService;
 import java.math.BigDecimal;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
@@ -32,6 +40,8 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -53,6 +63,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
         "clinic.storage.minio.bucket=clinic-documents"
 })
 class ProviderLandingPageIntegrationTest extends PostgresTestContainerSupport {
+    private static final UUID TEST_TENANT_ID = UUID.fromString("11111111-1111-1111-1111-111111111111");
+
     @Autowired
     private TestRestTemplate restTemplate;
 
@@ -61,6 +73,9 @@ class ProviderLandingPageIntegrationTest extends PostgresTestContainerSupport {
 
     @Autowired
     private ProviderApplicationRepository providerApplicationRepository;
+
+    @Autowired
+    private ProviderDocumentRepository providerDocumentRepository;
 
     @Autowired
     private LandingPageRepository landingPageRepository;
@@ -79,6 +94,9 @@ class ProviderLandingPageIntegrationTest extends PostgresTestContainerSupport {
 
     @MockBean
     private ObjectStorageService objectStorageService;
+
+    @MockBean
+    private JwtDecoder jwtDecoder;
 
     @DynamicPropertySource
     static void registerDataSourceProperties(DynamicPropertyRegistry registry) {
@@ -185,7 +203,13 @@ class ProviderLandingPageIntegrationTest extends PostgresTestContainerSupport {
         assertThat(publicLanding).isNotNull();
         assertThat(publicLanding.get("published")).isEqualTo(true);
         assertThat(publicLanding.get("canonicalSlug")).isEqualTo(slug);
-        assertThat(((Map<?, ?>) publicLanding.get("publishedSnapshot")).get("templateKey")).isEqualTo(((Map<?, ?>) publicLanding.get("draft")).get("templateKey"));
+        assertThat(publicLanding).doesNotContainKey("draft");
+        assertThat(((Map<?, ?>) publicLanding.get("publishedSnapshot")).get("templateKey")).isEqualTo(((Map<?, ?>) published.get("draft")).get("templateKey"));
+        Map<String, Object> profile = (Map<String, Object>) publicLanding.get("profile");
+        assertThat(profile.get("logoUrl")).isEqualTo("https://example.test/media/logo-storage");
+        assertThat(profile.get("coverUrl")).isEqualTo("https://example.test/media/cover-storage");
+        assertThat((List<String>) profile.get("galleryImageUrls")).containsExactly("https://example.test/media/gallery-storage");
+        assertThat(profile.toString()).doesNotContain("registration-storage");
     }
 
     private Map<String, Object> draftSnapshotTheme(Map<String, Object> response) {
@@ -197,10 +221,22 @@ class ProviderLandingPageIntegrationTest extends PostgresTestContainerSupport {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.set("X-Provider-Onboarding-Token", token);
+        headers.set("X-Tenant-Id", TEST_TENANT_ID.toString());
+        headers.setBearerAuth("provider-access-token");
         return new HttpEntity<>(body, headers);
     }
 
     private Map<String, Object> createPublishedProvider(String slug) throws Exception {
+        when(jwtDecoder.decode(anyString())).thenReturn(Jwt.withTokenValue("provider-access-token")
+                .header("alg", "none")
+                .claim("iss", "http://localhost:8182/realms/clinic-management")
+                .claim("sub", "provider-landing-page-test")
+                .claim("email", "provider-landing-page-test@example.com")
+                .claim("preferred_username", "provider-landing-page-test")
+                .issuedAt(Instant.now())
+                .expiresAt(Instant.now().plus(Duration.ofHours(1)))
+                .build());
+        when(objectStorageService.generatePresignedDownloadUrl(any(), any(Duration.class))).thenAnswer(invocation -> "https://example.test/media/" + invocation.getArgument(0));
         Map<String, Object> request = Map.of(
                 "providerType", "CLINIC",
                 "email", "clinic.%s@example.com".formatted(UUID.randomUUID()),
@@ -217,6 +253,11 @@ class ProviderLandingPageIntegrationTest extends PostgresTestContainerSupport {
         assertThat(body).isNotNull();
         UUID providerId = UUID.fromString((String) body.get("id"));
 
+        ProviderDocumentEntity logo = providerDocumentRepository.save(new ProviderDocumentEntity(providerId, ProviderDocumentType.LOGO, "logo.png", "image/png", 1024, "logo-storage"));
+        ProviderDocumentEntity cover = providerDocumentRepository.save(new ProviderDocumentEntity(providerId, ProviderDocumentType.COVER_IMAGE, "cover.png", "image/png", 2048, "cover-storage"));
+        ProviderDocumentEntity gallery = providerDocumentRepository.save(new ProviderDocumentEntity(providerId, ProviderDocumentType.GALLERY_IMAGE, "gallery.png", "image/png", 4096, "gallery-storage"));
+        providerDocumentRepository.save(new ProviderDocumentEntity(providerId, ProviderDocumentType.REGISTRATION_CERTIFICATE, "registration.pdf", "application/pdf", 8192, "registration-storage"));
+
         ProviderApplicationEntity application = providerApplicationRepository.findById(UUID.fromString((String) body.get("id"))).orElseThrow();
         application.setStatus(com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderLifecycleStatus.PUBLISHED);
         application.setDisplayName("Sunrise Family Clinic");
@@ -232,6 +273,8 @@ class ProviderLandingPageIntegrationTest extends PostgresTestContainerSupport {
         application.setHospitalType("Clinic");
         application.setEmergencyAvailable(true);
         application.setContactVerified(true);
+        application.setLogoDocumentId(logo.getId());
+        application.setCoverImageDocumentId(cover.getId());
         providerApplicationRepository.save(application);
 
         OffsetDateTime publishedAt = OffsetDateTime.now();
@@ -253,15 +296,16 @@ class ProviderLandingPageIntegrationTest extends PostgresTestContainerSupport {
                 true,
                 List.of("English", "Hindi"),
                 List.of("Family Medicine", "Internal Medicine"),
-                List.of(),
+                List.<String>of(),
                 List.of("Consultations", "Preventive care"),
                 List.of("General Medicine", "Pediatrics"),
                 List.of("Pharmacy", "Lab", "Waiting Lounge"),
                 List.of("In-person", "Online"),
-                List.of(new PublicProviderLocationSnapshot("Main Branch", "12 Health Street", "Pune", "Maharashtra", "India", "411001", "Mon-Sat 9 AM - 8 PM", true, true)),
-                List.of(new PublicProviderGalleryImageSnapshot(UUID.randomUUID(), "Reception")),
-                null,
-                null,
+                List.of(new PublicProviderLocationSnapshot("Main Branch", "12 Health Street", "Pune", "Maharashtra", "India", "411001", "Mon-Sat 9 AM - 8 PM", true, true, null, null)),
+                List.of(new PublicProviderGalleryImageSnapshot(gallery.getId(), "Reception")),
+                List.of("https://example.test/media/gallery-storage"),
+                logo.getId(),
+                cover.getId(),
                 null,
                 "+911234567890",
                 "hello@sunrise.example.com",
@@ -271,6 +315,7 @@ class ProviderLandingPageIntegrationTest extends PostgresTestContainerSupport {
                 "Maharashtra",
                 "India",
                 "Family Medicine",
+                "Family-first care for the neighbourhood.",
                 "Private",
                 "Clinic",
                 "Dr. Sunita Rao",
@@ -303,8 +348,8 @@ class ProviderLandingPageIntegrationTest extends PostgresTestContainerSupport {
                 "Pharmacy,Lab,Waiting Lounge",
                 "English,Hindi",
                 "In-person,Online",
-                null,
-                null,
+                logo.getId(),
+                cover.getId(),
                 null,
                 "+911234567890",
                 "hello@sunrise.example.com",

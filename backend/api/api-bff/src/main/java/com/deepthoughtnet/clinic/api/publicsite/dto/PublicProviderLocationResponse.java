@@ -1,5 +1,7 @@
 package com.deepthoughtnet.clinic.api.publicsite.dto;
 
+import java.math.BigDecimal;
+
 public record PublicProviderLocationResponse(
         String label,
         String address,
@@ -9,6 +11,8 @@ public record PublicProviderLocationResponse(
         String pinCode,
         String workingHours,
         boolean parkingAvailable,
-        boolean accessibilityAvailable
+        boolean accessibilityAvailable,
+        BigDecimal latitude,
+        BigDecimal longitude
 ) {
 }

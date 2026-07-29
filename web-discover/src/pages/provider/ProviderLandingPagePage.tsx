@@ -1,5 +1,5 @@
 import { type ChangeEvent, useEffect, useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import {
   compareLandingPageVersions,
   loadLandingPage,
@@ -7,11 +7,9 @@ import {
   revertLandingPage,
   updateLandingPage,
   type LandingPageResponse,
-  type LandingPageSection,
-  type LandingPageSnapshot,
-  type LandingPageTemplate,
-  type LandingPageTheme,
-  type LandingVersion,
+  type LandingSection,
+  type LandingSnapshot,
+  type LandingTheme,
 } from "../../api/providerLandingPage";
 import { DiscoverEmptyState } from "../../components/DiscoveryComponents";
 import { LandingPageRenderer } from "../../components/landing/LandingPageRenderer";
@@ -49,10 +47,6 @@ function deviceClass(device: string) {
     default:
       return "device-frame";
   }
-}
-
-function sectionTitle(section: LandingSection) {
-  return section.title?.trim() || section.key.replaceAll("_", " ");
 }
 
 export function ProviderLandingPagePage() {

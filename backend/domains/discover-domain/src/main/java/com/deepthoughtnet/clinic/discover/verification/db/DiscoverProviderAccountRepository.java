@@ -1,0 +1,10 @@
+package com.deepthoughtnet.clinic.discover.verification.db;
+
+import java.util.Optional;
+import java.util.UUID;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+public interface DiscoverProviderAccountRepository extends JpaRepository<DiscoverProviderAccountEntity, UUID> {
+    Optional<DiscoverProviderAccountEntity> findByNormalizedEmail(String normalizedEmail);
+    Optional<DiscoverProviderAccountEntity> findByNormalizedPhone(String normalizedPhone);
+}

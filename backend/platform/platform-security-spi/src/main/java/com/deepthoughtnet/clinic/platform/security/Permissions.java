@@ -113,6 +113,12 @@ public final class Permissions {
     public static final String COMMERCIAL_RUNTIME_DIAGNOSTICS_VIEW = "commercial.runtime.diagnostics.view";
     public static final String COMMERCIAL_RUNTIME_READINESS_VIEW = "commercial.runtime.readiness.view";
     public static final String COMMERCIAL_RUNTIME_ALLOWLIST_MANAGE = "commercial.runtime.allowlist.manage";
+    public static final String DISCOVER_PROVIDER_APPLICATION_VIEW = "discover.provider.application.view";
+    public static final String DISCOVER_PROVIDER_APPLICATION_REVIEW = "discover.provider.application.review";
+    public static final String DISCOVER_PROVIDER_APPLICATION_REQUEST_CHANGES = "discover.provider.application.request.changes";
+    public static final String DISCOVER_PROVIDER_APPLICATION_APPROVE = "discover.provider.application.approve";
+    public static final String DISCOVER_PROVIDER_APPLICATION_PUBLISH = "discover.provider.application.publish";
+    public static final String DISCOVER_PROVIDER_APPLICATION_HISTORY_VIEW = "discover.provider.application.history.view";
     public static final String NOTIFICATION_READ = "notification.read";
     public static final String NOTIFICATION_MANAGE = "notification.manage";
     public static final String NOTIFICATION_SEND = "notification.send";

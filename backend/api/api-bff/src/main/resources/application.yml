@@ -54,6 +54,9 @@ management:
       show-details: never
 
 clinic:
+  security:
+    cors:
+      allowed-origins: ${CLINIC_CORS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:5174,http://localhost:5175,http://localhost:5177,http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:5175,http://127.0.0.1:5177}
   database:
     destructive-seed-enabled: ${CLINIC_DATABASE_DESTRUCTIVE_SEED_ENABLED:false}
     test-schema-creator-enabled: ${CLINIC_DATABASE_TEST_SCHEMA_CREATOR_ENABLED:false}

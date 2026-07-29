@@ -6,6 +6,15 @@ export type DiscoverConfig = {
   environmentName: string;
   analyticsId: string;
   analyticsEnabled: boolean;
+  mapTileUrl: string;
+  mapTileAttribution: string;
+  mapDefaultLatitude: number | null;
+  mapDefaultLongitude: number | null;
+  mapDefaultZoom: number;
+  mapDirectionsUrlTemplate: string;
+  geocodingProvider: string;
+  geocodingBaseUrl: string;
+  geocodingSearchPath: string;
 };
 
 function trimEnv(value: string | undefined): string {
@@ -14,6 +23,15 @@ function trimEnv(value: string | undefined): string {
 
 function isLocalHost(hostname: string): boolean {
   return hostname === "localhost" || hostname === "127.0.0.1";
+}
+
+function parseNumber(value: string | undefined): number | null {
+  const trimmed = trimEnv(value);
+  if (!trimmed) {
+    return null;
+  }
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function appUrlFallback(app: "care" | "healthcare"): string {
@@ -35,6 +53,14 @@ function appUrlFallback(app: "care" | "healthcare"): string {
   return currentUrl.toString();
 }
 
+function mapTileUrlFallback(): string {
+  return "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
+}
+
+function mapTileAttributionFallback(): string {
+  return "&copy; OpenStreetMap contributors";
+}
+
 export const discoverConfig: DiscoverConfig = {
   apiBaseUrl: trimEnv(import.meta.env.VITE_API_BASE_URL),
   careAppUrl: trimEnv(import.meta.env.VITE_CARE_APP_URL) || appUrlFallback("care"),
@@ -43,4 +69,13 @@ export const discoverConfig: DiscoverConfig = {
   environmentName: trimEnv(import.meta.env.VITE_ENV_NAME),
   analyticsId: trimEnv(import.meta.env.VITE_ANALYTICS_ID),
   analyticsEnabled: trimEnv(import.meta.env.VITE_ANALYTICS_ENABLED).toLowerCase() === "true",
+  mapTileUrl: trimEnv(import.meta.env.VITE_MAP_TILE_URL) || mapTileUrlFallback(),
+  mapTileAttribution: trimEnv(import.meta.env.VITE_MAP_TILE_ATTRIBUTION) || mapTileAttributionFallback(),
+  mapDefaultLatitude: parseNumber(import.meta.env.VITE_MAP_DEFAULT_LATITUDE),
+  mapDefaultLongitude: parseNumber(import.meta.env.VITE_MAP_DEFAULT_LONGITUDE),
+  mapDefaultZoom: parseNumber(import.meta.env.VITE_MAP_DEFAULT_ZOOM) ?? 15,
+  mapDirectionsUrlTemplate: trimEnv(import.meta.env.VITE_MAP_DIRECTIONS_URL_TEMPLATE),
+  geocodingProvider: trimEnv(import.meta.env.VITE_GEOCODING_PROVIDER),
+  geocodingBaseUrl: trimEnv(import.meta.env.VITE_GEOCODING_BASE_URL),
+  geocodingSearchPath: trimEnv(import.meta.env.VITE_GEOCODING_SEARCH_PATH),
 };

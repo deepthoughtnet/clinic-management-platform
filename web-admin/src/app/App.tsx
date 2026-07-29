@@ -62,6 +62,7 @@ import CommercialEffectiveEntitlementsPage from "../pages/platform/CommercialEff
 import CommercialRuntimeDiffPage from "../pages/platform/CommercialRuntimeDiffPage";
 import CommercialPlansPage from "../pages/platform/CommercialPlansPage";
 import CommercialSubscriptionsPage from "../pages/platform/CommercialSubscriptionsPage";
+import DiscoverProviderApplicationsPage from "../pages/platform/DiscoverProviderApplicationsPage";
 import CampaignsPage from "../products/carepilot/campaigns/CampaignsPage";
 import AnalyticsPage from "../products/carepilot/analytics/AnalyticsPage";
 import OpsConsolePage from "../products/carepilot/ops/OpsConsolePage";
@@ -73,6 +74,7 @@ import WebinarsPage from "../products/carepilot/webinars/WebinarsPage";
 import AiOperationsPage from "../products/carepilot/ai-operations/AiOperationsPage";
 import { hasTenantModule } from "../auth/moduleEntitlements";
 import {
+  DISCOVER_PROVIDER_APPLICATION_VIEW,
   ENGAGE_ANALYTICS_VIEW,
   ENGAGE_LEAD_VIEW,
   ENGAGE_LEAD_VIEW_ALL,
@@ -476,6 +478,8 @@ function AuthedApp() {
         <Route path="/platform/commercial/plans/:templateId/versions/:versionId" element={<PathnameKeyedRoute><PlatformAdminGate><CommercialPlansPage /></PlatformAdminGate></PathnameKeyedRoute>} />
         <Route path="/platform/commercial/subscriptions" element={<PathnameKeyedRoute><PlatformAdminGate><CommercialSubscriptionsPage /></PlatformAdminGate></PathnameKeyedRoute>} />
         <Route path="/platform/commercial/subscriptions/:subscriptionId" element={<PathnameKeyedRoute><PlatformAdminGate><CommercialSubscriptionsPage /></PlatformAdminGate></PathnameKeyedRoute>} />
+        <Route path="/platform/discover/provider-applications" element={<PathnameKeyedRoute><PlatformAdminGate><PermissionGate anyPermissions={[DISCOVER_PROVIDER_APPLICATION_VIEW]} title="Access denied" message="You do not have access to Discover provider applications."><DiscoverProviderApplicationsPage /></PermissionGate></PlatformAdminGate></PathnameKeyedRoute>} />
+        <Route path="/platform/discover/provider-applications/:referenceNumber" element={<PathnameKeyedRoute><PlatformAdminGate><PermissionGate anyPermissions={[DISCOVER_PROVIDER_APPLICATION_VIEW]} title="Access denied" message="You do not have access to Discover provider applications."><DiscoverProviderApplicationsPage /></PermissionGate></PlatformAdminGate></PathnameKeyedRoute>} />
         <Route path="/platform/commercial/entitlements" element={<PathnameKeyedRoute><PlatformAdminGate><CommercialEffectiveEntitlementsPage /></PlatformAdminGate></PathnameKeyedRoute>} />
         <Route path="/platform/commercial/runtime-diff" element={<PathnameKeyedRoute><PlatformAdminGate><CommercialRuntimeDiffPage /></PlatformAdminGate></PathnameKeyedRoute>} />
         <Route path="/platform/commercial-catalog" element={<Navigate to="/platform/commercial/catalog" replace />} />

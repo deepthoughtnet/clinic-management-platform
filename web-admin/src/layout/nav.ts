@@ -1,5 +1,6 @@
 import { branding } from "../branding";
 import {
+  DISCOVER_PROVIDER_APPLICATION_VIEW,
   ENGAGE_ANALYTICS_VIEW,
   ENGAGE_LEAD_VIEW,
   ENGAGE_LEAD_VIEW_ALL,
@@ -139,6 +140,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { key: "platform-tenants", label: "Tenants", path: "/platform/tenants", platformOnly: true },
       { key: "platform-product-implementation", label: "Product Implementation", path: "/platform/product-implementation", platformOnly: true },
       { key: "platform-commercial", label: "Commercial Platform", path: "/platform/commercial", platformOnly: true },
+      { key: "platform-discover-provider-applications", label: "Provider Applications", path: "/platform/discover/provider-applications", platformOnly: true, permissionsAny: [DISCOVER_PROVIDER_APPLICATION_VIEW] },
       { key: "platform-commercial-catalog", label: "Catalog", path: "/platform/commercial/catalog", platformOnly: true },
       { key: "platform-commercial-plans", label: "Plans", path: "/platform/commercial/plans", platformOnly: true },
       { key: "platform-subscriptions", label: "Subscriptions", path: "/platform/commercial/subscriptions", platformOnly: true },

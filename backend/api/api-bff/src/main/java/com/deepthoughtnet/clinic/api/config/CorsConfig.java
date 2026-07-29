@@ -19,10 +19,14 @@ public class CorsConfig {
             "http://localhost:5173",
             "http://localhost:5174",
             "http://localhost:5175",
+            "http://localhost:5177",
             "http://127.0.0.1:5173",
             "http://127.0.0.1:5174",
-            "http://127.0.0.1:5175"
+            "http://127.0.0.1:5175",
+            "http://127.0.0.1:5177"
     );
+    private static final String CORS_ALLOWED_ORIGINS_PROPERTY = "clinic.security.cors.allowed-origins";
+    private static final String LEGACY_CORS_ALLOWED_ORIGINS_PROPERTY = "CLINIC_CORS_ALLOWED_ORIGINS";
 
     private final Environment environment;
 
@@ -43,15 +47,16 @@ public class CorsConfig {
         cfg.setAllowedHeaders(List.of(
                 "Authorization",
                 "Content-Type",
+                "Accept",
+                "Idempotency-Key",
+                "If-Match",
+                "X-Requested-With",
                 "X-Tenant-Id",
                 "X-Patient-Session",
                 "X-Platform-Op",
                 "X-Correlation-Id",
                 "X-Correlation-ID",
-                "Accept",
-                "Origin",
-                "Cache-Control",
-                "Pragma"
+                "Origin"
         ));
         cfg.setExposedHeaders(List.of("WWW-Authenticate", "X-Correlation-ID", "X-Correlation-Id"));
         cfg.setAllowCredentials(false);
@@ -63,7 +68,10 @@ public class CorsConfig {
 
     private List<String> resolveAllowedOrigins() {
         Set<String> origins = new LinkedHashSet<>(DEFAULT_ALLOWED_ORIGINS);
-        String configured = environment.getProperty("CLINIC_CORS_ALLOWED_ORIGINS", "");
+        String configured = environment.getProperty(CORS_ALLOWED_ORIGINS_PROPERTY);
+        if (configured == null || configured.isBlank()) {
+            configured = environment.getProperty(LEGACY_CORS_ALLOWED_ORIGINS_PROPERTY, String.join(",", DEFAULT_ALLOWED_ORIGINS));
+        }
         for (String origin : configured.split(",")) {
             String trimmed = origin.trim();
             if (!trimmed.isEmpty()) {

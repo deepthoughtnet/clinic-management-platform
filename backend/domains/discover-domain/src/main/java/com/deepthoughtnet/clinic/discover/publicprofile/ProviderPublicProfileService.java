@@ -285,6 +285,10 @@ public class ProviderPublicProfileService {
         String imageUrl = resolveMediaUrl(entity.getProviderType() == ProviderType.INDIVIDUAL_DOCTOR ? entity.getDoctorPhotoDocumentId() : entity.getLogoDocumentId(), documentMap);
         String coverUrl = resolveMediaUrl(entity.getCoverImageDocumentId(), documentMap);
         String logoUrl = resolveMediaUrl(entity.getLogoDocumentId(), documentMap);
+        List<String> galleryImageUrls = snapshot.gallery().stream()
+                .map(image -> resolveMediaUrl(image.documentId(), documentMap))
+                .filter(url -> url != null && !url.isBlank())
+                .toList();
         return new PublicProviderProfileDetailRecord(
                 entity.getProviderId(),
                 entity.getProviderType(),
@@ -311,6 +315,7 @@ public class ProviderPublicProfileService {
                 snapshot.consultationModes(),
                 snapshot.locations(),
                 snapshot.gallery(),
+                galleryImageUrls,
                 imageUrl,
                 coverUrl,
                 logoUrl,
@@ -350,11 +355,19 @@ public class ProviderPublicProfileService {
                         item.getPinCode(),
                         item.getWorkingHours(),
                         item.isParkingAvailable(),
-                        item.isAccessibilityAvailable()))
+                        item.isAccessibilityAvailable(),
+                        item.getLatitude(),
+                        item.getLongitude()))
                 .toList();
         List<PublicProviderGalleryImageSnapshot> gallery = documentRecords.stream()
                 .filter(record -> record.getDocumentType() == ProviderDocumentType.GALLERY_IMAGE)
                 .map(record -> new PublicProviderGalleryImageSnapshot(record.getId(), record.getOriginalFilename()))
+                .toList();
+        Map<UUID, ProviderDocumentEntity> documentMap = documentRecords.stream()
+                .collect(Collectors.toMap(ProviderDocumentEntity::getId, Function.identity(), (left, right) -> left));
+        List<String> galleryImageUrls = gallery.stream()
+                .map(image -> resolveMediaUrl(image.documentId(), documentMap))
+                .filter(url -> url != null && !url.isBlank())
                 .toList();
 
         List<String> specialities = split(application.getSpecialities());
@@ -392,6 +405,7 @@ public class ProviderPublicProfileService {
                 consultationModes,
                 publicLocations,
                 gallery,
+                galleryImageUrls,
                 application.getLogoDocumentId(),
                 application.getCoverImageDocumentId(),
                 application.getDoctorPhotoDocumentId(),

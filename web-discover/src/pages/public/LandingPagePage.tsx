@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { loadPublicLandingPage, type LandingPageResponse } from "../../api/providerLandingPage";
+import { loadPublicLandingPage, type PublicLandingPageResponse } from "../../api/providerLandingPage";
 import { DiscoverEmptyState } from "../../components/DiscoveryComponents";
 import { LandingPageRenderer } from "../../components/landing/LandingPageRenderer";
 
 export function LandingPagePage({ param }: { param: "clinicSlug" | "hospitalSlug" | "doctorSlug" }) {
   const params = useParams<Record<string, string>>();
   const slug = params[param] || "";
-  const [page, setPage] = useState<LandingPageResponse | null>(null);
+  const [page, setPage] = useState<PublicLandingPageResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {

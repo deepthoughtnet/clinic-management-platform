@@ -132,6 +132,8 @@ export type PublicProviderLocationResponse = {
   workingHours: string | null;
   parkingAvailable: boolean;
   accessibilityAvailable: boolean;
+  latitude: number | null;
+  longitude: number | null;
 };
 
 export type PublicHospitalSummaryResponse = {

@@ -7,6 +7,7 @@ import com.deepthoughtnet.clinic.platform.core.errors.UnauthorizedException;
 import com.deepthoughtnet.clinic.api.medicationsafety.MedicationSafetyGuardErrorResponse;
 import com.deepthoughtnet.clinic.api.medicationsafety.MedicationSafetyGuardException;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityConflictException;
+import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingConflictException;
 import com.deepthoughtnet.clinic.identity.service.TenantProvisioningException;
 import com.deepthoughtnet.clinic.patient.service.model.PatientConflictException;
 import com.fasterxml.jackson.databind.JsonMappingException;
@@ -178,6 +179,11 @@ public class GlobalRestExceptionHandler {
     @ExceptionHandler(DoctorAvailabilityConflictException.class)
     public ResponseEntity<?> handleDoctorAvailabilityConflict(DoctorAvailabilityConflictException ex, HttpServletRequest req) {
         return build(HttpStatus.CONFLICT, "conflict", userMessage(ex.getMessage(), "Availability already exists for this doctor, day, and time range."), req);
+    }
+
+    @ExceptionHandler(ProviderOnboardingConflictException.class)
+    public ResponseEntity<?> handleProviderOnboardingConflict(ProviderOnboardingConflictException ex, HttpServletRequest req) {
+        return build(HttpStatus.CONFLICT, "conflict", userMessage(ex.getMessage(), "Provider application changed in another session."), req);
     }
 
     @ExceptionHandler(PatientConflictException.class)
