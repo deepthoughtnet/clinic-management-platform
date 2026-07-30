@@ -12,6 +12,7 @@ import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderServiceEntity;
 import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderServiceRepository;
 import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderSubmissionEntity;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderGalleryImageSnapshot;
+import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProfileMediaContent;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderLocationSnapshot;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderProfileDetailRecord;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderSearchCriteria;
@@ -240,6 +241,29 @@ public class ProviderPublicProfileService {
                 .map(document -> storageService.generatePresignedDownloadUrl(document.getStorageKey(), MEDIA_URL_TTL));
     }
 
+    @Transactional(readOnly = true)
+    public Optional<PublicProfileMediaContent> loadPublishedDoctorMedia(String slug, DoctorPublicMediaAsset asset, Integer galleryIndex) {
+        return resolvePublishedProfile(slug)
+                .filter(profile -> profile.entity().getProviderType() == ProviderType.INDIVIDUAL_DOCTOR)
+                .flatMap(profile -> resolveDoctorDocumentId(profile, asset, galleryIndex))
+                .flatMap(this::loadMediaContent);
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<PublicProfileMediaContent> loadPublishedProviderLogo(String slug, ProviderType providerType) {
+        return resolvePublishedProfile(slug)
+                .filter(profile -> profile.entity().getProviderType() == providerType)
+                .map(ResolvedPublishedProfile::entity)
+                .map(DiscoverPublicProviderProfileEntity::getLogoDocumentId)
+                .flatMap(this::loadMediaContent);
+    }
+
+    public enum DoctorPublicMediaAsset {
+        PHOTO,
+        COVER,
+        GALLERY
+    }
+
     private Optional<PublicProviderProfileDetailRecord> detailForSlugAlias(DiscoverPublicProviderProfileSlugEntity alias) {
         DiscoverPublicProviderProfileEntity profile = profiles.findByProviderId(alias.getProviderId()).orElse(null);
         DiscoverPublicProviderProfileVersionEntity version = versions.findByProviderIdAndVersionNumber(alias.getProviderId(), alias.getVersionNumber()).orElse(null);
@@ -248,6 +272,59 @@ public class ProviderPublicProfileService {
         }
         PublicProviderProfileSnapshot snapshot = readSnapshot(version.getSnapshotJson());
         return Optional.of(toDetail(profile, version, alias.getSlug(), snapshot));
+    }
+
+    private Optional<ResolvedPublishedProfile> resolvePublishedProfile(String slug) {
+        String cleanSlug = cleanSlug(slug);
+        if (!StringUtils.hasText(cleanSlug)) {
+            return Optional.empty();
+        }
+        Optional<DiscoverPublicProviderProfileSlugEntity> alias = slugs.findFirstBySlug(cleanSlug);
+        if (alias.isPresent()) {
+            DiscoverPublicProviderProfileEntity profile = profiles.findByProviderId(alias.get().getProviderId()).orElse(null);
+            DiscoverPublicProviderProfileVersionEntity version = versions.findByProviderIdAndVersionNumber(alias.get().getProviderId(), alias.get().getVersionNumber()).orElse(null);
+            if (profile == null || version == null) {
+                return Optional.empty();
+            }
+            return Optional.of(new ResolvedPublishedProfile(profile, readSnapshot(version.getSnapshotJson())));
+        }
+        DiscoverPublicProviderProfileEntity profile = profiles.findByCanonicalSlug(cleanSlug).orElse(null);
+        if (profile == null) {
+            return Optional.empty();
+        }
+        DiscoverPublicProviderProfileVersionEntity version = versions.findFirstByProviderIdOrderByVersionNumberDesc(profile.getProviderId()).orElse(null);
+        if (version == null) {
+            return Optional.empty();
+        }
+        return Optional.of(new ResolvedPublishedProfile(profile, readSnapshot(version.getSnapshotJson())));
+    }
+
+    private Optional<UUID> resolveDoctorDocumentId(ResolvedPublishedProfile profile, DoctorPublicMediaAsset asset, Integer galleryIndex) {
+        return switch (asset) {
+            case PHOTO -> Optional.ofNullable(profile.entity().getDoctorPhotoDocumentId());
+            case COVER -> Optional.ofNullable(profile.entity().getCoverImageDocumentId());
+            case GALLERY -> resolveGalleryDocumentId(profile.snapshot(), galleryIndex);
+        };
+    }
+
+    private Optional<UUID> resolveGalleryDocumentId(PublicProviderProfileSnapshot snapshot, Integer galleryIndex) {
+        if (galleryIndex == null || galleryIndex < 0 || galleryIndex >= snapshot.gallery().size()) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(snapshot.gallery().get(galleryIndex).documentId());
+    }
+
+    private Optional<PublicProfileMediaContent> loadMediaContent(UUID documentId) {
+        if (documentId == null) {
+            return Optional.empty();
+        }
+        return documents.findById(documentId)
+                .filter(document -> StringUtils.hasText(document.getStorageKey()))
+                .map(document -> new PublicProfileMediaContent(
+                        document.getContentType(),
+                        document.getOriginalFilename(),
+                        storageService.getObjectBytes(document.getStorageKey())
+                ));
     }
 
     private PublicProviderProfileSummaryRecord toSummary(DiscoverPublicProviderProfileEntity entity, Map<UUID, ProviderDocumentEntity> documentMap) {
@@ -777,6 +854,12 @@ public class ProviderPublicProfileService {
         if (!condition) {
             throw new IllegalArgumentException(message);
         }
+    }
+
+    private record ResolvedPublishedProfile(
+            DiscoverPublicProviderProfileEntity entity,
+            PublicProviderProfileSnapshot snapshot
+    ) {
     }
 
     private static final class SpecialityBucket {

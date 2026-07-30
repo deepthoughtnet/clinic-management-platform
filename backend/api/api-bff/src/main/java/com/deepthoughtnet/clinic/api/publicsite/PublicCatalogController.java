@@ -10,7 +10,10 @@ import com.deepthoughtnet.clinic.api.publicsite.dto.PublicPageResponse;
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicSearchResponse;
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicSpecialityDetailResponse;
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicSpecialitySummaryResponse;
+import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProfileMediaContent;
 import java.util.List;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -44,6 +47,11 @@ public class PublicCatalogController {
         return publicCatalogFacade.clinicDetail(clinicSlug);
     }
 
+    @GetMapping("/clinics/{clinicSlug}/logo")
+    public ResponseEntity<byte[]> clinicLogo(@PathVariable String clinicSlug) {
+        return inline(publicCatalogFacade.clinicLogo(clinicSlug));
+    }
+
     @GetMapping("/doctors")
     public PublicPageResponse<PublicDoctorSummaryResponse> doctors(
             @RequestParam(required = false) String q,
@@ -63,6 +71,21 @@ public class PublicCatalogController {
         return publicCatalogFacade.doctorDetail(doctorSlug);
     }
 
+    @GetMapping("/doctors/{doctorSlug}/photo")
+    public ResponseEntity<byte[]> doctorPhoto(@PathVariable String doctorSlug) {
+        return inline(publicCatalogFacade.doctorPhoto(doctorSlug));
+    }
+
+    @GetMapping("/doctors/{doctorSlug}/cover")
+    public ResponseEntity<byte[]> doctorCover(@PathVariable String doctorSlug) {
+        return inline(publicCatalogFacade.doctorCover(doctorSlug));
+    }
+
+    @GetMapping("/doctors/{doctorSlug}/gallery/{index}")
+    public ResponseEntity<byte[]> doctorGalleryImage(@PathVariable String doctorSlug, @PathVariable int index) {
+        return inline(publicCatalogFacade.doctorGalleryImage(doctorSlug, index));
+    }
+
     @GetMapping("/hospitals")
     public PublicPageResponse<PublicHospitalSummaryResponse> hospitals(
             @RequestParam(required = false) String q,
@@ -79,6 +102,11 @@ public class PublicCatalogController {
     @GetMapping("/hospitals/{hospitalSlug}")
     public PublicHospitalDetailResponse hospital(@PathVariable String hospitalSlug) {
         return publicCatalogFacade.hospitalDetail(hospitalSlug);
+    }
+
+    @GetMapping("/hospitals/{hospitalSlug}/logo")
+    public ResponseEntity<byte[]> hospitalLogo(@PathVariable String hospitalSlug) {
+        return inline(publicCatalogFacade.hospitalLogo(hospitalSlug));
     }
 
     @GetMapping("/specialities")
@@ -114,5 +142,15 @@ public class PublicCatalogController {
             @RequestParam(defaultValue = "6") int size
     ) {
         return publicCatalogFacade.search(q, city, area, tenantCode, page, size);
+    }
+
+    private ResponseEntity<byte[]> inline(PublicProfileMediaContent media) {
+        String contentType = media.contentType() == null || media.contentType().isBlank()
+                ? "application/octet-stream"
+                : media.contentType();
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(contentType))
+                .header("Content-Disposition", "inline; filename=\"" + media.originalFilename() + "\"")
+                .body(media.bytes());
     }
 }

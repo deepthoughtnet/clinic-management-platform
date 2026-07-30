@@ -34,6 +34,7 @@ test("Phase 4 publishes doctor, clinic, hospital, and speciality discovery pages
 test("published profiles reuse public catalog APIs without backend or auth changes", () => {
   const api = read("src/api/publicCatalog.ts");
   const pages = read("src/pages/discovery/PublicDiscoveryPages.tsx");
+  const profile = read("src/components/discovery/PublicProviderProfile.tsx");
 
   assert.ok(pages.includes('"/api/public/doctors"'));
   assert.ok(pages.includes("`/api/public/doctors/${doctorSlug}`"));
@@ -43,10 +44,25 @@ test("published profiles reuse public catalog APIs without backend or auth chang
   assert.ok(pages.includes("`/api/public/hospitals/${hospitalSlug}`"));
   assert.ok(pages.includes('"/api/public/specialities"'));
   assert.ok(pages.includes("`/api/public/specialities/${specialitySlug}`"));
+  assert.ok(pages.includes("buildDoctorProfile"));
+  assert.ok(pages.includes("buildClinicProfile"));
+  assert.ok(pages.includes("buildHospitalProfile"));
+  assert.ok(pages.includes("<PublicProviderProfile {...profile} />"));
+  assert.ok(profile.includes("export function PublicProviderProfile"));
   assert.ok(api.includes("VITE_API_BASE_URL"));
   assert.ok(!api.includes("Authorization"));
   assert.ok(!api.includes("X-Patient-Session"));
   assert.ok(!api.includes("keycloak"));
+});
+
+test("doctor directory summary cards use published values instead of placeholder copy", () => {
+  const components = read("src/components/DiscoveryComponents.tsx");
+
+  assert.ok(components.includes("doctor.subtitle?.trim() || doctor.speciality || null"));
+  assert.ok(components.includes("doctor.yearsOfExperience != null ?"));
+  assert.ok(components.includes("doctor.languages.length ?"));
+  assert.ok(components.includes("[doctor.clinicDisplayName, doctor.area, doctor.city].filter(Boolean).join(\" · \")"));
+  assert.ok(!components.includes("Fee available on profile"));
 });
 
 test("published discovery has no patient session, portal, or dashboard dependency", () => {

@@ -50,6 +50,16 @@ export type ProviderOnboardingAccessResponse = {
   onboardingToken: string;
 };
 
+export class ProviderAuthError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ProviderAuthError";
+    this.status = status;
+  }
+}
+
 function buildUrl(path: string) {
   return new URL(`${discoverConfig.apiBaseUrl}${path}`, window.location.origin).toString();
 }
@@ -70,7 +80,7 @@ async function parseError(response: Response) {
 
 async function parseResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
-    throw new Error(await parseError(response));
+    throw new ProviderAuthError(await parseError(response), response.status);
   }
   if (response.status === 204) {
     return undefined as T;

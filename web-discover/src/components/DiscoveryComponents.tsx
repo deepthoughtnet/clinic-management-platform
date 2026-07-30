@@ -349,6 +349,15 @@ export function PaginationBar({
 
 export function DoctorCard({ doctor }: { doctor: PublicDoctorSummaryResponse }) {
   const consultationFee = formatConsultationFee(doctor.consultationFee ?? null);
+  const subtitle = doctor.subtitle?.trim() || doctor.speciality || null;
+  const detailRows = [
+    doctor.speciality && doctor.speciality !== subtitle ? doctor.speciality : null,
+    doctor.yearsOfExperience != null ? `${doctor.yearsOfExperience}+ years experience` : null,
+    consultationFee ? `Consultation fee: ${consultationFee}` : null,
+    doctor.languages.length ? `Languages: ${doctor.languages.join(", ")}` : null,
+    [doctor.clinicDisplayName, doctor.area, doctor.city].filter(Boolean).join(" · ") || null,
+  ].filter((item): item is string => Boolean(item));
+
   return (
     <article className="public-directory-card doctor-directory-card">
       <div className="directory-card-top">
@@ -357,18 +366,11 @@ export function DoctorCard({ doctor }: { doctor: PublicDoctorSummaryResponse }) 
         </div>
         <div className="directory-card-heading">
           <strong>{doctor.doctorDisplayName}</strong>
-          <span>{doctor.speciality ?? "General consultation"}</span>
+          {subtitle ? <span>{subtitle}</span> : null}
         </div>
       </div>
       <div className="directory-meta-list">
-        <span>{formatExperience(doctor.yearsOfExperience)}</span>
-        <span>
-          {doctor.clinicDisplayName}
-          {doctor.area ? ` · ${doctor.area}` : ""}
-          {doctor.city ? ` · ${doctor.city}` : ""}
-        </span>
-        {consultationFee ? <span>Consultation fee: {consultationFee}</span> : <span>Fee available on profile</span>}
-        {doctor.languages.length ? <span>Languages: {doctor.languages.join(", ")}</span> : null}
+        {detailRows.map((item) => <span key={item}>{item}</span>)}
       </div>
       <div className="directory-badge-row">
         {doctor.availableToday ? <span className="status-pill">Available today</span> : <span className="chip">Check next slot</span>}

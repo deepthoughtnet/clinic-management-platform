@@ -8,6 +8,7 @@ import type {
   PublicHospitalDetailResponse,
   PublicHospitalSummaryResponse,
   PublicPageResponse,
+  PublicProviderLocationResponse,
   PublicSpecialityDetailResponse,
   PublicSpecialitySummaryResponse,
 } from "../../api/publicCatalog";
@@ -24,9 +25,9 @@ import {
   careBookingUrl,
   emptyClinicsPage,
   emptyDoctorsPage,
-  formatExperience,
-  initials,
+  formatConsultationFee,
 } from "../../components/DiscoveryComponents";
+import { PublicProviderProfile, type PublicProviderProfileDefinitionItem, type PublicProviderProfileGalleryItem } from "../../components/discovery/PublicProviderProfile";
 import {
   PUBLIC_CURRENT_LOCATION_LABEL,
   PUBLIC_DEFAULT_LOCATION,
@@ -44,7 +45,6 @@ import {
   scoreDiscoveryLocation,
   slugify,
 } from "../../utils/publicDiscovery";
-import { LocationDisplayMap } from "../../components/location";
 
 type FetchState<T> = {
   data: T;
@@ -299,6 +299,200 @@ function useDirectoryFilters(defaultSize = 12) {
   }
 
   return { searchParams, query, setQuery, city, setCity, area, setArea, page, size, submit, changePage };
+}
+
+function providerCallLabel(providerType: "INDIVIDUAL_DOCTOR" | "CLINIC" | "HOSPITAL") {
+  switch (providerType) {
+    case "INDIVIDUAL_DOCTOR":
+      return "Call Doctor";
+    case "CLINIC":
+      return "Call Clinic";
+    case "HOSPITAL":
+      return "Call Hospital";
+    default:
+      return "Call Provider";
+  }
+}
+
+function primaryLocation(locations?: PublicProviderLocationResponse[]) {
+  return locations?.[0] ?? null;
+}
+
+function locationSummary(location: PublicProviderLocationResponse | null, fallback?: string | null) {
+  return [location?.city, location?.state].filter(Boolean).join(", ") || fallback || null;
+}
+
+function locationAddress(location: PublicProviderLocationResponse | null, fallbackParts?: Array<string | null | undefined>) {
+  const fromLocation = [location?.address, location?.city, location?.state, location?.country, location?.pinCode].filter(Boolean).join(", ");
+  if (fromLocation) {
+    return fromLocation;
+  }
+  return (fallbackParts ?? []).filter(Boolean).join(", ") || null;
+}
+
+function locationFacilityLabels(location: PublicProviderLocationResponse | null) {
+  const values: string[] = [];
+  if (location?.parkingAvailable) values.push("Parking available");
+  if (location?.accessibilityAvailable) values.push("Wheelchair accessible");
+  return values;
+}
+
+function dedupeGallery(urls: Array<string | null | undefined>, providerName: string): PublicProviderProfileGalleryItem[] {
+  const seen = new Set<string>();
+  const items: PublicProviderProfileGalleryItem[] = [];
+  urls.forEach((url, index) => {
+    const trimmed = url?.trim();
+    if (!trimmed || seen.has(trimmed)) {
+      return;
+    }
+    seen.add(trimmed);
+    items.push({
+      url: trimmed,
+      caption: `Clinic image ${index + 1}`,
+      alt: `${providerName} clinic image ${index + 1}`,
+    });
+  });
+  return items;
+}
+
+function compactList(values: string[] | undefined, limit = 4) {
+  return (values ?? []).filter(Boolean).slice(0, limit).join(" • ");
+}
+
+function buildDoctorProfile(detail: PublicDoctorDetailResponse) {
+  const location = primaryLocation(detail.locations);
+  const feeLabel = null;
+  const languages = detail.languages ?? [];
+  const consultationModes = detail.consultationModes ?? [];
+  const professionalInformation = [
+    detail.medicalCouncil?.trim() ? { label: "Medical Council", value: detail.medicalCouncil.trim() } : null,
+    detail.qualification?.trim() ? { label: "Qualifications", value: detail.qualification.trim(), wide: true } : null,
+    detail.yearsOfExperience != null ? { label: "Experience", value: `${detail.yearsOfExperience} years` } : null,
+    feeLabel ? { label: "Consultation Fee", value: feeLabel } : null,
+    (detail.primarySpeciality ?? detail.specialities[0]) ? { label: "Specialty", value: detail.primarySpeciality ?? detail.specialities[0] } : null,
+    languages.length ? { label: "Languages", value: languages.join(" • "), wide: true } : null,
+    location?.workingHours?.trim() ? { label: "Working Hours", value: location.workingHours.trim(), wide: true } : null,
+  ].filter(Boolean) as PublicProviderProfileDefinitionItem[];
+
+  return {
+    providerType: "INDIVIDUAL_DOCTOR" as const,
+    displayName: detail.doctorDisplayName,
+    heroSummary: [detail.qualification?.trim() || null, detail.primarySpeciality ?? detail.specialities[0] ?? null].filter(Boolean).join(" • ") || null,
+    tagline: detail.subtitle?.trim() || detail.summary?.trim() || null,
+    coverImageUrl: detail.coverUrl ?? null,
+    avatarImageUrl: detail.photoUrl ?? null,
+    primarySpeciality: detail.primarySpeciality ?? detail.specialities[0] ?? null,
+    locationSummary: locationSummary(location, [detail.city, detail.state].filter(Boolean).join(", ")),
+    yearsOfExperience: detail.yearsOfExperience,
+    consultationFeeLabel: feeLabel,
+    languages,
+    teleconsultationAvailable: consultationModes.some((item) => item.toLowerCase().includes("tele")),
+    bookingUrl: careBookingUrl({
+      doctorId: detail.publicDoctorId,
+      ...(detail.clinics.length === 1 ? { clinicSlug: detail.clinics[0].clinicSlug } : {}),
+    }),
+    callHref: detail.contactPhone?.trim() ? `tel:${detail.contactPhone.trim()}` : null,
+    callLabel: detail.contactPhone?.trim() ? providerCallLabel("INDIVIDUAL_DOCTOR") : null,
+    biographyTitle: `About ${detail.doctorDisplayName}`,
+    biography: detail.biography?.trim() || detail.summary?.trim() || null,
+    biographyEmptyDescription: "Doctor biography will appear here when it is shared publicly.",
+    professionalInformation,
+    services: detail.services ?? [],
+    facilitiesTitle: locationFacilityLabels(location).length ? "Clinic facilities at this location" : null,
+    facilities: locationFacilityLabels(location),
+    galleryItems: dedupeGallery(detail.galleryImageUrls ?? [], detail.doctorDisplayName),
+    locationName: location?.label || detail.clinics[0]?.clinicDisplayName || detail.doctorDisplayName,
+    locationAddress: locationAddress(location, [detail.area, detail.city, detail.state, detail.country]),
+    locationWorkingHours: location?.workingHours ?? null,
+    locationFacilities: locationFacilityLabels(location),
+    locations: detail.locations ?? [],
+    trustIndicators: ["Published on Jeevanam Discover"],
+    consultationModes,
+  };
+}
+
+function buildClinicProfile(detail: PublicClinicDetailResponse) {
+  const location = primaryLocation(detail.locations);
+  const professionalInformation = [
+    detail.specialities.length ? { label: "Specialties", value: compactList(detail.specialities, 6), wide: true } : null,
+    detail.departments?.length ? { label: "Departments", value: compactList(detail.departments, 6), wide: true } : null,
+    detail.consultationModes?.length ? { label: "Consultation Modes", value: detail.consultationModes.join(" • "), wide: true } : null,
+    detail.timings.length ? { label: "Working Hours", value: detail.timings.join(" • "), wide: true } : null,
+  ].filter(Boolean) as PublicProviderProfileDefinitionItem[];
+
+  return {
+    providerType: "CLINIC" as const,
+    displayName: detail.clinicDisplayName,
+    heroSummary: detail.subtitle?.trim() || compactList(detail.specialities, 3) || "Clinic profile",
+    tagline: detail.summary?.trim() || null,
+    coverImageUrl: detail.coverUrl ?? null,
+    avatarImageUrl: detail.logoUrl ?? null,
+    primarySpeciality: detail.specialities[0] ?? null,
+    locationSummary: locationSummary(location, [detail.city].filter(Boolean).join(", ")),
+    consultationFeeLabel: null,
+    languages: [],
+    teleconsultationAvailable: (detail.consultationModes ?? []).some((item) => item.toLowerCase().includes("tele")),
+    bookingUrl: careBookingUrl({ clinicSlug: detail.clinicSlug }),
+    callHref: detail.contactPhone?.trim() ? `tel:${detail.contactPhone.trim()}` : null,
+    callLabel: detail.contactPhone?.trim() ? providerCallLabel("CLINIC") : null,
+    biographyTitle: `About ${detail.clinicDisplayName}`,
+    biography: detail.description?.trim() || detail.summary?.trim() || null,
+    biographyEmptyDescription: "Clinic description will appear here when it is shared publicly.",
+    professionalInformation,
+    services: detail.services ?? [],
+    facilitiesTitle: detail.facilities?.length ? "Clinic facilities at this location" : null,
+    facilities: detail.facilities ?? [],
+    galleryItems: dedupeGallery(detail.galleryImageUrls ?? [], detail.clinicDisplayName),
+    locationName: location?.label || detail.clinicDisplayName,
+    locationAddress: locationAddress(location, [detail.address, detail.area, detail.city]),
+    locationWorkingHours: location?.workingHours ?? detail.timings[0] ?? null,
+    locationFacilities: locationFacilityLabels(location),
+    locations: detail.locations ?? [],
+    trustIndicators: ["Published on Jeevanam Discover"],
+    consultationModes: detail.consultationModes ?? [],
+  };
+}
+
+function buildHospitalProfile(detail: PublicHospitalDetailResponse) {
+  const location = primaryLocation(detail.locations);
+  const professionalInformation = [
+    detail.departments.length ? { label: "Departments", value: compactList(detail.departments, 6), wide: true } : null,
+    detail.services.length ? { label: "Clinical Services", value: compactList(detail.services, 6), wide: true } : null,
+    detail.consultationModes.length ? { label: "Consultation Modes", value: detail.consultationModes.join(" • "), wide: true } : null,
+    detail.emergencyAvailable ? { label: "Emergency Care", value: "Available" } : null,
+  ].filter(Boolean) as PublicProviderProfileDefinitionItem[];
+
+  return {
+    providerType: "HOSPITAL" as const,
+    displayName: detail.hospitalDisplayName,
+    heroSummary: detail.subtitle?.trim() || compactList(detail.departments, 3) || "Hospital profile",
+    tagline: detail.summary?.trim() || null,
+    coverImageUrl: detail.coverUrl ?? null,
+    avatarImageUrl: detail.logoUrl ?? null,
+    primarySpeciality: detail.departments[0] ?? null,
+    locationSummary: locationSummary(location, [detail.city].filter(Boolean).join(", ")),
+    consultationFeeLabel: null,
+    languages: [],
+    teleconsultationAvailable: detail.consultationModes.some((item) => item.toLowerCase().includes("tele")),
+    bookingUrl: careBookingUrl({ hospitalSlug: detail.hospitalSlug }),
+    callHref: detail.contactPhone?.trim() ? `tel:${detail.contactPhone.trim()}` : null,
+    callLabel: detail.contactPhone?.trim() ? providerCallLabel("HOSPITAL") : null,
+    biographyTitle: `About ${detail.hospitalDisplayName}`,
+    biography: detail.description?.trim() || detail.summary?.trim() || null,
+    biographyEmptyDescription: "Hospital overview will appear here when it is shared publicly.",
+    professionalInformation,
+    services: detail.services ?? [],
+    facilitiesTitle: detail.facilities.length ? "Hospital facilities" : null,
+    facilities: detail.facilities ?? [],
+    galleryItems: dedupeGallery(detail.galleryImageUrls ?? [], detail.hospitalDisplayName),
+    locationName: location?.label || detail.hospitalDisplayName,
+    locationAddress: locationAddress(location, [detail.address, detail.area, detail.city]),
+    locationWorkingHours: location?.workingHours ?? null,
+    locationFacilities: locationFacilityLabels(location),
+    locations: detail.locations ?? [],
+    trustIndicators: ["Published on Jeevanam Discover"],
+    consultationModes: detail.consultationModes ?? [],
+  };
 }
 
 export function PublicHomePage() {
@@ -777,6 +971,7 @@ export function PublicDoctorDetailPage() {
   const { doctorSlug = "" } = useParams();
   const location = useLocation();
   const detail = usePublicResource<PublicDoctorDetailResponse | null>(`/api/public/doctors/${doctorSlug}`, {}, null);
+  const profile = useMemo(() => (detail.data ? buildDoctorProfile(detail.data) : null), [detail.data]);
 
   if (detail.data?.publicPath && detail.data.publicPath !== location.pathname) {
     return <Navigate replace to={`${detail.data.publicPath}${location.search}`} />;
@@ -796,72 +991,9 @@ export function PublicDoctorDetailPage() {
         secondaryAction="View clinics"
         secondaryTo={DISCOVER_ROUTES.clinics.path}
       >
-        {detail.data ? (
-          <div className="public-detail-shell">
-            <article className="result-panel public-detail-hero">
-              <div className="directory-card-top">
-                <div className="directory-avatar directory-avatar-large" aria-hidden="true">
-                  {detail.data.photoUrl ? <img src={detail.data.photoUrl} alt="" /> : <span>{initials(detail.data.doctorDisplayName)}</span>}
-                </div>
-                <div className="directory-card-heading">
-                  <strong>{detail.data.doctorDisplayName}</strong>
-                  <span>{detail.data.specialities.join(", ") || "General consultation"}</span>
-                  <p>{detail.data.qualification ?? "Qualification shared by provider onboarding"} · {formatExperience(detail.data.yearsOfExperience)}</p>
-                </div>
-              </div>
-              <div className="directory-badge-row">
-                {detail.data.availableToday ? <span className="status-pill">Available today</span> : null}
-                {detail.data.languages.length ? <span className="chip">Languages: {detail.data.languages.join(", ")}</span> : null}
-              </div>
-              <div className="directory-action-row">
-                <a
-                  className="primary-button"
-                  href={careBookingUrl({
-                    doctorId: detail.data.publicDoctorId,
-                    ...(detail.data.clinics.length === 1 ? { clinicSlug: detail.data.clinics[0].clinicSlug } : {}),
-                  })}
-                >
-                  Start booking
-                </a>
-                <Link className="secondary-button" to={DISCOVER_ROUTES.doctors.path}>
-                  Back to doctors
-                </Link>
-              </div>
-            </article>
-            <div className="public-detail-grid">
-              <article className="result-panel">
-                <div className="panel-heading"><h2>Clinic</h2></div>
-                <div className="subcard-list">
-                  {detail.data.clinics.map((clinic) => (
-                    <Link key={clinic.clinicSlug} className="subcard" to={DISCOVER_DETAIL_PATHS.clinic(clinic.clinicSlug)}>
-                      <strong>{clinic.clinicDisplayName}</strong>
-                      <span>{clinic.area ?? clinic.city ?? "Clinic profile"}{clinic.area && clinic.city ? ` · ${clinic.city}` : ""}</span>
-                    </Link>
-                  ))}
-                </div>
-              </article>
-              <article className="result-panel">
-                <div className="panel-heading"><h2>Availability</h2></div>
-                <div className="detail-list">
-                  <div>
-                    <strong>Available days</strong>
-                    <span>{detail.data.availableDays.join(", ") || "Provider shares availability after review"}</span>
-                  </div>
-                </div>
-                <div className="subcard-list">
-                  {detail.data.nextAvailableSlots.length ? (
-                    detail.data.nextAvailableSlots.map((slot) => (
-                      <div key={slot} className="subcard">
-                        <strong>Next slot</strong>
-                        <span>{slot}</span>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="state-card compact">Availability will appear when this provider shares appointment options.</div>
-                  )}
-                </div>
-              </article>
-            </div>
+        {profile ? (
+          <div className="provider-preview-page-body provider-preview-page-body--public">
+            <PublicProviderProfile {...profile} />
           </div>
         ) : null}
       </DirectoryState>
@@ -939,6 +1071,7 @@ export function PublicClinicDetailPage() {
   const { clinicSlug = "" } = useParams();
   const location = useLocation();
   const detail = usePublicResource<PublicClinicDetailResponse | null>(`/api/public/clinics/${clinicSlug}`, {}, null);
+  const profile = useMemo(() => (detail.data ? buildClinicProfile(detail.data) : null), [detail.data]);
 
   if (detail.data?.publicPath && detail.data.publicPath !== location.pathname) {
     return <Navigate replace to={`${detail.data.publicPath}${location.search}`} />;
@@ -958,60 +1091,9 @@ export function PublicClinicDetailPage() {
         secondaryAction="Find doctors"
         secondaryTo={DISCOVER_ROUTES.doctors.path}
       >
-        {detail.data ? (
-          <div className="public-detail-shell">
-            <article className="result-panel public-detail-hero">
-              <div className="directory-card-top">
-                <div className="directory-avatar directory-avatar-large" aria-hidden="true">
-                  {detail.data.logoUrl ? <img src={detail.data.logoUrl} alt="" /> : <span>{initials(detail.data.clinicDisplayName)}</span>}
-                </div>
-                <div className="directory-card-heading">
-                  <strong>{detail.data.clinicDisplayName}</strong>
-                  <span>{detail.data.area ?? detail.data.city ?? "Clinic profile"}</span>
-                  <p>{detail.data.address ?? "Clinic address shared after onboarding"}</p>
-                </div>
-              </div>
-              <div className="directory-badge-row">
-                {detail.data.availableToday ? <span className="status-pill">Available today</span> : null}
-                {detail.data.specialities.slice(0, 4).map((speciality) => (
-                  <Link key={speciality} className="chip" to={DISCOVER_DETAIL_PATHS.speciality(slugify(speciality))}>{speciality}</Link>
-                ))}
-              </div>
-              <div className="directory-action-row">
-                <a className="primary-button" href={careBookingUrl({ clinicSlug: detail.data.clinicSlug })}>Start booking</a>
-                <Link className="secondary-button" to={DISCOVER_ROUTES.clinics.path}>Back to clinics</Link>
-              </div>
-              <LocationDisplayMap
-                providerName={detail.data.clinicDisplayName}
-                locations={detail.data.locations}
-                compact
-                title="Locations"
-                directionsLabel="Get directions"
-              />
-            </article>
-            <div className="public-detail-grid">
-              <article className="result-panel">
-                <div className="panel-heading"><h2>Timings</h2></div>
-                <div className="subcard-list">
-                  {detail.data.timings.length ? (
-                    detail.data.timings.map((timing) => (
-                      <div key={timing} className="subcard">
-                        <strong>{timing}</strong>
-                        <span>Shared by the clinic for patient planning.</span>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="state-card compact">Clinic timings will appear when this clinic shares appointment hours.</div>
-                  )}
-                </div>
-              </article>
-              <article className="result-panel">
-                <div className="panel-heading"><h2>Doctors</h2></div>
-                <div className="public-card-stack">
-                  {detail.data.doctors.map((doctor) => <DoctorCard key={doctor.doctorSlug} doctor={doctor} />)}
-                </div>
-              </article>
-            </div>
+        {profile ? (
+          <div className="provider-preview-page-body provider-preview-page-body--public">
+            <PublicProviderProfile {...profile} />
           </div>
         ) : null}
       </DirectoryState>
@@ -1089,6 +1171,7 @@ export function PublicHospitalDetailPage() {
   const { hospitalSlug = "" } = useParams();
   const location = useLocation();
   const detail = usePublicResource<PublicHospitalDetailResponse | null>(`/api/public/hospitals/${hospitalSlug}`, {}, null);
+  const profile = useMemo(() => (detail.data ? buildHospitalProfile(detail.data) : null), [detail.data]);
 
   if (detail.data?.publicPath && detail.data.publicPath !== location.pathname) {
     return <Navigate replace to={`${detail.data.publicPath}${location.search}`} />;
@@ -1108,56 +1191,9 @@ export function PublicHospitalDetailPage() {
         secondaryAction="Find clinics"
         secondaryTo={DISCOVER_ROUTES.clinics.path}
       >
-        {detail.data ? (
-          <div className="public-detail-shell">
-            <article className="result-panel public-detail-hero">
-              <div className="directory-card-top">
-                <div className="directory-avatar directory-avatar-large" aria-hidden="true">
-                  {detail.data.logoUrl ? <img src={detail.data.logoUrl} alt="" /> : <span>{initials(detail.data.hospitalDisplayName)}</span>}
-                </div>
-                <div className="directory-card-heading">
-                  <strong>{detail.data.hospitalDisplayName}</strong>
-                  <span>{detail.data.area ?? detail.data.city ?? "Hospital profile"}</span>
-                  <p>{detail.data.address ?? "Hospital address shared after onboarding"}</p>
-                </div>
-              </div>
-              <div className="directory-badge-row">
-                {detail.data.emergencyAvailable ? <span className="status-pill">Emergency available</span> : null}
-                {detail.data.departments.slice(0, 4).map((department) => (
-                  <span key={department} className="chip">{department}</span>
-                ))}
-              </div>
-              <div className="directory-action-row">
-                <a className="primary-button" href={careBookingUrl({ hospitalSlug: detail.data.hospitalSlug })}>Start booking</a>
-                <Link className="secondary-button" to={DISCOVER_ROUTES.hospitals.path}>Back to hospitals</Link>
-              </div>
-              <LocationDisplayMap
-                providerName={detail.data.hospitalDisplayName}
-                locations={detail.data.locations}
-                compact
-                title="Locations"
-                directionsLabel="Get directions"
-              />
-            </article>
-            <div className="public-detail-grid">
-              <article className="result-panel">
-                <div className="panel-heading"><h2>Facilities</h2></div>
-                <div className="subcard-list">
-                  {detail.data.facilities.length ? detail.data.facilities.map((facility) => (
-                    <div key={facility} className="subcard">
-                      <strong>{facility}</strong>
-                      <span>Shared by the hospital for public discovery.</span>
-                    </div>
-                  )) : <div className="state-card compact">Hospital facilities will appear when the profile is published.</div>}
-                </div>
-              </article>
-              <article className="result-panel">
-                <div className="panel-heading"><h2>Doctors</h2></div>
-                <div className="public-card-stack">
-                  {detail.data.doctors.map((doctor) => <DoctorCard key={doctor.doctorSlug} doctor={doctor} />)}
-                </div>
-              </article>
-            </div>
+        {profile ? (
+          <div className="provider-preview-page-body provider-preview-page-body--public">
+            <PublicProviderProfile {...profile} />
           </div>
         ) : null}
       </DirectoryState>

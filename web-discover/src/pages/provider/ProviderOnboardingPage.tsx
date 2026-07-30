@@ -1,6 +1,6 @@
 import { type ChangeEvent, type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { AssignmentOutlined, CheckCircleOutlined, DirectionsCarOutlined, LanguageOutlined, MedicalServicesOutlined, PaletteOutlined, PlaceOutlined, SchoolOutlined } from "@mui/icons-material";
+import { PaletteOutlined } from "@mui/icons-material";
 import {
   createProviderApplication,
   loadProviderChangeRequests,
@@ -27,11 +27,11 @@ import {
 import { loadDiscoverReferenceCatalog, type DiscoverReferenceCatalog, type DiscoverReferenceOption } from "../../api/referenceData";
 import { DISCOVER_ROUTES, REGISTRATION_PROVIDER_TYPE_BY_ROUTE } from "../../routes";
 import { careBookingUrl } from "../../components/DiscoveryComponents";
-import { PublicMediaImage } from "../../components/landing/PublicMediaImage";
-import { LocationDisplayMap, LocationPicker } from "../../components/location";
+import { LocationPicker } from "../../components/location";
 import { ProviderDropdownField, ProviderMultiSelectField } from "../../components/provider-onboarding/ProviderOnboardingFields";
 import { ProviderOnboardingStepper, ProviderSaveStatus, type ProviderOnboardingStepState } from "../../components/provider-onboarding/ProviderOnboardingStepper";
 import { providerDocumentContentPath } from "../../api/providerOnboarding";
+import { PublicProviderProfile } from "../../components/discovery/PublicProviderProfile";
 
 const TOKEN_KEY = "jeevanam.discover.providerOnboardingToken";
 const TOKEN_KEYS = [
@@ -348,6 +348,12 @@ type PreviewGalleryItem = {
   url: string;
   alt: string;
   caption: string;
+};
+
+type ProfessionalInformationItem = {
+  label: string;
+  value: string;
+  wide?: boolean;
 };
 
 function providerTypeLabel(providerType: ProviderType) {
@@ -1366,14 +1372,25 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
   const previewPrimaryLocation = primaryLocation(draft);
   const primarySpeciality = preview?.specialities[0] ?? draft.specialities?.[0] ?? null;
   const consultationFeeLabel = formatCurrency(draft.consultationFee);
-  const hasTeleconsultation = Boolean(draft.onlineConsultation || draft.services?.some((item) => item.enabled !== false && item.serviceType === "TELECONSULTATION"));
-  const publicPhone = contactVerification?.phoneStatus === "VERIFIED" ? (account.phone || application?.phone || draft.phone || "") : "";
+  const enabledServices = draft.services?.filter((item) => item.enabled !== false) ?? [];
+  const hasTeleconsultation = Boolean(draft.onlineConsultation || enabledServices.some((item) => item.serviceType === "TELECONSULTATION"));
+  const hasInPersonConsultation = enabledServices.some((item) => item.serviceType === "CONSULTATION");
+  const publicPhone = contactVerification?.phoneStatus === "VERIFIED" ? (account.phone || application?.phone || draft.phone || "").trim() : "";
+  const hasPublicPhone = publicPhone.length >= 10;
   const heroLocation = [previewPrimaryLocation?.city, previewPrimaryLocation?.state].filter(Boolean).join(", ") || preview?.locationSummary || null;
   const heroSummary = [
     draft.qualification?.trim() || null,
     primarySpeciality,
   ].filter(Boolean).join(" • ");
   const tagline = previewBranding?.tagline?.trim() || draft.branding?.tagline?.trim() || null;
+  const serviceLabels = preview?.services?.length
+    ? preview.services
+    : enabledServices.map((item) => item.label);
+  const locationFacilityValues = validation.facilities.filter((item) => item.trim().toLowerCase() !== "online appointment");
+  const consultationModes = [
+    hasInPersonConsultation ? "In-person" : null,
+    hasTeleconsultation ? "Teleconsultation" : null,
+  ].filter((item): item is string => Boolean(item));
   const previewGalleryItems = useMemo(() => {
     const name = preview?.displayName ?? draft.displayName ?? providerTypeLabel(providerType);
     const items: PreviewGalleryItem[] = [];
@@ -1384,18 +1401,12 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
       items.push({ url, caption, alt });
     };
 
-    push(
-      previewDoctorPhotoPath,
-      providerType === "INDIVIDUAL_DOCTOR" ? "Profile photo" : "Primary provider image",
-      `${name} ${providerType === "INDIVIDUAL_DOCTOR" ? "profile photo" : "primary provider image"}`,
-    );
-
     previewGalleryPaths.forEach((url, index) => {
-      push(url, `Gallery image ${index + 1}`, `${name} gallery image ${index + 1}`);
+      push(url, `Clinic image ${index + 1}`, `${name} clinic image ${index + 1}`);
     });
 
     return items;
-  }, [draft.displayName, preview?.displayName, previewDoctorPhotoPath, previewGalleryPaths, providerType]);
+  }, [draft.displayName, preview?.displayName, previewGalleryPaths]);
   const previewChecklistItems = useMemo(() => {
     const items: PreviewChecklistItem[] = [];
     const add = (label: string, step: ProviderOnboardingStepId, detail?: string) => {
@@ -1416,7 +1427,7 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
     if (!previewPrimaryLocation?.workingHours?.trim()) add("Clinic timings", "locations");
     if (!previewDoctorPhotoPath && providerType === "INDIVIDUAL_DOCTOR") add("Profile photo", "branding");
     if (!previewLogoPath && providerType !== "INDIVIDUAL_DOCTOR") add("Logo", "branding");
-    if (!previewGalleryItems.length) add("Additional clinic images", "branding", "Add gallery images for patients to preview your space.");
+    if (!previewGalleryItems.length) add("Clinic gallery images", "branding", "Add real clinic or facility images for patients to preview your space.");
 
     return items;
   }, [
@@ -1436,32 +1447,23 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
     validation.languages.length,
   ]);
   const returnToEditingStep = previewChecklistItems[0]?.step ?? (providerType === "INDIVIDUAL_DOCTOR" ? "professional" : "organisation");
-  const showFacilitiesSection = validation.facilities.length > 0 && (providerType !== "INDIVIDUAL_DOCTOR" || Boolean(previewPrimaryLocation));
+  const showFacilitiesSection = locationFacilityValues.length > 0 && (providerType !== "INDIVIDUAL_DOCTOR" || Boolean(previewPrimaryLocation));
   const facilitySectionTitle = providerType === "INDIVIDUAL_DOCTOR" ? "Clinic facilities at this location" : "Facilities";
   const professionalInformation = [
-    draft.registrationNumber?.trim() ? { label: "Registration number", value: draft.registrationNumber.trim() } : null,
-    draft.medicalCouncil?.trim() ? { label: "Medical council", value: draft.medicalCouncil.trim() } : null,
-    draft.qualification?.trim() ? { label: "Qualifications", value: draft.qualification.trim() } : null,
+    draft.registrationNumber?.trim() ? { label: "Registration Number", value: draft.registrationNumber.trim() } : null,
+    draft.medicalCouncil?.trim() ? { label: "Medical Council", value: draft.medicalCouncil.trim() } : null,
+    draft.qualification?.trim() ? { label: "Qualifications", value: draft.qualification.trim(), wide: true } : null,
     draft.yearsOfExperience != null && !Number.isNaN(draft.yearsOfExperience) ? { label: "Experience", value: `${draft.yearsOfExperience} years` } : null,
-    consultationFeeLabel ? { label: "Consultation fee", value: consultationFeeLabel } : null,
+    consultationFeeLabel ? { label: "Consultation Fee", value: consultationFeeLabel } : null,
     primarySpeciality ? { label: "Specialty", value: primarySpeciality } : null,
-    validation.languages.length ? { label: "Languages", value: validation.languages.join(" • ") } : null,
-    previewPrimaryLocation?.workingHours?.trim() ? { label: "Working hours", value: previewPrimaryLocation.workingHours.trim() } : null,
-  ].filter((item): item is { label: string; value: string } => Boolean(item));
+    validation.languages.length ? { label: "Languages", value: validation.languages.join(" • "), wide: true } : null,
+    previewPrimaryLocation?.workingHours?.trim() ? { label: "Working Hours", value: previewPrimaryLocation.workingHours.trim(), wide: true } : null,
+  ].filter((item): item is ProfessionalInformationItem => Boolean(item));
   const trustIndicators = [
+    application?.status === "PUBLISHED" ? "Published on Jeevanam Discover" : null,
     contactVerification?.emailStatus === "VERIFIED" ? "Email verified" : null,
     contactVerification?.phoneStatus === "VERIFIED" ? "Phone verified" : null,
-    hasTeleconsultation ? "Online consultation available" : null,
-    application?.status === "PUBLISHED" ? "Published on Jeevanam Discover" : null,
   ].filter((item): item is string => Boolean(item));
-  const quickFacts = [
-    draft.yearsOfExperience != null && !Number.isNaN(draft.yearsOfExperience) ? { label: "Experience", value: `${draft.yearsOfExperience} years` } : null,
-    consultationFeeLabel ? { label: "Fee", value: consultationFeeLabel } : null,
-    validation.languages.length ? { label: "Languages", value: String(validation.languages.length) } : null,
-    draft.locations?.length ? { label: "Locations", value: String(draft.locations.length) } : null,
-    draft.services?.filter((item) => item.enabled !== false).length ? { label: "Services", value: String(draft.services.filter((item) => item.enabled !== false).length) } : null,
-    hasTeleconsultation ? { label: "Teleconsultation", value: "Available" } : null,
-  ].filter((item): item is { label: string; value: string } => Boolean(item));
   const readinessCompletedAreas = [
     professionalInformation.length ? "Professional information" : null,
     hasEnabledServices(draft.services) ? "Services" : null,
@@ -1476,6 +1478,9 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
     previewPrimaryLocation?.country,
     previewPrimaryLocation?.pinCode,
   ].filter(Boolean).join(", ");
+  const trustSectionTitle = trustIndicators.some((item) => item === "Published on Jeevanam Discover")
+    ? "Trust and Verification"
+    : "Verified contact details";
 
   return (
     <section className={`page-section provider-portal-page${isPreviewStep ? " provider-portal-page--preview" : ""}`}>
@@ -1920,319 +1925,95 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
                   {readOnlyApplication ? <small>Your application is currently read-only while Jeevanam reviews it.</small> : null}
                 </div>
                 <div className="provider-preview-banner-actions">
-                  <button className="secondary-button" type="button" onClick={() => void goToStep(returnToEditingStep, "route-transition")}>
-                    Return to editing
-                  </button>
                   <button className="primary-button" type="button" onClick={() => void loadPreviewPanel()}>
                     Refresh preview
                   </button>
                 </div>
               </header>
               <div className="provider-preview-page-body">
-                <article className="provider-preview-profile profile-preview-card provider-public-preview">
-                  <section className="provider-preview-hero-shell">
-                    <div className="provider-public-hero provider-public-hero--preview">
-                      <div className="provider-public-hero-media">
-                        <div className="provider-public-cover-frame">
-                          <PublicMediaImage
-                            src={previewCoverPath}
-                            alt={`${preview?.displayName ?? draft.displayName ?? "Provider"} cover image`}
-                            className="landing-cover-image"
-                            objectFit="cover"
-                            fallback={<div className="landing-cover-fallback" aria-hidden="true" />}
-                            token={token}
-                          />
-                        </div>
-                        <div className="provider-public-avatar-frame">
-                          <PublicMediaImage
-                            src={previewDoctorPhotoPath ?? previewLogoPath}
-                            alt={`${preview?.displayName ?? draft.displayName ?? "Provider"} ${providerType === "INDIVIDUAL_DOCTOR" ? "photo" : "logo"}`}
-                            className="landing-avatar-image"
-                            objectFit={providerType === "INDIVIDUAL_DOCTOR" ? "cover" : "contain"}
-                            fallback={(
-                              <div className="landing-avatar-fallback" aria-hidden="true">
-                                <span>{providerType === "INDIVIDUAL_DOCTOR" ? "DR" : providerType === "CLINIC" ? "CL" : "HS"}</span>
-                              </div>
-                            )}
-                            token={token}
-                          />
-                        </div>
-                      </div>
-                      <div className="provider-preview-hero-copy">
-                        <div className="provider-preview-hero-heading">
-                          <span className="eyebrow">{providerTypeLabel(providerType)} profile</span>
-                          <h2>{preview?.displayName ?? draft.displayName ?? "Profile name pending"}</h2>
-                          {heroSummary ? <p>{heroSummary}</p> : null}
-                          {tagline ? <small>{tagline}</small> : null}
-                        </div>
-                        <div className="provider-preview-hero-facts">
-                          {primarySpeciality ? <span className="provider-preview-fact-chip"><MedicalServicesOutlined fontSize="small" aria-hidden="true" />{primarySpeciality}</span> : null}
-                          {heroLocation ? <span className="provider-preview-fact-chip"><PlaceOutlined fontSize="small" aria-hidden="true" />{heroLocation}</span> : null}
-                          {draft.yearsOfExperience != null && !Number.isNaN(draft.yearsOfExperience) ? <span className="provider-preview-fact-chip"><AssignmentOutlined fontSize="small" aria-hidden="true" />{draft.yearsOfExperience} Years Experience</span> : null}
-                          {consultationFeeLabel ? <span className="provider-preview-fact-chip"><SchoolOutlined fontSize="small" aria-hidden="true" />{consultationFeeLabel} Consultation</span> : null}
-                          {validation.languages.length ? <span className="provider-preview-fact-chip"><LanguageOutlined fontSize="small" aria-hidden="true" />{validation.languages.join(" • ")}</span> : null}
-                          {hasTeleconsultation ? <span className="provider-preview-fact-chip"><DirectionsCarOutlined fontSize="small" aria-hidden="true" />Teleconsultation available</span> : null}
-                        </div>
-                        <div className="provider-preview-hero-actions">
-                          <a className="primary-button" href={careBookingUrl({ provider: preview?.displayName ?? draft.displayName })}>
-                            Book Appointment
-                          </a>
-                          {publicPhone ? (
-                            <a className="secondary-button" href={`tel:${publicPhone}`}>
-                              {providerCallLabel(providerType)}
-                            </a>
-                          ) : null}
-                        </div>
-                      </div>
-                    </div>
-                  </section>
-
-                  <section className="provider-preview-section provider-preview-section--about">
-                    <div className="provider-preview-section-heading">
-                      <span className="eyebrow">About</span>
-                      <h2>{providerType === "INDIVIDUAL_DOCTOR" ? `About ${preview?.displayName ?? draft.displayName ?? "the doctor"}` : `About ${preview?.displayName ?? draft.displayName ?? "the provider"}`}</h2>
-                    </div>
-                    {draft.biography?.trim() || preview?.biography ? (
-                      <p className="provider-preview-biography">{preview?.biography ?? draft.biography}</p>
-                    ) : (
-                      <div className="provider-preview-empty-state">
-                        <strong>Biography not added yet.</strong>
-                        <p>Add a patient-facing introduction so people understand your background and care approach.</p>
-                      </div>
-                    )}
-                  </section>
-
-                  <div className="provider-preview-grid provider-preview-grid--paired">
-                    <section className="provider-preview-card">
-                      <div className="provider-preview-section-heading">
-                        <span className="eyebrow">Professional Information</span>
-                        <h2>Professional Information</h2>
-                      </div>
-                      {professionalInformation.length ? (
-                        <dl className="provider-preview-definition-list">
-                          {professionalInformation.map((item) => (
-                            <div key={item.label}>
-                              <dt>{item.label}</dt>
-                              <dd>{item.value}</dd>
-                            </div>
-                          ))}
-                        </dl>
-                      ) : (
-                        <div className="provider-preview-empty-state">
-                          <strong>Professional details are still being added.</strong>
-                        </div>
-                      )}
-                    </section>
-
-                    <section className="provider-preview-card">
-                      <div className="provider-preview-section-heading">
-                        <span className="eyebrow">Services</span>
-                        <h2>Services</h2>
-                      </div>
-                      {hasEnabledServices(draft.services) ? (
-                        <div className="provider-preview-pill-grid">
-                          {(preview?.services ?? draft.services?.filter((item) => item.enabled !== false).map((item) => item.label) ?? []).map((item) => (
-                            <span className="provider-preview-service-pill" key={item}>
-                              <MedicalServicesOutlined fontSize="small" aria-hidden="true" />
-                              {item}
-                            </span>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="provider-preview-empty-state">
-                          <strong>No services selected yet.</strong>
-                        </div>
-                      )}
-                      {showFacilitiesSection ? (
-                        <div className="provider-preview-subsection">
-                          <h3>{facilitySectionTitle}</h3>
-                          <div className="provider-preview-pill-grid">
-                            {validation.facilities.map((item) => (
-                              <span className="provider-preview-facility-pill" key={item}>
-                                <CheckCircleOutlined fontSize="small" aria-hidden="true" />
-                                {item}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      ) : null}
-                    </section>
+                <PublicProviderProfile
+                  providerType={providerType}
+                  displayName={preview?.displayName ?? draft.displayName ?? "Profile name pending"}
+                  profileEyebrow={`${providerTypeLabel(providerType)} profile`}
+                  heroSummary={heroSummary}
+                  tagline={tagline}
+                  coverImageUrl={previewCoverPath}
+                  avatarImageUrl={previewDoctorPhotoPath ?? previewLogoPath}
+                  imageToken={token}
+                  primarySpeciality={primarySpeciality}
+                  locationSummary={heroLocation}
+                  yearsOfExperience={draft.yearsOfExperience}
+                  consultationFeeLabel={consultationFeeLabel}
+                  languages={validation.languages}
+                  teleconsultationAvailable={hasTeleconsultation}
+                  bookingUrl={careBookingUrl({ provider: preview?.displayName ?? draft.displayName })}
+                  callHref={hasPublicPhone ? `tel:${publicPhone}` : null}
+                  callLabel={hasPublicPhone ? providerCallLabel(providerType) : null}
+                  biographyTitle={providerType === "INDIVIDUAL_DOCTOR" ? `About ${preview?.displayName ?? draft.displayName ?? "the doctor"}` : `About ${preview?.displayName ?? draft.displayName ?? "the provider"}`}
+                  biography={preview?.biography ?? draft.biography}
+                  biographyEmptyDescription="Add a patient-facing introduction so people understand your background and care approach."
+                  professionalInformation={professionalInformation}
+                  services={serviceLabels}
+                  facilitiesTitle={showFacilitiesSection ? facilitySectionTitle : null}
+                  facilities={showFacilitiesSection ? locationFacilityValues : []}
+                  galleryItems={previewGalleryItems}
+                  galleryEmptyActionLabel="Add images"
+                  onGalleryEmptyAction={() => {
+                    void goToStep("branding", "route-transition");
+                  }}
+                  locationName={previewPrimaryLocation?.label || preview?.displayName || draft.displayName || copy.nameLabel}
+                  locationAddress={locationAddress}
+                  locationWorkingHours={previewPrimaryLocation?.workingHours ?? null}
+                  locationFacilities={showFacilitiesSection ? locationFacilityValues : []}
+                  locations={draft.locations ?? []}
+                  locationEmptyDescription="Add an address and map pin so patients can find you easily."
+                  trustTitle={trustSectionTitle}
+                  trustIndicators={trustIndicators}
+                  trustSupportingCopy={trustSectionTitle === "Verified contact details" ? "Currently showing verified contact details. Clinical verification badges are not available in this preview yet." : null}
+                  consultationModes={consultationModes}
+                  className="provider-preview-profile profile-preview-card provider-public-preview"
+                  dataTestId="provider-preview-canvas"
+                  preview
+                />
+                <section className="provider-preview-workflow" data-testid="provider-preview-readiness-panel">
+                  <div className="provider-preview-section-heading">
+                    <span className="eyebrow">Provider workflow</span>
+                    <h2>Ready for submission</h2>
                   </div>
-
-                  <div className="provider-preview-grid provider-preview-grid--paired">
-                    <section className="provider-preview-card">
-                      <div className="provider-preview-section-heading">
-                        <span className="eyebrow">Gallery</span>
-                        <h2>Clinic image gallery</h2>
-                      </div>
-                      {previewGalleryItems.length ? (
-                        <div className="provider-preview-gallery-grid">
-                          {previewGalleryItems.map((item, index) => (
-                            <article className="provider-preview-gallery-card" key={`${item.url}-${index}`}>
-                              <div className="landing-gallery-media">
-                                <PublicMediaImage
-                                  src={item.url}
-                                  alt={item.alt}
-                                  className="landing-gallery-image"
-                                  objectFit="cover"
-                                  fallback={<div className="landing-gallery-fallback" aria-hidden="true" />}
-                                  token={token}
-                                />
-                              </div>
-                              <div className="provider-preview-gallery-card-copy">
-                                <strong>{item.caption}</strong>
-                                <a className="text-button" href={item.url} target="_blank" rel="noreferrer">
-                                  Open image
-                                </a>
-                              </div>
-                            </article>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="provider-preview-gallery-empty" role="status" aria-live="polite">
-                          <p>No additional clinic images have been added.</p>
-                          <button className="secondary-button" type="button" onClick={() => void goToStep("branding", "route-transition")}>
-                            Add images
+                  {previewChecklistItems.length ? (
+                    <div className="provider-preview-checklist">
+                      {previewChecklistItems.map((item) => (
+                        <article className="provider-preview-checklist-item" key={`${item.step}-${item.label}`}>
+                          <div>
+                            <h3>{item.label}</h3>
+                            <p>{item.detail ?? `Update this in ${stepLabel(item.step)}.`}</p>
+                            <small>{stepLabel(item.step)}</small>
+                          </div>
+                          <button className="secondary-button" type="button" onClick={() => void goToStep(item.step, "route-transition")}>
+                            Complete now
                           </button>
-                        </div>
-                      )}
-                    </section>
-
-                    <section className="provider-preview-card">
-                      <div className="provider-preview-section-heading">
-                        <span className="eyebrow">Location</span>
-                        <h2>Location and access</h2>
-                      </div>
-                      {previewPrimaryLocation ? (
-                        <div className="provider-preview-location">
-                          <div className="provider-preview-location-copy">
-                            <strong>{previewPrimaryLocation.label || preview?.displayName || draft.displayName || copy.nameLabel}</strong>
-                            <p>{locationAddress || "Address will appear once location details are completed."}</p>
-                            <div className="provider-preview-location-meta">
-                              {previewPrimaryLocation.workingHours?.trim() ? <span>Working hours: {previewPrimaryLocation.workingHours.trim()}</span> : null}
-                              {publicPhone ? <span>Phone: {publicPhone}</span> : null}
-                            </div>
-                            {showFacilitiesSection ? (
-                              <div className="provider-preview-pill-grid">
-                                {validation.facilities.map((item) => <span className="provider-preview-facility-pill" key={`location-${item}`}>{item}</span>)}
-                              </div>
-                            ) : null}
-                          </div>
-                          <LocationDisplayMap
-                            providerName={preview?.displayName ?? draft.displayName ?? copy.nameLabel}
-                            locations={draft.locations ?? []}
-                            compact
-                            title="Find this location"
-                            directionsLabel="Get directions"
-                          />
-                        </div>
-                      ) : (
-                        <div className="provider-preview-empty-state">
-                          <strong>Location details are missing.</strong>
-                          <p>Add an address and map pin so patients can find you easily.</p>
-                        </div>
-                      )}
-                    </section>
-                  </div>
-
-                  <div className="provider-preview-grid provider-preview-grid--paired">
-                    <section className="provider-preview-card">
-                      <div className="provider-preview-section-heading">
-                        <span className="eyebrow">Trust and Verification</span>
-                        <h2>Trust and Verification</h2>
-                      </div>
-                      {trustIndicators.length ? (
+                        </article>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="provider-preview-checklist-empty" role="status" aria-live="polite">
+                      <strong>Your public profile contains the required information.</strong>
+                      {readinessCompletedAreas.length ? (
                         <div className="provider-preview-pill-grid">
-                          {trustIndicators.map((item) => (
-                            <span className="provider-preview-trust-pill" key={item}>
-                              <CheckCircleOutlined fontSize="small" aria-hidden="true" />
-                              {item}
-                            </span>
-                          ))}
+                          {readinessCompletedAreas.map((item) => <span className="provider-preview-ready-pill" key={item}>{item}</span>)}
                         </div>
-                      ) : (
-                        <div className="provider-preview-empty-state">
-                          <strong>Public verification indicators are not available yet.</strong>
-                        </div>
-                      )}
-                    </section>
-
-                    <section className="provider-preview-card">
-                      <div className="provider-preview-section-heading">
-                        <span className="eyebrow">Quick Facts</span>
-                        <h2>Quick Facts</h2>
-                      </div>
-                      {quickFacts.length ? (
-                        <dl className="provider-preview-fact-grid">
-                          {quickFacts.map((item) => (
-                            <div key={item.label}>
-                              <dt>{item.label}</dt>
-                              <dd>{item.value}</dd>
-                            </div>
-                          ))}
-                        </dl>
-                      ) : (
-                        <div className="provider-preview-empty-state">
-                          <strong>Quick facts will appear here as more profile information is added.</strong>
-                        </div>
-                      )}
-                    </section>
-                  </div>
-
-                  <section className="provider-preview-card provider-preview-readiness">
-                    <div className="provider-preview-section-heading">
-                      <span className="eyebrow">Profile readiness</span>
-                      <h2>{previewChecklistItems.length ? "Complete your public profile" : "Ready for submission"}</h2>
-                    </div>
-                    {previewChecklistItems.length ? (
-                      <div className="provider-preview-checklist">
-                        {previewChecklistItems.map((item) => (
-                          <article className="provider-preview-checklist-item" key={`${item.step}-${item.label}`}>
-                            <div>
-                              <h3>{item.label}</h3>
-                              <p>{item.detail ?? `Update this in ${stepLabel(item.step)}.`}</p>
-                              <small>{stepLabel(item.step)}</small>
-                            </div>
-                            <button className="secondary-button" type="button" onClick={() => void goToStep(item.step, "route-transition")}>
-                              Complete now
-                            </button>
-                          </article>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="provider-preview-checklist-empty" role="status" aria-live="polite">
-                        <strong>Your public profile contains the required information.</strong>
-                        {readinessCompletedAreas.length ? (
-                          <div className="provider-preview-pill-grid">
-                            {readinessCompletedAreas.map((item) => <span className="provider-preview-ready-pill" key={item}>{item}</span>)}
-                          </div>
-                        ) : null}
-                      </div>
-                    )}
-                  </section>
-
-                  <section className="provider-preview-card provider-preview-appointment-card">
-                    <div className="provider-preview-section-heading">
-                      <span className="eyebrow">Appointment</span>
-                      <h2>Book Appointment</h2>
-                    </div>
-                    <p>{consultationFeeLabel ? `${consultationFeeLabel} consultation` : "Consultation fee will appear once added."}</p>
-                    <div className="provider-preview-appointment-meta">
-                      {hasTeleconsultation ? <span>Teleconsultation available</span> : null}
-                      {publicPhone ? <span>{publicPhone}</span> : null}
-                    </div>
-                    <div className="provider-preview-appointment-actions">
-                      <a className="primary-button" href={careBookingUrl({ provider: preview?.displayName ?? draft.displayName })}>
-                        Book Appointment
-                      </a>
-                      {publicPhone ? (
-                        <a className="secondary-button" href={`tel:${publicPhone}`}>
-                          {providerCallLabel(providerType)}
-                        </a>
                       ) : null}
                     </div>
-                  </section>
-                </article>
+                  )}
+                  <div className="provider-preview-workflow-actions">
+                    <button className="secondary-button" type="button" onClick={() => void goToStep(returnToEditingStep, "route-transition")}>
+                      Back to editing
+                    </button>
+                    <button className="primary-button" type="button" onClick={() => void goToStep("submit", "route-transition")}>
+                      Continue to submission
+                    </button>
+                  </div>
+                </section>
               </div>
             </section>
           ) : null}

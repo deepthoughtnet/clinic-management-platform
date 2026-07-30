@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicPageResponse;
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicSearchResponse;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderType;
+import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderGalleryImageSnapshot;
 import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderLocationSnapshot;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderProfileDetailRecord;
@@ -106,17 +107,20 @@ class PublicCatalogFacadeTest {
         assertThat(doctors.items()).singleElement().satisfies(item -> {
             assertThat(item.doctorDisplayName()).isEqualTo("Dr. Asha Menon");
             assertThat(item.publicPath()).isEqualTo("/discover/doctors/dr-asha-menon");
+            assertThat(item.photoUrl()).isEqualTo("/api/public/doctors/dr-asha-menon/photo");
             assertThat(item.subtitle()).isEqualTo("Dr. Asha Menon subtitle");
             assertThat(item.summary()).isEqualTo("Experienced public doctor");
         });
         assertThat(clinics.items()).singleElement().satisfies(item -> {
             assertThat(item.clinicDisplayName()).isEqualTo("Sunrise Clinic");
             assertThat(item.publicPath()).isEqualTo("/discover/clinics/sunrise-clinic");
+            assertThat(item.logoUrl()).isEqualTo("/api/public/clinics/sunrise-clinic/logo");
             assertThat(item.emergencyAvailable()).isFalse();
         });
         assertThat(hospitals.items()).singleElement().satisfies(item -> {
             assertThat(item.hospitalDisplayName()).isEqualTo("City Care Hospital");
             assertThat(item.publicPath()).isEqualTo("/discover/hospitals/city-care-hospital");
+            assertThat(item.logoUrl()).isEqualTo("/api/public/hospitals/city-care-hospital/logo");
             assertThat(item.emergencyAvailable()).isTrue();
         });
         assertThat(search.hospitals().items()).singleElement().satisfies(item -> assertThat(item.hospitalDisplayName()).isEqualTo("City Care Hospital"));
@@ -153,7 +157,7 @@ class PublicCatalogFacadeTest {
                         List.of(),
                         List.of("In-person"),
                         List.of(new PublicProviderLocationSnapshot("Primary", "Baner Road", "Pune", "Maharashtra", "India", "411045", "Mon-Sat 9 AM-5 PM", true, true, new BigDecimal("18.520400"), new BigDecimal("73.856700"))),
-                        List.of(),
+                        List.of(new PublicProviderGalleryImageSnapshot(UUID.randomUUID(), "gallery.png")),
                         List.of("https://example.com/doctor-gallery.jpg"),
                         "https://example.com/doctor.jpg",
                         "https://example.com/doctor-cover.jpg",
@@ -184,6 +188,9 @@ class PublicCatalogFacadeTest {
 
         assertThat(detail.publicPath()).isEqualTo("/discover/doctors/dr-asha-menon");
         assertThat(detail.canonicalSlug()).isEqualTo("dr-asha-menon");
+        assertThat(detail.photoUrl()).isEqualTo("/api/public/doctors/dr-asha-menon/photo");
+        assertThat(detail.coverUrl()).isEqualTo("/api/public/doctors/dr-asha-menon/cover");
+        assertThat(detail.galleryImageUrls()).containsExactly("/api/public/doctors/dr-asha-menon/gallery/0");
         assertThat(detail.reviewsComingSoon()).isTrue();
         assertThat(detail.availableToday()).isFalse();
         assertThat(detail.locations()).singleElement().satisfies(location -> {

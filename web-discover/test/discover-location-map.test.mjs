@@ -13,6 +13,7 @@ test("reusable location map support is wired across Discover surfaces", () => {
   const config = read("src/config.ts");
   const main = read("src/main.tsx");
   const onboardingPage = read("src/pages/provider/ProviderOnboardingPage.tsx");
+  const publicProfile = read("src/components/discovery/PublicProviderProfile.tsx");
   const publicPages = read("src/pages/discovery/PublicDiscoveryPages.tsx");
   const landingRenderer = read("src/components/landing/LandingPageRenderer.tsx");
   const locationPicker = read("src/components/location/LocationPicker.tsx");
@@ -41,8 +42,8 @@ test("reusable location map support is wired across Discover surfaces", () => {
 
   assert.ok(main.includes("leaflet/dist/leaflet.css"));
   assert.ok(onboardingPage.includes("LocationPicker"));
-  assert.ok(onboardingPage.includes("LocationDisplayMap"));
-  assert.ok(publicPages.includes("LocationDisplayMap"));
+  assert.ok(publicProfile.includes("LocationDisplayMap"));
+  assert.ok(publicPages.includes("PublicProviderProfile"));
   assert.ok(landingRenderer.includes("LocationDisplayMap"));
   assert.ok(locationPicker.includes("geocodeLocation"));
   assert.ok(locationPicker.includes("LocationSearchInput"));

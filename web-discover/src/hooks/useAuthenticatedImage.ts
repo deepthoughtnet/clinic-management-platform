@@ -17,6 +17,15 @@ function revokeObjectUrl(url: string | null) {
   }
 }
 
+function isPublicApiImage(url: string) {
+  try {
+    const resolved = new URL(url, window.location.origin);
+    return resolved.pathname.startsWith("/api/public/");
+  } catch {
+    return false;
+  }
+}
+
 export function useAuthenticatedImage(url: string | null | undefined, options: UseAuthenticatedImageOptions = {}): UseAuthenticatedImageResult {
   const [objectUrl, setObjectUrl] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(false);
@@ -43,6 +52,12 @@ export function useAuthenticatedImage(url: string | null | undefined, options: U
       }
 
       if (!nextUrl.startsWith("/api/")) {
+        setObjectUrl(nextUrl);
+        setLoading(false);
+        return;
+      }
+
+      if (isPublicApiImage(nextUrl)) {
         setObjectUrl(nextUrl);
         setLoading(false);
         return;

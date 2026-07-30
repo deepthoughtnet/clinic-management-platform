@@ -35,6 +35,7 @@ test("provider onboarding routes use one governed wizard for all provider types"
 
 test("provider onboarding persists drafts, resumes by token, and keeps URL as step source", () => {
   const portal = read("src/pages/provider/ProviderOnboardingPage.tsx");
+  const profile = read("src/components/discovery/PublicProviderProfile.tsx");
 
   assert.ok(portal.includes("useSearchParams"));
   assert.ok(portal.includes('searchParams.get("step")'));
@@ -61,7 +62,7 @@ test("provider onboarding persists drafts, resumes by token, and keeps URL as st
   assert.ok(portal.includes("ProviderMultiSelectField"));
   assert.ok(portal.includes("ProviderOnboardingStepper"));
   assert.ok(portal.includes("ProviderSaveStatus"));
-  assert.ok(portal.includes("PublicMediaImage"));
+  assert.ok(profile.includes("PublicMediaImage"));
   assert.ok(portal.includes("providerDocumentContentPath"));
   assert.ok(portal.includes("loadProviderApplication(token)"));
   assert.ok(portal.includes("localStorage.setItem(tokenStorageKey"));
@@ -93,6 +94,7 @@ test("provider onboarding uses provider-registration APIs and not patient-privat
 
 test("provider onboarding upload and submission UX is explicit", () => {
   const portal = read("src/pages/provider/ProviderOnboardingPage.tsx");
+  const profile = read("src/components/discovery/PublicProviderProfile.tsx");
   const styles = read("src/styles.css");
 
   assert.ok(portal.includes("Upload PNG, JPEG, or PDF files only."));
@@ -112,29 +114,43 @@ test("provider onboarding upload and submission UX is explicit", () => {
   assert.ok(portal.includes("provider-preview-page"));
   assert.ok(portal.includes("provider-preview-banner"));
   assert.ok(portal.includes("provider-preview-page-body"));
-  assert.ok(portal.includes("provider-public-preview"));
-  assert.ok(portal.includes("provider-public-hero"));
-  assert.ok(portal.includes("provider-public-hero-media"));
-  assert.ok(portal.includes("provider-preview-profile"));
-  assert.ok(portal.includes("provider-preview-grid"));
-  assert.ok(portal.includes("provider-preview-section--about"));
-  assert.ok(portal.includes("Professional Information"));
-  assert.ok(portal.includes("Trust and Verification"));
-  assert.ok(portal.includes("Quick Facts"));
+  assert.ok(portal.includes("PublicProviderProfile"));
+  assert.ok(profile.includes("provider-public-preview"));
+  assert.ok(profile.includes("provider-public-hero"));
+  assert.ok(profile.includes("provider-public-hero-media"));
+  assert.ok(profile.includes("provider-preview-profile"));
+  assert.ok(profile.includes("provider-preview-grid"));
+  assert.ok(profile.includes("provider-preview-section--about"));
+  assert.ok(profile.includes("Professional Information"));
+  assert.ok(profile.includes("Trust and Verification"));
   assert.ok(portal.includes("Ready for submission"));
-  assert.ok(portal.includes("Complete your public profile"));
+  assert.ok(portal.includes("Verified contact details"));
   assert.ok(portal.includes("provider-preview-checklist"));
-  assert.ok(portal.includes("provider-preview-gallery-grid"));
-  assert.ok(portal.includes("No additional clinic images have been added."));
+  assert.ok(profile.includes("provider-preview-gallery-grid"));
+  assert.ok(profile.includes("No clinic gallery images have been added yet."));
   assert.ok(portal.includes("Your public profile contains the required information."));
   assert.ok(portal.includes('goToStep(item.step, "route-transition")'));
-  assert.ok(portal.includes('goToStep("branding", "route-transition")'));
-  assert.ok(portal.includes("Return to editing"));
+  assert.ok(portal.includes("onGalleryEmptyAction"));
+  assert.ok(portal.includes("Back to editing"));
+  assert.ok(portal.includes("Continue to submission"));
   assert.ok(portal.includes("provider-branding-banner"));
-  assert.ok(portal.includes("Book Appointment"));
-  assert.ok(portal.includes("provider-public-hero--preview"));
-  assert.ok(portal.includes("provider-preview-appointment-card"));
-  assert.ok(portal.includes("provider-preview-location"));
+  assert.ok(profile.includes("Book Appointment"));
+  assert.ok(profile.includes("provider-public-hero--preview"));
+  assert.ok(profile.includes("provider-preview-appointment-card"));
+  assert.ok(profile.includes("provider-preview-location"));
+  assert.ok(portal.includes("provider-preview-workflow"));
+  assert.ok(portal.includes('dataTestId="provider-preview-canvas"'));
+  assert.ok(profile.includes('data-testid={dataTestId}'));
+  assert.ok(portal.includes('data-testid="provider-preview-readiness-panel"'));
+  assert.ok(profile.includes("Consultation fee"));
+  assert.ok(profile.includes("Consultation modes"));
+  assert.ok(portal.includes('item.trim().toLowerCase() !== "online appointment"'));
+  assert.ok(portal.includes("Currently showing verified contact details."));
+  assert.ok(portal.includes("previewGalleryPaths.forEach"));
+  assert.ok(!portal.includes("push(\n      previewDoctorPhotoPath"));
+  assert.ok(!portal.includes("Quick Facts"));
+  assert.ok(!portal.includes("<span>{publicPhone}</span>"));
+  assert.ok(!portal.includes("Phone: {publicPhone}"));
   assert.ok(portal.includes("StatusTimeline"));
   assert.ok(portal.includes("verification-note"));
   assert.ok(portal.includes("provider-readonly-banner"));
@@ -158,10 +174,13 @@ test("provider onboarding upload and submission UX is explicit", () => {
   assert.ok(styles.includes(".provider-public-hero--preview"));
   assert.ok(styles.includes(".provider-preview-grid--paired"));
   assert.ok(styles.includes(".provider-preview-definition-list"));
-  assert.ok(styles.includes(".provider-preview-fact-grid"));
   assert.ok(styles.includes(".provider-preview-checklist-item"));
   assert.ok(styles.includes(".provider-preview-gallery-card"));
   assert.ok(styles.includes(".provider-preview-gallery-empty"));
+  assert.ok(styles.includes(".provider-preview-workflow"));
+  assert.ok(styles.includes(".provider-preview-workflow-actions"));
+  assert.ok(styles.includes(".provider-preview-appointment-summary"));
+  assert.ok(styles.includes(".provider-preview-definition-list__item--wide"));
 });
 
 test("provider login uses passwordless provider wording and local-only development codes", () => {

@@ -61,6 +61,24 @@ Provider service selections use the Discover reference catalog as the canonical 
 - `POST /api/provider-registration/providers/{id}/documents`
 - `GET /api/provider-registration/providers/{id}/preview`
 
+## Public Profile Rendering
+
+- The provider onboarding preview route is a provider-only wrapper around the canonical Discover public provider profile presentation.
+- Published public doctor, clinic, and hospital detail routes should reuse the same public profile presentation component, without preview-only banners or provider workflow controls.
+- Preview-specific actions such as refresh, readiness guidance, and return-to-editing remain outside the canonical patient-facing profile canvas.
+- Directory cards should summarize real published data and link to the canonical public profile route.
+
+## Provider Workspace And Session Restoration
+
+- The provider workspace route (`/provider`) is the canonical signed-in entry point for Discover providers.
+- The workspace presents account summary, application status, published profiles, attention items, and recent activity using business-facing labels only.
+- Provider workspace reads are authenticated by the Discover provider session only. They must not depend on onboarding draft tokens.
+- Successful provider login establishes an opaque server-side provider session and an HttpOnly cookie.
+- Provider workspace bootstrap must restore a valid provider session before rendering signed-out UI or redirecting to the provider login page.
+- Refreshing `/provider` or reopening the browser while the session remains valid must restore the same provider account without requiring a new OTP challenge.
+- Logout and switch-account actions must invalidate the active provider session and clear provider-scoped frontend state before returning to the provider login flow.
+- Provider session restoration must not change patient, platform-admin, or public Discover authentication behavior.
+
 ## Validation
 
 Each step reports missing fields. Submit is blocked until mandatory account, profile, location, service, document, and terms requirements are met.

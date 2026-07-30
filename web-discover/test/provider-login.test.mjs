@@ -64,6 +64,8 @@ test("provider login keeps auth state in memory and does not fake local login in
   const page = read("src/pages/provider/ProviderLoginPage.tsx");
   const api = read("src/api/providerAuth.ts");
   const workspace = read("src/pages/provider/ProviderWorkspacePage.tsx");
+  const app = read("src/App.tsx");
+  const sessionContext = read("src/context/ProviderSessionContext.tsx");
 
   assert.ok(!page.includes("sessionStorage"));
   assert.ok(!page.includes("localStorage"));
@@ -73,9 +75,15 @@ test("provider login keeps auth state in memory and does not fake local login in
   assert.ok(!page.includes("mock auth"));
   assert.ok(api.includes("cache: \"no-store\""));
   assert.ok(api.includes("credentials: \"include\""));
+  assert.ok(page.includes("const { status, refreshSession } = useProviderSession();"));
+  assert.ok(page.includes("const returnTo = searchParams.get(\"returnTo\")?.trim() || DISCOVER_ROUTES.providerWorkspace.path;"));
+  assert.ok(page.includes("await refreshSession(true);"));
+  assert.ok(page.includes("Restoring your provider session"));
+  assert.ok(app.includes("function ProviderProtectedRoute()"));
+  assert.ok(app.includes("return <Navigate replace to={`${DISCOVER_ROUTES.providerLogin.path}?returnTo=${encodeURIComponent(returnTo)}`} />;"));
+  assert.ok(sessionContext.includes("ex instanceof ProviderAuthError && ex.status === 401"));
   assert.ok(workspace.includes("async function endSession(targetPath: string)"));
-  assert.ok(workspace.includes("await logoutProviderSession();"));
-  assert.ok(workspace.includes("setWorkspace(null);"));
+  assert.ok(workspace.includes("await logout();"));
   assert.ok(workspace.includes("navigate(targetPath, { replace: true });"));
   assert.ok(workspace.includes("Switch account"));
 });

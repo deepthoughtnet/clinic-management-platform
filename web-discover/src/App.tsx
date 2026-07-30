@@ -1,9 +1,10 @@
 import { Component, type ErrorInfo, type ReactNode, useEffect, useState } from "react";
-import { Link, Navigate, NavLink, Route, Routes, useLocation, useParams } from "react-router-dom";
+import { Link, Navigate, NavLink, Outlet, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { discoverBrand } from "./branding";
 import { DiscoverEmptyState } from "./components/DiscoveryComponents";
 import { discoverConfig } from "./config";
 import { PublicLocationProvider } from "./context/PublicLocationContext";
+import { ProviderSessionProvider, useProviderSession } from "./context/ProviderSessionContext";
 import {
   PublicClinicDetailPage,
   PublicClinicsPage,
@@ -318,6 +319,46 @@ function LegacySpecialityRedirect() {
   return <Navigate replace to={`${DISCOVER_ROUTES.specialities.path}/${specialitySlug}${location.search}`} />;
 }
 
+function ProviderProtectedRoute() {
+  const location = useLocation();
+  const { status, error, refreshSession } = useProviderSession();
+
+  if (status === "idle" || status === "loading") {
+    return (
+      <section className="page-section provider-dashboard-page">
+        <div className="provider-dashboard-skeleton" role="status" aria-label="Restoring provider session">
+          <span />
+          <span />
+          <span />
+        </div>
+      </section>
+    );
+  }
+
+  if (status === "anonymous") {
+    const returnTo = `${location.pathname}${location.search}`;
+    return <Navigate replace to={`${DISCOVER_ROUTES.providerLogin.path}?returnTo=${encodeURIComponent(returnTo)}`} />;
+  }
+
+  if (status === "error") {
+    return (
+      <section className="page-section provider-dashboard-page">
+        <DiscoverEmptyState
+          icon="!"
+          title="We could not restore your provider session"
+          description={error ?? "Please try again."}
+          primaryAction="Try again"
+          primaryHref={window.location.href}
+          secondaryAction="Provider login"
+          secondaryTo={DISCOVER_ROUTES.providerLogin.path}
+        />
+      </section>
+    );
+  }
+
+  return <Outlet />;
+}
+
 function ProviderEntryPage() {
   const stages = [
     ["Create account", "Start with basic contact and practice information."],
@@ -419,8 +460,9 @@ function App() {
   return (
     <DiscoverErrorBoundary>
       <PublicLocationProvider>
-        <Shell>
-          <Routes>
+        <ProviderSessionProvider>
+          <Shell>
+        <Routes>
           <Route path={DISCOVER_ROUTES.home.path} element={<PublicHomePage />} />
           <Route path={DISCOVER_ROUTES.doctors.path} element={<PublicDoctorsPage />} />
           <Route path="/doctors" element={<LegacyRedirect to={DISCOVER_ROUTES.doctors.path} />} />
@@ -449,11 +491,13 @@ function App() {
           <Route path={DISCOVER_ROUTES.registerClinic.path} element={<ProviderOnboardingPage type="clinic" />} />
           <Route path={DISCOVER_ROUTES.registerHospital.path} element={<ProviderOnboardingPage type="hospital" />} />
         <Route path={DISCOVER_ROUTES.providerLogin.path} element={<ProviderLoginPage />} />
-        <Route path={DISCOVER_ROUTES.providerWorkspace.path} element={<ProviderWorkspacePage />} />
-        <Route path={DISCOVER_ROUTES.providerApplications.path} element={<Navigate to={DISCOVER_ROUTES.providerWorkspace.path} replace />} />
-        <Route path={DISCOVER_ROUTES.providerApplicationDashboard.path} element={<ProviderDashboardPage />} />
-        <Route path={DISCOVER_ROUTES.providerLandingPage.path} element={<ProviderLandingPagePage />} />
-        <Route path={DISCOVER_ROUTES.providerAccount.path} element={<ProviderWorkspacePage />} />
+        <Route element={<ProviderProtectedRoute />}>
+          <Route path={DISCOVER_ROUTES.providerWorkspace.path} element={<ProviderWorkspacePage />} />
+          <Route path={DISCOVER_ROUTES.providerApplications.path} element={<Navigate to={DISCOVER_ROUTES.providerWorkspace.path} replace />} />
+          <Route path={DISCOVER_ROUTES.providerApplicationDashboard.path} element={<ProviderDashboardPage />} />
+          <Route path={DISCOVER_ROUTES.providerLandingPage.path} element={<ProviderLandingPagePage />} />
+          <Route path={DISCOVER_ROUTES.providerAccount.path} element={<ProviderWorkspacePage />} />
+        </Route>
         <Route path="/provider/workspace" element={<Navigate to={DISCOVER_ROUTES.providerWorkspace.path} replace />} />
         <Route path="/provider/dashboard" element={<Navigate to={DISCOVER_ROUTES.providerWorkspace.path} replace />} />
         <Route path="/provider/landing-page" element={<Navigate to={DISCOVER_ROUTES.providerLandingPage.path} replace />} />
@@ -466,6 +510,7 @@ function App() {
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
         </Shell>
+        </ProviderSessionProvider>
       </PublicLocationProvider>
     </DiscoverErrorBoundary>
   );

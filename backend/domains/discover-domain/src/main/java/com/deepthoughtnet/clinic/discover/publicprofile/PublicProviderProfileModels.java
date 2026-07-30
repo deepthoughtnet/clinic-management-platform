@@ -186,4 +186,11 @@ public final class PublicProviderProfileModels {
             String service
     ) {
     }
+
+    public record PublicProfileMediaContent(
+            String contentType,
+            String originalFilename,
+            byte[] bytes
+    ) {
+    }
 }

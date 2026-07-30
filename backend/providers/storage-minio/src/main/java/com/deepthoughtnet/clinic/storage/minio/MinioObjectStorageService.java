@@ -138,7 +138,6 @@ public class MinioObjectStorageService implements ObjectStorageService {
 
         try {
             int expirySeconds = (int) ttl.getSeconds();
-
             return minioClient.getPresignedObjectUrl(
                     GetPresignedObjectUrlArgs.builder()
                             .method(Http.Method.GET)

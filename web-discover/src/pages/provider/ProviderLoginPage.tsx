@@ -1,10 +1,11 @@
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import {
   requestProviderLoginChallenge,
   verifyProviderLoginCode,
   type ProviderLoginChallengeResponse,
 } from "../../api/providerAuth";
+import { useProviderSession } from "../../context/ProviderSessionContext";
 import { DISCOVER_ROUTES } from "../../routes";
 
 type Step = "identifier" | "code";
@@ -80,6 +81,8 @@ function safeVerificationError(ex: unknown) {
 
 export function ProviderLoginPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const { status, refreshSession } = useProviderSession();
   const [step, setStep] = useState<Step>("identifier");
   const [identifier, setIdentifier] = useState("");
   const [code, setCode] = useState("");
@@ -150,6 +153,7 @@ export function ProviderLoginPage() {
   const canVerify = codeDigits.length === 6 && !!activeChallenge;
   const sending = loading && step === "identifier";
   const verifying = loading && step === "code";
+  const returnTo = searchParams.get("returnTo")?.trim() || DISCOVER_ROUTES.providerWorkspace.path;
   async function sendCode(event?: FormEvent) {
     event?.preventDefault();
     if (sendLockRef.current) {
@@ -206,13 +210,39 @@ export function ProviderLoginPage() {
     setError(null);
     try {
       await verifyProviderLoginCode(currentChallenge.challengeId, codeDigits);
-      navigate(DISCOVER_ROUTES.providerWorkspace.path, { replace: true });
+      await refreshSession(true);
+      navigate(returnTo, { replace: true });
     } catch (ex) {
       setError(safeVerificationError(ex));
     } finally {
       verifyLockRef.current = false;
       setLoading(false);
     }
+  }
+
+  if (status === "authenticated") {
+    return <Navigate replace to={returnTo} />;
+  }
+
+  if (status === "idle" || status === "loading") {
+    return (
+      <section className="page-section provider-auth-page">
+        <header className="provider-auth-hero">
+          <div className="provider-auth-heading">
+            <span className="eyebrow">Provider Login</span>
+            <h1>Restoring your provider session</h1>
+            <p>Checking whether you already have an active provider session.</p>
+          </div>
+        </header>
+        <article className="provider-auth-card">
+          <div className="provider-dashboard-skeleton" role="status" aria-label="Restoring provider session">
+            <span />
+            <span />
+            <span />
+          </div>
+        </article>
+      </section>
+    );
   }
 
   return (

@@ -51,6 +51,8 @@ test("phase 5 landing page builder routes and preview are wired", () => {
   assert.ok(renderer.includes("landing-avatar-image"));
   assert.ok(renderer.includes("landing-gallery-media"));
   assert.ok(imageHook.includes("fetchProviderDocumentBlob"));
+  assert.ok(imageHook.includes('resolved.pathname.startsWith("/api/public/")'));
+  assert.ok(imageHook.includes("if (isPublicApiImage(nextUrl))"));
   assert.ok(onboardingApi.includes("X-Provider-Onboarding-Token"));
   assert.ok(onboardingApi.includes("fetchProviderDocumentBlob"));
   assert.ok(styles.includes(".landing-page"));
