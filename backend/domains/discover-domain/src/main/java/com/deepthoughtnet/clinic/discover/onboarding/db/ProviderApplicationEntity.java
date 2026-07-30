@@ -161,6 +161,7 @@ public class ProviderApplicationEntity {
     public ProviderLifecycleStatus getStatus() { return status; }
     public void setStatus(ProviderLifecycleStatus status) { this.status = status; }
     public String getTokenHash() { return tokenHash; }
+    public void setTokenHash(String tokenHash) { this.tokenHash = tokenHash; }
     public String getEmail() { return email; }
     public void setEmail(String email) { this.email = email; }
     public String getPhone() { return phone; }

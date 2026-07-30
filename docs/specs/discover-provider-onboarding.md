@@ -41,6 +41,16 @@ Structured tables:
 
 No image bytes, browser URLs, or arbitrary HTML are stored in application rows. Uploaded files use the existing object storage abstraction and store metadata plus storage key.
 
+## Service Codes
+
+Provider service selections use the Discover reference catalog as the canonical source of truth.
+
+- Active selectable service codes are the `SERVICE` catalog rows from the discover reference catalog.
+- Provider onboarding persists canonical service codes, not UI labels.
+- Service display names are resolved from reference data at save time.
+- Historical legacy service codes may be normalized through migration, but new selections must use the active catalog codes.
+- Unsupported or inactive service selections are rejected by domain validation before persistence.
+
 ## API
 
 - `POST /api/provider-registration/providers`

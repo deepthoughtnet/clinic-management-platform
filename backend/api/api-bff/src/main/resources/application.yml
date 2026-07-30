@@ -25,7 +25,7 @@ spring:
     oauth2:
       resourceserver:
         jwt:
-          issuer-uri: http://localhost:8182/realms/clinic-management
+          issuer-uri: http://localhost:8182/auth/realms/clinic-management
 
   servlet:
     multipart:
@@ -186,6 +186,13 @@ clinic:
       expose-dev-otp: ${CLINIC_PATIENT_PORTAL_EXPOSE_DEV_OTP:false}
       session-secret: ${CLINIC_PATIENT_PORTAL_SESSION_SECRET:local-patient-portal-session-secret}
       session-ttl: ${CLINIC_PATIENT_PORTAL_SESSION_TTL:PT12H}
+  discover:
+    verification:
+      challenge-ttl: ${CLINIC_DISCOVER_VERIFICATION_CHALLENGE_TTL:PT5M}
+      resend-cooldown: ${CLINIC_DISCOVER_VERIFICATION_RESEND_COOLDOWN:PT60S}
+      max-attempts: ${CLINIC_DISCOVER_VERIFICATION_MAX_ATTEMPTS:5}
+      session-ttl: ${CLINIC_DISCOVER_VERIFICATION_SESSION_TTL:PT12H}
+      expose-development-code: ${CLINIC_DISCOVER_VERIFICATION_EXPOSE_DEVELOPMENT_CODE:false}
 
 aiva:
   response-composer:

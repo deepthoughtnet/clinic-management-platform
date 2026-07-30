@@ -15,6 +15,7 @@ import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.Pr
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.ProviderChangeRequestRecord;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.ProviderCompletionRecord;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.ProviderDashboardRecord;
+import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.ProviderOnboardingAccessRecord;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.ProviderPreviewRecord;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.ProviderReviewDetailRecord;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.ProviderReviewSummaryRecord;
@@ -41,7 +42,10 @@ import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderStatusHistoryEnt
 import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderStatusHistoryRepository;
 import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderSubmissionEntity;
 import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderSubmissionRepository;
+import com.deepthoughtnet.clinic.discover.reference.DiscoverReferenceDataService;
 import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService;
+import com.deepthoughtnet.clinic.discover.verification.DiscoverContactNormalizer;
+import com.deepthoughtnet.clinic.discover.verification.VerificationChannel;
 import com.deepthoughtnet.clinic.discover.verification.DiscoverVerificationService;
 import com.deepthoughtnet.clinic.discover.verification.VerificationChannel;
 import com.deepthoughtnet.clinic.discover.verification.VerificationChallengeRequest;
@@ -98,6 +102,7 @@ public class ProviderOnboardingService {
     private final ObjectMapper objectMapper;
     private final ProviderPublicProfileService publicProfileService;
     private final DiscoverVerificationService verificationService;
+    private final DiscoverReferenceDataService referenceDataService;
 
     public ProviderOnboardingService(
             ProviderApplicationRepository applications,
@@ -111,7 +116,8 @@ public class ProviderOnboardingService {
             ObjectStorageService storageService,
             ObjectMapper objectMapper,
             ProviderPublicProfileService publicProfileService,
-            DiscoverVerificationService verificationService
+            DiscoverVerificationService verificationService,
+            DiscoverReferenceDataService referenceDataService
     ) {
         this.applications = applications;
         this.locations = locations;
@@ -125,6 +131,7 @@ public class ProviderOnboardingService {
         this.objectMapper = objectMapper;
         this.publicProfileService = publicProfileService;
         this.verificationService = verificationService;
+        this.referenceDataService = referenceDataService;
     }
 
     @Transactional
@@ -143,8 +150,8 @@ public class ProviderOnboardingService {
                 referenceNumber(command.providerType(), id),
                 command.providerType(),
                 digest(token),
-                normalize(command.email()),
-                normalize(command.phone()),
+                normalizeEmail(command.email()),
+                normalizePhone(command.phone()),
                 digest(command.password()),
                 true,
                 true
@@ -152,7 +159,7 @@ public class ProviderOnboardingService {
         ProviderCompletionRecord completion = calculateCompletion(entity, List.of(), List.of(), List.of());
         entity.touch(completion.completionPercentage(), completion.currentStep());
         applications.saveAndFlush(entity);
-        contactVerifications.save(ProviderContactVerificationEntity.create(entity.getId(), normalize(command.email()), normalize(command.phone())));
+        contactVerifications.save(ProviderContactVerificationEntity.create(entity.getId(), normalizeEmail(command.email()), normalizePhone(command.phone())));
         history.save(new ProviderStatusHistoryEntity(entity.getId(), null, entity.getStatus(), "Draft created"));
         return toRecord(entity, token);
     }
@@ -173,6 +180,20 @@ public class ProviderOnboardingService {
     public ProviderDashboardRecord dashboard(String token) {
         ProviderApplicationEntity entity = requireByToken(token);
         return buildDashboard(entity);
+    }
+
+    @Transactional(readOnly = true)
+    public ProviderDashboardRecord dashboardForOwnedApplication(String referenceNumber, UUID providerAccountId) {
+        return buildDashboard(requireOwnedApplicationByReference(referenceNumber, providerAccountId));
+    }
+
+    @Transactional
+    public ProviderOnboardingAccessRecord issueOnboardingAccess(String referenceNumber, UUID providerAccountId) {
+        ProviderApplicationEntity entity = requireOwnedApplicationByReference(referenceNumber, providerAccountId);
+        String onboardingToken = newToken();
+        entity.setTokenHash(digest(onboardingToken));
+        applications.saveAndFlush(entity);
+        return new ProviderOnboardingAccessRecord(entity.getId(), onboardingToken);
     }
 
     @Transactional(readOnly = true)
@@ -209,8 +230,9 @@ public class ProviderOnboardingService {
             locations.saveAll(command.locations().stream().map(item -> toEntity(entity.getId(), item)).toList());
         }
         if (command.services() != null) {
+            List<ServiceCommand> normalizedServices = normalizeServices(entity, command.services());
             services.deleteByProviderId(entity.getId());
-            services.saveAll(command.services().stream().map(item -> toEntity(entity.getId(), item)).toList());
+            services.saveAll(normalizedServices.stream().map(item -> toEntity(entity, item)).toList());
         }
         syncContactVerification(entity);
 
@@ -317,6 +339,7 @@ public class ProviderOnboardingService {
         requireOwns(entity, token);
         ensureEditable(entity);
         verificationService.verifyChallenge(new VerificationVerificationRequest(
+                null,
                 id,
                 null,
                 VerificationPurpose.PROVIDER_REGISTRATION_EMAIL,
@@ -334,6 +357,7 @@ public class ProviderOnboardingService {
         requireOwns(entity, token);
         ensureEditable(entity);
         verificationService.verifyChallenge(new VerificationVerificationRequest(
+                null,
                 id,
                 null,
                 VerificationPurpose.PROVIDER_REGISTRATION_PHONE,
@@ -499,6 +523,9 @@ public class ProviderOnboardingService {
         List<ProviderServiceEntity> serviceRecords = currentServices(entity.getId());
         List<ProviderDocumentEntity> documentRecords = documents.findByProviderIdOrderByUploadedAtDesc(entity.getId());
         ProviderCompletionRecord completion = calculateCompletion(entity, locationRecords, serviceRecords, documentRecords);
+        if (!referenceDataService.isAvailableForSubmission(entity.getProviderType())) {
+            throw new IllegalStateException("REFERENCE_DATA_UNAVAILABLE");
+        }
         if (!completion.canSubmit()) {
             throw new IllegalStateException("Cannot submit until required fields are complete: " + String.join(", ", completion.blockingErrors()));
         }
@@ -534,8 +561,8 @@ public class ProviderOnboardingService {
         if (command == null) {
             return;
         }
-        if (StringUtils.hasText(command.email())) entity.setEmail(normalize(command.email()));
-        if (StringUtils.hasText(command.phone())) entity.setPhone(normalize(command.phone()));
+        if (StringUtils.hasText(command.email())) entity.setEmail(normalizeEmail(command.email()));
+        if (StringUtils.hasText(command.phone())) entity.setPhone(normalizePhone(command.phone()));
         if (command.contactVerified() != null) entity.setContactVerified(command.contactVerified());
         if (command.termsAccepted() != null) entity.setTermsAccepted(command.termsAccepted());
         if (command.privacyAccepted() != null) entity.setPrivacyAccepted(command.privacyAccepted());
@@ -608,26 +635,33 @@ public class ProviderOnboardingService {
         };
         boolean documentsComplete = missingDocuments.isEmpty();
         boolean previewReady = accountComplete && profileComplete && detailsComplete && servicesComplete && locationsComplete && brandingComplete && documentsComplete;
-        boolean canSubmit = previewReady && missingFields.isEmpty() && missingDocuments.isEmpty() && !isReadOnly(entity.getStatus());
+        boolean referenceDataAvailable = referenceDataService.isAvailableForSubmission(entity.getProviderType());
+        boolean canSubmit = previewReady && missingFields.isEmpty() && missingDocuments.isEmpty() && referenceDataAvailable && !isReadOnly(entity.getStatus());
 
         List<StepState> steps = List.of(
-                new StepState("ACCOUNT", "Account and contact", accountComplete),
-                new StepState("PROFILE", "Provider profile", profileComplete),
-                new StepState(entity.getProviderType() == ProviderType.INDIVIDUAL_DOCTOR ? "PROFESSIONAL_DETAILS" : "ORGANISATION_DETAILS", entity.getProviderType() == ProviderType.INDIVIDUAL_DOCTOR ? "Professional details" : "Organisation details", detailsComplete),
-                new StepState("SERVICES", "Services and specialities", servicesComplete),
-                new StepState("LOCATIONS", "Locations and working hours", locationsComplete),
-                new StepState("BRANDING", "Branding and media", brandingComplete),
-                new StepState("DOCUMENTS", "Verification documents", documentsComplete),
-                new StepState("PREVIEW", "Profile preview", previewReady),
-                new StepState("REVIEW", "Review and submit", canSubmit)
+                new StepState("ACCOUNT", "Account and contact", accountComplete, 10),
+                new StepState("PROFILE", "Provider profile", profileComplete, 15),
+                new StepState(entity.getProviderType() == ProviderType.INDIVIDUAL_DOCTOR ? "PROFESSIONAL_DETAILS" : "ORGANISATION_DETAILS", entity.getProviderType() == ProviderType.INDIVIDUAL_DOCTOR ? "Professional details" : "Organisation details", detailsComplete, 20),
+                new StepState("SERVICES", "Services and specialities", servicesComplete, 15),
+                new StepState("LOCATIONS", "Locations and working hours", locationsComplete, 15),
+                new StepState("BRANDING", "Branding and media", brandingComplete, 10),
+                new StepState("DOCUMENTS", "Verification documents", documentsComplete, 10),
+                new StepState("PREVIEW", "Profile preview", previewReady, 5),
+                new StepState("REVIEW", "Review and submit", canSubmit, 0)
         );
 
         List<String> completedSteps = steps.stream().filter(StepState::complete).map(StepState::label).toList();
         List<String> incompleteSteps = steps.stream().filter(step -> !step.complete()).map(StepState::label).toList();
         String recommendedNextStep = incompleteSteps.isEmpty() ? "Review and submit" : incompleteSteps.get(0);
-        int completionPercent = (int) Math.round((completedSteps.size() * 100.0) / steps.size());
+        int completionPercent = steps.stream()
+                .filter(StepState::complete)
+                .mapToInt(StepState::weight)
+                .sum();
         List<String> blockingErrors = new ArrayList<>(missingFields);
         blockingErrors.addAll(missingDocuments);
+        if (!referenceDataAvailable) {
+            blockingErrors.add("REFERENCE_DATA_UNAVAILABLE");
+        }
         List<String> warnings = new ArrayList<>();
         if (!entity.isContactVerified()) {
             warnings.add("CONTACT_VERIFICATION_PENDING");
@@ -982,8 +1016,15 @@ public class ProviderOnboardingService {
         );
     }
 
-    private ProviderServiceEntity toEntity(UUID providerId, ServiceCommand command) {
-        return new ProviderServiceEntity(command.id(), providerId, command.serviceType(), normalize(command.label()), normalizeNullable(command.description()), command.enabled() == null || command.enabled());
+    private ProviderServiceEntity toEntity(ProviderApplicationEntity entity, ServiceCommand command) {
+        return new ProviderServiceEntity(
+                command.id(),
+                entity.getId(),
+                command.serviceType(),
+                referenceDataService.requireService(entity.getProviderType(), command.serviceType()).displayName(),
+                normalizeNullable(command.description()),
+                command.enabled() == null || command.enabled()
+        );
     }
 
     private LocationRecord toLocation(ProviderLocationEntity entity) {
@@ -1201,6 +1242,19 @@ public class ProviderOnboardingService {
         return services.findByProviderIdOrderByLabelAsc(providerId);
     }
 
+    private List<ServiceCommand> normalizeServices(ProviderApplicationEntity entity, List<ServiceCommand> commands) {
+        LinkedHashMap<String, ServiceCommand> uniqueByType = new LinkedHashMap<>();
+        for (ServiceCommand command : commands) {
+            if (command == null) {
+                continue;
+            }
+            require(command.serviceType() != null, "serviceType is required");
+            referenceDataService.requireService(entity.getProviderType(), command.serviceType());
+            uniqueByType.put(command.serviceType().name(), command);
+        }
+        return new ArrayList<>(uniqueByType.values());
+    }
+
     private String locationSummary(List<ProviderLocationEntity> records) {
         return records.isEmpty() ? "Location details pending" : records.get(0).getCity() + ", " + records.get(0).getState();
     }
@@ -1299,6 +1353,25 @@ public class ProviderOnboardingService {
         return value.trim();
     }
 
+    private ProviderApplicationEntity requireOwnedApplicationByReference(String referenceNumber, UUID providerAccountId) {
+        if (providerAccountId == null) {
+            throw new IllegalArgumentException("provider account is required");
+        }
+        return applications.findByReferenceNumberAndProviderAccountId(normalize(referenceNumber), providerAccountId)
+                .orElseThrow(() -> new IllegalArgumentException("provider application not found"));
+    }
+
+    private String normalizeEmail(String value) {
+        if (!StringUtils.hasText(value)) throw new IllegalArgumentException("required text is missing");
+        return value.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private String normalizePhone(String value) {
+        String normalized = DiscoverContactNormalizer.normalizeRecipient(value, VerificationChannel.SMS);
+        if (!StringUtils.hasText(normalized)) throw new IllegalArgumentException("Phone is required");
+        return normalized;
+    }
+
     private String normalizeNullable(String value) {
         return StringUtils.hasText(value) ? value.trim() : null;
     }
@@ -1339,7 +1412,7 @@ public class ProviderOnboardingService {
         }
     }
 
-    private record StepState(String code, String label, boolean complete) {
+    private record StepState(String code, String label, boolean complete, int weight) {
     }
 
 }

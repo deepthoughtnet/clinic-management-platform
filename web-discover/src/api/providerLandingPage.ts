@@ -128,6 +128,7 @@ export type LandingProfile = {
 export type LandingPageResponse = {
   providerId: string;
   providerType: LandingProviderType;
+  applicationStatus: "DRAFT" | "CONTACT_VERIFIED" | "PROFILE_INCOMPLETE" | "READY_FOR_REVIEW" | "SUBMITTED" | "UNDER_REVIEW" | "CHANGES_REQUESTED" | "APPROVED" | "PUBLISHED" | "SUSPENDED" | "ARCHIVED";
   displayName: string;
   canonicalSlug: string;
   publicPath: string;

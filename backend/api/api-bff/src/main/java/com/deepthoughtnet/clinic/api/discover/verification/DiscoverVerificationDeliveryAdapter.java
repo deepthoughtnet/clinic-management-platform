@@ -15,10 +15,11 @@ import com.deepthoughtnet.clinic.messaging.spi.MessageResult;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
-import org.springframework.util.StringUtils;
 
 @Service
 public class DiscoverVerificationDeliveryAdapter implements VerificationDeliveryPort {
+    private static final String UNAVAILABLE_MESSAGE = "Verification service is temporarily unavailable. Please try again later.";
+
     private final DiscoverVerificationProperties properties;
     private final MessagingProviderRegistry providerRegistry;
 
@@ -64,8 +65,7 @@ public class DiscoverVerificationDeliveryAdapter implements VerificationDelivery
                     "Verification code sent."
             );
         }
-        String message = StringUtils.hasText(result.errorMessage()) ? result.errorMessage() : "Verification provider is not available.";
-        return VerificationDeliveryResult.unavailable(result.providerName(), message);
+        return VerificationDeliveryResult.unavailable(result.providerName(), UNAVAILABLE_MESSAGE);
     }
 
     private MessageChannel toMessageChannel(VerificationChannel channel) {

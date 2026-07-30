@@ -1,9 +1,16 @@
 import { discoverConfig } from "../config";
 import type { ProviderStatus, ProviderType } from "./providerOnboarding";
+import type { ProviderDashboard } from "./providerOnboarding";
 
 export type ProviderLoginChallengeResponse = {
+  challengeId: string;
+  channel: "EMAIL" | "SMS" | string;
+  maskedRecipient: string | null;
   message: string;
   developmentCode: string | null;
+  verificationMode?: "LOCAL" | "PRODUCTION" | string | null;
+  expiresAt: string;
+  resendAvailableAt: string;
   expiresInSeconds: number;
   resendAfterSeconds: number;
   providerName?: string | null;
@@ -12,7 +19,6 @@ export type ProviderLoginChallengeResponse = {
 
 export type ProviderLoginVerifyResponse = {
   verified: boolean;
-  providerAccountId: string | null;
   sessionExpiresAt: string | null;
   message: string;
 };
@@ -32,8 +38,16 @@ export type ProviderWorkspaceApplication = {
 };
 
 export type ProviderWorkspaceResponse = {
-  providerAccountId: string;
+  contactEmail: string | null;
+  contactPhone: string | null;
+  emailVerifiedAt: string | null;
+  phoneVerifiedAt: string | null;
   applications: ProviderWorkspaceApplication[];
+};
+
+export type ProviderOnboardingAccessResponse = {
+  applicationId: string;
+  onboardingToken: string;
 };
 
 function buildUrl(path: string) {
@@ -44,22 +58,17 @@ async function parseError(response: Response) {
   const fallback = `Request failed with status ${response.status}`;
   try {
     const body = (await response.json()) as { message?: string };
-    return body.message ?? fallback;
+    const message = body.message ?? fallback;
+    if (typeof message === "string" && /carepilot|enabled=false|not configured|providerName|deliveryReference|verificationMode/i.test(message)) {
+      return "Verification service is temporarily unavailable. Please try again later.";
+    }
+    return message;
   } catch {
     return fallback;
   }
 }
 
-async function request<T>(path: string, method: "GET" | "POST", body?: unknown): Promise<T> {
-  const response = await fetch(buildUrl(path), {
-    method,
-    credentials: "include",
-    headers: {
-      Accept: "application/json",
-      ...(body ? { "Content-Type": "application/json" } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+async function parseResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     throw new Error(await parseError(response));
   }
@@ -69,12 +78,26 @@ async function request<T>(path: string, method: "GET" | "POST", body?: unknown):
   return response.json() as Promise<T>;
 }
 
-export function requestProviderLoginChallenge(identifier: string) {
-  return request<ProviderLoginChallengeResponse>("/api/provider/auth/request", "POST", { identifier });
+async function request<T>(path: string, method: "GET" | "POST", body?: unknown): Promise<T> {
+  const response = await fetch(buildUrl(path), {
+    method,
+    cache: "no-store",
+    credentials: "include",
+    headers: {
+      Accept: "application/json",
+      ...(body ? { "Content-Type": "application/json" } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  return parseResponse<T>(response);
 }
 
-export function verifyProviderLoginCode(identifier: string, code: string) {
-  return request<ProviderLoginVerifyResponse>("/api/provider/auth/verify", "POST", { identifier, code });
+export function requestProviderLoginChallenge(identifier: string) {
+  return request<ProviderLoginChallengeResponse>("/api/provider/auth/challenges", "POST", { identifier });
+}
+
+export function verifyProviderLoginCode(challengeId: string, code: string) {
+  return request<ProviderLoginVerifyResponse>(`/api/provider/auth/challenges/${challengeId}/verify`, "POST", { code });
 }
 
 export function loadProviderWorkspace() {
@@ -83,6 +106,14 @@ export function loadProviderWorkspace() {
 
 export function loadProviderApplications() {
   return request<ProviderWorkspaceApplication[]>("/api/provider/applications", "GET");
+}
+
+export function loadProviderApplicationDashboard(applicationReference: string) {
+  return request<ProviderDashboard>(`/api/provider/applications/${encodeURIComponent(applicationReference)}/dashboard`, "GET");
+}
+
+export function createProviderOnboardingAccess(applicationReference: string) {
+  return request<ProviderOnboardingAccessResponse>(`/api/provider/applications/${encodeURIComponent(applicationReference)}/onboarding-access`, "POST");
 }
 
 export function logoutProviderSession() {

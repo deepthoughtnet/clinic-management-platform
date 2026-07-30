@@ -77,9 +77,9 @@ const routeMeta: Record<string, { title: string; description: string }> = {
     title: "Login | Jeevanam Discover",
     description: "Choose Jeevanam Care for patients or Jeevanam Healthcare for clinic and hospital teams.",
   },
-  [DISCOVER_ROUTES.providerDashboard.path]: {
-    title: "Provider Dashboard | Jeevanam Discover",
-    description: "Continue your provider onboarding, review status, and submit your public profile.",
+  [DISCOVER_ROUTES.providerApplications.path]: {
+    title: "Provider Applications | Jeevanam Discover",
+    description: "Review your provider applications and continue onboarding where needed.",
   },
   [DISCOVER_ROUTES.providerLogin.path]: {
     title: "Provider Login | Jeevanam Discover",
@@ -90,8 +90,12 @@ const routeMeta: Record<string, { title: string; description: string }> = {
     description: "View your provider applications and public profiles.",
   },
   [DISCOVER_ROUTES.providerLandingPage.path]: {
-    title: "Landing Page Builder | Jeevanam Discover",
-    description: "Configure structured sections, themes, and published landing-page versions.",
+    title: "Provider Profiles | Jeevanam Discover",
+    description: "Configure your profile, landing page, and publication setup.",
+  },
+  [DISCOVER_ROUTES.providerAccount.path]: {
+    title: "Account & Security | Jeevanam Discover",
+    description: "Review your provider session and account details.",
   },
 };
 
@@ -444,10 +448,15 @@ function App() {
           <Route path={DISCOVER_ROUTES.registerDoctor.path} element={<ProviderOnboardingPage type="doctor" />} />
           <Route path={DISCOVER_ROUTES.registerClinic.path} element={<ProviderOnboardingPage type="clinic" />} />
           <Route path={DISCOVER_ROUTES.registerHospital.path} element={<ProviderOnboardingPage type="hospital" />} />
-        <Route path={DISCOVER_ROUTES.providerDashboard.path} element={<ProviderDashboardPage />} />
         <Route path={DISCOVER_ROUTES.providerLogin.path} element={<ProviderLoginPage />} />
         <Route path={DISCOVER_ROUTES.providerWorkspace.path} element={<ProviderWorkspacePage />} />
+        <Route path={DISCOVER_ROUTES.providerApplications.path} element={<Navigate to={DISCOVER_ROUTES.providerWorkspace.path} replace />} />
+        <Route path={DISCOVER_ROUTES.providerApplicationDashboard.path} element={<ProviderDashboardPage />} />
         <Route path={DISCOVER_ROUTES.providerLandingPage.path} element={<ProviderLandingPagePage />} />
+        <Route path={DISCOVER_ROUTES.providerAccount.path} element={<ProviderWorkspacePage />} />
+        <Route path="/provider/workspace" element={<Navigate to={DISCOVER_ROUTES.providerWorkspace.path} replace />} />
+        <Route path="/provider/dashboard" element={<Navigate to={DISCOVER_ROUTES.providerWorkspace.path} replace />} />
+        <Route path="/provider/landing-page" element={<Navigate to={DISCOVER_ROUTES.providerLandingPage.path} replace />} />
           <Route path="/provider/onboarding/:applicationId/:step" element={<ProviderOnboardingPage />} />
           <Route path={DISCOVER_ROUTES.login.path} element={<LoginChooserPage />} />
           <Route path={DISCOVER_ROUTES.about.path} element={<ShellPage eyebrow="About" title="About Jeevanam." body="Jeevanam connects public discovery, patient care access, and healthcare operations through focused applications." ctaLabel="Find Care" ctaTo={`${DISCOVER_ROUTES.home.path}#find-care`} />} />

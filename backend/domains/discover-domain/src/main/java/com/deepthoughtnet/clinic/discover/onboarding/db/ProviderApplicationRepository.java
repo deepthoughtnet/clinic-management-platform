@@ -10,8 +10,10 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface ProviderApplicationRepository extends JpaRepository<ProviderApplicationEntity, UUID> {
     Optional<ProviderApplicationEntity> findByTokenHash(String tokenHash);
     Optional<ProviderApplicationEntity> findByReferenceNumber(String referenceNumber);
+    Optional<ProviderApplicationEntity> findByReferenceNumberAndProviderAccountId(String referenceNumber, UUID providerAccountId);
     List<ProviderApplicationEntity> findByStatusIn(Collection<ProviderLifecycleStatus> statuses);
     List<ProviderApplicationEntity> findByProviderAccountIdOrderByUpdatedAtDesc(UUID providerAccountId);
+    List<ProviderApplicationEntity> findByProviderAccountIdIsNotNullOrderByUpdatedAtDesc();
     List<ProviderApplicationEntity> findByEmailIgnoreCase(String email);
     List<ProviderApplicationEntity> findByPhoneIgnoreCase(String phone);
 }

@@ -59,6 +59,7 @@ export function ProviderMultiSelectField({
   loading = false,
   noOptionsText,
   disabled = false,
+  allowCustomValues = false,
 }: {
   label: string;
   helperText?: string;
@@ -70,6 +71,7 @@ export function ProviderMultiSelectField({
   loading?: boolean;
   noOptionsText?: string;
   disabled?: boolean;
+  allowCustomValues?: boolean;
 }) {
   const selectedValues = value
     .map((item) => options.find((option) => option.value === item) ?? { value: item, label: item })
@@ -79,18 +81,19 @@ export function ProviderMultiSelectField({
     <Autocomplete
       className="provider-autocomplete"
       multiple
+      freeSolo={allowCustomValues}
       disableCloseOnSelect
       loading={loading}
       disabled={disabled}
       options={options}
       value={selectedValues}
       isOptionEqualToValue={(option, current) => option.value === current.value}
-      getOptionLabel={(option) => option.label}
+      getOptionLabel={(option) => typeof option === "string" ? option : option.label}
       filterSelectedOptions
       noOptionsText={noOptionsText ?? "No options match your search"}
-      onChange={(_, next) => onChange(next.map((item) => item.value))}
+      onChange={(_, next) => onChange(next.map((item) => typeof item === "string" ? item : item.value))}
       renderTags={(tagValue, getTagProps) =>
-        tagValue.map((option, index) => (
+        (tagValue as ProviderOption[]).map((option, index) => (
           <Chip
             {...getTagProps({ index })}
             key={option.value}

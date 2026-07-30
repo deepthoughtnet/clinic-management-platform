@@ -24,6 +24,20 @@ Out of scope:
 - Healthcare tenant user management
 - unrelated provider approval, map, branding, or document-review changes
 
+## Temporary Local/UAT Development Access
+
+Until the provider OTP login defect is resolved, Discover may expose a separate Local/UAT-only provider-access path for development continuity.
+
+Constraints:
+
+- the path is additive and temporary
+- it must not replace or weaken the OTP challenge flow
+- it must be explicitly gated by configuration and a non-production environment/profile check
+- it must reuse the normal Discover provider session mechanism
+- it must not mark contacts verified, create verification challenges, or alter ownership linkage
+- it must resolve only existing provider-account-linked applications through stable business references
+- it must be unavailable in production startup/runtime behavior
+
 ## Ownership
 
 - Owning bounded context: Discover
@@ -107,6 +121,37 @@ Local/UAT:
 - a separate provider login flow for email or phone OTP
 - a minimal provider workspace after login
 
+## Stage 1 Identity Correction Constraints
+
+The first correction stage for provider identity is limited to:
+
+- OTP challenge consistency for provider login
+- provider-account resolution after successful challenge verification
+- provider session replacement on new login
+- backend-enforced provider-application ownership
+- account-scoped provider workspace reads
+
+This stage must not modify the onboarding workflow, onboarding UI structure, autosave, draft resume, review, approval, or publication behavior.
+
+Provider login resolution rules:
+
+- the verified challenge remains the source of truth for the authenticated contact
+- the resolved provider account must be derived from the verified normalized contact and explicit ownership linkage
+- login must not fall back to the first account, latest application, cached application, or browser-local state
+- phone and email for the same owner must resolve the same provider account only when explicit verified linkage exists
+- different owners must not share workspace data
+
+Session rules:
+
+- a successful login replaces the previous provider session for that browser session
+- logout and switch-account flows must invalidate the provider session and clear account-scoped frontend state
+
+Workspace rules:
+
+- workspace responses are built from authenticated `providerAccountId`
+- provider application queries must be filtered by explicit ownership
+- frontend must fetch fresh workspace data after account changes and must not reuse prior account data
+
 ## Validation Expectations
 
 Backend validation must verify:
@@ -154,4 +199,3 @@ Required tests for implementation:
 - `web-discover/src/pages/provider/ProviderLoginPage.tsx`
 - `web-discover/src/pages/provider/ProviderWorkspacePage.tsx`
 - `web-discover/src/pages/provider/ProviderOnboardingPage.tsx`
-

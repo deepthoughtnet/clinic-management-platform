@@ -14,14 +14,15 @@ export type ProviderStatus =
   | "SUSPENDED"
   | "ARCHIVED";
 export type ProviderServiceType =
-  | "CONSULTATIONS"
-  | "VACCINATION"
-  | "LAB"
-  | "RADIOLOGY"
+  | "CONSULTATION"
   | "TELECONSULTATION"
-  | "PHARMACY"
   | "HEALTH_CHECKUPS"
-  | "PROCEDURES";
+  | "VACCINATION"
+  | "MINOR_PROCEDURES"
+  | "HOME_VISIT"
+  | "LAB_COLLECTION"
+  | "CHRONIC_DISEASE_MANAGEMENT"
+  | "PREVENTIVE_CARE";
 export type ProviderDocumentType =
   | "LOGO"
   | "COVER_IMAGE"

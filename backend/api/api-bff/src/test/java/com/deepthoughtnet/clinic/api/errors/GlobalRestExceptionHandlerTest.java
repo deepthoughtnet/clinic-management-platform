@@ -7,6 +7,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityConflictException;
+import com.deepthoughtnet.clinic.discover.reference.InvalidReferenceValueException;
 import com.deepthoughtnet.clinic.prescription.service.model.Timing;
 import com.deepthoughtnet.clinic.platform.core.errors.UnauthorizedException;
 import jakarta.validation.Valid;
@@ -119,6 +120,18 @@ class GlobalRestExceptionHandlerTest {
                 .andExpect(jsonPath("$.correlationId").value("corr-json"));
     }
 
+    @Test
+    void formatsInvalidReferenceValuesWithValidationEnvelope() throws Exception {
+        mockMvc.perform(get("/invalid-reference")
+                        .header("X-Correlation-Id", "corr-ref"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.status").value(422))
+                .andExpect(jsonPath("$.code").value("INVALID_REFERENCE_VALUE"))
+                .andExpect(jsonPath("$.field").value("services"))
+                .andExpect(jsonPath("$.message").value("Selected service is not available for this provider type."))
+                .andExpect(jsonPath("$.correlationId").value("corr-ref"));
+    }
+
     @RestController
     static class TestController {
         @PostMapping("/validation")
@@ -147,6 +160,11 @@ class GlobalRestExceptionHandlerTest {
 
         @PostMapping("/json-mapping")
         void jsonMapping(@RequestBody JsonMappingPayload payload) {
+        }
+
+        @GetMapping("/invalid-reference")
+        void invalidReference() {
+            throw new InvalidReferenceValueException("services", "Selected service is not available for this provider type.");
         }
     }
 

@@ -1,5 +1,6 @@
 import { type ChangeEvent, type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { AssignmentOutlined, CheckCircleOutlined, DirectionsCarOutlined, LanguageOutlined, MedicalServicesOutlined, PaletteOutlined, PlaceOutlined, SchoolOutlined } from "@mui/icons-material";
 import {
   createProviderApplication,
   loadProviderChangeRequests,
@@ -23,7 +24,7 @@ import {
   type ProviderStatus,
   type ProviderType,
 } from "../../api/providerOnboarding";
-import { fetchPublicJson, type PublicSpecialitySummaryResponse } from "../../api/publicCatalog";
+import { loadDiscoverReferenceCatalog, type DiscoverReferenceCatalog, type DiscoverReferenceOption } from "../../api/referenceData";
 import { DISCOVER_ROUTES, REGISTRATION_PROVIDER_TYPE_BY_ROUTE } from "../../routes";
 import { careBookingUrl } from "../../components/DiscoveryComponents";
 import { PublicMediaImage } from "../../components/landing/PublicMediaImage";
@@ -57,6 +58,27 @@ type VerificationCodeState = {
   devCode: string | null;
 };
 
+type ProviderOnboardingConfig = {
+  title: string;
+  eyebrow: string;
+  nameLabel: string;
+  registrationLabel: string;
+  specialityLabel: string;
+  specialityRequired: boolean;
+  showSpecialities: boolean;
+  showDepartments: boolean;
+  showMedicalCouncil: boolean;
+  showQualification: boolean;
+  showExperience: boolean;
+  showMedicalDirector: boolean;
+  showBeds: boolean;
+  showEmergencyAvailable: boolean;
+  showOwnership: boolean;
+  showOrganisationType: boolean;
+  showHospitalType: boolean;
+  brandingAssetLabel: string;
+};
+
 const ownershipOptions = [
   "Private",
   "Government",
@@ -68,35 +90,106 @@ const ownershipOptions = [
   "Clinic Chain",
 ];
 
-const languageOptions = [
-  "English",
-  "Hindi",
-  "Marathi",
-  "Gujarati",
-  "Bengali",
-  "Tamil",
-  "Telugu",
-  "Kannada",
-  "Malayalam",
-  "Punjabi",
-  "Urdu",
-];
+const providerTypeConfig: Record<ProviderType, ProviderOnboardingConfig> = {
+  INDIVIDUAL_DOCTOR: {
+    title: "Create your public doctor profile",
+    eyebrow: "Doctor onboarding",
+    nameLabel: "Doctor name",
+    registrationLabel: "Medical registration number",
+    specialityLabel: "Primary speciality",
+    specialityRequired: true,
+    showSpecialities: true,
+    showDepartments: false,
+    showMedicalCouncil: true,
+    showQualification: true,
+    showExperience: true,
+    showMedicalDirector: false,
+    showBeds: false,
+    showEmergencyAvailable: false,
+    showOwnership: false,
+    showOrganisationType: false,
+    showHospitalType: false,
+    brandingAssetLabel: "Doctor photo",
+  },
+  CLINIC: {
+    title: "Create your clinic profile",
+    eyebrow: "Clinic onboarding",
+    nameLabel: "Clinic name",
+    registrationLabel: "Clinic registration number",
+    specialityLabel: "Primary speciality",
+    specialityRequired: false,
+    showSpecialities: true,
+    showDepartments: false,
+    showMedicalCouncil: false,
+    showQualification: false,
+    showExperience: false,
+    showMedicalDirector: false,
+    showBeds: false,
+    showEmergencyAvailable: false,
+    showOwnership: true,
+    showOrganisationType: true,
+    showHospitalType: false,
+    brandingAssetLabel: "Logo",
+  },
+  HOSPITAL: {
+    title: "Create your hospital profile",
+    eyebrow: "Hospital onboarding",
+    nameLabel: "Hospital name",
+    registrationLabel: "Hospital registration number",
+    specialityLabel: "Primary speciality",
+    specialityRequired: false,
+    showSpecialities: false,
+    showDepartments: true,
+    showMedicalCouncil: false,
+    showQualification: false,
+    showExperience: false,
+    showMedicalDirector: true,
+    showBeds: true,
+    showEmergencyAvailable: true,
+    showOwnership: true,
+    showOrganisationType: false,
+    showHospitalType: true,
+    brandingAssetLabel: "Logo",
+  },
+};
 
-const facilityOptions = [
-  "Parking",
-  "Pharmacy",
-  "Wheelchair Access",
-  "Vaccination",
-  "Sample Collection",
-  "Emergency",
-  "Digital Payments",
-  "Waiting Area",
-  "WiFi",
-  "Lift",
-  "Air Conditioning",
-];
+function optionMatchesProviderType(option: DiscoverReferenceOption, providerType: ProviderType) {
+  return option.active && (option.providerTypes.length === 0 || option.providerTypes.includes(providerType));
+}
 
-const specialityCache = new Map<string, string[]>();
+function toOptionItems(options: DiscoverReferenceOption[], providerType: ProviderType) {
+  return options
+    .filter((option) => optionMatchesProviderType(option, providerType))
+    .sort((left, right) => left.displayOrder - right.displayOrder || left.displayName.localeCompare(right.displayName))
+    .map((option) => ({ value: option.displayName, label: option.displayName }));
+}
+
+function toServiceItems(options: DiscoverReferenceOption[], providerType: ProviderType) {
+  return options
+    .filter((option) => optionMatchesProviderType(option, providerType))
+    .sort((left, right) => left.displayOrder - right.displayOrder || left.displayName.localeCompare(right.displayName))
+    .map((option) => ({ type: option.code as ProviderServiceType, label: option.displayName }));
+}
+
+function optionNames(options: DiscoverReferenceOption[], providerType: ProviderType) {
+  return toOptionItems(options, providerType).map((item) => item.value.toLowerCase());
+}
+
+function hasReferenceData(options: DiscoverReferenceOption[], providerType: ProviderType) {
+  return toOptionItems(options, providerType).length > 0;
+}
+
+function emptyReferenceCatalog(): DiscoverReferenceCatalog {
+  return {
+    specialities: [],
+    services: [],
+    facilities: [],
+    languages: [],
+    countries: [],
+    states: [],
+    medicalCouncils: [],
+  };
+}
 
 const steps = [
   ["account", "Account"],
@@ -109,43 +202,13 @@ const steps = [
   ["submit", "Submit"],
 ] as const;
 
-const serviceOptions: Array<{ type: ProviderServiceType; label: string }> = [
-  { type: "CONSULTATIONS", label: "Consultations" },
-  { type: "VACCINATION", label: "Vaccination" },
-  { type: "LAB", label: "Lab" },
-  { type: "RADIOLOGY", label: "Radiology" },
-  { type: "TELECONSULTATION", label: "Teleconsultation" },
-  { type: "PHARMACY", label: "Pharmacy" },
-  { type: "HEALTH_CHECKUPS", label: "Health Checkups" },
-  { type: "PROCEDURES", label: "Procedures" },
-];
+type ProviderOnboardingStepId = (typeof steps)[number][0];
 
-const EDITABLE_PROVIDER_STATUSES: ProviderStatus[] = ["DRAFT", "CHANGES_REQUESTED"];
+const READ_ONLY_PROVIDER_STATUSES: ProviderStatus[] = ["SUBMITTED", "UNDER_REVIEW", "APPROVED", "PUBLISHED", "SUSPENDED", "ARCHIVED"];
 
 function isApplicationEditable(status: ProviderStatus | undefined) {
-  return Boolean(status && EDITABLE_PROVIDER_STATUSES.includes(status));
+  return Boolean(status && !READ_ONLY_PROVIDER_STATUSES.includes(status));
 }
-
-const typeCopy = {
-  INDIVIDUAL_DOCTOR: {
-    eyebrow: "Doctor onboarding",
-    title: "Create your public doctor profile",
-    nameLabel: "Doctor name",
-    registrationLabel: "Medical registration number",
-  },
-  CLINIC: {
-    eyebrow: "Clinic onboarding",
-    title: "Create your clinic profile",
-    nameLabel: "Clinic name",
-    registrationLabel: "Clinic registration number",
-  },
-  HOSPITAL: {
-    eyebrow: "Hospital onboarding",
-    title: "Create your hospital profile",
-    nameLabel: "Hospital name",
-    registrationLabel: "Hospital registration number",
-  },
-} satisfies Record<ProviderType, { eyebrow: string; title: string; nameLabel: string; registrationLabel: string }>;
 
 function blankDraft(providerType: ProviderType): ProviderApplicationPayload {
   return {
@@ -258,11 +321,14 @@ type ProviderFieldErrors = Partial<Record<
   | "facilities"
   | "biography"
   | "organisationType"
+  | "hospitalType"
   | "qualification"
   | "medicalCouncil"
   | "yearsOfExperience"
   | "beds"
   | "medicalDirector"
+  | "emergencyAvailable"
+  | "departments"
   | "locations"
   | "services"
   | "documents"
@@ -272,6 +338,18 @@ type ProviderFieldErrors = Partial<Record<
   string
 >>;
 
+type ProviderAccountCompletionInput = Pick<AccountStepValues, "email" | "phone" | "termsAccepted" | "privacyAccepted">;
+type PreviewChecklistItem = {
+  label: string;
+  step: ProviderOnboardingStepId;
+  detail?: string;
+};
+type PreviewGalleryItem = {
+  url: string;
+  alt: string;
+  caption: string;
+};
+
 function providerTypeLabel(providerType: ProviderType) {
   return providerType === "INDIVIDUAL_DOCTOR" ? "Doctor" : providerType === "CLINIC" ? "Clinic" : "Hospital";
 }
@@ -280,25 +358,61 @@ function providerReferencePrefix(providerType: ProviderType) {
   return providerType === "INDIVIDUAL_DOCTOR" ? "JDR" : providerType === "CLINIC" ? "JCL" : "JHS";
 }
 
+function stepLabel(stepId: ProviderOnboardingStepId) {
+  return steps.find(([id]) => id === stepId)?.[1] ?? "Preview";
+}
+
 function normalizeSearchList(items: string[]) {
   return items.map((item) => item.trim()).filter(Boolean).filter((item, index, list) => list.findIndex((candidate) => candidate.toLowerCase() === item.toLowerCase()) === index);
 }
 
+function hasEnabledServices(services: ProviderApplicationPayload["services"] | undefined) {
+  return Boolean(services?.some((item) => item.enabled !== false));
+}
+
+function primaryLocation(draft: ProviderApplicationPayload) {
+  return draft.locations?.[0] ?? null;
+}
+
+function formatCurrency(amount: number | null | undefined) {
+  if (amount == null || Number.isNaN(amount)) return null;
+  return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(amount);
+}
+
+function providerCallLabel(providerType: ProviderType) {
+  return providerType === "INDIVIDUAL_DOCTOR" ? "Call Doctor" : providerType === "CLINIC" ? "Call Clinic" : "Call Hospital";
+}
+
 function validateDraft(
   draft: ProviderApplicationPayload,
-  account: AccountStepValues,
+  account: ProviderAccountCompletionInput,
   providerType: ProviderType,
-  options: { specialityNames: string[] },
+  catalog: DiscoverReferenceCatalog,
 ) {
   const errors: ProviderFieldErrors = {};
   const displayName = draft.displayName?.trim() || draft.legalName?.trim();
   const website = draft.website?.trim();
   const gst = draft.gstNumber?.trim();
   const biography = draft.biography?.trim() ?? "";
-  const specialitySet = new Set(options.specialityNames.map((item) => item.toLowerCase()));
+  const specialityOptions = optionNames(catalog.specialities, providerType);
+  const serviceOptions = optionNames(catalog.services, providerType);
+  const facilityOptions = optionNames(catalog.facilities, providerType);
+  const languageOptions = optionNames(catalog.languages, providerType);
+  const countryOptions = optionNames(catalog.countries, providerType);
+  const stateOptions = optionNames(catalog.states, providerType);
+  const medicalCouncilOptions = optionNames(catalog.medicalCouncils, providerType);
+  const specialitySet = new Set(specialityOptions);
+  const serviceSet = new Set(serviceOptions);
+  const facilitySet = new Set(facilityOptions);
+  const languageSet = new Set(languageOptions);
+  const countrySet = new Set(countryOptions);
+  const stateSet = new Set(stateOptions);
+  const medicalCouncilSet = new Set(medicalCouncilOptions);
   const specialities = normalizeSearchList(draft.specialities ?? []);
+  const departments = normalizeSearchList(draft.departments ?? []);
   const languages = normalizeSearchList(draft.languages ?? []);
   const facilities = normalizeSearchList(draft.facilities ?? []);
+  const services = normalizeSearchList((draft.services ?? []).filter((item) => item.enabled !== false).map((item) => item.label));
 
   if (!account.email.trim()) errors.account = "Email is required.";
   if (!account.phone.trim()) errors.account = errors.account ?? "Phone is required.";
@@ -309,37 +423,50 @@ function validateDraft(
   if (website && !/^https?:\/\/[^\s/$.?#].[^\s]*$/i.test(website)) errors.website = "Enter a valid public website URL.";
   if (gst && !/^[0-9A-Z]{15}$/i.test(gst)) errors.gstNumber = "GST number must be 15 alphanumeric characters when provided.";
   if (biography.length > 1500) errors.biography = "Biography must be 1500 characters or fewer.";
-  if (!draft.ownership?.trim()) errors.ownership = "Ownership type is required.";
+  if (providerType !== "INDIVIDUAL_DOCTOR" && !draft.ownership?.trim()) errors.ownership = "Ownership type is required.";
+  if (providerType === "CLINIC" && !draft.organisationType?.trim()) errors.organisationType = "Clinic organisation type is required.";
+  if (providerType === "HOSPITAL" && !draft.hospitalType?.trim()) errors.hospitalType = "Hospital type is required.";
 
   if (providerType === "INDIVIDUAL_DOCTOR") {
     if (!draft.qualification?.trim()) errors.qualification = "Qualification is required.";
     if (!draft.medicalCouncil?.trim()) errors.medicalCouncil = "Medical council registration is required.";
     if (draft.yearsOfExperience == null || Number.isNaN(draft.yearsOfExperience)) errors.yearsOfExperience = "Experience is required.";
+    if (!specialities.length) errors.specialities = "Select a primary speciality.";
   }
 
-  if (providerType === "CLINIC" && !draft.organisationType?.trim()) {
-    errors.organisationType = "Clinic organisation type is required.";
+  if (providerType === "CLINIC" && specialities.length && !specialities.every((item) => specialitySet.has(item.toLowerCase()))) {
+    errors.specialities = "Choose from the speciality master.";
   }
 
   if (providerType === "HOSPITAL") {
-    if (!draft.hospitalType?.trim()) errors.ownership = "Hospital type is required.";
-    if (!draft.beds || draft.beds <= 0) errors.beds = "Beds must be greater than zero.";
+    if (!departments.length) errors.departments = "Add at least one department.";
     if (!draft.medicalDirector?.trim()) errors.medicalDirector = "Medical director is required.";
+    if (!draft.beds || draft.beds <= 0) errors.beds = "Beds must be greater than zero.";
+    if (!draft.emergencyAvailable) errors.emergencyAvailable = "Emergency availability must be confirmed.";
   }
 
-  if (!specialities.length) errors.specialities = "Select at least one speciality.";
   if (!languages.length) errors.languages = "Select at least one language.";
   if (!facilities.length) errors.facilities = "Select at least one facility.";
+  if (!services.length) errors.services = "Select at least one service.";
 
-  if (options.specialityNames.length) {
-    const unknownSpecialities = specialities.filter((item) => !specialitySet.has(item.toLowerCase()));
-    if (unknownSpecialities.length) {
-      errors.specialities = "Choose from the speciality master.";
-    }
-  }
-
-  if (!draft.locations?.length) {
+  if (specialities.length && !specialities.every((item) => specialitySet.has(item.toLowerCase()))) errors.specialities = "Choose from the speciality master.";
+  if (languages.length && !languages.every((item) => languageSet.has(item.toLowerCase()))) errors.languages = "Choose from the language master.";
+  if (facilities.length && !facilities.every((item) => facilitySet.has(item.toLowerCase()))) errors.facilities = "Choose from the facility master.";
+  if (draft.services?.length && !draft.services.filter((item) => item.enabled !== false).every((item) => serviceSet.has(item.label.toLowerCase()))) errors.services = "Choose from the service master.";
+  if (draft.locations?.length) {
+    const location = draft.locations[0];
+    if (!location.address?.trim()) errors.locations = "Add a street address.";
+    if (!location.city?.trim()) errors.locations = errors.locations ?? "Add a city.";
+    if (!location.state?.trim()) errors.locations = errors.locations ?? "Add a state.";
+    if (!location.country?.trim()) errors.locations = errors.locations ?? "Add a country.";
+    if (location.country && !countrySet.has(location.country.toLowerCase())) errors.locations = errors.locations ?? "Choose from the country master.";
+    if (location.state && !stateSet.has(location.state.toLowerCase())) errors.locations = errors.locations ?? "Choose from the state master.";
+    if (!location.pinCode?.trim()) errors.locations = errors.locations ?? "Add a postal code.";
+  } else {
     errors.locations = "Add at least one location.";
+  }
+  if (providerType === "INDIVIDUAL_DOCTOR" && draft.medicalCouncil && !medicalCouncilSet.has(draft.medicalCouncil.toLowerCase())) {
+    errors.medicalCouncil = "Choose from the medical council master.";
   }
 
   return {
@@ -355,6 +482,41 @@ function contactVerificationSatisfied(application: ProviderApplication | null, c
   return Boolean(contactVerification?.requirementSatisfied ?? application?.contactVerification?.requirementSatisfied ?? application?.contactVerified);
 }
 
+function stepCompletion(
+  stepId: ProviderOnboardingStepId,
+  validation: ReturnType<typeof validateDraft>,
+  application: ProviderApplication | null,
+  draft: ProviderApplicationPayload,
+  contactSatisfied: boolean,
+  providerType: ProviderType,
+) {
+  const currentLocation = draft.locations?.[0] ?? null;
+  const hasBranding = providerType === "INDIVIDUAL_DOCTOR"
+    ? Boolean(application?.branding?.doctorPhotoDocumentId)
+    : Boolean(application?.branding?.logoDocumentId);
+
+  switch (stepId) {
+    case "account":
+      return !validation.errors.account && !validation.errors.terms && !validation.errors.privacy && contactSatisfied;
+    case "organisation":
+      return !validation.errors.displayName && !validation.errors.registrationNumber && !validation.errors.website && !validation.errors.gstNumber && !validation.errors.ownership && !validation.errors.organisationType && !validation.errors.hospitalType;
+    case "professional":
+      return !validation.errors.qualification && !validation.errors.medicalCouncil && !validation.errors.yearsOfExperience && !validation.errors.specialities && !validation.errors.departments && !validation.errors.languages && !validation.errors.facilities && !validation.errors.beds && !validation.errors.medicalDirector && !validation.errors.emergencyAvailable;
+    case "services":
+      return !validation.errors.services && Boolean(draft.services?.some((item) => item.enabled !== false));
+    case "locations":
+      return !validation.errors.locations && Boolean(currentLocation?.address && currentLocation.city && currentLocation.state && currentLocation.country && currentLocation.pinCode);
+    case "branding":
+      return hasBranding;
+    case "preview":
+      return contactSatisfied && !validation.errors.account && !validation.errors.registrationNumber && !validation.errors.locations;
+    case "submit":
+      return Boolean(application && application.status !== "DRAFT" && contactSatisfied);
+    default:
+      return false;
+  }
+}
+
 function missingItemLabel(code: string) {
   switch (code) {
     case "CONTACT_VERIFICATION_REQUIRED":
@@ -363,9 +525,89 @@ function missingItemLabel(code: string) {
       return "Email is required.";
     case "PHONE_REQUIRED":
       return "Phone is required.";
+    case "TERMS_ACCEPTANCE_REQUIRED":
+      return "Accept the terms to continue.";
+    case "PRIVACY_ACCEPTANCE_REQUIRED":
+      return "Accept the privacy policy to continue.";
+    case "DOCTOR_NAME_REQUIRED":
+      return "Add the doctor’s full name.";
+    case "CLINIC_NAME_REQUIRED":
+      return "Add the clinic name.";
+    case "HOSPITAL_NAME_REQUIRED":
+      return "Add the hospital name.";
+    case "DOCTOR_REGISTRATION_NUMBER_REQUIRED":
+      return "Add the medical registration number.";
+    case "CLINIC_REGISTRATION_NUMBER_REQUIRED":
+      return "Add the clinic registration number.";
+    case "HOSPITAL_REGISTRATION_NUMBER_REQUIRED":
+      return "Add the hospital registration number.";
+    case "PRIMARY_SPECIALITY_REQUIRED":
+      return "Select a primary speciality.";
+    case "DOCTOR_QUALIFICATION_REQUIRED":
+      return "Add professional qualifications.";
+    case "DOCTOR_REGISTRATION_COUNCIL_REQUIRED":
+      return "Select the registration council.";
+    case "PRACTISING_SINCE_REQUIRED":
+      return "Add the year practice began.";
+    case "CLINIC_ORGANISATION_TYPE_REQUIRED":
+      return "Add the clinic organisation type.";
+    case "CLINIC_FACILITIES_REQUIRED":
+      return "Select the clinic facilities.";
+    case "HOSPITAL_DEPARTMENTS_REQUIRED":
+      return "Add at least one department.";
+    case "HOSPITAL_OWNERSHIP_REQUIRED":
+      return "Select the hospital ownership type.";
+    case "HOSPITAL_TYPE_REQUIRED":
+      return "Add the hospital type.";
+    case "HOSPITAL_BEDS_REQUIRED":
+      return "Add the number of licensed beds.";
+    case "HOSPITAL_MEDICAL_DIRECTOR_REQUIRED":
+      return "Add the medical director.";
+    case "HOSPITAL_EMERGENCY_STATUS_REQUIRED":
+      return "Confirm emergency availability.";
+    case "PRIMARY_LOCATION_REQUIRED":
+      return "Add a primary practice location.";
+    case "SERVICES_REQUIRED":
+      return "Select at least one service.";
+    case "DOCTOR_PHOTO_REQUIRED":
+      return "Upload the doctor photo.";
+    case "DOCTOR_REGISTRATION_CERTIFICATE_REQUIRED":
+      return "Upload the registration certificate.";
+    case "CLINIC_LOGO_REQUIRED":
+      return "Upload the clinic logo.";
+    case "CLINIC_REGISTRATION_DOCUMENT_REQUIRED":
+      return "Upload the clinic registration document.";
+    case "HOSPITAL_LOGO_REQUIRED":
+      return "Upload the hospital logo.";
+    case "HOSPITAL_REGISTRATION_DOCUMENT_REQUIRED":
+      return "Upload the hospital registration document.";
+    case "REFERENCE_DATA_UNAVAILABLE":
+      return "Required reference data is unavailable right now.";
     default:
       return code.replaceAll("_", " ").toLowerCase();
   }
+}
+
+function missingItemGroup(code: string) {
+  if (code.includes("VERIFICATION") || code === "EMAIL_REQUIRED" || code === "PHONE_REQUIRED" || code === "TERMS_ACCEPTANCE_REQUIRED" || code === "PRIVACY_ACCEPTANCE_REQUIRED") {
+    return "Profile";
+  }
+  if (code.includes("DOCTOR_") || code.includes("HOSPITAL_") || code.includes("CLINIC_")) {
+    return code.includes("DOCUMENT") ? "Documents" : "Professional";
+  }
+  if (code === "SERVICES_REQUIRED") {
+    return "Services";
+  }
+  if (code === "PRIMARY_LOCATION_REQUIRED") {
+    return "Profile";
+  }
+  if (code.includes("DOCUMENT")) {
+    return "Documents";
+  }
+  if (code.includes("BRANDING") || code.includes("PHOTO") || code.includes("LOGO")) {
+    return "Branding";
+  }
+  return "Profile";
 }
 
 function contactVerificationSummary(contactVerification: ContactVerificationStatus | null, email: string, phone: string) {
@@ -376,33 +618,38 @@ function contactVerificationSummary(contactVerification: ContactVerificationStat
   return `${emailLabel} · ${phoneLabel}`;
 }
 
-function stepCompletion(
-  stepId: (typeof steps)[number][0],
-  validation: ReturnType<typeof validateDraft>,
-  application: ProviderApplication | null,
-  draft: ProviderApplicationPayload,
-  contactSatisfied: boolean,
-) {
+function stepHasRequiredReferenceData(stepId: ProviderOnboardingStepId, providerType: ProviderType, catalog: DiscoverReferenceCatalog) {
   switch (stepId) {
-    case "account":
-      return !validation.errors.account && !validation.errors.terms && !validation.errors.privacy && contactSatisfied;
-    case "organisation":
-      return !validation.errors.displayName && !validation.errors.registrationNumber && !validation.errors.website && !validation.errors.gstNumber && !validation.errors.ownership && !validation.errors.organisationType;
     case "professional":
-      return !validation.errors.qualification && !validation.errors.medicalCouncil && !validation.errors.yearsOfExperience && !validation.errors.biography;
+      return providerType === "INDIVIDUAL_DOCTOR"
+        ? hasReferenceData(catalog.specialities, providerType) && hasReferenceData(catalog.medicalCouncils, providerType) && hasReferenceData(catalog.languages, providerType) && hasReferenceData(catalog.facilities, providerType)
+        : hasReferenceData(catalog.languages, providerType) && hasReferenceData(catalog.facilities, providerType);
     case "services":
-      return Boolean(draft.services?.some((item) => item.enabled !== false));
+      return hasReferenceData(catalog.services, providerType);
     case "locations":
-      return Boolean(draft.locations?.length);
-    case "branding":
-      return Boolean(application?.documents.length);
+      return hasReferenceData(catalog.countries, providerType) && hasReferenceData(catalog.states, providerType);
     case "preview":
-      return Boolean(application && contactSatisfied);
     case "submit":
-      return Boolean(application && application.status !== "DRAFT" && contactSatisfied);
+      return submissionReferenceDataReady(providerType, catalog);
     default:
-      return false;
+      return true;
   }
+}
+
+function submissionReferenceDataReady(providerType: ProviderType, catalog: DiscoverReferenceCatalog) {
+  return providerType === "INDIVIDUAL_DOCTOR"
+    ? hasReferenceData(catalog.specialities, providerType)
+      && hasReferenceData(catalog.services, providerType)
+      && hasReferenceData(catalog.facilities, providerType)
+      && hasReferenceData(catalog.languages, providerType)
+      && hasReferenceData(catalog.countries, providerType)
+      && hasReferenceData(catalog.states, providerType)
+      && hasReferenceData(catalog.medicalCouncils, providerType)
+    : hasReferenceData(catalog.services, providerType)
+      && hasReferenceData(catalog.facilities, providerType)
+      && hasReferenceData(catalog.languages, providerType)
+      && hasReferenceData(catalog.countries, providerType)
+      && hasReferenceData(catalog.states, providerType);
 }
 
 export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | "hospital" }) {
@@ -412,9 +659,9 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
   const routeProviderType = type ? providerTypeFromRoute(type) : undefined;
   const [providerType, setProviderType] = useState<ProviderType>(() => routeProviderType ?? "INDIVIDUAL_DOCTOR");
   const tokenStorageKey = routeProviderType ? `${TOKEN_KEY}.${routeProviderType}` : TOKEN_KEY;
-  const copy = typeCopy[providerType];
+  const copy = providerTypeConfig[providerType];
   const activeStep = params.step ?? searchParams.get("step") ?? "account";
-  const [token, setToken] = useState(() => readStoredToken(routeProviderType ? [tokenStorageKey] : TOKEN_KEYS));
+  const [token, setToken] = useState(() => (routeProviderType ? "" : readStoredToken(TOKEN_KEYS)));
   const [application, setApplication] = useState<ProviderApplication | null>(null);
   const [draft, setDraft] = useState<ProviderApplicationPayload>(() => blankDraft(providerType));
   const [account, setAccount] = useState<AccountStepValues>(() => blankAccountStepValues());
@@ -427,9 +674,11 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [preview, setPreview] = useState<ProviderPreview | null>(null);
+  const [referenceCatalog, setReferenceCatalog] = useState<DiscoverReferenceCatalog>(() => emptyReferenceCatalog());
+  const [referenceCatalogLoaded, setReferenceCatalogLoaded] = useState(false);
+  const [referenceCatalogError, setReferenceCatalogError] = useState<string | null>(null);
   const [changeRequests, setChangeRequests] = useState<Array<{ id: string; reviewerMessage: string | null; providerResponseNote: string | null; requestedSections: string[]; resolved: boolean }>>([]);
   const [responseNote, setResponseNote] = useState("");
-  const [specialityOptions, setSpecialityOptions] = useState<string[]>([]);
   const latestApplicationRef = useRef<ProviderApplication | null>(null);
   const latestDraftRef = useRef<ProviderApplicationPayload>(draft);
   const latestFormStateRef = useRef<ProviderApplicationPayload>(draft);
@@ -448,6 +697,17 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
   useEffect(() => {
     if (!routeProviderType) return;
     setProviderType(routeProviderType);
+    setToken("");
+    setApplication(null);
+    setDraft(blankDraft(routeProviderType));
+    setAccount(blankAccountStepValues());
+    setAccountHydrated(false);
+    setContactVerification(null);
+    setPreview(null);
+    setChangeRequests([]);
+    setResponseNote("");
+    setStatusMessage("Start with your account details. Progress saves as you go.");
+    setError(null);
   }, [routeProviderType]);
 
   useEffect(() => {
@@ -480,28 +740,30 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
   }, [token]);
 
   useEffect(() => {
-    const abortController = new AbortController();
-    const cacheKey = "specialities";
-    const cached = specialityCache.get(cacheKey);
-    if (cached) {
-      setSpecialityOptions(cached);
-      return () => abortController.abort();
-    }
-    void fetchPublicJson<PublicSpecialitySummaryResponse[]>("/api/public/specialities", {}, abortController.signal)
-      .then((items) => {
-        const names = items.map((item) => item.speciality).filter(Boolean).sort((left, right) => left.localeCompare(right));
-        specialityCache.set(cacheKey, names);
-        setSpecialityOptions(names);
+    let cancelled = false;
+    setReferenceCatalogLoaded(false);
+    setReferenceCatalogError(null);
+    void loadDiscoverReferenceCatalog()
+      .then((catalog) => {
+        if (cancelled) return;
+        setReferenceCatalog(catalog);
+        setReferenceCatalogLoaded(true);
       })
-      .catch(() => {
-        if (!abortController.signal.aborted) {
-          setSpecialityOptions([]);
-        }
+      .catch((ex) => {
+        if (cancelled) return;
+        setReferenceCatalog(emptyReferenceCatalog());
+        setReferenceCatalogLoaded(true);
+        setReferenceCatalogError(ex instanceof Error ? ex.message : "Reference data could not be loaded.");
       });
-    return () => abortController.abort();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
+    if (routeProviderType && !params.applicationId) {
+      return;
+    }
     if (!token) return;
     let cancelled = false;
     setAccountHydrated(false);
@@ -581,13 +843,14 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
     () => (accountHydrated || !application ? account : mapAccountStepValues(application)),
     [account, accountHydrated, application],
   );
-  const completionPercent = application?.completionPercent ?? estimateCompletion(draft, hydratedAccount, providerType);
+  const completionPercent = application?.completionPercent ?? estimateCompletion(draft, hydratedAccount, providerType, referenceCatalog);
   const missingItems = application?.missingItems ?? clientMissingItems(draft, hydratedAccount, providerType);
   const currentStepIndex = Math.max(0, steps.findIndex(([id]) => id === activeStep));
+  const currentStepId = (steps[currentStepIndex]?.[0] ?? "account") as ProviderOnboardingStepId;
   const contactSatisfied = contactVerificationSatisfied(application, contactVerification);
   const validation = useMemo(
-    () => validateDraft(draft, hydratedAccount, providerType, { specialityNames: specialityOptions }),
-    [draft, hydratedAccount, providerType, specialityOptions],
+    () => validateDraft(draft, hydratedAccount, providerType, referenceCatalog),
+    [draft, hydratedAccount, providerType, referenceCatalog],
   );
   const requiredRemainingCount = validation.requiredRemaining + (contactSatisfied ? 0 : 1);
   const unsavedChanges = Boolean(application) && draftSnapshot(draft) !== savedDraftSnapshotRef.current;
@@ -595,13 +858,18 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
   const verificationPending = application ? !contactSatisfied : false;
   const applicationEditable = isApplicationEditable(application?.status);
   const readOnlyApplication = Boolean(application && !applicationEditable);
+  const currentStepComplete = stepCompletion(currentStepId, validation, application, draft, contactSatisfied, providerType);
+  const currentStepReferenceReady = stepHasRequiredReferenceData(currentStepId, providerType, referenceCatalog);
+  const submissionReadyForReferenceData = submissionReferenceDataReady(providerType, referenceCatalog);
+  const currentStepCanContinue = Boolean(applicationEditable && !saving && !verificationBusy && !readOnlyApplication && currentStepComplete && currentStepReferenceReady);
   const lockedStepIndex = useMemo(() => {
-    const firstIncomplete = steps.findIndex(([stepId]) => !stepCompletion(stepId, validation, application, draft, contactSatisfied));
+    const firstIncomplete = steps.findIndex(([stepId]) => !stepCompletion(stepId, validation, application, draft, contactSatisfied, providerType));
     return firstIncomplete === -1 ? steps.length - 1 : Math.max(0, firstIncomplete);
-  }, [application, contactSatisfied, draft, validation]);
+  }, [application, contactSatisfied, draft, validation, providerType]);
+  const showStepper = activeStep !== "preview";
   const stepStates: ProviderOnboardingStepState[] = useMemo(() => {
     return steps.map(([id, label], index) => {
-      const complete = stepCompletion(id, validation, application, draft, contactSatisfied);
+      const complete = stepCompletion(id, validation, application, draft, contactSatisfied, providerType);
       const current = id === activeStep;
       const disabled = !readOnlyApplication && index > lockedStepIndex && !current;
       const summary = id === "account"
@@ -635,9 +903,13 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
     });
   }, [activeStep, application, contactSatisfied, contactVerification, draft, hydratedAccount.email, hydratedAccount.phone, lockedStepIndex, providerType, requiredRemainingCount, validation]);
   const stepPosition = `${currentStepIndex + 1} of ${steps.length}`;
-  const specialitySelectOptions = useMemo(() => specialityOptions.map((item) => ({ value: item, label: item })), [specialityOptions]);
-  const languageSelectOptions = useMemo(() => languageOptions.map((item) => ({ value: item, label: item })), []);
-  const facilitySelectOptions = useMemo(() => facilityOptions.map((item) => ({ value: item, label: item })), []);
+  const specialitySelectOptions = useMemo(() => toOptionItems(referenceCatalog.specialities, providerType), [referenceCatalog.specialities, providerType]);
+  const serviceSelectOptions = useMemo(() => toServiceItems(referenceCatalog.services, providerType), [referenceCatalog.services, providerType]);
+  const facilitySelectOptions = useMemo(() => toOptionItems(referenceCatalog.facilities, providerType), [referenceCatalog.facilities, providerType]);
+  const languageSelectOptions = useMemo(() => toOptionItems(referenceCatalog.languages, providerType), [referenceCatalog.languages, providerType]);
+  const countrySelectOptions = useMemo(() => toOptionItems(referenceCatalog.countries, providerType), [referenceCatalog.countries, providerType]);
+  const stateSelectOptions = useMemo(() => toOptionItems(referenceCatalog.states, providerType), [referenceCatalog.states, providerType]);
+  const medicalCouncilSelectOptions = useMemo(() => toOptionItems(referenceCatalog.medicalCouncils, providerType), [referenceCatalog.medicalCouncils, providerType]);
   const ownershipSelectOptions = useMemo(() => ownershipOptions.map((item) => ({ value: item, label: item })), []);
 
   function markDraftChanged(nextDraft: ProviderApplicationPayload) {
@@ -1052,6 +1324,10 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
 
   async function submit() {
     if (!application || !token) return;
+    if (!submissionReadyForReferenceData) {
+      setError("REFERENCE_DATA_UNAVAILABLE");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -1084,58 +1360,187 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
   const previewBranding = preview?.branding;
   const previewLogoPath = previewBranding?.logoDocumentId ? providerDocumentContentPath(providerPublicId, previewBranding.logoDocumentId) : null;
   const previewCoverPath = previewBranding?.coverImageDocumentId ? providerDocumentContentPath(providerPublicId, previewBranding.coverImageDocumentId) : null;
+  const previewDoctorPhotoPath = previewBranding?.doctorPhotoDocumentId ? providerDocumentContentPath(providerPublicId, previewBranding.doctorPhotoDocumentId) : null;
   const previewGalleryPaths = (previewBranding?.galleryDocumentIds ?? []).map((documentId) => providerDocumentContentPath(providerPublicId, documentId));
+  const isPreviewStep = activeStep === "preview";
+  const previewPrimaryLocation = primaryLocation(draft);
+  const primarySpeciality = preview?.specialities[0] ?? draft.specialities?.[0] ?? null;
+  const consultationFeeLabel = formatCurrency(draft.consultationFee);
+  const hasTeleconsultation = Boolean(draft.onlineConsultation || draft.services?.some((item) => item.enabled !== false && item.serviceType === "TELECONSULTATION"));
+  const publicPhone = contactVerification?.phoneStatus === "VERIFIED" ? (account.phone || application?.phone || draft.phone || "") : "";
+  const heroLocation = [previewPrimaryLocation?.city, previewPrimaryLocation?.state].filter(Boolean).join(", ") || preview?.locationSummary || null;
+  const heroSummary = [
+    draft.qualification?.trim() || null,
+    primarySpeciality,
+  ].filter(Boolean).join(" • ");
+  const tagline = previewBranding?.tagline?.trim() || draft.branding?.tagline?.trim() || null;
+  const previewGalleryItems = useMemo(() => {
+    const name = preview?.displayName ?? draft.displayName ?? providerTypeLabel(providerType);
+    const items: PreviewGalleryItem[] = [];
+    const seen = new Set<string>();
+    const push = (url: string | null, caption: string, alt: string) => {
+      if (!url || seen.has(url)) return;
+      seen.add(url);
+      items.push({ url, caption, alt });
+    };
+
+    push(
+      previewDoctorPhotoPath,
+      providerType === "INDIVIDUAL_DOCTOR" ? "Profile photo" : "Primary provider image",
+      `${name} ${providerType === "INDIVIDUAL_DOCTOR" ? "profile photo" : "primary provider image"}`,
+    );
+
+    previewGalleryPaths.forEach((url, index) => {
+      push(url, `Gallery image ${index + 1}`, `${name} gallery image ${index + 1}`);
+    });
+
+    return items;
+  }, [draft.displayName, preview?.displayName, previewDoctorPhotoPath, previewGalleryPaths, providerType]);
+  const previewChecklistItems = useMemo(() => {
+    const items: PreviewChecklistItem[] = [];
+    const add = (label: string, step: ProviderOnboardingStepId, detail?: string) => {
+      items.push({ label, step, detail });
+    };
+
+    if (!contactSatisfied) add("Contact information", "account", "Verify an email address or mobile number.");
+    if (!draft.registrationNumber?.trim()) add(copy.registrationLabel, "organisation");
+    if (providerType === "INDIVIDUAL_DOCTOR" && !draft.medicalCouncil?.trim()) add("Medical council registration", "professional");
+    if (!draft.biography?.trim()) add("Biography", "professional");
+    if (!validation.languages.length) add("Languages", "professional");
+    if (!hasEnabledServices(draft.services)) add("Services", "services");
+    if (!validation.facilities.length) add("Facilities", "professional");
+    if (draft.consultationFee == null || Number.isNaN(draft.consultationFee)) add("Consultation fee", "professional");
+    if (!previewPrimaryLocation?.address?.trim() || !previewPrimaryLocation.city?.trim() || !previewPrimaryLocation.state?.trim() || !previewPrimaryLocation.country?.trim() || !previewPrimaryLocation.pinCode?.trim()) {
+      add("Location details", "locations");
+    }
+    if (!previewPrimaryLocation?.workingHours?.trim()) add("Clinic timings", "locations");
+    if (!previewDoctorPhotoPath && providerType === "INDIVIDUAL_DOCTOR") add("Profile photo", "branding");
+    if (!previewLogoPath && providerType !== "INDIVIDUAL_DOCTOR") add("Logo", "branding");
+    if (!previewGalleryItems.length) add("Additional clinic images", "branding", "Add gallery images for patients to preview your space.");
+
+    return items;
+  }, [
+    contactSatisfied,
+    copy.registrationLabel,
+    draft.biography,
+    draft.consultationFee,
+    draft.medicalCouncil,
+    draft.registrationNumber,
+    draft.services,
+    previewDoctorPhotoPath,
+    previewGalleryItems.length,
+    previewLogoPath,
+    previewPrimaryLocation,
+    providerType,
+    validation.facilities.length,
+    validation.languages.length,
+  ]);
+  const returnToEditingStep = previewChecklistItems[0]?.step ?? (providerType === "INDIVIDUAL_DOCTOR" ? "professional" : "organisation");
+  const showFacilitiesSection = validation.facilities.length > 0 && (providerType !== "INDIVIDUAL_DOCTOR" || Boolean(previewPrimaryLocation));
+  const facilitySectionTitle = providerType === "INDIVIDUAL_DOCTOR" ? "Clinic facilities at this location" : "Facilities";
+  const professionalInformation = [
+    draft.registrationNumber?.trim() ? { label: "Registration number", value: draft.registrationNumber.trim() } : null,
+    draft.medicalCouncil?.trim() ? { label: "Medical council", value: draft.medicalCouncil.trim() } : null,
+    draft.qualification?.trim() ? { label: "Qualifications", value: draft.qualification.trim() } : null,
+    draft.yearsOfExperience != null && !Number.isNaN(draft.yearsOfExperience) ? { label: "Experience", value: `${draft.yearsOfExperience} years` } : null,
+    consultationFeeLabel ? { label: "Consultation fee", value: consultationFeeLabel } : null,
+    primarySpeciality ? { label: "Specialty", value: primarySpeciality } : null,
+    validation.languages.length ? { label: "Languages", value: validation.languages.join(" • ") } : null,
+    previewPrimaryLocation?.workingHours?.trim() ? { label: "Working hours", value: previewPrimaryLocation.workingHours.trim() } : null,
+  ].filter((item): item is { label: string; value: string } => Boolean(item));
+  const trustIndicators = [
+    contactVerification?.emailStatus === "VERIFIED" ? "Email verified" : null,
+    contactVerification?.phoneStatus === "VERIFIED" ? "Phone verified" : null,
+    hasTeleconsultation ? "Online consultation available" : null,
+    application?.status === "PUBLISHED" ? "Published on Jeevanam Discover" : null,
+  ].filter((item): item is string => Boolean(item));
+  const quickFacts = [
+    draft.yearsOfExperience != null && !Number.isNaN(draft.yearsOfExperience) ? { label: "Experience", value: `${draft.yearsOfExperience} years` } : null,
+    consultationFeeLabel ? { label: "Fee", value: consultationFeeLabel } : null,
+    validation.languages.length ? { label: "Languages", value: String(validation.languages.length) } : null,
+    draft.locations?.length ? { label: "Locations", value: String(draft.locations.length) } : null,
+    draft.services?.filter((item) => item.enabled !== false).length ? { label: "Services", value: String(draft.services.filter((item) => item.enabled !== false).length) } : null,
+    hasTeleconsultation ? { label: "Teleconsultation", value: "Available" } : null,
+  ].filter((item): item is { label: string; value: string } => Boolean(item));
+  const readinessCompletedAreas = [
+    professionalInformation.length ? "Professional information" : null,
+    hasEnabledServices(draft.services) ? "Services" : null,
+    previewPrimaryLocation?.address?.trim() ? "Location" : null,
+    previewDoctorPhotoPath || previewLogoPath ? "Images" : null,
+    contactSatisfied ? "Contact details" : null,
+  ].filter((item): item is string => Boolean(item));
+  const locationAddress = [
+    previewPrimaryLocation?.address,
+    previewPrimaryLocation?.city,
+    previewPrimaryLocation?.state,
+    previewPrimaryLocation?.country,
+    previewPrimaryLocation?.pinCode,
+  ].filter(Boolean).join(", ");
 
   return (
-    <section className="page-section provider-portal-page">
-      <div className="provider-portal-hero">
-        <div>
-          <span className="eyebrow">{copy.eyebrow}</span>
-          <h1>{copy.title}</h1>
-          <p>Complete your profile step by step, upload required documents, preview your public presence, and submit for Jeevanam verification.</p>
-        </div>
-        <aside className="resume-card">
-          <strong>{application ? application.referenceNumber : "New application"}</strong>
-          <span>{application ? `${providerReferencePrefix(application.providerType)} reference` : `${providerReferencePrefix(providerType)} reference prefix`}</span>
-          <span>{application?.status.replaceAll("_", " ") ?? "Draft not created"}</span>
-          <div className="progress-track" aria-label={`${completionPercent}% complete`}>
-            <span style={{ width: `${completionPercent}%` }} />
+    <section className={`page-section provider-portal-page${isPreviewStep ? " provider-portal-page--preview" : ""}`}>
+      {!isPreviewStep ? (
+        <div className="provider-portal-hero">
+          <div>
+            <span className="eyebrow">{copy.eyebrow}</span>
+            <h1>{copy.title}</h1>
+            <p>Complete your profile step by step, upload required documents, preview your public presence, and submit for Jeevanam verification.</p>
           </div>
-          <small>{completionPercent}% Complete</small>
-        </aside>
-      </div>
+          <aside className="resume-card">
+            <strong>{application ? application.referenceNumber : "New application"}</strong>
+            <span>{application ? `${providerReferencePrefix(application.providerType)} reference` : `${providerReferencePrefix(providerType)} reference prefix`}</span>
+            <span>{application?.status.replaceAll("_", " ") ?? "Draft not created"}</span>
+            <div className="progress-track" aria-label={`${completionPercent}% complete`}>
+              <span style={{ width: `${completionPercent}%` }} />
+            </div>
+            <small>{completionPercent}% Complete</small>
+          </aside>
+        </div>
+      ) : null}
 
-      <div className="provider-portal-layout">
-        <ProviderOnboardingStepper
-          steps={stepStates}
-          onSelect={(stepId) => {
-            void goToStep(stepId, "route-transition");
-          }}
-        />
-
-        <div className="provider-workspace">
-          <ProviderSaveStatus
-            saving={saving}
-            statusMessage={statusMessage}
-            unsavedChanges={unsavedChanges}
-            conflict={conflict}
-            autosaveEnabled={application ? applicationEditable : false}
+      <div className={`provider-portal-layout${activeStep === "preview" ? " provider-portal-layout--preview" : ""}`}>
+        {showStepper ? (
+          <ProviderOnboardingStepper
+            steps={stepStates}
+            onSelect={(stepId) => {
+              void goToStep(stepId, "route-transition");
+            }}
           />
-          {readOnlyApplication ? (
+        ) : null}
+
+        <div className={`provider-workspace${activeStep === "preview" ? " provider-workspace--preview" : ""}`}>
+          {referenceCatalogError ? (
+            <div className="portal-warning" role="status" aria-live="polite">
+              <strong>Reference data is partially unavailable.</strong>
+              <span>{referenceCatalogError}</span>
+            </div>
+          ) : null}
+          {!isPreviewStep ? (
+            <ProviderSaveStatus
+              saving={saving}
+              statusMessage={statusMessage}
+              unsavedChanges={unsavedChanges}
+              conflict={conflict}
+              autosaveEnabled={application ? applicationEditable : false}
+            />
+          ) : null}
+          {readOnlyApplication && !isPreviewStep ? (
             <div className="provider-readonly-banner" role="status" aria-live="polite">
               <strong>Application submitted</strong>
               <span>Your profile is read-only while Jeevanam reviews it.</span>
               <span>You can edit it again if changes are requested.</span>
             </div>
           ) : null}
-          <div className="provider-progress-summary" aria-label="Onboarding progress summary">
-            <strong>Step {stepPosition}</strong>
-            <span>{completionPercent}% complete</span>
-            <span>{validation.requiredRemaining} required items remaining</span>
-            <span>{application ? `${application.missingItems.length} missing items` : `${validation.requiredRemaining} missing items`}</span>
-            <span>{verificationPending ? "Verification pending" : application?.status === "PUBLISHED" ? "Published" : application?.status ?? "Draft"}</span>
-          </div>
-          {application && applicationEditable ? <div className="provider-save-actions"><button className="secondary-button" type="button" onClick={() => void requestSave("manual", { showMessage: true })}>Save draft</button></div> : null}
+          {!isPreviewStep ? (
+            <div className="provider-progress-summary" aria-label="Onboarding progress summary">
+              <strong>Step {stepPosition}</strong>
+              <span>{completionPercent}% complete</span>
+              <span>{validation.requiredRemaining} required items remaining</span>
+              <span>{application ? `${application.missingItems.length} missing items` : `${validation.requiredRemaining} missing items`}</span>
+              <span>{verificationPending ? "Verification pending" : application?.status === "PUBLISHED" ? "Published" : application?.status ?? "Draft"}</span>
+            </div>
+          ) : null}
+          {!isPreviewStep && application && applicationEditable ? <div className="provider-save-actions"><button className="secondary-button" type="button" onClick={() => void requestSave("manual", { showMessage: true })}>Save draft</button></div> : null}
           {error ? <div className="portal-error" role="alert">{error}</div> : null}
           {activeStep === "account" ? (
             !application ? (
@@ -1219,7 +1624,7 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
                 {verificationPanel()}
                 </fieldset>
                 <div className="cta-row">
-                  <button className="secondary-button" type="button" onClick={() => void goToStep("organisation")} disabled={applicationEditable ? !stepCompletion("account", validation, application, draft, contactSatisfied) : false}>
+                  <button className="secondary-button" type="button" onClick={() => void goToStep("organisation")} disabled={!currentStepCanContinue}>
                     Continue
                   </button>
                 </div>
@@ -1248,15 +1653,15 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
                     placeholder={copy.registrationLabel}
                   />
                 </FieldShell>
-                {providerType !== "INDIVIDUAL_DOCTOR" ? (
+                {copy.showOrganisationType ? (
                   <FieldShell label="Organisation type" helperText="Describe the practice structure." error={validation.errors.organisationType}>
                     <input
                       aria-invalid={Boolean(validation.errors.organisationType)}
                       value={draft.organisationType ?? ""}
                       onChange={(event) => patchDraft({ organisationType: event.target.value })}
-                      placeholder="Group practice, standalone, chain, etc."
-                    />
-                  </FieldShell>
+                    placeholder="Group practice, standalone, chain, etc."
+                  />
+                </FieldShell>
                 ) : null}
                 <FieldShell label="Website" helperText="Public website. Must include https://." error={validation.errors.website}>
                   <input
@@ -1275,7 +1680,7 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
                     placeholder="15-character GST number"
                   />
                 </FieldShell>
-                {providerType !== "INDIVIDUAL_DOCTOR" ? (
+                {copy.showOwnership ? (
                   <ProviderDropdownField
                     label="Ownership"
                     helperText="Select the ownership category."
@@ -1287,7 +1692,7 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
                     disabled={!applicationEditable}
                   />
                 ) : null}
-                {providerType === "HOSPITAL" ? (
+                {copy.showHospitalType ? (
                   <FieldShell label="Hospital type" helperText="Describe the hospital profile type." error={null}>
                     <input
                       value={draft.hospitalType ?? ""}
@@ -1306,23 +1711,40 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
               <p className="panel-help">Add the details that support the public profile and review process.</p>
               <fieldset className="provider-readonly-fieldset" disabled={!applicationEditable}>
               <div className="form-grid">
-                {providerType === "INDIVIDUAL_DOCTOR" ? <>
+                {copy.showQualification ? <>
                   <FieldShell label="Gender" helperText="Optional." error={null}><input value={draft.gender ?? ""} onChange={(event) => patchDraft({ gender: event.target.value })} /></FieldShell>
                   <FieldShell label="Date of birth" helperText="Publicly hidden unless required for verification." error={null}><input type="date" value={draft.dateOfBirth ?? ""} onChange={(event) => patchDraft({ dateOfBirth: event.target.value })} /></FieldShell>
                   <FieldShell label="Qualification" helperText="Displayed publicly on your profile." error={validation.errors.qualification}><input aria-invalid={Boolean(validation.errors.qualification)} value={draft.qualification ?? ""} onChange={(event) => patchDraft({ qualification: event.target.value })} /></FieldShell>
-                  <FieldShell label="Medical council" helperText="Registration details used for review." error={validation.errors.medicalCouncil}><input aria-invalid={Boolean(validation.errors.medicalCouncil)} value={draft.medicalCouncil ?? ""} onChange={(event) => patchDraft({ medicalCouncil: event.target.value })} /></FieldShell>
+                  {copy.showMedicalCouncil ? (
+                    <ProviderDropdownField
+                      label="Medical council"
+                      helperText="Registration details used for review."
+                      error={validation.errors.medicalCouncil}
+                      value={draft.medicalCouncil ?? ""}
+                      options={medicalCouncilSelectOptions}
+                      onChange={(value) => patchDraft({ medicalCouncil: value })}
+                      placeholder="Select medical council"
+                      disabled={!applicationEditable}
+                    />
+                  ) : null}
                   <FieldShell label="Experience" helperText="Years of practice." error={validation.errors.yearsOfExperience}><input type="number" min={0} value={draft.yearsOfExperience ?? 0} onChange={(event) => patchDraft({ yearsOfExperience: Number(event.target.value) })} /></FieldShell>
                   <FieldShell label="Consultation fee" helperText="Optional. Shown publicly when enabled." error={null}><input type="number" min={0} value={draft.consultationFee ?? ""} onChange={(event) => patchDraft({ consultationFee: Number(event.target.value) })} /></FieldShell>
                 </> : <>
-                  {providerType === "HOSPITAL" ? (
+                  {copy.showBeds ? (
                     <FieldShell label="Beds" helperText="Number of licensed beds." error={validation.errors.beds}>
                       <input type="number" min={1} value={draft.beds ?? 0} onChange={(event) => patchDraft({ beds: Number(event.target.value) })} />
                     </FieldShell>
                   ) : null}
-                  {providerType === "HOSPITAL" ? (
+                  {copy.showMedicalDirector ? (
                     <FieldShell label="Medical director" helperText="Lead physician responsible for the hospital." error={validation.errors.medicalDirector}>
                       <input aria-invalid={Boolean(validation.errors.medicalDirector)} value={draft.medicalDirector ?? ""} onChange={(event) => patchDraft({ medicalDirector: event.target.value })} />
                     </FieldShell>
+                  ) : null}
+                  {copy.showEmergencyAvailable ? (
+                    <label className="checkbox-row">
+                      <input type="checkbox" checked={draft.emergencyAvailable ?? false} onChange={(event) => patchDraft({ emergencyAvailable: event.target.checked })} />
+                      Emergency services available
+                    </label>
                   ) : null}
                 </>}
                 <ProviderMultiSelectField
@@ -1335,17 +1757,31 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
                   placeholder="Search languages"
                   disabled={!applicationEditable}
                 />
-                <ProviderMultiSelectField
-                  label="Specialities"
-                  helperText="Choose from the speciality master."
-                  error={validation.errors.specialities}
-                  value={validation.specialities}
-                  options={specialitySelectOptions}
-                  onChange={(value) => patchDraft({ specialities: normalizeSearchList(value), departments: normalizeSearchList(value) })}
-                  placeholder="Search specialities"
-                  loading={!specialityOptions.length}
-                  disabled={!applicationEditable}
-                />
+                {copy.showSpecialities ? (
+                  <ProviderDropdownField
+                    label={copy.specialityLabel}
+                    helperText={copy.specialityRequired ? "Choose one primary speciality." : "Optional. Choose the closest fit if relevant."}
+                    error={validation.errors.specialities}
+                    value={draft.specialities?.[0] ?? ""}
+                    options={specialitySelectOptions}
+                    onChange={(value) => patchDraft({ specialities: value ? [value] : [] })}
+                    placeholder={copy.specialityLabel}
+                    disabled={!applicationEditable}
+                  />
+                ) : null}
+                {copy.showDepartments ? (
+                  <ProviderMultiSelectField
+                    label="Departments"
+                    helperText="Add the hospital departments you operate."
+                    error={validation.errors.departments}
+                    value={draft.departments ?? []}
+                    options={(draft.departments ?? []).map((item) => ({ value: item, label: item }))}
+                    onChange={(value) => patchDraft({ departments: normalizeSearchList(value) })}
+                    placeholder="Type a department and press Enter"
+                    allowCustomValues
+                    disabled={!applicationEditable}
+                  />
+                ) : null}
                 <ProviderMultiSelectField
                   label="Facilities"
                   helperText="Select the facilities available at this location."
@@ -1354,8 +1790,12 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
                   options={facilitySelectOptions}
                   onChange={(value) => patchDraft({ facilities: normalizeSearchList(value) })}
                   placeholder="Search facilities"
+                  noOptionsText="No facility matches the catalog"
                   disabled={!applicationEditable}
                 />
+                {copy.showQualification ? null : (
+                  <FieldShell label="Consultation fee" helperText="Optional. Shown publicly when enabled." error={null}><input type="number" min={0} value={draft.consultationFee ?? ""} onChange={(event) => patchDraft({ consultationFee: Number(event.target.value) })} /></FieldShell>
+                )}
               </div>
               <FieldShell label="Biography" helperText="Displayed publicly on your profile. Maximum 1500 characters." error={validation.errors.biography}>
                 <textarea
@@ -1370,21 +1810,67 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
             </Panel>
           ) : null}
 
-          {activeStep === "services" ? <Panel title="Services"><fieldset className="provider-readonly-fieldset" disabled={!applicationEditable}>{serviceOptions.map((service) => <ServiceToggle key={service.type} service={service} draft={draft} patchDraft={patchDraft} disabled={!applicationEditable} />)}</fieldset></Panel> : null}
+          {activeStep === "services" ? (
+            <Panel title="Services">
+              <p className="panel-help">Select the services your practice offers.</p>
+              <fieldset className="provider-readonly-fieldset" disabled={!applicationEditable}>
+                <div className="service-grid">
+                  {serviceSelectOptions.length ? serviceSelectOptions.map((service) => (
+                    <ServiceToggle
+                      key={service.type}
+                      service={{ type: service.type, label: service.label }}
+                      draft={draft}
+                      patchDraft={patchDraft}
+                      disabled={!applicationEditable}
+                    />
+                  )) : <p className="panel-help">No active service catalog entries are available right now.</p>}
+                </div>
+              </fieldset>
+            </Panel>
+          ) : null}
 
           {activeStep === "locations" ? (
             <Panel title="Locations">
+              <p className="panel-help">Enter the primary location patients will search and visit.</p>
               <fieldset className="provider-readonly-fieldset" disabled={!applicationEditable}>
               <div className="form-grid">
-                <label>Address<input value={draft.locations?.[0]?.address ?? ""} onChange={(event) => patchLocation(draft, patchDraft, { address: event.target.value })} /></label>
-                <label>City<input value={draft.locations?.[0]?.city ?? ""} onChange={(event) => patchLocation(draft, patchDraft, { city: event.target.value })} /></label>
-                <label>State<input value={draft.locations?.[0]?.state ?? ""} onChange={(event) => patchLocation(draft, patchDraft, { state: event.target.value })} /></label>
-                <label>Country<input value={draft.locations?.[0]?.country ?? "India"} onChange={(event) => patchLocation(draft, patchDraft, { country: event.target.value })} /></label>
-                <label>PIN<input value={draft.locations?.[0]?.pinCode ?? ""} onChange={(event) => patchLocation(draft, patchDraft, { pinCode: event.target.value })} /></label>
-                <label>Working hours<input value={draft.locations?.[0]?.workingHours ?? ""} onChange={(event) => patchLocation(draft, patchDraft, { workingHours: event.target.value })} /></label>
+                <FieldShell label="Address" helperText="Street address or landmark." error={null}>
+                  <input value={draft.locations?.[0]?.address ?? ""} onChange={(event) => patchLocation(draft, patchDraft, { address: event.target.value })} />
+                </FieldShell>
+                <FieldShell label="City" helperText="Primary city for the location." error={null}>
+                  <input value={draft.locations?.[0]?.city ?? ""} onChange={(event) => patchLocation(draft, patchDraft, { city: event.target.value })} />
+                </FieldShell>
+                <ProviderDropdownField
+                  label="State"
+                  helperText="Select the state or province."
+                  error={validation.errors.locations}
+                  value={draft.locations?.[0]?.state ?? ""}
+                  options={stateSelectOptions}
+                  onChange={(value) => patchLocation(draft, patchDraft, { state: value })}
+                  placeholder="Select state"
+                  disabled={!applicationEditable}
+                />
+                <ProviderDropdownField
+                  label="Country"
+                  helperText="Select the country."
+                  error={validation.errors.locations}
+                  value={draft.locations?.[0]?.country ?? "India"}
+                  options={countrySelectOptions}
+                  onChange={(value) => patchLocation(draft, patchDraft, { country: value })}
+                  placeholder="Select country"
+                  disabled={!applicationEditable}
+                />
+                <FieldShell label="PIN" helperText="Postal or ZIP code." error={null}>
+                  <input value={draft.locations?.[0]?.pinCode ?? ""} onChange={(event) => patchLocation(draft, patchDraft, { pinCode: event.target.value })} />
+                </FieldShell>
+                <FieldShell label="Working hours" helperText="For example, Mon-Sat 9am-6pm." error={null}>
+                  <input value={draft.locations?.[0]?.workingHours ?? ""} onChange={(event) => patchLocation(draft, patchDraft, { workingHours: event.target.value })} />
+                </FieldShell>
               </div>
-              <label className="checkbox-row"><input type="checkbox" checked={draft.locations?.[0]?.parkingAvailable ?? false} onChange={(event) => patchLocation(draft, patchDraft, { parkingAvailable: event.target.checked })} /> Parking available</label>
-              <label className="checkbox-row"><input type="checkbox" checked={draft.locations?.[0]?.accessibilityAvailable ?? false} onChange={(event) => patchLocation(draft, patchDraft, { accessibilityAvailable: event.target.checked })} /> Accessibility support available</label>
+              <div className="icon-pill-row">
+                <label className="checkbox-row"><input type="checkbox" checked={draft.locations?.[0]?.parkingAvailable ?? false} onChange={(event) => patchLocation(draft, patchDraft, { parkingAvailable: event.target.checked })} /> Parking available</label>
+                <label className="checkbox-row"><input type="checkbox" checked={draft.locations?.[0]?.accessibilityAvailable ?? false} onChange={(event) => patchLocation(draft, patchDraft, { accessibilityAvailable: event.target.checked })} /> Accessibility support available</label>
+              </div>
               <LocationPicker
                 providerName={draft.displayName || copy.nameLabel}
                 location={draft.locations?.[0] ?? null}
@@ -1401,11 +1887,15 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
           {activeStep === "branding" ? (
             <Panel title="Branding and documents">
               <p className="panel-help">Upload the assets patients will recognize on the public page.</p>
+              <div className="provider-branding-banner">
+                <strong>Branding</strong>
+                <span>Logo, cover image, and gallery assets should match the final published profile.</span>
+              </div>
               <fieldset className="provider-readonly-fieldset" disabled={!applicationEditable}>
               <div className="upload-grid">
-                <UploadBox label="Logo" type="LOGO" uploadDocument={uploadDocument} disabled={!applicationEditable} />
+                <UploadBox label={copy.brandingAssetLabel} type={providerType === "INDIVIDUAL_DOCTOR" ? "DOCTOR_PHOTO" : "LOGO"} uploadDocument={uploadDocument} disabled={!applicationEditable} />
                 <UploadBox label="Cover image" type="COVER_IMAGE" uploadDocument={uploadDocument} disabled={!applicationEditable} />
-                <UploadBox label={providerType === "INDIVIDUAL_DOCTOR" ? "Doctor photo" : "Gallery image"} type={providerType === "INDIVIDUAL_DOCTOR" ? "DOCTOR_PHOTO" : "GALLERY_IMAGE"} uploadDocument={uploadDocument} disabled={!applicationEditable} />
+                <UploadBox label="Gallery image" type="GALLERY_IMAGE" uploadDocument={uploadDocument} disabled={!applicationEditable} />
                 <UploadBox label="Registration document" type="REGISTRATION_CERTIFICATE" uploadDocument={uploadDocument} disabled={!applicationEditable} />
               </div>
               <FieldShell label="Tagline" helperText="Short public brand line. Optional." error={null}>
@@ -1421,106 +1911,370 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
           ) : null}
 
           {activeStep === "preview" ? (
-            <Panel title="Public profile preview">
-              <p className="panel-help">This preview uses the same public profile data that patients will see.</p>
-              <button className="secondary-button" type="button" onClick={() => void loadPreviewPanel()}>Refresh preview</button>
-              <article className="profile-preview-card provider-public-preview">
-                <div className="provider-public-hero">
-                  <div className="provider-public-hero-media">
-                    <div className="provider-public-cover-frame">
-                      <PublicMediaImage
-                        src={previewCoverPath}
-                        alt={`${preview?.displayName ?? draft.displayName ?? "Provider"} cover image`}
-                        className="landing-cover-image"
-                        objectFit="cover"
-                        fallback={<div className="landing-cover-fallback" aria-hidden="true" />}
-                        token={token}
-                      />
-                    </div>
-                    <div className="provider-public-avatar-frame">
-                      <PublicMediaImage
-                        src={previewLogoPath}
-                        alt={`${preview?.displayName ?? draft.displayName ?? "Provider"} logo`}
-                        className="landing-avatar-image"
-                        objectFit="contain"
-                        fallback={(
-                          <div className="landing-avatar-fallback" aria-hidden="true">
-                            <span>{providerType === "INDIVIDUAL_DOCTOR" ? "DR" : providerType === "CLINIC" ? "CL" : "HS"}</span>
-                          </div>
-                        )}
-                        token={token}
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <span className="eyebrow">{providerTypeLabel(providerType)} profile</span>
-                    <h2>{preview?.displayName ?? draft.displayName ?? "Profile name pending"}</h2>
-                    <p>{preview?.subtitle ?? draft.qualification ?? draft.organisationType ?? draft.hospitalType ?? "Profile details pending"}</p>
-                  </div>
+            <section className="provider-preview-page">
+              <header className="provider-preview-banner" role="status" aria-live="polite">
+                <div className="provider-preview-banner-copy">
+                  <span className="eyebrow">Preview</span>
+                  <h1>Public profile preview</h1>
+                  <p>This is how patients will see your profile after publication. Only you can see this preview before submission.</p>
+                  {readOnlyApplication ? <small>Your application is currently read-only while Jeevanam reviews it.</small> : null}
                 </div>
-                <div className="provider-public-section-grid">
-                  <section>
-                    <strong>Biography</strong>
-                    <p>{preview?.biography ?? draft.biography ?? "Biography will appear here once published."}</p>
+                <div className="provider-preview-banner-actions">
+                  <button className="secondary-button" type="button" onClick={() => void goToStep(returnToEditingStep, "route-transition")}>
+                    Return to editing
+                  </button>
+                  <button className="primary-button" type="button" onClick={() => void loadPreviewPanel()}>
+                    Refresh preview
+                  </button>
+                </div>
+              </header>
+              <div className="provider-preview-page-body">
+                <article className="provider-preview-profile profile-preview-card provider-public-preview">
+                  <section className="provider-preview-hero-shell">
+                    <div className="provider-public-hero provider-public-hero--preview">
+                      <div className="provider-public-hero-media">
+                        <div className="provider-public-cover-frame">
+                          <PublicMediaImage
+                            src={previewCoverPath}
+                            alt={`${preview?.displayName ?? draft.displayName ?? "Provider"} cover image`}
+                            className="landing-cover-image"
+                            objectFit="cover"
+                            fallback={<div className="landing-cover-fallback" aria-hidden="true" />}
+                            token={token}
+                          />
+                        </div>
+                        <div className="provider-public-avatar-frame">
+                          <PublicMediaImage
+                            src={previewDoctorPhotoPath ?? previewLogoPath}
+                            alt={`${preview?.displayName ?? draft.displayName ?? "Provider"} ${providerType === "INDIVIDUAL_DOCTOR" ? "photo" : "logo"}`}
+                            className="landing-avatar-image"
+                            objectFit={providerType === "INDIVIDUAL_DOCTOR" ? "cover" : "contain"}
+                            fallback={(
+                              <div className="landing-avatar-fallback" aria-hidden="true">
+                                <span>{providerType === "INDIVIDUAL_DOCTOR" ? "DR" : providerType === "CLINIC" ? "CL" : "HS"}</span>
+                              </div>
+                            )}
+                            token={token}
+                          />
+                        </div>
+                      </div>
+                      <div className="provider-preview-hero-copy">
+                        <div className="provider-preview-hero-heading">
+                          <span className="eyebrow">{providerTypeLabel(providerType)} profile</span>
+                          <h2>{preview?.displayName ?? draft.displayName ?? "Profile name pending"}</h2>
+                          {heroSummary ? <p>{heroSummary}</p> : null}
+                          {tagline ? <small>{tagline}</small> : null}
+                        </div>
+                        <div className="provider-preview-hero-facts">
+                          {primarySpeciality ? <span className="provider-preview-fact-chip"><MedicalServicesOutlined fontSize="small" aria-hidden="true" />{primarySpeciality}</span> : null}
+                          {heroLocation ? <span className="provider-preview-fact-chip"><PlaceOutlined fontSize="small" aria-hidden="true" />{heroLocation}</span> : null}
+                          {draft.yearsOfExperience != null && !Number.isNaN(draft.yearsOfExperience) ? <span className="provider-preview-fact-chip"><AssignmentOutlined fontSize="small" aria-hidden="true" />{draft.yearsOfExperience} Years Experience</span> : null}
+                          {consultationFeeLabel ? <span className="provider-preview-fact-chip"><SchoolOutlined fontSize="small" aria-hidden="true" />{consultationFeeLabel} Consultation</span> : null}
+                          {validation.languages.length ? <span className="provider-preview-fact-chip"><LanguageOutlined fontSize="small" aria-hidden="true" />{validation.languages.join(" • ")}</span> : null}
+                          {hasTeleconsultation ? <span className="provider-preview-fact-chip"><DirectionsCarOutlined fontSize="small" aria-hidden="true" />Teleconsultation available</span> : null}
+                        </div>
+                        <div className="provider-preview-hero-actions">
+                          <a className="primary-button" href={careBookingUrl({ provider: preview?.displayName ?? draft.displayName })}>
+                            Book Appointment
+                          </a>
+                          {publicPhone ? (
+                            <a className="secondary-button" href={`tel:${publicPhone}`}>
+                              {providerCallLabel(providerType)}
+                            </a>
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
                   </section>
-                  <section>
-                    <strong>Services</strong>
-                    <div className="directory-badge-row">{(preview?.services ?? draft.services?.map((item) => item.label) ?? []).map((item) => <span className="chip" key={item}>{item}</span>)}</div>
+
+                  <section className="provider-preview-section provider-preview-section--about">
+                    <div className="provider-preview-section-heading">
+                      <span className="eyebrow">About</span>
+                      <h2>{providerType === "INDIVIDUAL_DOCTOR" ? `About ${preview?.displayName ?? draft.displayName ?? "the doctor"}` : `About ${preview?.displayName ?? draft.displayName ?? "the provider"}`}</h2>
+                    </div>
+                    {draft.biography?.trim() || preview?.biography ? (
+                      <p className="provider-preview-biography">{preview?.biography ?? draft.biography}</p>
+                    ) : (
+                      <div className="provider-preview-empty-state">
+                        <strong>Biography not added yet.</strong>
+                        <p>Add a patient-facing introduction so people understand your background and care approach.</p>
+                      </div>
+                    )}
                   </section>
-                  <section>
-                    <strong>Languages</strong>
-                    <div className="directory-badge-row">{validation.languages.map((item) => <span className="chip" key={item}>{item}</span>)}</div>
-                  </section>
-                  <section>
-                    <strong>Facilities</strong>
-                    <div className="directory-badge-row">{validation.facilities.map((item) => <span className="chip" key={item}>{item}</span>)}</div>
-                  </section>
-                  <section>
-                    <strong>Locations</strong>
-                    <p>{preview?.locationSummary ?? draft.locations?.[0]?.city ?? "Location pending"}</p>
-                    <LocationDisplayMap
-                      providerName={preview?.displayName ?? draft.displayName ?? copy.nameLabel}
-                      locations={draft.locations ?? []}
-                      compact
-                    />
-                  </section>
-                  <section>
-                    <strong>Branding</strong>
-                    <p>{previewBranding?.tagline || draft.branding?.tagline || "Branding tagline pending."}</p>
-                    {previewGalleryPaths.length ? (
-                      <div className="landing-gallery-grid provider-public-gallery">
-                        {previewGalleryPaths.map((url, index) => (
-                          <article className="landing-gallery-card" key={url}>
-                            <div className="landing-gallery-media">
-                              <PublicMediaImage
-                                src={url}
-                                alt={`${preview?.displayName ?? draft.displayName ?? "Provider"} gallery image ${index + 1}`}
-                                className="landing-gallery-image"
-                                objectFit="cover"
-                                fallback={<div className="landing-gallery-fallback" aria-hidden="true" />}
-                                token={token}
-                              />
+
+                  <div className="provider-preview-grid provider-preview-grid--paired">
+                    <section className="provider-preview-card">
+                      <div className="provider-preview-section-heading">
+                        <span className="eyebrow">Professional Information</span>
+                        <h2>Professional Information</h2>
+                      </div>
+                      {professionalInformation.length ? (
+                        <dl className="provider-preview-definition-list">
+                          {professionalInformation.map((item) => (
+                            <div key={item.label}>
+                              <dt>{item.label}</dt>
+                              <dd>{item.value}</dd>
                             </div>
-                            <strong>Gallery image {index + 1}</strong>
+                          ))}
+                        </dl>
+                      ) : (
+                        <div className="provider-preview-empty-state">
+                          <strong>Professional details are still being added.</strong>
+                        </div>
+                      )}
+                    </section>
+
+                    <section className="provider-preview-card">
+                      <div className="provider-preview-section-heading">
+                        <span className="eyebrow">Services</span>
+                        <h2>Services</h2>
+                      </div>
+                      {hasEnabledServices(draft.services) ? (
+                        <div className="provider-preview-pill-grid">
+                          {(preview?.services ?? draft.services?.filter((item) => item.enabled !== false).map((item) => item.label) ?? []).map((item) => (
+                            <span className="provider-preview-service-pill" key={item}>
+                              <MedicalServicesOutlined fontSize="small" aria-hidden="true" />
+                              {item}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="provider-preview-empty-state">
+                          <strong>No services selected yet.</strong>
+                        </div>
+                      )}
+                      {showFacilitiesSection ? (
+                        <div className="provider-preview-subsection">
+                          <h3>{facilitySectionTitle}</h3>
+                          <div className="provider-preview-pill-grid">
+                            {validation.facilities.map((item) => (
+                              <span className="provider-preview-facility-pill" key={item}>
+                                <CheckCircleOutlined fontSize="small" aria-hidden="true" />
+                                {item}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                    </section>
+                  </div>
+
+                  <div className="provider-preview-grid provider-preview-grid--paired">
+                    <section className="provider-preview-card">
+                      <div className="provider-preview-section-heading">
+                        <span className="eyebrow">Gallery</span>
+                        <h2>Clinic image gallery</h2>
+                      </div>
+                      {previewGalleryItems.length ? (
+                        <div className="provider-preview-gallery-grid">
+                          {previewGalleryItems.map((item, index) => (
+                            <article className="provider-preview-gallery-card" key={`${item.url}-${index}`}>
+                              <div className="landing-gallery-media">
+                                <PublicMediaImage
+                                  src={item.url}
+                                  alt={item.alt}
+                                  className="landing-gallery-image"
+                                  objectFit="cover"
+                                  fallback={<div className="landing-gallery-fallback" aria-hidden="true" />}
+                                  token={token}
+                                />
+                              </div>
+                              <div className="provider-preview-gallery-card-copy">
+                                <strong>{item.caption}</strong>
+                                <a className="text-button" href={item.url} target="_blank" rel="noreferrer">
+                                  Open image
+                                </a>
+                              </div>
+                            </article>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="provider-preview-gallery-empty" role="status" aria-live="polite">
+                          <p>No additional clinic images have been added.</p>
+                          <button className="secondary-button" type="button" onClick={() => void goToStep("branding", "route-transition")}>
+                            Add images
+                          </button>
+                        </div>
+                      )}
+                    </section>
+
+                    <section className="provider-preview-card">
+                      <div className="provider-preview-section-heading">
+                        <span className="eyebrow">Location</span>
+                        <h2>Location and access</h2>
+                      </div>
+                      {previewPrimaryLocation ? (
+                        <div className="provider-preview-location">
+                          <div className="provider-preview-location-copy">
+                            <strong>{previewPrimaryLocation.label || preview?.displayName || draft.displayName || copy.nameLabel}</strong>
+                            <p>{locationAddress || "Address will appear once location details are completed."}</p>
+                            <div className="provider-preview-location-meta">
+                              {previewPrimaryLocation.workingHours?.trim() ? <span>Working hours: {previewPrimaryLocation.workingHours.trim()}</span> : null}
+                              {publicPhone ? <span>Phone: {publicPhone}</span> : null}
+                            </div>
+                            {showFacilitiesSection ? (
+                              <div className="provider-preview-pill-grid">
+                                {validation.facilities.map((item) => <span className="provider-preview-facility-pill" key={`location-${item}`}>{item}</span>)}
+                              </div>
+                            ) : null}
+                          </div>
+                          <LocationDisplayMap
+                            providerName={preview?.displayName ?? draft.displayName ?? copy.nameLabel}
+                            locations={draft.locations ?? []}
+                            compact
+                            title="Find this location"
+                            directionsLabel="Get directions"
+                          />
+                        </div>
+                      ) : (
+                        <div className="provider-preview-empty-state">
+                          <strong>Location details are missing.</strong>
+                          <p>Add an address and map pin so patients can find you easily.</p>
+                        </div>
+                      )}
+                    </section>
+                  </div>
+
+                  <div className="provider-preview-grid provider-preview-grid--paired">
+                    <section className="provider-preview-card">
+                      <div className="provider-preview-section-heading">
+                        <span className="eyebrow">Trust and Verification</span>
+                        <h2>Trust and Verification</h2>
+                      </div>
+                      {trustIndicators.length ? (
+                        <div className="provider-preview-pill-grid">
+                          {trustIndicators.map((item) => (
+                            <span className="provider-preview-trust-pill" key={item}>
+                              <CheckCircleOutlined fontSize="small" aria-hidden="true" />
+                              {item}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="provider-preview-empty-state">
+                          <strong>Public verification indicators are not available yet.</strong>
+                        </div>
+                      )}
+                    </section>
+
+                    <section className="provider-preview-card">
+                      <div className="provider-preview-section-heading">
+                        <span className="eyebrow">Quick Facts</span>
+                        <h2>Quick Facts</h2>
+                      </div>
+                      {quickFacts.length ? (
+                        <dl className="provider-preview-fact-grid">
+                          {quickFacts.map((item) => (
+                            <div key={item.label}>
+                              <dt>{item.label}</dt>
+                              <dd>{item.value}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                      ) : (
+                        <div className="provider-preview-empty-state">
+                          <strong>Quick facts will appear here as more profile information is added.</strong>
+                        </div>
+                      )}
+                    </section>
+                  </div>
+
+                  <section className="provider-preview-card provider-preview-readiness">
+                    <div className="provider-preview-section-heading">
+                      <span className="eyebrow">Profile readiness</span>
+                      <h2>{previewChecklistItems.length ? "Complete your public profile" : "Ready for submission"}</h2>
+                    </div>
+                    {previewChecklistItems.length ? (
+                      <div className="provider-preview-checklist">
+                        {previewChecklistItems.map((item) => (
+                          <article className="provider-preview-checklist-item" key={`${item.step}-${item.label}`}>
+                            <div>
+                              <h3>{item.label}</h3>
+                              <p>{item.detail ?? `Update this in ${stepLabel(item.step)}.`}</p>
+                              <small>{stepLabel(item.step)}</small>
+                            </div>
+                            <button className="secondary-button" type="button" onClick={() => void goToStep(item.step, "route-transition")}>
+                              Complete now
+                            </button>
                           </article>
                         ))}
                       </div>
-                    ) : null}
+                    ) : (
+                      <div className="provider-preview-checklist-empty" role="status" aria-live="polite">
+                        <strong>Your public profile contains the required information.</strong>
+                        {readinessCompletedAreas.length ? (
+                          <div className="provider-preview-pill-grid">
+                            {readinessCompletedAreas.map((item) => <span className="provider-preview-ready-pill" key={item}>{item}</span>)}
+                          </div>
+                        ) : null}
+                      </div>
+                    )}
                   </section>
-                </div>
-                <div className="provider-public-cta">
-                  <a className="primary-button" href={careBookingUrl({ provider: preview?.displayName ?? draft.displayName })}>
-                    Appointment CTA
-                  </a>
-                </div>
-              </article>
-            </Panel>
+
+                  <section className="provider-preview-card provider-preview-appointment-card">
+                    <div className="provider-preview-section-heading">
+                      <span className="eyebrow">Appointment</span>
+                      <h2>Book Appointment</h2>
+                    </div>
+                    <p>{consultationFeeLabel ? `${consultationFeeLabel} consultation` : "Consultation fee will appear once added."}</p>
+                    <div className="provider-preview-appointment-meta">
+                      {hasTeleconsultation ? <span>Teleconsultation available</span> : null}
+                      {publicPhone ? <span>{publicPhone}</span> : null}
+                    </div>
+                    <div className="provider-preview-appointment-actions">
+                      <a className="primary-button" href={careBookingUrl({ provider: preview?.displayName ?? draft.displayName })}>
+                        Book Appointment
+                      </a>
+                      {publicPhone ? (
+                        <a className="secondary-button" href={`tel:${publicPhone}`}>
+                          {providerCallLabel(providerType)}
+                        </a>
+                      ) : null}
+                    </div>
+                  </section>
+                </article>
+              </div>
+            </section>
           ) : null}
 
           {activeStep === "submit" ? (
             <Panel title="Submit for verification">
               <p className="panel-help">Review the remaining items before submitting for verification.</p>
-              <StatusTimeline status={application?.status ?? "DRAFT"} />
+              {referenceCatalogLoaded && !submissionReadyForReferenceData ? (
+                <div className="verification-blocking" role="status" aria-live="polite">
+                  <strong>Reference data unavailable</strong>
+                  <p>At least one required reference dataset is empty for this provider type.</p>
+                </div>
+              ) : null}
+              <div className="submission-summary-grid">
+                <section className="submission-summary-card">
+                  <strong>Profile completion</strong>
+                  <div className="progress-track" aria-label={`${completionPercent}% complete`}>
+                    <span style={{ width: `${completionPercent}%` }} />
+                  </div>
+                  <p>{completionPercent}% complete</p>
+                  <small>{validation.requiredRemaining} required items remaining</small>
+                </section>
+                <section className="submission-summary-card">
+                  <strong>Submission summary</strong>
+                  <ul>
+                    <li>{providerTypeLabel(providerType)}</li>
+                    <li>{providerType === "INDIVIDUAL_DOCTOR" ? `Speciality: ${draft.specialities?.[0] ?? "Pending"}` : providerType === "HOSPITAL" ? `Departments: ${draft.departments?.join(", ") ?? "Pending"}` : `Speciality: ${draft.specialities?.[0] ?? "Optional"}`}</li>
+                    <li>Location: {draft.locations?.[0]?.city ? `${draft.locations[0].city}, ${draft.locations[0].state}` : "Pending"}</li>
+                    <li>Documents uploaded: {application?.documents.length ?? 0}</li>
+                  </ul>
+                </section>
+              </div>
+              <section className="submission-timeline-card">
+                <strong>Submission timeline</strong>
+                <div className="submission-timeline">
+                  {["Draft", "Submitted", "Under Review", "Changes Requested", "Approved", "Published"].map((label, index) => (
+                    <span key={label} className={index <= (application?.status === "PUBLISHED" ? 5 : application?.status === "APPROVED" ? 4 : application?.status === "CHANGES_REQUESTED" ? 3 : application?.status === "UNDER_REVIEW" ? 2 : application?.status === "SUBMITTED" ? 1 : 0) ? "is-active" : ""}>
+                      {label}
+                    </span>
+                  ))}
+                </div>
+              </section>
               {!contactSatisfied ? (
                 <div className="verification-blocking">
                   <strong>Contact verification required</strong>
@@ -1554,8 +2308,28 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
                   ))}
                 </div>
               ) : null}
-              {missingItems.length ? <div className="missing-list"><strong>Missing information</strong>{missingItems.map((item) => <span key={item}>{missingItemLabel(item)}</span>)}</div> : <p>Your application is ready for review.</p>}
-              <button className="primary-button" type="button" onClick={() => void submit()} disabled={!applicationEditable || saving || missingItems.length > 0 || !contactSatisfied}>
+              <div className="submission-blockers">
+                <strong>Blocking items</strong>
+                {missingItems.length ? (
+                  <div className="submission-blocker-groups">
+                    {Object.entries(missingItems.reduce<Record<string, string[]>>((groups, code) => {
+                      const group = missingItemGroup(code);
+                      (groups[group] ??= []).push(code);
+                      return groups;
+                    }, {})).map(([group, items]) => (
+                      <section key={group}>
+                        <strong>{group}</strong>
+                        {items.map((item) => (
+                          <span key={item}>{missingItemLabel(item)}</span>
+                        ))}
+                      </section>
+                    ))}
+                  </div>
+                ) : (
+                  <p>Your application is ready for review.</p>
+                )}
+              </div>
+              <button className="primary-button" type="button" onClick={() => void submit()} disabled={!applicationEditable || saving || missingItems.length > 0 || !contactSatisfied || !submissionReadyForReferenceData}>
                 {application?.status === "CHANGES_REQUESTED" ? "Resubmit for verification" : "Submit for verification"}
               </button>
             </Panel>
@@ -1568,7 +2342,7 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
                 className="primary-button"
                 type="button"
                 onClick={() => void goToStep(steps[Math.min(steps.length - 1, currentStepIndex + 1)][0])}
-                disabled={currentStepIndex >= steps.length - 1 || (!readOnlyApplication && stepStates[currentStepIndex + 1]?.disabled)}
+                disabled={currentStepIndex >= steps.length - 1 || !currentStepCanContinue}
               >
                 Continue
               </button>
@@ -1632,21 +2406,43 @@ function FieldShell({ label, helperText, error, children }: { label: string; hel
 
 function clientMissingItems(draft: ProviderApplicationPayload, account: { email: string; phone: string; termsAccepted: boolean; privacyAccepted: boolean }, providerType: ProviderType) {
   const missing = [];
-  if (!account.email && !draft.email) missing.push("email");
-  if (!account.phone && !draft.phone) missing.push("phone");
-  if (!account.termsAccepted && !draft.termsAccepted) missing.push("terms");
-  if (!account.privacyAccepted && !draft.privacyAccepted) missing.push("privacy");
-  if (!draft.displayName && !draft.legalName) missing.push("displayName");
-  if (!draft.registrationNumber) missing.push("registrationNumber");
-  if (!draft.services?.length) missing.push("services");
-  if (!draft.locations?.length) missing.push("locations");
-  if (providerType === "INDIVIDUAL_DOCTOR" && !draft.qualification) missing.push("qualification");
-  if (providerType === "HOSPITAL" && !draft.beds) missing.push("beds");
+  if (!account.email && !draft.email) missing.push("EMAIL_REQUIRED");
+  if (!account.phone && !draft.phone) missing.push("PHONE_REQUIRED");
+  if (!account.termsAccepted && !draft.termsAccepted) missing.push("TERMS_ACCEPTANCE_REQUIRED");
+  if (!account.privacyAccepted && !draft.privacyAccepted) missing.push("PRIVACY_ACCEPTANCE_REQUIRED");
+  if (!draft.displayName && !draft.legalName) missing.push(providerType === "INDIVIDUAL_DOCTOR" ? "DOCTOR_NAME_REQUIRED" : providerType === "CLINIC" ? "CLINIC_NAME_REQUIRED" : "HOSPITAL_NAME_REQUIRED");
+  if (!draft.registrationNumber) missing.push(providerType === "INDIVIDUAL_DOCTOR" ? "DOCTOR_REGISTRATION_NUMBER_REQUIRED" : providerType === "CLINIC" ? "CLINIC_REGISTRATION_NUMBER_REQUIRED" : "HOSPITAL_REGISTRATION_NUMBER_REQUIRED");
+  if (providerType === "INDIVIDUAL_DOCTOR" && !draft.specialities?.length) missing.push("PRIMARY_SPECIALITY_REQUIRED");
+  if (providerType === "CLINIC" && draft.specialities && draft.specialities.length > 1) missing.push("PRIMARY_SPECIALITY_REQUIRED");
+  if (providerType === "HOSPITAL" && !draft.departments?.length) missing.push("HOSPITAL_DEPARTMENTS_REQUIRED");
+  if (!draft.services?.some((item) => item.enabled !== false)) missing.push("SERVICES_REQUIRED");
+  if (!draft.locations?.length) missing.push("PRIMARY_LOCATION_REQUIRED");
+  if (providerType === "INDIVIDUAL_DOCTOR" && !draft.qualification) missing.push("DOCTOR_QUALIFICATION_REQUIRED");
+  if (providerType === "HOSPITAL" && !draft.beds) missing.push("HOSPITAL_BEDS_REQUIRED");
+  if (providerType === "HOSPITAL" && !draft.emergencyAvailable) missing.push("HOSPITAL_EMERGENCY_STATUS_REQUIRED");
   return missing;
 }
 
-function estimateCompletion(draft: ProviderApplicationPayload, account: { email: string; phone: string; termsAccepted: boolean; privacyAccepted: boolean }, providerType: ProviderType) {
-  const missing = clientMissingItems(draft, account, providerType).length;
-  const total = providerType === "HOSPITAL" ? 10 : 9;
-  return Math.max(0, Math.min(100, ((total - missing) * 100) / total));
+function estimateCompletion(draft: ProviderApplicationPayload, account: ProviderAccountCompletionInput, providerType: ProviderType, catalog: DiscoverReferenceCatalog = emptyReferenceCatalog()) {
+  const validation = validateDraft(draft, account, providerType, catalog);
+  const accountComplete = !validation.errors.account && !validation.errors.terms && !validation.errors.privacy;
+  const organisationComplete = !validation.errors.displayName && !validation.errors.registrationNumber && !validation.errors.website && !validation.errors.gstNumber && !validation.errors.ownership && !validation.errors.organisationType && !validation.errors.hospitalType;
+  const professionalComplete = !validation.errors.qualification && !validation.errors.medicalCouncil && !validation.errors.yearsOfExperience && !validation.errors.specialities && !validation.errors.departments && !validation.errors.languages && !validation.errors.facilities && !validation.errors.beds && !validation.errors.medicalDirector && !validation.errors.emergencyAvailable;
+  const servicesComplete = !validation.errors.services;
+  const locationsComplete = !validation.errors.locations;
+  const brandingComplete = providerType === "INDIVIDUAL_DOCTOR" ? Boolean(draft.branding?.doctorPhotoDocumentId) : Boolean(draft.branding?.logoDocumentId);
+  const previewReady = accountComplete && organisationComplete && professionalComplete && servicesComplete && locationsComplete && brandingComplete;
+  const steps = [
+    [accountComplete, 10],
+    [organisationComplete, 15],
+    [professionalComplete, 20],
+    [servicesComplete, 15],
+    [locationsComplete, 15],
+    [brandingComplete, 10],
+    [previewReady, 5],
+    [previewReady && !validation.errors.documents, 10],
+  ] as const;
+  const total = steps.reduce((sum, [, weight]) => sum + weight, 0);
+  const completed = steps.reduce((sum, [done, weight]) => sum + (done ? weight : 0), 0);
+  return Math.max(0, Math.min(100, (completed * 100) / total));
 }

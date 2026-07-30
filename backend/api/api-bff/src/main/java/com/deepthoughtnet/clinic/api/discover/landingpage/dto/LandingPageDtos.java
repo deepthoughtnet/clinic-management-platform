@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.api.discover.landingpage.dto;
 
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderType;
+import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderLifecycleStatus;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderProfileDetailRecord;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -79,6 +80,7 @@ public final class LandingPageDtos {
     public record LandingPageResponse(
             UUID providerId,
             ProviderType providerType,
+            ProviderLifecycleStatus applicationStatus,
             String displayName,
             String canonicalSlug,
             String publicPath,

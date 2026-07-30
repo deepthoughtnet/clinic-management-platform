@@ -1,10 +1,12 @@
 package com.deepthoughtnet.clinic.api.discover.provider.auth;
 
 import com.deepthoughtnet.clinic.api.discover.provider.auth.ProviderAuthModels.LoginChallengeResponse;
+import com.deepthoughtnet.clinic.api.discover.provider.auth.ProviderAuthModels.ChallengeVerifyRequest;
 import com.deepthoughtnet.clinic.api.discover.provider.auth.ProviderAuthModels.LoginRequest;
 import com.deepthoughtnet.clinic.api.discover.provider.auth.ProviderAuthModels.LoginVerifyRequest;
 import com.deepthoughtnet.clinic.api.discover.provider.auth.ProviderAuthModels.LoginVerifyResponse;
 import com.deepthoughtnet.clinic.discover.verification.DiscoverVerificationService;
+import com.deepthoughtnet.clinic.discover.verification.DiscoverContactNormalizer;
 import com.deepthoughtnet.clinic.discover.verification.ProviderSessionResult;
 import com.deepthoughtnet.clinic.discover.verification.VerificationChannel;
 import com.deepthoughtnet.clinic.discover.verification.VerificationChallengeRequest;
@@ -16,10 +18,11 @@ import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import java.time.Duration;
 import java.time.OffsetDateTime;
-import java.util.Locale;
+import java.util.UUID;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -38,6 +41,11 @@ public class ProviderAuthController {
 
     @PostMapping("/request")
     public LoginChallengeResponse request(@Valid @RequestBody LoginRequest request) {
+        return requestChallenge(request);
+    }
+
+    @PostMapping("/challenges")
+    public LoginChallengeResponse requestChallenge(@Valid @RequestBody LoginRequest request) {
         VerificationChannel channel = inferChannel(request.identifier());
         String normalizedRecipient = normalizeRecipient(request.identifier(), channel);
         VerificationPurpose purpose = channel == VerificationChannel.EMAIL
@@ -54,8 +62,14 @@ public class ProviderAuthController {
                 "PROVIDER_LOGIN"
         ));
         return new LoginChallengeResponse(
+                result.challengeId().toString(),
+                result.channel(),
+                result.maskedRecipient(),
                 result.message(),
                 result.developmentCode(),
+                result.verificationMode(),
+                result.expiresAt(),
+                result.resendAvailableAt(),
                 result.expiresInSeconds(),
                 result.resendAfterSeconds(),
                 result.providerName(),
@@ -77,6 +91,7 @@ public class ProviderAuthController {
         var result = verificationService.verifyChallenge(new VerificationVerificationRequest(
                 null,
                 null,
+                null,
                 purpose,
                 channel,
                 normalizedRecipient,
@@ -84,16 +99,40 @@ public class ProviderAuthController {
                 "PROVIDER_LOGIN"
         ));
         if (result.providerAccountId() == null) {
-            return ResponseEntity.status(401).body(new LoginVerifyResponse(false, null, null, "Unable to verify provider login right now."));
+            return ResponseEntity.status(401).body(new LoginVerifyResponse(false, null, "Unable to verify provider login right now."));
         }
-        ProviderSessionResult session = verificationService.createSession(result.providerAccountId());
+        ProviderSessionResult session = verificationService.replaceSession(result.providerAccountId(), readCookie(request, COOKIE_NAME));
         response.addHeader(HttpHeaders.SET_COOKIE, buildSessionCookie(session.sessionToken(), request.isSecure(), session.expiresAt().toEpochSecond()));
         return ResponseEntity.ok(new LoginVerifyResponse(
                 true,
-                session.providerAccountId(),
                 session.expiresAt(),
                 "Provider login successful."
         ));
+    }
+
+    @PostMapping("/challenges/{challengeId}/verify")
+    public ResponseEntity<LoginVerifyResponse> verifyChallenge(
+            HttpServletRequest request,
+            HttpServletResponse response,
+            @PathVariable UUID challengeId,
+            @Valid @RequestBody ChallengeVerifyRequest body
+    ) {
+        var result = verificationService.verifyChallenge(new VerificationVerificationRequest(
+                challengeId,
+                null,
+                null,
+                null,
+                null,
+                null,
+                body.code(),
+                "PROVIDER_LOGIN"
+        ));
+        if (result.providerAccountId() == null) {
+            return ResponseEntity.status(401).body(new LoginVerifyResponse(false, null, "Unable to verify provider login right now."));
+        }
+        ProviderSessionResult session = verificationService.replaceSession(result.providerAccountId(), readCookie(request, COOKIE_NAME));
+        response.addHeader(HttpHeaders.SET_COOKIE, buildSessionCookie(session.sessionToken(), request.isSecure(), session.expiresAt().toEpochSecond()));
+        return ResponseEntity.ok(new LoginVerifyResponse(true, session.expiresAt(), "Provider login successful."));
     }
 
     @PostMapping("/logout")
@@ -111,11 +150,7 @@ public class ProviderAuthController {
     }
 
     private String normalizeRecipient(String value, VerificationChannel channel) {
-        if (value == null) {
-            return null;
-        }
-        String trimmed = value.trim();
-        return channel == VerificationChannel.EMAIL ? trimmed.toLowerCase(Locale.ROOT) : trimmed.replaceAll("[^0-9+]", "");
+        return DiscoverContactNormalizer.normalizeRecipient(value, channel);
     }
 
     private String buildSessionCookie(String value, boolean secure, long expiresAtEpochSeconds) {
@@ -152,5 +187,4 @@ public class ProviderAuthController {
         }
         return null;
     }
-
 }

@@ -79,6 +79,7 @@ public final class LandingPageModels {
     public record LandingPageWorkspaceRecord(
             UUID providerId,
             ProviderType providerType,
+            com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderLifecycleStatus applicationStatus,
             String displayName,
             String canonicalSlug,
             String publicPath,

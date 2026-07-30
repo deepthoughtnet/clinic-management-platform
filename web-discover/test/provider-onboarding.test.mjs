@@ -12,15 +12,21 @@ function read(relPath) {
 test("provider onboarding routes use one governed wizard for all provider types", () => {
   const app = read("src/App.tsx");
   const routes = read("src/routes.ts");
+  const dashboard = read("src/pages/provider/ProviderDashboardPage.tsx");
   const portal = read("src/pages/provider/ProviderOnboardingPage.tsx");
 
   assert.ok(app.includes('<ProviderOnboardingPage type="doctor"'));
   assert.ok(app.includes('<ProviderOnboardingPage type="clinic"'));
   assert.ok(app.includes('<ProviderOnboardingPage type="hospital"'));
   assert.ok(routes.includes("REGISTRATION_PROVIDER_TYPE_BY_ROUTE"));
+  assert.ok(routes.includes('providerApplicationDashboard: { path: "/provider/applications/:applicationReference"'));
+  assert.ok(app.includes('<Route path={DISCOVER_ROUTES.providerApplicationDashboard.path} element={<ProviderDashboardPage />} />'));
   assert.ok(routes.includes('doctor: "INDIVIDUAL_DOCTOR"'));
   assert.ok(routes.includes('clinic: "CLINIC"'));
   assert.ok(routes.includes('hospital: "HOSPITAL"'));
+  assert.ok(dashboard.includes("createProviderOnboardingAccess"));
+  assert.ok(dashboard.includes("loadProviderApplicationDashboard"));
+  assert.ok(dashboard.includes("navigate(`/provider/onboarding/${access.applicationId}/${step}`)"));
   assert.ok(portal.includes("const steps = ["));
   for (const label of ["Account", "Organisation", "Professional Details", "Services", "Locations", "Branding", "Preview", "Submit"]) {
     assert.ok(portal.includes(label), `${label} step should be present`);
@@ -44,7 +50,9 @@ test("provider onboarding persists drafts, resumes by token, and keeps URL as st
   assert.ok(portal.includes("goToStep("));
   assert.ok(portal.includes("savePromiseRef"));
   assert.ok(portal.includes("latestVersionRef"));
-  assert.ok(portal.includes("EDITABLE_PROVIDER_STATUSES"));
+  assert.ok(portal.includes("loadDiscoverReferenceCatalog"));
+  assert.ok(portal.includes("referenceCatalog"));
+  assert.ok(portal.includes("READ_ONLY_PROVIDER_STATUSES"));
   assert.ok(portal.includes("isApplicationEditable"));
   assert.ok(portal.includes("applicationEditable"));
   assert.ok(portal.includes("readOnlyApplication"));
@@ -58,6 +66,9 @@ test("provider onboarding persists drafts, resumes by token, and keeps URL as st
   assert.ok(portal.includes("loadProviderApplication(token)"));
   assert.ok(portal.includes("localStorage.setItem(tokenStorageKey"));
   assert.ok(portal.includes("`${TOKEN_KEY}.${routeProviderType}`"));
+  assert.ok(portal.includes('const [token, setToken] = useState(() => (routeProviderType ? "" : readStoredToken(TOKEN_KEYS)));'));
+  assert.ok(portal.includes("setToken(\"\");"));
+  assert.ok(portal.includes("setApplication(null);"));
   assert.ok(portal.includes("providerType: routeProviderType ?? providerType"));
 });
 
@@ -91,12 +102,39 @@ test("provider onboarding upload and submission UX is explicit", () => {
   assert.ok(portal.includes("Verify your contact details before submitting your profile."));
   assert.ok(portal.includes("Submit for verification"));
   assert.ok(portal.includes("Status messages"));
-  assert.ok(portal.includes("Missing information"));
+  assert.ok(portal.includes("Blocking items"));
+  assert.ok(portal.includes("Profile completion"));
+  assert.ok(portal.includes("Submission timeline"));
+  assert.ok(portal.includes("Submission summary"));
   assert.ok(portal.includes("Public profile preview"));
+  assert.ok(portal.includes("provider-portal-layout--preview"));
+  assert.ok(portal.includes("provider-workspace--preview"));
+  assert.ok(portal.includes("provider-preview-page"));
+  assert.ok(portal.includes("provider-preview-banner"));
+  assert.ok(portal.includes("provider-preview-page-body"));
   assert.ok(portal.includes("provider-public-preview"));
+  assert.ok(portal.includes("provider-public-hero"));
   assert.ok(portal.includes("provider-public-hero-media"));
-  assert.ok(portal.includes("provider-public-gallery"));
-  assert.ok(portal.includes("Appointment CTA"));
+  assert.ok(portal.includes("provider-preview-profile"));
+  assert.ok(portal.includes("provider-preview-grid"));
+  assert.ok(portal.includes("provider-preview-section--about"));
+  assert.ok(portal.includes("Professional Information"));
+  assert.ok(portal.includes("Trust and Verification"));
+  assert.ok(portal.includes("Quick Facts"));
+  assert.ok(portal.includes("Ready for submission"));
+  assert.ok(portal.includes("Complete your public profile"));
+  assert.ok(portal.includes("provider-preview-checklist"));
+  assert.ok(portal.includes("provider-preview-gallery-grid"));
+  assert.ok(portal.includes("No additional clinic images have been added."));
+  assert.ok(portal.includes("Your public profile contains the required information."));
+  assert.ok(portal.includes('goToStep(item.step, "route-transition")'));
+  assert.ok(portal.includes('goToStep("branding", "route-transition")'));
+  assert.ok(portal.includes("Return to editing"));
+  assert.ok(portal.includes("provider-branding-banner"));
+  assert.ok(portal.includes("Book Appointment"));
+  assert.ok(portal.includes("provider-public-hero--preview"));
+  assert.ok(portal.includes("provider-preview-appointment-card"));
+  assert.ok(portal.includes("provider-preview-location"));
   assert.ok(portal.includes("StatusTimeline"));
   assert.ok(portal.includes("verification-note"));
   assert.ok(portal.includes("provider-readonly-banner"));
@@ -109,6 +147,39 @@ test("provider onboarding upload and submission UX is explicit", () => {
   assert.ok(styles.includes(".provider-public-preview"));
   assert.ok(styles.includes(".provider-readonly-banner"));
   assert.ok(styles.includes(".provider-readonly-fieldset"));
+  assert.ok(styles.includes(".provider-portal-layout--preview"));
+  assert.ok(styles.includes(".provider-workspace--preview"));
+  assert.ok(styles.includes(".provider-preview-banner"));
+  assert.ok(styles.includes(".provider-preview-page-body"));
+  assert.ok(styles.includes(".submission-summary-grid"));
+  assert.ok(styles.includes(".submission-timeline"));
+  assert.ok(styles.includes(".provider-public-preview"));
+  assert.ok(styles.includes(".provider-public-hero"));
+  assert.ok(styles.includes(".provider-public-hero--preview"));
+  assert.ok(styles.includes(".provider-preview-grid--paired"));
+  assert.ok(styles.includes(".provider-preview-definition-list"));
+  assert.ok(styles.includes(".provider-preview-fact-grid"));
+  assert.ok(styles.includes(".provider-preview-checklist-item"));
+  assert.ok(styles.includes(".provider-preview-gallery-card"));
+  assert.ok(styles.includes(".provider-preview-gallery-empty"));
+});
+
+test("provider login uses passwordless provider wording and local-only development codes", () => {
+  const page = read("src/pages/provider/ProviderLoginPage.tsx");
+  const api = read("src/api/providerAuth.ts");
+
+  assert.ok(page.includes("Send Verification Code"));
+  assert.ok(page.includes("List Your Practice"));
+  assert.ok(page.includes("Enter your verification code"));
+  assert.ok(page.includes("Development verification code"));
+  assert.ok(page.includes("Shown only in Local/UAT"));
+  assert.ok(page.includes("Change Email or Mobile Number"));
+  assert.ok(page.includes("maskRecipient"));
+  assert.ok(page.includes("codeInputRef"));
+  assert.ok(page.includes("Enter the six-digit code we sent to"));
+  assert.ok(page.includes("verificationMode"));
+  assert.ok(page.includes("Provider Login"));
+  assert.ok(api.includes("verificationMode"));
 });
 
 test("provider onboarding lifecycle gating disables editing outside editable statuses", () => {
@@ -116,8 +187,10 @@ test("provider onboarding lifecycle gating disables editing outside editable sta
   const locationPicker = read("src/components/location/LocationPicker.tsx");
   const searchInput = read("src/components/location/LocationSearchInput.tsx");
 
-  assert.ok(portal.includes("const EDITABLE_PROVIDER_STATUSES: ProviderStatus[] = [\"DRAFT\", \"CHANGES_REQUESTED\"]"));
-  assert.ok(portal.includes("if (!application || !token || !accountHydrated || !applicationEditable) return;"));
+  assert.ok(portal.includes("const READ_ONLY_PROVIDER_STATUSES: ProviderStatus[] = [\"SUBMITTED\", \"UNDER_REVIEW\", \"APPROVED\", \"PUBLISHED\", \"SUSPENDED\", \"ARCHIVED\"]"));
+  assert.ok(portal.includes("return Boolean(status && !READ_ONLY_PROVIDER_STATUSES.includes(status));"));
+  assert.ok(portal.includes('providerType !== "INDIVIDUAL_DOCTOR" && !draft.ownership?.trim()'));
+  assert.ok(portal.includes("if (!application || !token || !accountHydrated || !isApplicationEditable(application.status)) return;"));
   assert.ok(portal.includes("if (!applicationEditable) return;"));
   assert.ok(portal.includes("traceSave(reason, \"skipped\", { snapshot: \"read-only\" })"));
   assert.ok(portal.includes("autosaveEnabled={application ? applicationEditable : false}"));

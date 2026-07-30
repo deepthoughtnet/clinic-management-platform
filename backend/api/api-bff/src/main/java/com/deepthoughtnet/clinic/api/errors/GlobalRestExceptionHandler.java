@@ -8,6 +8,7 @@ import com.deepthoughtnet.clinic.api.medicationsafety.MedicationSafetyGuardError
 import com.deepthoughtnet.clinic.api.medicationsafety.MedicationSafetyGuardException;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityConflictException;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingConflictException;
+import com.deepthoughtnet.clinic.discover.reference.InvalidReferenceValueException;
 import com.deepthoughtnet.clinic.identity.service.TenantProvisioningException;
 import com.deepthoughtnet.clinic.patient.service.model.PatientConflictException;
 import com.fasterxml.jackson.databind.JsonMappingException;
@@ -184,6 +185,19 @@ public class GlobalRestExceptionHandler {
     @ExceptionHandler(ProviderOnboardingConflictException.class)
     public ResponseEntity<?> handleProviderOnboardingConflict(ProviderOnboardingConflictException ex, HttpServletRequest req) {
         return build(HttpStatus.CONFLICT, "conflict", userMessage(ex.getMessage(), "Provider application changed in another session."), req);
+    }
+
+    @ExceptionHandler(InvalidReferenceValueException.class)
+    public ResponseEntity<?> handleInvalidReferenceValue(InvalidReferenceValueException ex, HttpServletRequest req) {
+        ValidationErrorResponse body = ValidationErrorResponse.of(
+                HttpStatus.UNPROCESSABLE_ENTITY.value(),
+                ex.code(),
+                ex.field(),
+                userMessage(ex.getMessage(), "Invalid reference value"),
+                path(req),
+                correlationId(req)
+        );
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).body(body);
     }
 
     @ExceptionHandler(PatientConflictException.class)

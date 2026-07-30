@@ -119,4 +119,50 @@ class RequestContextFilterTest {
         assertThat(response.getHeader(CorrelationId.LEGACY_HEADER)).isEqualTo("corr-primary");
         assertThat(MDC.get(CorrelationId.MDC_KEY)).isNull();
     }
+
+    @Test
+    void discoverProviderRoutesStayTenantlessEvenWhenHealthcareJwtIsPresent() throws Exception {
+        when(auth.keycloakSub()).thenReturn("sub-discover");
+        when(auth.email()).thenReturn("clinic.user@arogia.com");
+        when(auth.displayName()).thenReturn("Clinic User");
+
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/api/provider/auth/challenges");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        AtomicBoolean chainCalled = new AtomicBoolean(false);
+        AtomicReference<RequestContext> capturedContext = new AtomicReference<>();
+
+        filter.doFilter(request, response, (req, res) -> {
+            chainCalled.set(true);
+            capturedContext.set(RequestContextHolder.get());
+        });
+
+        assertThat(chainCalled).isTrue();
+        assertThat(response.getStatus()).isEqualTo(200);
+        assertThat(capturedContext.get()).isNull();
+        verify(provisioner, never()).upsertAndReturnId(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
+        verify(roleResolver, never()).resolveTenantRole(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anySet());
+    }
+
+    @Test
+    void discoverReferenceReadsStayTenantlessEvenWhenHealthcareJwtIsPresent() throws Exception {
+        when(auth.keycloakSub()).thenReturn("sub-reference");
+        when(auth.email()).thenReturn("clinic.user@arogia.com");
+        when(auth.displayName()).thenReturn("Clinic User");
+
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/discover/reference/specialities");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        AtomicBoolean chainCalled = new AtomicBoolean(false);
+        AtomicReference<RequestContext> capturedContext = new AtomicReference<>();
+
+        filter.doFilter(request, response, (req, res) -> {
+            chainCalled.set(true);
+            capturedContext.set(RequestContextHolder.get());
+        });
+
+        assertThat(chainCalled).isTrue();
+        assertThat(response.getStatus()).isEqualTo(200);
+        assertThat(capturedContext.get()).isNull();
+        verify(provisioner, never()).upsertAndReturnId(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
+        verify(roleResolver, never()).resolveTenantRole(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anySet());
+    }
 }

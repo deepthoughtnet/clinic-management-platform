@@ -24,6 +24,7 @@ public final class LandingPageDtoMapper {
         return new LandingPageResponse(
                 record.providerId(),
                 record.providerType(),
+                record.applicationStatus(),
                 record.displayName(),
                 record.canonicalSlug(),
                 record.publicPath(),

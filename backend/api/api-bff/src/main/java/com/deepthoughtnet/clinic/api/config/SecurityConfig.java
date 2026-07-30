@@ -38,7 +38,6 @@ import org.springframework.security.web.AuthenticationEntryPoint;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashSet;
-import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -73,6 +72,7 @@ public class SecurityConfig {
                 .requestMatchers("/graphiql", "/graphiql/**").permitAll()
                 .requestMatchers("/favicon.ico").permitAll()
                 .requestMatchers("/api/public/**").permitAll()
+                .requestMatchers(HttpMethod.GET, "/api/discover/reference/**").permitAll()
                 .requestMatchers("/api/provider-registration/**").permitAll()
                 .requestMatchers("/api/provider/auth/**").permitAll()
                 .requestMatchers("/api/patient-portal/auth/**").permitAll()
@@ -164,25 +164,7 @@ public class SecurityConfig {
     }
 
     private static Set<String> buildAllowedIssuers(String primary) {
-        String normalizedPrimary = normalize(primary);
-        Set<String> issuers = new LinkedHashSet<>();
-        issuers.add(normalizedPrimary);
-        addHostVariants(issuers, normalizedPrimary, "localhost");
-        addHostVariants(issuers, normalizedPrimary, "127.0.0.1");
-        addHostVariants(issuers, normalizedPrimary, "10.0.2.2");
-        addHostVariants(issuers, normalizedPrimary, "host.docker.internal");
-        addHostVariants(issuers, normalizedPrimary, "keycloak");
-        Set<String> normalized = new LinkedHashSet<>();
-        for (String issuer : issuers) {
-            normalized.add(normalize(issuer));
-        }
-        return normalized;
-    }
-
-    private static void addHostVariants(Set<String> issuers, String base, String host) {
-        for (String existingHost : List.of("localhost", "127.0.0.1", "10.0.2.2", "host.docker.internal", "keycloak")) {
-            issuers.add(base.replace(existingHost, host));
-        }
+        return Set.of(normalize(primary));
     }
 
     private static String normalize(String value) {

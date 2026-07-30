@@ -1,28 +1,20 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
-  loadProviderDashboard,
-  resubmitProviderApplication,
-  type ProviderDashboard,
-  type ProviderStatus,
-} from "../../api/providerOnboarding";
+  createProviderOnboardingAccess,
+  loadProviderApplicationDashboard,
+} from "../../api/providerAuth";
+import type { ProviderDashboard, ProviderStatus } from "../../api/providerOnboarding";
 import { DiscoverEmptyState } from "../../components/DiscoveryComponents";
 import { DISCOVER_ROUTES } from "../../routes";
 
+const TOKEN_KEY = "jeevanam.discover.providerOnboardingToken";
 const TOKEN_KEYS = [
-  "jeevanam.discover.providerOnboardingToken.INDIVIDUAL_DOCTOR",
-  "jeevanam.discover.providerOnboardingToken.CLINIC",
-  "jeevanam.discover.providerOnboardingToken.HOSPITAL",
-  "jeevanam.discover.providerOnboardingToken",
+  TOKEN_KEY,
+  `${TOKEN_KEY}.INDIVIDUAL_DOCTOR`,
+  `${TOKEN_KEY}.CLINIC`,
+  `${TOKEN_KEY}.HOSPITAL`,
 ];
-
-function readStoredToken() {
-  for (const key of TOKEN_KEYS) {
-    const token = localStorage.getItem(key);
-    if (token) return token;
-  }
-  return "";
-}
 
 function formatDateTime(value?: string | null) {
   if (!value) return "Not yet saved";
@@ -49,60 +41,48 @@ function statusLabel(status: ProviderStatus) {
 }
 
 export function ProviderDashboardPage() {
-  const [token] = useState(() => readStoredToken());
+  const navigate = useNavigate();
+  const { applicationReference } = useParams<{ applicationReference: string }>();
   const [dashboard, setDashboard] = useState<ProviderDashboard | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [responseNote, setResponseNote] = useState("");
+  const [openingOnboarding, setOpeningOnboarding] = useState(false);
 
   useEffect(() => {
-    if (!token) {
+    if (!applicationReference) {
       setDashboard(null);
       return;
     }
     setLoading(true);
     setError(null);
-    loadProviderDashboard(token)
+    setDashboard(null);
+    loadProviderApplicationDashboard(applicationReference)
       .then((result) => {
         setDashboard(result);
-        setResponseNote(result.changeRequests.find((item) => !item.resolved)?.providerResponseNote ?? "");
       })
       .catch((ex) => {
-        setError(ex instanceof Error ? ex.message : "Could not load your onboarding dashboard.");
+        setError(ex instanceof Error ? ex.message : "Could not load the selected provider application.");
         setDashboard(null);
       })
       .finally(() => setLoading(false));
-  }, [token]);
+  }, [applicationReference]);
 
-  async function resubmit() {
-    if (!dashboard || !token) return;
-    setLoading(true);
+  async function openOnboarding(step: string) {
+    if (!applicationReference || !dashboard) return;
+    setOpeningOnboarding(true);
     setError(null);
     try {
-      const updated = await resubmitProviderApplication(dashboard.application.id, token, responseNote || undefined);
-      setDashboard({ ...dashboard, application: updated, readOnly: updated.status === "SUBMITTED" || updated.status === "UNDER_REVIEW" });
-      setResponseNote("");
+      const access = await createProviderOnboardingAccess(applicationReference);
+      for (const key of TOKEN_KEYS) {
+        localStorage.removeItem(key);
+      }
+      localStorage.setItem(TOKEN_KEY, access.onboardingToken);
+      navigate(`/provider/onboarding/${access.applicationId}/${step}`);
     } catch (ex) {
-      setError(ex instanceof Error ? ex.message : "Could not resubmit the application.");
+      setError(ex instanceof Error ? ex.message : "Could not open the selected application.");
     } finally {
-      setLoading(false);
+      setOpeningOnboarding(false);
     }
-  }
-
-  if (!token) {
-    return (
-      <section className="page-section provider-dashboard-page">
-        <DiscoverEmptyState
-          icon="★"
-          title="Start your provider onboarding"
-          description="Create a doctor, clinic, or hospital application and continue in your provider portal."
-          primaryAction="Register as Doctor"
-          primaryTo={DISCOVER_ROUTES.registerDoctor.path}
-          secondaryAction="Register a Clinic"
-          secondaryTo={DISCOVER_ROUTES.registerClinic.path}
-        />
-      </section>
-    );
   }
 
   if (error && !dashboard) {
@@ -110,12 +90,12 @@ export function ProviderDashboardPage() {
       <section className="page-section provider-dashboard-page">
         <DiscoverEmptyState
           icon="!"
-          title="We could not load your provider dashboard"
+          title="We could not load this provider application"
           description={error}
           primaryAction="Try again"
           primaryHref={window.location.href}
-          secondaryAction="Back to practice registration"
-          secondaryTo={DISCOVER_ROUTES.listPractice.path}
+          secondaryAction="Back to Provider Workspace"
+          secondaryTo={DISCOVER_ROUTES.providerWorkspace.path}
         />
       </section>
     );
@@ -167,12 +147,6 @@ export function ProviderDashboardPage() {
               {request.providerResponseNote ? <small>Response: {request.providerResponseNote}</small> : null}
             </div>
           ))}
-          {!readOnly ? (
-            <label>
-              Response note
-              <textarea value={responseNote} onChange={(event) => setResponseNote(event.target.value)} placeholder="Describe the changes you made" />
-            </label>
-          ) : null}
         </article>
       ) : null}
 
@@ -189,15 +163,21 @@ export function ProviderDashboardPage() {
             {completion.blockingErrors.length ? completion.blockingErrors.map((item) => <span key={item}>{item}</span>) : <span>None</span>}
           </div>
           <div className="cta-row">
-            <Link className="secondary-button" to={`/provider/onboarding/${application.id}/${continueStep}`}>Continue registration</Link>
-            <Link className="secondary-button" to={`/provider/onboarding/${application.id}/preview`}>Preview profile</Link>
-            <Link className="primary-button" to={`/provider/onboarding/${application.id}/submit`}>Submit</Link>
+            <button className="secondary-button" type="button" onClick={() => void openOnboarding(continueStep)} disabled={openingOnboarding}>
+              Continue registration
+            </button>
+            <button className="secondary-button" type="button" onClick={() => void openOnboarding("preview")} disabled={openingOnboarding}>
+              Preview profile
+            </button>
+            <button className="primary-button" type="button" onClick={() => void openOnboarding("submit")} disabled={openingOnboarding}>
+              Submit
+            </button>
             {application.status === "PUBLISHED" ? (
               <Link className="secondary-button" to={DISCOVER_ROUTES.providerLandingPage.path}>Landing page</Link>
             ) : null}
           </div>
           {dashboard.nextRecommendedAction === "Address requested changes" && !readOnly ? (
-            <button className="primary-button" type="button" onClick={() => void resubmit()} disabled={loading}>
+            <button className="primary-button" type="button" onClick={() => void openOnboarding("submit")} disabled={openingOnboarding}>
               Resubmit for review
             </button>
           ) : null}
@@ -218,7 +198,7 @@ export function ProviderDashboardPage() {
         </article>
       </div>
 
-      {loading ? <p className="autosave-row" role="status">Updating dashboard…</p> : null}
+      {(loading || openingOnboarding) ? <p className="autosave-row" role="status">{openingOnboarding ? "Opening application…" : "Updating dashboard…"}</p> : null}
     </section>
   );
 }

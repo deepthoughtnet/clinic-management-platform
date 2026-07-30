@@ -20,7 +20,9 @@ test("phase 5 landing page builder routes and preview are wired", () => {
   const api = read("src/api/providerLandingPage.ts");
   const onboardingApi = read("src/api/providerOnboarding.ts");
 
-  assert.ok(routes.includes('providerLandingPage: { path: "/provider/landing-page"'));
+  assert.ok(routes.includes('providerWorkspace: { path: "/provider"'));
+  assert.ok(routes.includes('providerLandingPage: { path: "/provider/profiles"'));
+  assert.ok(routes.includes('providerAccount: { path: "/provider/account"'));
   assert.ok(routes.includes('clinic: (slug: string) => `/discover/clinics/${slug}/home`'));
   assert.ok(routes.includes('hospital: (slug: string) => `/discover/hospitals/${slug}/home`'));
   assert.ok(routes.includes('doctor: (slug: string) => `/discover/doctors/${slug}/home`'));
@@ -32,6 +34,7 @@ test("phase 5 landing page builder routes and preview are wired", () => {
   assert.ok(builder.includes("Save draft"));
   assert.ok(builder.includes("Publish landing page"));
   assert.ok(builder.includes("Revert to published"));
+  assert.ok(builder.includes("Your profile is approved"));
   assert.ok(builder.includes("LandingPageRenderer"));
   assert.ok(builder.includes("device-frame"));
   assert.ok(publicPage.includes("loadPublicLandingPage"));

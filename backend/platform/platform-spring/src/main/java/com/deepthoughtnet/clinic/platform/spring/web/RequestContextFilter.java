@@ -62,6 +62,16 @@ public class RequestContextFilter extends OncePerRequestFilter implements Ordere
                 return;
             }
 
+            if (isDiscoverReferenceRequest(request)) {
+                chain.doFilter(request, response);
+                return;
+            }
+
+            if (isDiscoverTenantlessRequest(request)) {
+                chain.doFilter(request, response);
+                return;
+            }
+
             Set<String> tokenRoles = auth.rolesUpper();
             boolean isPlatformAdmin = tokenRoles != null && tokenRoles.contains("PLATFORM_ADMIN");
 
@@ -161,6 +171,23 @@ public class RequestContextFilter extends OncePerRequestFilter implements Ordere
     private boolean isPublicRequest(HttpServletRequest request) {
         String uri = request.getRequestURI();
         return uri != null && ("/api/public".equals(uri) || uri.startsWith("/api/public/"));
+    }
+
+    private boolean isDiscoverTenantlessRequest(HttpServletRequest request) {
+        String uri = request.getRequestURI();
+        return uri != null
+                && ("/api/provider".equals(uri)
+                || uri.startsWith("/api/provider/")
+                || "/api/provider-registration".equals(uri)
+                || uri.startsWith("/api/provider-registration/"));
+    }
+
+    private boolean isDiscoverReferenceRequest(HttpServletRequest request) {
+        String uri = request.getRequestURI();
+        return "GET".equalsIgnoreCase(request.getMethod())
+                && uri != null
+                && ("/api/discover/reference".equals(uri)
+                || uri.startsWith("/api/discover/reference/"));
     }
 
     private void writeError(HttpServletResponse response, HttpServletRequest request, int status, String code, String message) throws IOException {

@@ -17,8 +17,8 @@ spring:
     oauth2:
       resourceserver:
         jwt:
-          issuer-uri: ${CLINIC_JWT_ISSUER_URI:http://localhost:8182/realms/clinic-management}
-          jwk-set-uri: ${CLINIC_JWT_JWK_SET_URI:http://keycloak:8080/realms/clinic-management/protocol/openid-connect/certs}
+          issuer-uri: ${CLINIC_JWT_ISSUER_URI:http://localhost:8182/auth/realms/clinic-management}
+          jwk-set-uri: ${CLINIC_JWT_JWK_SET_URI:http://keycloak:8080/auth/realms/clinic-management/protocol/openid-connect/certs}
 
 clinic:
   patient-portal:

@@ -4,6 +4,7 @@ import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.Pro
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderLifecycleStatus;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderServiceType;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderType;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -115,6 +116,7 @@ public final class ProviderOnboardingModels {
 
     public record VerificationChallengeRecord(
             String message,
+            @JsonInclude(JsonInclude.Include.NON_NULL)
             String devCode,
             long expiresInSeconds,
             long resendAfterSeconds
@@ -226,6 +228,12 @@ public final class ProviderOnboardingModels {
             List<ProviderChangeRequestRecord> changeRequests,
             boolean readOnly,
             String nextRecommendedAction
+    ) {
+    }
+
+    public record ProviderOnboardingAccessRecord(
+            UUID applicationId,
+            String onboardingToken
     ) {
     }
 

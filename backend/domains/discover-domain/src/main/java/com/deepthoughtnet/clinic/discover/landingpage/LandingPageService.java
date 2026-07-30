@@ -20,6 +20,8 @@ import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.Pr
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingService;
 import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderProfileDetailRecord;
+import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderGalleryImageSnapshot;
+import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderLocationSnapshot;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
@@ -84,7 +86,8 @@ public class LandingPageService {
     @Transactional
     public LandingPageWorkspaceRecord update(String token, LandingPageUpdateRequest request) {
         ProviderApplicationRecord application = requireEditableProvider(token);
-        LandingPageEntity entity = loadOrCreateEntity(application);
+        PublicProviderProfileDetailRecord profile = resolveProfile(application);
+        LandingPageEntity entity = loadOrCreateEntity(application, profile);
         if (request.version() != null && request.version() != entity.getRowVersion()) {
             throw new IllegalStateException("landing page draft has changed; reload before saving");
         }
@@ -105,7 +108,8 @@ public class LandingPageService {
     @Transactional
     public LandingPageWorkspaceRecord publish(String token) {
         ProviderApplicationRecord application = requireEditableProvider(token);
-        LandingPageEntity entity = loadOrCreateEntity(application);
+        PublicProviderProfileDetailRecord profile = resolveProfile(application);
+        LandingPageEntity entity = loadOrCreateEntity(application, profile);
         LandingPageSnapshotRecord draft = readSnapshot(entity.getDraftSnapshotJson()).orElseGet(() -> defaultSnapshot(selectTemplate(application.providerType(), entity.getTemplateKey()), application));
         int nextVersion = versions.findFirstByProviderIdOrderByVersionNumberDesc(application.id()).map(LandingPageVersionEntity::getVersionNumber).orElse(0) + 1;
         String snapshotJson = toJson(draft);
@@ -129,7 +133,8 @@ public class LandingPageService {
     @Transactional
     public LandingPageWorkspaceRecord revert(String token, LandingPageRevertRequest request) {
         ProviderApplicationRecord application = requireEditableProvider(token);
-        LandingPageEntity entity = loadOrCreateEntity(application);
+        PublicProviderProfileDetailRecord profile = resolveProfile(application);
+        LandingPageEntity entity = loadOrCreateEntity(application, profile);
         LandingPageVersionEntity version = versions.findByProviderIdAndVersionNumber(application.id(), request.versionNumber())
                 .orElseThrow(() -> new IllegalStateException("landing page version not found"));
         entity.updateDraft(version.getTemplateKey(), version.getSnapshotJson(), application.id(), application.referenceNumber(), application.providerType(), application.displayName());
@@ -185,9 +190,8 @@ public class LandingPageService {
     }
 
     private LandingPageWorkspaceRecord workspaceFor(ProviderApplicationRecord application) {
-        PublicProviderProfileDetailRecord profile = publicProfileService.findByProviderId(application.id())
-                .orElseThrow(() -> new IllegalStateException("published provider profile is required before editing landing page"));
-        LandingPageEntity entity = loadOrCreateEntity(application);
+        PublicProviderProfileDetailRecord profile = resolveProfile(application);
+        LandingPageEntity entity = loadOrCreateEntity(application, profile);
         LandingPageTemplateEntity draftTemplate = selectTemplate(application.providerType(), entity.getTemplateKey());
         LandingPageSnapshotRecord draft = readSnapshot(entity.getDraftSnapshotJson()).orElseGet(() -> defaultSnapshot(draftTemplate, application));
         LandingPageSnapshotRecord published = readSnapshot(entity.getPublishedSnapshotJson()).orElse(null);
@@ -198,6 +202,7 @@ public class LandingPageService {
         return new LandingPageWorkspaceRecord(
                 application.id(),
                 application.providerType(),
+                application.status(),
                 application.displayName(),
                 profile.canonicalSlug(),
                 profile.publicPath(),
@@ -222,6 +227,7 @@ public class LandingPageService {
         return new LandingPageWorkspaceRecord(
                 profile.providerId(),
                 profile.providerType(),
+                ProviderLifecycleStatus.PUBLISHED,
                 profile.displayName(),
                 profile.canonicalSlug(),
                 profile.publicPath(),
@@ -240,20 +246,21 @@ public class LandingPageService {
 
     private ProviderApplicationRecord requireEditableProvider(String token) {
         ProviderApplicationRecord application = onboardingService.getMe(token);
-        if (application.status() != ProviderLifecycleStatus.PUBLISHED) {
-            throw new IllegalStateException("landing pages are available after publication");
+        if (application.status() != ProviderLifecycleStatus.APPROVED && application.status() != ProviderLifecycleStatus.PUBLISHED) {
+            throw new IllegalStateException("landing pages are available after approval");
         }
         return application;
     }
 
-    private LandingPageEntity loadOrCreateEntity(ProviderApplicationRecord application) {
+    private LandingPageEntity loadOrCreateEntity(ProviderApplicationRecord application, PublicProviderProfileDetailRecord profile) {
         return landingPages.findByProviderId(application.id()).orElseGet(() -> {
             LandingPageTemplateEntity template = selectTemplate(application.providerType(), null);
             LandingPageSnapshotRecord defaultSnapshot = defaultSnapshot(template, application);
+            String canonicalSlug = profile == null ? slugFor(application) : profile.canonicalSlug();
             LandingPageEntity entity = LandingPageEntity.create(
                     application.id(),
                     application.providerType(),
-                    publicProfileService.findByProviderId(application.id()).orElseThrow().canonicalSlug(),
+                    canonicalSlug,
                     template.getTemplateKey(),
                     toJson(defaultSnapshot),
                     application.referenceNumber(),
@@ -280,7 +287,7 @@ public class LandingPageService {
     }
 
     private LandingPageSnapshotRecord defaultSnapshot(LandingPageTemplateEntity template, ProviderApplicationRecord application) {
-        return defaultSnapshot(template, application.providerType(), publicProfileService.findByProviderId(application.id()).orElseThrow().canonicalSlug());
+        return defaultSnapshot(template, application.providerType(), resolveProfile(application).canonicalSlug());
     }
 
     private LandingPageSnapshotRecord defaultSnapshot(LandingPageTemplateEntity template, PublicProviderProfileDetailRecord profile) {
@@ -294,6 +301,123 @@ public class LandingPageService {
                 .sorted(Comparator.comparingInt(LandingPageSectionRecord::displayOrder))
                 .map(section -> normalizeSection(section, sections))
                 .toList());
+    }
+
+    private PublicProviderProfileDetailRecord resolveProfile(ProviderApplicationRecord application) {
+        return publicProfileService.findByProviderId(application.id()).orElseGet(() -> fallbackProfile(application));
+    }
+
+    private PublicProviderProfileDetailRecord fallbackProfile(ProviderApplicationRecord application) {
+        List<com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.LocationRecord> applicationLocations = application.locations() == null ? List.of() : application.locations();
+        List<com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.DocumentRecord> applicationDocuments = application.documents() == null ? List.of() : application.documents();
+        List<com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.ServiceRecord> applicationServices = application.services() == null ? List.of() : application.services();
+        List<String> specialities = application.specialities() == null ? List.of() : application.specialities();
+        List<String> subSpecialities = application.subSpecialities() == null ? List.of() : application.subSpecialities();
+        List<String> languages = application.languages() == null ? List.of() : application.languages();
+        List<String> departments = application.departments() == null ? List.of() : application.departments();
+        List<String> facilities = application.facilities() == null ? List.of() : application.facilities();
+        List<PublicProviderLocationSnapshot> locations = applicationLocations.stream()
+                .map(location -> new PublicProviderLocationSnapshot(
+                        location.label(),
+                        location.address(),
+                        location.city(),
+                        location.state(),
+                        location.country(),
+                        location.pinCode(),
+                        location.workingHours(),
+                        location.parkingAvailable(),
+                        location.accessibilityAvailable(),
+                        location.latitude(),
+                        location.longitude()
+                ))
+                .toList();
+        List<PublicProviderGalleryImageSnapshot> gallery = applicationDocuments.stream()
+                .filter(document -> document.documentType() == com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderDocumentType.GALLERY_IMAGE)
+                .map(document -> new PublicProviderGalleryImageSnapshot(document.id(), document.originalFilename()))
+                .toList();
+        List<String> galleryImageUrls = gallery.stream()
+                .map(image -> publicProfileService.resolveDocumentUrl(image.documentId()).orElse(null))
+                .filter(StringUtils::hasText)
+                .toList();
+        String canonicalSlug = slugFor(application);
+        String publicPath = publicPath(application.providerType(), canonicalSlug);
+        var branding = application.branding();
+        String logoUrl = publicProfileService.resolveDocumentUrl(branding == null ? null : branding.logoDocumentId()).orElse(null);
+        String coverUrl = publicProfileService.resolveDocumentUrl(branding == null ? null : branding.coverImageDocumentId()).orElse(null);
+        String doctorPhotoUrl = publicProfileService.resolveDocumentUrl(branding == null ? null : branding.doctorPhotoDocumentId()).orElse(null);
+        String displayName = firstNonBlank(application.displayName(), application.legalName(), application.email());
+        String legalName = firstNonBlank(application.legalName(), displayName);
+        String summary = firstNonBlank(application.biography(), branding == null ? null : branding.tagline());
+        String city = locations.isEmpty() ? null : locations.get(0).city();
+        String area = locations.isEmpty() ? null : locations.get(0).label();
+        String state = locations.isEmpty() ? null : locations.get(0).state();
+        String country = locations.isEmpty() ? null : locations.get(0).country();
+        return new PublicProviderProfileDetailRecord(
+                application.id(),
+                application.providerType(),
+                application.referenceNumber(),
+                canonicalSlug,
+                publicPath,
+                displayName,
+                legalName,
+                summary,
+                summary,
+                application.biography(),
+                application.qualification(),
+                application.medicalCouncil(),
+                application.yearsOfExperience(),
+                application.consultationFee(),
+                application.appointmentDurationMinutes(),
+                application.onlineConsultation(),
+                languages,
+                specialities,
+                subSpecialities,
+                applicationServices.stream().filter(com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.ServiceRecord::enabled).map(com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.ServiceRecord::label).toList(),
+                departments,
+                facilities,
+                consultationModes(application),
+                locations,
+                gallery,
+                galleryImageUrls,
+                logoUrl,
+                coverUrl,
+                doctorPhotoUrl,
+                application.phone(),
+                application.email(),
+                application.website(),
+                city,
+                area,
+                state,
+                country,
+                first(application.specialities()),
+                application.ownership(),
+                application.hospitalType(),
+                application.medicalDirector(),
+                application.beds(),
+                application.emergencyAvailable(),
+                true,
+                OffsetDateTime.now(),
+                0,
+                canonicalSlug,
+                null,
+                false
+        );
+    }
+
+    private String publicPath(com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderType providerType, String slug) {
+        return "/discover/" + switch (providerType) {
+            case INDIVIDUAL_DOCTOR -> "doctors";
+            case CLINIC -> "clinics";
+            case HOSPITAL -> "hospitals";
+        } + "/" + slug;
+    }
+
+    private String slugFor(ProviderApplicationRecord application) {
+        String base = firstNonBlank(application.displayName(), application.legalName(), application.referenceNumber());
+        if (application.providerType() == com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderType.INDIVIDUAL_DOCTOR && !normalize(base).startsWith("dr")) {
+            base = "Dr " + base;
+        }
+        return slugify(base);
     }
 
     private LandingPageSnapshotRecord normalizeSnapshot(
@@ -349,6 +473,46 @@ public class LandingPageService {
         }
         String trimmed = value.trim();
         return trimmed.matches("^#[0-9A-Fa-f]{6}$") ? trimmed.toUpperCase(Locale.ROOT) : fallback;
+    }
+
+    private String normalize(String value) {
+        return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private String slugify(String value) {
+        return normalize(value).replaceAll("[^a-z0-9]+", "-").replaceAll("(^-|-$)", "");
+    }
+
+    private String first(String... values) {
+        if (values == null) {
+            return null;
+        }
+        for (String value : values) {
+            if (StringUtils.hasText(value)) {
+                return value.trim();
+            }
+        }
+        return null;
+    }
+
+    private String first(List<String> values) {
+        return values == null || values.isEmpty() ? null : first(values.toArray(String[]::new));
+    }
+
+    private String firstNonBlank(String... values) {
+        return first(values);
+    }
+
+    private List<String> consultationModes(ProviderApplicationRecord application) {
+        List<String> modes = new ArrayList<>();
+        if (application.onlineConsultation()) {
+            modes.add("Online consultation");
+        }
+        modes.add("In-person consultation");
+        if (application.appointmentDurationMinutes() != null) {
+            modes.add("Appointment duration " + application.appointmentDurationMinutes() + " mins");
+        }
+        return modes.stream().distinct().toList();
     }
 
     private String titleFor(String key) {

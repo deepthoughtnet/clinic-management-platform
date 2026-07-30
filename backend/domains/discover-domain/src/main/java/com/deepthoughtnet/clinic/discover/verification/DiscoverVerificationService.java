@@ -14,9 +14,11 @@ import com.deepthoughtnet.clinic.discover.verification.db.DiscoverVerificationCh
 import com.deepthoughtnet.clinic.discover.verification.db.DiscoverVerificationChallengeRepository;
 import java.security.SecureRandom;
 import java.time.OffsetDateTime;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -70,14 +72,7 @@ public class DiscoverVerificationService {
             if (active.getConsumedAt() == null && active.getInvalidatedAt() == null && active.getExpiresAt().isAfter(now)) {
                 if (active.getResendAvailableAt().isAfter(now)) {
                     long remaining = Math.max(0L, active.getResendAvailableAt().toEpochSecond() - now.toEpochSecond());
-                    return new VerificationChallengeResult(
-                            "Please wait before requesting another code.",
-                            null,
-                            properties.getChallengeTtl().getSeconds(),
-                            remaining,
-                            active.getDeliveryProvider(),
-                            active.getDeliveryReference()
-                    );
+                    return challengeResult(active, "Please wait before requesting another code.", null, remaining);
                 }
                 invalidateActiveChallenges(request);
             }
@@ -124,28 +119,33 @@ public class DiscoverVerificationService {
         } else {
             challenge = updateDeliveryMetadata(challenge, deliveryResult);
         }
-        return new VerificationChallengeResult(
+        return challengeResult(
+                challenge,
                 deliveryResult.accepted()
                         ? challengeMessage(request.purpose(), request.channel())
                         : deliveryResult.message(),
                 deliveryResult.developmentCode(),
-                properties.getChallengeTtl().getSeconds(),
-                properties.getResendCooldown().getSeconds(),
-                deliveryResult.providerName(),
-                deliveryResult.deliveryReference()
+                properties.getResendCooldown().getSeconds()
         );
     }
 
     @Transactional
     public VerificationVerificationResult verifyChallenge(VerificationVerificationRequest request) {
-        require(request.purpose() != null, "purpose is required");
-        require(request.channel() != null, "channel is required");
-        requireText(request.normalizedRecipient(), "normalizedRecipient");
         requireText(request.code(), "code");
 
         DiscoverVerificationChallengeEntity challenge = latestChallenge(request)
                 .orElseThrow(() -> new IllegalArgumentException("The verification code is invalid or has expired."));
         OffsetDateTime now = OffsetDateTime.now();
+        if (request.purpose() != null && challenge.getPurpose() != request.purpose()) {
+            throw new IllegalArgumentException("The verification code is invalid or has expired.");
+        }
+        if (request.channel() != null && challenge.getChannel() != request.channel()) {
+            throw new IllegalArgumentException("The verification code is invalid or has expired.");
+        }
+        if (StringUtils.hasText(request.normalizedRecipient())
+                && !normalizeRecipient(request.normalizedRecipient(), challenge.getChannel()).equals(challenge.getNormalizedRecipient())) {
+            throw new IllegalArgumentException("The verification code is invalid or has expired.");
+        }
         if (challenge.getConsumedAt() != null || challenge.getInvalidatedAt() != null || challenge.getExpiresAt().isBefore(now)) {
             throw new IllegalArgumentException("The verification code is invalid or has expired.");
         }
@@ -167,20 +167,20 @@ public class DiscoverVerificationService {
         DiscoverProviderAccountEntity account = null;
         boolean created = false;
         boolean linked = false;
-        if (request.purpose() == VerificationPurpose.PROVIDER_LOGIN_EMAIL || request.purpose() == VerificationPurpose.PROVIDER_LOGIN_PHONE) {
-            Optional<ProviderAccountResolution> resolution = resolveAccountForLogin(request.normalizedRecipient(), request.channel());
+        if (challenge.getPurpose() == VerificationPurpose.PROVIDER_LOGIN_EMAIL || challenge.getPurpose() == VerificationPurpose.PROVIDER_LOGIN_PHONE) {
+            Optional<ProviderAccountResolution> resolution = resolveAccountForLogin(challenge.getNormalizedRecipient(), challenge.getChannel());
             if (resolution.isEmpty()) {
                 throw new IllegalArgumentException("The verification code is invalid or has expired.");
             }
             account = resolution.get().account();
             created = resolution.get().created();
             linked = resolution.get().linked();
-        } else if (request.providerApplicationId() != null) {
-            ProviderAccountResolution resolution = resolveOrCreateProviderAccountForApplication(request.providerApplicationId(), request.channel(), challenge.getNormalizedRecipient());
+        } else if (challenge.getProviderApplicationId() != null) {
+            ProviderAccountResolution resolution = resolveOrCreateProviderAccountForApplication(challenge.getProviderApplicationId(), challenge.getChannel(), challenge.getNormalizedRecipient());
             account = resolution.account();
             created = resolution.created();
             linked = resolution.linked();
-            markApplicationContactVerified(requireApplication(request.providerApplicationId()), challenge.getChannel(), challenge.getNormalizedRecipient());
+            markApplicationContactVerified(requireApplication(challenge.getProviderApplicationId()), challenge.getChannel(), challenge.getNormalizedRecipient());
         }
 
         return new VerificationVerificationResult(
@@ -198,6 +198,7 @@ public class DiscoverVerificationService {
     @Transactional
     public ProviderSessionResult createSession(UUID providerAccountId) {
         DiscoverProviderAccountEntity account = requireAccount(providerAccountId);
+        revokeActiveSessionsForAccount(providerAccountId);
         String token = generateSessionToken();
         OffsetDateTime issuedAt = OffsetDateTime.now();
         OffsetDateTime expiresAt = issuedAt.plus(properties.getSessionTtl());
@@ -209,6 +210,14 @@ public class DiscoverVerificationService {
         );
         providerSessions.save(session);
         return new ProviderSessionResult(account.getId(), token, expiresAt);
+    }
+
+    @Transactional
+    public ProviderSessionResult replaceSession(UUID providerAccountId, String existingSessionToken) {
+        if (StringUtils.hasText(existingSessionToken)) {
+            revokeSession(existingSessionToken);
+        }
+        return createSession(providerAccountId);
     }
 
     @Transactional(readOnly = true)
@@ -235,6 +244,14 @@ public class DiscoverVerificationService {
         return channel == VerificationChannel.EMAIL
                 ? providerAccounts.findByNormalizedEmail(normalized)
                 : providerAccounts.findByNormalizedPhone(normalized);
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<DiscoverProviderAccountEntity> findAccountById(UUID providerAccountId) {
+        if (providerAccountId == null) {
+            return Optional.empty();
+        }
+        return providerAccounts.findById(providerAccountId);
     }
 
     @Transactional(readOnly = true)
@@ -281,6 +298,26 @@ public class DiscoverVerificationService {
 
     private ProviderAccountResolution resolveOrCreateProviderAccountForApplication(UUID providerApplicationId, VerificationChannel channel, String recipient) {
         String normalizedRecipient = normalizeRecipient(recipient, channel);
+        ProviderApplicationEntity application = requireApplication(providerApplicationId);
+        List<ProviderApplicationEntity> applicationsByContact = applicationsByContact(normalizedRecipient, channel);
+        Optional<DiscoverProviderAccountEntity> linkedFromApplications = resolveLinkedAccountFromApplications(applicationsByContact);
+        if (application.getProviderAccountId() != null) {
+            DiscoverProviderAccountEntity account = requireAccount(application.getProviderAccountId());
+            touchAccountForChannel(account, channel, normalizedRecipient);
+            account = providerAccounts.save(account);
+            linkApplicationsToAccount(applicationsByContact, account);
+            linkApplicationToAccount(providerApplicationId, account);
+            return new ProviderAccountResolution(account, false, true);
+        }
+        if (linkedFromApplications.isPresent()) {
+            DiscoverProviderAccountEntity account = linkedFromApplications.get();
+            touchAccountForChannel(account, channel, normalizedRecipient);
+            account = providerAccounts.save(account);
+            linkApplicationsToAccount(applicationsByContact, account);
+            linkApplicationToAccount(providerApplicationId, account);
+            return new ProviderAccountResolution(account, false, true);
+        }
+
         Optional<DiscoverProviderAccountEntity> existing = channel == VerificationChannel.EMAIL
                 ? providerAccounts.findByNormalizedEmail(normalizedRecipient)
                 : providerAccounts.findByNormalizedPhone(normalizedRecipient);
@@ -288,10 +325,9 @@ public class DiscoverVerificationService {
             DiscoverProviderAccountEntity account = existing.get();
             touchAccountForChannel(account, channel, normalizedRecipient);
             account = providerAccounts.save(account);
-            if (providerApplicationId != null) {
-                linkApplicationToAccount(providerApplicationId, account);
-            }
-            return new ProviderAccountResolution(account, false, providerApplicationId != null);
+            linkApplicationsToAccount(applicationsByContact, account);
+            linkApplicationToAccount(providerApplicationId, account);
+            return new ProviderAccountResolution(account, false, true);
         }
 
         DiscoverProviderAccountEntity account = DiscoverProviderAccountEntity.create(
@@ -304,33 +340,50 @@ public class DiscoverVerificationService {
             account.markPhoneVerified();
         }
         account = providerAccounts.save(account);
-        if (providerApplicationId != null) {
-            linkApplicationToAccount(providerApplicationId, account);
-        }
-        return new ProviderAccountResolution(account, true, providerApplicationId != null);
+        linkApplicationsToAccount(applicationsByContact, account);
+        linkApplicationToAccount(providerApplicationId, account);
+        return new ProviderAccountResolution(account, true, true);
     }
 
     private Optional<ProviderAccountResolution> resolveAccountForLogin(String recipient, VerificationChannel channel) {
         String normalizedRecipient = normalizeRecipient(recipient, channel);
-        Optional<DiscoverProviderAccountEntity> existing = channel == VerificationChannel.EMAIL
-                ? providerAccounts.findByNormalizedEmail(normalizedRecipient)
-                : providerAccounts.findByNormalizedPhone(normalizedRecipient);
-        if (existing.isPresent()) {
-            DiscoverProviderAccountEntity account = existing.get();
-            touchAccountForChannel(account, channel, normalizedRecipient);
-            account = providerAccounts.save(account);
+        Optional<DiscoverProviderAccountEntity> directVerifiedAccount = findVerifiedAccountByRecipient(channel, normalizedRecipient);
+        if (directVerifiedAccount.isPresent()) {
+            return Optional.of(new ProviderAccountResolution(directVerifiedAccount.get(), false, false));
+        }
+
+        Optional<DiscoverProviderAccountEntity> directAccount = findAccountByNormalizedRecipient(channel, normalizedRecipient);
+        if (directAccount.isPresent()) {
+            DiscoverProviderAccountEntity account = ensureAccountHasVerifiedChannel(directAccount.get(), channel, normalizedRecipient);
             return Optional.of(new ProviderAccountResolution(account, false, false));
         }
 
-        List<ProviderApplicationEntity> applicationsByContact = (channel == VerificationChannel.EMAIL
-                ? applications.findByEmailIgnoreCase(normalizedRecipient)
-                : applications.findByPhoneIgnoreCase(normalizedRecipient)).stream()
-                .filter(ProviderApplicationEntity::isContactVerified)
-                .toList();
-        if (applicationsByContact.isEmpty()) {
+        List<ProviderApplicationEntity> verifiedApplications = verifiedApplicationsByContact(normalizedRecipient, channel);
+        Set<UUID> linkedAccountIds = linkedProviderAccountIds(verifiedApplications);
+        if (linkedAccountIds.size() > 1) {
             return Optional.empty();
         }
+        if (linkedAccountIds.size() == 1) {
+            DiscoverProviderAccountEntity account = requireAccount(linkedAccountIds.iterator().next());
+            account = ensureAccountHasVerifiedChannel(account, channel, normalizedRecipient);
+            return Optional.of(new ProviderAccountResolution(account, false, false));
+        }
+        if (verifiedApplications.isEmpty()) {
+            return Optional.of(new ProviderAccountResolution(createVerifiedAccount(channel, normalizedRecipient), true, false));
+        }
 
+        DiscoverProviderAccountEntity account = createVerifiedAccount(channel, normalizedRecipient);
+        linkApplicationsToAccount(verifiedApplications, account);
+        return Optional.of(new ProviderAccountResolution(account, true, true));
+    }
+
+    private Optional<DiscoverProviderAccountEntity> findAccountByNormalizedRecipient(VerificationChannel channel, String normalizedRecipient) {
+        return channel == VerificationChannel.EMAIL
+                ? providerAccounts.findByNormalizedEmail(normalizedRecipient)
+                : providerAccounts.findByNormalizedPhone(normalizedRecipient);
+    }
+
+    private DiscoverProviderAccountEntity createVerifiedAccount(VerificationChannel channel, String normalizedRecipient) {
         DiscoverProviderAccountEntity account = DiscoverProviderAccountEntity.create(
                 channel == VerificationChannel.EMAIL ? normalizedRecipient : null,
                 channel == VerificationChannel.SMS ? normalizedRecipient : null
@@ -340,12 +393,100 @@ public class DiscoverVerificationService {
         } else {
             account.markPhoneVerified();
         }
-        account = providerAccounts.save(account);
+        return providerAccounts.save(account);
+    }
+
+    private List<ProviderApplicationEntity> applicationsByContact(String normalizedRecipient, VerificationChannel channel) {
+        return (channel == VerificationChannel.EMAIL
+                ? applications.findByEmailIgnoreCase(normalizedRecipient)
+                : applications.findByPhoneIgnoreCase(normalizedRecipient)).stream().toList();
+    }
+
+    private Optional<DiscoverProviderAccountEntity> resolveLinkedAccountFromApplications(List<ProviderApplicationEntity> applicationsByContact) {
         for (ProviderApplicationEntity application : applicationsByContact) {
-            application.setProviderAccountId(account.getId());
-            applications.save(application);
+            if (application.getProviderAccountId() != null) {
+                Optional<DiscoverProviderAccountEntity> account = providerAccounts.findById(application.getProviderAccountId());
+                if (account.isPresent()) {
+                    return account;
+                }
+            }
         }
-        return Optional.of(new ProviderAccountResolution(account, true, true));
+        return Optional.empty();
+    }
+
+    private Optional<DiscoverProviderAccountEntity> findVerifiedAccountByRecipient(VerificationChannel channel, String normalizedRecipient) {
+        Optional<DiscoverProviderAccountEntity> account = channel == VerificationChannel.EMAIL
+                ? providerAccounts.findByNormalizedEmail(normalizedRecipient)
+                : providerAccounts.findByNormalizedPhone(normalizedRecipient);
+        return account.filter(candidate -> accountHasVerifiedChannel(candidate, channel, normalizedRecipient));
+    }
+
+    private boolean accountHasVerifiedChannel(DiscoverProviderAccountEntity account, VerificationChannel channel, String normalizedRecipient) {
+        if (channel == VerificationChannel.EMAIL) {
+            return normalizedRecipient.equals(account.getNormalizedEmail()) && account.getEmailVerifiedAt() != null;
+        }
+        return normalizedRecipient.equals(account.getNormalizedPhone()) && account.getPhoneVerifiedAt() != null;
+    }
+
+    private DiscoverProviderAccountEntity ensureAccountHasVerifiedChannel(
+            DiscoverProviderAccountEntity account,
+            VerificationChannel channel,
+            String normalizedRecipient
+    ) {
+        boolean changed = false;
+        if (channel == VerificationChannel.EMAIL) {
+            if (!normalizedRecipient.equals(account.getNormalizedEmail())) {
+                account.setNormalizedEmail(normalizedRecipient);
+                changed = true;
+            }
+            if (account.getEmailVerifiedAt() == null) {
+                account.markEmailVerified();
+                changed = true;
+            }
+        } else {
+            if (!normalizedRecipient.equals(account.getNormalizedPhone())) {
+                account.setNormalizedPhone(normalizedRecipient);
+                changed = true;
+            }
+            if (account.getPhoneVerifiedAt() == null) {
+                account.markPhoneVerified();
+                changed = true;
+            }
+        }
+        return changed ? providerAccounts.save(account) : account;
+    }
+
+    private List<ProviderApplicationEntity> verifiedApplicationsByContact(String normalizedRecipient, VerificationChannel channel) {
+        return applicationsByContact(normalizedRecipient, channel).stream()
+                .filter(application -> applicationContactVerifiedForChannel(application.getId(), normalizedRecipient, channel))
+                .toList();
+    }
+
+    private boolean applicationContactVerifiedForChannel(UUID providerApplicationId, String normalizedRecipient, VerificationChannel channel) {
+        return contactVerifications.findByProviderId(providerApplicationId)
+                .map(verification -> channel == VerificationChannel.EMAIL
+                        ? normalizedRecipient.equals(verification.getEmailNormalized()) && verification.getEmailVerifiedAt() != null
+                        : normalizedRecipient.equals(verification.getPhoneNormalized()) && verification.getPhoneVerifiedAt() != null)
+                .orElse(false);
+    }
+
+    private Set<UUID> linkedProviderAccountIds(List<ProviderApplicationEntity> applicationsByContact) {
+        Set<UUID> ids = new LinkedHashSet<>();
+        for (ProviderApplicationEntity application : applicationsByContact) {
+            if (application.getProviderAccountId() != null) {
+                ids.add(application.getProviderAccountId());
+            }
+        }
+        return ids;
+    }
+
+    private void linkApplicationsToAccount(List<ProviderApplicationEntity> applicationsByContact, DiscoverProviderAccountEntity account) {
+        for (ProviderApplicationEntity application : applicationsByContact) {
+            if (!account.getId().equals(application.getProviderAccountId())) {
+                application.setProviderAccountId(account.getId());
+                applications.save(application);
+            }
+        }
     }
 
     private void touchAccountForChannel(DiscoverProviderAccountEntity account, VerificationChannel channel, String normalizedRecipient) {
@@ -385,6 +526,15 @@ public class DiscoverVerificationService {
         }
     }
 
+    private void revokeActiveSessionsForAccount(UUID providerAccountId) {
+        for (DiscoverProviderSessionEntity session : providerSessions.findByProviderAccountIdOrderByCreatedAtDesc(providerAccountId)) {
+            if (session.isActive()) {
+                session.revoke();
+                providerSessions.save(session);
+            }
+        }
+    }
+
     private DiscoverProviderAccountEntity requireAccount(UUID providerAccountId) {
         return providerAccounts.findById(providerAccountId)
                 .orElseThrow(() -> new IllegalArgumentException("provider account not found"));
@@ -420,6 +570,9 @@ public class DiscoverVerificationService {
     }
 
     private Optional<DiscoverVerificationChallengeEntity> latestChallenge(VerificationVerificationRequest request) {
+        if (request.challengeId() != null) {
+            return challenges.findById(request.challengeId());
+        }
         VerificationChallengeRequest challengeRequest = new VerificationChallengeRequest(
                 request.providerApplicationId(),
                 request.providerAccountId(),
@@ -431,6 +584,28 @@ public class DiscoverVerificationService {
                 request.createdByContext()
         );
         return latestChallenge(challengeRequest);
+    }
+
+    private VerificationChallengeResult challengeResult(
+            DiscoverVerificationChallengeEntity challenge,
+            String message,
+            String developmentCode,
+            long resendAfterSeconds
+    ) {
+        return new VerificationChallengeResult(
+                challenge.getId(),
+                challenge.getChannel(),
+                maskRecipient(challenge.getNormalizedRecipient(), challenge.getChannel()),
+                message,
+                developmentCode,
+                properties.isExposeDevelopmentCode() ? "LOCAL" : "PRODUCTION",
+                challenge.getExpiresAt(),
+                challenge.getResendAvailableAt(),
+                properties.getChallengeTtl().getSeconds(),
+                resendAfterSeconds,
+                challenge.getDeliveryProvider(),
+                challenge.getDeliveryReference()
+        );
     }
 
     private void invalidateActiveChallenges(VerificationChallengeRequest request) {
@@ -531,15 +706,38 @@ public class DiscoverVerificationService {
         return "**" + code.substring(code.length() - 2);
     }
 
-    private String normalizeRecipient(String value, VerificationChannel channel) {
-        if (!StringUtils.hasText(value)) {
+    private String maskRecipient(String recipient, VerificationChannel channel) {
+        if (!StringUtils.hasText(recipient)) {
             return null;
         }
-        String trimmed = value.trim();
-        if (channel == VerificationChannel.EMAIL) {
-            return trimmed.toLowerCase(Locale.ROOT);
+        String trimmed = recipient.trim();
+        return channel == VerificationChannel.EMAIL
+                ? maskEmail(trimmed)
+                : maskPhone(trimmed);
+    }
+
+    private String maskEmail(String email) {
+        int at = email.indexOf('@');
+        if (at <= 0) {
+            return email;
         }
-        return trimmed.replaceAll("[^0-9+]", "");
+        String local = email.substring(0, at);
+        String domain = email.substring(at);
+        String prefix = local.substring(0, 1);
+        String masked = "*".repeat(Math.max(1, Math.min(8, local.length() - 1)));
+        return prefix + masked + domain;
+    }
+
+    private String maskPhone(String phone) {
+        String digits = phone.replaceAll("\\D", "");
+        if (digits.isEmpty()) {
+            return phone;
+        }
+        return "*".repeat(Math.max(0, digits.length() - 4)) + digits.substring(Math.max(0, digits.length() - 4));
+    }
+
+    private String normalizeRecipient(String value, VerificationChannel channel) {
+        return DiscoverContactNormalizer.normalizeRecipient(value, channel);
     }
 
     private String normalizeCode(String code) {
@@ -562,6 +760,7 @@ public class DiscoverVerificationService {
     }
 
     public record VerificationVerificationRequest(
+            UUID challengeId,
             UUID providerApplicationId,
             UUID providerAccountId,
             VerificationPurpose purpose,

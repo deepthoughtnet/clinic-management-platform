@@ -216,7 +216,7 @@ export function ProviderLandingPagePage() {
           title="Open your provider workspace first"
           description="Landing pages are available after publication for the owning provider."
           primaryAction="Provider dashboard"
-          primaryTo={DISCOVER_ROUTES.providerDashboard.path}
+          primaryTo={DISCOVER_ROUTES.providerWorkspace.path}
           secondaryAction="List your practice"
           secondaryTo={DISCOVER_ROUTES.listPractice.path}
         />
@@ -234,7 +234,7 @@ export function ProviderLandingPagePage() {
           primaryAction="Try again"
           primaryHref={window.location.href}
           secondaryAction="Provider dashboard"
-          secondaryTo={DISCOVER_ROUTES.providerDashboard.path}
+          secondaryTo={DISCOVER_ROUTES.providerWorkspace.path}
         />
       </section>
     );
@@ -253,14 +253,25 @@ export function ProviderLandingPagePage() {
   }
 
   const visibleSnapshot = draftSnapshot ?? page.draft;
+  const statusText = page.applicationStatus === "APPROVED"
+    ? "Your profile is approved. Complete publication setup to make it visible in Discover."
+    : page.applicationStatus === "PUBLISHED"
+      ? "Your profile is published and visible in Discover."
+      : "Your profile is ready to be configured.";
 
   return (
     <section className="page-section landing-builder-page">
+      <div className="provider-dashboard-panel">
+        <span className="eyebrow">Provider profiles</span>
+        <h1>{page.displayName}</h1>
+        <p>{statusText}</p>
+      </div>
+
       <div className="landing-builder-hero">
         <div>
-          <span className="eyebrow">Landing page builder</span>
-          <h1>{page.displayName}</h1>
-          <p>{page.publicPath}</p>
+          <span className="eyebrow">Publication setup</span>
+          <h1>{page.publicPath}</h1>
+          <p>{page.profile?.canonicalSlug ?? page.canonicalSlug}</p>
         </div>
         <div className="landing-builder-actions">
           <button className="secondary-button" type="button" onClick={() => void saveDraft()} disabled={saving}>
@@ -433,7 +444,14 @@ export function ProviderLandingPagePage() {
             </div>
           ) : (
             <div className={deviceClass(device)}>
-              <LandingPageRenderer page={page} snapshot={visibleSnapshot} />
+              {page.profile ? (
+                <LandingPageRenderer page={page} snapshot={visibleSnapshot} />
+              ) : (
+                <div className="provider-dashboard-panel">
+                  <h2>Complete publication setup</h2>
+                  <p>Your profile is approved. Configure the landing page and publish when ready.</p>
+                </div>
+              )}
             </div>
           )}
         </div>

@@ -1,7 +1,9 @@
 package com.deepthoughtnet.clinic.api.discover.provider.auth;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderLifecycleStatus;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderType;
+import com.deepthoughtnet.clinic.discover.verification.VerificationChannel;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -15,8 +17,15 @@ public final class ProviderAuthModels {
     }
 
     public record LoginChallengeResponse(
+            String challengeId,
+            VerificationChannel channel,
+            String maskedRecipient,
             String message,
+            @JsonInclude(JsonInclude.Include.NON_NULL)
             String developmentCode,
+            String verificationMode,
+            OffsetDateTime expiresAt,
+            OffsetDateTime resendAvailableAt,
             long expiresInSeconds,
             long resendAfterSeconds,
             String providerName,
@@ -27,9 +36,11 @@ public final class ProviderAuthModels {
     public record LoginVerifyRequest(@NotBlank String identifier, @NotBlank String code) {
     }
 
+    public record ChallengeVerifyRequest(@NotBlank String code) {
+    }
+
     public record LoginVerifyResponse(
             boolean verified,
-            UUID providerAccountId,
             OffsetDateTime sessionExpiresAt,
             String message
     ) {
@@ -51,8 +62,17 @@ public final class ProviderAuthModels {
     }
 
     public record WorkspaceResponse(
-            UUID providerAccountId,
+            String contactEmail,
+            String contactPhone,
+            OffsetDateTime emailVerifiedAt,
+            OffsetDateTime phoneVerifiedAt,
             List<WorkspaceApplicationResponse> applications
+    ) {
+    }
+
+    public record ProviderOnboardingAccessResponse(
+            UUID applicationId,
+            String onboardingToken
     ) {
     }
 }

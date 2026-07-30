@@ -2,9 +2,8 @@ package com.deepthoughtnet.clinic.discover.onboarding.db;
 
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderServiceType;
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.util.UUID;
@@ -16,7 +15,7 @@ public class ProviderServiceEntity {
     private UUID id;
     @Column(name = "provider_id", nullable = false)
     private UUID providerId;
-    @Enumerated(EnumType.STRING)
+    @Convert(converter = ProviderServiceTypeConverter.class)
     @Column(name = "service_type", nullable = false, length = 64)
     private ProviderServiceType serviceType;
     @Column(nullable = false, length = 128)
