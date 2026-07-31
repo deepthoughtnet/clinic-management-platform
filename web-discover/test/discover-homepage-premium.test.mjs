@@ -18,6 +18,8 @@ test("homepage prioritizes search with URL-driven query and location parameters"
   assert.ok(page.includes("buildDirectorySearchParams"));
   assert.ok(page.includes("params.set(\"q\""));
   assert.ok(page.includes("params.set(\"city\""));
+  assert.ok(page.includes("Use my current location"));
+  assert.ok(page.includes("radiusKm"));
   assert.ok(page.includes("navigate(`/?${params.toString()}`)"));
   assert.ok(page.includes("event.preventDefault()"));
 });
@@ -120,9 +122,8 @@ test("provider onboarding routes render governed wizard instead of technical pla
 
   assert.ok(app.includes("PublicHospitalsPage"));
   assert.ok(app.includes("PublicHospitalDetailPage"));
-  assert.ok(app.includes('<ProviderOnboardingPage type="doctor"'));
-  assert.ok(app.includes('<ProviderOnboardingPage type="clinic"'));
-  assert.ok(app.includes('<ProviderOnboardingPage type="hospital"'));
+  assert.ok(app.includes("ProviderRegistrationStartPage"));
+  assert.ok(app.includes("startProviderApplication"));
   assert.ok(portal.includes("Save draft"));
   assert.ok(portal.includes("Submit for verification"));
   assert.ok(portal.includes("Public profile preview"));

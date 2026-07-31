@@ -99,10 +99,10 @@ class PublicCatalogFacadeTest {
                 new PublicSpecialitySummaryRecord("Dermatology", "dermatology", 3, 2, 1)
         ));
 
-        var doctors = facade.listDoctors("skin", "pune", "baner", "Dermatology", "sunrise", "demo", 0, 12);
-        var clinics = facade.listClinics("skin", "pune", "baner", "Dermatology", "sunrise", 0, 12);
-        var hospitals = facade.listHospitals("skin", "pune", "baner", "Dermatology", "sunrise", 0, 12);
-        PublicSearchResponse search = facade.search("skin", "pune", "baner", "sunrise", 0, 6);
+        var doctors = facade.listDoctors("skin", "pune", "baner", "Dermatology", "sunrise", "demo", null, null, null, 0, 12);
+        var clinics = facade.listClinics("skin", "pune", "baner", "Dermatology", "sunrise", null, null, null, 0, 12);
+        var hospitals = facade.listHospitals("skin", "pune", "baner", "Dermatology", "sunrise", null, null, null, 0, 12);
+        PublicSearchResponse search = facade.search("skin", "pune", "baner", "sunrise", null, null, null, 0, 6);
 
         assertThat(doctors.items()).singleElement().satisfies(item -> {
             assertThat(item.doctorDisplayName()).isEqualTo("Dr. Asha Menon");
@@ -235,7 +235,8 @@ class PublicCatalogFacadeTest {
                 departmentCount,
                 galleryCount,
                 emergencyAvailable,
-                tags
+                tags,
+                null
         );
     }
 

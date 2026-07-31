@@ -140,7 +140,7 @@ class DiscoverReferenceSecurityTest {
 
     @Test
     void existingProtectedProviderAndPublicCatalogRoutesRetainSecurityBehavior() throws Exception {
-        when(publicCatalogFacade.search(null, null, null, null, 0, 6))
+        when(publicCatalogFacade.search(null, null, null, null, null, null, null, 0, 6))
                 .thenReturn(new com.deepthoughtnet.clinic.api.publicsite.dto.PublicSearchResponse(
                         null,
                         null,

@@ -265,6 +265,9 @@ function useDirectoryFilters(defaultSize = 12) {
   const [query, setQuery] = useState(queryParam);
   const [city, setCity] = useState(cityParam || selectedLocation);
   const [area, setArea] = useState(searchParams.get("area") ?? "");
+  const radiusKm = searchParams.get("radiusKm") ?? "";
+  const latitude = searchParams.get("lat") ?? "";
+  const longitude = searchParams.get("lng") ?? "";
   const page = Number(searchParams.get("page") ?? "0") || 0;
   const size = Number(searchParams.get("size") ?? `${defaultSize}`) || defaultSize;
 
@@ -298,7 +301,7 @@ function useDirectoryFilters(defaultSize = 12) {
     navigate(`${basePath}?${params.toString()}`);
   }
 
-  return { searchParams, query, setQuery, city, setCity, area, setArea, page, size, submit, changePage };
+  return { searchParams, query, setQuery, city, setCity, area, setArea, radiusKm, latitude, longitude, page, size, submit, changePage };
 }
 
 function providerCallLabel(providerType: "INDIVIDUAL_DOCTOR" | "CLINIC" | "HOSPITAL") {
@@ -508,17 +511,24 @@ export function PublicHomePage() {
   const [locationDraft, setLocationDraft] = useState(() => selectedLocation);
   const [locationMessage, setLocationMessage] = useState<string | null>(null);
   const [locationBusy, setLocationBusy] = useState(false);
+  const [radiusKm, setRadiusKm] = useState(() => filters.searchParams.get("radiusKm") ?? "10");
   const hasHydratedLocation = useRef(false);
   const displayLocation = selectedLocation;
   const searchableLocation = displayLocation === PUBLIC_CURRENT_LOCATION_LABEL ? PUBLIC_DEFAULT_LOCATION : displayLocation;
   const doctors = usePublicResource<PublicPageResponse<PublicDoctorSummaryResponse>>(
     "/api/public/doctors",
-    homepageParams(searchableLocation, 4),
+    {
+      ...homepageParams(searchableLocation, 4),
+      ...(selectedCoordinates ? { lat: `${selectedCoordinates.latitude}`, lng: `${selectedCoordinates.longitude}`, radiusKm } : {}),
+    },
     { ...emptyDoctorsPage, size: 4 },
   );
   const clinics = usePublicResource<PublicPageResponse<PublicClinicSummaryResponse>>(
     "/api/public/clinics",
-    homepageParams(searchableLocation, 3),
+    {
+      ...homepageParams(searchableLocation, 3),
+      ...(selectedCoordinates ? { lat: `${selectedCoordinates.latitude}`, lng: `${selectedCoordinates.longitude}`, radiusKm } : {}),
+    },
     { ...emptyClinicsPage, size: 3 },
   );
   const specialities = usePublicResource<PublicSpecialitySummaryResponse[]>(
@@ -593,7 +603,7 @@ export function PublicHomePage() {
       page: 0,
       size: 6,
       extra: selectedCoordinates
-        ? { lat: `${selectedCoordinates.latitude}`, lng: `${selectedCoordinates.longitude}` }
+        ? { lat: `${selectedCoordinates.latitude}`, lng: `${selectedCoordinates.longitude}`, radiusKm }
         : undefined,
     });
     navigate(`/?${params.toString()}`);
@@ -606,8 +616,17 @@ export function PublicHomePage() {
       area: filters.area,
       page: 0,
       size: 6,
+      extra: selectedCoordinates
+        ? { lat: `${selectedCoordinates.latitude}`, lng: `${selectedCoordinates.longitude}`, radiusKm }
+        : undefined,
     });
     navigate(`/?${params.toString()}`);
+  }
+
+  function clearActiveLocation() {
+    setSelectedLocation(PUBLIC_DEFAULT_LOCATION, null);
+    setLocationDraft(PUBLIC_DEFAULT_LOCATION);
+    setLocationMessage(null);
   }
 
   return (
@@ -664,6 +683,24 @@ export function PublicHomePage() {
                 </div>
               ) : null}
             </form>
+            <div className="cta-row">
+              <label className="toolbar-field">
+                <span>Nearby radius</span>
+                <select value={radiusKm} onChange={(event) => setRadiusKm(event.target.value)} disabled={!selectedCoordinates}>
+                  <option value="2">2 km</option>
+                  <option value="5">5 km</option>
+                  <option value="10">10 km</option>
+                  <option value="25">25 km</option>
+                  <option value="50">50 km</option>
+                </select>
+              </label>
+              {selectedCoordinates ? (
+                <p className="form-note" role="status">
+                  Using current location within {radiusKm} km.
+                  <button className="text-button" type="button" onClick={clearActiveLocation}>Clear</button>
+                </p>
+              ) : null}
+            </div>
             <div className="popular-searches" aria-label="Popular searches">
               <span>Popular searches</span>
               <div className="chip-row">
@@ -911,6 +948,9 @@ export function PublicDoctorsPage() {
       area: filters.searchParams.get("area"),
       speciality,
       clinic,
+      lat: filters.latitude,
+      lng: filters.longitude,
+      radiusKm: filters.radiusKm,
       page: filters.page,
       size: filters.size,
     },
@@ -1011,6 +1051,9 @@ export function PublicClinicsPage() {
       city: filters.searchParams.get("city"),
       area: filters.searchParams.get("area"),
       speciality,
+      lat: filters.latitude,
+      lng: filters.longitude,
+      radiusKm: filters.radiusKm,
       page: filters.page,
       size: filters.size,
     },
@@ -1111,6 +1154,9 @@ export function PublicHospitalsPage() {
       city: filters.searchParams.get("city"),
       area: filters.searchParams.get("area"),
       speciality,
+      lat: filters.latitude,
+      lng: filters.longitude,
+      radiusKm: filters.radiusKm,
       page: filters.page,
       size: filters.size,
     },

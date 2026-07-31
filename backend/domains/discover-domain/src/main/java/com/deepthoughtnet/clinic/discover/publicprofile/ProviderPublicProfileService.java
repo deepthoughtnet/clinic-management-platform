@@ -31,6 +31,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -43,6 +44,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Function;
@@ -152,10 +154,22 @@ public class ProviderPublicProfileService {
 
     @Transactional(readOnly = true)
     public Page<PublicProviderProfileSummaryRecord> listProfiles(PublicProviderSearchCriteria criteria, int page, int size) {
+        if (hasDistanceFilter(criteria)) {
+            List<PublicProviderProfileSummaryRecord> filtered = listAllProfiles(criteria);
+            int safePage = Math.max(page, 0);
+            int safeSize = Math.min(Math.max(size, 1), 48);
+            int fromIndex = Math.min(safePage * safeSize, filtered.size());
+            int toIndex = Math.min(fromIndex + safeSize, filtered.size());
+            return new org.springframework.data.domain.PageImpl<>(
+                    filtered.subList(fromIndex, toIndex),
+                    PageRequest.of(safePage, safeSize),
+                    filtered.size()
+            );
+        }
         Pageable pageable = PageRequest.of(Math.max(page, 0), Math.min(Math.max(size, 1), 48), Sort.by(Sort.Direction.ASC, "displayName"));
         Page<DiscoverPublicProviderProfileEntity> result = profiles.findAll(profileSpecification(criteria), pageable);
         Map<UUID, ProviderDocumentEntity> documentMap = loadDocuments(result.getContent());
-        return result.map(entity -> toSummary(entity, documentMap));
+        return result.map(entity -> toSummary(entity, documentMap, null));
     }
 
     @Transactional(readOnly = true)
@@ -163,8 +177,19 @@ public class ProviderPublicProfileService {
         Pageable pageable = PageRequest.of(0, 512, Sort.by(Sort.Direction.ASC, "displayName"));
         List<DiscoverPublicProviderProfileEntity> content = profiles.findAll(profileSpecification(criteria), pageable).getContent();
         Map<UUID, ProviderDocumentEntity> documentMap = loadDocuments(content);
+        if (hasDistanceFilter(criteria)) {
+            return content.stream()
+                    .map(entity -> new java.util.AbstractMap.SimpleEntry<>(entity, distanceKm(entity, criteria.latitude(), criteria.longitude())))
+                    .filter(entry -> entry.getValue() != null)
+                    .filter(entry -> criteria.radiusKm() == null || entry.getValue().compareTo(BigDecimal.valueOf(criteria.radiusKm())) <= 0)
+                    .sorted(Comparator
+                            .comparing((java.util.AbstractMap.SimpleEntry<DiscoverPublicProviderProfileEntity, BigDecimal> entry) -> entry.getValue())
+                            .thenComparing(entry -> normalize(entry.getKey().getDisplayName())))
+                    .map(entry -> toSummary(entry.getKey(), documentMap, entry.getValue()))
+                    .toList();
+        }
         return content.stream()
-                .map(entity -> toSummary(entity, documentMap))
+                .map(entity -> toSummary(entity, documentMap, null))
                 .toList();
     }
 
@@ -228,7 +253,7 @@ public class ProviderPublicProfileService {
 
     @Transactional(readOnly = true)
     public List<PublicProviderProfileSummaryRecord> summariesByType(ProviderType providerType, String q, String city, String area, String speciality, String service) {
-        return listProfiles(new PublicProviderSearchCriteria(providerType, q, city, area, speciality, service), 0, 512).getContent();
+        return listProfiles(new PublicProviderSearchCriteria(providerType, q, city, area, speciality, service, null, null, null), 0, 512).getContent();
     }
 
     @Transactional(readOnly = true)
@@ -327,7 +352,11 @@ public class ProviderPublicProfileService {
                 ));
     }
 
-    private PublicProviderProfileSummaryRecord toSummary(DiscoverPublicProviderProfileEntity entity, Map<UUID, ProviderDocumentEntity> documentMap) {
+    private PublicProviderProfileSummaryRecord toSummary(
+            DiscoverPublicProviderProfileEntity entity,
+            Map<UUID, ProviderDocumentEntity> documentMap,
+            BigDecimal distanceKm
+    ) {
         String imageUrl = resolveMediaUrl(entity.getProviderType() == ProviderType.INDIVIDUAL_DOCTOR ? entity.getDoctorPhotoDocumentId() : entity.getLogoDocumentId(), documentMap);
         String coverUrl = resolveMediaUrl(entity.getCoverImageDocumentId(), documentMap);
         return new PublicProviderProfileSummaryRecord(
@@ -348,7 +377,8 @@ public class ProviderPublicProfileService {
                 entity.getDepartmentCount(),
                 entity.getGalleryCount(),
                 entity.isEmergencyAvailable(),
-                tags(entity)
+                tags(entity),
+                distanceKm
         );
     }
 
@@ -696,6 +726,54 @@ public class ProviderPublicProfileService {
             }
             return cb.and(predicates.toArray(new jakarta.persistence.criteria.Predicate[0]));
         };
+    }
+
+    private boolean hasDistanceFilter(PublicProviderSearchCriteria criteria) {
+        return criteria != null
+                && criteria.latitude() != null
+                && criteria.longitude() != null
+                && criteria.radiusKm() != null
+                && criteria.radiusKm() > 0;
+    }
+
+    private BigDecimal distanceKm(DiscoverPublicProviderProfileEntity entity, BigDecimal latitude, BigDecimal longitude) {
+        Double sourceLatitude = entityLatitude(entity);
+        Double sourceLongitude = entityLongitude(entity);
+        if (sourceLatitude == null || sourceLongitude == null || latitude == null || longitude == null) {
+            return null;
+        }
+        double earthRadiusKm = 6371.0088d;
+        double dLat = Math.toRadians(latitude.doubleValue() - sourceLatitude);
+        double dLon = Math.toRadians(longitude.doubleValue() - sourceLongitude);
+        double lat1 = Math.toRadians(sourceLatitude);
+        double lat2 = Math.toRadians(latitude.doubleValue());
+        double a = Math.sin(dLat / 2) * Math.sin(dLat / 2)
+                + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return BigDecimal.valueOf(earthRadiusKm * c).setScale(1, RoundingMode.HALF_UP);
+    }
+
+    private Double entityLatitude(DiscoverPublicProviderProfileEntity entity) {
+        return firstLocationCoordinate(entity.getProviderId(), true);
+    }
+
+    private Double entityLongitude(DiscoverPublicProviderProfileEntity entity) {
+        return firstLocationCoordinate(entity.getProviderId(), false);
+    }
+
+    private Double firstLocationCoordinate(UUID providerId, boolean latitude) {
+        if (providerId == null) {
+            return null;
+        }
+        return locations.findByProviderIdOrderByLabelAsc(providerId).stream()
+                .map(location -> latitude ? coordinate(location.getLatitude()) : coordinate(location.getLongitude()))
+                .filter(Objects::nonNull)
+                .findFirst()
+                .orElse(null);
+    }
+
+    private Double coordinate(BigDecimal value) {
+        return value == null ? null : value.doubleValue();
     }
 
     private String like(String value) {

@@ -75,4 +75,20 @@ public final class ProviderAuthModels {
             String onboardingToken
     ) {
     }
+
+    public record ProviderWorkspaceStartRequest(
+            ProviderType providerType
+    ) {
+    }
+
+    public record ProviderWorkspaceStartResponse(
+            UUID applicationId,
+            String referenceNumber,
+            ProviderType providerType,
+            ProviderLifecycleStatus status,
+            String currentStep,
+            String onboardingToken,
+            String publicProfilePath
+    ) {
+    }
 }

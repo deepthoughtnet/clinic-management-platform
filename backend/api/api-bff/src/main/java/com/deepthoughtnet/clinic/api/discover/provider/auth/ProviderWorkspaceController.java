@@ -2,9 +2,12 @@ package com.deepthoughtnet.clinic.api.discover.provider.auth;
 
 import com.deepthoughtnet.clinic.api.discover.provider.auth.ProviderAuthModels.WorkspaceApplicationResponse;
 import com.deepthoughtnet.clinic.api.discover.provider.auth.ProviderAuthModels.ProviderOnboardingAccessResponse;
+import com.deepthoughtnet.clinic.api.discover.provider.auth.ProviderAuthModels.ProviderWorkspaceStartRequest;
+import com.deepthoughtnet.clinic.api.discover.provider.auth.ProviderAuthModels.ProviderWorkspaceStartResponse;
 import com.deepthoughtnet.clinic.api.discover.provider.auth.ProviderAuthModels.WorkspaceResponse;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.ProviderDashboardRecord;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.ProviderOnboardingAccessRecord;
+import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.ProviderWorkspaceStartRecord;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingService;
 import com.deepthoughtnet.clinic.discover.verification.DiscoverVerificationService;
 import com.deepthoughtnet.clinic.discover.verification.db.DiscoverProviderAccountEntity;
@@ -18,6 +21,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -80,6 +84,26 @@ public class ProviderWorkspaceController {
         return ResponseEntity.ok()
                 .cacheControl(CacheControl.noStore())
                 .body(new ProviderOnboardingAccessResponse(access.applicationId(), access.onboardingToken()));
+    }
+
+    @PostMapping("/applications/start")
+    public ResponseEntity<ProviderWorkspaceStartResponse> start(
+            Authentication authentication,
+            @RequestBody ProviderWorkspaceStartRequest request
+    ) {
+        ProviderSessionPrincipal principal = requirePrincipal(authentication);
+        ProviderWorkspaceStartRecord start = onboardingService.startOrResumeOwnedApplication(request.providerType(), principal.providerAccountId());
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.noStore())
+                .body(new ProviderWorkspaceStartResponse(
+                        start.applicationId(),
+                        start.referenceNumber(),
+                        start.providerType(),
+                        start.status(),
+                        start.currentStep(),
+                        start.onboardingToken(),
+                        start.publicProfilePath()
+                ));
     }
 
     private List<WorkspaceApplicationResponse> loadApplications(UUID providerAccountId) {

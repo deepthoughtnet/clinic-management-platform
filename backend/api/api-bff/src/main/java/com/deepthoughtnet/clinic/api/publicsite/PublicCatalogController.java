@@ -11,6 +11,7 @@ import com.deepthoughtnet.clinic.api.publicsite.dto.PublicSearchResponse;
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicSpecialityDetailResponse;
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicSpecialitySummaryResponse;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProfileMediaContent;
+import java.math.BigDecimal;
 import java.util.List;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -36,10 +37,13 @@ public class PublicCatalogController {
             @RequestParam(required = false) String area,
             @RequestParam(required = false) String speciality,
             @RequestParam(required = false) String tenantCode,
+            @RequestParam(required = false) BigDecimal lat,
+            @RequestParam(required = false) BigDecimal lng,
+            @RequestParam(required = false) Integer radiusKm,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "12") int size
     ) {
-        return publicCatalogFacade.listClinics(q, city, area, speciality, tenantCode, page, size);
+        return publicCatalogFacade.listClinics(q, city, area, speciality, tenantCode, lat, lng, radiusKm, page, size);
     }
 
     @GetMapping("/clinics/{clinicSlug}")
@@ -60,10 +64,13 @@ public class PublicCatalogController {
             @RequestParam(required = false) String speciality,
             @RequestParam(required = false) String clinic,
             @RequestParam(required = false) String tenantCode,
+            @RequestParam(required = false) BigDecimal lat,
+            @RequestParam(required = false) BigDecimal lng,
+            @RequestParam(required = false) Integer radiusKm,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "12") int size
     ) {
-        return publicCatalogFacade.listDoctors(q, city, area, speciality, clinic, tenantCode, page, size);
+        return publicCatalogFacade.listDoctors(q, city, area, speciality, clinic, tenantCode, lat, lng, radiusKm, page, size);
     }
 
     @GetMapping("/doctors/{doctorSlug}")
@@ -93,10 +100,13 @@ public class PublicCatalogController {
             @RequestParam(required = false) String area,
             @RequestParam(required = false) String speciality,
             @RequestParam(required = false) String tenantCode,
+            @RequestParam(required = false) BigDecimal lat,
+            @RequestParam(required = false) BigDecimal lng,
+            @RequestParam(required = false) Integer radiusKm,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "12") int size
     ) {
-        return publicCatalogFacade.listHospitals(q, city, area, speciality, tenantCode, page, size);
+        return publicCatalogFacade.listHospitals(q, city, area, speciality, tenantCode, lat, lng, radiusKm, page, size);
     }
 
     @GetMapping("/hospitals/{hospitalSlug}")
@@ -126,10 +136,13 @@ public class PublicCatalogController {
             @RequestParam(required = false) String area,
             @RequestParam(required = false) String clinic,
             @RequestParam(required = false) String tenantCode,
+            @RequestParam(required = false) BigDecimal lat,
+            @RequestParam(required = false) BigDecimal lng,
+            @RequestParam(required = false) Integer radiusKm,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "12") int size
     ) {
-        return publicCatalogFacade.specialityDetail(specialitySlug, q, city, area, clinic, tenantCode, page, size);
+        return publicCatalogFacade.specialityDetail(specialitySlug, q, city, area, clinic, tenantCode, lat, lng, radiusKm, page, size);
     }
 
     @GetMapping("/search")
@@ -138,10 +151,13 @@ public class PublicCatalogController {
             @RequestParam(required = false) String city,
             @RequestParam(required = false) String area,
             @RequestParam(required = false) String tenantCode,
+            @RequestParam(required = false) BigDecimal lat,
+            @RequestParam(required = false) BigDecimal lng,
+            @RequestParam(required = false) Integer radiusKm,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "6") int size
     ) {
-        return publicCatalogFacade.search(q, city, area, tenantCode, page, size);
+        return publicCatalogFacade.search(q, city, area, tenantCode, lat, lng, radiusKm, page, size);
     }
 
     private ResponseEntity<byte[]> inline(PublicProfileMediaContent media) {

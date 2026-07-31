@@ -237,6 +237,17 @@ public final class ProviderOnboardingModels {
     ) {
     }
 
+    public record ProviderWorkspaceStartRecord(
+            UUID applicationId,
+            String referenceNumber,
+            ProviderType providerType,
+            ProviderLifecycleStatus status,
+            String currentStep,
+            String onboardingToken,
+            String publicProfilePath
+    ) {
+    }
+
     public record ProviderReviewSummaryRecord(
             UUID id,
             String referenceNumber,

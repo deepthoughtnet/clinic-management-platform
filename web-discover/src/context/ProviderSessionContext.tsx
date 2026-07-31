@@ -20,7 +20,7 @@ type ProviderSessionContextValue = {
 const ProviderSessionContext = createContext<ProviderSessionContextValue | null>(null);
 
 function isProviderRoute(pathname: string) {
-  return pathname === "/provider" || pathname.startsWith("/provider/");
+  return pathname === "/provider" || pathname.startsWith("/provider/") || pathname.startsWith("/register/");
 }
 
 export function ProviderSessionProvider({ children }: { children: ReactNode }) {

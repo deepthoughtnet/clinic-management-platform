@@ -21,6 +21,7 @@ import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileMod
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicSpecialitySummaryRecord;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderSearchCriteria;
 import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService;
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
@@ -46,6 +47,9 @@ public class PublicCatalogFacade {
             String area,
             String speciality,
             String tenantCode,
+            BigDecimal latitude,
+            BigDecimal longitude,
+            Integer radiusKm,
             int page,
             int size
     ) {
@@ -56,7 +60,10 @@ public class PublicCatalogFacade {
                         city,
                         area,
                         speciality,
-                        null
+                        null,
+                        latitude,
+                        longitude,
+                        radiusKm
                 ), page, size)
         ));
     }
@@ -78,6 +85,9 @@ public class PublicCatalogFacade {
             String speciality,
             String clinic,
             String tenantCode,
+            BigDecimal latitude,
+            BigDecimal longitude,
+            Integer radiusKm,
             int page,
             int size
     ) {
@@ -88,7 +98,10 @@ public class PublicCatalogFacade {
                         city,
                         area,
                         speciality,
-                        clinic
+                        clinic,
+                        latitude,
+                        longitude,
+                        radiusKm
                 ), page, size)
         ));
     }
@@ -119,6 +132,9 @@ public class PublicCatalogFacade {
             String area,
             String speciality,
             String tenantCode,
+            BigDecimal latitude,
+            BigDecimal longitude,
+            Integer radiusKm,
             int page,
             int size
     ) {
@@ -129,7 +145,10 @@ public class PublicCatalogFacade {
                         city,
                         area,
                         speciality,
-                        null
+                        null,
+                        latitude,
+                        longitude,
+                        radiusKm
                 ), page, size)
         ));
     }
@@ -163,6 +182,9 @@ public class PublicCatalogFacade {
             String area,
             String clinic,
             String tenantCode,
+            BigDecimal latitude,
+            BigDecimal longitude,
+            Integer radiusKm,
             int page,
             int size
     ) {
@@ -175,17 +197,20 @@ public class PublicCatalogFacade {
                         city,
                         area,
                         speciality,
-                        clinic
+                        clinic,
+                        latitude,
+                        longitude,
+                        radiusKm
                 ), page, size)
         ));
         return new PublicSpecialityDetailResponse(speciality, slugify(speciality), doctors);
     }
 
-    public PublicSearchResponse search(String q, String city, String area, String tenantCode, int page, int size) {
+    public PublicSearchResponse search(String q, String city, String area, String tenantCode, BigDecimal latitude, BigDecimal longitude, Integer radiusKm, int page, int size) {
         return new PublicSearchResponse(
-                listDoctors(q, city, area, null, null, tenantCode, page, size),
-                listClinics(q, city, area, null, tenantCode, page, size),
-                listHospitals(q, city, area, null, tenantCode, page, size),
+                listDoctors(q, city, area, null, null, tenantCode, latitude, longitude, radiusKm, page, size),
+                listClinics(q, city, area, null, tenantCode, latitude, longitude, radiusKm, page, size),
+                listHospitals(q, city, area, null, tenantCode, latitude, longitude, radiusKm, page, size),
                 listSpecialities(q, city, tenantCode)
         );
     }
@@ -360,6 +385,8 @@ public class PublicCatalogFacade {
     }
 
     private PublicDoctorSummaryResponse toDoctorSummary(PublicProviderProfileSummaryRecord record) {
+        PublicProviderProfileDetailRecord detail = publicProfileService.findBySlug(record.canonicalSlug()).orElse(null);
+        PublicProviderLocationSnapshot location = detail == null || detail.locations().isEmpty() ? null : detail.locations().get(0);
         return new PublicDoctorSummaryResponse(
                 record.providerId().toString(),
                 record.canonicalSlug(),
@@ -367,16 +394,18 @@ public class PublicCatalogFacade {
                 record.displayName(),
                 record.imageUrl() == null || record.imageUrl().isBlank() ? null : publicDoctorPhotoPath(record.canonicalSlug()),
                 record.primarySpeciality(),
-                null,
-                List.of(),
-                record.area(),
-                record.city(),
+                detail == null ? null : detail.yearsOfExperience(),
+                detail == null ? null : detail.consultationFee(),
+                detail == null ? List.of() : detail.languages(),
+                location == null ? record.area() : location.label(),
+                location == null ? record.city() : location.city(),
                 record.subtitle(),
                 record.summary(),
-                firstNonBlank(record.subtitle(), record.primarySpeciality(), record.displayName()),
-                slugify(firstNonBlank(record.area(), record.city(), record.displayName())),
+                firstNonBlank(location == null ? null : location.label(), record.subtitle(), record.primarySpeciality(), record.displayName()),
+                slugify(firstNonBlank(location == null ? null : location.label(), record.area(), record.city(), record.displayName())),
                 false,
-                null
+                null,
+                record.distanceKm()
         );
     }
 
@@ -398,7 +427,8 @@ public class PublicCatalogFacade {
                 record.tags(),
                 record.subtitle(),
                 record.summary(),
-                false
+                false,
+                record.distanceKm()
         );
     }
 
@@ -418,7 +448,8 @@ public class PublicCatalogFacade {
                 record.emergencyAvailable(),
                 record.tags(),
                 record.subtitle(),
-                record.summary()
+                record.summary(),
+                record.distanceKm()
         );
     }
 

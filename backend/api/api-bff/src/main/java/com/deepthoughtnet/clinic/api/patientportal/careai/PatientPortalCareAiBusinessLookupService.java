@@ -53,6 +53,9 @@ class PatientPortalCareAiBusinessLookupService {
                 StringUtils.hasText(specialityQuery) ? specialityQuery : null,
                 StringUtils.hasText(clinicSlug) ? clinicSlug : null,
                 null,
+                null,
+                null,
+                null,
                 0,
                 24
         );
@@ -70,6 +73,9 @@ class PatientPortalCareAiBusinessLookupService {
         }
         PublicPageResponse<PublicClinicSummaryResponse> page = publicCatalogFacade.listClinics(
                 StringUtils.hasText(clinicQuery) ? clinicQuery : null,
+                null,
+                null,
+                null,
                 null,
                 null,
                 null,
@@ -152,6 +158,7 @@ class PatientPortalCareAiBusinessLookupService {
                 null,
                 doctor.specialization(),
                 doctor.yearsOfExperience(),
+                null,
                 List.of(),
                 null,
                 null,
@@ -160,6 +167,7 @@ class PatientPortalCareAiBusinessLookupService {
                 null,
                 null,
                 false,
+                null,
                 null
         );
     }

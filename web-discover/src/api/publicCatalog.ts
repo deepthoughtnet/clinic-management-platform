@@ -24,6 +24,7 @@ export type PublicDoctorSummaryResponse = {
   summary?: string | null;
   availableToday: boolean;
   nextAvailableSlotSummary: string | null;
+  distanceKm?: number | string | null;
 };
 
 export type PublicClinicSummaryResponse = {
@@ -43,6 +44,7 @@ export type PublicClinicSummaryResponse = {
   subtitle?: string | null;
   summary?: string | null;
   availableToday: boolean;
+  distanceKm?: number | string | null;
   specialities: string[];
 };
 
@@ -152,6 +154,7 @@ export type PublicHospitalSummaryResponse = {
   departments: string[];
   subtitle?: string | null;
   summary?: string | null;
+  distanceKm?: number | string | null;
 };
 
 export type PublicHospitalDetailResponse = {

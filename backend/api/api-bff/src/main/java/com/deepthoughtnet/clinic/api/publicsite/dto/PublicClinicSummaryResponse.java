@@ -19,6 +19,7 @@ public record PublicClinicSummaryResponse(
         List<String> specialities,
         String subtitle,
         String summary,
-        boolean availableToday
+        boolean availableToday,
+        java.math.BigDecimal distanceKm
 ) {
 }

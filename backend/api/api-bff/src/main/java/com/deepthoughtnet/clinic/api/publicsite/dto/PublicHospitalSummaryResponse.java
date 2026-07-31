@@ -17,6 +17,7 @@ public record PublicHospitalSummaryResponse(
         boolean emergencyAvailable,
         List<String> departments,
         String subtitle,
-        String summary
+        String summary,
+        java.math.BigDecimal distanceKm
 ) {
 }

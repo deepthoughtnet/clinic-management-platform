@@ -629,7 +629,19 @@ public class PatientPortalCareAiService {
     public List<Map<String, Object>> debugDoctorLookup(String query) {
         CareAiState state = currentState();
         List<DoctorChoice> careAiDoctors = lookupDoctors(state, query, null);
-        int publicCatalogCount = publicCatalogFacade == null ? -1 : publicCatalogFacade.listDoctors(query, null, null, null, null, null, 0, 24).items().size();
+        int publicCatalogCount = publicCatalogFacade == null ? -1 : publicCatalogFacade.listDoctors(
+                query,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                0,
+                24
+        ).items().size();
         careAiTrace("CAREAI_TRACE_DOCTOR_COMPARE", "enter", state,
                 "publicCatalogCount=" + publicCatalogCount
                         + " careAiDoctorCount=" + careAiDoctors.size()

@@ -10,6 +10,7 @@ public record PublicDoctorSummaryResponse(
         String photoUrl,
         String speciality,
         Integer yearsOfExperience,
+        java.math.BigDecimal consultationFee,
         List<String> languages,
         String area,
         String city,
@@ -18,6 +19,7 @@ public record PublicDoctorSummaryResponse(
         String clinicDisplayName,
         String clinicSlug,
         boolean availableToday,
-        String nextAvailableSlotSummary
+        String nextAvailableSlotSummary,
+        java.math.BigDecimal distanceKm
 ) {
 }

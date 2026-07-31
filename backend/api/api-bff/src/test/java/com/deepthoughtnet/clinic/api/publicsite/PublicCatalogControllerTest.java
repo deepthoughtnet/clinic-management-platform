@@ -30,6 +30,7 @@ class PublicCatalogControllerTest {
                 null,
                 "Dermatology",
                 8,
+                null,
                 List.of("English"),
                 "Baner",
                 "Pune",
@@ -38,7 +39,8 @@ class PublicCatalogControllerTest {
                 "Sunrise Clinic",
                 "sunrise-clinic",
                 true,
-                "Today · 10:30 AM"
+                "Today · 10:30 AM",
+                null
         );
         var clinic = new PublicClinicSummaryResponse(
                 "sunrise-clinic",
@@ -57,7 +59,8 @@ class PublicCatalogControllerTest {
                 List.of("Dermatology"),
                 "Clinic",
                 "Clinic summary",
-                true
+                true,
+                null
         );
         var hospital = new PublicHospitalSummaryResponse(
                 "city-care-hospital",
@@ -74,7 +77,8 @@ class PublicCatalogControllerTest {
                 false,
                 List.of("Cardiology"),
                 "Hospital",
-                "Hospital summary"
+                "Hospital summary",
+                null
         );
         var doctorsPage = new PublicPageResponse<>(List.of(doctor), 0, 12, 1, 1);
         var clinicsPage = new PublicPageResponse<>(List.of(clinic), 0, 12, 1, 1);
@@ -82,22 +86,22 @@ class PublicCatalogControllerTest {
         var speciality = new PublicSpecialitySummaryResponse("Dermatology", "dermatology", 1, 1, 1);
         var search = new PublicSearchResponse(doctorsPage, clinicsPage, hospitalsPage, List.of(speciality));
 
-        when(facade.listClinics("skin", "pune", "baner", "Dermatology", "sunrise", 0, 12)).thenReturn(clinicsPage);
-        when(facade.listDoctors("skin", "pune", "baner", "Dermatology", "sunrise", "demo", 0, 12)).thenReturn(doctorsPage);
-        when(facade.listHospitals("skin", "pune", "baner", "Dermatology", "demo", 0, 12)).thenReturn(hospitalsPage);
+        when(facade.listClinics("skin", "pune", "baner", "Dermatology", "sunrise", null, null, null, 0, 12)).thenReturn(clinicsPage);
+        when(facade.listDoctors("skin", "pune", "baner", "Dermatology", "sunrise", "demo", null, null, null, 0, 12)).thenReturn(doctorsPage);
+        when(facade.listHospitals("skin", "pune", "baner", "Dermatology", "demo", null, null, null, 0, 12)).thenReturn(hospitalsPage);
         when(facade.listSpecialities("skin", "pune", "demo")).thenReturn(List.of(speciality));
-        when(facade.search("skin", "pune", "baner", "demo", 0, 6)).thenReturn(search);
+        when(facade.search("skin", "pune", "baner", "demo", null, null, null, 0, 6)).thenReturn(search);
         when(facade.clinicLogo("sunrise-clinic")).thenReturn(new PublicProfileMediaContent("image/png", "clinic-logo.png", new byte[]{4}));
         when(facade.doctorPhoto("dr-asha-menon")).thenReturn(new PublicProfileMediaContent("image/png", "photo.png", new byte[]{1}));
         when(facade.doctorCover("dr-asha-menon")).thenReturn(new PublicProfileMediaContent("image/png", "cover.png", new byte[]{2}));
         when(facade.doctorGalleryImage("dr-asha-menon", 0)).thenReturn(new PublicProfileMediaContent("image/png", "gallery.png", new byte[]{3}));
         when(facade.hospitalLogo("city-care-hospital")).thenReturn(new PublicProfileMediaContent("image/png", "hospital-logo.png", new byte[]{5}));
 
-        assertThat(controller.clinics("skin", "pune", "baner", "Dermatology", "sunrise", 0, 12)).isEqualTo(clinicsPage);
-        assertThat(controller.doctors("skin", "pune", "baner", "Dermatology", "sunrise", "demo", 0, 12)).isEqualTo(doctorsPage);
-        assertThat(controller.hospitals("skin", "pune", "baner", "Dermatology", "demo", 0, 12)).isEqualTo(hospitalsPage);
+        assertThat(controller.clinics("skin", "pune", "baner", "Dermatology", "sunrise", null, null, null, 0, 12)).isEqualTo(clinicsPage);
+        assertThat(controller.doctors("skin", "pune", "baner", "Dermatology", "sunrise", "demo", null, null, null, 0, 12)).isEqualTo(doctorsPage);
+        assertThat(controller.hospitals("skin", "pune", "baner", "Dermatology", "demo", null, null, null, 0, 12)).isEqualTo(hospitalsPage);
         assertThat(controller.specialities("skin", "pune", "demo")).containsExactly(speciality);
-        assertThat(controller.search("skin", "pune", "baner", "demo", 0, 6)).isEqualTo(search);
+        assertThat(controller.search("skin", "pune", "baner", "demo", null, null, null, 0, 6)).isEqualTo(search);
         assertThat(controller.clinicLogo("sunrise-clinic").getBody()).containsExactly((byte) 4);
         assertThat(controller.doctorPhoto("dr-asha-menon").getHeaders().getContentType()).isEqualTo(MediaType.IMAGE_PNG);
         assertThat(controller.doctorCover("dr-asha-menon").getBody()).containsExactly((byte) 2);

@@ -1,10 +1,11 @@
 import { Component, type ErrorInfo, type ReactNode, useEffect, useState } from "react";
-import { Link, Navigate, NavLink, Outlet, Route, Routes, useLocation, useParams } from "react-router-dom";
+import { Link, Navigate, NavLink, Outlet, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import { discoverBrand } from "./branding";
 import { DiscoverEmptyState } from "./components/DiscoveryComponents";
 import { discoverConfig } from "./config";
 import { PublicLocationProvider } from "./context/PublicLocationContext";
 import { ProviderSessionProvider, useProviderSession } from "./context/ProviderSessionContext";
+import { startProviderApplication } from "./api/providerAuth";
 import {
   PublicClinicDetailPage,
   PublicClinicsPage,
@@ -17,6 +18,7 @@ import {
   PublicSpecialityDetailPage,
 } from "./pages/discovery/PublicDiscoveryPages";
 import { LandingPagePage } from "./pages/public/LandingPagePage";
+import type { ProviderType } from "./api/providerOnboarding";
 import { ProviderDashboardPage } from "./pages/provider/ProviderDashboardPage";
 import { ProviderLoginPage } from "./pages/provider/ProviderLoginPage";
 import { ProviderLandingPagePage } from "./pages/provider/ProviderLandingPagePage";
@@ -173,6 +175,94 @@ function BrandLockup() {
   );
 }
 
+function isProviderSessionRoute(pathname: string) {
+  return pathname === "/provider" || pathname.startsWith("/provider/") || pathname.startsWith("/register/");
+}
+
+function maskProviderIdentity(value: string | null) {
+  if (!value) {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  if (trimmed.includes("@")) {
+    const [localPart, domain = ""] = trimmed.split("@");
+    const prefix = localPart.slice(0, 1) || "";
+    return `${prefix}${"*".repeat(Math.max(0, Math.min(8, localPart.length - 1)))}@${domain}`;
+  }
+  const digits = trimmed.replace(/[^0-9]/g, "");
+  if (!digits) {
+    return null;
+  }
+  return `${"*".repeat(Math.max(0, digits.length - 4))}${digits.slice(-4)}`;
+}
+
+function ProviderHeaderActions() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { status, workspace, logout } = useProviderSession();
+  const [loggingOut, setLoggingOut] = useState(false);
+  const isHydratingSession = (status === "idle" || status === "loading") && isProviderSessionRoute(location.pathname);
+  const maskedIdentity = maskProviderIdentity(workspace?.contactEmail ?? workspace?.contactPhone ?? null);
+
+  async function endSession(targetPath: string) {
+    setLoggingOut(true);
+    try {
+      await logout();
+      navigate(targetPath, { replace: true });
+    } finally {
+      setLoggingOut(false);
+    }
+  }
+
+  if (isHydratingSession) {
+    return (
+      <div className="header-actions header-actions--loading" aria-live="polite">
+        <span className="header-session-pill">Restoring provider session</span>
+      </div>
+    );
+  }
+
+  if (status === "authenticated") {
+    return (
+      <div className="header-actions header-actions--authenticated">
+        <a className="ghost-button" href={discoverConfig.careAppUrl} target="_blank" rel="noopener noreferrer">
+          Patient Login
+        </a>
+        <div className="header-session-summary">
+          <span className="header-session-pill">Active provider session</span>
+          <span className="header-session-identity">{maskedIdentity ? `Signed in as ${maskedIdentity}` : "Provider account active"}</span>
+        </div>
+        <Link className="ghost-button" to={DISCOVER_ROUTES.providerWorkspace.path}>
+          Provider Account
+        </Link>
+        <button className="ghost-button" type="button" onClick={() => void endSession(DISCOVER_ROUTES.providerLogin.path)} disabled={loggingOut}>
+          Switch account
+        </button>
+        <button className="primary-button" type="button" onClick={() => void endSession(DISCOVER_ROUTES.providerLogin.path)} disabled={loggingOut}>
+          Logout
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="header-actions">
+      <a className="ghost-button" href={discoverConfig.careAppUrl} target="_blank" rel="noopener noreferrer">
+        Patient Login
+      </a>
+      <Link className="ghost-button" to={DISCOVER_ROUTES.providerLogin.path}>
+        Provider Login
+      </Link>
+      <Link className="primary-button" to={DISCOVER_ROUTES.listPractice.path}>
+        For Providers
+      </Link>
+    </div>
+  );
+}
+
 function Shell({ children }: { children: ReactNode }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const location = useLocation();
@@ -200,22 +290,12 @@ function Shell({ children }: { children: ReactNode }) {
           </button>
           <nav className={`primary-nav${menuOpen ? " is-open" : ""}`} aria-label="Discover navigation">
             {primaryNavigationRoutes.map((route) => (
-              <NavLink key={route.path} to={route.path} className={({ isActive }) => `nav-link${isActive ? " is-active" : ""}`}>
+              <NavLink key={route.path} to={route.path} end={route.path === DISCOVER_ROUTES.home.path} className={({ isActive }) => `nav-link${isActive ? " is-active" : ""}`}>
                 {route.label}
               </NavLink>
             ))}
           </nav>
-          <div className="header-actions">
-            <a className="ghost-button" href={discoverConfig.careAppUrl}>
-              Patient Login
-            </a>
-            <Link className="ghost-button" to={DISCOVER_ROUTES.providerLogin.path}>
-              Provider Login
-            </Link>
-            <Link className="primary-button" to={DISCOVER_ROUTES.listPractice.path}>
-              For Providers
-            </Link>
-          </div>
+          <ProviderHeaderActions />
         </div>
       </header>
 
@@ -240,7 +320,9 @@ function Shell({ children }: { children: ReactNode }) {
             <Link to={DISCOVER_ROUTES.clinics.path}>Find clinics</Link>
             <Link to={DISCOVER_ROUTES.hospitals.path}>Find hospitals</Link>
             <Link to={DISCOVER_ROUTES.specialities.path}>Browse specialities</Link>
-            <a href={discoverConfig.careAppUrl}>Patient login</a>
+            <a href={discoverConfig.careAppUrl} target="_blank" rel="noopener noreferrer">
+              Patient login
+            </a>
           </nav>
           <nav className="footer-column" aria-label="Providers">
             <strong>Providers</strong>
@@ -372,21 +454,21 @@ function ProviderEntryPage() {
       icon: "DR",
       body: "Create a professional profile for patients looking for your speciality.",
       details: "Best for independent doctors and consultants.",
-      to: DISCOVER_ROUTES.registerDoctor.path,
+      to: `${DISCOVER_ROUTES.registerDoctor.path}?intent=INDIVIDUAL_DOCTOR`,
     },
     {
       title: "Clinic",
       icon: "CL",
       body: "Present your clinic, doctor team, services, locations and appointment options.",
       details: "Best for outpatient practices and care centres.",
-      to: DISCOVER_ROUTES.registerClinic.path,
+      to: `${DISCOVER_ROUTES.registerClinic.path}?intent=CLINIC`,
     },
     {
       title: "Hospital",
       icon: "H",
       body: "Prepare a hospital presence with departments, facilities and doctor information.",
       details: "Best for hospitals and multi-speciality organisations.",
-      to: DISCOVER_ROUTES.registerHospital.path,
+      to: `${DISCOVER_ROUTES.registerHospital.path}?intent=HOSPITAL`,
     },
   ];
 
@@ -421,6 +503,79 @@ function ProviderEntryPage() {
   );
 }
 
+function providerStepRoute(step: string) {
+  const normalized = step.toUpperCase();
+  if (normalized.includes("ACCOUNT")) return "account";
+  if (normalized.includes("PROFILE")) return "organisation";
+  if (normalized.includes("ORGANISATION")) return "organisation";
+  if (normalized.includes("PROFESSIONAL")) return "professional";
+  if (normalized.includes("DETAILS")) return "professional";
+  if (normalized.includes("SERVICES")) return "services";
+  if (normalized.includes("LOCATION")) return "locations";
+  if (normalized.includes("BRANDING")) return "branding";
+  if (normalized.includes("DOCUMENT")) return "branding";
+  if (normalized.includes("PREVIEW")) return "preview";
+  return "submit";
+}
+
+function providerTypeForRegistrationPath(pathname: string): ProviderType | null {
+  if (pathname === DISCOVER_ROUTES.registerDoctor.path) return "INDIVIDUAL_DOCTOR";
+  if (pathname === DISCOVER_ROUTES.registerClinic.path) return "CLINIC";
+  if (pathname === DISCOVER_ROUTES.registerHospital.path) return "HOSPITAL";
+  return null;
+}
+
+function ProviderRegistrationStartPage() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const { status } = useProviderSession();
+  const providerType = providerTypeForRegistrationPath(location.pathname);
+
+  useEffect(() => {
+    if (!providerType) {
+      navigate(DISCOVER_ROUTES.listPractice.path, { replace: true });
+      return;
+    }
+    if (status === "idle" || status === "loading") {
+      return;
+    }
+    if (status === "anonymous") {
+      const returnTo = `${location.pathname}${location.search}`;
+      navigate(`${DISCOVER_ROUTES.providerLogin.path}?returnTo=${encodeURIComponent(returnTo)}`, { replace: true });
+      return;
+    }
+    if (status !== "authenticated") {
+      return;
+    }
+    void startProviderApplication(providerType).then((result) => {
+      if (result.onboardingToken) {
+        const tokenKey = "jeevanam.discover.providerOnboardingToken";
+        localStorage.removeItem(`${tokenKey}.INDIVIDUAL_DOCTOR`);
+        localStorage.removeItem(`${tokenKey}.CLINIC`);
+        localStorage.removeItem(`${tokenKey}.HOSPITAL`);
+        localStorage.setItem(tokenKey, result.onboardingToken);
+        navigate(`/provider/onboarding/${result.applicationId}/${providerStepRoute(result.currentStep)}`, { replace: true });
+        return;
+      }
+      if (result.status === "PUBLISHED" && result.publicProfilePath) {
+        navigate(DISCOVER_ROUTES.providerWorkspace.path, { replace: true });
+        return;
+      }
+      navigate(DISCOVER_ROUTES.providerApplicationDashboard.path.replace(":applicationReference", encodeURIComponent(result.referenceNumber)), { replace: true });
+    });
+  }, [location.pathname, location.search, navigate, providerType, status]);
+
+  return (
+    <section className="page-section provider-dashboard-page">
+      <div className="provider-dashboard-skeleton" role="status" aria-label="Preparing provider application">
+        <span />
+        <span />
+        <span />
+      </div>
+    </section>
+  );
+}
+
 function LoginChooserPage() {
   return (
     <section className="page-section">
@@ -433,7 +588,9 @@ function LoginChooserPage() {
         <article className="login-card">
           <h2>Patient Login</h2>
           <p>Personal care access, care history, documents, and family profile support.</p>
-          <a className="primary-button" href={discoverConfig.careAppUrl}>Open Jeevanam Care</a>
+          <a className="primary-button" href={discoverConfig.careAppUrl} target="_blank" rel="noopener noreferrer">
+            Open Jeevanam Care
+          </a>
         </article>
         <article className="login-card">
           <h2>Clinic / Hospital Staff Login</h2>
@@ -487,9 +644,9 @@ function App() {
           <Route path={DISCOVER_ROUTES.healthcare.path} element={<ShellPage eyebrow="Jeevanam Healthcare" title="Operations platform for clinics and hospitals." body="Jeevanam Healthcare supports reception, queue, EMR, care documentation, lab, pharmacy, revenue workflows, vaccination, and administration." ctaLabel="Clinic / Hospital Login" ctaTo={DISCOVER_ROUTES.login.path} />} />
           <Route path={DISCOVER_ROUTES.pricing.path} element={<ShellPage eyebrow="Plans and pricing" title="Plan information for healthcare providers" body="Choose the right path for your practice and connect with Jeevanam for current plan guidance." stateIcon="₹" ctaLabel="Contact Jeevanam" ctaTo={DISCOVER_ROUTES.contact.path} secondaryLabel="List your practice" secondaryTo={DISCOVER_ROUTES.listPractice.path} />} />
           <Route path={DISCOVER_ROUTES.listPractice.path} element={<ProviderEntryPage />} />
-          <Route path={DISCOVER_ROUTES.registerDoctor.path} element={<ProviderOnboardingPage type="doctor" />} />
-          <Route path={DISCOVER_ROUTES.registerClinic.path} element={<ProviderOnboardingPage type="clinic" />} />
-          <Route path={DISCOVER_ROUTES.registerHospital.path} element={<ProviderOnboardingPage type="hospital" />} />
+          <Route path={DISCOVER_ROUTES.registerDoctor.path} element={<ProviderRegistrationStartPage />} />
+          <Route path={DISCOVER_ROUTES.registerClinic.path} element={<ProviderRegistrationStartPage />} />
+          <Route path={DISCOVER_ROUTES.registerHospital.path} element={<ProviderRegistrationStartPage />} />
         <Route path={DISCOVER_ROUTES.providerLogin.path} element={<ProviderLoginPage />} />
         <Route element={<ProviderProtectedRoute />}>
           <Route path={DISCOVER_ROUTES.providerWorkspace.path} element={<ProviderWorkspacePage />} />

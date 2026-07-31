@@ -241,6 +241,9 @@ class PatientPortalCareAiServiceTest {
                 org.mockito.ArgumentMatchers.<String>nullable(String.class),
                 org.mockito.ArgumentMatchers.<String>nullable(String.class),
                 org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.<BigDecimal>isNull(),
+                org.mockito.ArgumentMatchers.<BigDecimal>isNull(),
+                org.mockito.ArgumentMatchers.<Integer>isNull(),
                 org.mockito.ArgumentMatchers.eq(0),
                 org.mockito.ArgumentMatchers.eq(24)
         ))
@@ -253,6 +256,7 @@ class PatientPortalCareAiServiceTest {
                                 null,
                                 "General Medicine",
                                 12,
+                                null,
                                 List.of(),
                                 "Andheri",
                                 "Mumbai",
@@ -261,7 +265,8 @@ class PatientPortalCareAiServiceTest {
                                 "Sunrise Clinic",
                                 "curapilot-demo-clinic",
                                 true,
-                                "Tomorrow"
+                                "Tomorrow",
+                                null
                         )
                 ), 1, 24, 1, 1));
         when(patientPortalService.doctorSlots("doctor-vikas", "curapilot-demo-clinic", tomorrow)).thenReturn(List.of(
@@ -277,6 +282,9 @@ class PatientPortalCareAiServiceTest {
                 org.mockito.ArgumentMatchers.<String>nullable(String.class),
                 org.mockito.ArgumentMatchers.<String>nullable(String.class),
                 org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.<BigDecimal>isNull(),
+                org.mockito.ArgumentMatchers.<BigDecimal>isNull(),
+                org.mockito.ArgumentMatchers.<Integer>isNull(),
                 org.mockito.ArgumentMatchers.eq(0),
                 org.mockito.ArgumentMatchers.eq(24)
         );
@@ -306,6 +314,9 @@ class PatientPortalCareAiServiceTest {
                 org.mockito.ArgumentMatchers.<String>nullable(String.class),
                 org.mockito.ArgumentMatchers.<String>nullable(String.class),
                 org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.<BigDecimal>isNull(),
+                org.mockito.ArgumentMatchers.<BigDecimal>isNull(),
+                org.mockito.ArgumentMatchers.<Integer>isNull(),
                 org.mockito.ArgumentMatchers.eq(0),
                 org.mockito.ArgumentMatchers.eq(24)
         ))
@@ -318,6 +329,7 @@ class PatientPortalCareAiServiceTest {
                                 null,
                                 "General Medicine",
                                 12,
+                                null,
                                 List.of(),
                                 "Andheri",
                                 "Mumbai",
@@ -326,7 +338,8 @@ class PatientPortalCareAiServiceTest {
                                 "Sunrise Clinic",
                                 "curapilot-demo-clinic",
                                 true,
-                                "Tomorrow"
+                                "Tomorrow",
+                                null
                         )
                 ), 1, 24, 1, 1));
         when(patientPortalService.doctorSlots("doctor-vikas", "curapilot-demo-clinic", tomorrow)).thenReturn(List.of(
@@ -474,6 +487,9 @@ class PatientPortalCareAiServiceTest {
                 org.mockito.ArgumentMatchers.<String>nullable(String.class),
                 org.mockito.ArgumentMatchers.<String>nullable(String.class),
                 org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.<BigDecimal>isNull(),
+                org.mockito.ArgumentMatchers.<BigDecimal>isNull(),
+                org.mockito.ArgumentMatchers.<Integer>isNull(),
                 org.mockito.ArgumentMatchers.eq(0),
                 org.mockito.ArgumentMatchers.eq(24)
         ))
@@ -493,6 +509,9 @@ class PatientPortalCareAiServiceTest {
                 org.mockito.ArgumentMatchers.<String>nullable(String.class),
                 org.mockito.ArgumentMatchers.<String>nullable(String.class),
                 org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.<BigDecimal>isNull(),
+                org.mockito.ArgumentMatchers.<BigDecimal>isNull(),
+                org.mockito.ArgumentMatchers.<Integer>isNull(),
                 org.mockito.ArgumentMatchers.eq(0),
                 org.mockito.ArgumentMatchers.eq(24)
         );
@@ -521,6 +540,9 @@ class PatientPortalCareAiServiceTest {
                 org.mockito.ArgumentMatchers.<String>nullable(String.class),
                 org.mockito.ArgumentMatchers.<String>nullable(String.class),
                 org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.<BigDecimal>isNull(),
+                org.mockito.ArgumentMatchers.<BigDecimal>isNull(),
+                org.mockito.ArgumentMatchers.<Integer>isNull(),
                 org.mockito.ArgumentMatchers.eq(0),
                 org.mockito.ArgumentMatchers.eq(24)
         ))
@@ -2136,6 +2158,7 @@ class PatientPortalCareAiServiceTest {
                 null,
                 speciality,
                 12,
+                null,
                 List.of(),
                 "Andheri",
                 "Mumbai",
@@ -2144,7 +2167,8 @@ class PatientPortalCareAiServiceTest {
                 clinicDisplayName,
                 clinicSlug,
                 true,
-                "Tomorrow"
+                "Tomorrow",
+                null
         );
     }
 

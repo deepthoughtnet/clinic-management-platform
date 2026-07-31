@@ -50,6 +50,16 @@ export type ProviderOnboardingAccessResponse = {
   onboardingToken: string;
 };
 
+export type ProviderWorkspaceStartResponse = {
+  applicationId: string;
+  referenceNumber: string;
+  providerType: ProviderType;
+  status: ProviderStatus;
+  currentStep: string;
+  onboardingToken: string | null;
+  publicProfilePath: string | null;
+};
+
 export class ProviderAuthError extends Error {
   status: number;
 
@@ -124,6 +134,10 @@ export function loadProviderApplicationDashboard(applicationReference: string) {
 
 export function createProviderOnboardingAccess(applicationReference: string) {
   return request<ProviderOnboardingAccessResponse>(`/api/provider/applications/${encodeURIComponent(applicationReference)}/onboarding-access`, "POST");
+}
+
+export function startProviderApplication(providerType: ProviderType) {
+  return request<ProviderWorkspaceStartResponse>("/api/provider/applications/start", "POST", { providerType });
 }
 
 export function logoutProviderSession() {

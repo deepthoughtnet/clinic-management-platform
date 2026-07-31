@@ -166,6 +166,45 @@ button:disabled {
   flex-wrap: wrap;
 }
 
+.header-actions--authenticated {
+  justify-content: flex-end;
+}
+
+.header-actions--loading {
+  justify-content: flex-end;
+  min-height: 44px;
+}
+
+.header-session-summary {
+  display: grid;
+  gap: 4px;
+  padding: 10px 14px;
+  border: 1px solid var(--discover-border);
+  border-radius: 14px;
+  background: var(--discover-surface);
+}
+
+.header-session-pill {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  border-radius: var(--discover-radius-pill);
+  padding: 4px 10px;
+  color: var(--discover-success);
+  background: rgba(18, 124, 86, 0.12);
+  font-size: 0.75rem;
+  font-weight: 850;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+}
+
+.header-session-identity {
+  color: var(--discover-text-body);
+  font-size: 0.82rem;
+  font-weight: 650;
+  line-height: 1.3;
+}
+
 .primary-nav {
   justify-content: center;
 }

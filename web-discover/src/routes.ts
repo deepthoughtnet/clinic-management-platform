@@ -35,6 +35,7 @@ export const DISCOVER_ROUTES = {
 } satisfies Record<string, DiscoverRoute>;
 
 export const primaryNavigationRoutes = [
+  DISCOVER_ROUTES.home,
   DISCOVER_ROUTES.doctors,
   DISCOVER_ROUTES.clinics,
   DISCOVER_ROUTES.hospitals,

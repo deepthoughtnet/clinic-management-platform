@@ -35,6 +35,7 @@ test("discover brand, public navigation, and homepage sections are present", () 
   assert.ok(homepage.includes("Grow your practice with Jeevanam"));
   assert.ok(homepage.includes("One connected healthcare experience"));
   assert.ok(app.includes("Patient Login"));
+  assert.ok(app.includes("Home"));
   assert.ok(app.includes("For Providers"));
 });
 
@@ -86,9 +87,8 @@ test("provider registration entry and placeholder routes are present", () => {
   assert.ok(app.includes("Submit for review"));
   assert.ok(app.includes("Publish"));
   assert.ok(app.includes("Once approved, your profile can be published in Discover."));
-  assert.ok(app.includes('type="doctor"'));
-  assert.ok(app.includes('type="clinic"'));
-  assert.ok(app.includes('type="hospital"'));
+  assert.ok(app.includes("ProviderRegistrationStartPage"));
+  assert.ok(app.includes("startProviderApplication"));
 });
 
 test("login chooser uses configurable Care and Healthcare URLs", () => {

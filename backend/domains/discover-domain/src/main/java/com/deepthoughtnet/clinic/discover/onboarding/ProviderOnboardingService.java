@@ -20,6 +20,7 @@ import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.Pr
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.ProviderReviewDetailRecord;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.ProviderReviewSummaryRecord;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.ProviderTimelineEventRecord;
+import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.ProviderWorkspaceStartRecord;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.ServiceCommand;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.ServiceRecord;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.StatusHistoryRecord;
@@ -194,6 +195,80 @@ public class ProviderOnboardingService {
         entity.setTokenHash(digest(onboardingToken));
         applications.saveAndFlush(entity);
         return new ProviderOnboardingAccessRecord(entity.getId(), onboardingToken);
+    }
+
+    @Transactional
+    public ProviderWorkspaceStartRecord startOrResumeOwnedApplication(ProviderType providerType, UUID providerAccountId) {
+        require(providerType != null, "providerType is required");
+        require(providerAccountId != null, "provider account is required");
+
+        ProviderApplicationEntity existing = applications.findByProviderAccountIdOrderByUpdatedAtDesc(providerAccountId).stream()
+                .filter(application -> application.getProviderType() == providerType)
+                .findFirst()
+                .orElse(null);
+        if (existing != null) {
+            String onboardingToken = null;
+            if (isWorkspaceEditable(existing.getStatus())) {
+                onboardingToken = newToken();
+                existing.setTokenHash(digest(onboardingToken));
+                applications.saveAndFlush(existing);
+            }
+            return new ProviderWorkspaceStartRecord(
+                    existing.getId(),
+                    existing.getReferenceNumber(),
+                    existing.getProviderType(),
+                    existing.getStatus(),
+                    existing.getCurrentStep(),
+                    onboardingToken,
+                    publicProfileService.findByProviderId(existing.getId()).map(record -> record.publicPath()).orElse(null)
+            );
+        }
+
+        var account = verificationService.findAccountById(providerAccountId)
+                .orElseThrow(() -> new IllegalArgumentException("provider account is required"));
+        requireText(account.getNormalizedEmail(), "provider account email");
+        requireText(account.getNormalizedPhone(), "provider account phone");
+
+        UUID id = UUID.randomUUID();
+        String onboardingToken = newToken();
+        ProviderApplicationEntity entity = ProviderApplicationEntity.create(
+                id,
+                referenceNumber(providerType, id),
+                providerType,
+                digest(onboardingToken),
+                normalizeEmail(account.getNormalizedEmail()),
+                normalizePhone(account.getNormalizedPhone()),
+                digest(newToken()),
+                true,
+                true
+        );
+        entity.setProviderAccountId(providerAccountId);
+        entity.setContactVerified(true);
+        ProviderCompletionRecord completion = calculateCompletion(entity, List.of(), List.of(), List.of());
+        entity.touch(completion.completionPercentage(), completion.currentStep());
+        applications.saveAndFlush(entity);
+        ProviderContactVerificationEntity verification = ProviderContactVerificationEntity.create(
+                entity.getId(),
+                normalizeEmail(account.getNormalizedEmail()),
+                normalizePhone(account.getNormalizedPhone())
+        );
+        if (account.getEmailVerifiedAt() != null) {
+            verification.markEmailVerified();
+        }
+        if (account.getPhoneVerifiedAt() != null) {
+            verification.markPhoneVerified();
+        }
+        contactVerifications.save(verification);
+        history.save(new ProviderStatusHistoryEntity(entity.getId(), null, entity.getStatus(), "Draft created from provider workspace"));
+        return new ProviderWorkspaceStartRecord(
+                entity.getId(),
+                entity.getReferenceNumber(),
+                entity.getProviderType(),
+                entity.getStatus(),
+                entity.getCurrentStep(),
+                onboardingToken,
+                null
+        );
     }
 
     @Transactional(readOnly = true)
@@ -1359,6 +1434,16 @@ public class ProviderOnboardingService {
         }
         return applications.findByReferenceNumberAndProviderAccountId(normalize(referenceNumber), providerAccountId)
                 .orElseThrow(() -> new IllegalArgumentException("provider application not found"));
+    }
+
+    private boolean isWorkspaceEditable(ProviderLifecycleStatus status) {
+        return status != null
+                && status != ProviderLifecycleStatus.SUBMITTED
+                && status != ProviderLifecycleStatus.UNDER_REVIEW
+                && status != ProviderLifecycleStatus.APPROVED
+                && status != ProviderLifecycleStatus.PUBLISHED
+                && status != ProviderLifecycleStatus.SUSPENDED
+                && status != ProviderLifecycleStatus.ARCHIVED;
     }
 
     private String normalizeEmail(String value) {

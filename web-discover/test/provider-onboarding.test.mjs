@@ -15,9 +15,8 @@ test("provider onboarding routes use one governed wizard for all provider types"
   const dashboard = read("src/pages/provider/ProviderDashboardPage.tsx");
   const portal = read("src/pages/provider/ProviderOnboardingPage.tsx");
 
-  assert.ok(app.includes('<ProviderOnboardingPage type="doctor"'));
-  assert.ok(app.includes('<ProviderOnboardingPage type="clinic"'));
-  assert.ok(app.includes('<ProviderOnboardingPage type="hospital"'));
+  assert.ok(app.includes("ProviderRegistrationStartPage"));
+  assert.ok(app.includes("startProviderApplication"));
   assert.ok(routes.includes("REGISTRATION_PROVIDER_TYPE_BY_ROUTE"));
   assert.ok(routes.includes('providerApplicationDashboard: { path: "/provider/applications/:applicationReference"'));
   assert.ok(app.includes('<Route path={DISCOVER_ROUTES.providerApplicationDashboard.path} element={<ProviderDashboardPage />} />'));

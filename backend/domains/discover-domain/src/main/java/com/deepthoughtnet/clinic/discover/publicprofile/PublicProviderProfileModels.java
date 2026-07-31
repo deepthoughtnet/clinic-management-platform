@@ -102,7 +102,8 @@ public final class PublicProviderProfileModels {
             int departmentCount,
             int galleryCount,
             boolean emergencyAvailable,
-            List<String> tags
+            List<String> tags,
+            BigDecimal distanceKm
     ) {
     }
 
@@ -183,7 +184,10 @@ public final class PublicProviderProfileModels {
             String city,
             String area,
             String speciality,
-            String service
+            String service,
+            BigDecimal latitude,
+            BigDecimal longitude,
+            Integer radiusKm
     ) {
     }
 
