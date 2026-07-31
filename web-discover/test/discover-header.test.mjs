@@ -11,6 +11,7 @@ function read(relPath) {
 
 test("discover header switches between anonymous and authenticated provider actions", () => {
   const app = read("src/App.tsx");
+  const styles = read("src/styles.css");
 
   assert.ok(app.includes("function ProviderHeaderActions()"));
   assert.ok(app.includes('const isHydratingSession = (status === "idle" || status === "loading") && isProviderSessionRoute(location.pathname);'));
@@ -18,10 +19,18 @@ test("discover header switches between anonymous and authenticated provider acti
   assert.ok(app.includes("Provider Account"));
   assert.ok(app.includes("Switch account"));
   assert.ok(app.includes("Logout"));
+  assert.ok(app.includes("HeaderLocationSelector"));
+  assert.ok(app.includes("header-location-selector-summary"));
   assert.ok(app.includes('to={DISCOVER_ROUTES.providerLogin.path}'));
   assert.ok(app.includes('Patient Login'));
   assert.ok(app.includes('For Providers'));
   assert.ok(app.includes('target="_blank" rel="noopener noreferrer"'));
+  assert.ok(styles.includes("--discover-primary-soft: #E7F7F6"));
+  assert.ok(styles.includes("--discover-surface: #FFFFFF"));
+  assert.ok(styles.includes(".provider-account-menu-summary"));
+  assert.ok(styles.includes(".provider-account-menu-panel"));
+  assert.ok(styles.includes(".nav-link.is-active"));
+  assert.ok(styles.includes(".header-location-selector-summary"));
 });
 
 test("patient login opens a new tab from the discover shell and login chooser", () => {

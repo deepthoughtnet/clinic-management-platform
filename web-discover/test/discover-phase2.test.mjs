@@ -22,13 +22,18 @@ test("Phase 4 publishes doctor, clinic, hospital, and speciality discovery pages
   assert.ok(app.includes("<PublicHospitalDetailPage />"));
   assert.ok(app.includes("<PublicSpecialitiesPage />"));
   assert.ok(app.includes("<PublicSpecialityDetailPage />"));
-  assert.ok(pages.includes("Doctors you can explore"));
+  assert.ok(pages.includes("Top doctors near you"));
   assert.ok(pages.includes("Clinics near you"));
-  assert.ok(pages.includes("Find hospitals and specialty care"));
-  assert.ok(pages.includes("Browse by speciality"));
-  assert.ok(pages.includes("Compare doctor profiles and continue to booking when you find the right care option."));
-  assert.ok(pages.includes("Explore clinic locations, specialities and doctor teams before you book."));
-  assert.ok(pages.includes("Browse healthcare specialities and find relevant doctors and clinics."));
+  assert.ok(pages.includes("Hospitals near you"));
+  assert.ok(pages.includes("Popular ways to explore care"));
+  assert.ok(pages.includes("Doctors"));
+  assert.ok(pages.includes("Clinics"));
+  assert.ok(pages.includes("Hospitals"));
+  assert.ok(pages.includes("Specialities"));
+  assert.ok(pages.includes("home-category-strip"));
+  assert.ok(pages.includes("Health Packages"));
+  assert.ok(pages.includes("Tests & Diagnostics"));
+  assert.ok(pages.includes("homepage-hospital-grid"));
 });
 
 test("published profiles reuse public catalog APIs without backend or auth changes", () => {
@@ -61,8 +66,10 @@ test("doctor directory summary cards use published values instead of placeholder
   assert.ok(components.includes("doctor.subtitle?.trim() || doctor.speciality || null"));
   assert.ok(components.includes("doctor.yearsOfExperience != null ?"));
   assert.ok(components.includes("doctor.languages.length ?"));
-  assert.ok(components.includes("[doctor.clinicDisplayName, doctor.area, doctor.city].filter(Boolean).join(\" · \")"));
+  assert.ok(components.includes("patientFacingLocationParts(doctor.clinicDisplayName, doctor.area, doctor.city).join(\" · \")"));
+  assert.ok(components.includes('value.toLowerCase() !== "primary"'));
   assert.ok(!components.includes("Fee available on profile"));
+  assert.ok(components.includes("formatDistanceKm"));
 });
 
 test("published discovery has no patient session, portal, or dashboard dependency", () => {

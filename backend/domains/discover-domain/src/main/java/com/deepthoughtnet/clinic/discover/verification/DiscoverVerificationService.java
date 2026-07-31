@@ -5,6 +5,11 @@ import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderApplicationEntit
 import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderApplicationRepository;
 import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderContactVerificationEntity;
 import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderContactVerificationRepository;
+import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderDocumentRepository;
+import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderLocationRepository;
+import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderServiceRepository;
+import com.deepthoughtnet.clinic.discover.onboarding.ProviderCompletionProjectionSupport;
+import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.ProviderCompletionRecord;
 import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService;
 import com.deepthoughtnet.clinic.discover.verification.db.DiscoverProviderAccountEntity;
 import com.deepthoughtnet.clinic.discover.verification.db.DiscoverProviderAccountRepository;
@@ -31,6 +36,9 @@ public class DiscoverVerificationService {
 
     private final ProviderApplicationRepository applications;
     private final ProviderContactVerificationRepository contactVerifications;
+    private final ProviderLocationRepository locations;
+    private final ProviderServiceRepository services;
+    private final ProviderDocumentRepository documents;
     private final DiscoverVerificationChallengeRepository challenges;
     private final DiscoverProviderAccountRepository providerAccounts;
     private final DiscoverProviderSessionRepository providerSessions;
@@ -42,6 +50,9 @@ public class DiscoverVerificationService {
     public DiscoverVerificationService(
             ProviderApplicationRepository applications,
             ProviderContactVerificationRepository contactVerifications,
+            ProviderLocationRepository locations,
+            ProviderServiceRepository services,
+            ProviderDocumentRepository documents,
             DiscoverVerificationChallengeRepository challenges,
             DiscoverProviderAccountRepository providerAccounts,
             DiscoverProviderSessionRepository providerSessions,
@@ -51,6 +62,9 @@ public class DiscoverVerificationService {
     ) {
         this.applications = applications;
         this.contactVerifications = contactVerifications;
+        this.locations = locations;
+        this.services = services;
+        this.documents = documents;
         this.challenges = challenges;
         this.providerAccounts = providerAccounts;
         this.providerSessions = providerSessions;
@@ -262,19 +276,7 @@ public class DiscoverVerificationService {
     @Transactional(readOnly = true)
     public List<ProviderWorkspaceApplicationRecord> findOwnedApplicationSummaries(UUID providerAccountId) {
         return findOwnedApplications(providerAccountId).stream()
-                .map(application -> new ProviderWorkspaceApplicationRecord(
-                        application.getId(),
-                        application.getReferenceNumber(),
-                        application.getProviderType(),
-                        application.getStatus(),
-                        firstText(application.getDisplayName(), application.getLegalName(), application.getEmail()),
-                        application.getCompletionPercent(),
-                        application.getCurrentStep(),
-                        application.isContactVerified(),
-                        application.getUpdatedAt(),
-                        application.getSubmittedAt(),
-                        publicProfileService.findByProviderId(application.getId()).map(record -> record.publicPath()).orElse(null)
-                ))
+                .map(this::toWorkspaceSummary)
                 .toList();
     }
 
@@ -293,6 +295,31 @@ public class DiscoverVerificationService {
                 resolution.account().getId(),
                 resolution.created(),
                 resolution.linked()
+        );
+    }
+
+    private ProviderWorkspaceApplicationRecord toWorkspaceSummary(ProviderApplicationEntity application) {
+        ProviderCompletionRecord completion = ProviderCompletionProjectionSupport.calculateCompletion(
+                application,
+                locations.findByProviderIdOrderByLabelAsc(application.getId()),
+                services.findByProviderIdOrderByLabelAsc(application.getId()),
+                documents.findByProviderIdOrderByUploadedAtDesc(application.getId())
+        );
+        return new ProviderWorkspaceApplicationRecord(
+                application.getId(),
+                application.getReferenceNumber(),
+                application.getProviderType(),
+                application.getStatus(),
+                firstText(application.getDisplayName(), application.getLegalName(), application.getEmail(), application.getPhone()),
+                completion.completionPercentage(),
+                completion.currentStep(),
+                application.isContactVerified(),
+                ProviderCompletionProjectionSupport.requiresAttention(application, completion),
+                completion.blockingErrors().size(),
+                completion.previewReady(),
+                application.getUpdatedAt(),
+                application.getSubmittedAt(),
+                publicProfileService.findByProviderId(application.getId()).map(record -> record.publicPath()).orElse(null)
         );
     }
 

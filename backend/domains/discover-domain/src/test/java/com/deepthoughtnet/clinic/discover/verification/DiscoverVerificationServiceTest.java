@@ -10,6 +10,9 @@ import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.Pro
 import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderApplicationEntity;
 import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderApplicationRepository;
 import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderContactVerificationRepository;
+import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderDocumentRepository;
+import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderLocationRepository;
+import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderServiceRepository;
 import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService;
 import com.deepthoughtnet.clinic.discover.verification.db.DiscoverProviderAccountEntity;
 import com.deepthoughtnet.clinic.discover.verification.db.DiscoverProviderSessionEntity;
@@ -38,6 +41,15 @@ class DiscoverVerificationServiceTest {
     private com.deepthoughtnet.clinic.discover.onboarding.db.ProviderContactVerificationRepository contactVerifications;
 
     @Mock
+    private ProviderLocationRepository locations;
+
+    @Mock
+    private ProviderServiceRepository services;
+
+    @Mock
+    private ProviderDocumentRepository documents;
+
+    @Mock
     private DiscoverVerificationChallengeRepository challenges;
 
     @Mock
@@ -56,6 +68,9 @@ class DiscoverVerificationServiceTest {
         return new DiscoverVerificationService(
                 applications,
                 contactVerifications,
+                locations,
+                services,
+                documents,
                 challenges,
                 providerAccounts,
                 providerSessions,

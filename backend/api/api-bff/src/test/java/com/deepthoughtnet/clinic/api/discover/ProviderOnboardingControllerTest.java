@@ -30,6 +30,7 @@ class ProviderOnboardingControllerTest {
         assertThat(ProviderOnboardingController.class.getMethod("changeRequests", java.util.UUID.class, String.class).getAnnotation(GetMapping.class).value()).containsExactly("/{id}/change-requests");
         assertThat(ProviderOnboardingController.class.getMethod("update", java.util.UUID.class, String.class, ProviderOnboardingController.UpdateProviderRequest.class).getAnnotation(PutMapping.class).value()).containsExactly("/{id}");
         assertThat(ProviderOnboardingController.class.getMethod("submit", java.util.UUID.class, String.class).getAnnotation(PostMapping.class).value()).containsExactly("/{id}/submit");
+        assertThat(ProviderOnboardingController.class.getMethod("discard", java.util.UUID.class, String.class, ProviderOnboardingController.DiscardRequest.class).getAnnotation(PostMapping.class).value()).containsExactly("/{id}/discard");
         assertThat(ProviderOnboardingController.class.getMethod("resubmit", java.util.UUID.class, String.class, ProviderOnboardingController.ResubmitRequest.class).getAnnotation(PostMapping.class).value()).containsExactly("/{id}/resubmit");
         assertThat(ProviderOnboardingController.class.getMethod("preview", java.util.UUID.class, String.class).getAnnotation(GetMapping.class).value()).containsExactly("/{id}/preview");
         assertThat(ProviderOnboardingController.class.getMethod("startReview", java.util.UUID.class, ProviderOnboardingController.ReviewTransitionRequest.class).getAnnotation(PostMapping.class).value()).containsExactly("/{id}/review/start");

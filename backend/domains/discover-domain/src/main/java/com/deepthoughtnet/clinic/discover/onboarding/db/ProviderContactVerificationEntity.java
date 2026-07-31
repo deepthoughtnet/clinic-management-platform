@@ -13,7 +13,7 @@ public class ProviderContactVerificationEntity {
     @Id
     @Column(name = "provider_id", nullable = false)
     private UUID providerId;
-    @Column(name = "email_normalized", nullable = false, length = 256)
+    @Column(name = "email_normalized", length = 256)
     private String emailNormalized;
     @Column(name = "phone_normalized", nullable = false, length = 32)
     private String phoneNormalized;

@@ -111,6 +111,11 @@ public class ProviderOnboardingController {
         return service.submit(id, token);
     }
 
+    @PostMapping("/{id}/discard")
+    public ProviderApplicationRecord discard(@PathVariable UUID id, @RequestHeader(TOKEN_HEADER) String token, @RequestBody(required = false) DiscardRequest request) {
+        return service.discard(id, token, request == null ? null : request.reason());
+    }
+
     @PostMapping("/{id}/resubmit")
     public ProviderApplicationRecord resubmit(@PathVariable UUID id, @RequestHeader(TOKEN_HEADER) String token, @RequestBody(required = false) ResubmitRequest request) {
         return service.resubmit(id, token, request == null ? null : request.providerResponseNote());
@@ -255,6 +260,9 @@ public class ProviderOnboardingController {
     }
 
     public record ResubmitRequest(String providerResponseNote) {
+    }
+
+    public record DiscardRequest(String reason) {
     }
 
     public record VerificationCodeRequest(@NotBlank String code) {

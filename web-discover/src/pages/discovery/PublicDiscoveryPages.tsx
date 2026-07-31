@@ -1,4 +1,14 @@
-import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ArrowForwardRounded,
+  HealthAndSafetyOutlined,
+  LocalHospitalOutlined,
+  LocationOnOutlined,
+  MedicalServicesOutlined,
+  ScienceOutlined,
+  SearchOutlined,
+  VerifiedOutlined,
+} from "@mui/icons-material";
 import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import type {
   PublicClinicDetailResponse,
@@ -15,6 +25,7 @@ import type {
 import { fetchPublicJson } from "../../api/publicCatalog";
 import { discoverConfig } from "../../config";
 import {
+  AivaDiscoveryAssistantCard,
   ClinicCard,
   DirectoryState,
   DoctorCard,
@@ -25,9 +36,38 @@ import {
   careBookingUrl,
   emptyClinicsPage,
   emptyDoctorsPage,
+  emptyHospitalsPage,
   formatConsultationFee,
 } from "../../components/DiscoveryComponents";
+import {
+  AivaComingSoonPanel,
+  AlphabetNavigation,
+  buildDirectoryResultLabel,
+  countActiveDirectoryFilters,
+  DirectoryFiltersDrawer,
+  DirectoryHero,
+  DirectoryPageShell,
+  DirectoryPageStickyPanel,
+  DirectoryResultsToolbar,
+  DirectorySearchPanel,
+  DirectoryFilterChips,
+  DirectoryToggleFilters,
+  DoctorDirectoryCard,
+  ClinicDirectoryCard,
+  HospitalDirectoryCard,
+  PopularLinkChipRow,
+  PopularSpecialityGrid,
+  SpecialityCard,
+  pageAccentClass,
+  pageAccentTone,
+  pageSearchButtonLabel,
+  pageSearchPlaceholder,
+  splitFilterValues,
+  joinFilterValues,
+  toggleFilterValue,
+} from "../../components/directory/DirectoryComponents";
 import { PublicProviderProfile, type PublicProviderProfileDefinitionItem, type PublicProviderProfileGalleryItem } from "../../components/discovery/PublicProviderProfile";
+import { demoClinics, demoDoctors, demoHospitals } from "../../features/home/homeDemoProviders";
 import {
   PUBLIC_CURRENT_LOCATION_LABEL,
   PUBLIC_DEFAULT_LOCATION,
@@ -52,67 +92,96 @@ type FetchState<T> = {
   error: string | null;
 };
 
-const POPULAR_SEARCHES = [
-  "Cardiologist",
+type HomeDemoCard<T> = T & { demo?: boolean };
+
+function mergeHomeCards<T extends object>(realCards: T[], demoCards: T[], targetCount: number, enabled: boolean): HomeDemoCard<T>[] {
+  const visible = realCards.slice(0, targetCount).map((card) => ({ ...card, demo: false as const }));
+  if (!enabled || visible.length >= targetCount) {
+    return visible;
+  }
+  const remaining = targetCount - visible.length;
+  return [...visible, ...demoCards.slice(0, remaining).map((card) => ({ ...card, demo: true as const }))];
+}
+
+const FALLBACK_POPULAR_SEARCHES = [
+  "General Physician",
   "Pediatrician",
   "Dentist",
+  "Dermatologist",
+  "Cardiologist",
+  "Gynecologist",
+  "Orthopedic",
   "Eye Specialist",
-  "General Physician",
-  "Nearby Clinics",
-  "Book Appointment",
-  "Pharmacy",
 ] as const;
 
-const TRUST_SIGNALS = [
-  {
-    title: "Provider Information",
-    body: "Specialities, experience and locations.",
-    icon: "◎",
-  },
-  {
-    title: "Easy Booking",
-    body: "Search and book in fewer steps.",
-    icon: "↗",
-  },
-  {
-    title: "Your Care Workspace",
-    body: "Appointments, reports and bills.",
-    icon: "＋",
-  },
-  {
-    title: "Clinics & Hospitals",
-    body: "Browse trusted healthcare providers.",
-    icon: "⌂",
-  },
-] as const;
+type HomeCategoryCard = {
+  title: string;
+  body: string;
+  to: string;
+  action: string;
+  icon: ReactNode;
+};
 
-const HEALTHCARE_SERVICES = [
-  { title: "Doctor consultations", body: "Find doctors by speciality, clinic and location.", to: DISCOVER_ROUTES.doctors.path, state: "Explore →" },
-  { title: "Clinic appointments", body: "Browse clinics and start appointment booking.", to: DISCOVER_ROUTES.clinics.path, state: "Explore →" },
-  { title: "Hospital discovery", body: "Explore hospital profiles, departments and facilities.", to: DISCOVER_ROUTES.hospitals.path, state: "Explore →" },
-  { title: "Speciality search", body: "Start with the medical speciality you need.", to: DISCOVER_ROUTES.specialities.path, state: "Explore →" },
-] as const;
+const DISCOVERY_CATEGORY_CARDS: HomeCategoryCard[] = [
+  {
+    title: "Doctors",
+    body: "Find expert doctors.",
+    to: DISCOVER_ROUTES.doctors.path,
+    action: "View doctors",
+    icon: <MedicalServicesOutlined fontSize="small" aria-hidden="true" />,
+  },
+  {
+    title: "Clinics",
+    body: "Local clinics & centers.",
+    to: DISCOVER_ROUTES.clinics.path,
+    action: "View clinics",
+    icon: <LocalHospitalOutlined fontSize="small" aria-hidden="true" />,
+  },
+  {
+    title: "Hospitals",
+    body: "Multi-speciality hospitals.",
+    to: DISCOVER_ROUTES.hospitals.path,
+    action: "View hospitals",
+    icon: <HealthAndSafetyOutlined fontSize="small" aria-hidden="true" />,
+  },
+  {
+    title: "Specialities",
+    body: "Explore by speciality.",
+    to: DISCOVER_ROUTES.specialities.path,
+    action: "Browse specialities",
+    icon: <ScienceOutlined fontSize="small" aria-hidden="true" />,
+  },
+  {
+    title: "Health Packages",
+    body: "Preventive health checkups.",
+    to: DISCOVER_ROUTES.services.path,
+    action: "Explore services",
+    icon: <HealthAndSafetyOutlined fontSize="small" aria-hidden="true" />,
+  },
+  {
+    title: "Tests & Diagnostics",
+    body: "Lab tests & imaging.",
+    to: DISCOVER_ROUTES.services.path,
+    action: "Explore services",
+    icon: <SearchOutlined fontSize="small" aria-hidden="true" />,
+  },
+];
 
-const WHY_JEEVANAM = [
+const VALUE_PANEL_POINTS = [
   {
-    icon: "◎",
-    title: "Find care confidently",
-    body: "Verified public healthcare information.",
+    label: "Verified public information",
+    body: "Public profiles, services and locations use the published discover data.",
+    icon: <VerifiedOutlined fontSize="small" aria-hidden="true" />,
   },
   {
-    icon: "↗",
-    title: "Choose with confidence",
-    body: "Compare providers and services.",
+    label: "Location-aware search",
+    body: "Search by city, area or current location without forcing a location choice.",
+    icon: <LocationOnOutlined fontSize="small" aria-hidden="true" />,
   },
   {
-    icon: "＋",
-    title: "Continue your journey",
-    body: "Manage appointments inside Care.",
-  },
-  {
-    icon: "⌂",
-    title: "Connected healthcare",
-    body: "Participating clinics stay connected.",
+    label: "Appointment handoff",
+    body: "Move into booking or continue exploring the right care option.",
+    icon: <ArrowForwardRounded fontSize="small" aria-hidden="true" />,
   },
 ] as const;
 
@@ -302,6 +371,474 @@ function useDirectoryFilters(defaultSize = 12) {
   }
 
   return { searchParams, query, setQuery, city, setCity, area, setArea, radiusKm, latitude, longitude, page, size, submit, changePage };
+}
+
+type DirectoryPageKey = "doctors" | "clinics" | "hospitals" | "specialities";
+
+type DirectoryPageState = {
+  searchParams: URLSearchParams;
+  searchKey: string;
+  queryDraft: string;
+  setQueryDraft: (value: string) => void;
+  sort: string;
+  setSort: (value: string) => void;
+  radiusKm: string;
+  setRadiusKm: (value: string) => void;
+  page: number;
+  size: number;
+  selectedLocation: string;
+  selectedCoordinates: PublicLocationCoordinates | null;
+  selectedFilterCount: number;
+  commitSearch: (basePath: string, extra?: Record<string, string | number | boolean | null | undefined>) => void;
+  commitLocation: (basePath: string, nextLocation: string, nextCoordinates?: PublicLocationCoordinates | null) => void;
+  updateParams: (basePath: string, updates: Record<string, string | number | boolean | null | undefined>) => void;
+  clearParams: (basePath: string, clearQuery?: boolean) => void;
+};
+
+function stringifyDirectoryParam(value: string | number | boolean | null | undefined) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value === "boolean") {
+    return value ? "1" : null;
+  }
+  const trimmed = `${value}`.trim();
+  return trimmed ? trimmed : null;
+}
+
+function useDirectoryPageState(defaultSize = 12): DirectoryPageState {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
+  const { locationState, setSelectedLocation } = usePublicLocation();
+  const searchKey = searchParams.toString();
+  const [queryDraft, setQueryDraft] = useState(searchParams.get("q") ?? "");
+  const [sort, setSort] = useState(searchParams.get("sort") ?? "relevance");
+  const [radiusKm, setRadiusKm] = useState(searchParams.get("radiusKm") ?? "10");
+  const selectedLocation =
+    searchParams.get("city")?.trim() ||
+    (locationState.location === PUBLIC_CURRENT_LOCATION_LABEL ? PUBLIC_DEFAULT_LOCATION : locationState.location || PUBLIC_DEFAULT_LOCATION);
+  const selectedCoordinates = locationState.coordinates;
+  const page = Number(searchParams.get("page") ?? "0") || 0;
+  const size = Number(searchParams.get("size") ?? `${defaultSize}`) || defaultSize;
+
+  useEffect(() => {
+    setQueryDraft(searchParams.get("q") ?? "");
+    setSort(searchParams.get("sort") ?? "relevance");
+    setRadiusKm(searchParams.get("radiusKm") ?? "10");
+  }, [searchKey]);
+
+  function navigateWithParams(basePath: string, params: URLSearchParams, replace = false) {
+    navigate(`${basePath}?${params.toString()}`, { replace, state: location.state });
+  }
+
+  function updateParams(basePath: string, updates: Record<string, string | number | boolean | null | undefined>) {
+    const params = new URLSearchParams(searchParams);
+    Object.entries(updates).forEach(([key, value]) => {
+      const normalized = stringifyDirectoryParam(value);
+      if (normalized) {
+        params.set(key, normalized);
+      } else {
+        params.delete(key);
+      }
+    });
+    params.set("page", "0");
+    params.set("size", `${size}`);
+    navigateWithParams(basePath, params);
+  }
+
+  function commitSearch(basePath: string, extra?: Record<string, string | number | boolean | null | undefined>) {
+    const params = new URLSearchParams(searchParams);
+    const normalizedQuery = queryDraft.trim();
+    if (normalizedQuery) {
+      params.set("q", normalizedQuery);
+    } else {
+      params.delete("q");
+    }
+    params.set("city", selectedLocation);
+    if (selectedCoordinates) {
+      params.set("lat", `${selectedCoordinates.latitude}`);
+      params.set("lng", `${selectedCoordinates.longitude}`);
+      params.set("radiusKm", radiusKm);
+    } else {
+      params.delete("lat");
+      params.delete("lng");
+      params.delete("radiusKm");
+    }
+    const normalizedSort = sort.trim();
+    if (normalizedSort && normalizedSort !== "relevance") {
+      params.set("sort", normalizedSort);
+    } else {
+      params.delete("sort");
+    }
+    Object.entries(extra ?? {}).forEach(([key, value]) => {
+      const normalized = stringifyDirectoryParam(value);
+      if (normalized) {
+        params.set(key, normalized);
+      } else {
+        params.delete(key);
+      }
+    });
+    params.set("page", "0");
+    params.set("size", `${size}`);
+    setSelectedLocation(selectedLocation, selectedCoordinates);
+    navigateWithParams(basePath, params);
+  }
+
+  function commitLocation(basePath: string, nextLocation: string, nextCoordinates: PublicLocationCoordinates | null = null) {
+    const normalized = normalizePublicLocation(nextLocation) || PUBLIC_DEFAULT_LOCATION;
+    setSelectedLocation(normalized, nextCoordinates);
+    const params = new URLSearchParams(searchParams);
+    params.set("city", normalized);
+    if (nextCoordinates) {
+      params.set("lat", `${nextCoordinates.latitude}`);
+      params.set("lng", `${nextCoordinates.longitude}`);
+    } else {
+      params.delete("lat");
+      params.delete("lng");
+    }
+    if (radiusKm.trim()) {
+      params.set("radiusKm", radiusKm);
+    } else {
+      params.delete("radiusKm");
+    }
+    params.set("page", "0");
+    params.set("size", `${size}`);
+    setQueryDraft(searchParams.get("q") ?? queryDraft);
+    navigateWithParams(basePath, params);
+  }
+
+  function clearParams(basePath: string, clearQuery = true) {
+    const params = new URLSearchParams();
+    if (!clearQuery) {
+      const currentQuery = searchParams.get("q") ?? "";
+      if (currentQuery.trim()) {
+        params.set("q", currentQuery.trim());
+      }
+    }
+    params.set("city", selectedLocation);
+    if (selectedCoordinates) {
+      params.set("lat", `${selectedCoordinates.latitude}`);
+      params.set("lng", `${selectedCoordinates.longitude}`);
+      params.set("radiusKm", radiusKm);
+    }
+    params.set("page", "0");
+    params.set("size", `${size}`);
+    setSort("relevance");
+    navigateWithParams(basePath, params);
+  }
+
+  const selectedFilterCount = countActiveDirectoryFilters([
+    searchParams.get("availableToday"),
+    searchParams.get("feeBand"),
+    searchParams.get("experienceBand"),
+    searchParams.get("languages"),
+    searchParams.get("specialities"),
+    searchParams.get("departments"),
+    searchParams.get("letter"),
+    selectedCoordinates && radiusKm.trim() && radiusKm !== "10" ? radiusKm : null,
+  ]);
+
+  return {
+    searchParams,
+    searchKey,
+    queryDraft,
+    setQueryDraft,
+    sort,
+    setSort,
+    radiusKm,
+    setRadiusKm,
+    page,
+    size,
+    selectedLocation,
+    selectedCoordinates,
+    selectedFilterCount,
+    commitSearch,
+    commitLocation,
+    updateParams,
+    clearParams,
+  };
+}
+
+function createCurrentLocationHandler(onSuccess: (coordinates: PublicLocationCoordinates) => void) {
+  return () => {
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        onSuccess({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        });
+      },
+      () => undefined,
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 },
+    );
+  };
+}
+
+function getBooleanParam(searchParams: URLSearchParams, key: string) {
+  return searchParams.get(key) === "1" || searchParams.get(key) === "true";
+}
+
+function getStringListParam(searchParams: URLSearchParams, key: string) {
+  return splitFilterValues(searchParams.get(key));
+}
+
+function setStringListParam(searchParams: URLSearchParams, key: string, values: string[]) {
+  const next = new URLSearchParams(searchParams);
+  const normalized = values.map((value) => value.trim()).filter(Boolean);
+  if (normalized.length) {
+    next.set(key, joinFilterValues(normalized));
+  } else {
+    next.delete(key);
+  }
+  return next;
+}
+
+function buildDoctorFilterSummary(searchParams: URLSearchParams, selectedCoordinates: PublicLocationCoordinates | null) {
+  const parts: string[] = [];
+  if (getBooleanParam(searchParams, "availableToday")) parts.push("Available today");
+  if (searchParams.get("feeBand") === "500") parts.push("Fee up to ₹500");
+  if (searchParams.get("feeBand") === "1000") parts.push("Fee up to ₹1,000");
+  if (searchParams.get("feeBand") === "2000") parts.push("Fee up to ₹2,000");
+  if (searchParams.get("experienceBand") === "3") parts.push("3+ years");
+  if (searchParams.get("experienceBand") === "5") parts.push("5+ years");
+  if (searchParams.get("experienceBand") === "10") parts.push("10+ years");
+  const languages = getStringListParam(searchParams, "languages");
+  if (languages.length) parts.push(`Languages: ${languages.join(", ")}`);
+  if (selectedCoordinates && searchParams.get("radiusKm")) parts.push(`Within ${searchParams.get("radiusKm")} km`);
+  return parts.length ? parts.join(" · ") : null;
+}
+
+function buildClinicFilterSummary(searchParams: URLSearchParams, selectedCoordinates: PublicLocationCoordinates | null) {
+  const parts: string[] = [];
+  if (getBooleanParam(searchParams, "availableToday")) parts.push("Available today");
+  const services = getStringListParam(searchParams, "specialities");
+  if (services.length) parts.push(services.join(", "));
+  if (selectedCoordinates && searchParams.get("radiusKm")) parts.push(`Within ${searchParams.get("radiusKm")} km`);
+  return parts.length ? parts.join(" · ") : null;
+}
+
+function buildHospitalFilterSummary(searchParams: URLSearchParams, selectedCoordinates: PublicLocationCoordinates | null) {
+  const parts: string[] = [];
+  const departments = getStringListParam(searchParams, "departments");
+  if (departments.length) parts.push(departments.join(", "));
+  if (selectedCoordinates && searchParams.get("radiusKm")) parts.push(`Within ${searchParams.get("radiusKm")} km`);
+  return parts.length ? parts.join(" · ") : null;
+}
+
+function buildSpecialityFilterSummary(searchParams: URLSearchParams) {
+  const parts: string[] = [];
+  if (searchParams.get("letter")) parts.push(`Starting with ${searchParams.get("letter")}`);
+  if (searchParams.get("city")) parts.push(`City: ${searchParams.get("city")}`);
+  return parts.length ? parts.join(" · ") : null;
+}
+
+function filterDoctorsDirectory(
+  doctors: PublicDoctorSummaryResponse[],
+  query: string,
+  searchParams: URLSearchParams,
+  selectedLocation: string,
+) {
+  const availableToday = getBooleanParam(searchParams, "availableToday");
+  const feeBand = searchParams.get("feeBand");
+  const experienceBand = searchParams.get("experienceBand");
+  const languages = getStringListParam(searchParams, "languages").map((item) => item.toLowerCase());
+  const sort = searchParams.get("sort") ?? "relevance";
+
+  return [...doctors]
+    .filter((doctor) =>
+      matchesDiscoveryQuery(
+        [
+          doctor.doctorDisplayName,
+          doctor.speciality,
+          doctor.clinicDisplayName,
+          doctor.area,
+          doctor.city,
+          doctor.nextAvailableSlotSummary,
+          doctor.languages.join(" "),
+        ],
+        query,
+      ),
+    )
+    .filter((doctor) => (availableToday ? doctor.availableToday : true))
+    .filter((doctor) => {
+      if (!feeBand) return true;
+      const fee = typeof doctor.consultationFee === "number" ? doctor.consultationFee : Number(doctor.consultationFee ?? NaN);
+      if (!Number.isFinite(fee) || fee <= 0) return false;
+      if (feeBand === "500") return fee <= 500;
+      if (feeBand === "1000") return fee <= 1000;
+      if (feeBand === "2000") return fee <= 2000;
+      return true;
+    })
+    .filter((doctor) => {
+      if (!experienceBand || !doctor.yearsOfExperience) return !experienceBand;
+      const years = doctor.yearsOfExperience ?? 0;
+      if (experienceBand === "3") return years >= 3;
+      if (experienceBand === "5") return years >= 5;
+      if (experienceBand === "10") return years >= 10;
+      return true;
+    })
+    .filter((doctor) => {
+      if (!languages.length) return true;
+      return doctor.languages.some((language) => languages.includes(language.toLowerCase()));
+    })
+    .sort((left, right) => {
+      const locationScore =
+        scoreDiscoveryLocation(right.city, right.area, selectedLocation) -
+        scoreDiscoveryLocation(left.city, left.area, selectedLocation);
+      if (sort === "distance") {
+        const leftDistance = Number(left.distanceKm ?? Number.POSITIVE_INFINITY);
+        const rightDistance = Number(right.distanceKm ?? Number.POSITIVE_INFINITY);
+        if (Number.isFinite(leftDistance) && Number.isFinite(rightDistance) && leftDistance !== rightDistance) {
+          return leftDistance - rightDistance;
+        }
+      }
+      if (sort === "fee-low") {
+        return Number(left.consultationFee ?? Number.POSITIVE_INFINITY) - Number(right.consultationFee ?? Number.POSITIVE_INFINITY);
+      }
+      if (sort === "fee-high") {
+        return Number(right.consultationFee ?? 0) - Number(left.consultationFee ?? 0);
+      }
+      if (sort === "experience") {
+        return Number(right.yearsOfExperience ?? 0) - Number(left.yearsOfExperience ?? 0);
+      }
+      if (locationScore !== 0) {
+        return locationScore;
+      }
+      return normalizeDiscoveryText(left.doctorDisplayName).localeCompare(normalizeDiscoveryText(right.doctorDisplayName));
+    });
+}
+
+function filterClinicsDirectory(
+  clinics: PublicClinicSummaryResponse[],
+  query: string,
+  searchParams: URLSearchParams,
+  selectedLocation: string,
+) {
+  const availableToday = getBooleanParam(searchParams, "availableToday");
+  const specialities = getStringListParam(searchParams, "specialities").map((item) => item.toLowerCase());
+  const sort = searchParams.get("sort") ?? "relevance";
+
+  return [...clinics]
+    .filter((clinic) =>
+      matchesDiscoveryQuery(
+        [
+          clinic.clinicDisplayName,
+          clinic.address,
+          clinic.area,
+          clinic.city,
+          clinic.specialities.join(" "),
+          clinic.doctorsCount,
+        ],
+        query,
+      ),
+    )
+    .filter((clinic) => (availableToday ? clinic.availableToday : true))
+    .filter((clinic) => {
+      if (!specialities.length) return true;
+      return clinic.specialities.some((item) => specialities.includes(item.toLowerCase()));
+    })
+    .sort((left, right) => {
+      if (sort === "doctors") {
+        return right.doctorsCount - left.doctorsCount;
+      }
+      if (sort === "name") {
+        return normalizeDiscoveryText(left.clinicDisplayName).localeCompare(normalizeDiscoveryText(right.clinicDisplayName));
+      }
+      if (sort === "distance") {
+        const leftDistance = Number(left.distanceKm ?? Number.POSITIVE_INFINITY);
+        const rightDistance = Number(right.distanceKm ?? Number.POSITIVE_INFINITY);
+        if (Number.isFinite(leftDistance) && Number.isFinite(rightDistance) && leftDistance !== rightDistance) {
+          return leftDistance - rightDistance;
+        }
+      }
+      const locationScore =
+        scoreDiscoveryLocation(right.city, right.area, selectedLocation) -
+        scoreDiscoveryLocation(left.city, left.area, selectedLocation);
+      if (locationScore !== 0) {
+        return locationScore;
+      }
+      return normalizeDiscoveryText(left.clinicDisplayName).localeCompare(normalizeDiscoveryText(right.clinicDisplayName));
+    });
+}
+
+function filterHospitalsDirectory(
+  hospitals: PublicHospitalSummaryResponse[],
+  query: string,
+  searchParams: URLSearchParams,
+  selectedLocation: string,
+) {
+  const departments = getStringListParam(searchParams, "departments").map((item) => item.toLowerCase());
+  const sort = searchParams.get("sort") ?? "relevance";
+
+  return [...hospitals]
+    .filter((hospital) =>
+      matchesDiscoveryQuery(
+        [hospital.hospitalDisplayName, hospital.area, hospital.city, hospital.departments.join(" "), hospital.summary ?? ""],
+        query,
+      ),
+    )
+    .filter((hospital) => {
+      if (!departments.length) return true;
+      return hospital.departments.some((item) => departments.includes(item.toLowerCase()));
+    })
+    .sort((left, right) => {
+      if (sort === "departments") {
+        return right.departments.length - left.departments.length;
+      }
+      if (sort === "name") {
+        return normalizeDiscoveryText(left.hospitalDisplayName).localeCompare(normalizeDiscoveryText(right.hospitalDisplayName));
+      }
+      if (sort === "distance") {
+        const leftDistance = Number(left.distanceKm ?? Number.POSITIVE_INFINITY);
+        const rightDistance = Number(right.distanceKm ?? Number.POSITIVE_INFINITY);
+        if (Number.isFinite(leftDistance) && Number.isFinite(rightDistance) && leftDistance !== rightDistance) {
+          return leftDistance - rightDistance;
+        }
+      }
+      const locationScore =
+        scoreDiscoveryLocation(right.city, right.area, selectedLocation) -
+        scoreDiscoveryLocation(left.city, left.area, selectedLocation);
+      if (locationScore !== 0) {
+        return locationScore;
+      }
+      return normalizeDiscoveryText(left.hospitalDisplayName).localeCompare(normalizeDiscoveryText(right.hospitalDisplayName));
+    });
+}
+
+function filterSpecialitiesDirectory(specialities: PublicSpecialitySummaryResponse[], query: string, searchParams: URLSearchParams) {
+  const letter = searchParams.get("letter")?.trim().toUpperCase() ?? null;
+  const sort = searchParams.get("sort") ?? "relevance";
+
+  return [...specialities]
+    .filter((speciality) => matchesDiscoveryQuery([speciality.speciality, speciality.doctorsCount, speciality.clinicsCount, speciality.hospitalsCount ?? 0], query))
+    .filter((speciality) => {
+      if (!letter) return true;
+      return speciality.speciality.trim().toUpperCase().startsWith(letter);
+    })
+    .sort((left, right) => {
+      if (sort === "count") {
+        return (right.doctorsCount + right.clinicsCount + (right.hospitalsCount ?? 0)) - (left.doctorsCount + left.clinicsCount + (left.hospitalsCount ?? 0));
+      }
+      if (sort === "clinics") {
+        return right.clinicsCount - left.clinicsCount;
+      }
+      return normalizeDiscoveryText(left.speciality).localeCompare(normalizeDiscoveryText(right.speciality));
+    });
+}
+
+function specialityAlphabet(items: PublicSpecialitySummaryResponse[]) {
+  const letters = new Set<string>();
+  items.forEach((item) => {
+    const letter = item.speciality.trim().charAt(0).toUpperCase();
+    if (letter) {
+      letters.add(letter);
+    }
+  });
+  return Array.from(letters).sort();
 }
 
 function providerCallLabel(providerType: "INDIVIDUAL_DOCTOR" | "CLINIC" | "HOSPITAL") {
@@ -531,6 +1068,14 @@ export function PublicHomePage() {
     },
     { ...emptyClinicsPage, size: 3 },
   );
+  const hospitals = usePublicResource<PublicPageResponse<PublicHospitalSummaryResponse>>(
+    "/api/public/hospitals",
+    {
+      ...homepageParams(searchableLocation, 3),
+      ...(selectedCoordinates ? { lat: `${selectedCoordinates.latitude}`, lng: `${selectedCoordinates.longitude}`, radiusKm } : {}),
+    },
+    { ...emptyHospitalsPage, size: 3 },
+  );
   const specialities = usePublicResource<PublicSpecialitySummaryResponse[]>(
     "/api/public/specialities",
     { city: searchableLocation },
@@ -544,9 +1089,34 @@ export function PublicHomePage() {
     () => filterAndSortClinicResults(clinics.data.items, "", searchableLocation),
     [clinics.data.items, searchableLocation],
   );
+  const homeHospitals = useMemo(
+    () => [...hospitals.data.items].sort((left, right) => normalizeDiscoveryText(left.hospitalDisplayName).localeCompare(normalizeDiscoveryText(right.hospitalDisplayName))),
+    [hospitals.data.items],
+  );
   const homeSpecialities = useMemo(
     () => filterAndSortSpecialities(specialities.data, ""),
     [specialities.data],
+  );
+  const homeDoctorsToRender = useMemo(
+    () => mergeHomeCards(homeDoctors, demoDoctors, 3, discoverConfig.showHomeDemoProviders),
+    [homeDoctors],
+  );
+  const homeClinicsToRender = useMemo(
+    () => mergeHomeCards(homeClinics, demoClinics, 3, discoverConfig.showHomeDemoProviders),
+    [homeClinics],
+  );
+  const homeHospitalsToRender = useMemo(
+    () => mergeHomeCards(homeHospitals, demoHospitals, 3, discoverConfig.showHomeDemoProviders),
+    [homeHospitals],
+  );
+  const popularSearches = useMemo(() => {
+    const values = [...homeSpecialities.map((item) => item.speciality), ...FALLBACK_POPULAR_SEARCHES];
+    return Array.from(new Set(values)).slice(0, 8);
+  }, [homeSpecialities]);
+  const showHomePreviewExamples = discoverConfig.showHomeDemoProviders && (
+    homeDoctorsToRender.some((item) => item.demo) ||
+    homeClinicsToRender.some((item) => item.demo) ||
+    homeHospitalsToRender.some((item) => item.demo)
   );
 
   useEffect(() => {
@@ -632,30 +1202,33 @@ export function PublicHomePage() {
   return (
     <>
       <section className="hero-section hero-discovery">
-        <div className="hero-grid">
-          <div className="hero-copy">
+        <div className="hero-grid home-hero-grid">
+          <div className="hero-copy home-hero-copy">
             <span className="eyebrow">Jeevanam Discover</span>
-            <h1>Find trusted doctors, clinics and hospitals near you.</h1>
-            <p>Search healthcare providers, compare services and book appointments with confidence.</p>
-            <form id="find-care" className="hero-search-panel" aria-label="Discover care search" onSubmit={submitHeroSearch}>
+            <h1>
+              Find trusted healthcare near you.
+            </h1>
+            <p>Discover doctors, clinics, hospitals and health services for a healthier life.</p>
+            <form id="find-care" className="hero-search-panel home-search-panel" aria-label="Discover care search" onSubmit={submitHeroSearch}>
               <label className="hero-search-field hero-search-query">
                 <span className="visually-hidden">Search</span>
                 <input
                   value={filters.query}
                   onChange={(event) => filters.setQuery(event.target.value)}
-                  placeholder="Search doctors, specialities, clinics or treatments"
+                  placeholder="Search doctors, clinics, hospitals, treatments..."
                   autoComplete="off"
-                  aria-label="Search doctors, specialities, clinics or treatments"
+                  aria-label="Search doctors, clinics, hospitals, treatments"
                 />
               </label>
-              <label className="hero-search-field">
+              <label className="hero-search-field hero-search-location">
                 <span className="visually-hidden">Location</span>
-                <button className="location-select-button" type="button" onClick={() => setLocationPickerOpen((current) => !current)} aria-label={`Change location, currently ${displayLocation}`}>
+                <button className="location-select-button home-location-button" type="button" onClick={() => setLocationPickerOpen((current) => !current)} aria-label={`Change location, currently ${displayLocation}`}>
+                  <LocationOnOutlined fontSize="small" aria-hidden="true" />
                   {displayLocation}
                 </button>
               </label>
               <button className="primary-button hero-search-button" type="submit" aria-label="Search healthcare providers">
-                <span aria-hidden="true">⌕</span>
+                <SearchOutlined fontSize="small" aria-hidden="true" />
                 Search
               </button>
               {locationPickerOpen ? (
@@ -671,6 +1244,19 @@ export function PublicHomePage() {
                       </button>
                     ))}
                   </div>
+                  <label>
+                    <span>Nearby radius</span>
+                    <select value={radiusKm} onChange={(event) => setRadiusKm(event.target.value)} disabled={!selectedCoordinates}>
+                      <option value="2">2 km</option>
+                      <option value="5">5 km</option>
+                      <option value="10">10 km</option>
+                      <option value="25">25 km</option>
+                      <option value="50">50 km</option>
+                    </select>
+                  </label>
+                  <p className="form-note">
+                    {selectedCoordinates ? `Searching within ${radiusKm} km of your selected location.` : "Radius applies after using your current location."}
+                  </p>
                   <div className="cta-row">
                     <button className="secondary-button" type="button" onClick={() => commitSelectedLocation(locationDraft)} disabled={!normalizePublicLocation(locationDraft)}>
                       Save location
@@ -678,34 +1264,25 @@ export function PublicHomePage() {
                     <button className="text-button" type="button" onClick={handleCurrentLocation} disabled={locationBusy}>
                       {locationBusy ? "Detecting..." : "Use my current location"}
                     </button>
+                    {selectedCoordinates ? (
+                      <button className="text-button" type="button" onClick={clearActiveLocation}>
+                        Clear
+                      </button>
+                    ) : null}
                   </div>
                   {locationMessage ? <p className="form-note" role="status">{locationMessage}</p> : null}
                 </div>
               ) : null}
             </form>
-            <div className="cta-row">
-              <label className="toolbar-field">
-                <span>Nearby radius</span>
-                <select value={radiusKm} onChange={(event) => setRadiusKm(event.target.value)} disabled={!selectedCoordinates}>
-                  <option value="2">2 km</option>
-                  <option value="5">5 km</option>
-                  <option value="10">10 km</option>
-                  <option value="25">25 km</option>
-                  <option value="50">50 km</option>
-                </select>
-              </label>
-              {selectedCoordinates ? (
-                <p className="form-note" role="status">
-                  Using current location within {radiusKm} km.
-                  <button className="text-button" type="button" onClick={clearActiveLocation}>Clear</button>
-                </p>
-              ) : null}
-            </div>
             <div className="popular-searches" aria-label="Popular searches">
-              <span>Popular searches</span>
+              <div className="section-heading-row">
+                <span>Popular searches</span>
+                <Link className="text-button" to={DISCOVER_ROUTES.specialities.path}>View all</Link>
+              </div>
               <div className="chip-row">
-                {POPULAR_SEARCHES.slice(0, 5).map((item) => (
-                  <button key={item} className="chip-button" type="button" onClick={() => applyPopularSearch(item)}>
+                {popularSearches.map((item) => (
+                  <button key={item} className="chip-button chip-button--search" type="button" onClick={() => applyPopularSearch(item)}>
+                    <SearchOutlined fontSize="small" aria-hidden="true" />
                     {item}
                   </button>
                 ))}
@@ -713,126 +1290,79 @@ export function PublicHomePage() {
             </div>
           </div>
 
-          <div className="hero-visual" aria-label="Jeevanam Discover provider preview">
-            <div className="hero-profile-card">
-              <div className="hero-profile-header">
-                <div className="hero-visual-avatar" aria-hidden="true">AS</div>
-                <div>
-                  <strong>Dr. Anjali Sharma</strong>
-                  <span>General Physician</span>
-                </div>
-              </div>
-              <div className="hero-profile-meta">
-                <span>15 Years Experience</span>
-                <span aria-label="Five star rating">★★★★★</span>
-              </div>
-              <div className="hero-profile-footer">
-                <span className="hero-availability-pill">Available Today</span>
-                <span className="primary-button hero-consult-button">Book Consultation</span>
-              </div>
-            </div>
-            <div className="hero-clinic-card">
-              <span className="mini-avatar clinic" aria-hidden="true">CL</span>
-              <div>
-                <strong>Sunrise Family Clinic</strong>
-                <small>Open Today · Appointments Available</small>
-              </div>
-            </div>
+          <div className="hero-visual home-hero-visual" aria-label="Healthcare hero visual">
+            <img className="home-hero-visual-image" src="/home-hero-visual.png" alt="Smiling doctor in a clinic" loading="eager" />
           </div>
         </div>
-      </section>
 
-      <section className="page-section">
-        <div className="trust-grid" aria-label="Jeevanam Discover trust indicators">
-          {TRUST_SIGNALS.map((item) => (
-            <article className="trust-card" key={item.title}>
-              <span aria-hidden="true">{item.icon}</span>
+        <div className="home-category-strip" aria-label="Popular ways to explore care">
+          {DISCOVERY_CATEGORY_CARDS.map((item) => (
+            <Link className="category-card" key={item.title} to={item.to}>
+              <span className="category-card-icon" aria-hidden="true">
+                {item.icon}
+              </span>
               <strong>{item.title}</strong>
-              <p>{item.body}</p>
-            </article>
+              <span>{item.body}</span>
+              <small>{item.action}</small>
+            </Link>
           ))}
         </div>
       </section>
 
       <section className="page-section">
-        <div className="section-heading section-heading-row">
-          <div>
-            <span className="eyebrow">Specialities</span>
-            <h2>Browse by speciality</h2>
-            <p>Find care based on the medical speciality you need.</p>
-          </div>
-          <Link className="text-button" to={DISCOVER_ROUTES.specialities.path}>View all specialities</Link>
-        </div>
-        <InlineDirectoryState
-          loading={specialities.loading}
-          error={specialities.error}
-          empty={homeSpecialities.length === 0}
-          emptyIcon="＋"
-          emptyTitle="Specialities are being prepared"
-          emptyMessage="Published provider specialities will appear here as the directory grows."
-          primaryAction="Browse clinics"
-          primaryTo={DISCOVER_ROUTES.clinics.path}
-          secondaryAction="List your practice"
-          secondaryTo={DISCOVER_ROUTES.listPractice.path}
-        />
-        {homeSpecialities.length ? (
-          <div className="speciality-card-grid">
-            {homeSpecialities.slice(0, 8).map((speciality) => (
-              <Link className="speciality-card" key={speciality.specialitySlug} to={DISCOVER_DETAIL_PATHS.speciality(speciality.specialitySlug)}>
-                <span className="speciality-icon" aria-hidden="true">＋</span>
-                <strong>{speciality.speciality}</strong>
-                <span>
-                  {speciality.doctorsCount || speciality.clinicsCount
-                    ? `${speciality.doctorsCount} doctors · ${speciality.clinicsCount} clinics`
-                    : "Explore providers"}
-                </span>
+        <div className="home-doctors-layout">
+          <div className="home-doctors-main">
+            <div className="section-heading section-heading-row">
+              <div>
+                <span className="eyebrow">Doctors</span>
+                <h2>Top doctors near you</h2>
+                <p>Highly rated doctors with verified credentials.</p>
+              </div>
+              {showHomePreviewExamples ? <span className="home-preview-label">Preview examples</span> : null}
+              <Link className="text-button" to={DISCOVER_ROUTES.doctors.path}>
+                View all doctors
               </Link>
-            ))}
+            </div>
+            <InlineDirectoryState
+              loading={doctors.loading}
+              error={doctors.error}
+              empty={homeDoctorsToRender.length === 0}
+              emptyIcon="DR"
+              emptyTitle={`No doctors found for ${searchableLocation}`}
+              emptyMessage="Try another location or broaden your search."
+              primaryAction="Change location"
+              primaryTo={`${DISCOVER_ROUTES.home.path}#find-care`}
+              secondaryAction="View clinics"
+              secondaryTo={DISCOVER_ROUTES.clinics.path}
+            />
+            {homeDoctorsToRender.length ? (
+              <div className="homepage-doctor-grid">
+                {homeDoctorsToRender.map((doctor) => (
+                  <DoctorCard key={doctor.doctorSlug} doctor={doctor} demo={Boolean(doctor.demo)} />
+                ))}
+              </div>
+            ) : null}
           </div>
-        ) : null}
-      </section>
-
-      <section className="page-section">
-        <div className="section-heading section-heading-row">
-          <div>
-            <span className="eyebrow">Doctors</span>
-            <h2>Doctors you can explore</h2>
-            <p>Review experience, specialities and available booking options.</p>
-          </div>
-          <Link className="text-button" to={DISCOVER_ROUTES.doctors.path}>View all doctors</Link>
+          <AivaDiscoveryAssistantCard />
         </div>
-        <InlineDirectoryState
-          loading={doctors.loading}
-          error={doctors.error}
-          empty={homeDoctors.length === 0}
-          emptyIcon="DR"
-          emptyTitle={`No doctors found for ${searchableLocation}`}
-          emptyMessage="Try another location or broaden your search."
-          primaryAction="Change location"
-          primaryTo={`${DISCOVER_ROUTES.home.path}#find-care`}
-          secondaryAction="View clinics"
-          secondaryTo={DISCOVER_ROUTES.clinics.path}
-        />
-        {homeDoctors.length ? (
-          <div className="homepage-doctor-grid">
-            {homeDoctors.slice(0, 4).map((doctor) => <DoctorCard key={doctor.doctorSlug} doctor={doctor} />)}
-          </div>
-        ) : null}
       </section>
 
-      <section className="page-section surface-band">
+      <section className="page-section page-section--surface">
         <div className="section-heading section-heading-row">
           <div>
             <span className="eyebrow">Clinics</span>
             <h2>Clinics near you</h2>
-            <p>{displayLocation ? "Explore clinics, services and doctors available in your selected location." : "Explore clinics and the services they offer."}</p>
+            <p>{displayLocation ? "Explore clinics, services and doctor teams in your selected location." : "Explore clinics and the services they offer."}</p>
           </div>
-          <Link className="text-button" to={DISCOVER_ROUTES.clinics.path}>View all clinics</Link>
+          {showHomePreviewExamples ? <span className="home-preview-label">Preview examples</span> : null}
+          <Link className="text-button" to={DISCOVER_ROUTES.clinics.path}>
+            View all clinics
+          </Link>
         </div>
         <InlineDirectoryState
           loading={clinics.loading}
           error={clinics.error}
-          empty={homeClinics.length === 0}
+          empty={homeClinicsToRender.length === 0}
           emptyIcon="CL"
           emptyTitle={`No clinics found for ${searchableLocation}`}
           emptyMessage="Try another location or browse doctors by speciality."
@@ -841,52 +1371,46 @@ export function PublicHomePage() {
           secondaryAction="Browse specialities"
           secondaryTo={DISCOVER_ROUTES.specialities.path}
         />
-        {homeClinics.length ? (
+        {homeClinicsToRender.length ? (
           <div className="homepage-clinic-grid">
-            {homeClinics.slice(0, 3).map((clinic) => <ClinicCard key={clinic.clinicSlug} clinic={clinic} />)}
+            {homeClinicsToRender.map((clinic) => (
+              <ClinicCard key={clinic.clinicSlug} clinic={clinic} demo={Boolean(clinic.demo)} />
+            ))}
           </div>
         ) : null}
       </section>
 
       <section className="page-section">
-        <div className="section-heading">
-          <span className="eyebrow">Services</span>
-          <h2>Explore healthcare services</h2>
-          <p>Start with the care paths currently available in Jeevanam Discover.</p>
+        <div className="section-heading section-heading-row">
+          <div>
+            <span className="eyebrow">Hospitals</span>
+            <h2>Hospitals near you</h2>
+            <p>Explore hospitals and multi-speciality care near your location.</p>
+          </div>
+          {showHomePreviewExamples ? <span className="home-preview-label">Preview examples</span> : null}
+          <Link className="text-button" to={DISCOVER_ROUTES.hospitals.path}>
+            View all hospitals
+          </Link>
         </div>
-        <div className="service-grid">
-          {HEALTHCARE_SERVICES.map((service) => (
-            service.state === "Explore →" ? (
-              <Link className="service-card" to={service.to} key={service.title}>
-                <strong>{service.title}</strong>
-                <span>{service.body}</span>
-                <small>{service.state}</small>
-              </Link>
-            ) : (
-              <article className="service-card service-card-disabled" key={service.title} aria-label={`${service.title}: ${service.state}`}>
-                <strong>{service.title}</strong>
-                <span>{service.body}</span>
-                <small>{service.state}</small>
-              </article>
-            )
-          ))}
-        </div>
-      </section>
-
-      <section className="page-section">
-        <div className="section-heading">
-          <span className="eyebrow">Why Jeevanam</span>
-          <h2>A simpler way to find and manage care</h2>
-        </div>
-        <div className="feature-grid">
-          {WHY_JEEVANAM.map((feature) => (
-            <article className="feature-card" key={feature.title}>
-              <span aria-hidden="true">{feature.icon}</span>
-              <strong>{feature.title}</strong>
-              <p>{feature.body}</p>
-            </article>
-          ))}
-        </div>
+        <InlineDirectoryState
+          loading={hospitals.loading}
+          error={hospitals.error}
+          empty={homeHospitalsToRender.length === 0}
+          emptyIcon="H"
+          emptyTitle={`No hospitals found for ${searchableLocation}`}
+          emptyMessage="Try another location or browse doctors by speciality."
+          primaryAction="Change location"
+          primaryTo={`${DISCOVER_ROUTES.home.path}#find-care`}
+          secondaryAction="Browse specialities"
+          secondaryTo={DISCOVER_ROUTES.specialities.path}
+        />
+        {homeHospitalsToRender.length ? (
+          <div className="homepage-hospital-grid">
+            {homeHospitalsToRender.map((hospital) => (
+              <HospitalCard key={hospital.hospitalSlug} hospital={hospital} demo={Boolean(hospital.demo)} />
+            ))}
+          </div>
+        ) : null}
       </section>
 
       <section className="provider-band">
@@ -895,14 +1419,27 @@ export function PublicHomePage() {
           <h2>Grow your practice with Jeevanam</h2>
           <p>Create a public profile, present your services and connect appointment discovery with your clinic operations.</p>
           <ul className="provider-benefits">
-            <li>Publish your practice profile</li>
-            <li>Present doctors and services</li>
-            <li>Receive appointment enquiries</li>
+            <li>
+              <span aria-hidden="true">✓</span>
+              <span>Publish your practice profile</span>
+            </li>
+            <li>
+              <span aria-hidden="true">✓</span>
+              <span>Present doctors and services</span>
+            </li>
+            <li>
+              <span aria-hidden="true">✓</span>
+              <span>Receive appointment enquiries</span>
+            </li>
           </ul>
         </div>
         <div className="cta-row">
-          <Link className="primary-button light-button" to={DISCOVER_ROUTES.listPractice.path}>List your practice</Link>
-          <Link className="secondary-button light-outline-button" to={DISCOVER_ROUTES.healthcare.path}>Explore Jeevanam Healthcare</Link>
+          <Link className="primary-button light-button" to={DISCOVER_ROUTES.listPractice.path}>
+            List your practice
+          </Link>
+          <Link className="secondary-button light-outline-button" to={DISCOVER_ROUTES.healthcare.path}>
+            Explore Jeevanam Healthcare
+          </Link>
         </div>
       </section>
 
@@ -915,13 +1452,13 @@ export function PublicHomePage() {
           <article className="ecosystem-card ecosystem-discover">
             <span className="ecosystem-icon" aria-hidden="true">◎</span>
             <strong>Jeevanam Discover</strong>
-            <p>Find doctors, clinics, hospitals and appointment options.</p>
+            <p>Find doctors, clinics, hospitals, and appointment options.</p>
             <Link className="text-button" to={`${DISCOVER_ROUTES.home.path}#find-care`}>Explore care →</Link>
           </article>
           <article className="ecosystem-card ecosystem-care">
             <span className="ecosystem-icon" aria-hidden="true">＋</span>
             <strong>Jeevanam Care</strong>
-            <p>Manage appointments, prescriptions, reports, bills and your care journey.</p>
+            <p>Manage appointments, prescriptions, reports, bills, and your care journey.</p>
             <a className="text-button" href={discoverConfig.careAppUrl}>Open Care →</a>
           </article>
           <article className="ecosystem-card ecosystem-healthcare">
@@ -937,73 +1474,182 @@ export function PublicHomePage() {
 }
 
 export function PublicDoctorsPage() {
-  const filters = useDirectoryFilters();
-  const speciality = filters.searchParams.get("speciality");
-  const clinic = filters.searchParams.get("clinic");
+  const state = useDirectoryPageState();
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const doctors = usePublicResource<PublicPageResponse<PublicDoctorSummaryResponse>>(
     "/api/public/doctors",
     {
-      q: filters.searchParams.get("q"),
-      city: filters.searchParams.get("city"),
-      area: filters.searchParams.get("area"),
-      speciality,
-      clinic,
-      lat: filters.latitude,
-      lng: filters.longitude,
-      radiusKm: filters.radiusKm,
-      page: filters.page,
-      size: filters.size,
+      q: state.searchParams.get("q"),
+      city: state.selectedLocation,
+      lat: state.selectedCoordinates ? `${state.selectedCoordinates.latitude}` : null,
+      lng: state.selectedCoordinates ? `${state.selectedCoordinates.longitude}` : null,
+      radiusKm: state.selectedCoordinates ? state.radiusKm : null,
+      page: state.page,
+      size: state.size,
     },
     emptyDoctorsPage,
   );
+  const specialities = usePublicResource<PublicSpecialitySummaryResponse[]>("/api/public/specialities", { city: state.selectedLocation }, []);
   const visibleDoctors = useMemo(
-    () => filterAndSortDoctorResults(doctors.data.items, filters.query, filters.city || PUBLIC_DEFAULT_LOCATION),
-    [doctors.data.items, filters.city, filters.query],
+    () => filterDoctorsDirectory(doctors.data.items, state.searchParams.get("q") ?? "", state.searchParams, state.selectedLocation),
+    [doctors.data.items, state.searchParams, state.selectedLocation],
+  );
+  const popularSpecialities = useMemo(
+    () =>
+      [...specialities.data]
+        .filter((item) => item.doctorsCount > 0)
+        .sort((left, right) => right.doctorsCount - left.doctorsCount)
+        .slice(0, 8),
+    [specialities.data],
+  );
+  const languages = useMemo(
+    () => Array.from(new Set(doctors.data.items.flatMap((doctor) => doctor.languages))).slice(0, 6),
+    [doctors.data.items],
+  );
+  const selectedSpecialities = getStringListParam(state.searchParams, "specialities");
+  const selectedLanguages = getStringListParam(state.searchParams, "languages");
+  const filterSummary = buildDoctorFilterSummary(state.searchParams, state.selectedCoordinates);
+  const resultLabel = buildDirectoryResultLabel(visibleDoctors.length, "doctor", state.selectedLocation);
+  const doctorFilterControls = (
+    <>
+      <DirectoryToggleFilters
+        label="Availability"
+        items={[{ value: "availableToday", label: "Available today" }]}
+        active={new Set(state.searchParams.get("availableToday") ? ["availableToday"] : [])}
+        onToggle={() => state.updateParams(DISCOVER_ROUTES.doctors.path, { availableToday: state.searchParams.get("availableToday") ? null : true })}
+      />
+      <DirectoryToggleFilters
+        label="Consultation fee"
+        items={[
+          { value: "500", label: "Up to ₹500" },
+          { value: "1000", label: "Up to ₹1,000" },
+          { value: "2000", label: "Up to ₹2,000" },
+        ]}
+        active={new Set(state.searchParams.get("feeBand") ? [state.searchParams.get("feeBand") ?? ""] : [])}
+        onToggle={(value) => state.updateParams(DISCOVER_ROUTES.doctors.path, { feeBand: state.searchParams.get("feeBand") === value ? null : value })}
+      />
+      <DirectoryToggleFilters
+        label="Experience"
+        items={[
+          { value: "3", label: "3+ years" },
+          { value: "5", label: "5+ years" },
+          { value: "10", label: "10+ years" },
+        ]}
+        active={new Set(state.searchParams.get("experienceBand") ? [state.searchParams.get("experienceBand") ?? ""] : [])}
+        onToggle={(value) => state.updateParams(DISCOVER_ROUTES.doctors.path, { experienceBand: state.searchParams.get("experienceBand") === value ? null : value })}
+      />
+      <DirectoryFilterChips
+        label="Languages"
+        values={languages.length ? languages : ["English", "Hindi"]}
+        active={new Set(selectedLanguages)}
+        onToggle={(value) => state.updateParams(DISCOVER_ROUTES.doctors.path, { languages: joinFilterValues(toggleFilterValue(selectedLanguages, value)) })}
+        onClear={() => state.updateParams(DISCOVER_ROUTES.doctors.path, { languages: null })}
+      />
+      <DirectoryFilterChips
+        label="Popular specialities"
+        values={popularSpecialities.map((item) => item.speciality)}
+        active={new Set(selectedSpecialities)}
+        onToggle={(value) => state.updateParams(DISCOVER_ROUTES.doctors.path, { specialities: joinFilterValues(toggleFilterValue(selectedSpecialities, value)) })}
+        onClear={() => state.updateParams(DISCOVER_ROUTES.doctors.path, { specialities: null })}
+      />
+    </>
   );
 
   return (
-    <section className="page-section">
-      <div className="section-heading compact-page-hero">
-        <span className="eyebrow">Doctor directory</span>
-        <h1>Find doctors by speciality, clinic and location</h1>
-        <p>Compare doctor profiles and continue to booking when you find the right care option.</p>
-      </div>
-      <QueryToolbar
-        actionLabel="Search doctors"
-        query={filters.query}
-        setQuery={filters.setQuery}
-        city={filters.city}
-        setCity={filters.setCity}
-        area={filters.area}
-        setArea={filters.setArea}
+    <DirectoryPageShell className={pageAccentClass("doctors")}>
+      <DirectoryHero
+        eyebrow="Doctor directory"
+        title="Compare healthcare professionals"
+        body="Search doctors by speciality, location, fee, and experience."
+        accent={pageAccentTone("doctors")}
+      />
+      <DirectorySearchPanel
+        query={state.queryDraft}
+        onQueryChange={state.setQueryDraft}
+        placeholder={pageSearchPlaceholder("doctors")}
+        searchButtonLabel={pageSearchButtonLabel("doctors")}
         onSubmit={(event) => {
           event.preventDefault();
-          filters.submit(DISCOVER_ROUTES.doctors.path, { speciality, clinic });
+          state.commitSearch(DISCOVER_ROUTES.doctors.path);
         }}
+        locationLabel={state.selectedLocation}
+        onLocationCommit={(nextLocation, nextCoordinates) => state.commitLocation(DISCOVER_ROUTES.doctors.path, nextLocation, nextCoordinates)}
+        onUseCurrentLocation={createCurrentLocationHandler((coordinates) =>
+          state.commitLocation(DISCOVER_ROUTES.doctors.path, PUBLIC_CURRENT_LOCATION_LABEL, coordinates)
+        )}
+        selectedCoordinates={state.selectedCoordinates}
+        radiusKm={state.radiusKm}
+        onRadiusChange={state.setRadiusKm}
+        note="Use the location control for city, current location, and nearby radius."
       />
-      <DirectoryState
-        loading={doctors.loading}
-        error={doctors.error}
-        empty={visibleDoctors.length === 0}
-        emptyIcon="DR"
-        emptyTitle={`No doctors found for ${filters.city || PUBLIC_DEFAULT_LOCATION}`}
-        emptyMessage="Try another location or broaden your search."
-        primaryAction="Change search"
-        primaryTo={`${DISCOVER_ROUTES.home.path}#find-care`}
-        secondaryAction="View clinics"
-        secondaryTo={DISCOVER_ROUTES.clinics.path}
-        errorTitle="We could not load doctors right now."
-      >
-        <div className="public-directory-grid">
-          {visibleDoctors.map((doctor) => <DoctorCard key={doctor.doctorSlug} doctor={doctor} />)}
+      <PopularLinkChipRow
+        title="Popular specialities"
+        items={popularSpecialities.map((item) => item.speciality)}
+        onSelect={(value) => state.updateParams(DISCOVER_ROUTES.doctors.path, { q: value })}
+        secondaryAction={{ label: "Browse all specialities", to: DISCOVER_ROUTES.specialities.path }}
+      />
+
+      <DirectoryResultsToolbar
+        resultLabel={resultLabel}
+        locationLabel={state.selectedLocation}
+        filterSummary={filterSummary}
+        selectedFilterCount={state.selectedFilterCount}
+        sortValue={state.sort}
+        sortOptions={[
+          { value: "relevance", label: "Relevance" },
+          { value: "distance", label: "Distance" },
+          { value: "experience", label: "Experience" },
+          { value: "fee-low", label: "Fee: Low to high" },
+          { value: "fee-high", label: "Fee: High to low" },
+        ]}
+        onSortChange={(value) => state.updateParams(DISCOVER_ROUTES.doctors.path, { sort: value === "relevance" ? null : value })}
+        onOpenFilters={() => setFiltersOpen(true)}
+        onClear={() => state.clearParams(DISCOVER_ROUTES.doctors.path)}
+      />
+
+      <div className="directory-layout">
+        <DirectoryPageStickyPanel title="Doctor filters">
+          {doctorFilterControls}
+        </DirectoryPageStickyPanel>
+        <div className="directory-results-column">
+          <DirectoryState
+            loading={doctors.loading || specialities.loading}
+            error={doctors.error || specialities.error}
+            empty={visibleDoctors.length === 0}
+            emptyIcon="DR"
+            emptyTitle={`No doctors found for ${state.selectedLocation}`}
+            emptyMessage="Try another location, clear filters, or broaden the speciality search."
+            primaryAction="Change search"
+            primaryTo={`${DISCOVER_ROUTES.home.path}#find-care`}
+            secondaryAction="Browse specialities"
+            secondaryTo={DISCOVER_ROUTES.specialities.path}
+            errorTitle="We could not load doctors right now."
+          >
+            <div className="directory-card-grid directory-card-grid--doctors">
+              {visibleDoctors.map((doctor) => (
+                <DoctorDirectoryCard key={doctor.doctorSlug} doctor={doctor} />
+              ))}
+            </div>
+            <PaginationBar
+              page={doctors.data.page}
+              totalPages={doctors.data.totalPages}
+              onPageChange={(nextPage) => state.updateParams(DISCOVER_ROUTES.doctors.path, { page: nextPage })}
+            />
+          </DirectoryState>
         </div>
-        <PaginationBar
-          page={doctors.data.page}
-          totalPages={doctors.data.totalPages}
-          onPageChange={(nextPage) => filters.changePage(DISCOVER_ROUTES.doctors.path, nextPage, { speciality, clinic })}
-        />
-      </DirectoryState>
-    </section>
+      </div>
+
+      <DirectoryFiltersDrawer
+        open={filtersOpen}
+        title="Doctor filters"
+        selectedCount={state.selectedFilterCount}
+        onClose={() => setFiltersOpen(false)}
+        onApply={() => setFiltersOpen(false)}
+        onClear={() => state.clearParams(DISCOVER_ROUTES.doctors.path)}
+      >
+        {doctorFilterControls}
+      </DirectoryFiltersDrawer>
+    </DirectoryPageShell>
   );
 }
 
@@ -1042,71 +1688,151 @@ export function PublicDoctorDetailPage() {
 }
 
 export function PublicClinicsPage() {
-  const filters = useDirectoryFilters();
-  const speciality = filters.searchParams.get("speciality");
+  const state = useDirectoryPageState();
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const clinics = usePublicResource<PublicPageResponse<PublicClinicSummaryResponse>>(
     "/api/public/clinics",
     {
-      q: filters.searchParams.get("q"),
-      city: filters.searchParams.get("city"),
-      area: filters.searchParams.get("area"),
-      speciality,
-      lat: filters.latitude,
-      lng: filters.longitude,
-      radiusKm: filters.radiusKm,
-      page: filters.page,
-      size: filters.size,
+      q: state.searchParams.get("q"),
+      city: state.selectedLocation,
+      lat: state.selectedCoordinates ? `${state.selectedCoordinates.latitude}` : null,
+      lng: state.selectedCoordinates ? `${state.selectedCoordinates.longitude}` : null,
+      radiusKm: state.selectedCoordinates ? state.radiusKm : null,
+      page: state.page,
+      size: state.size,
     },
     emptyClinicsPage,
   );
   const visibleClinics = useMemo(
-    () => filterAndSortClinicResults(clinics.data.items, filters.query, filters.city || PUBLIC_DEFAULT_LOCATION),
-    [clinics.data.items, filters.city, filters.query],
+    () => filterClinicsDirectory(clinics.data.items, state.searchParams.get("q") ?? "", state.searchParams, state.selectedLocation),
+    [clinics.data.items, state.searchParams, state.selectedLocation],
+  );
+  const popularAreas = useMemo(() => {
+    const values = clinics.data.items.map((clinic) => clinic.area ?? clinic.city ?? "").filter(Boolean);
+    return Array.from(new Set(values)).slice(0, 8);
+  }, [clinics.data.items]);
+  const popularServices = useMemo(
+    () => Array.from(new Set(clinics.data.items.flatMap((clinic) => clinic.specialities))).filter(Boolean).slice(0, 8),
+    [clinics.data.items],
+  );
+  const selectedServices = getStringListParam(state.searchParams, "specialities");
+  const filterSummary = buildClinicFilterSummary(state.searchParams, state.selectedCoordinates);
+  const resultLabel = buildDirectoryResultLabel(visibleClinics.length, "clinic", state.selectedLocation);
+  const clinicFilterControls = (
+    <>
+      <DirectoryToggleFilters
+        label="Availability"
+        items={[{ value: "availableToday", label: "Available today" }]}
+        active={new Set(state.searchParams.get("availableToday") ? ["availableToday"] : [])}
+        onToggle={() => state.updateParams(DISCOVER_ROUTES.clinics.path, { availableToday: state.searchParams.get("availableToday") ? null : true })}
+      />
+      <DirectoryFilterChips
+        label="Clinic services"
+        values={popularServices.length ? popularServices : ["General Medicine", "Dermatology", "Pediatrics"]}
+        active={new Set(selectedServices)}
+        onToggle={(value) => state.updateParams(DISCOVER_ROUTES.clinics.path, { specialities: joinFilterValues(toggleFilterValue(selectedServices, value)) })}
+        onClear={() => state.updateParams(DISCOVER_ROUTES.clinics.path, { specialities: null })}
+      />
+      <DirectoryFilterChips
+        label="Popular areas"
+        values={popularAreas.length ? popularAreas : [state.selectedLocation]}
+        active={new Set()}
+        onToggle={(value) => state.updateParams(DISCOVER_ROUTES.clinics.path, { q: value })}
+      />
+    </>
   );
 
   return (
-    <section className="page-section">
-      <div className="section-heading compact-page-hero">
-        <span className="eyebrow">Clinic directory</span>
-        <h1>Find clinics and appointment options near you</h1>
-        <p>Explore clinic locations, specialities and doctor teams before you book.</p>
-      </div>
-      <QueryToolbar
-        actionLabel="Search clinics"
-        query={filters.query}
-        setQuery={filters.setQuery}
-        city={filters.city}
-        setCity={filters.setCity}
-        area={filters.area}
-        setArea={filters.setArea}
+    <DirectoryPageShell className={pageAccentClass("clinics")}>
+      <DirectoryHero
+        eyebrow="Clinic directory"
+        title="Find clinics near you"
+        body="Explore clinics by area, service, and location."
+        accent={pageAccentTone("clinics")}
+      />
+      <DirectorySearchPanel
+        query={state.queryDraft}
+        onQueryChange={state.setQueryDraft}
+        placeholder={pageSearchPlaceholder("clinics")}
+        searchButtonLabel={pageSearchButtonLabel("clinics")}
         onSubmit={(event) => {
           event.preventDefault();
-          filters.submit(DISCOVER_ROUTES.clinics.path, { speciality });
+          state.commitSearch(DISCOVER_ROUTES.clinics.path);
         }}
+        locationLabel={state.selectedLocation}
+        onLocationCommit={(nextLocation, nextCoordinates) => state.commitLocation(DISCOVER_ROUTES.clinics.path, nextLocation, nextCoordinates)}
+        onUseCurrentLocation={createCurrentLocationHandler((coordinates) =>
+          state.commitLocation(DISCOVER_ROUTES.clinics.path, PUBLIC_CURRENT_LOCATION_LABEL, coordinates)
+        )}
+        selectedCoordinates={state.selectedCoordinates}
+        radiusKm={state.radiusKm}
+        onRadiusChange={state.setRadiusKm}
+        note="Search clinics, services, and areas using real published data."
       />
-      <DirectoryState
-        loading={clinics.loading}
-        error={clinics.error}
-        empty={visibleClinics.length === 0}
-        emptyIcon="CL"
-        emptyTitle={`No clinics found for ${filters.city || PUBLIC_DEFAULT_LOCATION}`}
-        emptyMessage="Try another location or browse doctors by speciality."
-        primaryAction="Change search"
-        primaryTo={`${DISCOVER_ROUTES.home.path}#find-care`}
-        secondaryAction="Browse specialities"
-        secondaryTo={DISCOVER_ROUTES.specialities.path}
-        errorTitle="We could not load clinics right now."
-      >
-        <div className="public-directory-grid">
-          {visibleClinics.map((clinic) => <ClinicCard key={clinic.clinicSlug} clinic={clinic} />)}
+      <PopularLinkChipRow
+        title="Popular areas"
+        items={popularAreas.length ? popularAreas : [state.selectedLocation]}
+        onSelect={(value) => state.updateParams(DISCOVER_ROUTES.clinics.path, { q: value })}
+        secondaryAction={{ label: "Browse doctors", to: DISCOVER_ROUTES.doctors.path }}
+      />
+      <DirectoryResultsToolbar
+        resultLabel={resultLabel}
+        locationLabel={state.selectedLocation}
+        filterSummary={filterSummary}
+        selectedFilterCount={state.selectedFilterCount}
+        sortValue={state.sort}
+        sortOptions={[
+          { value: "relevance", label: "Relevance" },
+          { value: "distance", label: "Distance" },
+          { value: "doctors", label: "Doctor count" },
+          { value: "name", label: "Name" },
+        ]}
+        onSortChange={(value) => state.updateParams(DISCOVER_ROUTES.clinics.path, { sort: value === "relevance" ? null : value })}
+        onOpenFilters={() => setFiltersOpen(true)}
+        onClear={() => state.clearParams(DISCOVER_ROUTES.clinics.path)}
+      />
+      <div className="directory-layout">
+        <DirectoryPageStickyPanel title="Clinic filters">
+          {clinicFilterControls}
+        </DirectoryPageStickyPanel>
+        <div className="directory-results-column">
+          <DirectoryState
+            loading={clinics.loading}
+            error={clinics.error}
+            empty={visibleClinics.length === 0}
+            emptyIcon="CL"
+            emptyTitle={`No clinics found for ${state.selectedLocation}`}
+            emptyMessage="Try a different location, clear filters, or browse doctors and specialities."
+            primaryAction="Change search"
+            primaryTo={`${DISCOVER_ROUTES.home.path}#find-care`}
+            secondaryAction="Browse doctors"
+            secondaryTo={DISCOVER_ROUTES.doctors.path}
+            errorTitle="We could not load clinics right now."
+          >
+            <div className="directory-card-grid directory-card-grid--clinics">
+              {visibleClinics.map((clinic) => (
+                <ClinicDirectoryCard key={clinic.clinicSlug} clinic={clinic} />
+              ))}
+            </div>
+            <PaginationBar
+              page={clinics.data.page}
+              totalPages={clinics.data.totalPages}
+              onPageChange={(nextPage) => state.updateParams(DISCOVER_ROUTES.clinics.path, { page: nextPage })}
+            />
+          </DirectoryState>
         </div>
-        <PaginationBar
-          page={clinics.data.page}
-          totalPages={clinics.data.totalPages}
-          onPageChange={(nextPage) => filters.changePage(DISCOVER_ROUTES.clinics.path, nextPage, { speciality })}
-        />
-      </DirectoryState>
-    </section>
+      </div>
+      <DirectoryFiltersDrawer
+        open={filtersOpen}
+        title="Clinic filters"
+        selectedCount={state.selectedFilterCount}
+        onClose={() => setFiltersOpen(false)}
+        onApply={() => setFiltersOpen(false)}
+        onClear={() => state.clearParams(DISCOVER_ROUTES.clinics.path)}
+      >
+        {clinicFilterControls}
+      </DirectoryFiltersDrawer>
+    </DirectoryPageShell>
   );
 }
 
@@ -1145,71 +1871,135 @@ export function PublicClinicDetailPage() {
 }
 
 export function PublicHospitalsPage() {
-  const filters = useDirectoryFilters();
-  const speciality = filters.searchParams.get("speciality");
+  const state = useDirectoryPageState();
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const hospitals = usePublicResource<PublicPageResponse<PublicHospitalSummaryResponse>>(
     "/api/public/hospitals",
     {
-      q: filters.searchParams.get("q"),
-      city: filters.searchParams.get("city"),
-      area: filters.searchParams.get("area"),
-      speciality,
-      lat: filters.latitude,
-      lng: filters.longitude,
-      radiusKm: filters.radiusKm,
-      page: filters.page,
-      size: filters.size,
+      q: state.searchParams.get("q"),
+      city: state.selectedLocation,
+      lat: state.selectedCoordinates ? `${state.selectedCoordinates.latitude}` : null,
+      lng: state.selectedCoordinates ? `${state.selectedCoordinates.longitude}` : null,
+      radiusKm: state.selectedCoordinates ? state.radiusKm : null,
+      page: state.page,
+      size: state.size,
     },
-    { items: [], page: 0, size: filters.size, totalItems: 0, totalPages: 0 },
+    { items: [], page: 0, size: state.size, totalItems: 0, totalPages: 0 },
   );
   const visibleHospitals = useMemo(
-    () => [...hospitals.data.items].sort((left, right) => normalizeDiscoveryText(left.hospitalDisplayName).localeCompare(normalizeDiscoveryText(right.hospitalDisplayName))),
-    [hospitals.data.items],
+    () => filterHospitalsDirectory(hospitals.data.items, state.searchParams.get("q") ?? "", state.searchParams, state.selectedLocation),
+    [hospitals.data.items, state.searchParams, state.selectedLocation],
+  );
+  const popularDepartments = useMemo(() => {
+    const values = hospitals.data.items.flatMap((hospital) => hospital.departments).filter(Boolean);
+    return Array.from(new Set(values)).slice(0, 8);
+  }, [hospitals.data.items]);
+  const selectedDepartments = getStringListParam(state.searchParams, "departments");
+  const filterSummary = buildHospitalFilterSummary(state.searchParams, state.selectedCoordinates);
+  const resultLabel = buildDirectoryResultLabel(visibleHospitals.length, "hospital", state.selectedLocation);
+  const hospitalFilterControls = (
+    <>
+      <DirectoryFilterChips
+        label="Departments"
+        values={popularDepartments.length ? popularDepartments : ["General Medicine", "Cardiology", "Orthopedics"]}
+        active={new Set(selectedDepartments)}
+        onToggle={(value) => state.updateParams(DISCOVER_ROUTES.hospitals.path, { departments: joinFilterValues(toggleFilterValue(selectedDepartments, value)) })}
+        onClear={() => state.updateParams(DISCOVER_ROUTES.hospitals.path, { departments: null })}
+      />
+    </>
   );
 
   return (
-    <section className="page-section">
-      <div className="section-heading compact-page-hero">
-        <span className="eyebrow">Hospital directory</span>
-        <h1>Find hospitals and specialty care</h1>
-        <p>Explore hospital profiles, departments and facilities before you continue to booking.</p>
-      </div>
-      <QueryToolbar
-        actionLabel="Search hospitals"
-        query={filters.query}
-        setQuery={filters.setQuery}
-        city={filters.city}
-        setCity={filters.setCity}
-        area={filters.area}
-        setArea={filters.setArea}
+    <DirectoryPageShell className={pageAccentClass("hospitals")}>
+      <DirectoryHero
+        eyebrow="Hospital directory"
+        title="Explore hospitals and specialty care"
+        body="Browse hospitals by area, department, and public capability."
+        accent={pageAccentTone("hospitals")}
+      />
+      <DirectorySearchPanel
+        query={state.queryDraft}
+        onQueryChange={state.setQueryDraft}
+        placeholder={pageSearchPlaceholder("hospitals")}
+        searchButtonLabel={pageSearchButtonLabel("hospitals")}
         onSubmit={(event) => {
           event.preventDefault();
-          filters.submit(DISCOVER_ROUTES.hospitals.path, { speciality });
+          state.commitSearch(DISCOVER_ROUTES.hospitals.path);
         }}
+        locationLabel={state.selectedLocation}
+        onLocationCommit={(nextLocation, nextCoordinates) => state.commitLocation(DISCOVER_ROUTES.hospitals.path, nextLocation, nextCoordinates)}
+        onUseCurrentLocation={createCurrentLocationHandler((coordinates) =>
+          state.commitLocation(DISCOVER_ROUTES.hospitals.path, PUBLIC_CURRENT_LOCATION_LABEL, coordinates)
+        )}
+        selectedCoordinates={state.selectedCoordinates}
+        radiusKm={state.radiusKm}
+        onRadiusChange={state.setRadiusKm}
+        note="Use location and department filters to explore public hospital profiles."
       />
-      <DirectoryState
-        loading={hospitals.loading}
-        error={hospitals.error}
-        empty={visibleHospitals.length === 0}
-        emptyIcon="H"
-        emptyTitle={`No hospitals found for ${filters.city || PUBLIC_DEFAULT_LOCATION}`}
-        emptyMessage="Try another location or search by department or speciality."
-        primaryAction="Browse clinics"
-        primaryTo={DISCOVER_ROUTES.clinics.path}
-        secondaryAction="Browse specialities"
-        secondaryTo={DISCOVER_ROUTES.specialities.path}
-        errorTitle="We could not load hospitals right now."
-      >
-        <div className="public-directory-grid">
-          {visibleHospitals.map((hospital) => <HospitalCard key={hospital.hospitalSlug} hospital={hospital} />)}
+      <PopularLinkChipRow
+        title="Popular departments"
+        items={popularDepartments.length ? popularDepartments : ["General Medicine", "Cardiology", "Orthopedics"]}
+        onSelect={(value) => state.updateParams(DISCOVER_ROUTES.hospitals.path, { q: value })}
+        secondaryAction={{ label: "Browse specialities", to: DISCOVER_ROUTES.specialities.path }}
+      />
+      <DirectoryResultsToolbar
+        resultLabel={resultLabel}
+        locationLabel={state.selectedLocation}
+        filterSummary={filterSummary}
+        selectedFilterCount={state.selectedFilterCount}
+        sortValue={state.sort}
+        sortOptions={[
+          { value: "relevance", label: "Relevance" },
+          { value: "distance", label: "Distance" },
+          { value: "departments", label: "Department count" },
+          { value: "name", label: "Name" },
+        ]}
+        onSortChange={(value) => state.updateParams(DISCOVER_ROUTES.hospitals.path, { sort: value === "relevance" ? null : value })}
+        onOpenFilters={() => setFiltersOpen(true)}
+        onClear={() => state.clearParams(DISCOVER_ROUTES.hospitals.path)}
+      />
+      <div className="directory-layout">
+        <DirectoryPageStickyPanel title="Hospital filters">
+          {hospitalFilterControls}
+        </DirectoryPageStickyPanel>
+        <div className="directory-results-column">
+          <DirectoryState
+            loading={hospitals.loading}
+            error={hospitals.error}
+            empty={visibleHospitals.length === 0}
+            emptyIcon="H"
+            emptyTitle={`No hospitals found for ${state.selectedLocation}`}
+            emptyMessage="Try changing the location, clearing filters, or browsing clinics and specialities."
+            primaryAction="Change search"
+            primaryTo={`${DISCOVER_ROUTES.home.path}#find-care`}
+            secondaryAction="Browse clinics"
+            secondaryTo={DISCOVER_ROUTES.clinics.path}
+            errorTitle="We could not load hospitals right now."
+          >
+            <div className="directory-card-grid directory-card-grid--hospitals">
+              {visibleHospitals.map((hospital) => (
+                <HospitalDirectoryCard key={hospital.hospitalSlug} hospital={hospital} />
+              ))}
+            </div>
+            <PaginationBar
+              page={hospitals.data.page}
+              totalPages={hospitals.data.totalPages}
+              onPageChange={(nextPage) => state.updateParams(DISCOVER_ROUTES.hospitals.path, { page: nextPage })}
+            />
+          </DirectoryState>
         </div>
-        <PaginationBar
-          page={hospitals.data.page}
-          totalPages={hospitals.data.totalPages}
-          onPageChange={(nextPage) => filters.changePage(DISCOVER_ROUTES.hospitals.path, nextPage, { speciality })}
-        />
-      </DirectoryState>
-    </section>
+      </div>
+      <DirectoryFiltersDrawer
+        open={filtersOpen}
+        title="Hospital filters"
+        selectedCount={state.selectedFilterCount}
+        onClose={() => setFiltersOpen(false)}
+        onApply={() => setFiltersOpen(false)}
+        onClear={() => state.clearParams(DISCOVER_ROUTES.hospitals.path)}
+      >
+        {hospitalFilterControls}
+      </DirectoryFiltersDrawer>
+    </DirectoryPageShell>
   );
 }
 
@@ -1248,60 +2038,129 @@ export function PublicHospitalDetailPage() {
 }
 
 export function PublicSpecialitiesPage() {
-  const filters = useDirectoryFilters(24);
+  const state = useDirectoryPageState(24);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const specialities = usePublicResource<PublicSpecialitySummaryResponse[]>(
     "/api/public/specialities",
-    { q: filters.searchParams.get("q"), city: filters.searchParams.get("city") },
+    { q: state.searchParams.get("q"), city: state.selectedLocation },
     [],
   );
-  const visibleSpecialities = useMemo(() => filterAndSortSpecialities(specialities.data, filters.query), [filters.query, specialities.data]);
+  const visibleSpecialities = useMemo(
+    () => filterSpecialitiesDirectory(specialities.data, state.searchParams.get("q") ?? "", state.searchParams),
+    [specialities.data, state.searchParams],
+  );
+  const popularSpecialities = useMemo(
+    () =>
+      [...specialities.data]
+        .filter((item) => item.doctorsCount > 0 || item.clinicsCount > 0)
+        .sort((left, right) => (right.doctorsCount + right.clinicsCount + (right.hospitalsCount ?? 0)) - (left.doctorsCount + left.clinicsCount + (left.hospitalsCount ?? 0)))
+        .slice(0, 8),
+    [specialities.data],
+  );
+  const alphabet = useMemo(() => Array.from("ABCDEFGHIJKLMNOPQRSTUVWXYZ"), []);
+  const availableLetters = useMemo(() => new Set(specialityAlphabet(specialities.data)), [specialities.data]);
+  const activeLetter = state.searchParams.get("letter")?.trim().toUpperCase() || null;
+  const filterSummary = buildSpecialityFilterSummary(state.searchParams);
+  const resultLabel = buildDirectoryResultLabel(visibleSpecialities.length, "speciality", state.selectedLocation);
 
   return (
-    <section className="page-section">
-      <div className="section-heading compact-page-hero">
-        <span className="eyebrow">Specialities</span>
-        <h1>Explore specialities</h1>
-        <p>Browse healthcare specialities and find relevant doctors and clinics.</p>
-      </div>
-      <form className="toolbar-card public-toolbar-card" onSubmit={(event) => { event.preventDefault(); filters.submit(DISCOVER_ROUTES.specialities.path); }}>
-        <label className="toolbar-field">
-          <span>Speciality</span>
-          <input value={filters.query} onChange={(event) => filters.setQuery(event.target.value)} placeholder="Dermatology, pediatrics, cardiology" />
-        </label>
-        <label className="toolbar-field">
-          <span>City</span>
-          <input value={filters.city} onChange={(event) => filters.setCity(event.target.value)} placeholder="Filter by city" />
-        </label>
-        <button className="primary-button" type="submit">Search specialities</button>
-      </form>
-      <DirectoryState
-        loading={specialities.loading}
-        error={specialities.error}
-        empty={visibleSpecialities.length === 0}
-        emptyIcon="＋"
-        emptyTitle="Specialities are being prepared"
-        emptyMessage="Published provider specialities will appear here as the directory grows."
-        primaryAction="Browse clinics"
-        primaryTo={DISCOVER_ROUTES.clinics.path}
-        secondaryAction="List your practice"
-        secondaryTo={DISCOVER_ROUTES.listPractice.path}
-        errorTitle="We could not load specialities right now."
-      >
-        <div className="public-directory-grid speciality-directory-grid">
-          {visibleSpecialities.map((speciality) => (
-            <article key={speciality.specialitySlug} className="public-directory-card feature-card speciality-card">
-              <strong>{speciality.speciality}</strong>
-              <p>{speciality.doctorsCount} doctor{speciality.doctorsCount === 1 ? "" : "s"} across {speciality.clinicsCount} clinic{speciality.clinicsCount === 1 ? "" : "s"}.</p>
-              <span>{speciality.doctorsCount > 0 ? "Search and book from this speciality." : "Provider details will appear once available."}</span>
-              <div className="directory-action-row">
-                <Link className="secondary-button" to={DISCOVER_DETAIL_PATHS.speciality(speciality.specialitySlug)}>Search doctors</Link>
-                <a className="text-button" href={careBookingUrl({ speciality: speciality.specialitySlug })}>Start booking</a>
-              </div>
-            </article>
-          ))}
+    <DirectoryPageShell className={pageAccentClass("specialities")}>
+      <DirectoryHero
+        eyebrow="Speciality directory"
+        title="Explore specialities"
+        body="Move from a broad category into the right doctors and clinics."
+        accent={pageAccentTone("specialities")}
+      />
+      <DirectorySearchPanel
+        query={state.queryDraft}
+        onQueryChange={state.setQueryDraft}
+        placeholder={pageSearchPlaceholder("specialities")}
+        searchButtonLabel={pageSearchButtonLabel("specialities")}
+        onSubmit={(event) => {
+          event.preventDefault();
+          state.commitSearch(DISCOVER_ROUTES.specialities.path);
+        }}
+        locationLabel={state.selectedLocation}
+        onLocationCommit={(nextLocation, nextCoordinates) => state.commitLocation(DISCOVER_ROUTES.specialities.path, nextLocation, nextCoordinates)}
+        onUseCurrentLocation={createCurrentLocationHandler((coordinates) =>
+          state.commitLocation(DISCOVER_ROUTES.specialities.path, PUBLIC_CURRENT_LOCATION_LABEL, coordinates)
+        )}
+        selectedCoordinates={state.selectedCoordinates}
+        radiusKm={state.radiusKm}
+        onRadiusChange={state.setRadiusKm}
+        note="Search specialities, conditions, and care categories using published taxonomy only."
+      />
+      <PopularSpecialityGrid items={popularSpecialities} />
+      {visibleSpecialities.length > 10 ? (
+        <AlphabetNavigation
+          letters={alphabet}
+          activeLetter={activeLetter}
+          disabledLetters={new Set(alphabet.filter((letter) => !availableLetters.has(letter)))}
+          onSelect={(letter) => state.updateParams(DISCOVER_ROUTES.specialities.path, { letter })}
+        />
+      ) : null}
+      <DirectoryResultsToolbar
+        resultLabel={resultLabel}
+        locationLabel={state.selectedLocation}
+        filterSummary={filterSummary}
+        selectedFilterCount={state.selectedFilterCount}
+        sortValue={state.sort}
+        sortOptions={[
+          { value: "relevance", label: "Relevance" },
+          { value: "count", label: "Provider count" },
+          { value: "clinics", label: "Clinic count" },
+          { value: "name", label: "Name" },
+        ]}
+        onSortChange={(value) => state.updateParams(DISCOVER_ROUTES.specialities.path, { sort: value === "relevance" ? null : value })}
+        onOpenFilters={() => setFiltersOpen(true)}
+        onClear={() => state.clearParams(DISCOVER_ROUTES.specialities.path)}
+      />
+      <div className="directory-layout directory-layout--stacked">
+        <div className="directory-results-column">
+          <DirectoryState
+            loading={specialities.loading}
+            error={specialities.error}
+            empty={visibleSpecialities.length === 0}
+            emptyIcon="＋"
+            emptyTitle="Specialities are being prepared"
+            emptyMessage="Published provider specialities will appear here as the directory grows."
+            primaryAction="Browse doctors"
+            primaryTo={DISCOVER_ROUTES.doctors.path}
+            secondaryAction="Browse clinics"
+            secondaryTo={DISCOVER_ROUTES.clinics.path}
+            errorTitle="We could not load specialities right now."
+          >
+            <div className="directory-speciality-results">
+              {visibleSpecialities.map((speciality) => (
+                <SpecialityCard
+                  key={speciality.specialitySlug}
+                  speciality={speciality}
+                  onSearchDoctors={`${DISCOVER_ROUTES.doctors.path}?speciality=${encodeURIComponent(speciality.speciality)}`}
+                  onSearchClinics={`${DISCOVER_ROUTES.clinics.path}?speciality=${encodeURIComponent(speciality.speciality)}`}
+                />
+              ))}
+            </div>
+          </DirectoryState>
         </div>
-      </DirectoryState>
-    </section>
+        <AivaComingSoonPanel />
+      </div>
+      <DirectoryFiltersDrawer
+        open={filtersOpen}
+        title="Speciality filters"
+        selectedCount={state.selectedFilterCount}
+        onClose={() => setFiltersOpen(false)}
+        onApply={() => setFiltersOpen(false)}
+        onClear={() => state.clearParams(DISCOVER_ROUTES.specialities.path)}
+      >
+        <DirectoryFilterChips
+          label="Browse A-Z"
+          values={alphabet}
+          active={new Set(activeLetter ? [activeLetter] : [])}
+          onToggle={(value) => state.updateParams(DISCOVER_ROUTES.specialities.path, { letter: activeLetter === value ? null : value })}
+          onClear={() => state.updateParams(DISCOVER_ROUTES.specialities.path, { letter: null })}
+        />
+      </DirectoryFiltersDrawer>
+    </DirectoryPageShell>
   );
 }
 

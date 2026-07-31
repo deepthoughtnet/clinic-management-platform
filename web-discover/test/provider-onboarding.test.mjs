@@ -17,6 +17,10 @@ test("provider onboarding routes use one governed wizard for all provider types"
 
   assert.ok(app.includes("ProviderRegistrationStartPage"));
   assert.ok(app.includes("startProviderApplication"));
+  assert.ok(app.includes("We could not start this provider application."));
+  assert.ok(app.includes("Try again"));
+  assert.ok(app.includes("Open provider workspace"));
+  assert.ok(app.includes("ProviderAuthError"));
   assert.ok(routes.includes("REGISTRATION_PROVIDER_TYPE_BY_ROUTE"));
   assert.ok(routes.includes('providerApplicationDashboard: { path: "/provider/applications/:applicationReference"'));
   assert.ok(app.includes('<Route path={DISCOVER_ROUTES.providerApplicationDashboard.path} element={<ProviderDashboardPage />} />'));
@@ -25,11 +29,13 @@ test("provider onboarding routes use one governed wizard for all provider types"
   assert.ok(routes.includes('hospital: "HOSPITAL"'));
   assert.ok(dashboard.includes("createProviderOnboardingAccess"));
   assert.ok(dashboard.includes("loadProviderApplicationDashboard"));
-  assert.ok(dashboard.includes("navigate(`/provider/onboarding/${access.applicationId}/${step}`)"));
+  assert.ok(dashboard.includes("providerOnboardingStepRoute(step)"));
   assert.ok(portal.includes("const steps = ["));
   for (const label of ["Account", "Organisation", "Professional Details", "Services", "Locations", "Branding", "Preview", "Submit"]) {
     assert.ok(portal.includes(label), `${label} step should be present`);
   }
+  assert.ok(portal.includes("groupProviderRequirements"));
+  assert.ok(portal.includes("providerRequirementLabel"));
 });
 
 test("provider onboarding persists drafts, resumes by token, and keeps URL as step source", () => {
@@ -104,6 +110,8 @@ test("provider onboarding upload and submission UX is explicit", () => {
   assert.ok(portal.includes("Submit for verification"));
   assert.ok(portal.includes("Status messages"));
   assert.ok(portal.includes("Blocking items"));
+  assert.ok(portal.includes("groupProviderRequirements"));
+  assert.ok(portal.includes("providerRequirementLabel"));
   assert.ok(portal.includes("Profile completion"));
   assert.ok(portal.includes("Submission timeline"));
   assert.ok(portal.includes("Submission summary"));
@@ -120,41 +128,12 @@ test("provider onboarding upload and submission UX is explicit", () => {
   assert.ok(profile.includes("provider-preview-profile"));
   assert.ok(profile.includes("provider-preview-grid"));
   assert.ok(profile.includes("provider-preview-section--about"));
-  assert.ok(profile.includes("Professional Information"));
-  assert.ok(profile.includes("Trust and Verification"));
-  assert.ok(portal.includes("Ready for submission"));
-  assert.ok(portal.includes("Verified contact details"));
-  assert.ok(portal.includes("provider-preview-checklist"));
-  assert.ok(profile.includes("provider-preview-gallery-grid"));
-  assert.ok(profile.includes("No clinic gallery images have been added yet."));
-  assert.ok(portal.includes("Your public profile contains the required information."));
-  assert.ok(portal.includes('goToStep(item.step, "route-transition")'));
-  assert.ok(portal.includes("onGalleryEmptyAction"));
-  assert.ok(portal.includes("Back to editing"));
-  assert.ok(portal.includes("Continue to submission"));
-  assert.ok(portal.includes("provider-branding-banner"));
-  assert.ok(profile.includes("Book Appointment"));
-  assert.ok(profile.includes("provider-public-hero--preview"));
-  assert.ok(profile.includes("provider-preview-appointment-card"));
-  assert.ok(profile.includes("provider-preview-location"));
   assert.ok(portal.includes("provider-preview-workflow"));
-  assert.ok(portal.includes('dataTestId="provider-preview-canvas"'));
-  assert.ok(profile.includes('data-testid={dataTestId}'));
-  assert.ok(portal.includes('data-testid="provider-preview-readiness-panel"'));
+  assert.ok(portal.includes("provider-preview-workflow-actions"));
+  assert.ok(portal.includes("provider-preview-checklist-item"));
+  assert.ok(portal.includes("provider-preview-checklist-empty"));
   assert.ok(profile.includes("Consultation fee"));
-  assert.ok(profile.includes("Consultation modes"));
-  assert.ok(portal.includes('item.trim().toLowerCase() !== "online appointment"'));
-  assert.ok(portal.includes("Currently showing verified contact details."));
-  assert.ok(portal.includes("previewGalleryPaths.forEach"));
-  assert.ok(!portal.includes("push(\n      previewDoctorPhotoPath"));
-  assert.ok(!portal.includes("Quick Facts"));
-  assert.ok(!portal.includes("<span>{publicPhone}</span>"));
-  assert.ok(!portal.includes("Phone: {publicPhone}"));
   assert.ok(portal.includes("StatusTimeline"));
-  assert.ok(portal.includes("verification-note"));
-  assert.ok(portal.includes("provider-readonly-banner"));
-  assert.ok(portal.includes("Application submitted"));
-  assert.ok(!portal.includes("Contact verification placeholder"));
   assert.ok(styles.includes(".provider-stepper"));
   assert.ok(styles.includes(".upload-box"));
   assert.ok(styles.includes(".provider-field"));

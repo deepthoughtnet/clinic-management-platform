@@ -23,6 +23,8 @@ public class ProviderStatusHistoryEntity {
     @Enumerated(EnumType.STRING)
     @Column(name = "to_status", nullable = false, length = 32)
     private ProviderLifecycleStatus toStatus;
+    @Column(name = "actor_category", length = 64)
+    private String actorCategory;
     @Column(length = 512)
     private String reason;
     @Column(name = "created_at", nullable = false)
@@ -32,10 +34,15 @@ public class ProviderStatusHistoryEntity {
     }
 
     public ProviderStatusHistoryEntity(UUID providerId, ProviderLifecycleStatus fromStatus, ProviderLifecycleStatus toStatus, String reason) {
+        this(providerId, fromStatus, toStatus, null, reason);
+    }
+
+    public ProviderStatusHistoryEntity(UUID providerId, ProviderLifecycleStatus fromStatus, ProviderLifecycleStatus toStatus, String actorCategory, String reason) {
         this.id = UUID.randomUUID();
         this.providerId = providerId;
         this.fromStatus = fromStatus;
         this.toStatus = toStatus;
+        this.actorCategory = actorCategory;
         this.reason = reason;
         this.createdAt = OffsetDateTime.now();
     }
@@ -43,6 +50,7 @@ public class ProviderStatusHistoryEntity {
     public UUID getProviderId() { return providerId; }
     public ProviderLifecycleStatus getFromStatus() { return fromStatus; }
     public ProviderLifecycleStatus getToStatus() { return toStatus; }
+    public String getActorCategory() { return actorCategory; }
     public String getReason() { return reason; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
 }

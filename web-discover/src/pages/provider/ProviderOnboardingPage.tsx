@@ -32,6 +32,7 @@ import { ProviderDropdownField, ProviderMultiSelectField } from "../../component
 import { ProviderOnboardingStepper, ProviderSaveStatus, type ProviderOnboardingStepState } from "../../components/provider-onboarding/ProviderOnboardingStepper";
 import { providerDocumentContentPath } from "../../api/providerOnboarding";
 import { PublicProviderProfile } from "../../components/discovery/PublicProviderProfile";
+import { groupProviderRequirements, providerRequirementLabel } from "../../features/provider/providerRequirementLabels";
 
 const TOKEN_KEY = "jeevanam.discover.providerOnboardingToken";
 const TOKEN_KEYS = [
@@ -521,99 +522,6 @@ function stepCompletion(
     default:
       return false;
   }
-}
-
-function missingItemLabel(code: string) {
-  switch (code) {
-    case "CONTACT_VERIFICATION_REQUIRED":
-      return "Verify your contact details before submitting your profile.";
-    case "EMAIL_REQUIRED":
-      return "Email is required.";
-    case "PHONE_REQUIRED":
-      return "Phone is required.";
-    case "TERMS_ACCEPTANCE_REQUIRED":
-      return "Accept the terms to continue.";
-    case "PRIVACY_ACCEPTANCE_REQUIRED":
-      return "Accept the privacy policy to continue.";
-    case "DOCTOR_NAME_REQUIRED":
-      return "Add the doctor’s full name.";
-    case "CLINIC_NAME_REQUIRED":
-      return "Add the clinic name.";
-    case "HOSPITAL_NAME_REQUIRED":
-      return "Add the hospital name.";
-    case "DOCTOR_REGISTRATION_NUMBER_REQUIRED":
-      return "Add the medical registration number.";
-    case "CLINIC_REGISTRATION_NUMBER_REQUIRED":
-      return "Add the clinic registration number.";
-    case "HOSPITAL_REGISTRATION_NUMBER_REQUIRED":
-      return "Add the hospital registration number.";
-    case "PRIMARY_SPECIALITY_REQUIRED":
-      return "Select a primary speciality.";
-    case "DOCTOR_QUALIFICATION_REQUIRED":
-      return "Add professional qualifications.";
-    case "DOCTOR_REGISTRATION_COUNCIL_REQUIRED":
-      return "Select the registration council.";
-    case "PRACTISING_SINCE_REQUIRED":
-      return "Add the year practice began.";
-    case "CLINIC_ORGANISATION_TYPE_REQUIRED":
-      return "Add the clinic organisation type.";
-    case "CLINIC_FACILITIES_REQUIRED":
-      return "Select the clinic facilities.";
-    case "HOSPITAL_DEPARTMENTS_REQUIRED":
-      return "Add at least one department.";
-    case "HOSPITAL_OWNERSHIP_REQUIRED":
-      return "Select the hospital ownership type.";
-    case "HOSPITAL_TYPE_REQUIRED":
-      return "Add the hospital type.";
-    case "HOSPITAL_BEDS_REQUIRED":
-      return "Add the number of licensed beds.";
-    case "HOSPITAL_MEDICAL_DIRECTOR_REQUIRED":
-      return "Add the medical director.";
-    case "HOSPITAL_EMERGENCY_STATUS_REQUIRED":
-      return "Confirm emergency availability.";
-    case "PRIMARY_LOCATION_REQUIRED":
-      return "Add a primary practice location.";
-    case "SERVICES_REQUIRED":
-      return "Select at least one service.";
-    case "DOCTOR_PHOTO_REQUIRED":
-      return "Upload the doctor photo.";
-    case "DOCTOR_REGISTRATION_CERTIFICATE_REQUIRED":
-      return "Upload the registration certificate.";
-    case "CLINIC_LOGO_REQUIRED":
-      return "Upload the clinic logo.";
-    case "CLINIC_REGISTRATION_DOCUMENT_REQUIRED":
-      return "Upload the clinic registration document.";
-    case "HOSPITAL_LOGO_REQUIRED":
-      return "Upload the hospital logo.";
-    case "HOSPITAL_REGISTRATION_DOCUMENT_REQUIRED":
-      return "Upload the hospital registration document.";
-    case "REFERENCE_DATA_UNAVAILABLE":
-      return "Required reference data is unavailable right now.";
-    default:
-      return code.replaceAll("_", " ").toLowerCase();
-  }
-}
-
-function missingItemGroup(code: string) {
-  if (code.includes("VERIFICATION") || code === "EMAIL_REQUIRED" || code === "PHONE_REQUIRED" || code === "TERMS_ACCEPTANCE_REQUIRED" || code === "PRIVACY_ACCEPTANCE_REQUIRED") {
-    return "Profile";
-  }
-  if (code.includes("DOCTOR_") || code.includes("HOSPITAL_") || code.includes("CLINIC_")) {
-    return code.includes("DOCUMENT") ? "Documents" : "Professional";
-  }
-  if (code === "SERVICES_REQUIRED") {
-    return "Services";
-  }
-  if (code === "PRIMARY_LOCATION_REQUIRED") {
-    return "Profile";
-  }
-  if (code.includes("DOCUMENT")) {
-    return "Documents";
-  }
-  if (code.includes("BRANDING") || code.includes("PHOTO") || code.includes("LOGO")) {
-    return "Branding";
-  }
-  return "Profile";
 }
 
 function contactVerificationSummary(contactVerification: ContactVerificationStatus | null, email: string, phone: string) {
@@ -2093,15 +2001,11 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
                 <strong>Blocking items</strong>
                 {missingItems.length ? (
                   <div className="submission-blocker-groups">
-                    {Object.entries(missingItems.reduce<Record<string, string[]>>((groups, code) => {
-                      const group = missingItemGroup(code);
-                      (groups[group] ??= []).push(code);
-                      return groups;
-                    }, {})).map(([group, items]) => (
+                    {Object.entries(groupProviderRequirements(missingItems)).map(([group, items]) => (
                       <section key={group}>
                         <strong>{group}</strong>
                         {items.map((item) => (
-                          <span key={item}>{missingItemLabel(item)}</span>
+                          <span key={item}>{providerRequirementLabel(item)}</span>
                         ))}
                       </section>
                     ))}

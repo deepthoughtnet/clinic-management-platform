@@ -164,6 +164,7 @@ export type ProviderCompletion = {
   validationWarnings: string[];
   blockingErrors: string[];
   canSubmit: boolean;
+  previewReady: boolean;
   recommendedNextStep: string;
   currentStep: string;
   readOnly: boolean;
@@ -302,6 +303,13 @@ export function updateProviderApplication(id: string, token: string, payload: Pr
 
 export function submitProviderApplication(id: string, token: string) {
   return request<ProviderApplication>(`/api/provider-registration/providers/${id}/submit`, { method: "POST" }, token);
+}
+
+export function discardProviderApplication(id: string, token: string, reason?: string) {
+  return request<ProviderApplication>(`/api/provider-registration/providers/${id}/discard`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  }, token);
 }
 
 export function resubmitProviderApplication(id: string, token: string, providerResponseNote?: string) {

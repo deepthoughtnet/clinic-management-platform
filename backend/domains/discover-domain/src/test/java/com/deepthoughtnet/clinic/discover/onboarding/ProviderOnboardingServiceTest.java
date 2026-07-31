@@ -40,6 +40,7 @@ import com.deepthoughtnet.clinic.discover.reference.DiscoverReferenceDataService
 import com.deepthoughtnet.clinic.discover.reference.DiscoverReferenceOptionRecord;
 import com.deepthoughtnet.clinic.discover.reference.InvalidReferenceValueException;
 import com.deepthoughtnet.clinic.discover.verification.DiscoverVerificationService;
+import com.deepthoughtnet.clinic.discover.verification.db.DiscoverProviderAccountEntity;
 import com.deepthoughtnet.clinic.discover.verification.VerificationChallengeResult;
 import com.deepthoughtnet.clinic.discover.verification.VerificationChannel;
 import com.deepthoughtnet.clinic.discover.verification.VerificationChallengeRequest;
@@ -65,14 +66,16 @@ class ProviderOnboardingServiceTest {
     private final List<ProviderStatusHistoryEntity> history = new ArrayList<>();
     private final List<ProviderSubmissionEntity> submissions = new ArrayList<>();
     private final AtomicReference<ProviderContactVerificationEntity> contactVerification = new AtomicReference<>();
+    private ProviderApplicationRepository applicationRepository;
     private ProviderApplicationEntity application;
     private ProviderOnboardingService service;
+    private DiscoverVerificationService verificationService;
     private ObjectStorageService storage;
     private DiscoverReferenceDataService referenceDataService;
 
     @BeforeEach
     void setUp() {
-        ProviderApplicationRepository applicationRepository = Mockito.mock(ProviderApplicationRepository.class);
+        applicationRepository = Mockito.mock(ProviderApplicationRepository.class);
         ProviderLocationRepository locationRepository = Mockito.mock(ProviderLocationRepository.class);
         ProviderServiceRepository serviceRepository = Mockito.mock(ProviderServiceRepository.class);
         ProviderDocumentRepository documentRepository = Mockito.mock(ProviderDocumentRepository.class);
@@ -81,7 +84,7 @@ class ProviderOnboardingServiceTest {
         ProviderChangeRequestRepository changeRequestRepository = Mockito.mock(ProviderChangeRequestRepository.class);
         ProviderContactVerificationRepository contactVerificationRepository = Mockito.mock(ProviderContactVerificationRepository.class);
         ProviderPublicProfileService publicProfileService = Mockito.mock(ProviderPublicProfileService.class);
-        DiscoverVerificationService verificationService = Mockito.mock(DiscoverVerificationService.class);
+        verificationService = Mockito.mock(DiscoverVerificationService.class);
         referenceDataService = Mockito.mock(DiscoverReferenceDataService.class);
         storage = Mockito.mock(ObjectStorageService.class);
         ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
@@ -223,6 +226,27 @@ class ProviderOnboardingServiceTest {
         });
 
         service = new ProviderOnboardingService(applicationRepository, locationRepository, serviceRepository, documentRepository, submissionRepository, historyRepository, changeRequestRepository, contactVerificationRepository, storage, objectMapper, publicProfileService, verificationService, referenceDataService);
+    }
+
+    @Test
+    void startOrResumeOwnedApplicationBootstrapsPhoneAuthenticatedAccountWithoutEmail() {
+        UUID providerAccountId = UUID.fromString("99999999-9999-9999-9999-999999999999");
+        DiscoverProviderAccountEntity account = DiscoverProviderAccountEntity.create(null, "9876501402");
+        account.markPhoneVerified();
+        when(verificationService.findAccountById(providerAccountId)).thenReturn(Optional.of(account));
+        when(applicationRepository.findByProviderAccountIdOrderByUpdatedAtDesc(providerAccountId)).thenReturn(List.of());
+
+        var start = service.startOrResumeOwnedApplication(ProviderType.CLINIC, providerAccountId, false);
+
+        assertThat(start.providerType()).isEqualTo(ProviderType.CLINIC);
+        assertThat(start.onboardingToken()).isNotBlank();
+        assertThat(application).isNotNull();
+        assertThat(application.getProviderAccountId()).isEqualTo(providerAccountId);
+        assertThat(application.getEmail()).isNull();
+        assertThat(application.getPhone()).isEqualTo("9876501402");
+        assertThat(contactVerification.get()).isNotNull();
+        assertThat(contactVerification.get().getEmailNormalized()).isNull();
+        assertThat(contactVerification.get().getPhoneNormalized()).isEqualTo("9876501402");
     }
 
     @Test

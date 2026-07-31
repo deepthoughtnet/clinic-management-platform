@@ -8,6 +8,15 @@ Approved for Phase 3 implementation foundation.
 
 Jeevanam Discover owns provider onboarding for individual doctors, clinics, and hospitals before Healthcare tenant activation. This phase supports draft creation, resume, progressive completion, structured provider data, document upload, preview, submission, lifecycle history, and backend events/placeholders for notifications.
 
+Provider workspace scope includes:
+
+- `/provider`
+- `/provider/applications/{businessReference}`
+- lifecycle-aware application attention cards
+- multiple application/profile ownership under one provider account
+- discard of incomplete, unsubmitted onboarding drafts
+- compact, human-readable application detail presentation
+
 Out of scope: payment, SEO, public publishing, ratings, reviews, analytics, AI content generation, moderation UI, Healthcare tenant activation.
 
 ## Ownership
@@ -20,7 +29,7 @@ Out of scope: payment, SEO, public publishing, ratings, reviews, analytics, AI c
 
 ## Provider Lifecycle
 
-`DRAFT -> CONTACT_VERIFIED -> PROFILE_INCOMPLETE -> READY_FOR_REVIEW -> SUBMITTED -> UNDER_REVIEW -> CHANGES_REQUESTED -> APPROVED -> PUBLISHED -> SUSPENDED -> ARCHIVED`
+`DRAFT -> CONTACT_VERIFIED -> PROFILE_INCOMPLETE -> READY_FOR_REVIEW -> SUBMITTED -> UNDER_REVIEW -> CHANGES_REQUESTED -> APPROVED -> PUBLISHED -> DISCARDED -> SUSPENDED -> ARCHIVED`
 
 Every status change writes `discover_provider_status_history`. Draft field updates update the aggregate and preserve the current status unless submission validation advances it.
 
@@ -82,3 +91,17 @@ Provider service selections use the Discover reference catalog as the canonical 
 ## Validation
 
 Each step reports missing fields. Submit is blocked until mandatory account, profile, location, service, document, and terms requirements are met.
+
+## Workspace Behavior
+
+- The provider workspace must calculate a single canonical attention result used by both dashboard KPI and attention cards.
+- An incomplete application requires attention when completion is below 100%, required items are missing, the lifecycle is `DRAFT`, `CONTACT_VERIFIED`, `IN_PROGRESS`, or `CHANGES_REQUESTED`, or a reviewer/action is pending.
+- Completed or published applications must not appear in the incomplete-attention list.
+- A provider account may own multiple applications and published profiles. The workspace must show active applications and published profiles separately.
+- `Continue registration` resumes an existing application at its current or earliest incomplete step.
+- `Add another profile` starts a separate application intentionally when product rules allow it.
+- Discarded applications leave active onboarding, remain auditable, and cannot be resumed unless a restore feature is introduced later.
+
+## Requirement Labels
+
+Requirement codes must render with stable business labels. Unknown codes must be humanized to readable text rather than surfaced verbatim.

@@ -32,6 +32,9 @@ export type ProviderWorkspaceApplication = {
   completionPercent: number;
   currentStep: string;
   contactVerified: boolean;
+  requiresAttention: boolean;
+  missingRequirementCount: number;
+  previewReady: boolean;
   updatedAt: string;
   submittedAt: string | null;
   publicProfilePath: string | null;
@@ -43,6 +46,9 @@ export type ProviderWorkspaceResponse = {
   emailVerifiedAt: string | null;
   phoneVerifiedAt: string | null;
   applications: ProviderWorkspaceApplication[];
+  publishedProfiles: ProviderWorkspaceApplication[];
+  attentionCount: number;
+  supportedProviderTypes: ProviderType[];
 };
 
 export type ProviderOnboardingAccessResponse = {
@@ -136,8 +142,12 @@ export function createProviderOnboardingAccess(applicationReference: string) {
   return request<ProviderOnboardingAccessResponse>(`/api/provider/applications/${encodeURIComponent(applicationReference)}/onboarding-access`, "POST");
 }
 
-export function startProviderApplication(providerType: ProviderType) {
-  return request<ProviderWorkspaceStartResponse>("/api/provider/applications/start", "POST", { providerType });
+export function startProviderApplication(providerType: ProviderType, createNew = false) {
+  return request<ProviderWorkspaceStartResponse>("/api/provider/applications/start", "POST", { providerType, createNew });
+}
+
+export function discardWorkspaceApplication(applicationReference: string, reason?: string) {
+  return request<void>(`/api/provider/applications/${encodeURIComponent(applicationReference)}/discard`, "POST", { reason });
 }
 
 export function logoutProviderSession() {

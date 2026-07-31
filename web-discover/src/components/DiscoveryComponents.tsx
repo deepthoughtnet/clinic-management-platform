@@ -1,5 +1,13 @@
-import type { FormEvent, ReactNode } from "react";
+import { type FormEvent, type ReactNode } from "react";
 import { Link } from "react-router-dom";
+import {
+  ArrowForwardRounded,
+  AutoAwesomeOutlined,
+  CurrencyRupeeOutlined,
+  LanguageOutlined,
+  LocationOnOutlined,
+  ScheduleOutlined,
+} from "@mui/icons-material";
 import type {
   PublicClinicSummaryResponse,
   PublicDoctorSummaryResponse,
@@ -43,6 +51,11 @@ export const emptyHospitalsPage: PublicPageResponse<PublicHospitalSummaryRespons
 export const noPublicProfilesMessage =
   "Published provider profiles will appear here as the directory grows.";
 
+type DirectoryCardDemoProps = {
+  demo?: boolean;
+  demoLabel?: string;
+};
+
 export function formatExperience(value: number | null | undefined) {
   if (value == null) {
     return "Experience shared after profile review";
@@ -59,6 +72,49 @@ export function initials(label: string) {
     .join("");
 }
 
+function HealthcareAvatarFallback() {
+  return (
+    <svg className="directory-avatar-illustration" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+      <defs>
+        <linearGradient id="avatarFallbackBase" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#E7F7F6" />
+          <stop offset="100%" stopColor="#CFE8E8" />
+        </linearGradient>
+        <linearGradient id="avatarFallbackAccent" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#0F8B8D" />
+          <stop offset="100%" stopColor="#0C7778" />
+        </linearGradient>
+      </defs>
+      <circle cx="32" cy="32" r="30" fill="url(#avatarFallbackBase)" />
+      <circle cx="32" cy="25" r="9" fill="#FFFFFF" fillOpacity="0.95" />
+      <path
+        d="M20 49c1.9-7.2 7.6-12 12-12s10.1 4.8 12 12"
+        fill="none"
+        stroke="url(#avatarFallbackAccent)"
+        strokeWidth="6"
+        strokeLinecap="round"
+      />
+      <path
+        d="M31 19h2v5h5v2h-5v5h-2v-5h-5v-2h5z"
+        fill="url(#avatarFallbackAccent)"
+      />
+      <circle cx="48" cy="18" r="4" fill="#FFFFFF" fillOpacity="0.82" />
+      <path
+        d="M46 18h4M48 16v4"
+        stroke="#0F8B8D"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function patientFacingLocationParts(...values: Array<string | null | undefined>) {
+  return values
+    .map((value) => value?.trim())
+    .filter((value): value is string => typeof value === "string" && value.length > 0 && value.toLowerCase() !== "primary");
+}
+
 export function formatConsultationFee(value: number | string | null | undefined) {
   if (value === null || value === undefined || value === "") {
     return null;
@@ -72,6 +128,18 @@ export function formatConsultationFee(value: number | string | null | undefined)
     currency: "INR",
     maximumFractionDigits: 0,
   }).format(numericValue);
+}
+
+export function formatDistanceKm(value: number | string | null | undefined) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  const numericValue = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numericValue) || numericValue < 0) {
+    return null;
+  }
+  const rounded = numericValue < 10 ? numericValue.toFixed(1) : numericValue.toFixed(0);
+  return `${rounded} km away`;
 }
 
 function appendBookingParams(baseUrl: string, context?: Record<string, string | undefined | null>) {
@@ -347,59 +415,95 @@ export function PaginationBar({
   );
 }
 
-export function DoctorCard({ doctor }: { doctor: PublicDoctorSummaryResponse }) {
+export function DoctorCard({ doctor, demo = false, demoLabel = "Demo preview" }: { doctor: PublicDoctorSummaryResponse } & DirectoryCardDemoProps) {
   const consultationFee = formatConsultationFee(doctor.consultationFee ?? null);
+  const distance = formatDistanceKm(doctor.distanceKm ?? null);
   const subtitle = doctor.subtitle?.trim() || doctor.speciality || null;
-  const detailRows = [
-    doctor.speciality && doctor.speciality !== subtitle ? doctor.speciality : null,
-    doctor.yearsOfExperience != null ? `${doctor.yearsOfExperience}+ years experience` : null,
-    consultationFee ? `Consultation fee: ${consultationFee}` : null,
-    doctor.languages.length ? `Languages: ${doctor.languages.join(", ")}` : null,
-    [doctor.clinicDisplayName, doctor.area, doctor.city].filter(Boolean).join(" · ") || null,
-  ].filter((item): item is string => Boolean(item));
+  const locationSummary = patientFacingLocationParts(doctor.clinicDisplayName, doctor.area, doctor.city).join(" · ");
+  const availabilityText = doctor.availableToday ? "Available today" : doctor.nextAvailableSlotSummary || "Check next slot";
+  const availabilityClass = doctor.availableToday ? "chip chip--success" : "chip chip--info";
 
   return (
-    <article className="public-directory-card doctor-directory-card">
+    <article className={`public-directory-card doctor-directory-card ${demo ? "is-demo" : ""}`}>
       <div className="directory-card-top">
         <div className="directory-avatar" aria-hidden="true">
-          {doctor.photoUrl ? <img src={doctor.photoUrl} alt="" loading="lazy" /> : <span>{initials(doctor.doctorDisplayName)}</span>}
+          {doctor.photoUrl ? <img src={doctor.photoUrl} alt="" loading="lazy" /> : <HealthcareAvatarFallback />}
         </div>
         <div className="directory-card-heading">
           <strong>{doctor.doctorDisplayName}</strong>
           {subtitle ? <span>{subtitle}</span> : null}
+          {doctor.speciality ? <p>{doctor.speciality}</p> : null}
         </div>
       </div>
       <div className="directory-meta-list">
-        {detailRows.map((item) => <span key={item}>{item}</span>)}
+        {doctor.yearsOfExperience != null ? (
+          <span>
+            <ScheduleOutlined fontSize="small" aria-hidden="true" />
+            {doctor.yearsOfExperience}+ years experience
+          </span>
+        ) : null}
+        {consultationFee ? (
+          <span>
+            <CurrencyRupeeOutlined fontSize="small" aria-hidden="true" />
+            Consultation fee: {consultationFee}
+          </span>
+        ) : null}
+        {doctor.languages.length ? (
+          <span>
+            <LanguageOutlined fontSize="small" aria-hidden="true" />
+            {doctor.languages.join(", ")}
+          </span>
+        ) : null}
+        {locationSummary ? (
+          <span>
+            <LocationOnOutlined fontSize="small" aria-hidden="true" />
+            {locationSummary}
+          </span>
+        ) : null}
       </div>
       <div className="directory-badge-row">
-        {doctor.availableToday ? <span className="status-pill">Available today</span> : <span className="chip">Check next slot</span>}
-        {doctor.nextAvailableSlotSummary ? <span className="chip">{doctor.nextAvailableSlotSummary}</span> : null}
+        {demo ? <span className="chip chip--demo">{demoLabel}</span> : null}
+        <span className={availabilityClass}>{availabilityText}</span>
+        {distance ? <span className="chip chip--muted">{distance}</span> : null}
       </div>
       <div className="directory-action-row">
-        <Link className="secondary-button" to={doctor.publicPath ?? DISCOVER_DETAIL_PATHS.doctor(doctor.doctorSlug)}>
-          View profile
-        </Link>
-        <a
-          className="primary-button"
-          href={careBookingUrl({
-            doctorId: doctor.publicDoctorId,
-            clinicSlug: doctor.clinicSlug,
-          })}
-        >
-          Book appointment
-        </a>
+        {demo ? (
+          <button className="secondary-button" type="button" disabled aria-disabled="true">
+            Demo profile
+          </button>
+        ) : (
+          <Link className="secondary-button" to={doctor.publicPath ?? DISCOVER_DETAIL_PATHS.doctor(doctor.doctorSlug)}>
+            View profile
+          </Link>
+        )}
+        {demo ? (
+          <button className="primary-button" type="button" disabled aria-disabled="true">
+            Demo booking
+          </button>
+        ) : (
+          <a
+            className="primary-button"
+            href={careBookingUrl({
+              doctorId: doctor.publicDoctorId,
+              clinicSlug: doctor.clinicSlug,
+            })}
+          >
+            Book appointment
+          </a>
+        )}
       </div>
     </article>
   );
 }
 
-export function ClinicCard({ clinic }: { clinic: PublicClinicSummaryResponse }) {
+export function ClinicCard({ clinic, demo = false, demoLabel = "Demo preview" }: { clinic: PublicClinicSummaryResponse } & DirectoryCardDemoProps) {
+  const distance = formatDistanceKm(clinic.distanceKm ?? null);
+  const mediaUrl = clinic.coverUrl ?? clinic.logoUrl;
   return (
-    <article className="public-directory-card clinic-directory-card">
+    <article className={`public-directory-card clinic-directory-card ${demo ? "is-demo" : ""}`}>
       <div className="clinic-card-media">
         <div className="directory-avatar clinic-avatar" aria-hidden="true">
-          {clinic.logoUrl ? <img src={clinic.logoUrl} alt="" loading="lazy" /> : <span>{initials(clinic.clinicDisplayName)}</span>}
+          {mediaUrl ? <img src={mediaUrl} alt="" loading="lazy" /> : <HealthcareAvatarFallback />}
         </div>
       </div>
       <div className="directory-card-top">
@@ -409,11 +513,21 @@ export function ClinicCard({ clinic }: { clinic: PublicClinicSummaryResponse }) 
         </div>
       </div>
       <div className="directory-meta-list">
-        <span>{clinic.address ?? "Address shared after clinic onboarding"}</span>
+        <span>
+          <LocationOnOutlined fontSize="small" aria-hidden="true" />
+          {clinic.address ?? "Address shared after clinic onboarding"}
+        </span>
         {clinic.doctorsCount > 0 ? <span>{clinic.doctorsCount} doctor{clinic.doctorsCount === 1 ? "" : "s"}</span> : null}
+        {distance ? (
+          <span>
+            <ArrowForwardRounded fontSize="small" aria-hidden="true" />
+            {distance}
+          </span>
+        ) : null}
       </div>
       <div className="directory-badge-row">
-        {clinic.availableToday ? <span className="status-pill">Available today</span> : <span className="chip">Appointment entry available</span>}
+        {demo ? <span className="chip chip--demo">{demoLabel}</span> : null}
+        {clinic.availableToday ? <span className="chip chip--success">Available today</span> : <span className="chip chip--muted">Appointment entry available</span>}
         {clinic.specialities.slice(0, 2).map((item) => (
           <Link key={item} className="chip" to={DISCOVER_DETAIL_PATHS.speciality(slugify(item))}>
             {item}
@@ -421,23 +535,19 @@ export function ClinicCard({ clinic }: { clinic: PublicClinicSummaryResponse }) 
         ))}
       </div>
       <div className="directory-action-row">
-        <Link className="secondary-button" to={clinic.publicPath ?? DISCOVER_DETAIL_PATHS.clinic(clinic.clinicSlug)}>
-          View clinic
-        </Link>
-        <a className="primary-button" href={careBookingUrl({ clinicSlug: clinic.clinicSlug })}>
-          Book appointment
-        </a>
+        {demo ? <button className="secondary-button" type="button" disabled aria-disabled="true">Demo clinic</button> : <Link className="secondary-button" to={clinic.publicPath ?? DISCOVER_DETAIL_PATHS.clinic(clinic.clinicSlug)}>View clinic</Link>}
+        {demo ? <button className="primary-button" type="button" disabled aria-disabled="true">Demo booking</button> : <a className="primary-button" href={careBookingUrl({ clinicSlug: clinic.clinicSlug })}>Book appointment</a>}
       </div>
     </article>
   );
 }
 
-export function HospitalCard({ hospital }: { hospital: PublicHospitalSummaryResponse }) {
+export function HospitalCard({ hospital, demo = false, demoLabel = "Demo preview" }: { hospital: PublicHospitalSummaryResponse } & DirectoryCardDemoProps) {
   return (
-    <article className="public-directory-card hospital-directory-card">
+    <article className={`public-directory-card hospital-directory-card ${demo ? "is-demo" : ""}`}>
       <div className="clinic-card-media hospital-card-media">
         <div className="directory-avatar clinic-avatar" aria-hidden="true">
-          {hospital.logoUrl ? <img src={hospital.logoUrl} alt="" loading="lazy" /> : <span>{initials(hospital.hospitalDisplayName)}</span>}
+          {hospital.logoUrl ? <img src={hospital.logoUrl} alt="" loading="lazy" /> : <HealthcareAvatarFallback />}
         </div>
       </div>
       <div className="directory-card-top">
@@ -451,17 +561,63 @@ export function HospitalCard({ hospital }: { hospital: PublicHospitalSummaryResp
         {hospital.departments.length ? <span>{hospital.departments.slice(0, 3).join(" · ")}</span> : null}
       </div>
       <div className="directory-badge-row">
-        {hospital.emergencyAvailable ? <span className="status-pill">Emergency available</span> : <span className="chip">Review services</span>}
-        {hospital.coverUrl ? <span className="chip">Cover image</span> : null}
+        {demo ? <span className="chip chip--demo">{demoLabel}</span> : null}
+        {hospital.emergencyAvailable ? <span className="chip chip--success">Emergency available</span> : <span className="chip chip--muted">Review services</span>}
+        {hospital.coverUrl ? <span className="chip chip--info">Cover image</span> : null}
       </div>
       <div className="directory-action-row">
-        <Link className="secondary-button" to={hospital.publicPath ?? DISCOVER_DETAIL_PATHS.hospital(hospital.hospitalSlug)}>
-          View hospital
-        </Link>
-        <a className="primary-button" href={careBookingUrl({ hospitalSlug: hospital.hospitalSlug })}>
-          Book appointment
-        </a>
+        {demo ? <button className="secondary-button" type="button" disabled aria-disabled="true">Demo hospital</button> : <Link className="secondary-button" to={hospital.publicPath ?? DISCOVER_DETAIL_PATHS.hospital(hospital.hospitalSlug)}>View hospital</Link>}
+        {demo ? <button className="primary-button" type="button" disabled aria-disabled="true">Demo booking</button> : <a className="primary-button" href={careBookingUrl({ hospitalSlug: hospital.hospitalSlug })}>Book appointment</a>}
       </div>
     </article>
+  );
+}
+
+export function AivaDiscoveryAssistantCard() {
+  return (
+    <aside className="discover-value-panel home-aiva-panel" aria-label="AIVA Discovery Assistant">
+      <div className="home-aiva-card">
+        <div className="home-aiva-header">
+          <span className="home-aiva-icon" aria-hidden="true">
+            <AutoAwesomeOutlined fontSize="small" />
+          </span>
+          <div className="discover-value-copy">
+            <span className="eyebrow">AIVA</span>
+            <h2>Your AI care guide</h2>
+            <p>Not sure which doctor to visit?</p>
+            <p>Describe your symptoms in natural language.</p>
+          </div>
+        </div>
+
+        <div className="home-aiva-summary">
+          <strong>AIVA will soon help you:</strong>
+          <ul className="home-aiva-benefits" aria-label="What AIVA will help with">
+            <li>
+              <span aria-hidden="true">✓</span>
+              <span>Suggest the right speciality</span>
+            </li>
+            <li>
+              <span aria-hidden="true">✓</span>
+              <span>Compare nearby doctors</span>
+            </li>
+            <li>
+              <span aria-hidden="true">✓</span>
+              <span>Recommend clinics</span>
+            </li>
+            <li>
+              <span aria-hidden="true">✓</span>
+              <span>Explain medical terms</span>
+            </li>
+            <li>
+              <span aria-hidden="true">✓</span>
+              <span>Help prepare for appointments</span>
+            </li>
+          </ul>
+        </div>
+
+        <span className="chip chip--demo home-aiva-coming-soon">Coming Soon</span>
+        <p className="home-aiva-note">AIVA assists healthcare discovery. It does not replace medical advice.</p>
+      </div>
+    </aside>
   );
 }

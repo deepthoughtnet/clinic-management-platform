@@ -28,7 +28,7 @@ public class ProviderApplicationEntity {
     private ProviderLifecycleStatus status;
     @Column(name = "token_hash", nullable = false, length = 128)
     private String tokenHash;
-    @Column(nullable = false, length = 256)
+    @Column(length = 256)
     private String email;
     @Column(nullable = false, length = 32)
     private String phone;

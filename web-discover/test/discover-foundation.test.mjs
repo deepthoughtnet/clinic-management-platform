@@ -24,19 +24,35 @@ test("application foundation uses React, TypeScript, and Vite", () => {
 test("discover brand, public navigation, and homepage sections are present", () => {
   const app = read("src/App.tsx");
   const homepage = read("src/pages/discovery/PublicDiscoveryPages.tsx");
+  const components = read("src/components/DiscoveryComponents.tsx");
   const branding = read("src/branding.ts");
 
   assert.ok(branding.includes("Jeevanam Discover"));
-  assert.ok(homepage.includes("Find trusted doctors, clinics and hospitals near you."));
-  assert.ok(homepage.includes("Search healthcare providers, compare services and book appointments with confidence."));
-  assert.ok(homepage.includes("Browse by speciality"));
-  assert.ok(homepage.includes("Doctors you can explore"));
+  assert.ok(homepage.includes("Find trusted healthcare"));
+  assert.ok(homepage.includes("Discover doctors, clinics, hospitals and health services for a healthier life."));
+  assert.ok(homepage.includes("Popular ways to explore care"));
+  assert.ok(homepage.includes("Top doctors near you"));
   assert.ok(homepage.includes("Clinics near you"));
+  assert.ok(homepage.includes("Hospitals near you"));
   assert.ok(homepage.includes("Grow your practice with Jeevanam"));
   assert.ok(homepage.includes("One connected healthcare experience"));
   assert.ok(app.includes("Patient Login"));
   assert.ok(app.includes("Home"));
   assert.ok(app.includes("For Providers"));
+  assert.ok(homepage.includes("AivaDiscoveryAssistantCard"));
+  assert.ok(components.includes("Your AI care guide"));
+  assert.ok(components.includes("Coming Soon"));
+  assert.ok(app.includes('aria-label="Patients"'));
+  assert.ok(app.includes('aria-label="Providers"'));
+  assert.ok(app.includes('aria-label="Support"'));
+  assert.ok(app.includes('aria-label="Legal"'));
+  assert.ok(app.includes("Accessibility"));
+  assert.ok(app.includes("Sitemap"));
+  assert.ok(app.includes("Status"));
+  assert.ok(app.includes("Security"));
+  assert.ok(app.includes("Cookies"));
+  assert.ok(app.includes("footer-placeholder-link"));
+  assert.ok(app.includes("Verified public information and clear discovery routes."));
 });
 
 test("required public routes are defined and patient routes are absent", () => {

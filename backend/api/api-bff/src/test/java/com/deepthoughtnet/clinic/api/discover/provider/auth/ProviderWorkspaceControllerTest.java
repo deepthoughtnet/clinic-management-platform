@@ -5,12 +5,15 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.deepthoughtnet.clinic.api.discover.provider.auth.ProviderAuthModels.ProviderOnboardingAccessResponse;
+import com.deepthoughtnet.clinic.api.discover.provider.auth.ProviderAuthModels.WorkspaceResponse;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderLifecycleStatus;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderType;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.ProviderDashboardRecord;
+import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.ProviderApplicationRecord;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.ProviderOnboardingAccessRecord;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingService;
 import com.deepthoughtnet.clinic.discover.verification.DiscoverVerificationService;
+import com.deepthoughtnet.clinic.discover.verification.db.DiscoverProviderAccountEntity;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Set;
@@ -93,6 +96,7 @@ class ProviderWorkspaceControllerTest {
                         List.of(),
                         List.of(),
                         false,
+                        false,
                         "ACCOUNT",
                         "ACCOUNT",
                         false
@@ -127,6 +131,48 @@ class ProviderWorkspaceControllerTest {
         verify(onboardingService).issueOnboardingAccess("JDR-2026-725068FC", providerAccountId);
         assertThat(response.getBody()).isEqualTo(new ProviderOnboardingAccessResponse(applicationId, "new-onboarding-token"));
         assertThat(response.getHeaders().getCacheControl()).isEqualTo(CacheControl.noStore().getHeaderValue());
+    }
+
+    @Test
+    void discardDelegatesToOwnedWorkspaceDiscardFlow() {
+        DiscoverVerificationService verificationService = Mockito.mock(DiscoverVerificationService.class);
+        ProviderOnboardingService onboardingService = Mockito.mock(ProviderOnboardingService.class);
+        ProviderWorkspaceController controller = new ProviderWorkspaceController(verificationService, onboardingService);
+        UUID providerAccountId = UUID.fromString("77777777-7777-7777-7777-777777777777");
+        Authentication authentication = authentication(providerAccountId);
+        when(onboardingService.discardOwnedApplication("JCL-2026-AA66F5CD", providerAccountId, "no longer needed")).thenReturn(null);
+
+        ResponseEntity<ProviderApplicationRecord> response = controller.discard(
+                authentication,
+                "JCL-2026-AA66F5CD",
+                new ProviderWorkspaceController.DiscardRequest("no longer needed")
+        );
+
+        verify(onboardingService).discardOwnedApplication("JCL-2026-AA66F5CD", providerAccountId, "no longer needed");
+        assertThat(response.getBody()).isNull();
+        assertThat(response.getHeaders().getCacheControl()).isEqualTo(CacheControl.noStore().getHeaderValue());
+    }
+
+    @Test
+    void meLoadsAuthenticatedPhoneSessionWithoutEmailRequirement() {
+        DiscoverVerificationService verificationService = Mockito.mock(DiscoverVerificationService.class);
+        ProviderOnboardingService onboardingService = Mockito.mock(ProviderOnboardingService.class);
+        ProviderWorkspaceController controller = new ProviderWorkspaceController(verificationService, onboardingService);
+        UUID providerAccountId = UUID.fromString("66666666-6666-6666-6666-666666666666");
+        Authentication authentication = authentication(providerAccountId);
+        DiscoverProviderAccountEntity account = DiscoverProviderAccountEntity.create(null, "9876501402");
+        account.markPhoneVerified();
+        when(verificationService.findAccountById(providerAccountId)).thenReturn(java.util.Optional.of(account));
+        when(verificationService.findOwnedApplicationSummaries(providerAccountId)).thenReturn(List.of());
+
+        ResponseEntity<WorkspaceResponse> response = controller.me(authentication);
+
+        verify(verificationService).findAccountById(providerAccountId);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().contactEmail()).isNull();
+        assertThat(response.getBody().contactPhone()).isEqualTo("9876501402");
+        assertThat(response.getBody().phoneVerifiedAt()).isEqualTo(account.getPhoneVerifiedAt());
+        assertThat(response.getBody().applications()).isEmpty();
     }
 
     private static Authentication authentication(UUID providerAccountId) {

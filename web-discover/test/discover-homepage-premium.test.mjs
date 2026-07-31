@@ -14,7 +14,7 @@ test("homepage prioritizes search with URL-driven query and location parameters"
 
   assert.ok(page.includes('id="find-care"'));
   assert.ok(page.includes('aria-label="Discover care search"'));
-  assert.ok(page.includes("Search doctors, specialities, clinics or treatments"));
+  assert.ok(page.includes("Search doctors, clinics, hospitals, treatments"));
   assert.ok(page.includes("buildDirectorySearchParams"));
   assert.ok(page.includes("params.set(\"q\""));
   assert.ok(page.includes("params.set(\"city\""));
@@ -28,17 +28,19 @@ test("homepage includes production discovery sections without fabricated metrics
   const page = read("src/pages/discovery/PublicDiscoveryPages.tsx");
 
   for (const text of [
-    "Provider Information",
-    "Easy Booking",
-    "Your Care Workspace",
-    "Clinics & Hospitals",
-    "Browse by speciality",
-    "Doctors you can explore",
+    "Popular searches",
+    "Popular ways to explore care",
+    "Top doctors near you",
     "Clinics near you",
-    "Explore healthcare services",
-    "A simpler way to find and manage care",
+    "Hospitals near you",
     "Grow your practice with Jeevanam",
     "One connected healthcare experience",
+    "Doctors",
+    "Clinics",
+    "Hospitals",
+    "Specialities",
+    "Health Packages",
+    "Tests & Diagnostics",
   ]) {
     assert.ok(page.includes(text), `${text} should render on the homepage`);
   }
@@ -96,6 +98,7 @@ test("Discover UI does not reintroduce legacy web-public wording or patient-priv
 test("visual refinement removes architecture panel and duplicate final CTA", () => {
   const page = read("src/pages/discovery/PublicDiscoveryPages.tsx");
   const components = read("src/components/DiscoveryComponents.tsx");
+  const config = read("src/config.ts");
   const styles = read("src/styles.css");
 
   assert.ok(!page.includes("Search nearby care"));
@@ -103,16 +106,61 @@ test("visual refinement removes architecture panel and duplicate final CTA", () 
   assert.ok(!page.includes("Clinic pages"));
   assert.ok(!page.includes("Jeevanam Care handoff"));
   assert.ok(!page.includes("Find care or bring your practice online."));
+  assert.ok(!page.includes("Premium public discovery"));
+  assert.ok(!page.includes("Search, compare and book with confidence."));
+  assert.ok(!page.includes("Explore doctors nearby"));
+  assert.ok(!page.includes("Location aware search"));
+  assert.ok(!page.includes("Public-safe data"));
+  assert.ok(!page.includes("home-search-meta"));
+  assert.ok(!page.includes("Health packages"));
+  assert.ok(!page.includes("Tests & diagnostics"));
   assert.ok(!styles.includes("final-cta"));
-  assert.ok(page.includes("Dr. Anjali Sharma"));
-  assert.ok(page.includes("Sunrise Family Clinic"));
-  assert.ok(page.includes("Hospital discovery"));
+  assert.ok(page.includes("Find trusted healthcare near you."));
+  assert.ok(!page.includes("Find trusted healthcare\n              <br />\n              near you."));
   assert.ok(page.includes('className="visually-hidden">Search'));
   assert.ok(page.includes('className="visually-hidden">Location'));
-  assert.ok(page.includes("hero-profile-card"));
-  assert.ok(page.includes("hero-clinic-card"));
+  assert.ok(page.includes("home-hero-grid"));
+  assert.ok(page.includes("home-category-strip"));
+  assert.ok(page.includes("home-hero-visual-image"));
+  assert.ok(page.includes("home-doctors-layout"));
+  assert.ok(page.includes("AivaDiscoveryAssistantCard"));
+  assert.ok(styles.includes(".home-aiva-panel"));
+  assert.ok(styles.includes(".home-aiva-card"));
+  assert.ok(styles.includes(".home-aiva-coming-soon"));
+  assert.ok(styles.includes(".home-preview-label"));
+  assert.ok(styles.includes("scrollbar-width: none"));
+  assert.ok(styles.includes("flex-wrap: wrap"));
+  assert.ok(styles.includes("overflow-x: auto"));
+  assert.ok(styles.includes(".popular-searches .chip-row::-webkit-scrollbar"));
+  assert.ok(styles.includes("text-decoration: underline"));
+  assert.ok(page.includes("homepage-hospital-grid"));
+  assert.ok(page.includes("Nearby radius"));
+  assert.ok(!page.includes("home-hero-visual-frame"));
+  assert.ok(!page.includes("hero-visual-stack"));
+  assert.ok(!page.includes("hero-visual-badges"));
   assert.ok(!components.includes("clinic-card-pattern"));
-  assert.ok(styles.includes("grid-template-columns: minmax(0, 3fr) minmax(150px, 1fr) minmax(132px, 1fr);"));
+  assert.ok(styles.includes(".header-location-selector-summary"));
+  assert.ok(styles.includes(".home-hero-visual"));
+  assert.ok(styles.includes("repeat(6, minmax(0, 1fr))"));
+  assert.ok(styles.includes("max-width: 32ch"));
+  assert.ok(styles.includes("font-size: clamp(2rem, 2.55vw, 2.62rem)"));
+  assert.ok(styles.includes("grid-template-columns: minmax(0, 3.35fr) minmax(176px, 1fr) minmax(136px, 160px)"));
+  assert.ok(styles.includes("padding-inline: 14px"));
+  assert.ok(styles.includes("min-height: 72px"));
+  assert.ok(styles.includes("margin-top: 16px"));
+  assert.ok(styles.includes("min-height: 146px"));
+  assert.ok(styles.includes("padding: 16px 15px 13px"));
+  assert.ok(styles.includes("object-fit: contain"));
+  assert.ok(styles.includes("object-position: center center"));
+  assert.ok(styles.includes("transform: translateY(-4px)"));
+  assert.ok(styles.includes(".chip--success"));
+  assert.ok(styles.includes(".chip--info"));
+  assert.ok(styles.includes(".chip--muted"));
+  assert.ok(styles.includes(".directory-avatar-illustration"));
+  assert.ok(styles.includes(".footer-placeholder-link"));
+  assert.ok(config.includes("showHomeDemoProviders"));
+  assert.ok(config.includes("VITE_SHOW_HOME_DEMO_PROVIDERS"));
+  assert.ok(page.includes("homeDemoProviders"));
 });
 
 test("provider onboarding routes render governed wizard instead of technical placeholders", () => {

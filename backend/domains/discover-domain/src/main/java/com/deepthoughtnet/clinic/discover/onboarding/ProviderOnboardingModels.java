@@ -195,6 +195,7 @@ public final class ProviderOnboardingModels {
             List<String> validationWarnings,
             List<String> blockingErrors,
             boolean canSubmit,
+            boolean previewReady,
             String recommendedNextStep,
             String currentStep,
             boolean readOnly

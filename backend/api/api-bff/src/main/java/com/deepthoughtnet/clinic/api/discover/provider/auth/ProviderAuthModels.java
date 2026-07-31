@@ -55,6 +55,9 @@ public final class ProviderAuthModels {
             int completionPercent,
             String currentStep,
             boolean contactVerified,
+            boolean requiresAttention,
+            int missingRequirementCount,
+            boolean previewReady,
             OffsetDateTime updatedAt,
             OffsetDateTime submittedAt,
             String publicProfilePath
@@ -66,7 +69,10 @@ public final class ProviderAuthModels {
             String contactPhone,
             OffsetDateTime emailVerifiedAt,
             OffsetDateTime phoneVerifiedAt,
-            List<WorkspaceApplicationResponse> applications
+            List<WorkspaceApplicationResponse> applications,
+            List<WorkspaceApplicationResponse> publishedProfiles,
+            int attentionCount,
+            List<ProviderType> supportedProviderTypes
     ) {
     }
 
@@ -77,7 +83,8 @@ public final class ProviderAuthModels {
     }
 
     public record ProviderWorkspaceStartRequest(
-            ProviderType providerType
+            ProviderType providerType,
+            Boolean createNew
     ) {
     }
 

@@ -87,6 +87,7 @@ public class ProviderOnboardingService {
             ProviderLifecycleStatus.UNDER_REVIEW,
             ProviderLifecycleStatus.APPROVED,
             ProviderLifecycleStatus.PUBLISHED,
+            ProviderLifecycleStatus.DISCARDED,
             ProviderLifecycleStatus.SUSPENDED,
             ProviderLifecycleStatus.ARCHIVED
     );
@@ -161,7 +162,7 @@ public class ProviderOnboardingService {
         entity.touch(completion.completionPercentage(), completion.currentStep());
         applications.saveAndFlush(entity);
         contactVerifications.save(ProviderContactVerificationEntity.create(entity.getId(), normalizeEmail(command.email()), normalizePhone(command.phone())));
-        history.save(new ProviderStatusHistoryEntity(entity.getId(), null, entity.getStatus(), "Draft created"));
+        history.save(new ProviderStatusHistoryEntity(entity.getId(), null, entity.getStatus(), "PROVIDER", "Draft created"));
         return toRecord(entity, token);
     }
 
@@ -198,15 +199,16 @@ public class ProviderOnboardingService {
     }
 
     @Transactional
-    public ProviderWorkspaceStartRecord startOrResumeOwnedApplication(ProviderType providerType, UUID providerAccountId) {
+    public ProviderWorkspaceStartRecord startOrResumeOwnedApplication(ProviderType providerType, UUID providerAccountId, boolean createNew) {
         require(providerType != null, "providerType is required");
         require(providerAccountId != null, "provider account is required");
 
         ProviderApplicationEntity existing = applications.findByProviderAccountIdOrderByUpdatedAtDesc(providerAccountId).stream()
                 .filter(application -> application.getProviderType() == providerType)
+                .filter(application -> isResumeable(application.getStatus()))
                 .findFirst()
                 .orElse(null);
-        if (existing != null) {
+        if (existing != null && !createNew) {
             String onboardingToken = null;
             if (isWorkspaceEditable(existing.getStatus())) {
                 onboardingToken = newToken();
@@ -226,7 +228,6 @@ public class ProviderOnboardingService {
 
         var account = verificationService.findAccountById(providerAccountId)
                 .orElseThrow(() -> new IllegalArgumentException("provider account is required"));
-        requireText(account.getNormalizedEmail(), "provider account email");
         requireText(account.getNormalizedPhone(), "provider account phone");
 
         UUID id = UUID.randomUUID();
@@ -236,7 +237,7 @@ public class ProviderOnboardingService {
                 referenceNumber(providerType, id),
                 providerType,
                 digest(onboardingToken),
-                normalizeEmail(account.getNormalizedEmail()),
+                normalizeEmailOrNull(account.getNormalizedEmail()),
                 normalizePhone(account.getNormalizedPhone()),
                 digest(newToken()),
                 true,
@@ -249,7 +250,7 @@ public class ProviderOnboardingService {
         applications.saveAndFlush(entity);
         ProviderContactVerificationEntity verification = ProviderContactVerificationEntity.create(
                 entity.getId(),
-                normalizeEmail(account.getNormalizedEmail()),
+                normalizeEmailOrNull(account.getNormalizedEmail()),
                 normalizePhone(account.getNormalizedPhone())
         );
         if (account.getEmailVerifiedAt() != null) {
@@ -259,7 +260,7 @@ public class ProviderOnboardingService {
             verification.markPhoneVerified();
         }
         contactVerifications.save(verification);
-        history.save(new ProviderStatusHistoryEntity(entity.getId(), null, entity.getStatus(), "Draft created from provider workspace"));
+        history.save(new ProviderStatusHistoryEntity(entity.getId(), null, entity.getStatus(), "PROVIDER", "Draft created from provider workspace"));
         return new ProviderWorkspaceStartRecord(
                 entity.getId(),
                 entity.getReferenceNumber(),
@@ -269,6 +270,25 @@ public class ProviderOnboardingService {
                 onboardingToken,
                 null
         );
+    }
+
+    @Transactional
+    public ProviderApplicationRecord discard(UUID id, String token, String reason) {
+        ProviderApplicationEntity entity = requireById(id);
+        requireOwns(entity, token);
+        ensureDiscardable(entity);
+        transition(entity, ProviderLifecycleStatus.DISCARDED, firstText(reason, "Onboarding discarded"), "PROVIDER");
+        applications.saveAndFlush(entity);
+        return toRecord(entity, null);
+    }
+
+    @Transactional
+    public ProviderApplicationRecord discardOwnedApplication(String referenceNumber, UUID providerAccountId, String reason) {
+        ProviderApplicationEntity entity = requireOwnedApplicationByReference(referenceNumber, providerAccountId);
+        ensureDiscardable(entity);
+        transition(entity, ProviderLifecycleStatus.DISCARDED, firstText(reason, "Onboarding discarded"), "PROVIDER");
+        applications.saveAndFlush(entity);
+        return toRecord(entity, null);
     }
 
     @Transactional(readOnly = true)
@@ -315,7 +335,7 @@ public class ProviderOnboardingService {
         entity.touch(completion.completionPercentage(), completion.currentStep());
         ProviderLifecycleStatus nextStatus = deriveProviderStatusAfterUpdate(entity, completion);
         if (nextStatus != entity.getStatus()) {
-            transition(entity, nextStatus, statusReason(nextStatus));
+            transition(entity, nextStatus, statusReason(nextStatus), "PROVIDER");
         }
         applications.saveAndFlush(entity);
         return toRecord(entity, null);
@@ -464,7 +484,7 @@ public class ProviderOnboardingService {
         return new ProviderPreviewRecord(
                 entity.getId(),
                 entity.getProviderType(),
-                firstText(entity.getDisplayName(), entity.getLegalName(), entity.getEmail()),
+                firstText(entity.getDisplayName(), entity.getLegalName(), entity.getEmail(), entity.getPhone()),
                 subtitle(entity),
                 locationSummary(locationRecords),
                 serviceRecords.stream().filter(ProviderServiceEntity::isEnabled).map(ProviderServiceEntity::getLabel).toList(),
@@ -627,7 +647,13 @@ public class ProviderOnboardingService {
                 responseNote
         ));
         resolveOpenChangeRequests(entity.getId(), responseNote);
-        history.save(new ProviderStatusHistoryEntity(entity.getId(), before, ProviderLifecycleStatus.SUBMITTED, before == ProviderLifecycleStatus.CHANGES_REQUESTED ? "Resubmitted for verification" : "Submitted for verification"));
+        history.save(new ProviderStatusHistoryEntity(
+                entity.getId(),
+                before,
+                ProviderLifecycleStatus.SUBMITTED,
+                "PROVIDER",
+                before == ProviderLifecycleStatus.CHANGES_REQUESTED ? "Resubmitted for verification" : "Submitted for verification"
+        ));
         applications.saveAndFlush(entity);
         return toRecord(entity, null);
     }
@@ -709,9 +735,9 @@ public class ProviderOnboardingService {
             case CLINIC, HOSPITAL -> entity.getLogoDocumentId() != null;
         };
         boolean documentsComplete = missingDocuments.isEmpty();
-        boolean previewReady = accountComplete && profileComplete && detailsComplete && servicesComplete && locationsComplete && brandingComplete && documentsComplete;
+        boolean previewReady = accountComplete && profileComplete && detailsComplete && servicesComplete && locationsComplete && brandingComplete;
         boolean referenceDataAvailable = referenceDataService.isAvailableForSubmission(entity.getProviderType());
-        boolean canSubmit = previewReady && missingFields.isEmpty() && missingDocuments.isEmpty() && referenceDataAvailable && !isReadOnly(entity.getStatus());
+        boolean canSubmit = previewReady && documentsComplete && missingFields.isEmpty() && referenceDataAvailable && !isReadOnly(entity.getStatus());
 
         List<StepState> steps = List.of(
                 new StepState("ACCOUNT", "Account and contact", accountComplete, 10),
@@ -728,6 +754,11 @@ public class ProviderOnboardingService {
         List<String> completedSteps = steps.stream().filter(StepState::complete).map(StepState::label).toList();
         List<String> incompleteSteps = steps.stream().filter(step -> !step.complete()).map(StepState::label).toList();
         String recommendedNextStep = incompleteSteps.isEmpty() ? "Review and submit" : incompleteSteps.get(0);
+        String currentStep = steps.stream()
+                .filter(step -> !step.complete())
+                .findFirst()
+                .map(StepState::code)
+                .orElse("REVIEW");
         int completionPercent = steps.stream()
                 .filter(StepState::complete)
                 .mapToInt(StepState::weight)
@@ -754,8 +785,9 @@ public class ProviderOnboardingService {
                 warnings,
                 blockingErrors,
                 canSubmit,
+                previewReady,
                 recommendedNextStep,
-                entity.getCurrentStep(),
+                currentStep,
                 isReadOnly(entity.getStatus())
         );
     }
@@ -828,6 +860,9 @@ public class ProviderOnboardingService {
         if (entity.getStatus() == ProviderLifecycleStatus.CHANGES_REQUESTED) {
             nextAction = "Address requested changes";
         }
+        if (entity.getStatus() == ProviderLifecycleStatus.DISCARDED) {
+            nextAction = "Onboarding discarded";
+        }
         return new ProviderDashboardRecord(application, completion, timeline, requestRecords, isReadOnly(entity.getStatus()), nextAction);
     }
 
@@ -836,7 +871,7 @@ public class ProviderOnboardingService {
         ProviderPreviewRecord preview = new ProviderPreviewRecord(
                 entity.getId(),
                 entity.getProviderType(),
-                firstText(entity.getDisplayName(), entity.getLegalName(), entity.getEmail()),
+                firstText(entity.getDisplayName(), entity.getLegalName(), entity.getEmail(), entity.getPhone()),
                 subtitle(entity),
                 locationSummary(currentLocations(entity.getId())),
                 currentServices(entity.getId()).stream().filter(ProviderServiceEntity::isEnabled).map(ProviderServiceEntity::getLabel).toList(),
@@ -865,7 +900,7 @@ public class ProviderOnboardingService {
         return new ProviderTimelineEventRecord(
                 timelineLabel(entity.getToStatus()),
                 entity.getReason(),
-                timelineActor(entity.getToStatus()),
+                timelineActor(entity.getActorCategory(), entity.getToStatus()),
                 entity.getCreatedAt()
         );
     }
@@ -1048,9 +1083,13 @@ public class ProviderOnboardingService {
     }
 
     private void transition(ProviderApplicationEntity entity, ProviderLifecycleStatus next, String reason) {
+        transition(entity, next, reason, null);
+    }
+
+    private void transition(ProviderApplicationEntity entity, ProviderLifecycleStatus next, String reason, String actorCategory) {
         ProviderLifecycleStatus previous = entity.getStatus();
         entity.setStatus(next);
-        history.save(new ProviderStatusHistoryEntity(entity.getId(), previous, next, reason));
+        history.save(new ProviderStatusHistoryEntity(entity.getId(), previous, next, actorCategory, reason));
     }
 
     private void attachBrandingReference(ProviderApplicationEntity entity, ProviderDocumentEntity document) {
@@ -1176,7 +1215,7 @@ public class ProviderOnboardingService {
                 entity.getProviderType(),
                 entity.getStatus(),
                 entity.getRowVersion(),
-                firstText(entity.getDisplayName(), entity.getLegalName(), entity.getEmail()),
+                firstText(entity.getDisplayName(), entity.getLegalName(), entity.getEmail(), entity.getPhone()),
                 entity.getRegistrationNumber(),
                 entity.getEmail(),
                 entity.getPhone(),
@@ -1246,9 +1285,9 @@ public class ProviderOnboardingService {
         return contactVerifications.findByProviderId(entity.getId())
                 .map(existing -> {
                     boolean changed = false;
-                    String emailNormalized = normalize(entity.getEmail());
+                    String emailNormalized = normalizeEmailOrNull(entity.getEmail());
                     String phoneNormalized = normalize(entity.getPhone());
-                    if (!emailNormalized.equals(existing.getEmailNormalized())) {
+                    if (emailNormalized != null && !emailNormalized.equals(existing.getEmailNormalized())) {
                         existing.setEmailNormalized(emailNormalized);
                         existing.setEmailOtpHash(null);
                         existing.setEmailOtpExpiresAt(null);
@@ -1269,15 +1308,15 @@ public class ProviderOnboardingService {
                     }
                     return existing;
                 })
-                .orElseGet(() -> contactVerifications.save(ProviderContactVerificationEntity.create(entity.getId(), normalize(entity.getEmail()), normalize(entity.getPhone()))));
+                .orElseGet(() -> contactVerifications.save(ProviderContactVerificationEntity.create(entity.getId(), normalizeEmailOrNull(entity.getEmail()), normalize(entity.getPhone()))));
     }
 
     private void syncContactVerification(ProviderApplicationEntity entity) {
         ProviderContactVerificationEntity verification = ensureContactVerification(entity);
         boolean changed = false;
-        String emailNormalized = normalize(entity.getEmail());
+        String emailNormalized = normalizeEmailOrNull(entity.getEmail());
         String phoneNormalized = normalize(entity.getPhone());
-        if (!emailNormalized.equals(verification.getEmailNormalized())) {
+        if (emailNormalized != null && !emailNormalized.equals(verification.getEmailNormalized())) {
             verification.setEmailNormalized(emailNormalized);
             verification.setEmailOtpHash(null);
             verification.setEmailOtpExpiresAt(null);
@@ -1378,16 +1417,34 @@ public class ProviderOnboardingService {
             case CHANGES_REQUESTED -> "Changes requested";
             case APPROVED -> "Approved";
             case PUBLISHED -> "Published";
+            case DISCARDED -> "Onboarding discarded";
             case SUSPENDED -> "Suspended";
             case ARCHIVED -> "Archived";
         };
     }
 
-    private String timelineActor(ProviderLifecycleStatus status) {
+    private String timelineActor(String actorCategory, ProviderLifecycleStatus status) {
+        if (StringUtils.hasText(actorCategory)) {
+            String normalized = actorCategory.trim().toUpperCase(Locale.ROOT);
+            return switch (normalized) {
+                case "PROVIDER" -> "Provider";
+                case "PLATFORM_ADMIN", "ADMIN", "REVIEW_TEAM" -> "Review team";
+                case "SYSTEM" -> "System";
+                default -> humanizeEnumLabel(actorCategory);
+            };
+        }
         return switch (status) {
             case DRAFT, CONTACT_VERIFIED, PROFILE_INCOMPLETE, READY_FOR_REVIEW, SUBMITTED -> "Provider";
-            case UNDER_REVIEW, CHANGES_REQUESTED, APPROVED, PUBLISHED, SUSPENDED, ARCHIVED -> "Review Team";
+            case UNDER_REVIEW, CHANGES_REQUESTED, APPROVED, PUBLISHED, DISCARDED, SUSPENDED, ARCHIVED -> "Review team";
         };
+    }
+
+    private String humanizeEnumLabel(String value) {
+        if (!StringUtils.hasText(value)) {
+            return "";
+        }
+        String normalized = value.trim().replace('_', ' ').toLowerCase(Locale.ROOT);
+        return Character.toUpperCase(normalized.charAt(0)) + normalized.substring(1);
     }
 
     private String referenceNumber(ProviderType providerType, UUID id) {
@@ -1442,12 +1499,32 @@ public class ProviderOnboardingService {
                 && status != ProviderLifecycleStatus.UNDER_REVIEW
                 && status != ProviderLifecycleStatus.APPROVED
                 && status != ProviderLifecycleStatus.PUBLISHED
+                && status != ProviderLifecycleStatus.DISCARDED
                 && status != ProviderLifecycleStatus.SUSPENDED
                 && status != ProviderLifecycleStatus.ARCHIVED;
     }
 
+    private boolean isResumeable(ProviderLifecycleStatus status) {
+        return status == ProviderLifecycleStatus.DRAFT
+                || status == ProviderLifecycleStatus.CONTACT_VERIFIED
+                || status == ProviderLifecycleStatus.PROFILE_INCOMPLETE
+                || status == ProviderLifecycleStatus.READY_FOR_REVIEW
+                || status == ProviderLifecycleStatus.CHANGES_REQUESTED;
+    }
+
+    private void ensureDiscardable(ProviderApplicationEntity entity) {
+        require(isResumeable(entity.getStatus()), "provider application cannot be discarded from its current status");
+    }
+
     private String normalizeEmail(String value) {
         if (!StringUtils.hasText(value)) throw new IllegalArgumentException("required text is missing");
+        return value.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private String normalizeEmailOrNull(String value) {
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
         return value.trim().toLowerCase(Locale.ROOT);
     }
 

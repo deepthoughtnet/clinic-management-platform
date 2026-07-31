@@ -24,6 +24,7 @@ public final class ProviderOnboardingEnums {
         CHANGES_REQUESTED,
         APPROVED,
         PUBLISHED,
+        DISCARDED,
         SUSPENDED,
         ARCHIVED
     }

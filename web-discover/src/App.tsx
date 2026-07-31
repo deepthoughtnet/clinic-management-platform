@@ -1,11 +1,20 @@
 import { Component, type ErrorInfo, type ReactNode, useEffect, useState } from "react";
+import { CheckCircleOutlineOutlined, LocationOnOutlined } from "@mui/icons-material";
 import { Link, Navigate, NavLink, Outlet, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import { discoverBrand } from "./branding";
 import { DiscoverEmptyState } from "./components/DiscoveryComponents";
 import { discoverConfig } from "./config";
-import { PublicLocationProvider } from "./context/PublicLocationContext";
+import {
+  PUBLIC_CURRENT_LOCATION_LABEL,
+  PUBLIC_DEFAULT_LOCATION,
+  PUBLIC_LOCATION_OPTIONS,
+  PublicLocationProvider,
+  normalizePublicLocation,
+  type PublicLocationCoordinates,
+  usePublicLocation,
+} from "./context/PublicLocationContext";
 import { ProviderSessionProvider, useProviderSession } from "./context/ProviderSessionContext";
-import { startProviderApplication } from "./api/providerAuth";
+import { ProviderAuthError, startProviderApplication } from "./api/providerAuth";
 import {
   PublicClinicDetailPage,
   PublicClinicsPage,
@@ -25,6 +34,7 @@ import { ProviderLandingPagePage } from "./pages/provider/ProviderLandingPagePag
 import { ProviderOnboardingPage } from "./pages/provider/ProviderOnboardingPage";
 import { ProviderWorkspacePage } from "./pages/provider/ProviderWorkspacePage";
 import { DISCOVER_ROUTES, primaryNavigationRoutes } from "./routes";
+import { providerOnboardingStepRoute } from "./features/provider/providerOnboardingRoutes";
 
 type ShellPageProps = {
   eyebrow: string;
@@ -199,6 +209,97 @@ function maskProviderIdentity(value: string | null) {
   return `${"*".repeat(Math.max(0, digits.length - 4))}${digits.slice(-4)}`;
 }
 
+function HeaderLocationSelector() {
+  const { locationState, setSelectedLocation } = usePublicLocation();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [draftLocation, setDraftLocation] = useState(locationState.location);
+  const [message, setMessage] = useState<string | null>(null);
+  const [detecting, setDetecting] = useState(false);
+
+  useEffect(() => {
+    if (menuOpen) {
+      setDraftLocation(locationState.location);
+      setMessage(null);
+    }
+  }, [locationState.location, menuOpen]);
+
+  function commitSelectedLocation(nextLocation: string, nextCoordinates: PublicLocationCoordinates | null = null) {
+    const normalizedLocation = normalizePublicLocation(nextLocation) || PUBLIC_DEFAULT_LOCATION;
+    setSelectedLocation(normalizedLocation, nextCoordinates);
+    setDraftLocation(normalizedLocation);
+    setMessage(null);
+    setMenuOpen(false);
+  }
+
+  function handleCurrentLocation() {
+    setMessage(null);
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      setMessage("Location services are not available in this browser.");
+      return;
+    }
+    setDetecting(true);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        commitSelectedLocation(PUBLIC_CURRENT_LOCATION_LABEL, {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        });
+        setDetecting(false);
+      },
+      () => {
+        setDetecting(false);
+        setMessage("Location permission was not allowed.");
+      },
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 },
+    );
+  }
+
+  return (
+    <div className="header-location-selector">
+      <button
+        className="ghost-button header-location-selector-summary"
+        type="button"
+        aria-haspopup="dialog"
+        aria-expanded={menuOpen}
+        aria-label={`Change location, currently ${locationState.location}`}
+        onClick={() => setMenuOpen((current) => !current)}
+      >
+        <LocationOnOutlined fontSize="small" aria-hidden="true" />
+        <span>{locationState.location}</span>
+      </button>
+      {menuOpen ? (
+        <div className="header-location-selector-panel" role="dialog" aria-label="Select location">
+          <label className="header-location-selector-field">
+            <span className="header-location-selector-label">City or locality</span>
+            <input value={draftLocation} onChange={(event) => setDraftLocation(normalizePublicLocation(event.target.value))} placeholder="Pune" />
+          </label>
+          <div className="chip-row" role="list" aria-label="Popular locations">
+            {PUBLIC_LOCATION_OPTIONS.map((location) => (
+              <button key={location} className="chip-button" type="button" onClick={() => commitSelectedLocation(location)}>
+                {location}
+              </button>
+            ))}
+          </div>
+          <div className="cta-row">
+            <button className="secondary-button" type="button" onClick={() => commitSelectedLocation(draftLocation)} disabled={!normalizePublicLocation(draftLocation)}>
+              Save location
+            </button>
+            <button className="text-button" type="button" onClick={handleCurrentLocation} disabled={detecting}>
+              {detecting ? "Detecting..." : "Use my current location"}
+            </button>
+            {locationState.location !== PUBLIC_DEFAULT_LOCATION ? (
+              <button className="text-button" type="button" onClick={() => commitSelectedLocation(PUBLIC_DEFAULT_LOCATION, null)}>
+                Clear
+              </button>
+            ) : null}
+          </div>
+          {message ? <p className="form-note" role="status">{message}</p> : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function ProviderHeaderActions() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -228,28 +329,36 @@ function ProviderHeaderActions() {
   if (status === "authenticated") {
     return (
       <div className="header-actions header-actions--authenticated">
+        <HeaderLocationSelector />
         <a className="ghost-button" href={discoverConfig.careAppUrl} target="_blank" rel="noopener noreferrer">
           Patient Login
         </a>
-        <div className="header-session-summary">
-          <span className="header-session-pill">Active provider session</span>
-          <span className="header-session-identity">{maskedIdentity ? `Signed in as ${maskedIdentity}` : "Provider account active"}</span>
-        </div>
-        <Link className="ghost-button" to={DISCOVER_ROUTES.providerWorkspace.path}>
-          Provider Account
-        </Link>
-        <button className="ghost-button" type="button" onClick={() => void endSession(DISCOVER_ROUTES.providerLogin.path)} disabled={loggingOut}>
-          Switch account
-        </button>
-        <button className="primary-button" type="button" onClick={() => void endSession(DISCOVER_ROUTES.providerLogin.path)} disabled={loggingOut}>
-          Logout
-        </button>
+        <details className="provider-account-menu">
+          <summary className="ghost-button provider-account-menu-summary" aria-label="Provider account menu">
+            <span className="provider-account-menu-label">
+              <span className="provider-account-menu-title">Provider Account</span>
+              <span className="provider-account-menu-subtitle">{maskedIdentity ? `Signed in as ${maskedIdentity}` : "Active session"}</span>
+            </span>
+          </summary>
+          <div className="provider-account-menu-panel" role="menu" aria-label="Provider account actions">
+            <Link className="provider-account-menu-item" to={DISCOVER_ROUTES.providerWorkspace.path}>
+              Dashboard
+            </Link>
+            <button className="provider-account-menu-item" type="button" onClick={() => void endSession(DISCOVER_ROUTES.providerLogin.path)} disabled={loggingOut}>
+              Switch account
+            </button>
+            <button className="provider-account-menu-item provider-account-menu-item--danger" type="button" onClick={() => void endSession(DISCOVER_ROUTES.providerLogin.path)} disabled={loggingOut}>
+              Logout
+            </button>
+          </div>
+        </details>
       </div>
     );
   }
 
   return (
     <div className="header-actions">
+      <HeaderLocationSelector />
       <a className="ghost-button" href={discoverConfig.careAppUrl} target="_blank" rel="noopener noreferrer">
         Patient Login
       </a>
@@ -266,6 +375,7 @@ function ProviderHeaderActions() {
 function Shell({ children }: { children: ReactNode }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const location = useLocation();
+  const isDoctorsDirectoryRoute = location.pathname === DISCOVER_ROUTES.doctors.path;
 
   useEffect(() => {
     setMenuOpen(false);
@@ -273,7 +383,7 @@ function Shell({ children }: { children: ReactNode }) {
   }, [location.pathname]);
 
   return (
-    <div className="discover-shell">
+    <div className={`discover-shell${isDoctorsDirectoryRoute ? " discover-shell--doctors-directory-wide" : ""}`}>
       <header className="site-header">
         <div className="header-inner">
           <BrandLockup />
@@ -319,7 +429,7 @@ function Shell({ children }: { children: ReactNode }) {
             <Link to={DISCOVER_ROUTES.doctors.path}>Find doctors</Link>
             <Link to={DISCOVER_ROUTES.clinics.path}>Find clinics</Link>
             <Link to={DISCOVER_ROUTES.hospitals.path}>Find hospitals</Link>
-            <Link to={DISCOVER_ROUTES.specialities.path}>Browse specialities</Link>
+            <Link to={DISCOVER_ROUTES.specialities.path}>Specialities</Link>
             <a href={discoverConfig.careAppUrl} target="_blank" rel="noopener noreferrer">
               Patient login
             </a>
@@ -327,22 +437,42 @@ function Shell({ children }: { children: ReactNode }) {
           <nav className="footer-column" aria-label="Providers">
             <strong>Providers</strong>
             <Link to={DISCOVER_ROUTES.listPractice.path}>Register practice</Link>
+            <Link to={DISCOVER_ROUTES.providerLogin.path}>Provider login</Link>
             <Link to={DISCOVER_ROUTES.healthcare.path}>Provider information</Link>
-            <Link to={DISCOVER_ROUTES.pricing.path}>Pricing</Link>
-            <a href={discoverConfig.healthcareAppUrl}>Clinic / Hospital login</a>
           </nav>
           <nav className="footer-column" aria-label="Support">
             <strong>Support</strong>
             <Link to={DISCOVER_ROUTES.about.path}>About</Link>
             <Link to={DISCOVER_ROUTES.contact.path}>Contact</Link>
+            <Link to={DISCOVER_ROUTES.contact.path}>Help</Link>
+            <a className="footer-placeholder-link" href="#" onClick={(event) => event.preventDefault()}>
+              Accessibility
+            </a>
+            <a className="footer-placeholder-link" href="#" onClick={(event) => event.preventDefault()}>
+              Sitemap
+            </a>
+          </nav>
+          <nav className="footer-column" aria-label="Legal">
+            <strong>Legal</strong>
             <Link to={DISCOVER_ROUTES.privacy.path}>Privacy</Link>
             <Link to={DISCOVER_ROUTES.terms.path}>Terms</Link>
+            <a className="footer-placeholder-link" href="#" onClick={(event) => event.preventDefault()}>
+              Status
+            </a>
+            <a className="footer-placeholder-link" href="#" onClick={(event) => event.preventDefault()}>
+              Security
+            </a>
+            <a className="footer-placeholder-link" href="#" onClick={(event) => event.preventDefault()}>
+              Cookies
+            </a>
           </nav>
           <section className="footer-bottom">
-            <span>© {new Date().getFullYear()} Jeevanam. Public healthcare discovery for patients and providers.</span>
+            <span>© {new Date().getFullYear()} Jeevanam Discover. Trusted public healthcare discovery for patients and providers.</span>
             <div>
-              <Link to={DISCOVER_ROUTES.privacy.path}>Privacy</Link>
-              <Link to={DISCOVER_ROUTES.terms.path}>Terms</Link>
+              <span className="footer-trust-note">
+                <CheckCircleOutlineOutlined fontSize="small" aria-hidden="true" />
+                Verified public information and clear discovery routes.
+              </span>
             </div>
           </section>
         </div>
@@ -353,7 +483,7 @@ function Shell({ children }: { children: ReactNode }) {
 
 function ShellPage({ eyebrow, title, body, stateIcon, stateTitle, stateBody, ctaLabel, ctaTo, secondaryLabel, secondaryTo }: ShellPageProps) {
   return (
-    <section className="page-section compact-page">
+    <section className="page-section compact-page shell-page">
       <div className="compact-page-hero">
         <span className="eyebrow">{eyebrow}</span>
         <h1>{title}</h1>
@@ -442,6 +572,13 @@ function ProviderProtectedRoute() {
 }
 
 function ProviderEntryPage() {
+  const location = useLocation();
+  const { workspace } = useProviderSession();
+  const addAnotherProfile = new URLSearchParams(location.search).get("mode") === "add";
+  const supportedProviderTypes = workspace?.supportedProviderTypes?.length
+    ? workspace.supportedProviderTypes
+    : ["INDIVIDUAL_DOCTOR", "CLINIC", "HOSPITAL"];
+
   const stages = [
     ["Create account", "Start with basic contact and practice information."],
     ["Complete profile", "Add doctors, specialities, services and locations."],
@@ -454,30 +591,33 @@ function ProviderEntryPage() {
       icon: "DR",
       body: "Create a professional profile for patients looking for your speciality.",
       details: "Best for independent doctors and consultants.",
-      to: `${DISCOVER_ROUTES.registerDoctor.path}?intent=INDIVIDUAL_DOCTOR`,
+      providerType: "INDIVIDUAL_DOCTOR",
+      to: `${DISCOVER_ROUTES.registerDoctor.path}?intent=INDIVIDUAL_DOCTOR${addAnotherProfile ? "&mode=add" : ""}`,
     },
     {
       title: "Clinic",
       icon: "CL",
       body: "Present your clinic, doctor team, services, locations and appointment options.",
       details: "Best for outpatient practices and care centres.",
-      to: `${DISCOVER_ROUTES.registerClinic.path}?intent=CLINIC`,
+      providerType: "CLINIC",
+      to: `${DISCOVER_ROUTES.registerClinic.path}?intent=CLINIC${addAnotherProfile ? "&mode=add" : ""}`,
     },
     {
       title: "Hospital",
       icon: "H",
       body: "Prepare a hospital presence with departments, facilities and doctor information.",
       details: "Best for hospitals and multi-speciality organisations.",
-      to: `${DISCOVER_ROUTES.registerHospital.path}?intent=HOSPITAL`,
+      providerType: "HOSPITAL",
+      to: `${DISCOVER_ROUTES.registerHospital.path}?intent=HOSPITAL${addAnotherProfile ? "&mode=add" : ""}`,
     },
-  ];
+  ].filter((card) => supportedProviderTypes.includes(card.providerType as ProviderType));
 
   return (
     <section className="page-section">
       <div className="section-heading compact-page-hero">
         <span className="eyebrow">Provider registration</span>
-        <h1>List your practice on Jeevanam Discover</h1>
-        <p>Create a public presence for your practice and help patients understand the care you offer.</p>
+        <h1>{addAnotherProfile ? "Add another profile" : "List your practice on Jeevanam Discover"}</h1>
+        <p>{addAnotherProfile ? "Choose the provider type for the new profile you want to add." : "Create a public presence for your practice and help patients understand the care you offer."}</p>
       </div>
       <div className="provider-card-grid">
         {cards.map((card) => (
@@ -486,7 +626,9 @@ function ProviderEntryPage() {
             <h2>{card.title}</h2>
             <p>{card.body}</p>
             <span>{card.details}</span>
-            <Link className="primary-button" to={card.to}>Start {card.title.toLowerCase()} registration</Link>
+            <Link className="primary-button" to={card.to}>
+              {addAnotherProfile ? `Add ${card.title} profile` : `Start ${card.title.toLowerCase()} registration`}
+            </Link>
           </article>
         ))}
       </div>
@@ -503,21 +645,6 @@ function ProviderEntryPage() {
   );
 }
 
-function providerStepRoute(step: string) {
-  const normalized = step.toUpperCase();
-  if (normalized.includes("ACCOUNT")) return "account";
-  if (normalized.includes("PROFILE")) return "organisation";
-  if (normalized.includes("ORGANISATION")) return "organisation";
-  if (normalized.includes("PROFESSIONAL")) return "professional";
-  if (normalized.includes("DETAILS")) return "professional";
-  if (normalized.includes("SERVICES")) return "services";
-  if (normalized.includes("LOCATION")) return "locations";
-  if (normalized.includes("BRANDING")) return "branding";
-  if (normalized.includes("DOCUMENT")) return "branding";
-  if (normalized.includes("PREVIEW")) return "preview";
-  return "submit";
-}
-
 function providerTypeForRegistrationPath(pathname: string): ProviderType | null {
   if (pathname === DISCOVER_ROUTES.registerDoctor.path) return "INDIVIDUAL_DOCTOR";
   if (pathname === DISCOVER_ROUTES.registerClinic.path) return "CLINIC";
@@ -530,6 +657,9 @@ function ProviderRegistrationStartPage() {
   const navigate = useNavigate();
   const { status } = useProviderSession();
   const providerType = providerTypeForRegistrationPath(location.pathname);
+  const addAnotherProfile = new URLSearchParams(location.search).get("mode") === "add";
+  const [bootstrapError, setBootstrapError] = useState<string | null>(null);
+  const [bootstrapAttempt, setBootstrapAttempt] = useState(0);
 
   useEffect(() => {
     if (!providerType) {
@@ -547,23 +677,63 @@ function ProviderRegistrationStartPage() {
     if (status !== "authenticated") {
       return;
     }
-    void startProviderApplication(providerType).then((result) => {
-      if (result.onboardingToken) {
-        const tokenKey = "jeevanam.discover.providerOnboardingToken";
-        localStorage.removeItem(`${tokenKey}.INDIVIDUAL_DOCTOR`);
-        localStorage.removeItem(`${tokenKey}.CLINIC`);
-        localStorage.removeItem(`${tokenKey}.HOSPITAL`);
-        localStorage.setItem(tokenKey, result.onboardingToken);
-        navigate(`/provider/onboarding/${result.applicationId}/${providerStepRoute(result.currentStep)}`, { replace: true });
-        return;
-      }
-      if (result.status === "PUBLISHED" && result.publicProfilePath) {
-        navigate(DISCOVER_ROUTES.providerWorkspace.path, { replace: true });
-        return;
-      }
-      navigate(DISCOVER_ROUTES.providerApplicationDashboard.path.replace(":applicationReference", encodeURIComponent(result.referenceNumber)), { replace: true });
-    });
-  }, [location.pathname, location.search, navigate, providerType, status]);
+    let active = true;
+    setBootstrapError(null);
+    void startProviderApplication(providerType, addAnotherProfile)
+      .then((result) => {
+        if (!active) {
+          return;
+        }
+        if (result.onboardingToken) {
+          const tokenKey = "jeevanam.discover.providerOnboardingToken";
+          localStorage.removeItem(`${tokenKey}.INDIVIDUAL_DOCTOR`);
+          localStorage.removeItem(`${tokenKey}.CLINIC`);
+          localStorage.removeItem(`${tokenKey}.HOSPITAL`);
+          localStorage.setItem(tokenKey, result.onboardingToken);
+          navigate(`/provider/onboarding/${result.applicationId}/${providerOnboardingStepRoute(result.currentStep)}`, { replace: true });
+          return;
+        }
+        if (result.status === "PUBLISHED" && result.publicProfilePath) {
+          navigate(DISCOVER_ROUTES.providerWorkspace.path, { replace: true });
+          return;
+        }
+        navigate(DISCOVER_ROUTES.providerApplicationDashboard.path.replace(":applicationReference", encodeURIComponent(result.referenceNumber)), { replace: true });
+      })
+      .catch((error) => {
+        if (!active) {
+          return;
+        }
+        const message = error instanceof ProviderAuthError
+          ? error.message
+          : error instanceof Error
+            ? error.message
+            : "Could not start your provider onboarding right now.";
+        setBootstrapError(message || "Could not start your provider onboarding right now.");
+      });
+    return () => {
+      active = false;
+    };
+  }, [addAnotherProfile, bootstrapAttempt, location.pathname, location.search, navigate, providerType, status]);
+
+  if (bootstrapError) {
+    return (
+      <section className="page-section provider-dashboard-page">
+        <div className="discover-empty-state is-compact provider-bootstrap-error" role="alert" aria-live="polite">
+          <span className="empty-state-icon" aria-hidden="true">!</span>
+          <strong>We could not start this provider application.</strong>
+          <p>{bootstrapError}</p>
+          <div className="cta-row">
+            <button className="primary-button" type="button" onClick={() => setBootstrapAttempt((value) => value + 1)}>
+              Try again
+            </button>
+            <Link className="secondary-button" to={DISCOVER_ROUTES.providerWorkspace.path}>
+              Open provider workspace
+            </Link>
+          </div>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className="page-section provider-dashboard-page">

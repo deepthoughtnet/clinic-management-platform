@@ -15,6 +15,7 @@ export type DiscoverConfig = {
   geocodingProvider: string;
   geocodingBaseUrl: string;
   geocodingSearchPath: string;
+  showHomeDemoProviders: boolean;
 };
 
 function trimEnv(value: string | undefined): string {
@@ -32,6 +33,20 @@ function parseNumber(value: string | undefined): number | null {
   }
   const parsed = Number(trimmed);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseBoolean(value: string | undefined): boolean | null {
+  const trimmed = trimEnv(value).toLowerCase();
+  if (!trimmed) {
+    return null;
+  }
+  if (["true", "1", "yes", "on"].includes(trimmed)) {
+    return true;
+  }
+  if (["false", "0", "no", "off"].includes(trimmed)) {
+    return false;
+  }
+  return null;
 }
 
 function appUrlFallback(app: "care" | "healthcare"): string {
@@ -61,6 +76,17 @@ function mapTileAttributionFallback(): string {
   return "&copy; OpenStreetMap contributors";
 }
 
+function defaultHomeDemoProviders(): boolean {
+  const environmentName = trimEnv(import.meta.env.VITE_ENV_NAME).toLowerCase();
+  if (environmentName === "local" || environmentName === "uat") {
+    return true;
+  }
+  if (typeof window !== "undefined") {
+    return window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+  }
+  return false;
+}
+
 export const discoverConfig: DiscoverConfig = {
   apiBaseUrl: trimEnv(import.meta.env.VITE_API_BASE_URL),
   careAppUrl: trimEnv(import.meta.env.VITE_CARE_APP_URL) || appUrlFallback("care"),
@@ -78,4 +104,5 @@ export const discoverConfig: DiscoverConfig = {
   geocodingProvider: trimEnv(import.meta.env.VITE_GEOCODING_PROVIDER),
   geocodingBaseUrl: trimEnv(import.meta.env.VITE_GEOCODING_BASE_URL),
   geocodingSearchPath: trimEnv(import.meta.env.VITE_GEOCODING_SEARCH_PATH),
+  showHomeDemoProviders: parseBoolean(import.meta.env.VITE_SHOW_HOME_DEMO_PROVIDERS) ?? defaultHomeDemoProviders(),
 };

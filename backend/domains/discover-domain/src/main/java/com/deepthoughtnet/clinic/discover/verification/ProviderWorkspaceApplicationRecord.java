@@ -14,6 +14,9 @@ public record ProviderWorkspaceApplicationRecord(
         int completionPercent,
         String currentStep,
         boolean contactVerified,
+        boolean requiresAttention,
+        int missingRequirementCount,
+        boolean previewReady,
         OffsetDateTime updatedAt,
         OffsetDateTime submittedAt,
         String publicProfilePath
