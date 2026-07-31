@@ -14,6 +14,7 @@ import com.deepthoughtnet.clinic.api.publicsite.dto.PublicSpecialityDetailRespon
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicSpecialitySummaryResponse;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderType;
 import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService.DoctorPublicMediaAsset;
+import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService.ProviderPublicMediaAsset;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProfileMediaContent;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderLocationSnapshot;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderProfileDetailRecord;
@@ -75,6 +76,16 @@ public class PublicCatalogFacade {
 
     public PublicProfileMediaContent clinicLogo(String clinicSlug) {
         return publicProfileService.loadPublishedProviderLogo(clinicSlug, ProviderType.CLINIC)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Public profile image not found"));
+    }
+
+    public PublicProfileMediaContent clinicCover(String clinicSlug) {
+        return publicProfileService.loadPublishedProviderMedia(clinicSlug, ProviderType.CLINIC, ProviderPublicMediaAsset.COVER, null)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Public profile image not found"));
+    }
+
+    public PublicProfileMediaContent clinicGalleryImage(String clinicSlug, int index) {
+        return publicProfileService.loadPublishedProviderMedia(clinicSlug, ProviderType.CLINIC, ProviderPublicMediaAsset.GALLERY, index)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Public profile image not found"));
     }
 
@@ -292,22 +303,30 @@ public class PublicCatalogFacade {
         return "/api/public/clinics/" + clinicSlug + "/logo";
     }
 
+    private String publicClinicCoverPath(String clinicSlug) {
+        return "/api/public/clinics/" + clinicSlug + "/cover";
+    }
+
+    private String publicClinicGalleryImagePath(String clinicSlug, int index) {
+        return "/api/public/clinics/" + clinicSlug + "/gallery/" + index;
+    }
+
     private String publicHospitalLogoPath(String hospitalSlug) {
         return "/api/public/hospitals/" + hospitalSlug + "/logo";
     }
 
     private PublicClinicDetailResponse toClinicDetail(PublicProviderProfileDetailRecord detail) {
-        List<String> gallery = detail.gallery().stream()
-                .map(image -> publicProfileService.resolveDocumentUrl(image.documentId()).orElse(null))
-                .filter(url -> url != null && !url.isBlank())
+        List<String> gallery = IntStream.range(0, detail.gallery().size())
+                .filter(index -> detail.gallery().get(index).documentId() != null)
+                .mapToObj(index -> publicClinicGalleryImagePath(detail.canonicalSlug(), index))
                 .toList();
         return new PublicClinicDetailResponse(
                 detail.slug(),
                 detail.canonicalSlug(),
                 detail.publicPath(),
                 detail.displayName(),
-                detail.logoUrl(),
-                detail.coverUrl(),
+                detail.logoUrl() == null || detail.logoUrl().isBlank() ? null : publicClinicLogoPath(detail.canonicalSlug()),
+                detail.coverUrl() == null || detail.coverUrl().isBlank() ? null : publicClinicCoverPath(detail.canonicalSlug()),
                 firstNonBlank(detail.locations().stream().findFirst().map(PublicProviderLocationSnapshot::address).orElse(null), detail.summary()),
                 detail.area(),
                 detail.city(),

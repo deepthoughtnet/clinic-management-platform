@@ -34,6 +34,16 @@ public class DiscoverReferenceDataService {
     }
 
     @Transactional(readOnly = true)
+    public List<DiscoverReferenceOptionRecord> listOwnerships() {
+        return list(DiscoverReferenceCategory.OWNERSHIP);
+    }
+
+    @Transactional(readOnly = true)
+    public List<DiscoverReferenceOptionRecord> listOrganisationTypes() {
+        return list(DiscoverReferenceCategory.ORGANISATION_TYPE);
+    }
+
+    @Transactional(readOnly = true)
     public List<DiscoverReferenceOptionRecord> listLanguages() {
         return list(DiscoverReferenceCategory.LANGUAGE);
     }
@@ -88,15 +98,20 @@ public class DiscoverReferenceDataService {
                     DiscoverReferenceCategory.MEDICAL_COUNCIL
             );
             case CLINIC -> List.of(
+                    DiscoverReferenceCategory.SPECIALITY,
                     DiscoverReferenceCategory.SERVICE,
                     DiscoverReferenceCategory.FACILITY,
+                    DiscoverReferenceCategory.OWNERSHIP,
+                    DiscoverReferenceCategory.ORGANISATION_TYPE,
                     DiscoverReferenceCategory.LANGUAGE,
                     DiscoverReferenceCategory.COUNTRY,
                     DiscoverReferenceCategory.STATE
             );
             case HOSPITAL -> List.of(
+                    DiscoverReferenceCategory.SPECIALITY,
                     DiscoverReferenceCategory.SERVICE,
                     DiscoverReferenceCategory.FACILITY,
+                    DiscoverReferenceCategory.OWNERSHIP,
                     DiscoverReferenceCategory.LANGUAGE,
                     DiscoverReferenceCategory.COUNTRY,
                     DiscoverReferenceCategory.STATE

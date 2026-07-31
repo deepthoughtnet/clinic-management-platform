@@ -1,6 +1,7 @@
 const LABELS: Record<string, string> = {
   CLINIC_NAME_REQUIRED: "Clinic name",
   CLINIC_REGISTRATION_NUMBER_REQUIRED: "Clinic registration number",
+  OWNERSHIP_REQUIRED: "Ownership",
   CLINIC_ORGANISATION_TYPE_REQUIRED: "Clinic organisation type",
   CLINIC_FACILITIES_REQUIRED: "Clinic facilities",
   CLINIC_LOGO_REQUIRED: "Clinic logo",

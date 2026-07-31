@@ -276,15 +276,25 @@ public class ProviderPublicProfileService {
 
     @Transactional(readOnly = true)
     public Optional<PublicProfileMediaContent> loadPublishedProviderLogo(String slug, ProviderType providerType) {
+        return loadPublishedProviderMedia(slug, providerType, ProviderPublicMediaAsset.LOGO, null);
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<PublicProfileMediaContent> loadPublishedProviderMedia(String slug, ProviderType providerType, ProviderPublicMediaAsset asset, Integer galleryIndex) {
         return resolvePublishedProfile(slug)
                 .filter(profile -> profile.entity().getProviderType() == providerType)
-                .map(ResolvedPublishedProfile::entity)
-                .map(DiscoverPublicProviderProfileEntity::getLogoDocumentId)
+                .flatMap(profile -> resolveProviderDocumentId(profile, asset, galleryIndex))
                 .flatMap(this::loadMediaContent);
     }
 
     public enum DoctorPublicMediaAsset {
         PHOTO,
+        COVER,
+        GALLERY
+    }
+
+    public enum ProviderPublicMediaAsset {
+        LOGO,
         COVER,
         GALLERY
     }
@@ -327,6 +337,14 @@ public class ProviderPublicProfileService {
     private Optional<UUID> resolveDoctorDocumentId(ResolvedPublishedProfile profile, DoctorPublicMediaAsset asset, Integer galleryIndex) {
         return switch (asset) {
             case PHOTO -> Optional.ofNullable(profile.entity().getDoctorPhotoDocumentId());
+            case COVER -> Optional.ofNullable(profile.entity().getCoverImageDocumentId());
+            case GALLERY -> resolveGalleryDocumentId(profile.snapshot(), galleryIndex);
+        };
+    }
+
+    private Optional<UUID> resolveProviderDocumentId(ResolvedPublishedProfile profile, ProviderPublicMediaAsset asset, Integer galleryIndex) {
+        return switch (asset) {
+            case LOGO -> Optional.ofNullable(profile.entity().getLogoDocumentId());
             case COVER -> Optional.ofNullable(profile.entity().getCoverImageDocumentId());
             case GALLERY -> resolveGalleryDocumentId(profile.snapshot(), galleryIndex);
         };

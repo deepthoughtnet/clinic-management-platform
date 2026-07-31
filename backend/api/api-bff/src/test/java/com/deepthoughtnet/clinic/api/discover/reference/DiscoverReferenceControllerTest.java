@@ -48,4 +48,26 @@ class DiscoverReferenceControllerTest {
             assertThat(item.category()).isEqualTo(DiscoverReferenceCategory.SPECIALITY);
         });
     }
+
+    @Test
+    void returnsOwnershipsAndOrganisationTypesFromReferenceService() {
+        DiscoverReferenceDataService service = Mockito.mock(DiscoverReferenceDataService.class);
+        var ownership = new DiscoverReferenceOptionRecord(UUID.randomUUID(), DiscoverReferenceCategory.OWNERSHIP, "PRIVATE", "Private", List.of(ProviderType.CLINIC), 1, true);
+        var organisationType = new DiscoverReferenceOptionRecord(UUID.randomUUID(), DiscoverReferenceCategory.ORGANISATION_TYPE, "STANDALONE_CLINIC", "Standalone clinic", List.of(ProviderType.CLINIC), 1, true);
+        when(service.listOwnerships()).thenReturn(List.of(ownership));
+        when(service.listOrganisationTypes()).thenReturn(List.of(organisationType));
+
+        DiscoverReferenceController controller = new DiscoverReferenceController(service);
+
+        assertThat(controller.ownerships()).singleElement().satisfies(item -> {
+            assertThat(item.code()).isEqualTo("PRIVATE");
+            assertThat(item.displayName()).isEqualTo("Private");
+            assertThat(item.category()).isEqualTo(DiscoverReferenceCategory.OWNERSHIP);
+        });
+        assertThat(controller.organisationTypes()).singleElement().satisfies(item -> {
+            assertThat(item.code()).isEqualTo("STANDALONE_CLINIC");
+            assertThat(item.displayName()).isEqualTo("Standalone clinic");
+            assertThat(item.category()).isEqualTo(DiscoverReferenceCategory.ORGANISATION_TYPE);
+        });
+    }
 }

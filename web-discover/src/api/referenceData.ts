@@ -14,6 +14,8 @@ export type DiscoverReferenceCatalog = {
   specialities: DiscoverReferenceOption[];
   services: DiscoverReferenceOption[];
   facilities: DiscoverReferenceOption[];
+  ownerships: DiscoverReferenceOption[];
+  organisationTypes: DiscoverReferenceOption[];
   languages: DiscoverReferenceOption[];
   countries: DiscoverReferenceOption[];
   states: DiscoverReferenceOption[];
@@ -46,14 +48,18 @@ export function loadDiscoverReferenceCatalog() {
     request<DiscoverReferenceOption[]>("/api/discover/reference/specialities"),
     request<DiscoverReferenceOption[]>("/api/discover/reference/services"),
     request<DiscoverReferenceOption[]>("/api/discover/reference/facilities"),
+    request<DiscoverReferenceOption[]>("/api/discover/reference/ownerships"),
+    request<DiscoverReferenceOption[]>("/api/discover/reference/organisation-types"),
     request<DiscoverReferenceOption[]>("/api/discover/reference/languages"),
     request<DiscoverReferenceOption[]>("/api/discover/reference/countries"),
     request<DiscoverReferenceOption[]>("/api/discover/reference/states"),
     request<DiscoverReferenceOption[]>("/api/discover/reference/medical-councils"),
-  ]).then(([specialities, services, facilities, languages, countries, states, medicalCouncils]) => ({
+  ]).then(([specialities, services, facilities, ownerships, organisationTypes, languages, countries, states, medicalCouncils]) => ({
     specialities,
     services,
     facilities,
+    ownerships,
+    organisationTypes,
     languages,
     countries,
     states,

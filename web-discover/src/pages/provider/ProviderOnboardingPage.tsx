@@ -80,17 +80,6 @@ type ProviderOnboardingConfig = {
   brandingAssetLabel: string;
 };
 
-const ownershipOptions = [
-  "Private",
-  "Government",
-  "Trust",
-  "NGO",
-  "Corporate",
-  "Teaching Hospital",
-  "Community Health Centre",
-  "Clinic Chain",
-];
-
 const providerTypeConfig: Record<ProviderType, ProviderOnboardingConfig> = {
   INDIVIDUAL_DOCTOR: {
     title: "Create your public doctor profile",
@@ -139,7 +128,7 @@ const providerTypeConfig: Record<ProviderType, ProviderOnboardingConfig> = {
     registrationLabel: "Hospital registration number",
     specialityLabel: "Primary speciality",
     specialityRequired: false,
-    showSpecialities: false,
+    showSpecialities: true,
     showDepartments: true,
     showMedicalCouncil: false,
     showQualification: false,
@@ -185,6 +174,8 @@ function emptyReferenceCatalog(): DiscoverReferenceCatalog {
     specialities: [],
     services: [],
     facilities: [],
+    ownerships: [],
+    organisationTypes: [],
     languages: [],
     countries: [],
     states: [],
@@ -404,6 +395,8 @@ function validateDraft(
   const specialityOptions = optionNames(catalog.specialities, providerType);
   const serviceOptions = optionNames(catalog.services, providerType);
   const facilityOptions = optionNames(catalog.facilities, providerType);
+  const ownershipOptions = optionNames(catalog.ownerships, providerType);
+  const organisationTypeOptions = optionNames(catalog.organisationTypes, providerType);
   const languageOptions = optionNames(catalog.languages, providerType);
   const countryOptions = optionNames(catalog.countries, providerType);
   const stateOptions = optionNames(catalog.states, providerType);
@@ -411,6 +404,8 @@ function validateDraft(
   const specialitySet = new Set(specialityOptions);
   const serviceSet = new Set(serviceOptions);
   const facilitySet = new Set(facilityOptions);
+  const ownershipSet = new Set(ownershipOptions);
+  const organisationTypeSet = new Set(organisationTypeOptions);
   const languageSet = new Set(languageOptions);
   const countrySet = new Set(countryOptions);
   const stateSet = new Set(stateOptions);
@@ -438,10 +433,13 @@ function validateDraft(
     if (!draft.qualification?.trim()) errors.qualification = "Qualification is required.";
     if (!draft.medicalCouncil?.trim()) errors.medicalCouncil = "Medical council registration is required.";
     if (draft.yearsOfExperience == null || Number.isNaN(draft.yearsOfExperience)) errors.yearsOfExperience = "Experience is required.";
-    if (!specialities.length) errors.specialities = "Select a primary speciality.";
   }
 
-  if (providerType === "CLINIC" && specialities.length && !specialities.every((item) => specialitySet.has(item.toLowerCase()))) {
+  if ((providerType === "INDIVIDUAL_DOCTOR" || providerType === "CLINIC") && !specialities.length) {
+    errors.specialities = "Select a primary speciality.";
+  }
+
+  if (specialities.length && !specialities.every((item) => specialitySet.has(item.toLowerCase()))) {
     errors.specialities = "Choose from the speciality master.";
   }
 
@@ -457,6 +455,8 @@ function validateDraft(
   if (!services.length) errors.services = "Select at least one service.";
 
   if (specialities.length && !specialities.every((item) => specialitySet.has(item.toLowerCase()))) errors.specialities = "Choose from the speciality master.";
+  if (draft.ownership?.trim() && !ownershipSet.has(draft.ownership.trim().toLowerCase())) errors.ownership = "Choose from the ownership master.";
+  if (draft.organisationType?.trim() && !organisationTypeSet.has(draft.organisationType.trim().toLowerCase())) errors.organisationType = "Choose from the organisation type master.";
   if (languages.length && !languages.every((item) => languageSet.has(item.toLowerCase()))) errors.languages = "Choose from the language master.";
   if (facilities.length && !facilities.every((item) => facilitySet.has(item.toLowerCase()))) errors.facilities = "Choose from the facility master.";
   if (draft.services?.length && !draft.services.filter((item) => item.enabled !== false).every((item) => serviceSet.has(item.label.toLowerCase()))) errors.services = "Choose from the service master.";
@@ -534,10 +534,16 @@ function contactVerificationSummary(contactVerification: ContactVerificationStat
 
 function stepHasRequiredReferenceData(stepId: ProviderOnboardingStepId, providerType: ProviderType, catalog: DiscoverReferenceCatalog) {
   switch (stepId) {
+    case "organisation":
+      return providerType === "CLINIC"
+        ? hasReferenceData(catalog.ownerships, providerType) && hasReferenceData(catalog.organisationTypes, providerType)
+        : providerType === "HOSPITAL"
+          ? hasReferenceData(catalog.ownerships, providerType)
+          : true;
     case "professional":
       return providerType === "INDIVIDUAL_DOCTOR"
         ? hasReferenceData(catalog.specialities, providerType) && hasReferenceData(catalog.medicalCouncils, providerType) && hasReferenceData(catalog.languages, providerType) && hasReferenceData(catalog.facilities, providerType)
-        : hasReferenceData(catalog.languages, providerType) && hasReferenceData(catalog.facilities, providerType);
+        : hasReferenceData(catalog.specialities, providerType) && hasReferenceData(catalog.languages, providerType) && hasReferenceData(catalog.facilities, providerType);
     case "services":
       return hasReferenceData(catalog.services, providerType);
     case "locations":
@@ -551,19 +557,27 @@ function stepHasRequiredReferenceData(stepId: ProviderOnboardingStepId, provider
 }
 
 function submissionReferenceDataReady(providerType: ProviderType, catalog: DiscoverReferenceCatalog) {
-  return providerType === "INDIVIDUAL_DOCTOR"
-    ? hasReferenceData(catalog.specialities, providerType)
+  if (providerType === "INDIVIDUAL_DOCTOR") {
+    return hasReferenceData(catalog.specialities, providerType)
       && hasReferenceData(catalog.services, providerType)
       && hasReferenceData(catalog.facilities, providerType)
       && hasReferenceData(catalog.languages, providerType)
       && hasReferenceData(catalog.countries, providerType)
       && hasReferenceData(catalog.states, providerType)
-      && hasReferenceData(catalog.medicalCouncils, providerType)
-    : hasReferenceData(catalog.services, providerType)
-      && hasReferenceData(catalog.facilities, providerType)
-      && hasReferenceData(catalog.languages, providerType)
-      && hasReferenceData(catalog.countries, providerType)
-      && hasReferenceData(catalog.states, providerType);
+      && hasReferenceData(catalog.medicalCouncils, providerType);
+  }
+
+  const sharedReady = hasReferenceData(catalog.specialities, providerType)
+    && hasReferenceData(catalog.services, providerType)
+    && hasReferenceData(catalog.facilities, providerType)
+    && hasReferenceData(catalog.languages, providerType)
+    && hasReferenceData(catalog.countries, providerType)
+    && hasReferenceData(catalog.states, providerType)
+    && hasReferenceData(catalog.ownerships, providerType);
+
+  return providerType === "CLINIC"
+    ? sharedReady && hasReferenceData(catalog.organisationTypes, providerType)
+    : sharedReady;
 }
 
 export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | "hospital" }) {
@@ -591,6 +605,7 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
   const [referenceCatalog, setReferenceCatalog] = useState<DiscoverReferenceCatalog>(() => emptyReferenceCatalog());
   const [referenceCatalogLoaded, setReferenceCatalogLoaded] = useState(false);
   const [referenceCatalogError, setReferenceCatalogError] = useState<string | null>(null);
+  const [referenceCatalogRefreshKey, setReferenceCatalogRefreshKey] = useState(0);
   const [changeRequests, setChangeRequests] = useState<Array<{ id: string; reviewerMessage: string | null; providerResponseNote: string | null; requestedSections: string[]; resolved: boolean }>>([]);
   const [responseNote, setResponseNote] = useState("");
   const latestApplicationRef = useRef<ProviderApplication | null>(null);
@@ -672,7 +687,7 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [referenceCatalogRefreshKey]);
 
   useEffect(() => {
     if (routeProviderType && !params.applicationId) {
@@ -820,11 +835,18 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
   const specialitySelectOptions = useMemo(() => toOptionItems(referenceCatalog.specialities, providerType), [referenceCatalog.specialities, providerType]);
   const serviceSelectOptions = useMemo(() => toServiceItems(referenceCatalog.services, providerType), [referenceCatalog.services, providerType]);
   const facilitySelectOptions = useMemo(() => toOptionItems(referenceCatalog.facilities, providerType), [referenceCatalog.facilities, providerType]);
+  const ownershipSelectOptions = useMemo(() => toOptionItems(referenceCatalog.ownerships, providerType), [referenceCatalog.ownerships, providerType]);
+  const organisationTypeSelectOptions = useMemo(() => toOptionItems(referenceCatalog.organisationTypes, providerType), [referenceCatalog.organisationTypes, providerType]);
   const languageSelectOptions = useMemo(() => toOptionItems(referenceCatalog.languages, providerType), [referenceCatalog.languages, providerType]);
   const countrySelectOptions = useMemo(() => toOptionItems(referenceCatalog.countries, providerType), [referenceCatalog.countries, providerType]);
   const stateSelectOptions = useMemo(() => toOptionItems(referenceCatalog.states, providerType), [referenceCatalog.states, providerType]);
   const medicalCouncilSelectOptions = useMemo(() => toOptionItems(referenceCatalog.medicalCouncils, providerType), [referenceCatalog.medicalCouncils, providerType]);
-  const ownershipSelectOptions = useMemo(() => ownershipOptions.map((item) => ({ value: item, label: item })), []);
+  const referenceCatalogLoading = !referenceCatalogLoaded && !referenceCatalogError;
+  const referenceCatalogLoadError = referenceCatalogError;
+
+  function retryReferenceCatalog() {
+    setReferenceCatalogRefreshKey((current) => current + 1);
+  }
 
   function markDraftChanged(nextDraft: ProviderApplicationPayload) {
     latestDraftRef.current = nextDraft;
@@ -1426,6 +1448,9 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
             <div className="portal-warning" role="status" aria-live="polite">
               <strong>Reference data is partially unavailable.</strong>
               <span>{referenceCatalogError}</span>
+              <button className="secondary-button" type="button" onClick={retryReferenceCatalog}>
+                Retry
+              </button>
             </div>
           ) : null}
           {!isPreviewStep ? (
@@ -1550,7 +1575,7 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
               <p className="panel-help">Use the official provider identity that patients will see on the public profile.</p>
               <fieldset className="provider-readonly-fieldset" disabled={!applicationEditable}>
               <div className="form-grid">
-                <FieldShell label={copy.nameLabel} helperText="Displayed publicly on the provider profile." error={validation.errors.displayName}>
+                <FieldShell label={copy.nameLabel} helperText="Displayed publicly on the provider profile." error={validation.errors.displayName} required>
                   <input
                     aria-invalid={Boolean(validation.errors.displayName)}
                     value={draft.displayName ?? ""}
@@ -1558,7 +1583,7 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
                     placeholder={copy.nameLabel}
                   />
                 </FieldShell>
-                <FieldShell label={copy.registrationLabel} helperText="Official registration document number." error={validation.errors.registrationNumber}>
+                <FieldShell label={copy.registrationLabel} helperText="Official registration document number." error={validation.errors.registrationNumber} required>
                   <input
                     aria-invalid={Boolean(validation.errors.registrationNumber)}
                     value={draft.registrationNumber ?? ""}
@@ -1567,14 +1592,20 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
                   />
                 </FieldShell>
                 {copy.showOrganisationType ? (
-                  <FieldShell label="Organisation type" helperText="Describe the practice structure." error={validation.errors.organisationType}>
-                    <input
-                      aria-invalid={Boolean(validation.errors.organisationType)}
-                      value={draft.organisationType ?? ""}
-                      onChange={(event) => patchDraft({ organisationType: event.target.value })}
-                    placeholder="Group practice, standalone, chain, etc."
+                  <ProviderDropdownField
+                    label="Organisation type"
+                    required
+                    helperText="Describe the practice structure."
+                    error={validation.errors.organisationType}
+                    value={draft.organisationType ?? ""}
+                    options={organisationTypeSelectOptions}
+                    onChange={(value) => patchDraft({ organisationType: value })}
+                    placeholder="Select organisation type"
+                    loading={referenceCatalogLoading}
+                    loadError={referenceCatalogLoadError}
+                    onRetry={retryReferenceCatalog}
+                    disabled={!applicationEditable}
                   />
-                </FieldShell>
                 ) : null}
                 <FieldShell label="Website" helperText="Public website. Must include https://." error={validation.errors.website}>
                   <input
@@ -1596,12 +1627,16 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
                 {copy.showOwnership ? (
                   <ProviderDropdownField
                     label="Ownership"
+                    required
                     helperText="Select the ownership category."
                     error={validation.errors.ownership}
                     value={draft.ownership ?? ""}
                     options={ownershipSelectOptions}
                     onChange={(value) => patchDraft({ ownership: value })}
                     placeholder="Select ownership"
+                    loading={referenceCatalogLoading}
+                    loadError={referenceCatalogLoadError}
+                    onRetry={retryReferenceCatalog}
                     disabled={!applicationEditable}
                   />
                 ) : null}
@@ -1627,29 +1662,38 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
                 {copy.showQualification ? <>
                   <FieldShell label="Gender" helperText="Optional." error={null}><input value={draft.gender ?? ""} onChange={(event) => patchDraft({ gender: event.target.value })} /></FieldShell>
                   <FieldShell label="Date of birth" helperText="Publicly hidden unless required for verification." error={null}><input type="date" value={draft.dateOfBirth ?? ""} onChange={(event) => patchDraft({ dateOfBirth: event.target.value })} /></FieldShell>
-                  <FieldShell label="Qualification" helperText="Displayed publicly on your profile." error={validation.errors.qualification}><input aria-invalid={Boolean(validation.errors.qualification)} value={draft.qualification ?? ""} onChange={(event) => patchDraft({ qualification: event.target.value })} /></FieldShell>
+                  <FieldShell label="Qualification" helperText="Displayed publicly on your profile." error={validation.errors.qualification} required><input aria-invalid={Boolean(validation.errors.qualification)} value={draft.qualification ?? ""} onChange={(event) => patchDraft({ qualification: event.target.value })} /></FieldShell>
                   {copy.showMedicalCouncil ? (
                     <ProviderDropdownField
                       label="Medical council"
+                      required
                       helperText="Registration details used for review."
                       error={validation.errors.medicalCouncil}
                       value={draft.medicalCouncil ?? ""}
                       options={medicalCouncilSelectOptions}
                       onChange={(value) => patchDraft({ medicalCouncil: value })}
                       placeholder="Select medical council"
+                      loading={referenceCatalogLoading}
+                      loadError={referenceCatalogLoadError}
+                      onRetry={retryReferenceCatalog}
                       disabled={!applicationEditable}
                     />
                   ) : null}
-                  <FieldShell label="Experience" helperText="Years of practice." error={validation.errors.yearsOfExperience}><input type="number" min={0} value={draft.yearsOfExperience ?? 0} onChange={(event) => patchDraft({ yearsOfExperience: Number(event.target.value) })} /></FieldShell>
-                  <FieldShell label="Consultation fee" helperText="Optional. Shown publicly when enabled." error={null}><input type="number" min={0} value={draft.consultationFee ?? ""} onChange={(event) => patchDraft({ consultationFee: Number(event.target.value) })} /></FieldShell>
+                  <FieldShell label="Experience" helperText="Years of practice." error={validation.errors.yearsOfExperience} required><input type="number" min={0} value={draft.yearsOfExperience ?? 0} onChange={(event) => patchDraft({ yearsOfExperience: Number(event.target.value) })} /></FieldShell>
+                  <FieldShell label="Consultation fee" helperText="Optional. Shown publicly when enabled." error={null}>
+                    <div className="provider-currency-input">
+                      <span>₹</span>
+                      <input type="number" min={0} value={draft.consultationFee ?? ""} onChange={(event) => patchDraft({ consultationFee: event.target.value === "" ? undefined : Number(event.target.value) })} />
+                    </div>
+                  </FieldShell>
                 </> : <>
                   {copy.showBeds ? (
-                    <FieldShell label="Beds" helperText="Number of licensed beds." error={validation.errors.beds}>
+                    <FieldShell label="Beds" helperText="Number of licensed beds." error={validation.errors.beds} required>
                       <input type="number" min={1} value={draft.beds ?? 0} onChange={(event) => patchDraft({ beds: Number(event.target.value) })} />
                     </FieldShell>
                   ) : null}
                   {copy.showMedicalDirector ? (
-                    <FieldShell label="Medical director" helperText="Lead physician responsible for the hospital." error={validation.errors.medicalDirector}>
+                    <FieldShell label="Medical director" helperText="Lead physician responsible for the hospital." error={validation.errors.medicalDirector} required>
                       <input aria-invalid={Boolean(validation.errors.medicalDirector)} value={draft.medicalDirector ?? ""} onChange={(event) => patchDraft({ medicalDirector: event.target.value })} />
                     </FieldShell>
                   ) : null}
@@ -1662,23 +1706,31 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
                 </>}
                 <ProviderMultiSelectField
                   label="Languages"
+                  required
                   helperText="Patients will see these."
                   error={validation.errors.languages}
                   value={validation.languages}
                   options={languageSelectOptions}
                   onChange={(value) => patchDraft({ languages: normalizeSearchList(value) })}
                   placeholder="Search languages"
+                  loading={referenceCatalogLoading}
+                  loadError={referenceCatalogLoadError}
+                  onRetry={retryReferenceCatalog}
                   disabled={!applicationEditable}
                 />
                 {copy.showSpecialities ? (
                   <ProviderDropdownField
                     label={copy.specialityLabel}
+                    required={copy.specialityRequired}
                     helperText={copy.specialityRequired ? "Choose one primary speciality." : "Optional. Choose the closest fit if relevant."}
                     error={validation.errors.specialities}
                     value={draft.specialities?.[0] ?? ""}
                     options={specialitySelectOptions}
                     onChange={(value) => patchDraft({ specialities: value ? [value] : [] })}
                     placeholder={copy.specialityLabel}
+                    loading={referenceCatalogLoading}
+                    loadError={referenceCatalogLoadError}
+                    onRetry={retryReferenceCatalog}
                     disabled={!applicationEditable}
                   />
                 ) : null}
@@ -1697,6 +1749,7 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
                 ) : null}
                 <ProviderMultiSelectField
                   label="Facilities"
+                  required
                   helperText="Select the facilities available at this location."
                   error={validation.errors.facilities}
                   value={validation.facilities}
@@ -1704,13 +1757,21 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
                   onChange={(value) => patchDraft({ facilities: normalizeSearchList(value) })}
                   placeholder="Search facilities"
                   noOptionsText="No facility matches the catalog"
+                  loading={referenceCatalogLoading}
+                  loadError={referenceCatalogLoadError}
+                  onRetry={retryReferenceCatalog}
                   disabled={!applicationEditable}
                 />
                 {copy.showQualification ? null : (
-                  <FieldShell label="Consultation fee" helperText="Optional. Shown publicly when enabled." error={null}><input type="number" min={0} value={draft.consultationFee ?? ""} onChange={(event) => patchDraft({ consultationFee: Number(event.target.value) })} /></FieldShell>
+                  <FieldShell label="Consultation fee" helperText="Optional. Shown publicly when enabled." error={null}>
+                    <div className="provider-currency-input">
+                      <span>₹</span>
+                      <input type="number" min={0} value={draft.consultationFee ?? ""} onChange={(event) => patchDraft({ consultationFee: event.target.value === "" ? undefined : Number(event.target.value) })} />
+                    </div>
+                  </FieldShell>
                 )}
               </div>
-              <FieldShell label="Biography" helperText="Displayed publicly on your profile. Maximum 1500 characters." error={validation.errors.biography}>
+              <FieldShell label="Biography" helperText={<>Displayed publicly on your profile. <span className="provider-field-counter">{draft.biography?.length ?? 0} / 1500</span></>} error={validation.errors.biography}>
                 <textarea
                   aria-invalid={Boolean(validation.errors.biography)}
                   value={draft.biography ?? ""}
@@ -1727,17 +1788,39 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
             <Panel title="Services">
               <p className="panel-help">Select the services your practice offers.</p>
               <fieldset className="provider-readonly-fieldset" disabled={!applicationEditable}>
-                <div className="service-grid">
-                  {serviceSelectOptions.length ? serviceSelectOptions.map((service) => (
-                    <ServiceToggle
-                      key={service.type}
-                      service={{ type: service.type, label: service.label }}
-                      draft={draft}
-                      patchDraft={patchDraft}
-                      disabled={!applicationEditable}
-                    />
-                  )) : <p className="panel-help">No active service catalog entries are available right now.</p>}
-                </div>
+                {referenceCatalogLoading ? (
+                  <div className="provider-field provider-dropdown-field provider-dropdown-field--loading" aria-live="polite">
+                    <span>Services</span>
+                    <div className="provider-field-skeleton" aria-hidden="true">
+                      <span />
+                      <span />
+                    </div>
+                    <small className="provider-field-loading-text">Loading reference data…</small>
+                  </div>
+                ) : referenceCatalogLoadError ? (
+                  <div className="provider-field provider-dropdown-field provider-dropdown-field--error" role="status" aria-live="polite">
+                    <span>Services</span>
+                    <div className="provider-field-error-panel">
+                      <strong>Unable to load reference data</strong>
+                      <p>{referenceCatalogLoadError}</p>
+                      <button className="secondary-button" type="button" onClick={retryReferenceCatalog}>
+                        Retry
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="service-grid">
+                    {serviceSelectOptions.length ? serviceSelectOptions.map((service) => (
+                      <ServiceToggle
+                        key={service.type}
+                        service={{ type: service.type, label: service.label }}
+                        draft={draft}
+                        patchDraft={patchDraft}
+                        disabled={!applicationEditable}
+                      />
+                    )) : <p className="panel-help">No active service catalog entries are available right now.</p>}
+                  </div>
+                )}
               </fieldset>
             </Panel>
           ) : null}
@@ -1747,33 +1830,41 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
               <p className="panel-help">Enter the primary location patients will search and visit.</p>
               <fieldset className="provider-readonly-fieldset" disabled={!applicationEditable}>
               <div className="form-grid">
-                <FieldShell label="Address" helperText="Street address or landmark." error={null}>
+                <FieldShell label="Address" helperText="Street address or landmark." error={null} required>
                   <input value={draft.locations?.[0]?.address ?? ""} onChange={(event) => patchLocation(draft, patchDraft, { address: event.target.value })} />
                 </FieldShell>
-                <FieldShell label="City" helperText="Primary city for the location." error={null}>
+                <FieldShell label="City" helperText="Primary city for the location." error={null} required>
                   <input value={draft.locations?.[0]?.city ?? ""} onChange={(event) => patchLocation(draft, patchDraft, { city: event.target.value })} />
                 </FieldShell>
                 <ProviderDropdownField
                   label="State"
+                  required
                   helperText="Select the state or province."
                   error={validation.errors.locations}
                   value={draft.locations?.[0]?.state ?? ""}
                   options={stateSelectOptions}
                   onChange={(value) => patchLocation(draft, patchDraft, { state: value })}
                   placeholder="Select state"
+                  loading={referenceCatalogLoading}
+                  loadError={referenceCatalogLoadError}
+                  onRetry={retryReferenceCatalog}
                   disabled={!applicationEditable}
                 />
                 <ProviderDropdownField
                   label="Country"
+                  required
                   helperText="Select the country."
                   error={validation.errors.locations}
                   value={draft.locations?.[0]?.country ?? "India"}
                   options={countrySelectOptions}
                   onChange={(value) => patchLocation(draft, patchDraft, { country: value })}
                   placeholder="Select country"
+                  loading={referenceCatalogLoading}
+                  loadError={referenceCatalogLoadError}
+                  onRetry={retryReferenceCatalog}
                   disabled={!applicationEditable}
                 />
-                <FieldShell label="PIN" helperText="Postal or ZIP code." error={null}>
+                <FieldShell label="PIN" helperText="Postal or ZIP code." error={null} required>
                   <input value={draft.locations?.[0]?.pinCode ?? ""} onChange={(event) => patchLocation(draft, patchDraft, { pinCode: event.target.value })} />
                 </FieldShell>
                 <FieldShell label="Working hours" helperText="For example, Mon-Sat 9am-6pm." error={null}>
@@ -1948,7 +2039,7 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
                   <strong>Submission summary</strong>
                   <ul>
                     <li>{providerTypeLabel(providerType)}</li>
-                    <li>{providerType === "INDIVIDUAL_DOCTOR" ? `Speciality: ${draft.specialities?.[0] ?? "Pending"}` : providerType === "HOSPITAL" ? `Departments: ${draft.departments?.join(", ") ?? "Pending"}` : `Speciality: ${draft.specialities?.[0] ?? "Optional"}`}</li>
+                    <li>{providerType === "HOSPITAL" ? `Speciality: ${draft.specialities?.[0] ?? "Optional"}` : `Speciality: ${draft.specialities?.[0] ?? "Pending"}`}</li>
                     <li>Location: {draft.locations?.[0]?.city ? `${draft.locations[0].city}, ${draft.locations[0].state}` : "Pending"}</li>
                     <li>Documents uploaded: {application?.documents.length ?? 0}</li>
                   </ul>
@@ -2076,11 +2167,12 @@ function StatusTimeline({ status }: { status: string }) {
   return <div className="status-timeline">{labels.map((item) => <span className={status.replaceAll("_", " ").toLowerCase().includes(item.toLowerCase().split(" ")[0]) ? "is-active" : ""} key={item}>{item}</span>)}</div>;
 }
 
-function FieldShell({ label, helperText, error, children }: { label: string; helperText?: string; error?: string | null; children: ReactNode }) {
+function FieldShell({ label, helperText, error, children, required = false }: { label: string; helperText?: ReactNode; error?: string | null; children: ReactNode; required?: boolean }) {
   return (
     <label className="provider-field">
       <span>
         {label}
+        {required ? <strong aria-hidden="true"> *</strong> : null}
         {helperText ? <small>{helperText}</small> : null}
       </span>
       {children}
@@ -2098,8 +2190,11 @@ function clientMissingItems(draft: ProviderApplicationPayload, account: { email:
   if (!draft.displayName && !draft.legalName) missing.push(providerType === "INDIVIDUAL_DOCTOR" ? "DOCTOR_NAME_REQUIRED" : providerType === "CLINIC" ? "CLINIC_NAME_REQUIRED" : "HOSPITAL_NAME_REQUIRED");
   if (!draft.registrationNumber) missing.push(providerType === "INDIVIDUAL_DOCTOR" ? "DOCTOR_REGISTRATION_NUMBER_REQUIRED" : providerType === "CLINIC" ? "CLINIC_REGISTRATION_NUMBER_REQUIRED" : "HOSPITAL_REGISTRATION_NUMBER_REQUIRED");
   if (providerType === "INDIVIDUAL_DOCTOR" && !draft.specialities?.length) missing.push("PRIMARY_SPECIALITY_REQUIRED");
-  if (providerType === "CLINIC" && draft.specialities && draft.specialities.length > 1) missing.push("PRIMARY_SPECIALITY_REQUIRED");
+  if (providerType === "CLINIC" && !draft.specialities?.length) missing.push("PRIMARY_SPECIALITY_REQUIRED");
+  if (providerType !== "INDIVIDUAL_DOCTOR" && !draft.ownership?.trim()) missing.push(providerType === "CLINIC" ? "OWNERSHIP_REQUIRED" : "HOSPITAL_OWNERSHIP_REQUIRED");
+  if (providerType === "CLINIC" && !draft.organisationType?.trim()) missing.push("CLINIC_ORGANISATION_TYPE_REQUIRED");
   if (providerType === "HOSPITAL" && !draft.departments?.length) missing.push("HOSPITAL_DEPARTMENTS_REQUIRED");
+  if (providerType === "HOSPITAL" && !draft.hospitalType?.trim()) missing.push("HOSPITAL_TYPE_REQUIRED");
   if (!draft.services?.some((item) => item.enabled !== false)) missing.push("SERVICES_REQUIRED");
   if (!draft.locations?.length) missing.push("PRIMARY_LOCATION_REQUIRED");
   if (providerType === "INDIVIDUAL_DOCTOR" && !draft.qualification) missing.push("DOCTOR_QUALIFICATION_REQUIRED");

@@ -128,6 +128,76 @@ class PublicCatalogFacadeTest {
     }
 
     @Test
+    void clinicDetailUsesPublicMediaRoutesForPublishedAssets() {
+        ProviderPublicProfileService publicProfileService = mock(ProviderPublicProfileService.class);
+        PublicCatalogFacade facade = new PublicCatalogFacade(publicProfileService);
+
+        when(publicProfileService.findBySlug("sunrise-clinic")).thenReturn(Optional.of(
+                detailRecord(
+                        ProviderType.CLINIC,
+                        "JCL-0001",
+                        "sunrise-clinic",
+                        "/discover/clinics/sunrise-clinic",
+                        "Sunrise Clinic",
+                        "Sunrise Clinic",
+                        "Clinic summary",
+                        "Clinic description",
+                        "Clinic biography",
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        false,
+                        List.of(),
+                        List.of("General Medicine"),
+                        List.of(),
+                        List.of("Consultation"),
+                        List.of("Outpatient"),
+                        List.of("Wheelchair Access"),
+                        List.of("In-person"),
+                        List.of(new PublicProviderLocationSnapshot("Primary", "Main Road", "Pune", "Maharashtra", "India", "411001", "Mon-Sat 9 AM-5 PM", true, true, null, null)),
+                        List.of(
+                                new PublicProviderGalleryImageSnapshot(UUID.randomUUID(), "gallery-one.png"),
+                                new PublicProviderGalleryImageSnapshot(UUID.randomUUID(), "gallery-two.png")
+                        ),
+                        List.of("https://example.com/gallery-one.png", "https://example.com/gallery-two.png"),
+                        "https://example.com/clinic-image.png",
+                        "https://example.com/clinic-cover.png",
+                        "https://example.com/clinic-logo.png",
+                        "9876543210",
+                        "clinic@example.com",
+                        "https://example.com",
+                        "Pune",
+                        "Main Road",
+                        "Maharashtra",
+                        "India",
+                        "General Medicine",
+                        "Private",
+                        null,
+                        null,
+                        null,
+                        false,
+                        true,
+                        OffsetDateTime.parse("2026-01-01T10:00:00Z"),
+                        1,
+                        "sunrise-clinic",
+                        null,
+                        true
+                )
+        ));
+
+        var detail = facade.clinicDetail("sunrise-clinic");
+
+        assertThat(detail.logoUrl()).isEqualTo("/api/public/clinics/sunrise-clinic/logo");
+        assertThat(detail.coverUrl()).isEqualTo("/api/public/clinics/sunrise-clinic/cover");
+        assertThat(detail.galleryImageUrls()).containsExactly(
+                "/api/public/clinics/sunrise-clinic/gallery/0",
+                "/api/public/clinics/sunrise-clinic/gallery/1"
+        );
+    }
+
+    @Test
     void doctorDetailReturnsCanonicalPublishedPath() {
         ProviderPublicProfileService publicProfileService = mock(ProviderPublicProfileService.class);
         PublicCatalogFacade facade = new PublicCatalogFacade(publicProfileService);

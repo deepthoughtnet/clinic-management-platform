@@ -32,6 +32,16 @@ public class DiscoverReferenceController {
         return toResponse(referenceDataService.listFacilities());
     }
 
+    @GetMapping("/ownerships")
+    public List<DiscoverReferenceOptionResponse> ownerships() {
+        return toResponse(referenceDataService.listOwnerships());
+    }
+
+    @GetMapping("/organisation-types")
+    public List<DiscoverReferenceOptionResponse> organisationTypes() {
+        return toResponse(referenceDataService.listOrganisationTypes());
+    }
+
     @GetMapping("/languages")
     public List<DiscoverReferenceOptionResponse> languages() {
         return toResponse(referenceDataService.listLanguages());

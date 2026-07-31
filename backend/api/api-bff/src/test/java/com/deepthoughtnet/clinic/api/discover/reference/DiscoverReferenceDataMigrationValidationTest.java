@@ -51,6 +51,35 @@ class DiscoverReferenceDataMigrationValidationTest {
         assertThat(migration).contains("5a39a56c-3f45-4c7f-86c4-3fd5f8b60010");
     }
 
+    @Test
+    void v136UuidLiteralsAreValidAndUnique() throws Exception {
+        String migration = readMigration("db/migration/V136__discover_provider_reference_ownership_and_organisation_types.sql");
+        Matcher matcher = INSERT_ROW.matcher(migration);
+
+        Set<UUID> ids = new HashSet<>();
+        Set<String> categoryCodes = new HashSet<>();
+        int rows = 0;
+
+        while (matcher.find()) {
+            rows++;
+            UUID id = UUID.fromString(matcher.group(1));
+            assertThat(id).isNotNull();
+            assertThat(ids.add(id)).as("duplicate id %s", id).isTrue();
+
+            String category = matcher.group(2);
+            String code = matcher.group(3);
+            assertThat(categoryCodes.add(category + "::" + code))
+                    .as("duplicate category/code %s::%s", category, code)
+                    .isTrue();
+        }
+
+        assertThat(rows).isEqualTo(10);
+        assertThat(ids).hasSize(10);
+        assertThat(categoryCodes).hasSize(10);
+        assertThat(migration).contains("OWNERSHIP");
+        assertThat(migration).contains("ORGANISATION_TYPE");
+    }
+
     private static String readMigration(String resourcePath) throws IOException {
         try (InputStream inputStream = DiscoverReferenceDataMigrationValidationTest.class
                 .getClassLoader()

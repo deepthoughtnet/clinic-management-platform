@@ -2621,6 +2621,12 @@ main {
   font-weight: 760;
 }
 
+.provider-field > span,
+.provider-dropdown-field > span {
+  display: grid;
+  gap: 4px;
+}
+
 .provider-field small {
   color: var(--discover-text-muted);
   font-weight: 650;
@@ -2644,10 +2650,12 @@ main {
 
 .provider-dropdown-field select {
   appearance: none;
+  width: 100%;
 }
 
 .provider-autocomplete {
   grid-column: 1 / -1;
+  width: 100%;
 }
 
 .provider-autocomplete .MuiInputBase-root {
@@ -2661,6 +2669,36 @@ main {
 
 .field-error {
   color: #b91c1c !important;
+}
+
+.provider-currency-input {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  border: 1px solid var(--discover-border);
+  border-radius: 14px;
+  padding: 0 12px;
+  background: #ffffff;
+}
+
+.provider-currency-input span {
+  color: var(--discover-text-muted);
+  font-weight: 800;
+}
+
+.provider-currency-input input {
+  flex: 1;
+  min-height: 44px;
+  border: 0;
+  padding: 10px 0;
+  background: transparent;
+  color: var(--discover-text-heading);
+}
+
+.provider-field-counter {
+  color: var(--discover-text-muted);
+  font-weight: 700;
 }
 
 .panel-help {

@@ -92,6 +92,8 @@ class PublicCatalogControllerTest {
         when(facade.listSpecialities("skin", "pune", "demo")).thenReturn(List.of(speciality));
         when(facade.search("skin", "pune", "baner", "demo", null, null, null, 0, 6)).thenReturn(search);
         when(facade.clinicLogo("sunrise-clinic")).thenReturn(new PublicProfileMediaContent("image/png", "clinic-logo.png", new byte[]{4}));
+        when(facade.clinicCover("sunrise-clinic")).thenReturn(new PublicProfileMediaContent("image/png", "clinic-cover.png", new byte[]{6}));
+        when(facade.clinicGalleryImage("sunrise-clinic", 0)).thenReturn(new PublicProfileMediaContent("image/png", "gallery.png", new byte[]{7}));
         when(facade.doctorPhoto("dr-asha-menon")).thenReturn(new PublicProfileMediaContent("image/png", "photo.png", new byte[]{1}));
         when(facade.doctorCover("dr-asha-menon")).thenReturn(new PublicProfileMediaContent("image/png", "cover.png", new byte[]{2}));
         when(facade.doctorGalleryImage("dr-asha-menon", 0)).thenReturn(new PublicProfileMediaContent("image/png", "gallery.png", new byte[]{3}));
@@ -103,6 +105,8 @@ class PublicCatalogControllerTest {
         assertThat(controller.specialities("skin", "pune", "demo")).containsExactly(speciality);
         assertThat(controller.search("skin", "pune", "baner", "demo", null, null, null, 0, 6)).isEqualTo(search);
         assertThat(controller.clinicLogo("sunrise-clinic").getBody()).containsExactly((byte) 4);
+        assertThat(controller.clinicCover("sunrise-clinic").getBody()).containsExactly((byte) 6);
+        assertThat(controller.clinicGalleryImage("sunrise-clinic", 0).getBody()).containsExactly((byte) 7);
         assertThat(controller.doctorPhoto("dr-asha-menon").getHeaders().getContentType()).isEqualTo(MediaType.IMAGE_PNG);
         assertThat(controller.doctorCover("dr-asha-menon").getBody()).containsExactly((byte) 2);
         assertThat(controller.doctorGalleryImage("dr-asha-menon", 0).getBody()).containsExactly((byte) 3);

@@ -1,4 +1,5 @@
 import { type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { useAuthenticatedImage } from "../../hooks/useAuthenticatedImage";
 
 export function PublicMediaImage({
@@ -19,8 +20,13 @@ export function PublicMediaImage({
   token?: string | null;
 }) {
   const { objectUrl, loading: isLoading, error } = useAuthenticatedImage(src, { token });
+  const [imageError, setImageError] = useState(false);
 
-  if (!objectUrl || error) {
+  useEffect(() => {
+    setImageError(false);
+  }, [src, token]);
+
+  if (!objectUrl || error || imageError) {
     return <>{fallback}</>;
   }
 
@@ -34,6 +40,7 @@ export function PublicMediaImage({
       draggable={false}
       data-object-fit={objectFit}
       aria-busy={isLoading ? "true" : undefined}
+      onError={() => setImageError(true)}
     />
   );
 }

@@ -15,6 +15,7 @@ test("phase 5 landing page builder routes and preview are wired", () => {
   const builder = read("src/pages/provider/ProviderLandingPagePage.tsx");
   const publicPage = read("src/pages/public/LandingPagePage.tsx");
   const renderer = read("src/components/landing/LandingPageRenderer.tsx");
+  const mediaImage = read("src/components/landing/PublicMediaImage.tsx");
   const imageHook = read("src/hooks/useAuthenticatedImage.ts");
   const styles = read("src/styles.css");
   const api = read("src/api/providerLandingPage.ts");
@@ -53,6 +54,7 @@ test("phase 5 landing page builder routes and preview are wired", () => {
   assert.ok(imageHook.includes("fetchProviderDocumentBlob"));
   assert.ok(imageHook.includes('resolved.pathname.startsWith("/api/public/")'));
   assert.ok(imageHook.includes("if (isPublicApiImage(nextUrl))"));
+  assert.ok(mediaImage.includes("onError={() => setImageError(true)}"));
   assert.ok(onboardingApi.includes("X-Provider-Onboarding-Token"));
   assert.ok(onboardingApi.includes("fetchProviderDocumentBlob"));
   assert.ok(styles.includes(".landing-page"));

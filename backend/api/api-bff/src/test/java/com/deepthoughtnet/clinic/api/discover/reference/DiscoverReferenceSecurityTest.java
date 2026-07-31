@@ -105,6 +105,8 @@ class DiscoverReferenceSecurityTest {
         when(discoverReferenceDataService.listSpecialities()).thenReturn(sampleOptions());
         when(discoverReferenceDataService.listServices()).thenReturn(sampleOptions());
         when(discoverReferenceDataService.listFacilities()).thenReturn(sampleOptions());
+        when(discoverReferenceDataService.listOwnerships()).thenReturn(sampleOptions());
+        when(discoverReferenceDataService.listOrganisationTypes()).thenReturn(sampleOptions());
         when(discoverReferenceDataService.listLanguages()).thenReturn(sampleOptions());
         when(discoverReferenceDataService.listCountries()).thenReturn(sampleOptions());
         when(discoverReferenceDataService.listStates()).thenReturn(sampleOptions());
@@ -115,6 +117,10 @@ class DiscoverReferenceSecurityTest {
         mockMvc.perform(get("/api/discover/reference/services"))
                 .andExpect(status().isOk());
         mockMvc.perform(get("/api/discover/reference/facilities"))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/discover/reference/ownerships"))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/discover/reference/organisation-types"))
                 .andExpect(status().isOk());
         mockMvc.perform(get("/api/discover/reference/languages"))
                 .andExpect(status().isOk());

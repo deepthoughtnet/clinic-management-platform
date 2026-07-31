@@ -56,6 +56,16 @@ public class PublicCatalogController {
         return inline(publicCatalogFacade.clinicLogo(clinicSlug));
     }
 
+    @GetMapping("/clinics/{clinicSlug}/cover")
+    public ResponseEntity<byte[]> clinicCover(@PathVariable String clinicSlug) {
+        return inline(publicCatalogFacade.clinicCover(clinicSlug));
+    }
+
+    @GetMapping("/clinics/{clinicSlug}/gallery/{index}")
+    public ResponseEntity<byte[]> clinicGalleryImage(@PathVariable String clinicSlug, @PathVariable int index) {
+        return inline(publicCatalogFacade.clinicGalleryImage(clinicSlug, index));
+    }
+
     @GetMapping("/doctors")
     public PublicPageResponse<PublicDoctorSummaryResponse> doctors(
             @RequestParam(required = false) String q,
