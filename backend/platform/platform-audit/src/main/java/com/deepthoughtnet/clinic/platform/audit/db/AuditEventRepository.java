@@ -18,4 +18,6 @@ public interface AuditEventRepository extends JpaRepository<AuditEventEntity, UU
             UUID tenantId,
             OffsetDateTime occurredAt
     );
+
+    List<AuditEventEntity> findTop50ByEntityTypeInOrderByOccurredAtDesc(List<String> entityTypes);
 }

@@ -10,6 +10,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -47,6 +48,11 @@ public class ClinicProfileService {
             return Optional.empty();
         }
         return repository.findBySlugIgnoreCase(slug.trim()).map(this::toRecord);
+    }
+
+    @Transactional(readOnly = true)
+    public List<ClinicProfileRecord> findAll() {
+        return repository.findAll().stream().map(this::toRecord).toList();
     }
 
     @Transactional

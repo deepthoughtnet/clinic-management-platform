@@ -102,6 +102,18 @@ public class AuditEventJpaService implements AuditEventPublisher, AuditEventQuer
         );
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public List<AuditEventRecord> listRecentForEntityTypes(List<String> entityTypes, int limit) {
+        if (entityTypes == null || entityTypes.isEmpty() || limit <= 0) {
+            return List.of();
+        }
+        return repository.findTop50ByEntityTypeInOrderByOccurredAtDesc(entityTypes).stream()
+                .limit(limit)
+                .map(this::toRecord)
+                .toList();
+    }
+
     private void validate(AuditEventCommand command) {
         if (command == null) {
             throw new IllegalArgumentException("command is required");

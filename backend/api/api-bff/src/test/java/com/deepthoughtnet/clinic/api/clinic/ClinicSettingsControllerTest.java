@@ -10,6 +10,7 @@ import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
 import com.deepthoughtnet.clinic.api.platform.discover.HealthcarePublicListingSyncService;
 import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
 import com.deepthoughtnet.clinic.platform.core.context.TenantId;
+import com.deepthoughtnet.clinic.platform.modulith.events.ModuleBusinessEventPublisher;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.OffsetDateTime;
@@ -24,13 +25,15 @@ class ClinicSettingsControllerTest {
     private final UUID tenantId = UUID.randomUUID();
     private TenantUserManagementService tenantUserManagementService;
     private HealthcarePublicListingSyncService healthcarePublicListingSyncService;
+    private ModuleBusinessEventPublisher moduleBusinessEventPublisher;
     private ClinicSettingsController controller;
 
     @BeforeEach
     void setUp() {
         tenantUserManagementService = mock(TenantUserManagementService.class);
         healthcarePublicListingSyncService = mock(HealthcarePublicListingSyncService.class);
-        controller = new ClinicSettingsController(mock(ClinicProfileService.class), tenantUserManagementService, healthcarePublicListingSyncService);
+        moduleBusinessEventPublisher = mock(ModuleBusinessEventPublisher.class);
+        controller = new ClinicSettingsController(mock(ClinicProfileService.class), tenantUserManagementService, healthcarePublicListingSyncService, moduleBusinessEventPublisher);
         RequestContextHolder.set(new RequestContext(
                 TenantId.of(tenantId),
                 UUID.randomUUID(),

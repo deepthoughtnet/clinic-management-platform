@@ -4,12 +4,14 @@ import com.deepthoughtnet.clinic.api.clinic.dto.ClinicProfileRequest;
 import com.deepthoughtnet.clinic.api.clinic.dto.ClinicProfileResponse;
 import com.deepthoughtnet.clinic.api.clinic.dto.ClinicRoleResponse;
 import com.deepthoughtnet.clinic.api.clinic.dto.ClinicUserResponse;
+import com.deepthoughtnet.clinic.api.platform.discover.event.HealthcareClinicPublicListingChangedEvent;
 import com.deepthoughtnet.clinic.api.platform.discover.HealthcarePublicListingSyncService;
 import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
 import com.deepthoughtnet.clinic.clinic.service.model.ClinicProfileRecord;
 import com.deepthoughtnet.clinic.clinic.service.model.ClinicProfileUpsertCommand;
 import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
 import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
+import com.deepthoughtnet.clinic.platform.modulith.events.ModuleBusinessEventPublisher;
 import com.deepthoughtnet.clinic.platform.security.RolePermissionMappings;
 import com.deepthoughtnet.clinic.platform.security.Roles;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
@@ -51,15 +53,18 @@ public class ClinicSettingsController {
     private final ClinicProfileService clinicProfileService;
     private final TenantUserManagementService tenantUserManagementService;
     private final HealthcarePublicListingSyncService healthcarePublicListingSyncService;
+    private final ModuleBusinessEventPublisher moduleBusinessEventPublisher;
 
     public ClinicSettingsController(
             ClinicProfileService clinicProfileService,
             TenantUserManagementService tenantUserManagementService,
-            HealthcarePublicListingSyncService healthcarePublicListingSyncService
+            HealthcarePublicListingSyncService healthcarePublicListingSyncService,
+            ModuleBusinessEventPublisher moduleBusinessEventPublisher
     ) {
         this.clinicProfileService = clinicProfileService;
         this.tenantUserManagementService = tenantUserManagementService;
         this.healthcarePublicListingSyncService = healthcarePublicListingSyncService;
+        this.moduleBusinessEventPublisher = moduleBusinessEventPublisher;
     }
 
     @GetMapping("/profile")
@@ -99,6 +104,15 @@ public class ClinicSettingsController {
                 actorAppUserId
         );
         healthcarePublicListingSyncService.syncClinic(tenantId, actorAppUserId, "clinic.profile.updated");
+        moduleBusinessEventPublisher.publish(HealthcareClinicPublicListingChangedEvent.changed(
+                tenantId,
+                saved.id(),
+                saved.id() == null ? null : saved.id().toString(),
+                saved.publicListingEnabled(),
+                null,
+                "clinic.profile.updated",
+                actorAppUserId
+        ));
         return toResponse(saved);
     }
 

@@ -41,6 +41,7 @@ import NotificationsRoundedIcon from "@mui/icons-material/NotificationsRounded";
 import ExtensionRoundedIcon from "@mui/icons-material/ExtensionRounded";
 import ApartmentRoundedIcon from "@mui/icons-material/ApartmentRounded";
 import AutoAwesomeMotionRoundedIcon from "@mui/icons-material/AutoAwesomeMotionRounded";
+import LinkRoundedIcon from "@mui/icons-material/LinkRounded";
 import GroupRoundedIcon from "@mui/icons-material/GroupRounded";
 import MonitorHeartRoundedIcon from "@mui/icons-material/MonitorHeartRounded";
 import RocketLaunchRoundedIcon from "@mui/icons-material/RocketLaunchRounded";
@@ -86,6 +87,7 @@ function iconFor(key: string): React.ReactNode {
     "platform-dashboard": <DashboardRoundedIcon fontSize="small" />,
     "platform-tenants": <ApartmentRoundedIcon fontSize="small" />,
     "platform-product-implementation": <RocketLaunchRoundedIcon fontSize="small" />,
+    "platform-provider-connections": <LinkRoundedIcon fontSize="small" />,
     "platform-plans": <AutoAwesomeMotionRoundedIcon fontSize="small" />,
     "platform-users": <GroupRoundedIcon fontSize="small" />,
     "platform-help": <DescriptionRoundedIcon fontSize="small" />,

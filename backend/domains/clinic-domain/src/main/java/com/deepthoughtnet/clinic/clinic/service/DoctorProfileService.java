@@ -55,6 +55,11 @@ public class DoctorProfileService {
         return doctorProfileRepository.findByTenantIdAndActiveTrue(tenantId).stream().map(this::toRecord).toList();
     }
 
+    @Transactional(readOnly = true)
+    public List<DoctorProfileRecord> findAll() {
+        return doctorProfileRepository.findAll().stream().map(this::toRecord).toList();
+    }
+
     @Transactional
     public DoctorProfileRecord upsert(UUID tenantId, UUID doctorUserId, DoctorProfileUpsertCommand command) {
         requireTenant(tenantId);

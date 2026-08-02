@@ -396,6 +396,8 @@ export function isRouteAccessibleForAuth(
     if (path === "/platform/tenants") return auth.rolesUpper.includes("PLATFORM_ADMIN");
     if (path === "/platform/help") return auth.rolesUpper.includes("PLATFORM_ADMIN");
     if (path === "/platform/product-implementation") return auth.rolesUpper.includes("PLATFORM_ADMIN");
+    if (path === "/platform/provider-connections") return auth.rolesUpper.includes("PLATFORM_ADMIN");
+    if (path.startsWith("/platform/provider-connections/")) return auth.rolesUpper.includes("PLATFORM_ADMIN");
     if (path === "/platform/discover/provider-applications") return auth.rolesUpper.includes("PLATFORM_ADMIN");
     if (path.startsWith("/platform/discover/provider-applications/")) return auth.rolesUpper.includes("PLATFORM_ADMIN");
     if (path === "/platform/commercial") return auth.rolesUpper.includes("PLATFORM_ADMIN");

@@ -25,6 +25,15 @@ public class DiscoverPublicProviderProfileEntity {
     @Column(name = "source_system", nullable = false, length = 64)
     private String sourceSystem;
 
+    @Column(name = "source_entity_reference", nullable = false, length = 160)
+    private String sourceEntityReference;
+
+    @Column(name = "source_revision", nullable = false)
+    private long sourceRevision;
+
+    @Column(name = "source_updated_at")
+    private OffsetDateTime sourceUpdatedAt;
+
     @Column(name = "canonical_slug", nullable = false, unique = true, length = 256)
     private String canonicalSlug;
 
@@ -132,8 +141,14 @@ public class DiscoverPublicProviderProfileEntity {
     @Column(name = "published_at", nullable = false)
     private OffsetDateTime publishedAt;
 
+    @Column(name = "projected_at", nullable = false)
+    private OffsetDateTime projectedAt;
+
     @Column(name = "publication_status", nullable = false, length = 32)
     private String publicationStatus;
+
+    @Column(name = "connection_revision", nullable = false)
+    private long connectionRevision;
 
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
@@ -152,6 +167,9 @@ public class DiscoverPublicProviderProfileEntity {
             UUID providerId,
             ProviderType providerType,
             String sourceSystem,
+            String sourceEntityReference,
+            long sourceRevision,
+            OffsetDateTime sourceUpdatedAt,
             String canonicalSlug,
             UUID latestPublishedVersionId,
             int latestPublishedVersionNumber,
@@ -193,6 +211,9 @@ public class DiscoverPublicProviderProfileEntity {
         entity.providerId = providerId;
         entity.providerType = providerType;
         entity.sourceSystem = sourceSystem;
+        entity.sourceEntityReference = sourceEntityReference;
+        entity.sourceRevision = sourceRevision;
+        entity.sourceUpdatedAt = sourceUpdatedAt;
         entity.canonicalSlug = canonicalSlug;
         entity.latestPublishedVersionId = latestPublishedVersionId;
         entity.latestPublishedVersionNumber = latestPublishedVersionNumber;
@@ -229,7 +250,9 @@ public class DiscoverPublicProviderProfileEntity {
         entity.galleryCount = galleryCount;
         entity.bookingMode = bookingMode;
         entity.publishedAt = publishedAt;
+        entity.projectedAt = publishedAt;
         entity.publicationStatus = "PUBLISHED";
+        entity.connectionRevision = 0L;
         entity.createdAt = publishedAt;
         entity.updatedAt = publishedAt;
         entity.rowVersion = 0L;
@@ -239,6 +262,9 @@ public class DiscoverPublicProviderProfileEntity {
     public UUID getProviderId() { return providerId; }
     public ProviderType getProviderType() { return providerType; }
     public String getSourceSystem() { return sourceSystem; }
+    public String getSourceEntityReference() { return sourceEntityReference; }
+    public long getSourceRevision() { return sourceRevision; }
+    public OffsetDateTime getSourceUpdatedAt() { return sourceUpdatedAt; }
     public String getCanonicalSlug() { return canonicalSlug; }
     public int getLatestPublishedVersionNumber() { return latestPublishedVersionNumber; }
     public UUID getLatestPublishedVersionId() { return latestPublishedVersionId; }
@@ -275,7 +301,9 @@ public class DiscoverPublicProviderProfileEntity {
     public int getGalleryCount() { return galleryCount; }
     public String getBookingMode() { return bookingMode; }
     public OffsetDateTime getPublishedAt() { return publishedAt; }
+    public OffsetDateTime getProjectedAt() { return projectedAt; }
     public String getPublicationStatus() { return publicationStatus; }
+    public long getConnectionRevision() { return connectionRevision; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
     public long getRowVersion() { return rowVersion; }
@@ -354,12 +382,41 @@ public class DiscoverPublicProviderProfileEntity {
         this.galleryCount = galleryCount;
         this.bookingMode = bookingMode;
         this.publishedAt = publishedAt;
+        this.projectedAt = publishedAt;
         this.updatedAt = publishedAt;
         this.publicationStatus = "PUBLISHED";
+        this.connectionRevision = 0L;
     }
 
     public void markUnpublished(OffsetDateTime unpublishedAt) {
         this.publicationStatus = "UNPUBLISHED";
+        this.projectedAt = unpublishedAt;
         this.updatedAt = unpublishedAt;
+    }
+
+    public void applyLifecycleMetadata(
+            String sourceSystem,
+            String sourceEntityReference,
+            long sourceRevision,
+            OffsetDateTime sourceUpdatedAt,
+            OffsetDateTime projectedAt,
+            long connectionRevision,
+            String publicationStatus
+    ) {
+        if (sourceSystem != null && !sourceSystem.isBlank()) {
+            this.sourceSystem = sourceSystem;
+        }
+        if (sourceEntityReference != null && !sourceEntityReference.isBlank()) {
+            this.sourceEntityReference = sourceEntityReference;
+        }
+        this.sourceRevision = sourceRevision;
+        this.sourceUpdatedAt = sourceUpdatedAt;
+        if (projectedAt != null) {
+            this.projectedAt = projectedAt;
+        }
+        this.connectionRevision = connectionRevision;
+        if (publicationStatus != null && !publicationStatus.isBlank()) {
+            this.publicationStatus = publicationStatus;
+        }
     }
 }

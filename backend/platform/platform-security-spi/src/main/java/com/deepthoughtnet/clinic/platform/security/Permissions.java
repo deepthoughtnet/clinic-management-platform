@@ -119,6 +119,13 @@ public final class Permissions {
     public static final String DISCOVER_PROVIDER_APPLICATION_APPROVE = "discover.provider.application.approve";
     public static final String DISCOVER_PROVIDER_APPLICATION_PUBLISH = "discover.provider.application.publish";
     public static final String DISCOVER_PROVIDER_APPLICATION_HISTORY_VIEW = "discover.provider.application.history.view";
+    public static final String PLATFORM_PROVIDER_CONNECTION_VIEW = "platform.provider_connection.view";
+    public static final String PLATFORM_PROVIDER_CONNECTION_PROPOSE = "platform.provider_connection.propose";
+    public static final String PLATFORM_PROVIDER_CONNECTION_APPROVE = "platform.provider_connection.approve";
+    public static final String PLATFORM_PROVIDER_CONNECTION_REJECT = "platform.provider_connection.reject";
+    public static final String PLATFORM_PROVIDER_CONNECTION_UNLINK = "platform.provider_connection.unlink";
+    public static final String PLATFORM_PROVIDER_CONNECTION_RECONCILE = "platform.provider_connection.reconcile";
+    public static final String PLATFORM_PROVIDER_CONNECTION_AUDIT = "platform.provider_connection.audit";
     public static final String NOTIFICATION_READ = "notification.read";
     public static final String NOTIFICATION_MANAGE = "notification.manage";
     public static final String NOTIFICATION_SEND = "notification.send";

@@ -20,6 +20,8 @@ import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileMod
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderProfileSummaryRecord;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicSpecialitySummaryRecord;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderPublicationRecord;
+import com.deepthoughtnet.clinic.discover.publicprofile.PublicProfileLifecycleRecord;
+import com.deepthoughtnet.clinic.discover.publicprofile.PublicationReadinessRecord;
 import com.deepthoughtnet.clinic.discover.publicprofile.db.DiscoverPublicProviderProfileEntity;
 import com.deepthoughtnet.clinic.discover.publicprofile.db.DiscoverPublicProviderProfileRepository;
 import com.deepthoughtnet.clinic.discover.publicprofile.db.DiscoverPublicProviderProfileSlugEntity;
@@ -121,11 +123,47 @@ public class ProviderPublicProfileService {
             String publicationReason,
             OffsetDateTime publishedAt
     ) {
+        return upsertLifecycleProfile(
+                snapshot,
+                sourceSubmissionVersionNumber,
+                statusBefore,
+                statusAfter,
+                publicationReason,
+                publishedAt,
+                "PUBLISHED",
+                snapshot.sourceSystem(),
+                snapshot.providerId().toString(),
+                sourceSubmissionVersionNumber == null ? 0L : sourceSubmissionVersionNumber.longValue(),
+                publishedAt == null ? OffsetDateTime.now() : publishedAt,
+                0L
+        );
+    }
+
+    @Transactional
+    public PublicProviderPublicationRecord upsertLifecycleProfile(
+            PublicProviderProfileSnapshot snapshot,
+            Integer sourceSubmissionVersionNumber,
+            String statusBefore,
+            String statusAfter,
+            String publicationReason,
+            OffsetDateTime projectedAt,
+            String publicationStatus,
+            String sourceSystem,
+            String sourceEntityReference,
+            long sourceRevision,
+            OffsetDateTime sourceUpdatedAt,
+            long connectionRevision
+    ) {
         require(snapshot != null, "public profile snapshot is required");
         require(snapshot.providerId() != null, "public profile source reference is required");
         require(snapshot.providerType() != null, "public profile type is required");
         require(StringUtils.hasText(snapshot.sourceSystem()), "public profile source system is required");
-        OffsetDateTime resolvedPublishedAt = publishedAt == null ? OffsetDateTime.now() : publishedAt;
+        OffsetDateTime resolvedProjectedAt = projectedAt == null ? OffsetDateTime.now() : projectedAt;
+        String lifecycleStatus = StringUtils.hasText(publicationStatus) ? publicationStatus : "PUBLISHED";
+        String resolvedSourceSystem = StringUtils.hasText(sourceSystem) ? sourceSystem : snapshot.sourceSystem();
+        String resolvedSourceEntityReference = StringUtils.hasText(sourceEntityReference) ? sourceEntityReference : snapshot.providerId().toString();
+        long resolvedSourceRevision = sourceRevision;
+        OffsetDateTime resolvedSourceUpdatedAt = sourceUpdatedAt == null ? resolvedProjectedAt : sourceUpdatedAt;
 
         String snapshotJson = snapshotJson(snapshot);
         String snapshotHash = digest(snapshotJson);
@@ -136,14 +174,14 @@ public class ProviderPublicProfileService {
         Optional<DiscoverPublicProviderProfileVersionEntity> duplicate = versions.findFirstByProviderIdAndSnapshotHashOrderByVersionNumberDesc(snapshot.providerId(), snapshotHash);
         if (duplicate.isPresent()) {
             DiscoverPublicProviderProfileVersionEntity version = duplicate.get();
-            upsertSlugAlias(snapshot.providerId(), version.getId(), version.getVersionNumber(), snapshot.canonicalSlug(), resolvedPublishedAt);
-            upsertAggregate(snapshot, version.getId(), version.getVersionNumber(), resolvedPublishedAt);
+            upsertSlugAlias(snapshot.providerId(), version.getId(), version.getVersionNumber(), snapshot.canonicalSlug(), resolvedProjectedAt);
+            upsertAggregate(snapshot, version.getId(), version.getVersionNumber(), resolvedProjectedAt, lifecycleStatus, resolvedSourceSystem, resolvedSourceEntityReference, resolvedSourceRevision, resolvedSourceUpdatedAt, connectionRevision);
             return new PublicProviderPublicationRecord(
                     snapshot.providerId(),
                     snapshot.providerType(),
                     snapshot.canonicalSlug(),
                     version.getVersionNumber(),
-                    version.getPublishedAt(),
+                    resolvedProjectedAt,
                     publicPath(snapshot.providerType(), snapshot.canonicalSlug())
             );
         }
@@ -153,24 +191,24 @@ public class ProviderPublicProfileService {
                 nextVersion,
                 sourceSubmissionVersionNumber == null ? nextVersion : sourceSubmissionVersionNumber,
                 statusBefore,
-                statusAfter == null ? ProviderLifecycleStatus.PUBLISHED.name() : statusAfter,
+                statusAfter == null ? lifecycleStatus : statusAfter,
                 snapshot.sourceSystem(),
                 StringUtils.hasText(publicationReason) ? publicationReason : "Published public profile",
                 snapshotHash,
                 snapshotJson,
                 snapshot.canonicalSlug(),
-                resolvedPublishedAt
+                resolvedProjectedAt
         ));
 
-        upsertSlugAlias(snapshot.providerId(), version.getId(), nextVersion, snapshot.canonicalSlug(), resolvedPublishedAt);
-        upsertAggregate(snapshot, version.getId(), nextVersion, resolvedPublishedAt);
+        upsertSlugAlias(snapshot.providerId(), version.getId(), nextVersion, snapshot.canonicalSlug(), resolvedProjectedAt);
+        upsertAggregate(snapshot, version.getId(), nextVersion, resolvedProjectedAt, lifecycleStatus, resolvedSourceSystem, resolvedSourceEntityReference, resolvedSourceRevision, resolvedSourceUpdatedAt, connectionRevision);
 
         return new PublicProviderPublicationRecord(
                 snapshot.providerId(),
                 snapshot.providerType(),
                 snapshot.canonicalSlug(),
                 nextVersion,
-                resolvedPublishedAt,
+                resolvedProjectedAt,
                 publicPath(snapshot.providerType(), snapshot.canonicalSlug())
         );
     }
@@ -286,6 +324,99 @@ public class ProviderPublicProfileService {
                 .filter(profile -> "PUBLISHED".equalsIgnoreCase(profile.getPublicationStatus()))
                 .flatMap(profile -> versions.findFirstByProviderIdOrderByVersionNumberDesc(providerId)
                         .map(version -> toDetail(profile, version, profile.getCanonicalSlug(), readSnapshot(version.getSnapshotJson()))));
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<PublicProfileLifecycleRecord> findLifecycleByProviderId(UUID providerId) {
+        if (providerId == null) {
+            return Optional.empty();
+        }
+        return profiles.findByProviderId(providerId)
+                .flatMap(profile -> versions.findFirstByProviderIdOrderByVersionNumberDesc(providerId)
+                        .map(version -> toLifecycleRecord(profile, version)));
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<PublicProfileLifecycleRecord> findLifecycleBySourceReference(String sourceSystem, String sourceEntityReference) {
+        if (!StringUtils.hasText(sourceSystem) || !StringUtils.hasText(sourceEntityReference)) {
+            return Optional.empty();
+        }
+        return profiles.findFirstBySourceSystemIgnoreCaseAndSourceEntityReference(sourceSystem.trim(), sourceEntityReference.trim())
+                .flatMap(profile -> versions.findFirstByProviderIdOrderByVersionNumberDesc(profile.getProviderId())
+                        .map(version -> toLifecycleRecord(profile, version)));
+    }
+
+    @Transactional(readOnly = true)
+    public List<PublicProfileLifecycleRecord> listLifecycleProfiles(ProviderType providerType, String q, String city) {
+        String normalizedQuery = normalize(q);
+        String normalizedCity = normalize(city);
+        return profiles.findAll().stream()
+                .filter(profile -> providerType == null || profile.getProviderType() == providerType)
+                .filter(profile -> StringUtils.hasText(normalizedCity) ? containsIgnoreCase(profile.getCity(), normalizedCity) : true)
+                .filter(profile -> StringUtils.hasText(normalizedQuery)
+                        ? containsIgnoreCase(profile.getDisplayName(), normalizedQuery)
+                        || containsIgnoreCase(profile.getSummary(), normalizedQuery)
+                        || containsIgnoreCase(profile.getPrimarySpeciality(), normalizedQuery)
+                        || containsIgnoreCase(profile.getCity(), normalizedQuery)
+                        || containsIgnoreCase(profile.getArea(), normalizedQuery)
+                        || containsIgnoreCase(profile.getSourceEntityReference(), normalizedQuery)
+                        : true)
+                .sorted(Comparator.comparing(DiscoverPublicProviderProfileEntity::getDisplayName, String.CASE_INSENSITIVE_ORDER))
+                .map(profile -> versions.findFirstByProviderIdOrderByVersionNumberDesc(profile.getProviderId())
+                        .map(version -> toLifecycleRecord(profile, version))
+                        .orElseGet(() -> new PublicProfileLifecycleRecord(
+                                profile.getProviderId(),
+                                profile.getProviderType(),
+                                profile.getSourceSystem(),
+                                profile.getSourceEntityReference(),
+                                profile.getSourceRevision(),
+                                profile.getSourceUpdatedAt(),
+                                profile.getCanonicalSlug(),
+                                profile.getDisplayName(),
+                                profile.getCity(),
+                                profile.getArea(),
+                                profile.getBookingMode(),
+                                profile.getPublicationStatus(),
+                                profile.getProjectedAt(),
+                                profile.getPublishedAt(),
+                                profile.getConnectionRevision(),
+                                publicPath(profile.getProviderType(), profile.getCanonicalSlug())
+                        )))
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public PublicationReadinessRecord publicationReadiness(UUID providerId) {
+        if (providerId == null) {
+            return new PublicationReadinessRecord(false, List.of("MISSING_PROVIDER"), List.of(), List.of(), "UNKNOWN", 0L, null);
+        }
+        DiscoverPublicProviderProfileEntity profile = profiles.findByProviderId(providerId).orElse(null);
+        if (profile == null) {
+            return new PublicationReadinessRecord(false, List.of("PROFILE_NOT_FOUND"), List.of(), List.of(), "UNKNOWN", 0L, null);
+        }
+        List<String> missing = new ArrayList<>();
+        List<String> invalid = new ArrayList<>();
+        List<String> warnings = new ArrayList<>();
+        if (!StringUtils.hasText(profile.getDisplayName())) {
+            missing.add("DISPLAY_NAME");
+        }
+        if (!StringUtils.hasText(profile.getCity()) || !StringUtils.hasText(profile.getArea()) && profile.getProviderType() != ProviderType.INDIVIDUAL_DOCTOR) {
+            missing.add("PUBLIC_LOCATION");
+        }
+        if (!StringUtils.hasText(profile.getContactPhone())) {
+            missing.add("PUBLIC_CONTACT");
+        }
+        if (!StringUtils.hasText(profile.getSourceSystem())) {
+            invalid.add("SOURCE_SYSTEM");
+        }
+        if (!StringUtils.hasText(profile.getCanonicalSlug())) {
+            warnings.add("SLUG_PENDING");
+        }
+        if (!"PUBLISHED".equalsIgnoreCase(profile.getPublicationStatus())) {
+            warnings.add("NOT_YET_PUBLISHED");
+        }
+        boolean ready = missing.isEmpty() && invalid.isEmpty();
+        return new PublicationReadinessRecord(ready, missing, invalid, warnings, profile.getPublicationStatus(), profile.getSourceRevision(), profile.getSourceUpdatedAt());
     }
 
     @Transactional(readOnly = true)
@@ -635,11 +766,25 @@ public class ProviderPublicProfileService {
         );
     }
 
-    private void upsertAggregate(PublicProviderProfileSnapshot snapshot, UUID latestVersionId, int latestVersionNumber, OffsetDateTime publishedAt) {
+    private void upsertAggregate(
+            PublicProviderProfileSnapshot snapshot,
+            UUID latestVersionId,
+            int latestVersionNumber,
+            OffsetDateTime projectedAt,
+            String publicationStatus,
+            String sourceSystem,
+            String sourceEntityReference,
+            long sourceRevision,
+            OffsetDateTime sourceUpdatedAt,
+            long connectionRevision
+    ) {
         DiscoverPublicProviderProfileEntity entity = profiles.findByProviderId(snapshot.providerId()).orElseGet(() -> DiscoverPublicProviderProfileEntity.create(
                 snapshot.providerId(),
                 snapshot.providerType(),
-                snapshot.sourceSystem(),
+                sourceSystem,
+                firstNonBlank(sourceEntityReference, snapshot.providerId().toString()),
+                sourceRevision,
+                sourceUpdatedAt == null ? projectedAt : sourceUpdatedAt,
                 snapshot.canonicalSlug(),
                 latestVersionId,
                 latestVersionNumber,
@@ -675,7 +820,7 @@ public class ProviderPublicProfileService {
                 snapshot.departmentCount(),
                 snapshot.galleryCount(),
                 snapshot.bookingMode(),
-                publishedAt
+                projectedAt
         ));
         entity.update(
                 snapshot.canonicalSlug(),
@@ -713,7 +858,16 @@ public class ProviderPublicProfileService {
                 snapshot.departmentCount(),
                 snapshot.galleryCount(),
                 snapshot.bookingMode(),
-                publishedAt
+                projectedAt
+        );
+        entity.applyLifecycleMetadata(
+                sourceSystem,
+                firstNonBlank(sourceEntityReference, snapshot.providerId().toString()),
+                sourceRevision,
+                sourceUpdatedAt == null ? projectedAt : sourceUpdatedAt,
+                projectedAt,
+                connectionRevision,
+                publicationStatus == null ? "PUBLISHED" : publicationStatus
         );
         profiles.save(entity);
     }
@@ -914,6 +1068,30 @@ public class ProviderPublicProfileService {
             case CLINIC -> "clinics";
             case HOSPITAL -> "hospitals";
         } + "/" + slug;
+    }
+
+    private PublicProfileLifecycleRecord toLifecycleRecord(
+            DiscoverPublicProviderProfileEntity profile,
+            DiscoverPublicProviderProfileVersionEntity version
+    ) {
+        return new PublicProfileLifecycleRecord(
+                profile.getProviderId(),
+                profile.getProviderType(),
+                profile.getSourceSystem(),
+                profile.getSourceEntityReference(),
+                profile.getSourceRevision(),
+                profile.getSourceUpdatedAt(),
+                profile.getCanonicalSlug(),
+                profile.getDisplayName(),
+                profile.getCity(),
+                profile.getArea(),
+                profile.getBookingMode(),
+                profile.getPublicationStatus(),
+                profile.getProjectedAt(),
+                version == null ? profile.getPublishedAt() : version.getPublishedAt(),
+                profile.getConnectionRevision(),
+                publicPath(profile.getProviderType(), profile.getCanonicalSlug())
+        );
     }
 
     private String slugFor(ProviderApplicationEntity application) {

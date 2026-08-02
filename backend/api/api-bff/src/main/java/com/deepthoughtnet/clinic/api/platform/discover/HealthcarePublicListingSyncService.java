@@ -2,13 +2,12 @@ package com.deepthoughtnet.clinic.api.platform.discover;
 
 import com.deepthoughtnet.clinic.api.clinicaldocument.service.ClinicalDocumentRecord;
 import com.deepthoughtnet.clinic.api.clinicaldocument.service.ClinicalDocumentService;
-import com.deepthoughtnet.clinic.appointment.service.AppointmentService;
-import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityRecord;
 import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
 import com.deepthoughtnet.clinic.clinic.service.DoctorProfileService;
 import com.deepthoughtnet.clinic.clinic.service.model.ClinicProfileRecord;
 import com.deepthoughtnet.clinic.clinic.service.model.DoctorProfileRecord;
 import com.deepthoughtnet.clinic.clinic.service.model.DoctorProfileUpsertCommand;
+import com.deepthoughtnet.clinic.appointment.service.DoctorAvailabilityQueryService;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderDocumentType;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderType;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels;
@@ -16,6 +15,7 @@ import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileMod
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderProfileSnapshot;
 import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService;
 import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
+import com.deepthoughtnet.clinic.platform.contracts.providerintegration.PublicationStatus;
 import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
@@ -43,7 +43,7 @@ public class HealthcarePublicListingSyncService {
     private final ClinicProfileService clinicProfileService;
     private final DoctorProfileService doctorProfileService;
     private final TenantUserManagementService tenantUserManagementService;
-    private final AppointmentService appointmentService;
+    private final DoctorAvailabilityQueryService doctorAvailabilityQueryService;
     private final ClinicalDocumentService clinicalDocumentService;
     private final ProviderPublicProfileService publicProfileService;
 
@@ -51,14 +51,14 @@ public class HealthcarePublicListingSyncService {
             ClinicProfileService clinicProfileService,
             DoctorProfileService doctorProfileService,
             TenantUserManagementService tenantUserManagementService,
-            AppointmentService appointmentService,
+            DoctorAvailabilityQueryService doctorAvailabilityQueryService,
             ClinicalDocumentService clinicalDocumentService,
             ProviderPublicProfileService publicProfileService
     ) {
         this.clinicProfileService = clinicProfileService;
         this.doctorProfileService = doctorProfileService;
         this.tenantUserManagementService = tenantUserManagementService;
-        this.appointmentService = appointmentService;
+        this.doctorAvailabilityQueryService = doctorAvailabilityQueryService;
         this.clinicalDocumentService = clinicalDocumentService;
         this.publicProfileService = publicProfileService;
     }
@@ -153,7 +153,20 @@ public class HealthcarePublicListingSyncService {
                 doctors.size()
         );
 
-        var publication = publicProfileService.upsertPublicProfile(snapshot, 1, null, null, reason, OffsetDateTime.now());
+        var publication = publicProfileService.upsertLifecycleProfile(
+                snapshot,
+                1,
+                null,
+                null,
+                reason,
+                OffsetDateTime.now(),
+                PublicationStatus.PUBLISHED.name(),
+                SOURCE_SYSTEM_CLINIC,
+                clinic.id().toString(),
+                clinic.updatedAt() == null ? 0L : clinic.updatedAt().toInstant().toEpochMilli(),
+                clinic.updatedAt(),
+                0L
+        );
         return HealthcarePublicListingSyncOutcome.updated(SOURCE_SYSTEM_CLINIC, clinic.id(), slug, bookingMode, "Clinic projected into Discover");
     }
 
@@ -235,7 +248,20 @@ public class HealthcarePublicListingSyncService {
                 "/discover/doctors/" + slug
         );
 
-        publicProfileService.upsertPublicProfile(snapshot, 1, null, null, reason, OffsetDateTime.now());
+        publicProfileService.upsertLifecycleProfile(
+                snapshot,
+                1,
+                null,
+                null,
+                reason,
+                OffsetDateTime.now(),
+                PublicationStatus.PUBLISHED.name(),
+                SOURCE_SYSTEM_DOCTOR,
+                doctor.doctorUserId().toString(),
+                doctor.updatedAt() == null ? 0L : doctor.updatedAt().toInstant().toEpochMilli(),
+                doctor.updatedAt(),
+                0L
+        );
         return HealthcarePublicListingSyncOutcome.updated(SOURCE_SYSTEM_DOCTOR, doctor.doctorUserId(), slug, bookingMode, "Doctor projected into Discover");
     }
 
@@ -291,7 +317,7 @@ public class HealthcarePublicListingSyncService {
     }
 
     private boolean hasActiveAvailability(UUID tenantId, UUID doctorUserId) {
-        return appointmentService.listDoctorAvailabilities(tenantId, doctorUserId).stream().anyMatch(DoctorAvailabilityRecord::active);
+        return doctorAvailabilityQueryService.hasActiveAvailability(tenantId, doctorUserId);
     }
 
     private String ensureClinicSlug(UUID tenantId, ClinicProfileRecord clinic, UUID actorAppUserId) {

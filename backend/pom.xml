@@ -38,6 +38,7 @@
     <module>platform/platform-audit</module>
     <module>platform/platform-contracts</module>
     <module>platform/platform-core</module>
+    <module>platform/platform-provider-integration</module>
     <module>platform/platform-idempotency</module>
     <module>platform/platform-jobs</module>
     <module>platform/platform-events</module>

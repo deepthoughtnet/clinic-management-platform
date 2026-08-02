@@ -5,4 +5,5 @@ import java.util.UUID;
 
 public interface AuditEventQueryService {
     List<AuditEventRecord> listForEntity(UUID tenantId, String entityType, UUID entityId);
+    List<AuditEventRecord> listRecentForEntityTypes(List<String> entityTypes, int limit);
 }

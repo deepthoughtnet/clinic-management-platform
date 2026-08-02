@@ -9937,3 +9937,387 @@ export async function publishDiscoverProviderApplication(token: string, referenc
 export async function getDiscoverProviderReviewDocumentBlob(token: string, referenceNumber: string, documentId: string) {
   return fetchAuthenticatedBlob(`/api/platform/discover/provider-applications/${encodeURIComponent(referenceNumber)}/documents/${documentId}/content`, { token, platformOperation: true });
 }
+
+export type ProviderConnectionsPublicProfileType = "DOCTOR" | "CLINIC" | "HOSPITAL";
+export type ProviderConnectionsBookingCapability = "ONLINE_BOOKING" | "CALL_TO_BOOK" | "NOT_AVAILABLE" | "REQUEST_APPOINTMENT" | "EXTERNAL_BOOKING";
+export type ProviderConnectionsAvailabilityState = "AVAILABLE_TODAY" | "NEXT_AVAILABLE" | "NO_SLOTS_IN_RANGE" | "TEMPORARILY_UNAVAILABLE" | "UNKNOWN";
+export type ProviderConnectionsLinkLifecycleStatus = "SUGGESTED" | "PENDING_VERIFICATION" | "PROPOSED" | "APPROVED" | "LINKED" | "REJECTED" | "UNLINKED" | "DISPUTED";
+export type ProviderConnectionsConnectionStatus = "NOT_CONNECTED" | "CONNECTION_PENDING" | "CONNECTED" | "DISCONNECTED" | "DISPUTED";
+export type ProviderConnectionsMatchConfidence = "LOW" | "MEDIUM" | "HIGH";
+export type ProviderConnectionsEvidenceStrength = "STRONG" | "SUPPORTING" | "WEAK" | "CONFLICT";
+export type ProviderConnectionsMatchMethod =
+  | "REGISTRATION_EXACT"
+  | "REGISTRATION_AND_CONTACT"
+  | "VERIFIED_PHONE_EXACT"
+  | "VERIFIED_EMAIL_EXACT"
+  | "VERIFIED_CONTACT_EXACT"
+  | "PROVIDER_CONFIRMED"
+  | "TENANT_CONFIRMED"
+  | "CLINIC_OWNERSHIP_CONFIRMED"
+  | "PLATFORM_ADMIN_REVIEWED"
+  | "BUSINESS_IDENTITY_MATCH"
+  | "NAME_SIMILARITY"
+  | "LOCATION_SIMILARITY"
+  | "SPECIALTY_SIMILARITY"
+  | "MANUAL_REFERENCE";
+
+export type ProviderConnectionsEvidence = {
+  evidenceType: string;
+  result: string | null;
+  strength: ProviderConnectionsEvidenceStrength;
+  publicDisplayValue: string | null;
+  platformDisplayValue: string | null;
+  sourceRevision: number;
+  recordedAt: string | null;
+  explanation: string | null;
+};
+
+export type ProviderConnectionsOverviewMetric = {
+  key: string;
+  label: string;
+  value: number;
+  helperText: string;
+  path: string;
+};
+
+export type ProviderConnectionsOverviewResponse = {
+  metrics: ProviderConnectionsOverviewMetric[];
+};
+
+export type ProviderConnectionsPublicProfileResponse = {
+  publicProfileType: ProviderConnectionsPublicProfileType;
+  publicReference: string | null;
+  publicPracticeReference: string | null;
+  displayName: string | null;
+  slug: string | null;
+  publicPath: string | null;
+  city: string | null;
+  area: string | null;
+  publicPhone: string | null;
+  publicFee: string | null;
+  bookingCapability: ProviderConnectionsBookingCapability;
+  availabilityState: ProviderConnectionsAvailabilityState;
+  publicationStatus: string;
+  sourceSystem: string | null;
+  sourceRevision: number;
+  sourceUpdatedAt: string | null;
+  projectedAt: string | null;
+  connected: boolean;
+  linkStatus: ProviderConnectionsLinkLifecycleStatus | null;
+  connectionStatus: ProviderConnectionsConnectionStatus | null;
+  platformClinicReference: string | null;
+  tenantReference: string | null;
+  tags: string[];
+};
+
+export type ProviderConnectionsLifecycleResponse = {
+  publicProfileType: ProviderConnectionsPublicProfileType;
+  sourceSystem: string | null;
+  sourceEntityReference: string | null;
+  displayName: string | null;
+  canonicalSlug: string | null;
+  publicPath: string | null;
+  city: string | null;
+  area: string | null;
+  publicationStatus: string | null;
+  sourceRevision: number;
+  sourceUpdatedAt: string | null;
+  projectedAt: string | null;
+  connectionRevision: number;
+  ready: boolean;
+  missingFields: string[];
+  invalidFields: string[];
+  warnings: string[];
+};
+
+export type ProviderConnectionsPlatformEntityResponse = {
+  entityType: string;
+  tenantId: string | null;
+  tenantReference: string | null;
+  tenantCode: string | null;
+  tenantName: string | null;
+  displayName: string | null;
+  city: string | null;
+  area: string | null;
+  phone: string | null;
+  email: string | null;
+  specialty: string | null;
+  qualification: string | null;
+  registrationNumber: string | null;
+  yearsOfExperience: number | null;
+  active: boolean;
+  publicListingEnabled: boolean;
+  publicListingConsent: string | null;
+  slug: string | null;
+  platformClinicReference: string | null;
+  tenantDoctorUserReference: string | null;
+  tenantDoctorProfileReference: string | null;
+  bookingCapability: string | null;
+  platformBookingSetup: string | null;
+  currentDiscoverCapability: string | null;
+  currentAvailability: string | null;
+  capabilityReason: string | null;
+  sourceRevision: number;
+  sourceUpdatedAt: string | null;
+  linkedPublicReference: string | null;
+  linkStatus: string | null;
+  connectionStatus: string | null;
+};
+
+export type ProviderConnectionsLinkResponse = {
+  id: string;
+  publicProfileType: ProviderConnectionsPublicProfileType;
+  publicReference: string | null;
+  publicPracticeReference: string | null;
+  tenantReference: string | null;
+  tenantName: string | null;
+  platformClinicReference: string | null;
+  tenantDoctorUserReference: string | null;
+  tenantDoctorProfileReference: string | null;
+  linkStatus: ProviderConnectionsLinkLifecycleStatus;
+  connectionStatus: ProviderConnectionsConnectionStatus;
+  bookingCapability: ProviderConnectionsBookingCapability;
+  availabilityState: ProviderConnectionsAvailabilityState;
+  matchMethod: ProviderConnectionsMatchMethod | null;
+  matchConfidence: ProviderConnectionsMatchConfidence | null;
+  reason: string | null;
+  bookingReferenceMasked: string | null;
+  sourceRevision: number;
+  sourceUpdatedAt: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+  publicDisplayName: string | null;
+  publicCity: string | null;
+  publicArea: string | null;
+  publicPath: string | null;
+  sourceSystem: string | null;
+  evidence: ProviderConnectionsEvidence[];
+};
+
+export type ProviderConnectionsComparisonRowResponse = {
+  key: string;
+  label: string;
+  publicValue: string | null;
+  platformValue: string | null;
+  status: string | null;
+};
+
+export type ProviderConnectionsAuditResponse = {
+  id: string;
+  action: string;
+  summary: string | null;
+  actorAppUserId: string | null;
+  occurredAt: string | null;
+  detailsJson: string | null;
+  providerType: string | null;
+  tenantReference: string | null;
+  platformClinicReference: string | null;
+  previousState: string | null;
+  newState: string | null;
+  result: string | null;
+  correlationId: string | null;
+};
+
+export type ProviderConnectionsLinkDetailResponse = {
+  link: ProviderConnectionsLinkResponse;
+  comparison: ProviderConnectionsComparisonRowResponse[];
+  audit: ProviderConnectionsAuditResponse[];
+};
+
+export type ProviderConnectionsSuggestionResponse = {
+  id: string;
+  publicProfileType: ProviderConnectionsPublicProfileType;
+  publicReference: string | null;
+  publicPracticeReference: string | null;
+  publicDisplayName: string | null;
+  platformDisplayName: string | null;
+  tenantReference: string | null;
+  platformClinicReference: string | null;
+  tenantDoctorUserReference: string | null;
+  tenantDoctorProfileReference: string | null;
+  platformCity: string | null;
+  platformArea: string | null;
+  platformPhone: string | null;
+  platformEmail: string | null;
+  platformSpecialty: string | null;
+  platformQualification: string | null;
+  platformRegistrationNumber: string | null;
+  platformYearsOfExperience: number | null;
+  platformBookingSetup: string | null;
+  currentDiscoverCapability: string | null;
+  currentAvailability: string | null;
+  bookingReference: string | null;
+  matchMethod: ProviderConnectionsMatchMethod | null;
+  confidence: ProviderConnectionsMatchConfidence | null;
+  evidence: ProviderConnectionsEvidence[];
+  reason: string | null;
+  status: string | null;
+  lastEvaluatedAt: string | null;
+  sourceRevision: number;
+};
+
+export type ProviderConnectionsConflictResponse = {
+  id: string;
+  severity: string;
+  title: string;
+  details: string;
+  linkId: string;
+  publicReference: string | null;
+  tenantReference: string | null;
+};
+
+export type ProviderConnectionsLinkProposalRequest = {
+  publicProfileType: ProviderConnectionsPublicProfileType;
+  publicReference: string | null;
+  publicPracticeReference: string | null;
+  tenantReference: string | null;
+  platformClinicReference: string | null;
+  tenantDoctorUserReference: string | null;
+  tenantDoctorProfileReference: string | null;
+  platformEntityRevision: number;
+  sourceSystem: string | null;
+  sourceEntityReference: string | null;
+  sourceRevision: number;
+  sourceUpdatedAt: string | null;
+  linkStatus: ProviderConnectionsLinkLifecycleStatus;
+  connectionStatus: ProviderConnectionsConnectionStatus;
+  matchMethod: ProviderConnectionsMatchMethod;
+  matchConfidence: ProviderConnectionsMatchConfidence | null;
+  reason: string | null;
+  evidence: string[];
+};
+
+export type ProviderConnectionsLinkUpdateRequest = {
+  reason: string | null;
+};
+
+export type ProviderConnectionsSuggestionDecisionRequest = {
+  reason: string | null;
+};
+
+export type ProviderConnectionsReconcileRequest = {
+  publicProfileType: ProviderConnectionsPublicProfileType | null;
+  linkId: string | null;
+  tenantReference: string | null;
+};
+
+export async function getProviderConnectionsOverview(token: string) {
+  return httpGet<ProviderConnectionsOverviewResponse>("/api/platform/provider-connections/overview", { token, platformOperation: true });
+}
+
+export async function listProviderConnectionsPublicProfiles(
+  token: string,
+  filters?: { type?: ProviderConnectionsPublicProfileType | null; q?: string | null; city?: string | null },
+) {
+  const query = new URLSearchParams();
+  if (filters?.type) query.set("type", filters.type);
+  if (filters?.q?.trim()) query.set("q", filters.q.trim());
+  if (filters?.city?.trim()) query.set("city", filters.city.trim());
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return httpGet<ProviderConnectionsPublicProfileResponse[]>(`/api/platform/provider-connections/public-profiles${suffix}`, { token, platformOperation: true });
+}
+
+export async function listProviderConnectionsPublicPractices(
+  token: string,
+  filters?: { q?: string | null; city?: string | null },
+) {
+  const query = new URLSearchParams();
+  if (filters?.q?.trim()) query.set("q", filters.q.trim());
+  if (filters?.city?.trim()) query.set("city", filters.city.trim());
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return httpGet<ProviderConnectionsPublicProfileResponse[]>(`/api/platform/provider-connections/public-practices${suffix}`, { token, platformOperation: true });
+}
+
+export async function listProviderConnectionsPublicProfileLifecycle(
+  token: string,
+  filters?: { type?: ProviderConnectionsPublicProfileType | null; q?: string | null; city?: string | null },
+) {
+  const query = new URLSearchParams();
+  if (filters?.type) query.set("type", filters.type);
+  if (filters?.q?.trim()) query.set("q", filters.q.trim());
+  if (filters?.city?.trim()) query.set("city", filters.city.trim());
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return httpGet<ProviderConnectionsLifecycleResponse[]>(`/api/platform/provider-connections/public-profile-lifecycle${suffix}`, { token, platformOperation: true });
+}
+
+export async function listProviderConnectionsPlatformEntities(
+  token: string,
+  filters?: { type?: string | null; q?: string | null },
+) {
+  const query = new URLSearchParams();
+  if (filters?.type?.trim()) query.set("type", filters.type.trim());
+  if (filters?.q?.trim()) query.set("q", filters.q.trim());
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return httpGet<ProviderConnectionsPlatformEntityResponse[]>(`/api/platform/provider-connections/platform-entities${suffix}`, { token, platformOperation: true });
+}
+
+export async function listProviderConnectionsLinks(
+  token: string,
+  filters?: { type?: string | null; status?: string | null; q?: string | null },
+) {
+  const query = new URLSearchParams();
+  if (filters?.type?.trim()) query.set("type", filters.type.trim());
+  if (filters?.status?.trim()) query.set("status", filters.status.trim());
+  if (filters?.q?.trim()) query.set("q", filters.q.trim());
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return httpGet<ProviderConnectionsLinkResponse[]>(`/api/platform/provider-connections/links${suffix}`, { token, platformOperation: true });
+}
+
+export async function getProviderConnectionsLinkDetail(token: string, linkId: string) {
+  return httpGet<ProviderConnectionsLinkDetailResponse>(`/api/platform/provider-connections/links/${encodeURIComponent(linkId)}`, { token, platformOperation: true });
+}
+
+export async function getProviderConnectionsLinkAudit(token: string, linkId: string) {
+  return httpGet<ProviderConnectionsAuditResponse[]>(`/api/platform/provider-connections/links/${encodeURIComponent(linkId)}/audit`, { token, platformOperation: true });
+}
+
+export async function getProviderConnectionsAuditEvents(
+  token: string,
+  filters?: { action?: string | null; tenantReference?: string | null; providerType?: string | null; result?: string | null; q?: string | null },
+) {
+  const query = new URLSearchParams();
+  if (filters?.action?.trim()) query.set("action", filters.action.trim());
+  if (filters?.tenantReference?.trim()) query.set("tenantReference", filters.tenantReference.trim());
+  if (filters?.providerType?.trim()) query.set("providerType", filters.providerType.trim());
+  if (filters?.result?.trim()) query.set("result", filters.result.trim());
+  if (filters?.q?.trim()) query.set("q", filters.q.trim());
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return httpGet<ProviderConnectionsAuditResponse[]>(`/api/platform/provider-connections/audit/events${suffix}`, { token, platformOperation: true });
+}
+
+export async function listProviderConnectionsSuggestions(token: string, q?: string | null) {
+  const query = q?.trim() ? `?q=${encodeURIComponent(q.trim())}` : "";
+  return httpGet<ProviderConnectionsSuggestionResponse[]>(`/api/platform/provider-connections/suggestions${query}`, { token, platformOperation: true });
+}
+
+export async function rejectProviderConnectionSuggestion(token: string, suggestionId: string, body?: ProviderConnectionsSuggestionDecisionRequest | null) {
+  return httpPost<ProviderConnectionsSuggestionResponse>(`/api/platform/provider-connections/suggestions/${encodeURIComponent(suggestionId)}/reject`, body ?? {}, { token, platformOperation: true });
+}
+
+export async function listProviderConnectionsConflicts(token: string) {
+  return httpGet<ProviderConnectionsConflictResponse[]>("/api/platform/provider-connections/conflicts", { token, platformOperation: true });
+}
+
+export async function proposeProviderConnectionLink(token: string, body: ProviderConnectionsLinkProposalRequest) {
+  return httpPost<ProviderConnectionsLinkResponse>("/api/platform/provider-connections/links/propose", body, { token, platformOperation: true });
+}
+
+export async function approveProviderConnectionLink(token: string, linkId: string, reason?: string | null) {
+  return httpPost<ProviderConnectionsLinkResponse>(`/api/platform/provider-connections/links/${encodeURIComponent(linkId)}/approve`, reason ? { reason } : {}, { token, platformOperation: true });
+}
+
+export async function activateProviderConnectionLink(token: string, linkId: string, reason?: string | null) {
+  return httpPost<ProviderConnectionsLinkResponse>(`/api/platform/provider-connections/links/${encodeURIComponent(linkId)}/activate`, reason ? { reason } : {}, { token, platformOperation: true });
+}
+
+export async function unlinkProviderConnectionLink(token: string, linkId: string, reason?: string | null) {
+  return httpPost<ProviderConnectionsLinkResponse>(`/api/platform/provider-connections/links/${encodeURIComponent(linkId)}/unlink`, reason ? { reason } : {}, { token, platformOperation: true });
+}
+
+export async function relinkProviderConnectionLink(token: string, linkId: string, reason?: string | null) {
+  return httpPost<ProviderConnectionsLinkResponse>(`/api/platform/provider-connections/links/${encodeURIComponent(linkId)}/relink`, reason ? { reason } : {}, { token, platformOperation: true });
+}
+
+export async function reconcileProviderConnection(token: string, body: ProviderConnectionsReconcileRequest) {
+  return httpPost<unknown>("/api/platform/provider-connections/reconcile", body, { token, platformOperation: true });
+}
