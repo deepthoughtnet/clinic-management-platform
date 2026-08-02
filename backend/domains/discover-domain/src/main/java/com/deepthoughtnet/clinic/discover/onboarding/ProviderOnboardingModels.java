@@ -227,8 +227,47 @@ public final class ProviderOnboardingModels {
             ProviderCompletionRecord completion,
             List<ProviderTimelineEventRecord> timeline,
             List<ProviderChangeRequestRecord> changeRequests,
+            ProviderSubmissionSummaryRecord submittedSnapshot,
+            String publicProfilePath,
             boolean readOnly,
             String nextRecommendedAction
+    ) {
+    }
+
+    public record ProviderSubmissionSummaryRecord(
+            int versionNumber,
+            OffsetDateTime submittedAt,
+            ProviderType providerType,
+            String displayName,
+            String legalName,
+            String primarySpeciality,
+            List<String> specialities,
+            List<String> subSpecialities,
+            List<String> languages,
+            String qualification,
+            String medicalCouncil,
+            Integer yearsOfExperience,
+            String organisationType,
+            String ownership,
+            String hospitalType,
+            Integer beds,
+            boolean emergencyAvailable,
+            String medicalDirector,
+            BigDecimal consultationFee,
+            List<String> departments,
+            List<String> facilities,
+            List<String> services,
+            List<String> locations,
+            int serviceCount,
+            int locationCount,
+            int documentCount,
+            int galleryCount,
+            java.util.UUID logoDocumentId,
+            java.util.UUID coverImageDocumentId,
+            java.util.UUID doctorPhotoDocumentId,
+            List<java.util.UUID> galleryDocumentIds,
+            String biography,
+            String tagline
     ) {
     }
 

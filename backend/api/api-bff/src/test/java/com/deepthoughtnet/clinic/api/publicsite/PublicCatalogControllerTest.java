@@ -28,12 +28,14 @@ class PublicCatalogControllerTest {
                 "/discover/doctors/dr-asha-menon",
                 "Dr. Asha Menon",
                 null,
+                null,
                 "Dermatology",
                 8,
                 null,
                 List.of("English"),
                 "Baner",
                 "Pune",
+                "ONLINE_BOOKING",
                 "Experienced doctor",
                 "Doctor summary",
                 "Sunrise Clinic",
@@ -48,9 +50,11 @@ class PublicCatalogControllerTest {
                 "Sunrise Clinic",
                 null,
                 null,
+                null,
                 "Baner, Pune, Maharashtra",
                 "Baner",
                 "Pune",
+                "ONLINE_BOOKING",
                 1,
                 2,
                 3,
@@ -68,8 +72,10 @@ class PublicCatalogControllerTest {
                 "City Care Hospital",
                 null,
                 null,
+                null,
                 "Baner",
                 "Pune",
+                "ONLINE_BOOKING",
                 2,
                 4,
                 5,
@@ -98,6 +104,8 @@ class PublicCatalogControllerTest {
         when(facade.doctorCover("dr-asha-menon")).thenReturn(new PublicProfileMediaContent("image/png", "cover.png", new byte[]{2}));
         when(facade.doctorGalleryImage("dr-asha-menon", 0)).thenReturn(new PublicProfileMediaContent("image/png", "gallery.png", new byte[]{3}));
         when(facade.hospitalLogo("city-care-hospital")).thenReturn(new PublicProfileMediaContent("image/png", "hospital-logo.png", new byte[]{5}));
+        when(facade.hospitalCover("city-care-hospital")).thenReturn(new PublicProfileMediaContent("image/png", "hospital-cover.png", new byte[]{8}));
+        when(facade.hospitalGalleryImage("city-care-hospital", 0)).thenReturn(new PublicProfileMediaContent("image/png", "hospital-gallery.png", new byte[]{9}));
 
         assertThat(controller.clinics("skin", "pune", "baner", "Dermatology", "sunrise", null, null, null, 0, 12)).isEqualTo(clinicsPage);
         assertThat(controller.doctors("skin", "pune", "baner", "Dermatology", "sunrise", "demo", null, null, null, 0, 12)).isEqualTo(doctorsPage);
@@ -111,5 +119,7 @@ class PublicCatalogControllerTest {
         assertThat(controller.doctorCover("dr-asha-menon").getBody()).containsExactly((byte) 2);
         assertThat(controller.doctorGalleryImage("dr-asha-menon", 0).getBody()).containsExactly((byte) 3);
         assertThat(controller.hospitalLogo("city-care-hospital").getBody()).containsExactly((byte) 5);
+        assertThat(controller.hospitalCover("city-care-hospital").getBody()).containsExactly((byte) 8);
+        assertThat(controller.hospitalGalleryImage("city-care-hospital", 0).getBody()).containsExactly((byte) 9);
     }
 }

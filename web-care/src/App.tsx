@@ -21,6 +21,7 @@ import {
 } from "./api/patientPortal";
 import { branding, footerBrandingLine, productAndTagline, productTitle } from "./branding";
 import { GlobalPatientHeader } from "./components/GlobalPatientHeader";
+import { CareFooter } from "./components/CareShell";
 import { careConfig, externalAppUrl } from "./config";
 import { PublicLocationProvider } from "./context/publicLocation";
 import {
@@ -291,50 +292,7 @@ function AppShell({
           </div>
         </footer>
       ) : (
-        <footer className="site-footer">
-          <div className="footer-grid">
-            <section className="footer-brand-block">
-              <strong>{branding.productName}</strong>
-              <p>{branding.tagline}</p>
-            </section>
-
-            <section className="footer-column">
-              <strong>Jeevanam Care</strong>
-              <div className="footer-link-list">
-                <Link to="/patient/login">Patient Login</Link>
-                <Link to={patientPortalHomePath(portalNavSession)}>Dashboard</Link>
-                <Link to="/patient/book-appointment">Book Appointment</Link>
-                <Link to="/patient/appointments">Appointments</Link>
-                <Link to="/patient/prescriptions">Prescriptions</Link>
-                <Link to="/patient/lab">Reports</Link>
-                <Link to="/patient/bills">Bills</Link>
-              </div>
-            </section>
-
-            <section className="footer-column">
-              <strong>Jeevanam Platform</strong>
-              <div className="footer-link-list">
-                <a href={careConfig.discoverAppUrl}>Find Care</a>
-                <a href={careConfig.healthcareAppUrl}>Clinic / Hospital Login</a>
-                <Link to="/patient/careai">AIVA for your care</Link>
-              </div>
-            </section>
-
-            <section className="footer-column">
-              <strong>Support</strong>
-              <div className="footer-link-list">
-                <Link to="/contact">Contact</Link>
-                <Link to="/help-centre">Help Centre</Link>
-                <Link to="/privacy-policy">Privacy Policy</Link>
-                <Link to="/terms">Terms</Link>
-              </div>
-            </section>
-          </div>
-          <div className="footer-brand-line">{footerBrandingLine()}</div>
-          <div className="footer-bottom">
-            <p>© 2026 DeepThoughtNet.</p>
-          </div>
-        </footer>
+        <CareFooter authenticated={session?.sessionRole === "patient"} />
       )}
     </div>
   );

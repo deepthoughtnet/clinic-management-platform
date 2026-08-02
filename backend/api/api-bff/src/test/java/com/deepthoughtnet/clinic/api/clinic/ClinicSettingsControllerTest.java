@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
 import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
 import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
+import com.deepthoughtnet.clinic.api.platform.discover.HealthcarePublicListingSyncService;
 import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
 import com.deepthoughtnet.clinic.platform.core.context.TenantId;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
@@ -22,12 +23,14 @@ import org.junit.jupiter.api.Test;
 class ClinicSettingsControllerTest {
     private final UUID tenantId = UUID.randomUUID();
     private TenantUserManagementService tenantUserManagementService;
+    private HealthcarePublicListingSyncService healthcarePublicListingSyncService;
     private ClinicSettingsController controller;
 
     @BeforeEach
     void setUp() {
         tenantUserManagementService = mock(TenantUserManagementService.class);
-        controller = new ClinicSettingsController(mock(ClinicProfileService.class), tenantUserManagementService);
+        healthcarePublicListingSyncService = mock(HealthcarePublicListingSyncService.class);
+        controller = new ClinicSettingsController(mock(ClinicProfileService.class), tenantUserManagementService, healthcarePublicListingSyncService);
         RequestContextHolder.set(new RequestContext(
                 TenantId.of(tenantId),
                 UUID.randomUUID(),

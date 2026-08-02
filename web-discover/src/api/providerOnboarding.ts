@@ -11,6 +11,7 @@ export type ProviderStatus =
   | "CHANGES_REQUESTED"
   | "APPROVED"
   | "PUBLISHED"
+  | "DISCARDED"
   | "SUSPENDED"
   | "ARCHIVED";
 export type ProviderServiceType =
@@ -193,8 +194,46 @@ export type ProviderDashboard = {
   completion: ProviderCompletion;
   timeline: ProviderTimelineEvent[];
   changeRequests: ProviderChangeRequest[];
+  submittedSnapshot: ProviderSubmittedSnapshot | null;
+  publicProfilePath: string | null;
   readOnly: boolean;
   nextRecommendedAction: string;
+};
+
+export type ProviderSubmittedSnapshot = {
+  versionNumber: number;
+  submittedAt: string;
+  providerType: ProviderType;
+  displayName: string | null;
+  legalName: string | null;
+  primarySpeciality: string | null;
+  specialities: string[];
+  subSpecialities: string[];
+  languages: string[];
+  qualification: string | null;
+  medicalCouncil: string | null;
+  yearsOfExperience: number | null;
+  organisationType: string | null;
+  ownership: string | null;
+  hospitalType: string | null;
+  beds: number | null;
+  emergencyAvailable: boolean;
+  medicalDirector: string | null;
+  consultationFee: number | null;
+  departments: string[];
+  facilities: string[];
+  services: string[];
+  locations: string[];
+  serviceCount: number;
+  locationCount: number;
+  documentCount: number;
+  galleryCount: number;
+  logoDocumentId: string | null;
+  coverImageDocumentId: string | null;
+  doctorPhotoDocumentId: string | null;
+  galleryDocumentIds: string[];
+  biography: string | null;
+  tagline: string | null;
 };
 
 export type ProviderPreview = {

@@ -395,6 +395,7 @@ public class LandingPageService {
                 application.medicalDirector(),
                 application.beds(),
                 application.emergencyAvailable(),
+                application.onlineConsultation() ? "ONLINE_BOOKING" : "CALL_TO_BOOK",
                 true,
                 OffsetDateTime.now(),
                 0,

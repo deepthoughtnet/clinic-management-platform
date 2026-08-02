@@ -2,6 +2,7 @@ package com.deepthoughtnet.clinic.api.doctor;
 
 import com.deepthoughtnet.clinic.api.doctor.dto.DoctorProfileRequest;
 import com.deepthoughtnet.clinic.api.doctor.dto.DoctorProfileResponse;
+import com.deepthoughtnet.clinic.api.platform.discover.HealthcarePublicListingSyncService;
 import com.deepthoughtnet.clinic.clinic.service.DoctorProfileService;
 import com.deepthoughtnet.clinic.clinic.service.model.DoctorProfilePhotoRecord;
 import com.deepthoughtnet.clinic.clinic.service.model.DoctorProfileRecord;
@@ -43,13 +44,16 @@ public class DoctorProfileController {
 
     private final DoctorProfileService doctorProfileService;
     private final TenantUserManagementService tenantUserManagementService;
+    private final HealthcarePublicListingSyncService healthcarePublicListingSyncService;
 
     public DoctorProfileController(
             DoctorProfileService doctorProfileService,
-            TenantUserManagementService tenantUserManagementService
+            TenantUserManagementService tenantUserManagementService,
+            HealthcarePublicListingSyncService healthcarePublicListingSyncService
     ) {
         this.doctorProfileService = doctorProfileService;
         this.tenantUserManagementService = tenantUserManagementService;
+        this.healthcarePublicListingSyncService = healthcarePublicListingSyncService;
     }
 
     @GetMapping("/{doctorUserId}/profile")
@@ -125,6 +129,7 @@ public class DoctorProfileController {
                 file.getContentType(),
                 file.getBytes()
         );
+        healthcarePublicListingSyncService.syncDoctor(tenantId, profile, RequestContextHolder.require().appUserId(), "doctor.photo.updated");
         log.info("doctor.profile.photo.controller.completed tenantId={} doctorUserId={}", tenantId, doctorUserId);
         return toResponse(doctor, profile);
     }
@@ -267,6 +272,7 @@ public class DoctorProfileController {
             );
             log.info("doctor.profile.photo.controller.multipart-upload.completed tenantId={} doctorUserId={}", tenantId, doctorUserId);
         }
+        healthcarePublicListingSyncService.syncDoctor(tenantId, profile, actorId, "doctor.profile.updated");
         log.info("doctor.profile.update.completed tenantId={} doctorUserId={}", tenantId, doctorUserId);
         return toResponse(doctor, profile);
     }

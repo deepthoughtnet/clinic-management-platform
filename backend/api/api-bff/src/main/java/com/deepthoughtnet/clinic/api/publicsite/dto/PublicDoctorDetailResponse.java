@@ -9,6 +9,7 @@ public record PublicDoctorDetailResponse(
         String publicPath,
         String doctorDisplayName,
         String photoUrl,
+        String bookingMode,
         String qualification,
         String medicalCouncil,
         Integer yearsOfExperience,

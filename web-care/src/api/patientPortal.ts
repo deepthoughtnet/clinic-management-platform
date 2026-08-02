@@ -447,7 +447,7 @@ export async function fetchPatientPortalJson<T>(path: string, session: PatientPo
 
 export async function loadPatientPortalDoctorSlots(
   query: PatientPortalDoctorSlotQuery,
-  session: PatientPortalPatientSession,
+  session: PatientPortalSession,
   signal?: AbortSignal,
 ) {
   const params = new URLSearchParams();

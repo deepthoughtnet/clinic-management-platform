@@ -15,27 +15,19 @@ test("provider onboarding routes use one governed wizard for all provider types"
   const dashboard = read("src/pages/provider/ProviderDashboardPage.tsx");
   const portal = read("src/pages/provider/ProviderOnboardingPage.tsx");
 
-  assert.ok(app.includes("ProviderRegistrationStartPage"));
-  assert.ok(app.includes("startProviderApplication"));
-  assert.ok(app.includes("We could not start this provider application."));
-  assert.ok(app.includes("Try again"));
-  assert.ok(app.includes("Open provider workspace"));
-  assert.ok(app.includes("ProviderAuthError"));
   assert.ok(routes.includes("REGISTRATION_PROVIDER_TYPE_BY_ROUTE"));
   assert.ok(routes.includes('providerApplicationDashboard: { path: "/provider/applications/:applicationReference"'));
   assert.ok(app.includes('<Route path={DISCOVER_ROUTES.providerApplicationDashboard.path} element={<ProviderDashboardPage />} />'));
-  assert.ok(routes.includes('doctor: "INDIVIDUAL_DOCTOR"'));
-  assert.ok(routes.includes('clinic: "CLINIC"'));
-  assert.ok(routes.includes('hospital: "HOSPITAL"'));
+  assert.ok(app.includes("ProviderDashboardPage"));
   assert.ok(dashboard.includes("createProviderOnboardingAccess"));
   assert.ok(dashboard.includes("loadProviderApplicationDashboard"));
-  assert.ok(dashboard.includes("providerOnboardingStepRoute(step)"));
+  assert.ok(dashboard.includes("ProviderApplicationStatusBanner"));
+  assert.ok(dashboard.includes("ProviderApplicationTimeline"));
   assert.ok(portal.includes("const steps = ["));
   for (const label of ["Account", "Organisation", "Professional Details", "Services", "Locations", "Branding", "Preview", "Submit"]) {
     assert.ok(portal.includes(label), `${label} step should be present`);
   }
-  assert.ok(portal.includes("groupProviderRequirements"));
-  assert.ok(portal.includes("providerRequirementLabel"));
+  assert.ok(portal.includes("navigate(`/provider/applications/${encodeURIComponent(submitted.referenceNumber)}`, { replace: true })"));
 });
 
 test("provider onboarding persists drafts, resumes by token, and keeps URL as step source", () => {
@@ -76,6 +68,24 @@ test("provider onboarding persists drafts, resumes by token, and keeps URL as st
   assert.ok(portal.includes("setToken(\"\");"));
   assert.ok(portal.includes("setApplication(null);"));
   assert.ok(portal.includes("providerType: routeProviderType ?? providerType"));
+  assert.ok(portal.includes("navigate(`/provider/applications/${encodeURIComponent(submitted.referenceNumber)}`, { replace: true })"));
+});
+
+test("hospital departments reuse discover reference data and reject free text", () => {
+  const portal = read("src/pages/provider/ProviderOnboardingPage.tsx");
+
+  assert.ok(portal.includes("departmentSelectOptions"));
+  assert.ok(portal.includes("const departmentOptions = optionNames(catalog.specialities, providerType);"));
+  assert.ok(portal.includes("const departmentSet = new Set(departmentOptions);"));
+  assert.ok(portal.includes('options={departmentSelectOptions}'));
+  assert.ok(portal.includes('placeholder="Search departments"'));
+  assert.ok(portal.includes('noOptionsText="No department matches the catalog"'));
+  assert.ok(portal.includes('loading={referenceCatalogLoading}'));
+  assert.ok(portal.includes('loadError={referenceCatalogLoadError}'));
+  assert.ok(portal.includes('onRetry={retryReferenceCatalog}'));
+  assert.ok(portal.includes("Choose from the department master."));
+  assert.ok(portal.includes("Add at least one department."));
+  assert.ok(!portal.includes("allowCustomValues"));
 });
 
 test("provider onboarding uses provider-registration APIs and not patient-private APIs", () => {

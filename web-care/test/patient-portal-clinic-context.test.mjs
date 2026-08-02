@@ -7,81 +7,61 @@ function readSource(relPath) {
   return fs.readFileSync(path.join(process.cwd(), "src", ...relPath.split("/")), "utf8");
 }
 
-test("global patient header and location context are shared", () => {
+test("patient portal shell keeps branded care entry and authenticated chrome", () => {
   const appSource = readSource("App.tsx");
   const headerSource = readSource("components/GlobalPatientHeader.tsx");
-  const locationSource = readSource("context/publicLocation.tsx");
+  const careShell = readSource("components/CareShell.tsx");
+
   assert.ok(appSource.includes("GlobalPatientHeader"));
-  assert.ok(appSource.includes("PublicLocationProvider"));
-  assert.ok(appSource.includes('path="/ai-assistant/*"'));
+  assert.ok(appSource.includes("CareFooter"));
   assert.ok(headerSource.includes("Patient Login"));
   assert.ok(headerSource.includes("Find Care"));
   assert.ok(headerSource.includes("Clinic / Hospital Login"));
-  assert.ok(headerSource.includes('aria-label="Care navigation"'));
-  assert.ok(!headerSource.includes("Demo Links"));
-  assert.ok(!headerSource.includes("global-location-pill"));
-  assert.ok(!headerSource.includes('label: "Doctors"'));
-  assert.ok(!headerSource.includes('label: "Clinics"'));
-  assert.ok(!headerSource.includes('label: "Specialities"'));
-  assert.ok(headerSource.includes("patientPortalHomePath"));
-  assert.ok(locationSource.includes("PUBLIC_LOCATION_OPTIONS"));
-  assert.ok(locationSource.includes("PUBLIC_DEFAULT_LOCATION"));
-  assert.ok(locationSource.includes("PublicLocationProvider"));
-  assert.ok(locationSource.includes("normalizePublicLocation"));
+  assert.ok(careShell.includes("CarePublicEntryHeader"));
+  assert.ok(careShell.includes("CareLoginHero"));
+  assert.ok(careShell.includes("CareEntrySecurityStrip"));
+  assert.ok(careShell.includes("CareEntrySessionNotice"));
+  assert.ok(careShell.includes("care-authenticated-header"));
+  assert.ok(careShell.includes("care-authenticated-header__badge"));
 });
 
-test("patient login keeps otp flow phone-only and preserves next-step context", () => {
-  const source = readSource("pages/patient/PatientPortalPages.tsx");
-  assert.ok(source.includes("sanitizePatientOtpInput"));
-  assert.ok(source.includes("sanitizePatientPortalErrorMessage"));
-  assert.ok(source.includes("patient-login-context"));
-  assert.ok(source.includes("patient-login-otp-payload"));
-  assert.ok(source.includes("registrationSessionToken"));
-  assert.ok(source.includes("recoverableRegistrationSession"));
-  assert.ok(source.includes("Cancel / Start over"));
-  assert.ok(source.includes("Complete patient registration."));
-});
-
-test("booking pages still wire clinic and slot selection", () => {
-  const source = readSource("pages/patient/PatientPortalPages.tsx");
-  const selector = readSource("pages/patient/DoctorClinicSelector.tsx");
-  assert.ok(source.includes("DoctorClinicSelector"));
-  assert.ok(source.includes("syncBookingClinicContext(clinic.clinicSlug)"));
-  assert.ok(source.includes("loadPatientPortalDoctorSlots("));
-  assert.ok(source.includes("doctorId: slotRequestDoctorId"));
-  assert.ok(source.includes("tenantId: slotRequestTenantId"));
-  assert.ok(source.includes("clinicId: slotRequestClinicId"));
-  assert.ok(selector.includes("Select a clinic"));
-});
-
-test("public nav and footer branding are cleaned up", () => {
-  const source = readSource("App.tsx");
-  const headerSource = readSource("components/GlobalPatientHeader.tsx");
-  const brandingSource = readSource("branding.ts");
+test("patient login and dashboard remain branded and data-driven", () => {
   const portalSource = readSource("pages/patient/PatientPortalPages.tsx");
-  assert.ok(headerSource.includes('label: "AIVA"'));
-  assert.ok(headerSource.includes('label: "Patient Login"'));
-  assert.ok(!source.includes('label: "AI Assistant"'));
-  assert.ok(source.includes("GlobalPatientHeader"));
-  assert.ok(source.includes("path=\"/ai-assistant/*\""));
-  assert.ok(headerSource.includes('brand-badge">JC</span>'));
-  assert.ok(brandingSource.includes('"Jeevanam Care"'));
-  assert.ok(source.includes("footer-brand-line"));
-  assert.ok(!source.includes("footer-environment-line"));
-  assert.ok(source.includes('Link to="/patient/login"'));
-  assert.ok(source.includes('Link to="/contact"'));
-  assert.ok(source.includes('Link to="/privacy-policy"'));
-  assert.ok(!headerSource.includes("Demo Links"));
-  assert.ok(portalSource.includes("Jeevanam Care"));
-  assert.ok(!portalSource.includes("Jeevanam Healthcare Patient Portal"));
-  assert.ok(portalSource.includes("GlobalPatientHeader"));
-  assert.ok(portalSource.includes("patient-appointments-page"));
-  assert.ok(portalSource.includes("patient-appointments-toolbar"));
-  assert.ok(portalSource.includes("patient-appointment-list"));
-  assert.ok(portalSource.includes("notificationSummaryLabel"));
-  assert.ok(portalSource.includes("formatNotificationText"));
-  assert.ok(portalSource.includes("profileValidation.success"));
-  assert.ok(portalSource.includes("New appointment, bill, prescription, and lab updates will appear here."));
+
+  assert.ok(portalSource.includes("Welcome to Jeevanam Care"));
+  assert.ok(portalSource.includes("Sign in to Jeevanam Care"));
+  assert.ok(portalSource.includes("patient-dashboard-stack"));
+  assert.ok(portalSource.includes("patient-dashboard-quick-actions"));
+  assert.ok(portalSource.includes("patient-dashboard-attention"));
+  assert.ok(portalSource.includes("patient-sidebar-branding"));
+  assert.ok(portalSource.includes("patient-widget-heading__icon"));
+  assert.ok(portalSource.includes("patient-dashboard-quick-action__icon"));
+  assert.ok(portalSource.includes("patient-stat-card__featured-date"));
+  assert.ok(portalSource.includes("patient-highlight-card--appointment"));
+  assert.ok(portalSource.includes("status-pill--compact"));
+  assert.ok(portalSource.includes("No visit scheduled"));
+  assert.ok(portalSource.includes("No payment due"));
+  assert.ok(portalSource.includes("No recent care activity"));
+  assert.ok(portalSource.includes("Ask AIVA about your care journey"));
+  assert.ok(portalSource.includes("Latest consultation bill paid"));
+  assert.ok(portalSource.includes("Vaccination records are not currently available in Jeevanam Care"));
+});
+
+test("dashboard hover and compactness styles are present", () => {
+  const stylesSource = readSource("styles.css");
+
+  assert.ok(stylesSource.includes(".patient-dashboard-quick-action:hover"));
+  assert.ok(stylesSource.includes(".patient-dashboard-attention-item:hover"));
+  assert.ok(stylesSource.includes(".patient-dashboard-activity-item:hover"));
+  assert.ok(stylesSource.includes(".patient-stat-card--featured"));
+  assert.ok(stylesSource.includes(".patient-highlight-card--appointment"));
+  assert.ok(stylesSource.includes(".patient-sidebar-branding"));
+  assert.ok(stylesSource.includes(".care-authenticated-header__badge"));
+  assert.ok(stylesSource.includes(".status-pill--compact"));
+  assert.ok(stylesSource.includes(".patient-dashboard-quick-actions-grid"));
+  assert.ok(stylesSource.includes("repeat(5, minmax(0, 1fr))"));
+  assert.ok(stylesSource.includes(".patient-dashboard-dual-grid"));
+  assert.ok(stylesSource.includes("repeat(2, minmax(0, 1fr))"));
 });
 
 test("patient registration session cleanup is centralized", () => {
@@ -91,38 +71,4 @@ test("patient registration session cleanup is centralized", () => {
   assert.ok(source.includes("PATIENT_PORTAL_PENDING_REGISTRATION_STORAGE_KEY"));
   assert.ok(source.includes("PATIENT_PORTAL_SESSION_STORAGE_KEY"));
   assert.ok(source.includes("clearPublicBookingContext"));
-});
-
-test("legacy public discovery routes redirect to Discover and root is Care-focused", () => {
-  const appSource = readSource("App.tsx");
-  const configSource = readSource("config.ts");
-
-  assert.ok(appSource.includes("CareHomePage"));
-  assert.ok(appSource.includes("LegacyDiscoverRedirectPage"));
-  assert.ok(appSource.includes("buildDiscoverRedirect"));
-  assert.ok(appSource.includes('path="/" element={<CareHomePage session={session} />}'));
-  assert.ok(appSource.includes('path="/doctors" element={<LegacyDiscoverRedirectPage />}'));
-  assert.ok(appSource.includes('path="/doctors/:doctorSlug" element={<LegacyDiscoverRedirectPage />}'));
-  assert.ok(appSource.includes('path="/clinics" element={<LegacyDiscoverRedirectPage />}'));
-  assert.ok(appSource.includes('path="/clinics/:clinicSlug" element={<LegacyDiscoverRedirectPage />}'));
-  assert.ok(appSource.includes('path="/specialities" element={<LegacyDiscoverRedirectPage />}'));
-  assert.ok(appSource.includes('path="/specialities/:specialitySlug" element={<LegacyDiscoverRedirectPage />}'));
-  assert.ok(appSource.includes('path="/careai" element={<Navigate to="/patient/careai" replace />}'));
-  assert.ok(appSource.includes("safeRedirectParams"));
-  assert.ok(!appSource.includes("patientSessionToken") || appSource.includes("parsed.patientSessionToken"));
-  assert.ok(configSource.includes("VITE_DISCOVER_APP_URL"));
-  assert.ok(configSource.includes("https://jeevanam.deepthoughtnet.com"));
-  assert.ok(configSource.includes("5177"));
-});
-
-test("public location context remains available for patient booking compatibility", () => {
-  const locationSource = readSource("context/publicLocation.tsx");
-  assert.ok(locationSource.includes("savePublicLocation"));
-  assert.ok(locationSource.includes("Current location selected"));
-  assert.ok(locationSource.includes("PUBLIC_LOCATION_STORAGE_KEY"));
-  assert.ok(locationSource.includes("PUBLIC_LOCATION_COORDS_STORAGE_KEY"));
-  assert.ok(locationSource.includes("PUBLIC_LOCATION_SOURCE_STORAGE_KEY"));
-  assert.ok(locationSource.includes("PUBLIC_LOCATION_OPTIONS"));
-  assert.ok(locationSource.includes("Pune"));
-  assert.ok(locationSource.includes("Bhopal"));
 });

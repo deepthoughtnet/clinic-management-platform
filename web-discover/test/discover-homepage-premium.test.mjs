@@ -122,12 +122,17 @@ test("visual refinement removes architecture panel and duplicate final CTA", () 
   assert.ok(page.includes("home-hero-grid"));
   assert.ok(page.includes("home-category-strip"));
   assert.ok(page.includes("home-hero-visual-image"));
+  assert.ok(page.includes('src={discoverHeroIllustrationUrl}'));
+  assert.ok(page.includes('alt="Jeevanam Discover healthcare network illustration"'));
   assert.ok(page.includes("home-doctors-layout"));
   assert.ok(page.includes("AivaDiscoveryAssistantCard"));
   assert.ok(styles.includes(".home-aiva-panel"));
   assert.ok(styles.includes(".home-aiva-card"));
   assert.ok(styles.includes(".home-aiva-coming-soon"));
   assert.ok(styles.includes(".home-preview-label"));
+  assert.ok(styles.includes(".home-hero-visual {"));
+  assert.ok(styles.includes("min-height: 432px"));
+  assert.ok(styles.includes("background:"));
   assert.ok(styles.includes("scrollbar-width: none"));
   assert.ok(styles.includes("flex-wrap: wrap"));
   assert.ok(styles.includes("overflow-x: auto"));
@@ -140,7 +145,7 @@ test("visual refinement removes architecture panel and duplicate final CTA", () 
   assert.ok(!page.includes("hero-visual-badges"));
   assert.ok(!components.includes("clinic-card-pattern"));
   assert.ok(styles.includes(".header-location-selector-summary"));
-  assert.ok(styles.includes(".home-hero-visual"));
+  assert.ok(styles.includes(".home-hero-visual-image"));
   assert.ok(styles.includes("repeat(6, minmax(0, 1fr))"));
   assert.ok(styles.includes("max-width: 32ch"));
   assert.ok(styles.includes("font-size: clamp(2rem, 2.55vw, 2.62rem)"));

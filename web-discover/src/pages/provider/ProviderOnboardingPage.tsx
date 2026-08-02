@@ -393,6 +393,7 @@ function validateDraft(
   const gst = draft.gstNumber?.trim();
   const biography = draft.biography?.trim() ?? "";
   const specialityOptions = optionNames(catalog.specialities, providerType);
+  const departmentOptions = optionNames(catalog.specialities, providerType);
   const serviceOptions = optionNames(catalog.services, providerType);
   const facilityOptions = optionNames(catalog.facilities, providerType);
   const ownershipOptions = optionNames(catalog.ownerships, providerType);
@@ -402,6 +403,7 @@ function validateDraft(
   const stateOptions = optionNames(catalog.states, providerType);
   const medicalCouncilOptions = optionNames(catalog.medicalCouncils, providerType);
   const specialitySet = new Set(specialityOptions);
+  const departmentSet = new Set(departmentOptions);
   const serviceSet = new Set(serviceOptions);
   const facilitySet = new Set(facilityOptions);
   const ownershipSet = new Set(ownershipOptions);
@@ -441,6 +443,9 @@ function validateDraft(
 
   if (specialities.length && !specialities.every((item) => specialitySet.has(item.toLowerCase()))) {
     errors.specialities = "Choose from the speciality master.";
+  }
+  if (departments.length && !departments.every((item) => departmentSet.has(item.toLowerCase()))) {
+    errors.departments = "Choose from the department master.";
   }
 
   if (providerType === "HOSPITAL") {
@@ -768,6 +773,16 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
     };
   }, [draft, application, token, accountHydrated]);
 
+  useEffect(() => {
+    if (!application || !params.applicationId) {
+      return;
+    }
+    if (isApplicationEditable(application.status) || application.status === "CHANGES_REQUESTED") {
+      return;
+    }
+    navigate(`/provider/applications/${encodeURIComponent(application.referenceNumber)}`, { replace: true });
+  }, [application, navigate, params.applicationId]);
+
   const hydratedAccount = useMemo(
     () => (accountHydrated || !application ? account : mapAccountStepValues(application)),
     [account, accountHydrated, application],
@@ -833,6 +848,7 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
   }, [activeStep, application, contactSatisfied, contactVerification, draft, hydratedAccount.email, hydratedAccount.phone, lockedStepIndex, providerType, requiredRemainingCount, validation]);
   const stepPosition = `${currentStepIndex + 1} of ${steps.length}`;
   const specialitySelectOptions = useMemo(() => toOptionItems(referenceCatalog.specialities, providerType), [referenceCatalog.specialities, providerType]);
+  const departmentSelectOptions = useMemo(() => toOptionItems(referenceCatalog.specialities, providerType), [referenceCatalog.specialities, providerType]);
   const serviceSelectOptions = useMemo(() => toServiceItems(referenceCatalog.services, providerType), [referenceCatalog.services, providerType]);
   const facilitySelectOptions = useMemo(() => toOptionItems(referenceCatalog.facilities, providerType), [referenceCatalog.facilities, providerType]);
   const ownershipSelectOptions = useMemo(() => toOptionItems(referenceCatalog.ownerships, providerType), [referenceCatalog.ownerships, providerType]);
@@ -1284,7 +1300,7 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
       dirtyRevisionRef.current = 0;
       lastPersistedRevisionRef.current = 0;
       void refreshChangeRequests(submitted.id, token);
-      setStatusMessage("Submitted for verification. You can return here to track review progress.");
+      navigate(`/provider/applications/${encodeURIComponent(submitted.referenceNumber)}`, { replace: true });
     } catch (ex) {
       setError(ex instanceof Error ? ex.message : "Submission could not be completed.");
     } finally {
@@ -1740,10 +1756,13 @@ export function ProviderOnboardingPage({ type }: { type?: "doctor" | "clinic" | 
                     helperText="Add the hospital departments you operate."
                     error={validation.errors.departments}
                     value={draft.departments ?? []}
-                    options={(draft.departments ?? []).map((item) => ({ value: item, label: item }))}
+                    options={departmentSelectOptions}
                     onChange={(value) => patchDraft({ departments: normalizeSearchList(value) })}
-                    placeholder="Type a department and press Enter"
-                    allowCustomValues
+                    placeholder="Search departments"
+                    noOptionsText="No department matches the catalog"
+                    loading={referenceCatalogLoading}
+                    loadError={referenceCatalogLoadError}
+                    onRetry={retryReferenceCatalog}
                     disabled={!applicationEditable}
                   />
                 ) : null}

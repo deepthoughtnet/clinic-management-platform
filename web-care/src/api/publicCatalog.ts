@@ -18,6 +18,7 @@ export type PublicDoctorSummaryResponse = {
   doctorSlug: string;
   doctorDisplayName: string;
   photoUrl: string | null;
+  contactPhone?: string | null;
   speciality: string | null;
   yearsOfExperience: number | null;
   consultationFee?: number | string | null;
@@ -26,6 +27,7 @@ export type PublicDoctorSummaryResponse = {
   clinicSlug: string;
   area: string | null;
   city: string | null;
+  bookingMode?: string | null;
   availableToday: boolean;
   nextAvailableSlotSummary: string | null;
 };
@@ -34,9 +36,11 @@ export type PublicClinicSummaryResponse = {
   clinicSlug: string;
   clinicDisplayName: string;
   logoUrl: string | null;
+  contactPhone?: string | null;
   address: string | null;
   area: string | null;
   city: string | null;
+  bookingMode?: string | null;
   doctorsCount: number;
   availableToday: boolean;
   specialities: string[];
@@ -56,6 +60,7 @@ export type PublicDoctorDetailResponse = {
   doctorSlug: string;
   doctorDisplayName: string;
   photoUrl: string | null;
+  bookingMode?: string | null;
   qualification: string | null;
   yearsOfExperience: number | null;
   specialities: string[];
@@ -70,6 +75,7 @@ export type PublicClinicDetailResponse = {
   clinicSlug: string;
   clinicDisplayName: string;
   logoUrl: string | null;
+  bookingMode?: string | null;
   address: string | null;
   area: string | null;
   city: string | null;

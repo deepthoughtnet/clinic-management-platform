@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.deepthoughtnet.clinic.api.doctor.dto.DoctorProfileResponse;
+import com.deepthoughtnet.clinic.api.platform.discover.HealthcarePublicListingSyncService;
 import com.deepthoughtnet.clinic.clinic.service.DoctorProfileService;
 import com.deepthoughtnet.clinic.clinic.service.model.DoctorProfilePhotoRecord;
 import com.deepthoughtnet.clinic.clinic.service.model.DoctorProfileRecord;
@@ -32,6 +33,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 class DoctorProfileControllerTest {
     private DoctorProfileService doctorProfileService;
     private TenantUserManagementService tenantUserManagementService;
+    private HealthcarePublicListingSyncService healthcarePublicListingSyncService;
     private MockMvc mockMvc;
     private UUID tenantId;
     private UUID doctorUserId;
@@ -40,7 +42,8 @@ class DoctorProfileControllerTest {
     void setUp() {
         doctorProfileService = mock(DoctorProfileService.class);
         tenantUserManagementService = mock(TenantUserManagementService.class);
-        DoctorProfileController controller = new DoctorProfileController(doctorProfileService, tenantUserManagementService);
+        healthcarePublicListingSyncService = mock(HealthcarePublicListingSyncService.class);
+        DoctorProfileController controller = new DoctorProfileController(doctorProfileService, tenantUserManagementService, healthcarePublicListingSyncService);
         mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
 
         tenantId = UUID.randomUUID();

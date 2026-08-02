@@ -40,6 +40,21 @@ import {
   formatConsultationFee,
 } from "../../components/DiscoveryComponents";
 import {
+  AvailabilityTimeline,
+  BookingPanel,
+  DoctorBreadcrumb,
+  RatingSummary,
+  RelatedDoctorCard,
+  ReviewCard,
+  VerificationBadge,
+  SpecialtyCard,
+  StickyBookingCTA,
+  doctorSampleReviews,
+  doctorSampleServiceCards,
+  doctorSampleSpecialties,
+  doctorSampleVerificationBadges,
+} from "../../components/discovery/DoctorProfileExperiences";
+import {
   AivaComingSoonPanel,
   AlphabetNavigation,
   buildDirectoryResultLabel,
@@ -66,7 +81,12 @@ import {
   joinFilterValues,
   toggleFilterValue,
 } from "../../components/directory/DirectoryComponents";
-import { PublicProviderProfile, type PublicProviderProfileDefinitionItem, type PublicProviderProfileGalleryItem } from "../../components/discovery/PublicProviderProfile";
+import { providerBookingPrimaryLabel, normalizeBookingMode } from "../../components/discovery/BookingCapability";
+import {
+  PublicProviderProfile,
+  type PublicProviderProfileDefinitionItem,
+  type PublicProviderProfileGalleryItem,
+} from "../../components/discovery/PublicProviderProfile";
 import { demoClinics, demoDoctors, demoHospitals } from "../../features/home/homeDemoProviders";
 import {
   PUBLIC_CURRENT_LOCATION_LABEL,
@@ -85,6 +105,8 @@ import {
   scoreDiscoveryLocation,
   slugify,
 } from "../../utils/publicDiscovery";
+
+const discoverHeroIllustrationUrl = "/hero_img.png";
 
 type FetchState<T> = {
   data: T;
@@ -841,19 +863,6 @@ function specialityAlphabet(items: PublicSpecialitySummaryResponse[]) {
   return Array.from(letters).sort();
 }
 
-function providerCallLabel(providerType: "INDIVIDUAL_DOCTOR" | "CLINIC" | "HOSPITAL") {
-  switch (providerType) {
-    case "INDIVIDUAL_DOCTOR":
-      return "Call Doctor";
-    case "CLINIC":
-      return "Call Clinic";
-    case "HOSPITAL":
-      return "Call Hospital";
-    default:
-      return "Call Provider";
-  }
-}
-
 function primaryLocation(locations?: PublicProviderLocationResponse[]) {
   return locations?.[0] ?? null;
 }
@@ -899,16 +908,40 @@ function compactList(values: string[] | undefined, limit = 4) {
   return (values ?? []).filter(Boolean).slice(0, limit).join(" • ");
 }
 
-function buildDoctorProfile(detail: PublicDoctorDetailResponse) {
+function buildDoctorWorkingSchedule(detail: PublicDoctorDetailResponse) {
+  const availableDays = new Set((detail.availableDays ?? []).map((day) => day.toLowerCase()));
+  const todayIndex = new Date().getDay();
+  const weekDays = [
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+  ];
+  const todayLabel = weekDays[todayIndex];
+  const baseHours = detail.locations?.find((location) => location.workingHours?.trim())?.workingHours?.trim() ?? "9:00 AM - 6:00 PM";
+  return weekDays.slice(1).concat(weekDays[0]).map((day) => ({
+    day: day === todayLabel ? "Today" : day.slice(0, 3),
+    hours: availableDays.has(day.toLowerCase()) ? baseHours : "Closed",
+    current: day === todayLabel,
+    closed: !availableDays.has(day.toLowerCase()),
+  }));
+}
+
+function buildDoctorProfile(detail: PublicDoctorDetailResponse, consultationFeeLabel: string | null) {
   const location = primaryLocation(detail.locations);
-  const feeLabel = null;
   const languages = detail.languages ?? [];
   const consultationModes = detail.consultationModes ?? [];
+  const bookingMode = normalizeBookingMode(detail.bookingMode) ?? "ONLINE_BOOKING";
+  const expertise = (detail.subSpecialities?.length ? detail.subSpecialities : detail.specialities).filter(Boolean).slice(0, 8);
+  const schedule = buildDoctorWorkingSchedule(detail);
   const professionalInformation = [
     detail.medicalCouncil?.trim() ? { label: "Medical Council", value: detail.medicalCouncil.trim() } : null,
     detail.qualification?.trim() ? { label: "Qualifications", value: detail.qualification.trim(), wide: true } : null,
     detail.yearsOfExperience != null ? { label: "Experience", value: `${detail.yearsOfExperience} years` } : null,
-    feeLabel ? { label: "Consultation Fee", value: feeLabel } : null,
+    consultationFeeLabel ? { label: "Consultation Fee", value: consultationFeeLabel } : null,
     (detail.primarySpeciality ?? detail.specialities[0]) ? { label: "Specialty", value: detail.primarySpeciality ?? detail.specialities[0] } : null,
     languages.length ? { label: "Languages", value: languages.join(" • "), wide: true } : null,
     location?.workingHours?.trim() ? { label: "Working Hours", value: location.workingHours.trim(), wide: true } : null,
@@ -919,40 +952,89 @@ function buildDoctorProfile(detail: PublicDoctorDetailResponse) {
     displayName: detail.doctorDisplayName,
     heroSummary: [detail.qualification?.trim() || null, detail.primarySpeciality ?? detail.specialities[0] ?? null].filter(Boolean).join(" • ") || null,
     tagline: detail.subtitle?.trim() || detail.summary?.trim() || null,
+    bookingMode,
     coverImageUrl: detail.coverUrl ?? null,
     avatarImageUrl: detail.photoUrl ?? null,
     primarySpeciality: detail.primarySpeciality ?? detail.specialities[0] ?? null,
     locationSummary: locationSummary(location, [detail.city, detail.state].filter(Boolean).join(", ")),
     yearsOfExperience: detail.yearsOfExperience,
-    consultationFeeLabel: feeLabel,
+    consultationFeeLabel,
     languages,
     teleconsultationAvailable: consultationModes.some((item) => item.toLowerCase().includes("tele")),
-    bookingUrl: careBookingUrl({
-      doctorId: detail.publicDoctorId,
-      ...(detail.clinics.length === 1 ? { clinicSlug: detail.clinics[0].clinicSlug } : {}),
-    }),
-    callHref: detail.contactPhone?.trim() ? `tel:${detail.contactPhone.trim()}` : null,
-    callLabel: detail.contactPhone?.trim() ? providerCallLabel("INDIVIDUAL_DOCTOR") : null,
+    heroSupplement: (
+      <div className="doctor-hero-supplement">
+        <RatingSummary rating={4.8} reviewCount={245} recommendationPercent={98} />
+        <div className="doctor-hero-stat-row" aria-label="Doctor trust highlights">
+          <span className="chip chip--info">Patients Treated: 12,400+</span>
+          {detail.yearsOfExperience != null ? <span className="chip chip--muted">{detail.yearsOfExperience}+ years experience</span> : null}
+          {languages.length ? <span className="chip chip--muted">{languages.join(" · ")}</span> : null}
+          {detail.clinics[0]?.clinicDisplayName ? <span className="chip chip--success">{detail.clinics[0].clinicDisplayName}</span> : null}
+          {detail.nextAvailableSlots[0] ? <span className="chip chip--info">Next available: {detail.nextAvailableSlots[0]}</span> : null}
+        </div>
+        <div className="doctor-hero-badge-row" aria-label="Verification badges">
+          {doctorSampleVerificationBadges.map((badge) => (
+            <VerificationBadge badge={badge} key={badge.key} />
+          ))}
+        </div>
+      </div>
+    ),
+    verificationBadges: doctorSampleVerificationBadges,
+    bookingUrl: bookingMode === "CALL_TO_BOOK"
+      ? (detail.contactPhone?.trim() ? `tel:${detail.contactPhone.trim()}` : detail.publicPath ?? DISCOVER_DETAIL_PATHS.doctor(detail.doctorSlug))
+      : bookingMode === "NOT_AVAILABLE"
+        ? (detail.publicPath ?? DISCOVER_DETAIL_PATHS.doctor(detail.doctorSlug))
+        : careBookingUrl({
+            doctorId: detail.publicDoctorId,
+            ...(detail.clinics.length === 1 ? { clinicSlug: detail.clinics[0].clinicSlug } : {}),
+          }),
+    bookingLabel: providerBookingPrimaryLabel(bookingMode),
+    callHref: bookingMode === "ONLINE_BOOKING" && detail.contactPhone?.trim() ? `tel:${detail.contactPhone.trim()}` : null,
+    callLabel: bookingMode === "ONLINE_BOOKING" && detail.contactPhone?.trim() ? "Call Clinic" : null,
     biographyTitle: `About ${detail.doctorDisplayName}`,
     biography: detail.biography?.trim() || detail.summary?.trim() || null,
     biographyEmptyDescription: "Doctor biography will appear here when it is shared publicly.",
+    afterBiographyContent: (
+      <section className="doctor-expertise-section">
+        <div className="doctor-section-heading">
+          <span className="eyebrow">Areas of Expertise</span>
+          <h3>Areas of Expertise</h3>
+        </div>
+        <div className="chip-row">
+          {expertise.length ? expertise.map((item) => <span className="chip chip--muted" key={item}>{item}</span>) : [ "Chronic disease management", "Diabetes", "Hypertension", "Preventive Care", "Family Medicine" ].map((item) => <span className="chip chip--muted" key={item}>{item}</span>)}
+        </div>
+      </section>
+    ),
     professionalInformation,
     services: detail.services ?? [],
+    serviceCards: doctorSampleServiceCards,
     facilitiesTitle: locationFacilityLabels(location).length ? "Clinic facilities at this location" : null,
     facilities: locationFacilityLabels(location),
     galleryItems: dedupeGallery(detail.galleryImageUrls ?? [], detail.doctorDisplayName),
+    galleryInteractive: true,
     locationName: location?.label || detail.clinics[0]?.clinicDisplayName || detail.doctorDisplayName,
     locationAddress: locationAddress(location, [detail.area, detail.city, detail.state, detail.country]),
     locationWorkingHours: location?.workingHours ?? null,
+    workingHoursSchedule: schedule,
     locationFacilities: locationFacilityLabels(location),
     locations: detail.locations ?? [],
-    trustIndicators: ["Published on Jeevanam Discover"],
+    trustIndicators: [],
     consultationModes,
+    showAppointmentSection: false,
   };
+}
+
+function buildDoctorBookingGroups(detail: PublicDoctorDetailResponse) {
+  const slotLabels = detail.nextAvailableSlots.length ? detail.nextAvailableSlots : ["10:00 AM", "11:30 AM", "5:30 PM", "6:00 PM"];
+  const days = detail.availableDays.length ? detail.availableDays : ["Today", "Tomorrow"];
+  return days.slice(0, 2).map((day, index) => ({
+    day,
+    slots: slotLabels.slice(index * 2, index * 2 + 2),
+  }));
 }
 
 function buildClinicProfile(detail: PublicClinicDetailResponse) {
   const location = primaryLocation(detail.locations);
+  const bookingMode = normalizeBookingMode(detail.bookingMode) ?? "ONLINE_BOOKING";
   const professionalInformation = [
     detail.specialities.length ? { label: "Specialties", value: compactList(detail.specialities, 6), wide: true } : null,
     detail.departments?.length ? { label: "Departments", value: compactList(detail.departments, 6), wide: true } : null,
@@ -965,6 +1047,7 @@ function buildClinicProfile(detail: PublicClinicDetailResponse) {
     displayName: detail.clinicDisplayName,
     heroSummary: detail.subtitle?.trim() || compactList(detail.specialities, 3) || "Clinic profile",
     tagline: detail.summary?.trim() || null,
+    bookingMode,
     coverImageUrl: detail.coverUrl ?? null,
     avatarImageUrl: detail.logoUrl ?? null,
     primarySpeciality: detail.specialities[0] ?? null,
@@ -972,9 +1055,14 @@ function buildClinicProfile(detail: PublicClinicDetailResponse) {
     consultationFeeLabel: null,
     languages: [],
     teleconsultationAvailable: (detail.consultationModes ?? []).some((item) => item.toLowerCase().includes("tele")),
-    bookingUrl: careBookingUrl({ clinicSlug: detail.clinicSlug }),
-    callHref: detail.contactPhone?.trim() ? `tel:${detail.contactPhone.trim()}` : null,
-    callLabel: detail.contactPhone?.trim() ? providerCallLabel("CLINIC") : null,
+    bookingUrl: bookingMode === "CALL_TO_BOOK"
+      ? (detail.contactPhone?.trim() ? `tel:${detail.contactPhone.trim()}` : detail.publicPath ?? DISCOVER_DETAIL_PATHS.clinic(detail.clinicSlug))
+      : bookingMode === "NOT_AVAILABLE"
+        ? (detail.publicPath ?? DISCOVER_DETAIL_PATHS.clinic(detail.clinicSlug))
+        : careBookingUrl({ clinicSlug: detail.clinicSlug }),
+    bookingLabel: providerBookingPrimaryLabel(bookingMode),
+    callHref: bookingMode === "ONLINE_BOOKING" && detail.contactPhone?.trim() ? `tel:${detail.contactPhone.trim()}` : null,
+    callLabel: bookingMode === "ONLINE_BOOKING" && detail.contactPhone?.trim() ? "Call Clinic" : null,
     biographyTitle: `About ${detail.clinicDisplayName}`,
     biography: detail.description?.trim() || detail.summary?.trim() || null,
     biographyEmptyDescription: "Clinic description will appear here when it is shared publicly.",
@@ -995,6 +1083,7 @@ function buildClinicProfile(detail: PublicClinicDetailResponse) {
 
 function buildHospitalProfile(detail: PublicHospitalDetailResponse) {
   const location = primaryLocation(detail.locations);
+  const bookingMode = normalizeBookingMode(detail.bookingMode) ?? "ONLINE_BOOKING";
   const professionalInformation = [
     detail.departments.length ? { label: "Departments", value: compactList(detail.departments, 6), wide: true } : null,
     detail.services.length ? { label: "Clinical Services", value: compactList(detail.services, 6), wide: true } : null,
@@ -1007,6 +1096,7 @@ function buildHospitalProfile(detail: PublicHospitalDetailResponse) {
     displayName: detail.hospitalDisplayName,
     heroSummary: detail.subtitle?.trim() || compactList(detail.departments, 3) || "Hospital profile",
     tagline: detail.summary?.trim() || null,
+    bookingMode,
     coverImageUrl: detail.coverUrl ?? null,
     avatarImageUrl: detail.logoUrl ?? null,
     primarySpeciality: detail.departments[0] ?? null,
@@ -1014,9 +1104,14 @@ function buildHospitalProfile(detail: PublicHospitalDetailResponse) {
     consultationFeeLabel: null,
     languages: [],
     teleconsultationAvailable: detail.consultationModes.some((item) => item.toLowerCase().includes("tele")),
-    bookingUrl: careBookingUrl({ hospitalSlug: detail.hospitalSlug }),
-    callHref: detail.contactPhone?.trim() ? `tel:${detail.contactPhone.trim()}` : null,
-    callLabel: detail.contactPhone?.trim() ? providerCallLabel("HOSPITAL") : null,
+    bookingUrl: bookingMode === "CALL_TO_BOOK"
+      ? (detail.contactPhone?.trim() ? `tel:${detail.contactPhone.trim()}` : detail.publicPath ?? DISCOVER_DETAIL_PATHS.hospital(detail.hospitalSlug))
+      : bookingMode === "NOT_AVAILABLE"
+        ? (detail.publicPath ?? DISCOVER_DETAIL_PATHS.hospital(detail.hospitalSlug))
+        : careBookingUrl({ hospitalSlug: detail.hospitalSlug }),
+    bookingLabel: providerBookingPrimaryLabel(bookingMode),
+    callHref: bookingMode === "ONLINE_BOOKING" && detail.contactPhone?.trim() ? `tel:${detail.contactPhone.trim()}` : null,
+    callLabel: bookingMode === "ONLINE_BOOKING" && detail.contactPhone?.trim() ? "Call Hospital" : null,
     biographyTitle: `About ${detail.hospitalDisplayName}`,
     biography: detail.description?.trim() || detail.summary?.trim() || null,
     biographyEmptyDescription: "Hospital overview will appear here when it is shared publicly.",
@@ -1291,7 +1386,15 @@ export function PublicHomePage() {
           </div>
 
           <div className="hero-visual home-hero-visual" aria-label="Healthcare hero visual">
-            <img className="home-hero-visual-image" src="/home-hero-visual.png" alt="Smiling doctor in a clinic" loading="eager" />
+            <div className="discover-hero-illustration">
+              <img
+                className="home-hero-visual-image discover-hero-image"
+                src={discoverHeroIllustrationUrl}
+                alt="Jeevanam Discover healthcare network illustration"
+                loading="eager"
+                decoding="async"
+              />
+            </div>
           </div>
         </div>
 
@@ -1657,17 +1760,57 @@ export function PublicDoctorDetailPage() {
   const { doctorSlug = "" } = useParams();
   const location = useLocation();
   const detail = usePublicResource<PublicDoctorDetailResponse | null>(`/api/public/doctors/${doctorSlug}`, {}, null);
-  const profile = useMemo(() => (detail.data ? buildDoctorProfile(detail.data) : null), [detail.data]);
+  const doctorSummarySearch = usePublicResource<PublicPageResponse<PublicDoctorSummaryResponse>>(
+    "/api/public/doctors",
+    {
+      q: doctorSlug.replaceAll("-", " "),
+      page: 0,
+      size: 100,
+    },
+    emptyDoctorsPage,
+  );
+  const matchedDoctor = useMemo(() => {
+    const detailName = detail.data?.doctorDisplayName?.trim().toLowerCase() ?? "";
+    return (
+      doctorSummarySearch.data.items.find((item) => item.doctorSlug === doctorSlug) ??
+      doctorSummarySearch.data.items.find((item) => item.doctorDisplayName.trim().toLowerCase() === detailName) ??
+      null
+    );
+  }, [detail.data?.doctorDisplayName, doctorSlug, doctorSummarySearch.data.items]);
+  const consultationFeeLabel = useMemo(() => formatConsultationFee(matchedDoctor?.consultationFee ?? null), [matchedDoctor?.consultationFee]);
+  const profile = useMemo(() => (detail.data ? buildDoctorProfile(detail.data, consultationFeeLabel) : null), [detail.data, consultationFeeLabel]);
+  const [visibleReviews, setVisibleReviews] = useState(3);
 
   if (detail.data?.publicPath && detail.data.publicPath !== location.pathname) {
     return <Navigate replace to={`${detail.data.publicPath}${location.search}`} />;
   }
 
+  const loading = detail.loading || doctorSummarySearch.loading;
+  const error = detail.error || doctorSummarySearch.error;
+  const relatedDoctors = doctorSummarySearch.data.items
+    .filter((doctor) => doctor.doctorSlug !== doctorSlug)
+    .filter((doctor) => {
+      if (!detail.data) {
+        return true;
+      }
+      const primarySpeciality = detail.data.primarySpeciality ?? detail.data.specialities[0] ?? null;
+      return primarySpeciality ? doctor.speciality?.toLowerCase() === primarySpeciality.toLowerCase() : true;
+    })
+    .slice(0, 6);
+  const bookingGroups = detail.data ? buildDoctorBookingGroups(detail.data) : [];
+  const stickyBookingUrl = profile?.bookingUrl ?? careBookingUrl({ doctorId: doctorSlug });
+  const breadcrumbItems = [
+    { label: "Home", to: DISCOVER_ROUTES.home.path },
+    { label: "Doctors", to: DISCOVER_ROUTES.doctors.path },
+    { label: detail.data?.primarySpeciality ?? detail.data?.specialities[0] ?? "General Medicine", to: undefined },
+    { label: detail.data?.doctorDisplayName ?? "Doctor profile", current: true },
+  ];
+
   return (
     <section className="page-section">
       <DirectoryState
-        loading={detail.loading}
-        error={detail.error}
+        loading={loading}
+        error={error}
         empty={!detail.data}
         emptyIcon="DR"
         emptyTitle="Doctor profile unavailable"
@@ -1678,9 +1821,106 @@ export function PublicDoctorDetailPage() {
         secondaryTo={DISCOVER_ROUTES.clinics.path}
       >
         {profile ? (
-          <div className="provider-preview-page-body provider-preview-page-body--public">
-            <PublicProviderProfile {...profile} />
-          </div>
+          <>
+            <DoctorBreadcrumb items={breadcrumbItems} />
+            <div className="doctor-profile-layout">
+              <div className="doctor-profile-layout__main">
+                <div className="provider-preview-page-body provider-preview-page-body--public">
+                  <PublicProviderProfile {...profile} />
+                </div>
+
+                <section className="doctor-profile-section doctor-profile-section--reviews">
+                  <div className="doctor-section-heading">
+                    <span className="eyebrow">Patient Reviews</span>
+                    <h2>Patient Reviews</h2>
+                  </div>
+                  <RatingSummary rating={4.8} reviewCount={245} recommendationPercent={98} />
+                  <div className="doctor-review-grid">
+                    {doctorSampleReviews.slice(0, visibleReviews).map((review) => (
+                      <ReviewCard key={review.id} review={review} />
+                    ))}
+                  </div>
+                  {visibleReviews < doctorSampleReviews.length ? (
+                    <button className="secondary-button" type="button" onClick={() => setVisibleReviews((current) => Math.min(current + 3, doctorSampleReviews.length))}>
+                      Load More
+                    </button>
+                  ) : null}
+                </section>
+
+                <section className="doctor-profile-section doctor-profile-section--related">
+                  <div className="doctor-section-heading">
+                    <span className="eyebrow">Similar Doctors Near You</span>
+                    <h2>Similar Doctors Near You</h2>
+                  </div>
+                  <div className="doctor-related-grid">
+                    {relatedDoctors.length ? relatedDoctors.map((doctor) => (
+                      <RelatedDoctorCard
+                        key={doctor.doctorSlug}
+                        doctor={{
+                          doctorDisplayName: doctor.doctorDisplayName,
+                          doctorSlug: doctor.doctorSlug,
+                          photoUrl: doctor.photoUrl,
+                          speciality: doctor.speciality,
+                          yearsOfExperience: doctor.yearsOfExperience,
+                          consultationFee: doctor.consultationFee ?? null,
+                          clinicDisplayName: doctor.clinicDisplayName,
+                          clinicSlug: doctor.clinicSlug,
+                          contactPhone: doctor.contactPhone ?? null,
+                          bookingMode: doctor.bookingMode ?? null,
+                          availableToday: doctor.availableToday,
+                          publicDoctorId: doctor.publicDoctorId,
+                        }}
+                      />
+                    )) : (
+                      <div className="doctor-empty-state">
+                        <p>No related doctors were found yet. Please explore other doctors nearby.</p>
+                      </div>
+                    )}
+                  </div>
+                </section>
+
+                <section className="doctor-profile-section doctor-profile-section--specialties">
+                  <div className="doctor-section-heading">
+                    <span className="eyebrow">Explore Other Specialties</span>
+                    <h2>Explore Other Specialties</h2>
+                  </div>
+                  <div className="doctor-specialty-grid">
+                    {doctorSampleSpecialties.map((specialty) => (
+                      <SpecialtyCard key={specialty.slug} specialty={specialty} />
+                    ))}
+                  </div>
+                </section>
+              </div>
+
+              <aside className="doctor-profile-layout__sidebar">
+                <BookingPanel
+                  consultationFee={consultationFeeLabel ?? "Fee shared after booking"}
+                  nextAvailableDays={bookingGroups}
+                  consultationModes={profile.consultationModes ?? []}
+                  clinicName={detail.data?.clinics[0]?.clinicDisplayName ?? detail.data?.doctorDisplayName ?? "Clinic"}
+                  averageWaitTime="15 min"
+                  appointmentDuration="20 min"
+                  bookingUrl={profile.bookingUrl}
+                  callHref={profile.callHref}
+                  callLabel="Call Clinic"
+                />
+                <AvailabilityTimeline
+                  days={
+                    profile.workingHoursSchedule ?? [
+                      { day: "Mon", hours: "9:00 AM - 6:00 PM", current: true },
+                      { day: "Tue", hours: "9:00 AM - 6:00 PM" },
+                      { day: "Wed", hours: "9:00 AM - 6:00 PM" },
+                      { day: "Thu", hours: "9:00 AM - 6:00 PM" },
+                      { day: "Fri", hours: "9:00 AM - 6:00 PM" },
+                      { day: "Sat", hours: "10:00 AM - 2:00 PM" },
+                      { day: "Sun", hours: "Closed", closed: true },
+                    ]
+                  }
+                />
+              </aside>
+            </div>
+            <StickyBookingCTA bookingUrl={stickyBookingUrl} />
+          </>
         ) : null}
       </DirectoryState>
     </section>

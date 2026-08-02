@@ -12,6 +12,7 @@ export type PublicDoctorSummaryResponse = {
   publicPath?: string;
   doctorDisplayName: string;
   photoUrl: string | null;
+  contactPhone?: string | null;
   speciality: string | null;
   yearsOfExperience: number | null;
   consultationFee?: number | string | null;
@@ -20,6 +21,7 @@ export type PublicDoctorSummaryResponse = {
   clinicSlug: string;
   area: string | null;
   city: string | null;
+  bookingMode?: string | null;
   subtitle?: string | null;
   summary?: string | null;
   availableToday: boolean;
@@ -33,9 +35,11 @@ export type PublicClinicSummaryResponse = {
   clinicDisplayName: string;
   logoUrl: string | null;
   coverUrl?: string | null;
+  contactPhone?: string | null;
   address: string | null;
   area: string | null;
   city: string | null;
+  bookingMode?: string | null;
   doctorsCount: number;
   serviceCount?: number;
   departmentCount?: number;
@@ -64,6 +68,7 @@ export type PublicDoctorDetailResponse = {
   publicPath?: string;
   doctorDisplayName: string;
   photoUrl: string | null;
+  bookingMode?: string | null;
   qualification: string | null;
   medicalCouncil?: string | null;
   yearsOfExperience: number | null;
@@ -102,6 +107,7 @@ export type PublicClinicDetailResponse = {
   clinicDisplayName: string;
   logoUrl: string | null;
   coverUrl?: string | null;
+  bookingMode?: string | null;
   address: string | null;
   area: string | null;
   city: string | null;
@@ -144,8 +150,10 @@ export type PublicHospitalSummaryResponse = {
   hospitalDisplayName: string;
   logoUrl: string | null;
   coverUrl?: string | null;
+  contactPhone?: string | null;
   area: string | null;
   city: string | null;
+  bookingMode?: string | null;
   doctorsCount: number;
   serviceCount?: number;
   departmentCount?: number;
@@ -164,6 +172,7 @@ export type PublicHospitalDetailResponse = {
   hospitalDisplayName: string;
   logoUrl: string | null;
   coverUrl?: string | null;
+  bookingMode?: string | null;
   address: string | null;
   area: string | null;
   city: string | null;

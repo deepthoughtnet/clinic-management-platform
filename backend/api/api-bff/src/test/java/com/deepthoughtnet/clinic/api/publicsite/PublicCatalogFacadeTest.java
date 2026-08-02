@@ -47,6 +47,8 @@ class PublicCatalogFacadeTest {
                 2,
                 3,
                 4,
+                "+911111111111",
+                "ONLINE_BOOKING",
                 false,
                 List.of("General Physician")
         );
@@ -65,6 +67,8 @@ class PublicCatalogFacadeTest {
                 6,
                 7,
                 8,
+                "+912222222222",
+                "CALL_TO_BOOK",
                 false,
                 List.of("Dermatology", "Pediatrics")
         );
@@ -83,6 +87,8 @@ class PublicCatalogFacadeTest {
                 10,
                 11,
                 12,
+                "+913333333333",
+                "CALL_TO_BOOK",
                 true,
                 List.of("Cardiology")
         );
@@ -115,12 +121,14 @@ class PublicCatalogFacadeTest {
             assertThat(item.clinicDisplayName()).isEqualTo("Sunrise Clinic");
             assertThat(item.publicPath()).isEqualTo("/discover/clinics/sunrise-clinic");
             assertThat(item.logoUrl()).isEqualTo("/api/public/clinics/sunrise-clinic/logo");
+            assertThat(item.coverUrl()).isEqualTo("/api/public/clinics/sunrise-clinic/cover");
             assertThat(item.emergencyAvailable()).isFalse();
         });
         assertThat(hospitals.items()).singleElement().satisfies(item -> {
             assertThat(item.hospitalDisplayName()).isEqualTo("City Care Hospital");
             assertThat(item.publicPath()).isEqualTo("/discover/hospitals/city-care-hospital");
             assertThat(item.logoUrl()).isEqualTo("/api/public/hospitals/city-care-hospital/logo");
+            assertThat(item.coverUrl()).isEqualTo("/api/public/hospitals/city-care-hospital/cover");
             assertThat(item.emergencyAvailable()).isTrue();
         });
         assertThat(search.hospitals().items()).singleElement().satisfies(item -> assertThat(item.hospitalDisplayName()).isEqualTo("City Care Hospital"));
@@ -178,7 +186,8 @@ class PublicCatalogFacadeTest {
                         null,
                         null,
                         false,
-                        true,
+                        "CALL_TO_BOOK",
+                        false,
                         OffsetDateTime.parse("2026-01-01T10:00:00Z"),
                         1,
                         "sunrise-clinic",
@@ -194,6 +203,77 @@ class PublicCatalogFacadeTest {
         assertThat(detail.galleryImageUrls()).containsExactly(
                 "/api/public/clinics/sunrise-clinic/gallery/0",
                 "/api/public/clinics/sunrise-clinic/gallery/1"
+        );
+    }
+
+    @Test
+    void hospitalDetailUsesPublicMediaRoutesForPublishedAssets() {
+        ProviderPublicProfileService publicProfileService = mock(ProviderPublicProfileService.class);
+        PublicCatalogFacade facade = new PublicCatalogFacade(publicProfileService);
+
+        when(publicProfileService.findBySlug("city-care-hospital")).thenReturn(Optional.of(
+                detailRecord(
+                        ProviderType.HOSPITAL,
+                        "JHS-0001",
+                        "city-care-hospital",
+                        "/discover/hospitals/city-care-hospital",
+                        "City Care Hospital",
+                        "City Care Hospital",
+                        "Hospital summary",
+                        "Hospital description",
+                        "Hospital biography",
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        false,
+                        List.of(),
+                        List.of("General Medicine"),
+                        List.of(),
+                        List.of("Consultation"),
+                        List.of("General Medicine", "Cardiology"),
+                        List.of("Wheelchair Access"),
+                        List.of("In-person"),
+                        List.of(new PublicProviderLocationSnapshot("Primary", "Main Road", "Pune", "Maharashtra", "India", "411001", "24x7", true, true, null, null)),
+                        List.of(
+                                new PublicProviderGalleryImageSnapshot(UUID.randomUUID(), "gallery-one.png"),
+                                new PublicProviderGalleryImageSnapshot(UUID.randomUUID(), "gallery-two.png")
+                        ),
+                        List.of("http://minio/internal/gallery-one.png", "http://minio/internal/gallery-two.png"),
+                        "http://minio/internal/hospital-image.png",
+                        "http://minio/internal/hospital-cover.png",
+                        "http://minio/internal/hospital-logo.png",
+                        "9876543210",
+                        "hospital@example.com",
+                        "https://example.com",
+                        "Pune",
+                        "Main Road",
+                        "Maharashtra",
+                        "India",
+                        "General Medicine",
+                        "Private",
+                        "Multispeciality Hospital",
+                        "Dr Example",
+                        250,
+                        true,
+                        "CALL_TO_BOOK",
+                        false,
+                        OffsetDateTime.parse("2026-01-01T10:00:00Z"),
+                        1,
+                        "city-care-hospital",
+                        null,
+                        true
+                )
+        ));
+
+        var detail = facade.hospitalDetail("city-care-hospital");
+
+        assertThat(detail.logoUrl()).isEqualTo("/api/public/hospitals/city-care-hospital/logo");
+        assertThat(detail.coverUrl()).isEqualTo("/api/public/hospitals/city-care-hospital/cover");
+        assertThat(detail.galleryImageUrls()).containsExactly(
+                "/api/public/hospitals/city-care-hospital/gallery/0",
+                "/api/public/hospitals/city-care-hospital/gallery/1"
         );
     }
 
@@ -245,6 +325,7 @@ class PublicCatalogFacadeTest {
                         null,
                         null,
                         false,
+                        "ONLINE_BOOKING",
                         true,
                         OffsetDateTime.parse("2026-01-01T10:00:00Z"),
                         1,
@@ -284,6 +365,8 @@ class PublicCatalogFacadeTest {
             int serviceCount,
             int departmentCount,
             int galleryCount,
+            String contactPhone,
+            String bookingMode,
             boolean emergencyAvailable,
             List<String> tags
     ) {
@@ -304,6 +387,8 @@ class PublicCatalogFacadeTest {
                 serviceCount,
                 departmentCount,
                 galleryCount,
+                contactPhone,
+                bookingMode,
                 emergencyAvailable,
                 tags,
                 null
@@ -352,6 +437,7 @@ class PublicCatalogFacadeTest {
             String medicalDirector,
             Integer beds,
             boolean emergencyAvailable,
+            String bookingMode,
             boolean reviewsComingSoon,
             OffsetDateTime publishedAt,
             int publishedVersionNumber,
@@ -405,6 +491,7 @@ class PublicCatalogFacadeTest {
                 medicalDirector,
                 beds,
                 emergencyAvailable,
+                bookingMode,
                 reviewsComingSoon,
                 publishedAt,
                 publishedVersionNumber,

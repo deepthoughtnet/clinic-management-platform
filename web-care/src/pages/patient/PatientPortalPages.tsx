@@ -2,6 +2,7 @@ import { type FormEvent, type KeyboardEvent, type ReactNode, useEffect, useMemo,
 import { Link, NavLink, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import AutoAwesomeOutlinedIcon from "@mui/icons-material/AutoAwesomeOutlined";
 import AutorenewRoundedIcon from "@mui/icons-material/AutorenewRounded";
+import BoltOutlinedIcon from "@mui/icons-material/BoltOutlined";
 import CalendarMonthOutlinedIcon from "@mui/icons-material/CalendarMonthOutlined";
 import CallEndRoundedIcon from "@mui/icons-material/CallEndRounded";
 import CancelOutlinedIcon from "@mui/icons-material/CancelOutlined";
@@ -11,10 +12,14 @@ import HeadsetMicOutlinedIcon from "@mui/icons-material/HeadsetMicOutlined";
 import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
 import MicOffRoundedIcon from "@mui/icons-material/MicOffRounded";
 import MicRoundedIcon from "@mui/icons-material/MicRounded";
+import AccessTimeOutlinedIcon from "@mui/icons-material/AccessTimeOutlined";
+import GridViewOutlinedIcon from "@mui/icons-material/GridViewOutlined";
+import NotificationsOutlinedIcon from "@mui/icons-material/NotificationsOutlined";
 import ReceiptLongOutlinedIcon from "@mui/icons-material/ReceiptLongOutlined";
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 import ScienceOutlinedIcon from "@mui/icons-material/ScienceOutlined";
 import ShieldOutlinedIcon from "@mui/icons-material/ShieldOutlined";
+import VaccinesOutlinedIcon from "@mui/icons-material/VaccinesOutlined";
 import AssignmentTurnedInOutlinedIcon from "@mui/icons-material/AssignmentTurnedInOutlined";
 import {
   indianMobileNumber,
@@ -33,8 +38,8 @@ import {
   type PatientPortalCareAiResetResponse,
   type PatientPortalCareAiStateResponse,
   type PatientPortalBillResponse,
-  type PatientPortalDashboardResponse,
   type PatientPortalDoctorSlotResponse,
+  type PatientPortalLabOrderResponse,
   type PatientPortalMeResponse,
   type PatientPortalNotificationResponse,
   type PatientPortalOtpRequestResponse,
@@ -66,6 +71,7 @@ import {
   fetchPublicJson,
 } from "../../api/publicCatalog";
 import { branding } from "../../branding";
+import { careConfig, externalAppUrl } from "../../config";
 import { DoctorClinicSelector } from "./DoctorClinicSelector";
 import { usePublicLocation } from "../../context/publicLocation";
 import {
@@ -79,7 +85,15 @@ import {
   resolvePatientPortalContext,
   savePublicBookingContext,
 } from "./patientPortalClinicContext";
-import { GlobalPatientHeader } from "../../components/GlobalPatientHeader";
+import {
+  CareAuthenticatedHeader,
+  CareEntrySecurityStrip,
+  CareEntrySessionNotice,
+  CareLoginHero,
+  CarePublicEntryHeader,
+  type CareDashboardBranding,
+  formatPatientDisplayName,
+} from "../../components/CareShell";
 import {
   PATIENT_PORTAL_PENDING_REGISTRATION_STORAGE_KEY,
   clearPatientRegistrationSession,
@@ -317,6 +331,39 @@ const patientNavItems = [
   { to: "/patient/profile", label: "Profile", shortLabel: "Profile" },
 ];
 
+const CARE_LOGIN_BENEFITS = [
+  {
+    icon: <CalendarMonthOutlinedIcon fontSize="small" aria-hidden="true" />,
+    title: "Appointments",
+    description: "See upcoming visits, updates, and booking details in one place.",
+  },
+  {
+    icon: <AssignmentTurnedInOutlinedIcon fontSize="small" aria-hidden="true" />,
+    title: "Prescriptions",
+    description: "Review medicines and visit notes shared by your care team.",
+  },
+  {
+    icon: <ScienceOutlinedIcon fontSize="small" aria-hidden="true" />,
+    title: "Lab reports",
+    description: "Open reports when they are shared securely with your account.",
+  },
+  {
+    icon: <ReceiptLongOutlinedIcon fontSize="small" aria-hidden="true" />,
+    title: "Bills and payments",
+    description: "Track charges, receipts, and payment history without the clutter.",
+  },
+  {
+    icon: <ShieldOutlinedIcon fontSize="small" aria-hidden="true" />,
+    title: "Vaccination records",
+    description: "Keep essential immunization details ready when you need them.",
+  },
+  {
+    icon: <AutoAwesomeOutlinedIcon fontSize="small" aria-hidden="true" />,
+    title: "AIVA care assistant",
+    description: "Use AIVA to find the right next step for your care journey.",
+  },
+] as const;
+
 function formatDate(value: string | null | undefined) {
   return formatDisplayDate(value);
 }
@@ -331,6 +378,20 @@ function formatDateTime(value: string | null | undefined) {
 
 function formatDateTimeFromParts(dateValue: string | null | undefined, timeValue: string | null | undefined) {
   return formatDisplayDateTimeFromParts(dateValue, timeValue);
+}
+
+function currentIsoDateInTimeZone(timeZone: string) {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const parts = formatter.formatToParts(new Date());
+  const year = parts.find((part) => part.type === "year")?.value ?? "1970";
+  const month = parts.find((part) => part.type === "month")?.value ?? "01";
+  const day = parts.find((part) => part.type === "day")?.value ?? "01";
+  return `${year}-${month}-${day}`;
 }
 
 function formatNotificationText(value: string | null | undefined) {
@@ -354,6 +415,17 @@ function formatCurrency(value: number | null | undefined) {
   }).format(value);
 }
 
+function formatCurrencyWhole(value: number | null | undefined) {
+  if (value == null) {
+    return "Not available yet";
+  }
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
 function formatStatusLabel(value: string | null | undefined) {
   if (!value) {
     return "Pending";
@@ -363,6 +435,68 @@ function formatStatusLabel(value: string | null | undefined) {
     .split("_")
     .map((item) => item.charAt(0).toUpperCase() + item.slice(1))
     .join(" ");
+}
+
+function formatDoctorDisplayName(value: string | null | undefined) {
+  const normalized = value?.trim() ?? "";
+  const withoutTitle = normalized.replace(/^dr\.?\s+/i, "").trim();
+  return withoutTitle || normalized;
+}
+
+function formatDoctorLabel(value: string | null | undefined) {
+  const name = formatDoctorDisplayName(value);
+  return name ? `Dr. ${name}` : "Dr.";
+}
+
+function buildBrandInitials(value: string | null | undefined) {
+  const raw = value?.trim() || "Jeevanam Care";
+  const parts = raw
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2);
+  if (!parts.length) {
+    return "JC";
+  }
+  return parts.map((part) => part.charAt(0).toUpperCase()).join("");
+}
+
+function formatMaskedPhone(value: string | null | undefined) {
+  if (!value) {
+    return "Phone unavailable";
+  }
+  const digits = value.replace(/\D/g, "");
+  if (digits.length < 4) {
+    return "Phone available";
+  }
+  return `Mobile ending ${digits.slice(-4)}`;
+}
+
+function formatCountLabel(count: number, singular: string, plural = `${singular}s`) {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function formatAppointmentDayLabel(date: string | null | undefined) {
+  if (!date) {
+    return "Date not available";
+  }
+  const candidate = new Date(`${date}T00:00:00`);
+  const today = new Date();
+  if (!Number.isNaN(candidate.getTime()) && candidate.toDateString() === today.toDateString()) {
+    return "Today";
+  }
+  return formatDate(date);
+}
+
+function toTimestamp(value: string | null | undefined) {
+  if (!value) {
+    return Number.NEGATIVE_INFINITY;
+  }
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
+}
+
+function pickLatestByDate<T>(items: T[], getDate: (item: T) => string | null | undefined) {
+  return [...items].sort((left, right) => toTimestamp(getDate(right)) - toTimestamp(getDate(left)))[0] ?? null;
 }
 
 function notificationSummaryLabel(notification: PatientPortalNotificationResponse) {
@@ -376,6 +510,107 @@ function notificationSummaryLabel(notification: PatientPortalNotificationRespons
   if (eventType.includes("PRESCRIPTION_")) return "Prescription update";
   if (eventType.includes("FOLLOW_UP")) return "Follow-up reminder";
   return "Notification";
+}
+
+function notificationEventType(notification: PatientPortalNotificationResponse) {
+  return (notification.eventType ?? "").toUpperCase();
+}
+
+function isAttentionNotification(notification: PatientPortalNotificationResponse) {
+  const eventType = notificationEventType(notification);
+  return (
+    eventType.includes("ACTION_REQUIRED") ||
+    eventType.includes("ATTENTION_REQUIRED") ||
+    eventType.includes("APPOINTMENT_REMINDER") ||
+    eventType.includes("APPOINTMENT_SOON") ||
+    eventType.includes("APPOINTMENT_DUE") ||
+    eventType.includes("BILL_DUE") ||
+    eventType.includes("PAYMENT_DUE") ||
+    eventType.includes("VACCINATION_DUE") ||
+    eventType.includes("VACCINATION_OVERDUE") ||
+    eventType.includes("LAB_REVIEW_REQUIRED") ||
+    eventType.includes("REPORT_REVIEW_REQUIRED") ||
+    eventType.includes("PRESCRIPTION_ACKNOWLEDGEMENT_REQUIRED") ||
+    eventType.includes("FOLLOW_UP_REQUIRED") ||
+    eventType.includes("CRITICAL")
+  );
+}
+
+function isRecentActivityNotification(notification: PatientPortalNotificationResponse) {
+  if (isAttentionNotification(notification)) {
+    return false;
+  }
+  const eventType = notificationEventType(notification);
+  return (
+    eventType.includes("APPOINTMENT_BOOKED") ||
+    eventType.includes("APPOINTMENT_RESCHEDULED") ||
+    eventType.includes("BILL_PAID") ||
+    eventType.includes("RECEIPT_") ||
+    eventType.includes("LAB_REPORT_READY") ||
+    eventType.includes("REPORT_PUBLISHED") ||
+    eventType.includes("PRESCRIPTION_SHARED") ||
+    eventType.includes("PRESCRIPTION_") ||
+    eventType.includes("VACCINATION_RECORDED") ||
+    eventType.includes("NOTIFICATION")
+  );
+}
+
+function dashboardNotificationTitle(notification: PatientPortalNotificationResponse) {
+  const eventType = notificationEventType(notification);
+  if (eventType.includes("APPOINTMENT_BOOKED")) return "Appointment booked";
+  if (eventType.includes("APPOINTMENT_RESCHEDULED")) return "Appointment rescheduled";
+  if (eventType.includes("BILL_PAID") || eventType.includes("RECEIPT_")) return "Bill paid";
+  if (eventType.includes("LAB_REPORT_READY") || eventType.includes("REPORT_PUBLISHED")) return "Report published";
+  if (eventType.includes("PRESCRIPTION_SHARED")) return "Prescription shared";
+  if (eventType.includes("PRESCRIPTION_")) return "Prescription update";
+  if (eventType.includes("VACCINATION_RECORDED")) return "Vaccination recorded";
+  if (eventType.includes("ACTION_REQUIRED") || eventType.includes("ATTENTION_REQUIRED")) return "Action required";
+  if (eventType.includes("PAYMENT_DUE") || eventType.includes("BILL_DUE")) return "Payment due";
+  if (eventType.includes("APPOINTMENT_REMINDER") || eventType.includes("APPOINTMENT_SOON")) return "Appointment soon";
+  return notification.subject?.trim() || "Notification";
+}
+
+function dashboardNotificationDetail(notification: PatientPortalNotificationResponse) {
+  const detail = notification.subject?.trim() || notification.message?.trim() || "";
+  return formatNotificationText(detail);
+}
+
+function formatBillTitle(bill: PatientPortalBillResponse | null, doctorName: string | null | undefined) {
+  if (!bill) {
+    return "Latest bill";
+  }
+  const billType = bill.billType?.trim().toUpperCase();
+  if (billType === "CONSULTATION") {
+    return doctorName?.trim() ? `Consultation with ${formatDoctorLabel(doctorName)}` : "Consultation bill";
+  }
+  const firstLineItem = bill.lines[0]?.itemName?.trim();
+  if (firstLineItem) {
+    return firstLineItem
+      .toLowerCase()
+      .split(/[\s_-]+/)
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+      .join(" ");
+  }
+  return bill.billType?.trim() || "Consultation bill";
+}
+
+function formatPrescriptionTitle(prescription: PatientPortalPrescriptionResponse | null) {
+  if (!prescription) {
+    return "Latest prescription";
+  }
+  return `Prescription from ${formatDoctorLabel(prescription.doctorName)}`;
+}
+
+function resolveVaccinationDashboardState(): "available-empty" | "unavailable" | "error" {
+  return "unavailable";
+}
+
+function formatLabReportTitle(report: PatientPortalLabOrderResponse | null) {
+  if (!report) {
+    return "Latest lab report";
+  }
+  return report.results[0]?.testName?.trim() || "Lab report";
 }
 
 function isUpcomingAppointment(appointment: PatientPortalAppointmentResponse) {
@@ -468,12 +703,6 @@ function sortAppointmentsForView(appointments: AppointmentViewModel[]) {
   });
 }
 
-function formatDoctorDisplayName(value: string | null | undefined) {
-  const normalized = value?.trim() ?? "";
-  const withoutTitle = normalized.replace(/^dr\.?\s+/i, "").trim();
-  return withoutTitle || normalized;
-}
-
 function normalizeUuidOrNull(value: string | null | undefined) {
   return isUuid(value) ? value.trim() : null;
 }
@@ -488,9 +717,72 @@ type BookingDoctorChoice = {
   yearsOfExperience: number | null;
   clinicName: string | null;
   clinicSlug: string | null;
+  area: string | null;
+  city: string | null;
+  contactPhone: string | null;
+  bookingMode: string | null;
   availableToday: boolean;
   nextAvailableSlotSummary: string | null;
 };
+
+type CareBookingMode = "ONLINE_BOOKING" | "CALL_TO_BOOK" | "REQUEST_APPOINTMENT" | "NOT_AVAILABLE";
+
+function normalizeCareBookingMode(value: string | null | undefined): CareBookingMode | null {
+  switch (value) {
+    case "ONLINE_BOOKING":
+    case "CALL_TO_BOOK":
+    case "REQUEST_APPOINTMENT":
+    case "NOT_AVAILABLE":
+      return value;
+    default:
+      return null;
+  }
+}
+
+function careBookingCapabilityLabel(mode: CareBookingMode | null) {
+  switch (mode) {
+    case "ONLINE_BOOKING":
+      return "Book online with Jeevanam";
+    case "CALL_TO_BOOK":
+      return "Call clinic to book";
+    case "REQUEST_APPOINTMENT":
+      return "Request appointment";
+    case "NOT_AVAILABLE":
+      return "Booking unavailable";
+    default:
+      return "Booking availability";
+  }
+}
+
+function careBookingCapabilitySecondaryText(mode: CareBookingMode | null) {
+  switch (mode) {
+    case "ONLINE_BOOKING":
+      return "Instant booking through Jeevanam Care";
+    case "CALL_TO_BOOK":
+      return "Call the clinic to schedule your visit";
+    case "REQUEST_APPOINTMENT":
+      return "Submit a request for the clinic to review";
+    case "NOT_AVAILABLE":
+      return "No public booking route is available";
+    default:
+      return "Booking availability is shared by the provider";
+  }
+}
+
+function careBookingCapabilityTone(mode: CareBookingMode | null) {
+  switch (mode) {
+    case "ONLINE_BOOKING":
+      return "is-online";
+    case "CALL_TO_BOOK":
+      return "is-call";
+    case "REQUEST_APPOINTMENT":
+      return "is-request";
+    case "NOT_AVAILABLE":
+      return "is-muted";
+    default:
+      return "is-muted";
+  }
+}
 
 function mapPublicDoctorSummaryToBookingChoice(doctor: PublicDoctorSummaryResponse): BookingDoctorChoice {
   return {
@@ -503,9 +795,21 @@ function mapPublicDoctorSummaryToBookingChoice(doctor: PublicDoctorSummaryRespon
     yearsOfExperience: doctor.yearsOfExperience,
     clinicName: doctor.clinicDisplayName,
     clinicSlug: doctor.clinicSlug,
+    area: doctor.area,
+    city: doctor.city,
+    contactPhone: doctor.contactPhone ?? null,
+    bookingMode: doctor.bookingMode ?? null,
     availableToday: doctor.availableToday,
     nextAvailableSlotSummary: doctor.nextAvailableSlotSummary,
   };
+}
+
+function formatBookingLocationLabel(area: string | null | undefined, city: string | null | undefined) {
+  const values = [area, city]
+    .map((value) => value?.trim() || "")
+    .filter((value) => value && value.toLowerCase() !== "primary");
+  const unique = Array.from(new Set(values));
+  return unique.length ? unique.join(" · ") : "Location shared after selection";
 }
 
 function mapPublicDoctorDetailToBookingChoice(
@@ -523,6 +827,10 @@ function mapPublicDoctorDetailToBookingChoice(
     yearsOfExperience: doctor.yearsOfExperience,
     clinicName,
     clinicSlug,
+    area: null,
+    city: null,
+    contactPhone: null,
+    bookingMode: doctor.bookingMode ?? null,
     availableToday: doctor.availableToday,
     nextAvailableSlotSummary: doctor.nextAvailableSlots[0] ?? null,
   };
@@ -660,7 +968,9 @@ function usePatientPortalResource<T>(
   session: PatientPortalSession | null,
   path: string,
   initialValue: T,
+  refreshKey = 0,
 ): FetchState<T> {
+  const initialValueRef = useRef(initialValue);
   const [state, setState] = useState<FetchState<T>>({
     data: initialValue,
     loading: false,
@@ -668,22 +978,26 @@ function usePatientPortalResource<T>(
   });
 
   useEffect(() => {
+    initialValueRef.current = initialValue;
+  }, [initialValue]);
+
+  useEffect(() => {
     const abortController = new AbortController();
 
     if (!session) {
       setState({
-        data: initialValue,
+        data: initialValueRef.current,
         loading: false,
         error: "Sign in with your patient OTP to load portal data.",
       });
       return () => abortController.abort();
     }
 
-    setState((current) => ({
-      data: current.data,
+    setState({
+      data: initialValueRef.current,
       loading: true,
       error: null,
-    }));
+    });
 
     fetchPatientPortalJson<T>(path, session, abortController.signal)
       .then((result) => {
@@ -698,14 +1012,14 @@ function usePatientPortalResource<T>(
           return;
         }
         setState({
-          data: initialValue,
+          data: initialValueRef.current,
           loading: false,
           error: error instanceof Error ? error.message : "Unable to load patient portal data.",
         });
       });
 
     return () => abortController.abort();
-  }, [path, session]);
+  }, [path, refreshKey, session]);
 
   return state;
 }
@@ -715,6 +1029,8 @@ export function PatientPortalShell({
   title,
   subtitle,
   className,
+  dashboardBranding,
+  unreadNotificationCount = 0,
   children,
   onSignOut,
 }: {
@@ -722,20 +1038,39 @@ export function PatientPortalShell({
   title: string;
   subtitle: string;
   className?: string;
+  dashboardBranding?: CareDashboardBranding | null;
+  unreadNotificationCount?: number;
   children: ReactNode;
   onSignOut: () => void;
 }) {
   const location = useLocation();
+  const patientDisplayName = formatPatientDisplayName(session.patientLabel);
 
   return (
     <section className={`page-section patient-portal-page${className ? ` ${className}` : ""}`}>
-      <GlobalPatientHeader session={session} />
+      <CareAuthenticatedHeader
+        session={session}
+        patientDisplayName={patientDisplayName}
+        unreadNotificationCount={unreadNotificationCount}
+        onSignOut={onSignOut}
+      />
       <div className="patient-portal-shell">
         <aside className="patient-sidebar">
           <div className="patient-sidebar-card">
             <span className="eyebrow">Jeevanam Care</span>
-            <h2>{session.patientLabel}</h2>
-            <p>{session.phone}</p>
+            <h2>{patientDisplayName}</h2>
+            <p>{formatMaskedPhone(session.phone)}</p>
+            {dashboardBranding ? (
+              <div className="patient-sidebar-branding" aria-label="Clinic branding">
+                <span className="patient-sidebar-branding__mark" aria-hidden="true">
+                  {dashboardBranding.initials}
+                </span>
+                <div className="patient-sidebar-branding__copy">
+                  <strong>{dashboardBranding.name}</strong>
+                  <small>{dashboardBranding.tagline}</small>
+                </div>
+              </div>
+            ) : null}
           </div>
           <nav className="patient-nav" aria-label="Patient portal navigation">
             {patientNavItems.map((item) => (
@@ -750,9 +1085,6 @@ export function PatientPortalShell({
               </NavLink>
             ))}
           </nav>
-          <button className="ghost-button patient-signout" type="button" onClick={onSignOut}>
-            Sign out
-          </button>
         </aside>
 
         <div className="patient-main">
@@ -763,18 +1095,8 @@ export function PatientPortalShell({
                 <h1>{title}</h1>
                 <p>{subtitle}</p>
               </div>
-              <div className="patient-status-card">
-                <strong>{session.patientLabel}</strong>
-                <small>{session.phone}</small>
-              </div>
             </div>
           )}
-
-          <div className="patient-mobile-top-actions">
-            <button className="ghost-button patient-mobile-signout" type="button" onClick={onSignOut}>
-              Sign out
-            </button>
-          </div>
 
           {children}
         </div>
@@ -829,6 +1151,8 @@ function PatientAccessBoundary({
   title,
   subtitle,
   className,
+  dashboardBranding,
+  unreadNotificationCount = 0,
   children,
 }: {
   session: PatientPortalSession | null;
@@ -836,6 +1160,8 @@ function PatientAccessBoundary({
   title: string;
   subtitle: string;
   className?: string;
+  dashboardBranding?: CareDashboardBranding | null;
+  unreadNotificationCount?: number;
   children: ReactNode;
 }) {
   const location = useLocation();
@@ -865,7 +1191,15 @@ function PatientAccessBoundary({
   }
 
   return (
-    <PatientPortalShell session={session} title={title} subtitle={subtitle} className={className} onSignOut={onSignOut}>
+    <PatientPortalShell
+      session={session}
+      title={title}
+      subtitle={subtitle}
+      className={className}
+      dashboardBranding={dashboardBranding}
+      unreadNotificationCount={unreadNotificationCount}
+      onSignOut={onSignOut}
+    >
       {children}
     </PatientPortalShell>
   );
@@ -906,6 +1240,72 @@ function PatientPortalApiState({
     );
   }
   return <>{children}</>;
+}
+
+function DashboardPanelCard({
+  title,
+  icon,
+  action,
+  loading,
+  error,
+  empty,
+  emptyTitle,
+  emptyMessage,
+  emptyAction,
+  onRetry,
+  errorAction,
+  className,
+  children,
+}: {
+  title: string;
+  icon?: ReactNode;
+  action?: ReactNode;
+  loading: boolean;
+  error: string | null;
+  empty: boolean;
+  emptyTitle: string;
+  emptyMessage: string;
+  emptyAction?: ReactNode;
+  onRetry?: () => void;
+  errorAction?: ReactNode;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <article className={`patient-panel patient-dashboard-widget${className ? ` ${className}` : ""}`}>
+      <div className="patient-panel-heading">
+        <h2 className="patient-widget-heading">
+          {icon ? <span className="patient-widget-heading__icon" aria-hidden="true">{icon}</span> : null}
+          <span>{title}</span>
+        </h2>
+        {action ? <div className="panel-link-row">{action}</div> : null}
+      </div>
+      {loading ? (
+        <div className="patient-dashboard-state patient-dashboard-state--loading">
+          <strong>Loading {title.toLowerCase()}...</strong>
+          <p>Please wait while the latest patient data loads.</p>
+        </div>
+      ) : error ? (
+        <div className="patient-dashboard-state patient-dashboard-state--error">
+          <strong>Unable to load {title.toLowerCase()}</strong>
+          <p>{error}</p>
+          {errorAction ?? (onRetry ? (
+            <button className="ghost-button" type="button" onClick={onRetry}>
+              Try Again
+            </button>
+          ) : null)}
+        </div>
+      ) : empty ? (
+        <div className="patient-dashboard-state patient-dashboard-state--empty">
+          <strong>{emptyTitle}</strong>
+          <p>{emptyMessage}</p>
+          {emptyAction ?? null}
+        </div>
+      ) : (
+        children
+      )}
+    </article>
+  );
 }
 
 async function openPortalDocument(
@@ -1260,136 +1660,178 @@ export function PatientLoginPage({
     }
   }
 
-  return (
-    <section className="page-section narrow-page">
-      <div className="section-heading">
-        <span className="eyebrow">Patient portal access</span>
-        <h1>Sign in with phone number and OTP.</h1>
-        <p>Access appointments, prescriptions, bills, reports, and care updates securely.</p>
-      </div>
-      <div className="login-placeholder portal-login-card">
-        {doctorDetail.loading ? <div className="patient-inline-empty">Loading clinic options...</div> : null}
-        {doctorDetail.error ? (
-          <div className="patient-inline-empty">
-            <strong>Clinic options unavailable</strong>
-            <p>Unable to load clinic options right now. Please try again.</p>
-          </div>
-        ) : null}
-        {doctorSelectionRequired && doctorDetail.data ? (
-          <DoctorClinicSelector
-            doctorName={portalClinicContext.doctorName || doctorDetail.data.doctorDisplayName}
-            clinics={doctorDetail.data.clinics}
-            selectedClinicCode={resolvedClinicCode}
-            nextAvailableSlot={doctorDetail.data.nextAvailableSlots[0] ?? null}
-            onSelect={(clinic) => syncClinicContext(clinic.clinicSlug, clinic.clinicDisplayName)}
-          />
-        ) : null}
-        {bookingContextLine ? (
-          <div className="patient-inline-empty">
-            <strong>{bookingContextLine}</strong>
-          </div>
-        ) : null}
+  const sessionActionLabel = session && isPatientPortalRegistrationSession(session) ? "Continue registration" : "Open current session";
 
-        <form className="patient-login-form" onSubmit={handleRequestOtp} noValidate>
-          {loginNotice ? (
+  return (
+    <section className="page-section care-login-page">
+      <CarePublicEntryHeader />
+      <div className="care-login-layout">
+        <CareLoginHero
+          title="Welcome to Jeevanam Care"
+          subtitle="Secure access to your appointments, prescriptions, lab reports, vaccinations, bills, and AIVA—all in one place."
+          benefits={CARE_LOGIN_BENEFITS.map((item) => ({
+            icon: item.icon,
+            title: item.title,
+            description: item.description,
+          }))}
+        />
+
+        <div className="login-placeholder portal-login-card care-login-card">
+          <div className="care-login-card__header">
+            <span className="eyebrow">Patient portal access</span>
+            <h2>Sign in to Jeevanam Care</h2>
+            <p>We will send a one-time password to your registered mobile number.</p>
+          </div>
+
+          {doctorDetail.loading ? <div className="patient-inline-empty">Loading clinic options...</div> : null}
+          {doctorDetail.error ? (
             <div className="patient-inline-empty">
-              <strong>Patient registration</strong>
-              <p>{loginNotice}</p>
+              <strong>Clinic options unavailable</strong>
+              <p>Unable to load clinic options right now. Please try again.</p>
             </div>
           ) : null}
-          <label>
-            <span>Phone number</span>
-            <input
-              value={phone}
-              onChange={(event) => {
-                setPhone(event.target.value);
-                clearOtpFlowMessages();
-              }}
-              onBlur={() => setPhoneTouched(true)}
-              placeholder="Enter 10-digit mobile number"
-              autoComplete="tel"
-              inputMode="tel"
-              aria-invalid={Boolean(phoneError)}
-              aria-describedby={phoneError ? "patient-login-phone-error" : undefined}
+          {doctorSelectionRequired && doctorDetail.data ? (
+            <DoctorClinicSelector
+              doctorName={portalClinicContext.doctorName || doctorDetail.data.doctorDisplayName}
+              clinics={doctorDetail.data.clinics}
+              selectedClinicCode={resolvedClinicCode}
+              nextAvailableSlot={doctorDetail.data.nextAvailableSlots[0] ?? null}
+              onSelect={(clinic) => syncClinicContext(clinic.clinicSlug, clinic.clinicDisplayName)}
             />
-            {phoneError ? (
-              <p id="patient-login-phone-error" className="patient-field-error">
-                {phoneError}
-              </p>
-            ) : null}
-          </label>
-          <div className="patient-login-actions">
-            <button className="primary-button wide-button" type="submit" disabled={requestPending || !canRequestOtp}>
-              {requestPending ? "Requesting OTP..." : "Request OTP"}
-            </button>
-          </div>
-        </form>
-
-        {requestMessage ? (
-          <div className="patient-inline-empty">
-            <strong>OTP request</strong>
-            <p>{requestMessage}</p>
-            {requestState?.accepted ? (
-              <span>
-                Code expires in {requestState.expiresInSeconds}s. Resend available in {requestState.resendAvailableInSeconds}s.
-              </span>
-            ) : null}
-            {isPatientPortalLocalDev() && requestState?.accepted ? (
-              <span>
-                Dev OTP: <strong>{requestState.devOtp || "123456"}</strong>
-              </span>
-            ) : null}
-          </div>
-        ) : null}
-
-        <form className="patient-login-form" onSubmit={handleVerifyOtp} noValidate>
-          <label>
-            <span>OTP code</span>
-            <input
-              value={otp}
-              onChange={(event) => {
-                setOtp(sanitizePatientOtpInput(event.target.value));
-                setVerifyMessage(null);
-              }}
-              onBlur={() => setOtpTouched(true)}
-              placeholder="6-digit code"
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              maxLength={6}
-              aria-invalid={Boolean(otpError)}
-              aria-describedby={otpError ? "patient-login-otp-error" : undefined}
-            />
-            {otpError ? (
-              <p id="patient-login-otp-error" className="patient-field-error">
-                {otpError}
-              </p>
-            ) : null}
-          </label>
-          <button className="secondary-button wide-button" type="submit" disabled={verifyPending || !canVerifyOtp}>
-            {verifyPending ? "Verifying..." : "Verify and continue"}
-          </button>
-        </form>
-
-        {verifyMessage ? (
-          <div className="patient-inline-empty">
-            <strong>OTP verification</strong>
-            <p>{verifyMessage}</p>
-          </div>
-        ) : null}
-
-        <div className="cta-row">
-          <a className="ghost-button" href={clinicLoginUrl}>
-            Open {branding.productName} Admin Console
-          </a>
+          ) : null}
+          {bookingContextLine ? (
+            <div className="patient-inline-empty">
+              <strong>{bookingContextLine}</strong>
+            </div>
+          ) : null}
           {session ? (
-            <>
+            <CareEntrySessionNotice
+              title="Current session"
+              body={
+                isPatientPortalRegistrationSession(session)
+                  ? "You already have a verified registration session. Continue from where you left off."
+                  : "You already have an active patient session. Open it again or sign out."
+              }
+              actionLabel={sessionActionLabel}
+              onAction={() => navigate(patientPortalHomePath(session))}
+            />
+          ) : null}
+
+          <form className="patient-login-form" onSubmit={handleRequestOtp} noValidate>
+            {loginNotice ? (
+              <div className="patient-inline-empty">
+                <strong>Patient registration</strong>
+                <p>{loginNotice}</p>
+              </div>
+            ) : null}
+            <label>
+              <span>Phone number</span>
+              <input
+                value={phone}
+                onChange={(event) => {
+                  setPhone(event.target.value);
+                  clearOtpFlowMessages();
+                }}
+                onBlur={() => setPhoneTouched(true)}
+                placeholder="Enter 10-digit mobile number"
+                autoComplete="tel"
+                inputMode="tel"
+                aria-invalid={Boolean(phoneError)}
+                aria-describedby={phoneError ? "patient-login-phone-error" : undefined}
+              />
+              {phoneError ? (
+                <p id="patient-login-phone-error" className="patient-field-error">
+                  {phoneError}
+                </p>
+              ) : null}
+            </label>
+            <div className="patient-login-actions">
+              <button className="primary-button wide-button" type="submit" disabled={requestPending || !canRequestOtp}>
+                {requestPending ? "Requesting OTP..." : "Request OTP"}
+              </button>
+            </div>
+          </form>
+
+          {requestMessage ? (
+            <div className="patient-inline-empty">
+              <strong>OTP request</strong>
+              <p>{requestMessage}</p>
+              {requestState?.accepted ? (
+                <span>
+                  Code expires in {requestState.expiresInSeconds}s. Resend available in {requestState.resendAvailableInSeconds}s.
+                </span>
+              ) : null}
+              {isPatientPortalLocalDev() && requestState?.accepted ? (
+                <span>
+                  Dev OTP: <strong>{requestState.devOtp || "123456"}</strong>
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+
+          <form className="patient-login-form" onSubmit={handleVerifyOtp} noValidate>
+            <label>
+              <span>OTP code</span>
+              <input
+                value={otp}
+                onChange={(event) => {
+                  setOtp(sanitizePatientOtpInput(event.target.value));
+                  setVerifyMessage(null);
+                }}
+                onBlur={() => setOtpTouched(true)}
+                placeholder="6-digit code"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                aria-invalid={Boolean(otpError)}
+                aria-describedby={otpError ? "patient-login-otp-error" : undefined}
+              />
+              {otpError ? (
+                <p id="patient-login-otp-error" className="patient-field-error">
+                  {otpError}
+                </p>
+              ) : null}
+            </label>
+            <button className="secondary-button wide-button" type="submit" disabled={verifyPending || !canVerifyOtp}>
+              {verifyPending ? "Verifying..." : "Verify and continue"}
+            </button>
+          </form>
+
+          {verifyMessage ? (
+            <div className="patient-inline-empty">
+              <strong>OTP verification</strong>
+              <p>{verifyMessage}</p>
+            </div>
+          ) : null}
+
+          <CareEntrySecurityStrip />
+
+          {isPatientPortalLocalDev() ? (
+            <details className="care-login-dev-tools">
+              <summary>Development tools</summary>
+              <div className="care-login-dev-tools__body">
+                <a className="ghost-button" href={clinicLoginUrl}>
+                  Open Jeevanam Care Admin Console
+                </a>
+                {requestState?.accepted ? (
+                  <div className="patient-inline-empty">
+                    <strong>Dev OTP</strong>
+                    <p>{requestState.devOtp || "123456"}</p>
+                  </div>
+                ) : null}
+              </div>
+            </details>
+          ) : null}
+
+          {session ? (
+            <div className="cta-row care-login-session-actions">
               <button className="secondary-button" type="button" onClick={() => navigate(patientPortalHomePath(session))}>
-                {isPatientPortalRegistrationSession(session) ? "Continue registration" : "Open current session"}
+                {sessionActionLabel}
               </button>
               <button className="ghost-button" type="button" onClick={onClearSession}>
-                {isPatientPortalRegistrationSession(session) ? "Start over" : "Sign out"}
+                Sign out
               </button>
-            </>
+            </div>
           ) : null}
         </div>
       </div>
@@ -1704,123 +2146,754 @@ export function PatientRegistrationPage({
 
 export function PatientDashboardPage({ session, onSignOut }: { session: PatientPortalSession | null; onSignOut: () => void }) {
   const portalSession = isPatientPortalPatientSession(session) ? session : null;
-  const dashboard = usePatientPortalResource<PatientPortalDashboardResponse | null>(portalSession, "/api/patient-portal/dashboard", null);
+  const [appointmentsRefreshKey, setAppointmentsRefreshKey] = useState(0);
+  const [prescriptionsRefreshKey, setPrescriptionsRefreshKey] = useState(0);
+  const [billsRefreshKey, setBillsRefreshKey] = useState(0);
+  const [labReportsRefreshKey, setLabReportsRefreshKey] = useState(0);
+  const [notificationsRefreshKey, setNotificationsRefreshKey] = useState(0);
+  const [portalActionBusy, setPortalActionBusy] = useState<string | null>(null);
+  const [portalActionError, setPortalActionError] = useState<string | null>(null);
+
+  const appointments = usePatientPortalResource<PatientPortalAppointmentResponse[]>(
+    portalSession,
+    "/api/patient-portal/appointments",
+    [],
+    appointmentsRefreshKey,
+  );
+  const prescriptions = usePatientPortalResource<PatientPortalPrescriptionResponse[]>(
+    portalSession,
+    "/api/patient-portal/prescriptions",
+    [],
+    prescriptionsRefreshKey,
+  );
+  const bills = usePatientPortalResource<PatientPortalBillResponse[]>(
+    portalSession,
+    "/api/patient-portal/bills",
+    [],
+    billsRefreshKey,
+  );
+  const labReports = usePatientPortalResource<PatientPortalLabOrderResponse[]>(
+    portalSession,
+    "/api/patient-portal/lab/reports",
+    [],
+    labReportsRefreshKey,
+  );
+  const notifications = usePatientPortalResource<PatientPortalNotificationResponse[]>(
+    portalSession,
+    "/api/patient-portal/notifications",
+    [],
+    notificationsRefreshKey,
+  );
+
+  const upcomingAppointments = useMemo(
+    () =>
+      sortAppointmentsForView(
+        appointments.data.map(toAppointmentViewModel).filter((appointment) => appointment.filterBucket === "upcoming"),
+      ),
+    [appointments.data],
+  );
+  const nextAppointment = upcomingAppointments[0] ?? null;
+  const latestPrescription = useMemo(
+    () => pickLatestByDate(prescriptions.data, (item) => item.prescriptionDate),
+    [prescriptions.data],
+  );
+  const latestBill = useMemo(() => pickLatestByDate(bills.data, (item) => item.billDate), [bills.data]);
+  const latestLabReport = useMemo(
+    () =>
+      pickLatestByDate(labReports.data, (item) => item.reportGeneratedAt ?? item.resultEnteredAt ?? item.orderedAt),
+    [labReports.data],
+  );
+  const sortedNotifications = useMemo(
+    () => [...notifications.data].sort((left, right) => toTimestamp(right.createdAt) - toTimestamp(left.createdAt)),
+    [notifications.data],
+  );
+  const unreadNotifications = useMemo(
+    () =>
+      sortedNotifications.filter((notification) => {
+        const status = notification.status.toUpperCase();
+        return status !== "READ" && !notification.readAt;
+      }),
+    [sortedNotifications],
+  );
+  const attentionNotifications = useMemo(
+    () => sortedNotifications.filter((notification) => !notification.readAt && isAttentionNotification(notification)).slice(0, 3),
+    [sortedNotifications],
+  );
+  const recentActivityNotifications = useMemo(
+    () => sortedNotifications.filter((notification) => isRecentActivityNotification(notification)).slice(0, 5),
+    [sortedNotifications],
+  );
+  const latestLabCritical = Boolean(latestLabReport?.results.some((result) => result.criticalResult));
+  const dashboardClinicName = useMemo(() => {
+    const clinicCandidates = [
+      nextAppointment?.clinicName,
+      latestPrescription?.clinicName,
+      appointments.data.find((appointment) => appointment.clinicName?.trim())?.clinicName,
+    ];
+    return clinicCandidates.find((value) => value?.trim())?.trim() || null;
+  }, [appointments.data, latestPrescription?.clinicName, nextAppointment?.clinicName]);
+  const dashboardBranding = useMemo<CareDashboardBranding>(() => {
+    const brandName = dashboardClinicName || branding.productName;
+    return {
+      name: brandName,
+      tagline: dashboardClinicName ? `Care delivered through ${dashboardClinicName}` : "Secure patient portal",
+      initials: buildBrandInitials(brandName),
+    };
+  }, [dashboardClinicName]);
+  const attentionItems = useMemo(() => {
+    type AttentionItem = {
+      key: string;
+      icon: ReactNode;
+      title: string;
+      detail: string;
+      href: string;
+      actionLabel: string;
+    };
+
+    const items: AttentionItem[] = [];
+    attentionNotifications.forEach((notification) => {
+      items.push({
+        key: notification.id,
+        icon: <NotificationsOutlinedIcon fontSize="small" aria-hidden="true" />,
+        title: dashboardNotificationTitle(notification),
+        detail: dashboardNotificationDetail(notification),
+        href: "/patient/notifications",
+        actionLabel: "Open notification",
+      });
+    });
+    const urgentAppointment = nextAppointment
+      && nextAppointment.appointmentTimestamp != null
+      && nextAppointment.appointmentTimestamp > Date.now()
+      && nextAppointment.appointmentTimestamp - Date.now() <= 24 * 60 * 60 * 1000;
+
+    if (urgentAppointment && nextAppointment) {
+      items.push({
+        key: "appointment",
+        icon: <CalendarMonthOutlinedIcon fontSize="small" aria-hidden="true" />,
+        title: "Appointment soon",
+        detail: `${nextAppointment.doctorName ?? "Your doctor"} · ${formatDateTimeFromParts(
+          nextAppointment.appointmentDate,
+          nextAppointment.appointmentTime,
+        )}`,
+        href: "/patient/appointments",
+        actionLabel: "View appointment",
+      });
+    }
+
+    if (latestLabReport && latestLabCritical) {
+      items.push({
+        key: "lab",
+        icon: <ScienceOutlinedIcon fontSize="small" aria-hidden="true" />,
+        title: "Review lab report",
+        detail: `${formatLabReportTitle(latestLabReport)} · ${formatDate(
+          latestLabReport.reportGeneratedAt ?? latestLabReport.resultEnteredAt ?? latestLabReport.orderedAt,
+        )}`,
+        href: "/patient/lab",
+        actionLabel: "View report",
+      });
+    }
+
+    if (latestBill && (latestBill.dueAmount ?? 0) > 0) {
+      items.push({
+        key: "bill",
+        icon: <ReceiptLongOutlinedIcon fontSize="small" aria-hidden="true" />,
+        title: "Payment due",
+        detail: formatCurrency(latestBill.dueAmount),
+        href: "/patient/bills",
+        actionLabel: "View bill",
+      });
+    }
+
+    return items.slice(0, 5);
+  }, [attentionNotifications, latestBill, latestLabCritical, latestLabReport, nextAppointment]);
+  const hasMeaningfulActivity = Boolean(
+    nextAppointment || latestPrescription || latestBill || latestLabReport || unreadNotifications.length || appointments.data.length || prescriptions.data.length || bills.data.length || labReports.data.length,
+  );
+  const dashboardSubtitle = hasMeaningfulActivity
+    ? "Your next visit, recent prescription, reports, and care updates in one place."
+    : "Your recent care information is here. Book your next visit whenever you are ready.";
+  const aivaHref = careConfig.aivaAppUrl || "/patient/careai";
+  const discoverDoctorsHref = externalAppUrl(careConfig.discoverAppUrl, "/doctors");
+  const latestBillDueAmount = latestBill?.dueAmount ?? null;
+  const latestBillSettled = latestBill ? (latestBillDueAmount ?? 0) <= 0 : false;
+  const latestBillAmount = latestBill?.totalAmount ?? latestBillDueAmount;
+  const latestPrescriptionMedicineCount = latestPrescription?.medicines.length ?? 0;
+  const latestPrescriptionDate = latestPrescription?.prescriptionDate ?? null;
+  const latestBillPrimaryLabel = formatBillTitle(latestBill, latestPrescription?.doctorName);
+  const latestPrescriptionPrimaryLabel = formatPrescriptionTitle(latestPrescription);
+  const latestPrescriptionDoctorLabel = latestPrescription?.doctorName ? formatDoctorLabel(latestPrescription.doctorName) : "Your care team";
+  const latestLabPrimaryLabel = formatLabReportTitle(latestLabReport);
+  const nextAppointmentModeLabel = nextAppointment?.source ? formatStatusLabel(nextAppointment.source) : "Mode not available";
+  const nextAppointmentStatusLabel = nextAppointment?.status ? formatStatusLabel(nextAppointment.status) : "Status pending";
+  const nextAppointmentDateLabel = formatAppointmentDayLabel(nextAppointment?.appointmentDate);
+  const nextAppointmentTimeLabel = nextAppointment?.appointmentTime || "Time not available";
+  const nextActionIsViewAppointment = Boolean(nextAppointment);
+  const vaccinationState = resolveVaccinationDashboardState();
+  const vaccinationUnavailableLabel = "Vaccination records are not currently available in Jeevanam Care";
+  const quickActions = [
+    nextActionIsViewAppointment
+      ? {
+          label: "View appointment",
+          href: "/patient/appointments",
+          description: "Open your next visit",
+          icon: <CalendarMonthOutlinedIcon fontSize="small" aria-hidden="true" />,
+        }
+      : {
+          label: "Book appointment",
+          href: "/patient/book-appointment",
+          description: "Choose a convenient time",
+          icon: <CalendarMonthOutlinedIcon fontSize="small" aria-hidden="true" />,
+        },
+    { label: "Find Doctor", href: discoverDoctorsHref, external: true, description: "Search nearby doctors", icon: <GridViewOutlinedIcon fontSize="small" aria-hidden="true" /> },
+    { label: "View Reports", href: "/patient/lab", description: "Open lab reports", icon: <ScienceOutlinedIcon fontSize="small" aria-hidden="true" /> },
+    { label: "Prescriptions", href: "/patient/prescriptions", description: "View shared medicines", icon: <ReceiptLongOutlinedIcon fontSize="small" aria-hidden="true" /> },
+    ...(careConfig.aivaAppUrl
+      ? [{ label: "Ask AIVA", href: aivaHref, external: true, description: "Get guided support", icon: <AutoAwesomeOutlinedIcon fontSize="small" aria-hidden="true" /> }]
+      : [{ label: "Ask AIVA", href: "/patient/careai", description: "Get guided support", icon: <AutoAwesomeOutlinedIcon fontSize="small" aria-hidden="true" /> }]),
+  ] as Array<{ label: string; href: string; description: string; external?: boolean; icon: ReactNode }>;
+
+  function retryAppointments() {
+    setAppointmentsRefreshKey((current) => current + 1);
+  }
+
+  function retryPrescriptions() {
+    setPrescriptionsRefreshKey((current) => current + 1);
+  }
+
+  function retryBills() {
+    setBillsRefreshKey((current) => current + 1);
+  }
+
+  function retryLabReports() {
+    setLabReportsRefreshKey((current) => current + 1);
+  }
+
+  function retryNotifications() {
+    setNotificationsRefreshKey((current) => current + 1);
+  }
+
+  async function openDashboardDocument(path: string, busyKey: string) {
+    if (!portalSession) {
+      return;
+    }
+    setPortalActionError(null);
+    try {
+      await openPortalDocument(portalSession, path, setPortalActionBusy, busyKey, setPortalActionError);
+    } catch {
+      // openPortalDocument already captures the error state.
+    }
+  }
+
+  function renderSummaryCard({
+    title,
+    icon,
+    className,
+    loading,
+    error,
+    empty,
+    emptyTitle,
+    emptyMessage,
+    action,
+    emptyAction,
+    errorAction,
+    children,
+    onRetry,
+  }: {
+    title: string;
+    icon?: ReactNode;
+    className?: string;
+    loading: boolean;
+    error: string | null;
+    empty: boolean;
+    emptyTitle: string;
+    emptyMessage: string;
+    action?: ReactNode;
+    emptyAction?: ReactNode;
+    errorAction?: ReactNode;
+    children: ReactNode;
+    onRetry?: () => void;
+  }) {
+    return (
+      <article className={`patient-stat-card${className ? ` ${className}` : ""}`}>
+        <span className="patient-stat-card__title">
+          {icon ? <span className="patient-stat-card__icon" aria-hidden="true">{icon}</span> : null}
+          <span>{title}</span>
+        </span>
+        {loading ? (
+          <>
+            <strong>Loading...</strong>
+            <small>Please wait while the latest patient data loads.</small>
+          </>
+        ) : error ? (
+          <>
+            <strong>Unable to load</strong>
+            <small>{error}</small>
+            {errorAction ?? (onRetry ? (
+              <button className="ghost-button" type="button" onClick={onRetry}>
+                Try Again
+              </button>
+            ) : null)}
+          </>
+        ) : empty ? (
+          <>
+            <strong>{emptyTitle}</strong>
+            {emptyMessage.trim() ? <small>{emptyMessage}</small> : null}
+            {emptyAction ?? action}
+          </>
+        ) : (
+          children
+        )}
+      </article>
+    );
+  }
 
   return (
     <PatientAccessBoundary
       session={session}
       onSignOut={onSignOut}
       title="Your care at a glance"
-      subtitle="See your next visit, recent prescription, bills, and care updates in one place."
+      subtitle={dashboardSubtitle}
+      dashboardBranding={dashboardBranding}
+      unreadNotificationCount={unreadNotifications.length}
     >
-      <PatientPortalApiState
-        loading={dashboard.loading}
-        error={dashboard.error}
-        empty={!dashboard.data}
-        emptyTitle="Your dashboard is not ready yet"
-        emptyMessage="Patient-safe summaries will appear here once your clinic has linked your records to this portal session."
-      >
+      <div className="patient-dashboard-stack">
+        {portalActionError ? (
+          <div className="patient-inline-empty patient-dashboard-banner patient-dashboard-banner--error">
+            <strong>Could not open the document</strong>
+            <p>{portalActionError}</p>
+          </div>
+        ) : null}
+
+        <section className="patient-panel patient-dashboard-quick-actions patient-panel-wide">
+          <div className="patient-panel-heading">
+            <h2 className="patient-widget-heading">
+              <span className="patient-widget-heading__icon" aria-hidden="true">
+                <BoltOutlinedIcon fontSize="small" />
+              </span>
+              <span>Quick actions</span>
+            </h2>
+          </div>
+          <div className="patient-dashboard-quick-actions-grid" aria-label="Dashboard quick actions">
+            {quickActions.map((action) => (
+              action.external ? (
+                <a
+                  key={action.label}
+                  className={`patient-dashboard-quick-action${action.label === "Book appointment" || action.label === "View appointment" ? " patient-dashboard-quick-action--primary" : ""}`}
+                  href={action.href}
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-label={action.label}
+                >
+                  <span className="patient-dashboard-quick-action__icon" aria-hidden="true">
+                    {action.icon}
+                  </span>
+                  <strong>{action.label}</strong>
+                  <span>{action.description}</span>
+                </a>
+              ) : (
+                <Link
+                  key={action.label}
+                  className={`patient-dashboard-quick-action${action.label === "Book appointment" || action.label === "View appointment" ? " patient-dashboard-quick-action--primary" : ""}`}
+                  to={action.href}
+                  aria-label={action.label}
+                >
+                  <span className="patient-dashboard-quick-action__icon" aria-hidden="true">
+                    {action.icon}
+                  </span>
+                  <strong>{action.label}</strong>
+                  <span>{action.description}</span>
+                </Link>
+              )
+            ))}
+          </div>
+        </section>
+
+        <section className="patient-panel patient-dashboard-attention patient-panel-wide">
+          <div className="patient-panel-heading">
+            <h2 className="patient-widget-heading">
+              <span className="patient-widget-heading__icon" aria-hidden="true">
+                <NotificationsOutlinedIcon fontSize="small" />
+              </span>
+              <span>Attention</span>
+            </h2>
+            {attentionItems.length ? <Link to="/patient/notifications">View all</Link> : null}
+          </div>
+          {attentionItems.length ? (
+            <div className="patient-dashboard-attention-list">
+              {attentionItems.map((item) => (
+                <Link key={item.key} className="patient-dashboard-attention-item" to={item.href}>
+                  <span className="patient-dashboard-attention-item__icon" aria-hidden="true">
+                    {item.icon}
+                  </span>
+                  <span className="patient-dashboard-attention-item__copy">
+                    <strong>{item.title}</strong>
+                    <small>{item.detail}</small>
+                  </span>
+                  <span className="patient-dashboard-attention-item__action">{item.actionLabel}</span>
+                </Link>
+              ))}
+            </div>
+          ) : (
+            <div className="patient-inline-empty">Nothing needs your attention right now.</div>
+          )}
+        </section>
+
         <div className="patient-summary-grid">
-          <article className="patient-stat-card">
-            <span>Next visit</span>
-            <strong>{dashboard.data?.nextAppointment ? formatDate(dashboard.data.nextAppointment.appointmentDate) : "None"}</strong>
-            <small>{dashboard.data?.nextAppointment?.doctorName ?? "No upcoming appointment is linked yet."}</small>
-            <Link className="text-link" to="/patient/book-appointment">
-              Book appointment
-            </Link>
-          </article>
-          <article className="patient-stat-card">
-            <span>Latest prescription</span>
-            <strong>{dashboard.data?.recentPrescription?.prescriptionNumber ?? "Not available"}</strong>
-            <small>{dashboard.data?.recentPrescription?.doctorName ?? "No prescription has been published yet."}</small>
-          </article>
-          <article className="patient-stat-card">
-            <span>Unpaid due</span>
-            <strong>{formatCurrency(dashboard.data?.unpaidDueAmount ?? null)}</strong>
-            <small>Billing totals only. Detailed accounting stays with the clinic team.</small>
-          </article>
+          {renderSummaryCard({
+            title: "Next appointment",
+            icon: <CalendarMonthOutlinedIcon fontSize="small" aria-hidden="true" />,
+            className: nextAppointment ? "patient-stat-card--featured" : undefined,
+            loading: appointments.loading,
+            error: appointments.error,
+            empty: !nextAppointment,
+            emptyTitle: "No visit scheduled",
+            emptyMessage: "You don't have an upcoming appointment. Book your next consultation with a verified Jeevanam doctor.",
+            onRetry: retryAppointments,
+            emptyAction: (
+              <div className="patient-action-row">
+                <Link className="primary-button" to="/patient/book-appointment">
+                  Book appointment
+                </Link>
+                <a className="ghost-button" href={careConfig.discoverAppUrl}>
+                  Find Care
+                </a>
+              </div>
+            ),
+            action: (
+              <Link className="text-link" to="/patient/book-appointment">
+                Book appointment
+              </Link>
+            ),
+            children: nextAppointment ? (
+              <div className="patient-stat-card__featured-copy">
+                <strong className="patient-stat-card__featured-date">
+                  {nextAppointmentDateLabel}
+                  <span>{nextAppointmentTimeLabel}</span>
+                </strong>
+                <strong>{nextAppointment.doctorName ?? "Doctor to be confirmed"}</strong>
+                <small>{nextAppointment.clinicName ?? "Clinic"}</small>
+                <small>
+                  {nextAppointmentModeLabel}
+                  {nextAppointmentStatusLabel ? ` · ${nextAppointmentStatusLabel}` : ""}
+                </small>
+                <span className="status-pill status-pill--compact">{nextAppointmentStatusLabel}</span>
+              </div>
+            ) : null,
+          })}
+
+          {renderSummaryCard({
+            title: "Latest prescription",
+            icon: <AssignmentTurnedInOutlinedIcon fontSize="small" aria-hidden="true" />,
+            loading: prescriptions.loading,
+            error: prescriptions.error,
+            empty: !latestPrescription,
+            emptyTitle: "No prescription yet",
+            emptyMessage: "Prescriptions will appear here when your care team shares them.",
+            onRetry: retryPrescriptions,
+            children: latestPrescription ? (
+              <>
+                <strong>{latestPrescriptionDoctorLabel}</strong>
+                <small>
+                  {formatCountLabel(latestPrescriptionMedicineCount, "medicine")} ·{" "}
+                  {latestPrescriptionDate ? `Finalized ${formatDate(latestPrescriptionDate)}` : "Finalized date not available"}
+                </small>
+              </>
+            ) : null,
+          })}
+
+          {renderSummaryCard({
+            title: "Payments",
+            icon: <ReceiptLongOutlinedIcon fontSize="small" aria-hidden="true" />,
+            loading: bills.loading,
+            error: bills.error,
+            empty: !latestBill,
+            emptyTitle: "No payment due",
+            emptyMessage: "Your latest bill is paid.",
+            onRetry: retryBills,
+            children: latestBill ? (
+              <>
+                <strong>{latestBillSettled ? "No payment due" : `${formatCurrencyWhole(latestBillDueAmount)} due`}</strong>
+                <small>{latestBillSettled ? "Latest consultation bill paid" : `Payment due by ${latestBill.billDate ? formatDate(latestBill.billDate) : "the due date"}`}</small>
+                <small>{latestBill.billDate ? `${formatDate(latestBill.billDate)} · ${formatCurrencyWhole(latestBillAmount)}` : formatCurrencyWhole(latestBillAmount)}</small>
+              </>
+            ) : null,
+          })}
         </div>
 
         <div className="patient-content-grid">
-          <article className="patient-panel">
-            <div className="patient-panel-heading">
-              <h2>Next upcoming appointment</h2>
-              <div className="panel-link-row">
-                <Link to="/patient/book-appointment">Book new</Link>
-                <Link to="/patient/appointments">View all</Link>
+          <DashboardPanelCard
+            title="Upcoming appointment"
+            icon={<CalendarMonthOutlinedIcon fontSize="small" aria-hidden="true" />}
+            loading={appointments.loading}
+            error={appointments.error}
+            empty={!nextAppointment}
+            emptyTitle="No upcoming appointment"
+            emptyMessage="Find a doctor and book a convenient time."
+            onRetry={retryAppointments}
+            emptyAction={
+              <div className="patient-action-row">
+                <Link className="primary-button" to="/patient/book-appointment">
+                  Book appointment
+                </Link>
+                <a className="ghost-button" href={careConfig.discoverAppUrl}>
+                  Find Care
+                </a>
               </div>
-            </div>
-            {dashboard.data?.nextAppointment ? (
-              <div className="patient-highlight-card">
-                <strong>{dashboard.data.nextAppointment.doctorName ?? "Doctor to be confirmed"}</strong>
-                <span>
-                  {dashboard.data.nextAppointment.clinicName ?? dashboard.data.clinicName} ·{" "}
-                  {formatDateTimeFromParts(dashboard.data.nextAppointment.appointmentDate, dashboard.data.nextAppointment.appointmentTime)}
+            }
+            action={<Link to="/patient/appointments">View all</Link>}
+          >
+            {nextAppointment ? (
+              <div className="patient-highlight-card patient-highlight-card--appointment">
+                <span className="patient-highlight-card__eyebrow">
+                  {nextAppointmentDateLabel}
+                  <span>{nextAppointmentTimeLabel}</span>
                 </span>
-                <p>{dashboard.data.nextAppointment.reason ?? "Visit reason will appear when the clinic shares it safely."}</p>
-              </div>
-            ) : (
-              <div className="patient-inline-empty">No upcoming appointment has been linked to your portal yet.</div>
-            )}
-          </article>
-
-          <article className="patient-panel">
-            <div className="patient-panel-heading">
-              <h2>Recent prescription summary</h2>
-              <Link to="/patient/prescriptions">View all</Link>
-            </div>
-            {dashboard.data?.recentPrescription ? (
-              <div className="patient-highlight-card">
-                <strong>{dashboard.data.recentPrescription.prescriptionNumber}</strong>
-                <span>
-                  {dashboard.data.recentPrescription.doctorName ?? "Doctor pending"} · {formatStatusLabel(dashboard.data.recentPrescription.status)}
-                </span>
-                <p>{dashboard.data.recentPrescription.adviceSummary ?? "Advice summary will appear when available."}</p>
-              </div>
-            ) : (
-              <div className="patient-inline-empty">No prescription summary is available yet.</div>
-            )}
-          </article>
-
-          <article className="patient-panel">
-            <div className="patient-panel-heading">
-              <h2>Latest bill and receipt</h2>
-              <Link to="/patient/bills">View all</Link>
-            </div>
-            {dashboard.data?.latestBill ? (
-              <div className="patient-highlight-card">
-                <strong>{dashboard.data.latestBill.billNumber}</strong>
-                <span>
-                  {formatDate(dashboard.data.latestBill.billDate)} · {formatStatusLabel(dashboard.data.latestBill.status)}
-                </span>
+                <strong>{nextAppointment.doctorName ?? "Doctor to be confirmed"}</strong>
+                <span>{nextAppointment.clinicName ?? "Clinic"}</span>
                 <p>
-                  Total {formatCurrency(dashboard.data.latestBill.totalAmount)} · Due {formatCurrency(dashboard.data.latestBill.dueAmount)}
+                  {nextAppointmentModeLabel}
+                  {nextAppointment.reason ? ` · ${nextAppointment.reason}` : ""}
                 </p>
-                {dashboard.data.latestBill.latestReceipt ? (
-                  <small>
-                    Latest receipt {dashboard.data.latestBill.latestReceipt.receiptNumber} on{" "}
-                    {formatDate(dashboard.data.latestBill.latestReceipt.receiptDate)}
-                  </small>
-                ) : null}
+                <span className="status-pill status-pill--compact">{nextAppointmentStatusLabel}</span>
+                <div className="patient-action-row">
+                  <Link className="secondary-button" to="/patient/appointments">
+                    View appointment
+                  </Link>
+                </div>
               </div>
             ) : (
-              <div className="patient-inline-empty">No bill summary is available yet.</div>
+              <div className="patient-inline-empty patient-dashboard-empty-compact">
+                <p>Find a doctor and book a convenient time.</p>
+                <div className="patient-action-row">
+                  <Link className="primary-button" to="/patient/book-appointment">
+                    Book appointment
+                  </Link>
+                  <a className="ghost-button" href={careConfig.discoverAppUrl}>
+                    Find Care
+                  </a>
+                </div>
+              </div>
             )}
-          </article>
+          </DashboardPanelCard>
 
-        <article className="patient-panel">
-          <div className="patient-panel-heading">
-            <h2>AIVA</h2>
-            <Link to="/patient/careai">Open AIVA</Link>
+          <DashboardPanelCard
+            title="Recent prescription"
+            icon={<AssignmentTurnedInOutlinedIcon fontSize="small" aria-hidden="true" />}
+            loading={prescriptions.loading}
+            error={prescriptions.error}
+            empty={!latestPrescription}
+            emptyTitle="No prescription available"
+            emptyMessage="Your recent prescriptions will appear here once they are finalized."
+            onRetry={retryPrescriptions}
+            action={<Link to="/patient/prescriptions">View all</Link>}
+          >
+            {latestPrescription ? (
+              <div className="patient-highlight-card">
+                <strong>{latestPrescriptionPrimaryLabel}</strong>
+                <span>
+                  {latestPrescription.prescriptionDate ? formatDate(latestPrescription.prescriptionDate) : "Date not available"} ·{" "}
+                  {formatCountLabel(latestPrescriptionMedicineCount, "medicine")}
+                </span>
+                <p>{latestPrescription.followUpDate ? "Follow-up advice available" : "No follow-up advice noted"}</p>
+                <div className="patient-action-row">
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={portalActionBusy === "prescription"}
+                    onClick={() =>
+                      openDashboardDocument(
+                        `/api/patient-portal/prescriptions/${encodeURIComponent(latestPrescription.prescriptionNumber)}/pdf`,
+                        "prescription",
+                      )
+                    }
+                    >
+                      {portalActionBusy === "prescription" ? "Opening..." : "View prescription"}
+                    </button>
+                </div>
+              </div>
+            ) : null}
+          </DashboardPanelCard>
+
+          <DashboardPanelCard
+            title="Latest bill"
+            icon={<ReceiptLongOutlinedIcon fontSize="small" aria-hidden="true" />}
+            loading={bills.loading}
+            error={bills.error}
+            empty={!latestBill}
+            emptyTitle="No bill available"
+            emptyMessage="Billing updates will appear here when a charge is created."
+            onRetry={retryBills}
+            action={<Link to="/patient/bills">View all</Link>}
+          >
+            {latestBill ? (
+              <div className="patient-highlight-card">
+                <strong>{latestBillPrimaryLabel}</strong>
+                <span>
+                  {latestBill.billDate ? `${formatDate(latestBill.billDate)} · ${latestBillSettled ? "Paid" : "Due"}` : latestBillSettled ? "Paid" : "Due"}
+                </span>
+                <p>{latestBillSettled ? formatCurrencyWhole(latestBillAmount) : `${formatCurrencyWhole(latestBillDueAmount)} due`}</p>
+                <div className="patient-action-row">
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={portalActionBusy === "bill"}
+                    onClick={() =>
+                      openDashboardDocument(`/api/patient-portal/bills/${encodeURIComponent(latestBill.billNumber)}/pdf`, "bill")
+                    }
+                  >
+                    {portalActionBusy === "bill" ? "Opening..." : "View bill"}
+                  </button>
+                  {latestBill.latestReceipt ? (
+                    <button
+                      className="ghost-button"
+                      type="button"
+                      disabled={portalActionBusy === "receipt"}
+                      onClick={() =>
+                        openDashboardDocument(
+                          `/api/patient-portal/bills/${encodeURIComponent(latestBill.billNumber)}/receipt.pdf`,
+                          "receipt",
+                        )
+                      }
+                    >
+                      {portalActionBusy === "receipt" ? "Opening..." : "View receipt"}
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+          </DashboardPanelCard>
+
+          <div className="patient-dashboard-dual-grid patient-panel-wide">
+          <DashboardPanelCard
+            title="Latest lab report"
+            icon={<ScienceOutlinedIcon fontSize="small" aria-hidden="true" />}
+            loading={labReports.loading}
+            error={labReports.error}
+            empty={!latestLabReport}
+            emptyTitle="No lab reports available yet"
+            emptyMessage="Your reports will automatically appear here once published by your clinic."
+            onRetry={retryLabReports}
+            emptyAction={<Link className="ghost-button" to="/patient/lab">View laboratory reports</Link>}
+            action={<Link to="/patient/lab">View all</Link>}
+          >
+              {latestLabReport ? (
+                <div className="patient-highlight-card">
+                  <strong>{latestLabPrimaryLabel}</strong>
+                  <span>
+                    {formatDate(latestLabReport.reportGeneratedAt ?? latestLabReport.resultEnteredAt ?? latestLabReport.orderedAt)} ·{" "}
+                    {latestLabReport.doctorName ?? "Care team"}
+                  </span>
+                  <p>{latestLabReport.doctorComments ?? "Report published securely for your review."}</p>
+                  <div className="patient-action-row">
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={portalActionBusy === "lab"}
+                      onClick={() =>
+                        openDashboardDocument(
+                          `/api/patient-portal/lab/orders/${encodeURIComponent(latestLabReport.orderNumber)}/pdf`,
+                          "lab",
+                        )
+                      }
+                    >
+                        {portalActionBusy === "lab" ? "Opening..." : "View report"}
+                      </button>
+                  </div>
+                </div>
+              ) : null}
+            </DashboardPanelCard>
+
+            {vaccinationState === "error" ? (
+              <DashboardPanelCard
+                title="Vaccination status"
+                icon={<VaccinesOutlinedIcon fontSize="small" aria-hidden="true" />}
+                loading={false}
+                error="We could not load vaccination information."
+                empty={false}
+                emptyTitle=""
+                emptyMessage=""
+              >
+                <div />
+              </DashboardPanelCard>
+            ) : vaccinationState === "available-empty" ? (
+              <DashboardPanelCard
+                title="Vaccination status"
+                icon={<VaccinesOutlinedIcon fontSize="small" aria-hidden="true" />}
+                loading={false}
+                error={null}
+                empty
+                emptyTitle="No vaccination records are available yet."
+                emptyMessage="Your vaccination history and reminders will appear here when shared by your clinic."
+              >
+                <div />
+              </DashboardPanelCard>
+            ) : (
+              <DashboardPanelCard
+                title="Vaccination status"
+                icon={<VaccinesOutlinedIcon fontSize="small" aria-hidden="true" />}
+                loading={false}
+                error={null}
+                empty
+                emptyTitle={vaccinationUnavailableLabel}
+                emptyMessage=""
+              >
+                <div />
+              </DashboardPanelCard>
+            )}
+
+            <DashboardPanelCard
+              title="AIVA"
+              icon={<AutoAwesomeOutlinedIcon fontSize="small" aria-hidden="true" />}
+              loading={false}
+              error={null}
+              empty={false}
+              emptyTitle=""
+              emptyMessage=""
+              className="patient-dashboard-dual-card"
+              action={
+                careConfig.aivaAppUrl ? (
+                  <a href={aivaHref} target="_blank" rel="noreferrer">
+                    Open AIVA
+                  </a>
+                ) : (
+                  <Link to="/patient/careai">Open AIVA</Link>
+                )
+              }
+            >
+              <div className="patient-highlight-card">
+                <strong>Ask AIVA about your care journey</strong>
+                <span>Find care, understand portal information, or prepare for your next visit.</span>
+                <p>Use AIVA for guided support without replacing clinical care.</p>
+              </div>
+            </DashboardPanelCard>
+
+            <DashboardPanelCard
+              title="Recent activity"
+              icon={<AccessTimeOutlinedIcon fontSize="small" aria-hidden="true" />}
+              loading={notifications.loading}
+              error={notifications.error}
+              empty={recentActivityNotifications.length === 0}
+              emptyTitle="No recent care activity"
+              emptyMessage="Appointments, prescriptions, reports, payments, and other updates will appear here."
+              onRetry={retryNotifications}
+              action={recentActivityNotifications.length ? <Link to="/patient/notifications">View all</Link> : null}
+              className="patient-dashboard-dual-card"
+            >
+              <div className="patient-dashboard-activity-list">
+                {recentActivityNotifications.map((notification) => (
+                  <article key={notification.id} className="patient-dashboard-activity-item">
+                    <div className="patient-dashboard-activity-item__copy">
+                      <strong>{dashboardNotificationTitle(notification)}</strong>
+                      <span>{dashboardNotificationDetail(notification)}</span>
+                    </div>
+                    <small>{formatDateTime(notification.createdAt)}</small>
+                  </article>
+                ))}
+              </div>
+            </DashboardPanelCard>
           </div>
-          <div className="patient-highlight-card">
-            <strong>Use AIVA for guided booking and visit prep</strong>
-            <span>{dashboard.data?.clinicName ?? "Clinic"} patient view</span>
-            <p>Ask AIVA to help book a clinic visit, summarize medicines, or explain billing totals.</p>
-          </div>
-        </article>
         </div>
-      </PatientPortalApiState>
+      </div>
     </PatientAccessBoundary>
   );
 }
@@ -1985,7 +3058,11 @@ export function PatientBookAppointmentPage({
   const [selectedClinicId, setSelectedClinicId] = useState("");
   const [selectedClinicSlug, setSelectedClinicSlug] = useState("");
   const [selectedTenantId, setSelectedTenantId] = useState("");
-  const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [selectedDate, setSelectedDate] = useState(() => {
+    const queryDate = searchParams.get("date")?.trim() || "";
+    return /^\d{4}-\d{2}-\d{2}$/.test(queryDate) ? queryDate : currentIsoDateInTimeZone("Asia/Kolkata");
+  });
+  const [doctorSearchTerm, setDoctorSearchTerm] = useState("");
   const [reason, setReason] = useState("");
   const [slots, setSlots] = useState<PatientPortalDoctorSlotResponse[]>([]);
   const [slotsLoading, setSlotsLoading] = useState(false);
@@ -2008,6 +3085,7 @@ export function PatientBookAppointmentPage({
   const lastSlotRequestKeyRef = useRef<string | null>(null);
   const manualDoctorSelectionRef = useRef(false);
   const currentBookingPath = `${location.pathname}${location.search}`;
+  const bookingSession = session && session.patientSessionToken ? session : null;
   const bookingClinicCode = publicBookingContext.clinicSlug || publicBookingContext.clinicCode || null;
   const bookingClinicId = normalizeUuidOrNull(publicBookingContext.clinicId);
   const bookingTenantId = normalizeUuidOrNull(publicBookingContext.tenantId);
@@ -2161,11 +3239,29 @@ export function PatientBookAppointmentPage({
         ),
       ];
     }
-    if (!hasBookingContext) {
+    if (bookingDoctorId) {
+      const matchedDoctor = publicDoctorsState.data.find((doctor) => doctor.publicDoctorId === bookingDoctorId) ?? null;
+      if (matchedDoctor) {
+        return [mapPublicDoctorSummaryToBookingChoice(matchedDoctor)];
+      }
+    }
+    if (bookingDoctorSlug) {
+      const matchedDoctor = publicDoctorsState.data.find((doctor) => doctor.doctorSlug === bookingDoctorSlug) ?? null;
+      if (matchedDoctor) {
+        return [mapPublicDoctorSummaryToBookingChoice(matchedDoctor)];
+      }
+    }
+    if (bookingDoctorName) {
+      const matchedDoctor = publicDoctorsState.data.find((doctor) => formatDoctorDisplayName(doctor.doctorDisplayName) === bookingDoctorName) ?? null;
+      if (matchedDoctor) {
+        return [mapPublicDoctorSummaryToBookingChoice(matchedDoctor)];
+      }
+    }
+    if (!hasBookingContext || publicDoctorsState.data.length) {
       return publicDoctorsState.data.map(mapPublicDoctorSummaryToBookingChoice);
     }
     return [];
-  }, [bookingClinicCode, bookingClinicName, clinicContextDetail.data, doctorContextDetail.data, hasBookingContext, publicDoctorsState.data]);
+  }, [bookingClinicCode, bookingClinicName, bookingDoctorId, bookingDoctorName, bookingDoctorSlug, clinicContextDetail.data, doctorContextDetail.data, hasBookingContext, publicDoctorsState.data]);
 
   const clinicOptions = useMemo(
     () =>
@@ -2191,6 +3287,44 @@ export function PatientBookAppointmentPage({
       return true;
     });
   }, [allDoctorOptions, selectedClinicFilter, selectedSpeciality]);
+
+  const filteredDoctorOptions = useMemo(() => {
+    const searchTerm = doctorSearchTerm.trim().toLowerCase();
+    if (!searchTerm) {
+      return doctorOptions;
+    }
+    return doctorOptions.filter((doctor) => {
+      const values = [
+        doctor.doctorName,
+        doctor.specialization,
+        doctor.qualification,
+        doctor.clinicName,
+        doctor.area,
+        doctor.city,
+        doctor.consultationRoom,
+        doctor.nextAvailableSlotSummary,
+        doctor.bookingMode,
+      ];
+      return values.some((value) => value?.toLowerCase().includes(searchTerm));
+    });
+  }, [doctorOptions, doctorSearchTerm]);
+
+  const onlineBookingDoctorOptions = useMemo(
+    () => filteredDoctorOptions.filter((doctor) => normalizeCareBookingMode(doctor.bookingMode) === "ONLINE_BOOKING"),
+    [filteredDoctorOptions],
+  );
+  const callToBookDoctorOptions = useMemo(
+    () => filteredDoctorOptions.filter((doctor) => normalizeCareBookingMode(doctor.bookingMode) === "CALL_TO_BOOK"),
+    [filteredDoctorOptions],
+  );
+  const otherBookingDoctorOptions = useMemo(
+    () =>
+      filteredDoctorOptions.filter((doctor) => {
+        const mode = normalizeCareBookingMode(doctor.bookingMode);
+        return mode !== "ONLINE_BOOKING" && mode !== "CALL_TO_BOOK";
+      }),
+    [filteredDoctorOptions],
+  );
 
   const specialities = useMemo(() => {
     const values = new Set<string>();
@@ -2243,11 +3377,13 @@ export function PatientBookAppointmentPage({
     setSearchParams(new URLSearchParams(), { replace: true });
     setSelectedClinicFilter("");
     setSelectedSpeciality("All");
+    setDoctorSearchTerm("");
     setSelectedDoctorId("");
     setSelectedDoctorSlug("");
     setSelectedClinicId("");
     setSelectedClinicSlug("");
     setSelectedTenantId("");
+    setSelectedDate(currentIsoDateInTimeZone("Asia/Kolkata"));
     setSelectedSlot(null);
     setSlots([]);
     setSlotsError(null);
@@ -2344,6 +3480,7 @@ export function PatientBookAppointmentPage({
   );
 
   const activeDoctorSlug = selectedDoctorSlug || selectedDoctor?.doctorSlug || bookingDoctorSlug || "";
+  const bookingDateStartIso = currentIsoDateInTimeZone("Asia/Kolkata");
 
   useEffect(() => {
     if (!activeDoctorSlug) {
@@ -2472,7 +3609,7 @@ export function PatientBookAppointmentPage({
       return;
     }
 
-    if (!portalSession) {
+    if (!bookingSession) {
       setSlots([]);
       setSlotsLoading(false);
       setSlotsError(null);
@@ -2519,7 +3656,7 @@ export function PatientBookAppointmentPage({
         clinicId: slotRequestClinicId || null,
         date: selectedDate,
       },
-      portalSession,
+      bookingSession,
       abortController.signal,
     )
       .then((result) => {
@@ -2542,7 +3679,9 @@ export function PatientBookAppointmentPage({
         setSlots([]);
         setSlotsLoading(false);
         const message = error instanceof Error ? error.message : "";
-        if (message.toLowerCase().includes("clinic is not available for online booking")) {
+        if (message.toLowerCase().includes("authentication is required") || message.toLowerCase().includes("unauthorized")) {
+          setSlotsError("Your patient session has expired. Sign in again to continue booking.");
+        } else if (message.toLowerCase().includes("clinic is not available for online booking")) {
           setSlotsError("We could not load slots for this doctor. Please try another date or choose another doctor.");
         } else {
           setSlotsError(message || "We could not load slots for this doctor. Please try another date or choose another doctor.");
@@ -2551,13 +3690,96 @@ export function PatientBookAppointmentPage({
 
     return () => abortController.abort();
   }, [
-    portalSession,
+    bookingSession,
     resolvedSelectedClinicId,
     resolvedSelectedClinicSlug,
     resolvedSelectedTenantId,
     selectedDate,
     selectedDoctorId,
   ]);
+
+  useEffect(() => {
+    if (!selectedDate) {
+      return;
+    }
+    const nextParams = new URLSearchParams(searchParams);
+    if (nextParams.get("date") === selectedDate) {
+      return;
+    }
+    nextParams.set("date", selectedDate);
+    setSearchParams(nextParams, { replace: true });
+  }, [searchParams, selectedDate, setSearchParams]);
+
+  function renderDoctorChoiceCard(doctor: BookingDoctorChoice) {
+    const mode = normalizeCareBookingMode(doctor.bookingMode);
+    const locationLabel = formatBookingLocationLabel(doctor.area, doctor.city);
+    return (
+      <button
+        key={doctor.publicDoctorId}
+        className={`doctor-choice-card${selectedDoctorId === doctor.publicDoctorId ? " is-active" : ""}`}
+        type="button"
+        onClick={() => {
+          manualDoctorSelectionRef.current = true;
+          if (isPatientPortalLocalDev()) {
+            console.debug("[patient-portal] manualDoctorClick", {
+              publicDoctorId: doctor.publicDoctorId,
+              doctorSlug: doctor.doctorSlug,
+              clinicSlug: doctor.clinicSlug,
+            });
+          }
+          setSelectedDoctorId(doctor.publicDoctorId);
+          setSelectedDoctorSlug(doctor.doctorSlug);
+          if (bookingClinicCode) {
+            setSelectedClinicId(bookingClinicId || "");
+            setSelectedClinicSlug(bookingClinicCode);
+            setSelectedTenantId(bookingTenantId || "");
+          } else if (doctorContextDetail.data?.clinics.length === 1 && doctor.clinicSlug) {
+            setSelectedClinicId("");
+            setSelectedClinicSlug(doctor.clinicSlug);
+            setSelectedTenantId("");
+          } else {
+            setSelectedClinicId("");
+            setSelectedClinicSlug("");
+            setSelectedTenantId("");
+          }
+          setSelectedSlot(null);
+          setConfirmation(null);
+          setSubmitError(null);
+          const nextParams = new URLSearchParams(searchParams);
+          nextParams.set("doctorId", doctor.publicDoctorId);
+          if (bookingClinicCode || (doctorContextDetail.data?.clinics.length === 1 && doctor.clinicSlug)) {
+            const clinicSlug = bookingClinicCode || doctor.clinicSlug || "";
+            nextParams.set("clinicSlug", clinicSlug);
+          }
+          nextParams.set("date", selectedDate);
+          setSearchParams(nextParams, { replace: true });
+          savePublicBookingContext({
+            clinicId: bookingClinicId,
+            clinicSlug: bookingClinicCode || (doctorContextDetail.data?.clinics.length === 1 ? doctor.clinicSlug : null),
+            tenantId: bookingTenantId,
+            doctorId: doctor.publicDoctorId,
+            nextPath: currentBookingPath,
+          });
+        }}
+      >
+        <strong>{doctor.doctorName}</strong>
+        <span>{doctor.specialization ?? "General consultation"}</span>
+        <small>
+          {doctor.qualification ?? doctor.clinicName ?? "Clinic doctor"}
+          {locationLabel ? ` · ${locationLabel}` : ""}
+          {doctor.consultationRoom ? ` · ${doctor.consultationRoom}` : ""}
+          {doctor.yearsOfExperience ? ` · ${doctor.yearsOfExperience} yrs exp` : ""}
+          {doctor.nextAvailableSlotSummary ? ` · ${doctor.nextAvailableSlotSummary}` : ""}
+        </small>
+        <div className="booking-mode-summary">
+          <span className={`booking-mode-chip ${mode ? `booking-mode-chip--${careBookingCapabilityTone(mode)}` : "booking-mode-chip--muted"}`}>
+            {careBookingCapabilityLabel(mode)}
+          </span>
+          <span className="booking-mode-summary__text">{careBookingCapabilitySecondaryText(mode)}</span>
+        </div>
+      </button>
+    );
+  }
 
   return (
     <PatientAccessBoundary
@@ -2613,6 +3835,7 @@ export function PatientBookAppointmentPage({
                     const nextParams = new URLSearchParams();
                     nextParams.set("doctorId", matched.publicDoctorId);
                     nextParams.set("clinicSlug", matched.clinicSlug);
+                    nextParams.set("date", selectedDate);
                     setSearchParams(nextParams, { replace: true });
                   }}
                 >
@@ -2671,11 +3894,20 @@ export function PatientBookAppointmentPage({
       {!bookingDoctorsError && !requiresClinicSelection && !bookingDoctorsLoading && allDoctorOptions.length > 0 ? (
         <>
           {!hasBookingContext ? (
-            <section className="patient-panel">
+            <section className="patient-panel patient-find-care-panel">
               <div className="patient-panel-heading">
-                <h2>Find your doctor</h2>
+                <h2>Find care</h2>
+                <span className="panel-caption">Authenticated search</span>
               </div>
               <div className="patient-form-grid">
+                <label className="patient-form-span-2">
+                  <span>Search doctor, clinic, or area</span>
+                  <input
+                    value={doctorSearchTerm}
+                    onChange={(event) => setDoctorSearchTerm(event.target.value)}
+                    placeholder="Amit Verma, General Medicine, Pune, clinic name"
+                  />
+                </label>
                 <label>
                   <span>Clinic</span>
                   <select value={selectedClinicFilter} onChange={(event) => setSelectedClinicFilter(event.target.value)}>
@@ -2698,86 +3930,67 @@ export function PatientBookAppointmentPage({
                   </select>
                 </label>
               </div>
+              <div className="booking-capability-legend">
+                <span className="booking-mode-chip booking-mode-chip--is-online">Book online with Jeevanam</span>
+                <span className="booking-mode-chip booking-mode-chip--is-call">Call clinic to book</span>
+              </div>
             </section>
           ) : null}
           <div className="patient-booking-grid">
             <section className="patient-panel">
-            <div className="patient-panel-heading">
-              <h2>Choose your doctor</h2>
-              <span className="panel-caption">Step 1</span>
-            </div>
-            <div className="booking-filter-chips">
-              {specialities.map((speciality) => (
-                <button
-                  key={speciality}
-                  className={`booking-chip${selectedSpeciality === speciality ? " is-active" : ""}`}
-                  type="button"
-                  onClick={() => setSelectedSpeciality(speciality)}
-                >
-                  {speciality}
-                </button>
-              ))}
-            </div>
-            <div className="patient-subcard-list">
-              {doctorOptions.map((doctor) => (
-                <button
-                  key={doctor.publicDoctorId}
-                  className={`doctor-choice-card${selectedDoctorId === doctor.publicDoctorId ? " is-active" : ""}`}
-                  type="button"
-                  onClick={() => {
-                    manualDoctorSelectionRef.current = true;
-                    if (isPatientPortalLocalDev()) {
-                      console.debug("[patient-portal] manualDoctorClick", {
-                        publicDoctorId: doctor.publicDoctorId,
-                        doctorSlug: doctor.doctorSlug,
-                        clinicSlug: doctor.clinicSlug,
-                      });
-                    }
-                    setSelectedDoctorId(doctor.publicDoctorId);
-                    setSelectedDoctorSlug(doctor.doctorSlug);
-                    if (bookingClinicCode) {
-                      setSelectedClinicId(bookingClinicId || "");
-                      setSelectedClinicSlug(bookingClinicCode);
-                      setSelectedTenantId(bookingTenantId || "");
-                    } else if (doctorContextDetail.data?.clinics.length === 1 && doctor.clinicSlug) {
-                      setSelectedClinicId("");
-                      setSelectedClinicSlug(doctor.clinicSlug);
-                      setSelectedTenantId("");
-                    } else {
-                      setSelectedClinicId("");
-                      setSelectedClinicSlug("");
-                      setSelectedTenantId("");
-                    }
-                    setSelectedSlot(null);
-                    setConfirmation(null);
-                    setSubmitError(null);
-                    const nextParams = new URLSearchParams(searchParams);
-                    nextParams.set("doctorId", doctor.publicDoctorId);
-                    if (bookingClinicCode || (doctorContextDetail.data?.clinics.length === 1 && doctor.clinicSlug)) {
-                      const clinicSlug = bookingClinicCode || doctor.clinicSlug || "";
-                      nextParams.set("clinicSlug", clinicSlug);
-                    }
-                    setSearchParams(nextParams, { replace: true });
-                    savePublicBookingContext({
-                      clinicId: bookingClinicId,
-                      clinicSlug: bookingClinicCode || (doctorContextDetail.data?.clinics.length === 1 ? doctor.clinicSlug : null),
-                      tenantId: bookingTenantId,
-                      doctorId: doctor.publicDoctorId,
-                      nextPath: currentBookingPath,
-                    });
-                  }}
-                >
-                  <strong>{doctor.doctorName}</strong>
-                  <span>{doctor.specialization ?? "General consultation"}</span>
-                  <small>
-                    {doctor.qualification ?? doctor.clinicName ?? "Clinic doctor"}
-                    {doctor.consultationRoom ? ` · ${doctor.consultationRoom}` : ""}
-                    {doctor.yearsOfExperience ? ` · ${doctor.yearsOfExperience} yrs exp` : ""}
-                    {doctor.nextAvailableSlotSummary ? ` · ${doctor.nextAvailableSlotSummary}` : ""}
-                  </small>
-                </button>
-              ))}
-            </div>
+              <div className="patient-panel-heading">
+                <h2>Choose your doctor</h2>
+                <span className="panel-caption">Step 1</span>
+              </div>
+              <div className="booking-filter-chips">
+                {specialities.map((speciality) => (
+                  <button
+                    key={speciality}
+                    className={`booking-chip${selectedSpeciality === speciality ? " is-active" : ""}`}
+                    type="button"
+                    onClick={() => setSelectedSpeciality(speciality)}
+                  >
+                    {speciality}
+                  </button>
+                ))}
+              </div>
+              <div className="patient-subcard-groups">
+                <section className="patient-subcard-group">
+                  <div className="patient-subcard-group__heading">
+                    <strong>Book online with Jeevanam</strong>
+                    <span>{onlineBookingDoctorOptions.length} provider{onlineBookingDoctorOptions.length === 1 ? "" : "s"}</span>
+                  </div>
+                  <div className="patient-subcard-list">
+                    {onlineBookingDoctorOptions.map((doctor) => renderDoctorChoiceCard(doctor))}
+                  </div>
+                </section>
+                <section className="patient-subcard-group">
+                  <div className="patient-subcard-group__heading">
+                    <strong>Call clinic to book</strong>
+                    <span>{callToBookDoctorOptions.length} provider{callToBookDoctorOptions.length === 1 ? "" : "s"}</span>
+                  </div>
+                  <div className="patient-subcard-list">
+                    {callToBookDoctorOptions.map((doctor) => renderDoctorChoiceCard(doctor))}
+                  </div>
+                </section>
+                {otherBookingDoctorOptions.length ? (
+                  <section className="patient-subcard-group">
+                    <div className="patient-subcard-group__heading">
+                      <strong>Other booking states</strong>
+                      <span>{otherBookingDoctorOptions.length} provider{otherBookingDoctorOptions.length === 1 ? "" : "s"}</span>
+                    </div>
+                    <div className="patient-subcard-list">
+                      {otherBookingDoctorOptions.map((doctor) => renderDoctorChoiceCard(doctor))}
+                    </div>
+                  </section>
+                ) : null}
+                {filteredDoctorOptions.length === 0 ? (
+                  <div className="patient-inline-empty">
+                    <strong>No providers matched your search.</strong>
+                    <p>Try a different doctor, clinic, specialty, or area.</p>
+                  </div>
+                ) : null}
+              </div>
           </section>
 
           <section className="patient-panel">
@@ -2785,15 +3998,39 @@ export function PatientBookAppointmentPage({
               <h2>Select date and slot</h2>
               <span className="panel-caption">Step 2</span>
             </div>
-            <label className="patient-form-field">
+            <div className="patient-form-field">
               <span>Date</span>
+              <div className="booking-date-strip" role="list" aria-label="Available booking dates">
+                {Array.from({ length: 7 }, (_, index) => {
+                  const candidate = new Date(`${bookingDateStartIso}T00:00:00Z`);
+                  candidate.setUTCDate(candidate.getUTCDate() + index);
+                  const iso = candidate.toISOString().slice(0, 10);
+                  const label = index === 0 ? "Today" : index === 1 ? "Tomorrow" : formatDate(iso);
+                  const isActive = selectedDate === iso;
+                  return (
+                    <button
+                      key={iso}
+                      className={`booking-date-pill${isActive ? " is-active" : ""}`}
+                      type="button"
+                      onClick={() => setSelectedDate(iso)}
+                      aria-pressed={isActive}
+                    >
+                      <strong>{label}</strong>
+                      <span>{formatDate(iso)}</span>
+                    </button>
+                  );
+                })}
+              </div>
               <input
+                className="visually-hidden"
                 type="date"
-                min={new Date().toISOString().slice(0, 10)}
+                min={currentIsoDateInTimeZone("Asia/Kolkata")}
                 value={selectedDate}
                 onChange={(event) => setSelectedDate(event.target.value)}
+                aria-label="Booking date"
               />
-            </label>
+              <p className="form-note">Selected date: {formatDate(selectedDate)}</p>
+            </div>
 
             {slotsLoading ? <div className="patient-inline-empty">Loading available slots...</div> : null}
             {slotsError ? (
@@ -4812,9 +6049,9 @@ export function PatientProfilePage({ session, onSignOut }: { session: PatientPor
             <div className="patient-panel-heading">
               <h2>Identity</h2>
             </div>
-            <div className="patient-detail-list">
-              <div>
-                <strong>{profileData?.fullName ?? "Patient"}</strong>
+              <div className="patient-detail-list">
+                <div>
+                <strong>{formatPatientDisplayName(profileData?.fullName)}</strong>
                 <span>Patient number {profileData?.patientNumber ?? "Not available"}</span>
               </div>
               <div>

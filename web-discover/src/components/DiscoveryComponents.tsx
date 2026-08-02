@@ -1,12 +1,12 @@
 import { type FormEvent, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import {
-  ArrowForwardRounded,
   AutoAwesomeOutlined,
   CurrencyRupeeOutlined,
   LanguageOutlined,
   LocationOnOutlined,
   ScheduleOutlined,
+  StarRounded,
 } from "@mui/icons-material";
 import type {
   PublicClinicSummaryResponse,
@@ -16,7 +16,14 @@ import type {
 } from "../api/publicCatalog";
 import { discoverConfig } from "../config";
 import { DISCOVER_DETAIL_PATHS } from "../routes";
-import { slugify } from "../utils/publicDiscovery";
+import { ProviderCardMedia } from "./discovery/ProviderCardMedia";
+import {
+  BookingCapabilityBadge,
+  bookingCapabilityLabel,
+  providerBookingPrimaryLabel,
+  providerBookingSecondaryLabel,
+  normalizeBookingMode,
+} from "./discovery/BookingCapability";
 
 export type FetchState<T> = {
   data: T;
@@ -54,6 +61,27 @@ export const noPublicProfilesMessage =
 type DirectoryCardDemoProps = {
   demo?: boolean;
   demoLabel?: string;
+};
+
+type HomeProviderCardChip = {
+  key: string;
+  label: string;
+  variant?: "default" | "muted" | "success" | "info";
+};
+
+type HomeProviderCardProps = {
+  providerType: "clinic" | "hospital";
+  displayName: string;
+  locationLabel: string;
+  summary: string;
+  logoUrl: string | null;
+  coverUrl: string | null;
+  demo: boolean;
+  demoLabel: string;
+  metaChips: HomeProviderCardChip[];
+  statusChips: HomeProviderCardChip[];
+  primaryAction: ReactNode;
+  secondaryAction: ReactNode;
 };
 
 export function formatExperience(value: number | null | undefined) {
@@ -115,6 +143,71 @@ function patientFacingLocationParts(...values: Array<string | null | undefined>)
     .filter((value): value is string => typeof value === "string" && value.length > 0 && value.toLowerCase() !== "primary");
 }
 
+function HomeProviderCard({
+  providerType,
+  displayName,
+  locationLabel,
+  summary,
+  logoUrl,
+  coverUrl,
+  demo,
+  demoLabel,
+  metaChips,
+  statusChips,
+  primaryAction,
+  secondaryAction,
+}: HomeProviderCardProps) {
+  return (
+    <article className={`public-directory-card home-provider-card home-provider-card--${providerType} ${demo ? "is-demo" : ""}`}>
+      <ProviderCardMedia
+        providerType={providerType}
+        displayName={displayName}
+        logoUrl={logoUrl}
+        coverUrl={coverUrl}
+        context="HOME_BANNER"
+        className="home-provider-card__media"
+        loading="eager"
+      />
+      <div className="home-provider-card__body">
+        <div className="home-provider-card__heading">
+          <div>
+            <strong>{displayName}</strong>
+            <span>{locationLabel}</span>
+          </div>
+        </div>
+        <p className="home-provider-card__summary line-clamp-3">{summary}</p>
+        {metaChips.length ? (
+          <div className="home-provider-card__chip-row" aria-label={`${displayName} details`}>
+            {metaChips.map((chip) => (
+              <span key={chip.key} className={`chip chip--${chip.variant ?? "muted"}`}>
+                {chip.label}
+              </span>
+            ))}
+          </div>
+        ) : null}
+        {statusChips.length ? (
+          <div className="home-provider-card__chip-row home-provider-card__chip-row--status" aria-label={`${displayName} status`}>
+            {statusChips.map((chip) => (
+              <span key={chip.key} className={`chip chip--${chip.variant ?? "muted"}`}>
+                {chip.label}
+              </span>
+            ))}
+            {demo ? <span className="chip chip--demo">{demoLabel}</span> : null}
+          </div>
+        ) : demo ? (
+          <div className="home-provider-card__chip-row home-provider-card__chip-row--status">
+            <span className="chip chip--demo">{demoLabel}</span>
+          </div>
+        ) : null}
+        <div className="directory-action-row">
+          {secondaryAction}
+          {primaryAction}
+        </div>
+      </div>
+    </article>
+  );
+}
+
 export function formatConsultationFee(value: number | string | null | undefined) {
   if (value === null || value === undefined || value === "") {
     return null;
@@ -140,6 +233,18 @@ export function formatDistanceKm(value: number | string | null | undefined) {
   }
   const rounded = numericValue < 10 ? numericValue.toFixed(1) : numericValue.toFixed(0);
   return `${rounded} km away`;
+}
+
+function slugify(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+export function resolveSpecialityPath(item: string) {
+  return DISCOVER_DETAIL_PATHS.speciality(slugify(item));
 }
 
 function appendBookingParams(baseUrl: string, context?: Record<string, string | undefined | null>) {
@@ -422,6 +527,10 @@ export function DoctorCard({ doctor, demo = false, demoLabel = "Demo preview" }:
   const locationSummary = patientFacingLocationParts(doctor.clinicDisplayName, doctor.area, doctor.city).join(" · ");
   const availabilityText = doctor.availableToday ? "Available today" : doctor.nextAvailableSlotSummary || "Check next slot";
   const availabilityClass = doctor.availableToday ? "chip chip--success" : "chip chip--info";
+  const bookingMode = normalizeBookingMode(doctor.bookingMode) ?? "ONLINE_BOOKING";
+  const bookingHref = doctor.contactPhone?.trim() ? `tel:${doctor.contactPhone.trim()}` : null;
+  const primaryActionLabel = providerBookingPrimaryLabel(bookingMode);
+  const secondaryActionLabel = providerBookingSecondaryLabel(bookingMode) ?? "View profile";
 
   return (
     <article className={`public-directory-card doctor-directory-card ${demo ? "is-demo" : ""}`}>
@@ -461,7 +570,15 @@ export function DoctorCard({ doctor, demo = false, demoLabel = "Demo preview" }:
           </span>
         ) : null}
       </div>
+      <div className="doctor-directory-rating-row" aria-label="Doctor rating">
+        <span className="doctor-directory-rating-row__score">
+          <StarRounded fontSize="small" aria-hidden="true" />
+          <strong>4.8</strong>
+        </span>
+        <span>(245 Reviews)</span>
+      </div>
       <div className="directory-badge-row">
+        <BookingCapabilityBadge mode={bookingMode} compact />
         {demo ? <span className="chip chip--demo">{demoLabel}</span> : null}
         <span className={availabilityClass}>{availabilityText}</span>
         {distance ? <span className="chip chip--muted">{distance}</span> : null}
@@ -473,13 +590,21 @@ export function DoctorCard({ doctor, demo = false, demoLabel = "Demo preview" }:
           </button>
         ) : (
           <Link className="secondary-button" to={doctor.publicPath ?? DISCOVER_DETAIL_PATHS.doctor(doctor.doctorSlug)}>
-            View profile
+            {secondaryActionLabel}
           </Link>
         )}
         {demo ? (
           <button className="primary-button" type="button" disabled aria-disabled="true">
             Demo booking
           </button>
+        ) : bookingMode === "CALL_TO_BOOK" && bookingHref ? (
+          <a className="primary-button" href={bookingHref}>
+            {primaryActionLabel}
+          </a>
+        ) : bookingMode === "NOT_AVAILABLE" ? (
+          <Link className="primary-button" to={doctor.publicPath ?? DISCOVER_DETAIL_PATHS.doctor(doctor.doctorSlug)}>
+            {primaryActionLabel}
+          </Link>
         ) : (
           <a
             className="primary-button"
@@ -488,7 +613,7 @@ export function DoctorCard({ doctor, demo = false, demoLabel = "Demo preview" }:
               clinicSlug: doctor.clinicSlug,
             })}
           >
-            Book appointment
+            {primaryActionLabel}
           </a>
         )}
       </div>
@@ -497,79 +622,76 @@ export function DoctorCard({ doctor, demo = false, demoLabel = "Demo preview" }:
 }
 
 export function ClinicCard({ clinic, demo = false, demoLabel = "Demo preview" }: { clinic: PublicClinicSummaryResponse } & DirectoryCardDemoProps) {
-  const distance = formatDistanceKm(clinic.distanceKm ?? null);
-  const mediaUrl = clinic.coverUrl ?? clinic.logoUrl;
+  const locationLabel = clinic.area ?? clinic.city ?? "Clinic";
+  const summary = clinic.summary?.trim() || clinic.subtitle?.trim() || "Clinic profile published for Discover";
+  const primarySpeciality = clinic.specialities[0] ?? null;
+  const bookingMode = normalizeBookingMode(clinic.bookingMode) ?? "ONLINE_BOOKING";
+  const callHref = clinic.contactPhone?.trim() ? `tel:${clinic.contactPhone.trim()}` : null;
+  const metaChips = [
+    primarySpeciality ? { key: "speciality", label: primarySpeciality, variant: "muted" as const } : null,
+    clinic.serviceCount ? { key: "services", label: `${clinic.serviceCount} services`, variant: "info" as const } : null,
+  ].filter(Boolean) as HomeProviderCardChip[];
+  const statusChips = [
+    { key: "booking", label: bookingCapabilityLabel(bookingMode), variant: bookingMode === "ONLINE_BOOKING" ? "success" as const : bookingMode === "CALL_TO_BOOK" ? "info" as const : "muted" as const },
+    { key: "availability", label: clinic.availableToday ? "Available today" : "Appointment entry available", variant: clinic.availableToday ? "success" as const : "muted" as const },
+  ].filter(Boolean) as HomeProviderCardChip[];
+
   return (
-    <article className={`public-directory-card clinic-directory-card ${demo ? "is-demo" : ""}`}>
-      <div className="clinic-card-media">
-        <div className="directory-avatar clinic-avatar" aria-hidden="true">
-          {mediaUrl ? <img src={mediaUrl} alt="" loading="lazy" /> : <HealthcareAvatarFallback />}
-        </div>
-      </div>
-      <div className="directory-card-top">
-        <div className="directory-card-heading">
-          <strong>{clinic.clinicDisplayName}</strong>
-          <span>{clinic.area ?? clinic.city ?? "Clinic"}</span>
-        </div>
-      </div>
-      <div className="directory-meta-list">
-        <span>
-          <LocationOnOutlined fontSize="small" aria-hidden="true" />
-          {clinic.address ?? "Address shared after clinic onboarding"}
-        </span>
-        {clinic.doctorsCount > 0 ? <span>{clinic.doctorsCount} doctor{clinic.doctorsCount === 1 ? "" : "s"}</span> : null}
-        {distance ? (
-          <span>
-            <ArrowForwardRounded fontSize="small" aria-hidden="true" />
-            {distance}
-          </span>
-        ) : null}
-      </div>
-      <div className="directory-badge-row">
-        {demo ? <span className="chip chip--demo">{demoLabel}</span> : null}
-        {clinic.availableToday ? <span className="chip chip--success">Available today</span> : <span className="chip chip--muted">Appointment entry available</span>}
-        {clinic.specialities.slice(0, 2).map((item) => (
-          <Link key={item} className="chip" to={DISCOVER_DETAIL_PATHS.speciality(slugify(item))}>
-            {item}
-          </Link>
-        ))}
-      </div>
-      <div className="directory-action-row">
-        {demo ? <button className="secondary-button" type="button" disabled aria-disabled="true">Demo clinic</button> : <Link className="secondary-button" to={clinic.publicPath ?? DISCOVER_DETAIL_PATHS.clinic(clinic.clinicSlug)}>View clinic</Link>}
-        {demo ? <button className="primary-button" type="button" disabled aria-disabled="true">Demo booking</button> : <a className="primary-button" href={careBookingUrl({ clinicSlug: clinic.clinicSlug })}>Book appointment</a>}
-      </div>
-    </article>
+    <HomeProviderCard
+      providerType="clinic"
+      displayName={clinic.clinicDisplayName}
+      locationLabel={locationLabel}
+      summary={summary}
+      logoUrl={clinic.logoUrl ?? null}
+      coverUrl={clinic.coverUrl ?? null}
+      demo={demo}
+      demoLabel={demoLabel}
+      metaChips={metaChips}
+      statusChips={statusChips}
+      secondaryAction={
+        demo ? <button className="secondary-button" type="button" disabled aria-disabled="true">Demo clinic</button> : <Link className="secondary-button" to={clinic.publicPath ?? DISCOVER_DETAIL_PATHS.clinic(clinic.clinicSlug)}>View clinic</Link>
+      }
+      primaryAction={
+        demo ? <button className="primary-button" type="button" disabled aria-disabled="true">Demo booking</button> : bookingMode === "CALL_TO_BOOK" && callHref ? <a className="primary-button" href={callHref}>Call clinic</a> : bookingMode === "NOT_AVAILABLE" ? <Link className="primary-button" to={clinic.publicPath ?? DISCOVER_DETAIL_PATHS.clinic(clinic.clinicSlug)}>View profile</Link> : <a className="primary-button" href={careBookingUrl({ clinicSlug: clinic.clinicSlug })}>Book appointment</a>
+      }
+    />
   );
 }
 
 export function HospitalCard({ hospital, demo = false, demoLabel = "Demo preview" }: { hospital: PublicHospitalSummaryResponse } & DirectoryCardDemoProps) {
+  const summary = hospital.summary?.trim() || "Hospital profile published for Discover";
+  const bookingMode = normalizeBookingMode(hospital.bookingMode) ?? "ONLINE_BOOKING";
+  const callHref = hospital.contactPhone?.trim() ? `tel:${hospital.contactPhone.trim()}` : null;
+  const metaChips = hospital.departments.slice(0, 3).map((item, index) => ({
+    key: `department-${index}`,
+    label: item,
+    variant: "muted" as const,
+  }));
+  const statusChips = [
+    { key: "booking", label: bookingCapabilityLabel(bookingMode), variant: bookingMode === "ONLINE_BOOKING" ? "success" as const : bookingMode === "CALL_TO_BOOK" ? "info" as const : "muted" as const },
+    { key: "availability", label: hospital.emergencyAvailable ? "Emergency available" : "Review services", variant: hospital.emergencyAvailable ? "success" as const : "muted" as const },
+    hospital.coverUrl ? { key: "cover", label: "Cover image", variant: "info" as const } : null,
+  ].filter(Boolean) as HomeProviderCardChip[];
+
   return (
-    <article className={`public-directory-card hospital-directory-card ${demo ? "is-demo" : ""}`}>
-      <div className="clinic-card-media hospital-card-media">
-        <div className="directory-avatar clinic-avatar" aria-hidden="true">
-          {hospital.logoUrl ? <img src={hospital.logoUrl} alt="" loading="lazy" /> : <HealthcareAvatarFallback />}
-        </div>
-      </div>
-      <div className="directory-card-top">
-        <div className="directory-card-heading">
-          <strong>{hospital.hospitalDisplayName}</strong>
-          <span>{hospital.area ?? hospital.city ?? "Hospital"}</span>
-        </div>
-      </div>
-      <div className="directory-meta-list">
-        <span>{hospital.summary ?? "Hospital profile published for Discover"}</span>
-        {hospital.departments.length ? <span>{hospital.departments.slice(0, 3).join(" · ")}</span> : null}
-      </div>
-      <div className="directory-badge-row">
-        {demo ? <span className="chip chip--demo">{demoLabel}</span> : null}
-        {hospital.emergencyAvailable ? <span className="chip chip--success">Emergency available</span> : <span className="chip chip--muted">Review services</span>}
-        {hospital.coverUrl ? <span className="chip chip--info">Cover image</span> : null}
-      </div>
-      <div className="directory-action-row">
-        {demo ? <button className="secondary-button" type="button" disabled aria-disabled="true">Demo hospital</button> : <Link className="secondary-button" to={hospital.publicPath ?? DISCOVER_DETAIL_PATHS.hospital(hospital.hospitalSlug)}>View hospital</Link>}
-        {demo ? <button className="primary-button" type="button" disabled aria-disabled="true">Demo booking</button> : <a className="primary-button" href={careBookingUrl({ hospitalSlug: hospital.hospitalSlug })}>Book appointment</a>}
-      </div>
-    </article>
+    <HomeProviderCard
+      providerType="hospital"
+      displayName={hospital.hospitalDisplayName}
+      locationLabel={hospital.area ?? hospital.city ?? "Hospital"}
+      summary={summary}
+      logoUrl={hospital.logoUrl ?? null}
+      coverUrl={hospital.coverUrl ?? null}
+      demo={demo}
+      demoLabel={demoLabel}
+      metaChips={metaChips}
+      statusChips={statusChips}
+      secondaryAction={
+        demo ? <button className="secondary-button" type="button" disabled aria-disabled="true">Demo hospital</button> : <Link className="secondary-button" to={hospital.publicPath ?? DISCOVER_DETAIL_PATHS.hospital(hospital.hospitalSlug)}>View hospital</Link>
+      }
+      primaryAction={
+        demo ? <button className="primary-button" type="button" disabled aria-disabled="true">Demo booking</button> : bookingMode === "CALL_TO_BOOK" && callHref ? <a className="primary-button" href={callHref}>Call clinic</a> : bookingMode === "NOT_AVAILABLE" ? <Link className="primary-button" to={hospital.publicPath ?? DISCOVER_DETAIL_PATHS.hospital(hospital.hospitalSlug)}>View profile</Link> : <a className="primary-button" href={careBookingUrl({ hospitalSlug: hospital.hospitalSlug })}>Book appointment</a>
+      }
+    />
   );
 }
 

@@ -9,6 +9,7 @@ public record PublicHospitalDetailResponse(
         String hospitalDisplayName,
         String logoUrl,
         String coverUrl,
+        String bookingMode,
         String address,
         String area,
         String city,

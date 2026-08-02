@@ -4,6 +4,7 @@ import com.deepthoughtnet.clinic.api.clinic.dto.ClinicProfileRequest;
 import com.deepthoughtnet.clinic.api.clinic.dto.ClinicProfileResponse;
 import com.deepthoughtnet.clinic.api.clinic.dto.ClinicRoleResponse;
 import com.deepthoughtnet.clinic.api.clinic.dto.ClinicUserResponse;
+import com.deepthoughtnet.clinic.api.platform.discover.HealthcarePublicListingSyncService;
 import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
 import com.deepthoughtnet.clinic.clinic.service.model.ClinicProfileRecord;
 import com.deepthoughtnet.clinic.clinic.service.model.ClinicProfileUpsertCommand;
@@ -49,13 +50,16 @@ public class ClinicSettingsController {
 
     private final ClinicProfileService clinicProfileService;
     private final TenantUserManagementService tenantUserManagementService;
+    private final HealthcarePublicListingSyncService healthcarePublicListingSyncService;
 
     public ClinicSettingsController(
             ClinicProfileService clinicProfileService,
-            TenantUserManagementService tenantUserManagementService
+            TenantUserManagementService tenantUserManagementService,
+            HealthcarePublicListingSyncService healthcarePublicListingSyncService
     ) {
         this.clinicProfileService = clinicProfileService;
         this.tenantUserManagementService = tenantUserManagementService;
+        this.healthcarePublicListingSyncService = healthcarePublicListingSyncService;
     }
 
     @GetMapping("/profile")
@@ -94,6 +98,7 @@ public class ClinicSettingsController {
                 ),
                 actorAppUserId
         );
+        healthcarePublicListingSyncService.syncClinic(tenantId, actorAppUserId, "clinic.profile.updated");
         return toResponse(saved);
     }
 

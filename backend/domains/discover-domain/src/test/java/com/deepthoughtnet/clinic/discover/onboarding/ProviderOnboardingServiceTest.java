@@ -743,6 +743,116 @@ class ProviderOnboardingServiceTest {
     }
 
     @Test
+    void reviewDetailLoadsForClinicSnapshotWithoutDoctorNumericFields() {
+        var created = service.create(new CreateProviderApplicationCommand(ProviderType.CLINIC, "clinic-review@example.com", "9999999999", "password-123", true, true));
+        addSubmission(created.id(), 1, clinicSnapshotJson(), ProviderLifecycleStatus.PUBLISHED);
+        application.setStatus(ProviderLifecycleStatus.PUBLISHED);
+
+        var detail = service.getApplicationForReview(created.referenceNumber());
+        var dashboard = service.dashboard(created.onboardingToken());
+
+        assertThat(detail.application().providerType()).isEqualTo(ProviderType.CLINIC);
+        assertThat(detail.preview()).isNotNull();
+        assertThat(dashboard.submittedSnapshot()).isNotNull();
+        assertThat(dashboard.submittedSnapshot().providerType()).isEqualTo(ProviderType.CLINIC);
+        assertThat(dashboard.submittedSnapshot().yearsOfExperience()).isNull();
+        assertThat(dashboard.submittedSnapshot().beds()).isNull();
+        assertThat(dashboard.submittedSnapshot().documentCount()).isEqualTo(1);
+        assertThat(dashboard.submittedSnapshot().serviceCount()).isEqualTo(1);
+        assertThat(dashboard.submittedSnapshot().locationCount()).isEqualTo(1);
+    }
+
+    @Test
+    void reviewDetailLoadsForHospitalSnapshotWithBedsAndDepartments() {
+        var created = service.create(new CreateProviderApplicationCommand(ProviderType.HOSPITAL, "hospital-review@example.com", "9999999999", "password-123", true, true));
+        addSubmission(created.id(), 1, hospitalSnapshotJson(), ProviderLifecycleStatus.PUBLISHED);
+        application.setStatus(ProviderLifecycleStatus.PUBLISHED);
+
+        var detail = service.getApplicationForReview(created.referenceNumber());
+        var snapshot = detail.application() != null ? service.dashboard(created.onboardingToken()).submittedSnapshot() : null;
+
+        assertThat(detail.application().providerType()).isEqualTo(ProviderType.HOSPITAL);
+        assertThat(snapshot).isNotNull();
+        assertThat(snapshot.beds()).isEqualTo(250);
+        assertThat(snapshot.departments()).containsExactly("General Medicine", "Family Medicine", "Dermatology");
+        assertThat(snapshot.yearsOfExperience()).isNull();
+        assertThat(snapshot.documentCount()).isEqualTo(2);
+    }
+
+    @Test
+    void reviewDetailLoadsForDoctorSnapshotWithYearsOfExperience() {
+        var created = service.create(new CreateProviderApplicationCommand(ProviderType.INDIVIDUAL_DOCTOR, "doctor-review@example.com", "9999999999", "password-123", true, true));
+        addSubmission(created.id(), 1, doctorSnapshotJson(), ProviderLifecycleStatus.PUBLISHED);
+        application.setStatus(ProviderLifecycleStatus.PUBLISHED);
+
+        var detail = service.getApplicationForReview(created.referenceNumber());
+        var snapshot = service.dashboard(created.onboardingToken()).submittedSnapshot();
+
+        assertThat(detail.application().providerType()).isEqualTo(ProviderType.INDIVIDUAL_DOCTOR);
+        assertThat(snapshot).isNotNull();
+        assertThat(snapshot.yearsOfExperience()).isEqualTo(12);
+        assertThat(snapshot.beds()).isNull();
+        assertThat(snapshot.documentCount()).isEqualTo(2);
+        assertThat(snapshot.galleryCount()).isEqualTo(1);
+    }
+
+    @Test
+    void olderClinicSnapshotMissingOptionalNumericFieldsStillLoads() {
+        var created = service.create(new CreateProviderApplicationCommand(ProviderType.CLINIC, "clinic-old@example.com", "9999999999", "password-123", true, true));
+        addSubmission(created.id(), 1, """
+                {
+                  "providerType": "CLINIC",
+                  "displayName": "Old Clinic",
+                  "legalName": "Old Clinic",
+                  "specialities": ["General Medicine"],
+                  "languages": ["English"],
+                  "ownership": "Private",
+                  "organisationType": "Standalone clinic",
+                  "departments": [],
+                  "facilities": ["Parking"]
+                }
+                """, ProviderLifecycleStatus.PUBLISHED);
+        application.setStatus(ProviderLifecycleStatus.PUBLISHED);
+
+        var snapshot = service.dashboard(created.onboardingToken()).submittedSnapshot();
+
+        assertThat(snapshot).isNotNull();
+        assertThat(snapshot.yearsOfExperience()).isNull();
+        assertThat(snapshot.beds()).isNull();
+        assertThat(snapshot.consultationFee()).isNull();
+        assertThat(snapshot.documentCount()).isZero();
+        assertThat(snapshot.serviceCount()).isZero();
+        assertThat(snapshot.locationCount()).isZero();
+    }
+
+    @Test
+    void nullableIntegerFieldsDoNotThrowForSubmittedSnapshots() {
+        var created = service.create(new CreateProviderApplicationCommand(ProviderType.CLINIC, "clinic-null-int@example.com", "9999999999", "password-123", true, true));
+        addSubmission(created.id(), 1, """
+                {
+                  "providerType": "CLINIC",
+                  "displayName": "Null Clinic",
+                  "legalName": "Null Clinic",
+                  "specialities": ["General Medicine"],
+                  "languages": ["English"],
+                  "ownership": "Private",
+                  "organisationType": "Standalone clinic",
+                  "departments": [],
+                  "facilities": ["Parking"],
+                  "services": [{"label": "Consultation"}],
+                  "locations": [{"label": "Primary"}],
+                  "documents": [{"documentType": "LOGO"}]
+                }
+                """, ProviderLifecycleStatus.PUBLISHED);
+        application.setStatus(ProviderLifecycleStatus.PUBLISHED);
+
+        var detail = service.getApplicationForReview(created.referenceNumber());
+
+        assertThat(detail.application().referenceNumber()).isEqualTo(created.referenceNumber());
+        assertThat(detail.application().providerType()).isEqualTo(ProviderType.CLINIC);
+    }
+
+    @Test
     void contactVerifiedApplicationsRemainEditable() {
         var created = service.create(new CreateProviderApplicationCommand(ProviderType.CLINIC, "clinic@example.com", "9999999999", "password-123", true, true));
 
@@ -917,6 +1027,91 @@ class ProviderOnboardingServiceTest {
         assertThat(challenge.devCode()).isNotBlank();
         var verified = service.verifyEmail(providerId, token, challenge.devCode());
         assertThat(verified.requirementSatisfied()).isTrue();
+    }
+
+    private ProviderSubmissionEntity addSubmission(UUID providerId, int versionNumber, String snapshotJson, ProviderLifecycleStatus statusAfter) {
+        ProviderSubmissionEntity submission = new ProviderSubmissionEntity(
+                providerId,
+                versionNumber,
+                ProviderLifecycleStatus.DRAFT.name(),
+                statusAfter.name(),
+                "PROVIDER",
+                "snapshot-" + versionNumber + "-" + providerId,
+                snapshotJson,
+                null
+        );
+        submissions.add(0, submission);
+        return submission;
+    }
+
+    private String doctorSnapshotJson() {
+        return """
+                {
+                  "providerType": "INDIVIDUAL_DOCTOR",
+                  "displayName": "Dr Example",
+                  "legalName": "Dr Example",
+                  "specialities": ["General Medicine"],
+                  "subSpecialities": [],
+                  "languages": ["English"],
+                  "qualification": "MBBS, MD",
+                  "medicalCouncil": "Maharashtra Medical Council",
+                  "yearsOfExperience": 12,
+                  "consultationFee": 800,
+                  "ownership": null,
+                  "departments": [],
+                  "facilities": ["Parking"],
+                  "services": [{"label": "Consultation"}],
+                  "locations": [{"label": "Primary"}],
+                  "documents": [{"documentType": "DOCTOR_PHOTO"}, {"documentType": "GALLERY_IMAGE"}],
+                  "branding": {"tagline": "Trusted doctor"}
+                }
+                """;
+    }
+
+    private String clinicSnapshotJson() {
+        return """
+                {
+                  "providerType": "CLINIC",
+                  "displayName": "Clinic Example",
+                  "legalName": "Clinic Example",
+                  "specialities": ["General Medicine"],
+                  "subSpecialities": [],
+                  "languages": ["English", "Hindi"],
+                  "organisationType": "Standalone clinic",
+                  "ownership": "Private",
+                  "consultationFee": 600,
+                  "departments": [],
+                  "facilities": ["Parking"],
+                  "services": [{"label": "Consultation"}],
+                  "locations": [{"label": "Primary"}],
+                  "documents": [{"documentType": "LOGO"}],
+                  "branding": {"tagline": "Trusted clinic"}
+                }
+                """;
+    }
+
+    private String hospitalSnapshotJson() {
+        return """
+                {
+                  "providerType": "HOSPITAL",
+                  "displayName": "Hospital Example",
+                  "legalName": "Hospital Example",
+                  "specialities": ["General Medicine"],
+                  "subSpecialities": [],
+                  "languages": ["English", "Hindi"],
+                  "hospitalType": "Multispeciality Hospital",
+                  "ownership": "Private",
+                  "beds": 250,
+                  "medicalDirector": "Dr Example",
+                  "consultationFee": 900,
+                  "departments": ["General Medicine", "Family Medicine", "Dermatology"],
+                  "facilities": ["Parking"],
+                  "services": [{"label": "Consultation"}, {"label": "Health Checkups"}],
+                  "locations": [{"label": "Primary"}],
+                  "documents": [{"documentType": "LOGO"}, {"documentType": "GALLERY_IMAGE"}],
+                  "branding": {"tagline": "Trusted hospital"}
+                }
+                """;
     }
 
     private DiscoverReferenceOptionRecord serviceOption(ProviderServiceType serviceType, ProviderType providerType) {

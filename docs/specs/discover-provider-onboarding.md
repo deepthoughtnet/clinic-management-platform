@@ -16,6 +16,7 @@ Provider workspace scope includes:
 - multiple application/profile ownership under one provider account
 - discard of incomplete, unsubmitted onboarding drafts
 - compact, human-readable application detail presentation
+- a shared post-submission status experience for doctor, clinic, and hospital applications
 
 Out of scope: payment, SEO, public publishing, ratings, reviews, analytics, AI content generation, moderation UI, Healthcare tenant activation.
 
@@ -101,6 +102,15 @@ Each step reports missing fields. Submit is blocked until mandatory account, pro
 - `Continue registration` resumes an existing application at its current or earliest incomplete step.
 - `Add another profile` starts a separate application intentionally when product rules allow it.
 - Discarded applications leave active onboarding, remain auditable, and cannot be resumed unless a restore feature is introduced later.
+
+## Shared Post-Submission Experience
+
+- After submission, provider onboarding must switch from editable wizard framing to a status-oriented application experience.
+- The status experience must be driven by the persisted application lifecycle and submitted snapshot/version, not by local UI state or completion percentage alone.
+- The shared status experience must support doctor, clinic, and hospital applications using shared components and shared lifecycle logic.
+- When an application is `SUBMITTED` or later, the provider dashboard is the default landing page and submit actions are hidden or disabled.
+- `CHANGES_REQUESTED` applications remain editable, but only through an explicit edit action surfaced from the status experience.
+- Submitted previews must use the submitted snapshot/version, while published profiles must link to the canonical public profile route.
 
 ## Requirement Labels
 

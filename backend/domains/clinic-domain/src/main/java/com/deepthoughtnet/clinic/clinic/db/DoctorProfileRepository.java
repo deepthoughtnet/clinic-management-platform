@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface DoctorProfileRepository extends JpaRepository<DoctorProfileEntity, UUID> {
     Optional<DoctorProfileEntity> findByTenantIdAndDoctorUserId(UUID tenantId, UUID doctorUserId);
+    Optional<DoctorProfileEntity> findBySlugIgnoreCase(String slug);
     java.util.List<DoctorProfileEntity> findByTenantIdAndActiveTrue(UUID tenantId);
     Optional<DoctorProfileEntity> findFirstByTenantIdAndActiveTrueAndRegistrationNumberIgnoreCase(UUID tenantId, String registrationNumber);
 }

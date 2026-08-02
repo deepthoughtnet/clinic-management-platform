@@ -61,6 +61,8 @@ import org.springframework.util.StringUtils;
 @Service
 public class ProviderPublicProfileService {
     private static final Duration MEDIA_URL_TTL = Duration.ofDays(7);
+    private static final String SOURCE_SYSTEM_ONBOARDING = "DISCOVER_ONBOARDING_APPLICATION";
+    private static final String BOOKING_MODE_ONLINE = "ONLINE_BOOKING";
 
     private final DiscoverPublicProviderProfileRepository profiles;
     private final DiscoverPublicProviderProfileVersionRepository versions;
@@ -107,49 +109,115 @@ public class ProviderPublicProfileService {
                 .orElse(0) + 1;
 
         PublicProviderProfileSnapshot snapshot = buildSnapshot(application, canonicalSlug, publishedAt, nextVersion);
+        return upsertPublicProfile(snapshot, submission.getVersionNumber(), submission.getStatusBefore(), submission.getStatusAfter(), publicationReason, publishedAt);
+    }
+
+    @Transactional
+    public PublicProviderPublicationRecord upsertPublicProfile(
+            PublicProviderProfileSnapshot snapshot,
+            Integer sourceSubmissionVersionNumber,
+            String statusBefore,
+            String statusAfter,
+            String publicationReason,
+            OffsetDateTime publishedAt
+    ) {
+        require(snapshot != null, "public profile snapshot is required");
+        require(snapshot.providerId() != null, "public profile source reference is required");
+        require(snapshot.providerType() != null, "public profile type is required");
+        require(StringUtils.hasText(snapshot.sourceSystem()), "public profile source system is required");
+        OffsetDateTime resolvedPublishedAt = publishedAt == null ? OffsetDateTime.now() : publishedAt;
+
         String snapshotJson = snapshotJson(snapshot);
         String snapshotHash = digest(snapshotJson);
+        int nextVersion = versions.findFirstByProviderIdOrderByVersionNumberDesc(snapshot.providerId())
+                .map(DiscoverPublicProviderProfileVersionEntity::getVersionNumber)
+                .orElse(0) + 1;
 
-        Optional<DiscoverPublicProviderProfileVersionEntity> duplicate = versions.findFirstByProviderIdAndSnapshotHashOrderByVersionNumberDesc(application.getId(), snapshotHash);
+        Optional<DiscoverPublicProviderProfileVersionEntity> duplicate = versions.findFirstByProviderIdAndSnapshotHashOrderByVersionNumberDesc(snapshot.providerId(), snapshotHash);
         if (duplicate.isPresent()) {
             DiscoverPublicProviderProfileVersionEntity version = duplicate.get();
-            upsertSlugAlias(application.getId(), version.getId(), version.getVersionNumber(), canonicalSlug, publishedAt);
-            upsertAggregate(snapshot, version.getId(), version.getVersionNumber(), publishedAt);
+            upsertSlugAlias(snapshot.providerId(), version.getId(), version.getVersionNumber(), snapshot.canonicalSlug(), resolvedPublishedAt);
+            upsertAggregate(snapshot, version.getId(), version.getVersionNumber(), resolvedPublishedAt);
             return new PublicProviderPublicationRecord(
-                    application.getId(),
-                    application.getProviderType(),
-                    canonicalSlug,
+                    snapshot.providerId(),
+                    snapshot.providerType(),
+                    snapshot.canonicalSlug(),
                     version.getVersionNumber(),
                     version.getPublishedAt(),
-                    publicPath(application.getProviderType(), canonicalSlug)
+                    publicPath(snapshot.providerType(), snapshot.canonicalSlug())
             );
         }
 
         DiscoverPublicProviderProfileVersionEntity version = versions.save(DiscoverPublicProviderProfileVersionEntity.create(
-                application.getId(),
+                snapshot.providerId(),
                 nextVersion,
-                submission.getVersionNumber(),
-                submission.getStatusBefore(),
-                submission.getStatusAfter(),
-                "VERIFICATION",
-                StringUtils.hasText(publicationReason) ? publicationReason : "Published after approval",
+                sourceSubmissionVersionNumber == null ? nextVersion : sourceSubmissionVersionNumber,
+                statusBefore,
+                statusAfter == null ? ProviderLifecycleStatus.PUBLISHED.name() : statusAfter,
+                snapshot.sourceSystem(),
+                StringUtils.hasText(publicationReason) ? publicationReason : "Published public profile",
                 snapshotHash,
                 snapshotJson,
-                canonicalSlug,
-                publishedAt
+                snapshot.canonicalSlug(),
+                resolvedPublishedAt
         ));
 
-        upsertSlugAlias(application.getId(), version.getId(), nextVersion, canonicalSlug, publishedAt);
-        upsertAggregate(snapshot, version.getId(), nextVersion, publishedAt);
+        upsertSlugAlias(snapshot.providerId(), version.getId(), nextVersion, snapshot.canonicalSlug(), resolvedPublishedAt);
+        upsertAggregate(snapshot, version.getId(), nextVersion, resolvedPublishedAt);
 
         return new PublicProviderPublicationRecord(
-                application.getId(),
-                application.getProviderType(),
-                canonicalSlug,
+                snapshot.providerId(),
+                snapshot.providerType(),
+                snapshot.canonicalSlug(),
                 nextVersion,
-                publishedAt,
-                publicPath(application.getProviderType(), canonicalSlug)
+                resolvedPublishedAt,
+                publicPath(snapshot.providerType(), snapshot.canonicalSlug())
         );
+    }
+
+    @Transactional
+    public void unpublishPublicProfile(UUID providerId, String sourceSystem, String reason) {
+        require(providerId != null, "public profile source reference is required");
+        require(StringUtils.hasText(sourceSystem), "public profile source system is required");
+        profiles.findByProviderId(providerId)
+                .filter(profile -> sourceSystem.equalsIgnoreCase(profile.getSourceSystem()))
+                .ifPresent(profile -> {
+                    profile.markUnpublished(OffsetDateTime.now());
+                    profiles.save(profile);
+                });
+    }
+
+    @Transactional
+    public UUID upsertPublishedMedia(UUID providerId, ProviderDocumentType documentType, String originalFilename, String contentType, byte[] bytes) {
+        require(providerId != null, "providerId is required");
+        require(documentType != null, "documentType is required");
+        require(bytes != null && bytes.length > 0, "media bytes are required");
+        String fileName = StringUtils.hasText(originalFilename) ? originalFilename.trim() : documentType.name().toLowerCase(Locale.ROOT);
+        String mediaType = StringUtils.hasText(contentType) ? contentType.trim() : "application/octet-stream";
+        ProviderDocumentEntity document = documents.findFirstByProviderIdAndDocumentTypeOrderByUploadedAtDesc(providerId, documentType)
+                .orElseGet(() -> new ProviderDocumentEntity(providerId, documentType, fileName, mediaType, bytes.length, storageService.buildDocumentStorageKey(providerId, fileName)));
+        String storageKey = StringUtils.hasText(document.getStorageKey())
+                ? document.getStorageKey()
+                : storageService.buildDocumentStorageKey(providerId, fileName);
+        storageService.putObject(storageKey, mediaType, bytes);
+        document.update(fileName, mediaType, bytes.length, storageKey);
+        ProviderDocumentEntity saved = documents.save(document);
+        return saved.getId();
+    }
+
+    @Transactional(readOnly = true)
+    public boolean isSlugReserved(String slug, UUID currentProviderId) {
+        String cleanSlug = cleanSlug(slug);
+        if (!StringUtils.hasText(cleanSlug)) {
+            return false;
+        }
+        boolean profileConflict = profiles.findByCanonicalSlug(cleanSlug)
+                .filter(profile -> currentProviderId == null || !currentProviderId.equals(profile.getProviderId()))
+                .isPresent();
+        boolean aliasConflict = slugs.findFirstBySlug(cleanSlug)
+                .filter(alias -> currentProviderId == null || !currentProviderId.equals(alias.getProviderId()))
+                .isPresent();
+        return profileConflict || aliasConflict;
     }
 
     @Transactional(readOnly = true)
@@ -203,8 +271,10 @@ public class ProviderPublicProfileService {
         if (alias.isPresent()) {
             return detailForSlugAlias(alias.get());
         }
-        return profiles.findByCanonicalSlug(cleanSlug).flatMap(profile -> versions.findFirstByProviderIdOrderByVersionNumberDesc(profile.getProviderId())
-                .map(version -> toDetail(profile, version, cleanSlug, readSnapshot(version.getSnapshotJson()))));
+        return profiles.findByCanonicalSlug(cleanSlug)
+                .filter(profile -> "PUBLISHED".equalsIgnoreCase(profile.getPublicationStatus()))
+                .flatMap(profile -> versions.findFirstByProviderIdOrderByVersionNumberDesc(profile.getProviderId())
+                        .map(version -> toDetail(profile, version, cleanSlug, readSnapshot(version.getSnapshotJson()))));
     }
 
     @Transactional(readOnly = true)
@@ -212,12 +282,10 @@ public class ProviderPublicProfileService {
         if (providerId == null) {
             return Optional.empty();
         }
-        Optional<DiscoverPublicProviderProfileEntity> profile = profiles.findByProviderId(providerId);
-        Optional<DiscoverPublicProviderProfileVersionEntity> version = versions.findFirstByProviderIdOrderByVersionNumberDesc(providerId);
-        if (profile.isEmpty() || version.isEmpty()) {
-            return Optional.empty();
-        }
-        return Optional.of(toDetail(profile.get(), version.get(), profile.get().getCanonicalSlug(), readSnapshot(version.get().getSnapshotJson())));
+        return profiles.findByProviderId(providerId)
+                .filter(profile -> "PUBLISHED".equalsIgnoreCase(profile.getPublicationStatus()))
+                .flatMap(profile -> versions.findFirstByProviderIdOrderByVersionNumberDesc(providerId)
+                        .map(version -> toDetail(profile, version, profile.getCanonicalSlug(), readSnapshot(version.getSnapshotJson()))));
     }
 
     @Transactional(readOnly = true)
@@ -227,6 +295,9 @@ public class ProviderPublicProfileService {
         Map<String, SpecialityBucket> buckets = new LinkedHashMap<>();
 
         for (DiscoverPublicProviderProfileEntity profile : profiles.findAll()) {
+            if (!"PUBLISHED".equalsIgnoreCase(profile.getPublicationStatus())) {
+                continue;
+            }
             if (StringUtils.hasText(normalizedCity) && !containsIgnoreCase(profile.getCity(), normalizedCity)) {
                 continue;
             }
@@ -302,7 +373,7 @@ public class ProviderPublicProfileService {
     private Optional<PublicProviderProfileDetailRecord> detailForSlugAlias(DiscoverPublicProviderProfileSlugEntity alias) {
         DiscoverPublicProviderProfileEntity profile = profiles.findByProviderId(alias.getProviderId()).orElse(null);
         DiscoverPublicProviderProfileVersionEntity version = versions.findByProviderIdAndVersionNumber(alias.getProviderId(), alias.getVersionNumber()).orElse(null);
-        if (profile == null || version == null) {
+        if (profile == null || version == null || !"PUBLISHED".equalsIgnoreCase(profile.getPublicationStatus())) {
             return Optional.empty();
         }
         PublicProviderProfileSnapshot snapshot = readSnapshot(version.getSnapshotJson());
@@ -318,7 +389,7 @@ public class ProviderPublicProfileService {
         if (alias.isPresent()) {
             DiscoverPublicProviderProfileEntity profile = profiles.findByProviderId(alias.get().getProviderId()).orElse(null);
             DiscoverPublicProviderProfileVersionEntity version = versions.findByProviderIdAndVersionNumber(alias.get().getProviderId(), alias.get().getVersionNumber()).orElse(null);
-            if (profile == null || version == null) {
+            if (profile == null || version == null || !"PUBLISHED".equalsIgnoreCase(profile.getPublicationStatus())) {
                 return Optional.empty();
             }
             return Optional.of(new ResolvedPublishedProfile(profile, readSnapshot(version.getSnapshotJson())));
@@ -394,6 +465,8 @@ public class ProviderPublicProfileService {
                 entity.getServiceCount(),
                 entity.getDepartmentCount(),
                 entity.getGalleryCount(),
+                entity.getContactPhone(),
+                entity.getBookingMode(),
                 entity.isEmergencyAvailable(),
                 tags(entity),
                 distanceKm
@@ -457,6 +530,7 @@ public class ProviderPublicProfileService {
                 entity.getMedicalDirector(),
                 entity.getBeds(),
                 entity.isEmergencyAvailable(),
+                entity.getBookingMode(),
                 true,
                 version.getPublishedAt(),
                 version.getVersionNumber(),
@@ -509,6 +583,7 @@ public class ProviderPublicProfileService {
         return new PublicProviderProfileSnapshot(
                 application.getId(),
                 application.getProviderType(),
+                SOURCE_SYSTEM_ONBOARDING,
                 application.getReferenceNumber(),
                 displayName,
                 legalName,
@@ -552,6 +627,7 @@ public class ProviderPublicProfileService {
                 enabledServices.size(),
                 departments.size(),
                 gallery.size(),
+                BOOKING_MODE_ONLINE,
                 true,
                 publishedAt,
                 versionNumber,
@@ -563,6 +639,7 @@ public class ProviderPublicProfileService {
         DiscoverPublicProviderProfileEntity entity = profiles.findByProviderId(snapshot.providerId()).orElseGet(() -> DiscoverPublicProviderProfileEntity.create(
                 snapshot.providerId(),
                 snapshot.providerType(),
+                snapshot.sourceSystem(),
                 snapshot.canonicalSlug(),
                 latestVersionId,
                 latestVersionNumber,
@@ -597,6 +674,7 @@ public class ProviderPublicProfileService {
                 snapshot.serviceCount(),
                 snapshot.departmentCount(),
                 snapshot.galleryCount(),
+                snapshot.bookingMode(),
                 publishedAt
         ));
         entity.update(
@@ -634,6 +712,7 @@ public class ProviderPublicProfileService {
                 snapshot.serviceCount(),
                 snapshot.departmentCount(),
                 snapshot.galleryCount(),
+                snapshot.bookingMode(),
                 publishedAt
         );
         profiles.save(entity);
@@ -708,6 +787,7 @@ public class ProviderPublicProfileService {
         return (root, query, cb) -> {
             List<jakarta.persistence.criteria.Predicate> predicates = new ArrayList<>();
             if (criteria != null) {
+                predicates.add(cb.equal(root.get("publicationStatus"), "PUBLISHED"));
                 if (criteria.providerType() != null) {
                     predicates.add(cb.equal(root.get("providerType"), criteria.providerType()));
                 }

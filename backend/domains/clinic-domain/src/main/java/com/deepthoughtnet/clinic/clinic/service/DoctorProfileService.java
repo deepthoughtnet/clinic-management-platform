@@ -41,6 +41,20 @@ public class DoctorProfileService {
         return doctorProfileRepository.findByTenantIdAndDoctorUserId(tenantId, doctorUserId).map(this::toRecord);
     }
 
+    @Transactional(readOnly = true)
+    public Optional<DoctorProfileRecord> findBySlug(String slug) {
+        if (!StringUtils.hasText(slug)) {
+            return Optional.empty();
+        }
+        return doctorProfileRepository.findBySlugIgnoreCase(slug.trim()).map(this::toRecord);
+    }
+
+    @Transactional(readOnly = true)
+    public List<DoctorProfileRecord> findByTenantIdAndActive(UUID tenantId) {
+        requireTenant(tenantId);
+        return doctorProfileRepository.findByTenantIdAndActiveTrue(tenantId).stream().map(this::toRecord).toList();
+    }
+
     @Transactional
     public DoctorProfileRecord upsert(UUID tenantId, UUID doctorUserId, DoctorProfileUpsertCommand command) {
         requireTenant(tenantId);

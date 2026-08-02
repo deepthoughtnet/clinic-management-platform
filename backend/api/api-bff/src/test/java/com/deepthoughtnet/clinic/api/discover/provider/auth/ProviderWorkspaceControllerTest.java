@@ -103,6 +103,8 @@ class ProviderWorkspaceControllerTest {
                 ),
                 List.of(),
                 List.of(),
+                null,
+                null,
                 false,
                 "Complete Account and contact"
         );

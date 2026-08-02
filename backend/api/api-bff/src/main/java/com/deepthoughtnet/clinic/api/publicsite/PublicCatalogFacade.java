@@ -174,6 +174,16 @@ public class PublicCatalogFacade {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Public profile image not found"));
     }
 
+    public PublicProfileMediaContent hospitalCover(String hospitalSlug) {
+        return publicProfileService.loadPublishedProviderMedia(hospitalSlug, ProviderType.HOSPITAL, ProviderPublicMediaAsset.COVER, null)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Public profile image not found"));
+    }
+
+    public PublicProfileMediaContent hospitalGalleryImage(String hospitalSlug, int index) {
+        return publicProfileService.loadPublishedProviderMedia(hospitalSlug, ProviderType.HOSPITAL, ProviderPublicMediaAsset.GALLERY, index)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Public profile image not found"));
+    }
+
     public List<PublicSpecialitySummaryResponse> listSpecialities(String q, String city, String tenantCode) {
         return publicProfileService.listSpecialities(q, city).stream()
                 .map(item -> new PublicSpecialitySummaryResponse(
@@ -255,6 +265,7 @@ public class PublicCatalogFacade {
                 detail.publicPath(),
                 detail.displayName(),
                 publicDoctorPhotoPath(doctorSlug),
+                detail.bookingMode(),
                 detail.qualification(),
                 detail.medicalCouncil(),
                 detail.yearsOfExperience(),
@@ -315,6 +326,14 @@ public class PublicCatalogFacade {
         return "/api/public/hospitals/" + hospitalSlug + "/logo";
     }
 
+    private String publicHospitalCoverPath(String hospitalSlug) {
+        return "/api/public/hospitals/" + hospitalSlug + "/cover";
+    }
+
+    private String publicHospitalGalleryImagePath(String hospitalSlug, int index) {
+        return "/api/public/hospitals/" + hospitalSlug + "/gallery/" + index;
+    }
+
     private PublicClinicDetailResponse toClinicDetail(PublicProviderProfileDetailRecord detail) {
         List<String> gallery = IntStream.range(0, detail.gallery().size())
                 .filter(index -> detail.gallery().get(index).documentId() != null)
@@ -327,6 +346,7 @@ public class PublicCatalogFacade {
                 detail.displayName(),
                 detail.logoUrl() == null || detail.logoUrl().isBlank() ? null : publicClinicLogoPath(detail.canonicalSlug()),
                 detail.coverUrl() == null || detail.coverUrl().isBlank() ? null : publicClinicCoverPath(detail.canonicalSlug()),
+                detail.bookingMode(),
                 firstNonBlank(detail.locations().stream().findFirst().map(PublicProviderLocationSnapshot::address).orElse(null), detail.summary()),
                 detail.area(),
                 detail.city(),
@@ -355,8 +375,9 @@ public class PublicCatalogFacade {
     }
 
     private PublicHospitalDetailResponse toHospitalDetail(PublicProviderProfileDetailRecord detail) {
-        List<String> gallery = detail.gallery().stream()
-                .map(image -> publicProfileService.resolveDocumentUrl(image.documentId()).orElse(null))
+        List<String> gallery = IntStream.range(0, detail.gallery().size())
+                .filter(index -> detail.gallery().get(index).documentId() != null)
+                .mapToObj(index -> publicHospitalGalleryImagePath(detail.canonicalSlug(), index))
                 .filter(url -> url != null && !url.isBlank())
                 .toList();
         return new PublicHospitalDetailResponse(
@@ -364,8 +385,9 @@ public class PublicCatalogFacade {
                 detail.canonicalSlug(),
                 detail.publicPath(),
                 detail.displayName(),
-                detail.logoUrl(),
-                detail.coverUrl(),
+                detail.logoUrl() == null || detail.logoUrl().isBlank() ? null : publicHospitalLogoPath(detail.canonicalSlug()),
+                detail.coverUrl() == null || detail.coverUrl().isBlank() ? null : publicHospitalCoverPath(detail.canonicalSlug()),
+                detail.bookingMode(),
                 firstNonBlank(detail.locations().stream().findFirst().map(PublicProviderLocationSnapshot::address).orElse(null), detail.summary()),
                 detail.area(),
                 detail.city(),
@@ -412,12 +434,14 @@ public class PublicCatalogFacade {
                 record.publicPath(),
                 record.displayName(),
                 record.imageUrl() == null || record.imageUrl().isBlank() ? null : publicDoctorPhotoPath(record.canonicalSlug()),
+                record.contactPhone(),
                 record.primarySpeciality(),
                 detail == null ? null : detail.yearsOfExperience(),
                 detail == null ? null : detail.consultationFee(),
                 detail == null ? List.of() : detail.languages(),
                 location == null ? record.area() : location.label(),
                 location == null ? record.city() : location.city(),
+                record.bookingMode(),
                 record.subtitle(),
                 record.summary(),
                 firstNonBlank(location == null ? null : location.label(), record.subtitle(), record.primarySpeciality(), record.displayName()),
@@ -434,10 +458,12 @@ public class PublicCatalogFacade {
                 record.publicPath(),
                 record.displayName(),
                 record.imageUrl() == null || record.imageUrl().isBlank() ? null : publicClinicLogoPath(record.canonicalSlug()),
-                record.coverUrl(),
+                record.coverUrl() == null || record.coverUrl().isBlank() ? null : publicClinicCoverPath(record.canonicalSlug()),
+                record.contactPhone(),
                 record.area(),
                 record.area(),
                 record.city(),
+                record.bookingMode(),
                 record.doctorCount(),
                 record.serviceCount(),
                 record.departmentCount(),
@@ -457,9 +483,11 @@ public class PublicCatalogFacade {
                 record.publicPath(),
                 record.displayName(),
                 record.imageUrl() == null || record.imageUrl().isBlank() ? null : publicHospitalLogoPath(record.canonicalSlug()),
-                record.coverUrl(),
+                record.coverUrl() == null || record.coverUrl().isBlank() ? null : publicHospitalCoverPath(record.canonicalSlug()),
+                record.contactPhone(),
                 record.area(),
                 record.city(),
+                record.bookingMode(),
                 record.doctorCount(),
                 record.serviceCount(),
                 record.departmentCount(),

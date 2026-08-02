@@ -129,6 +129,16 @@ public class PublicCatalogController {
         return inline(publicCatalogFacade.hospitalLogo(hospitalSlug));
     }
 
+    @GetMapping("/hospitals/{hospitalSlug}/cover")
+    public ResponseEntity<byte[]> hospitalCover(@PathVariable String hospitalSlug) {
+        return inline(publicCatalogFacade.hospitalCover(hospitalSlug));
+    }
+
+    @GetMapping("/hospitals/{hospitalSlug}/gallery/{index}")
+    public ResponseEntity<byte[]> hospitalGalleryImage(@PathVariable String hospitalSlug, @PathVariable int index) {
+        return inline(publicCatalogFacade.hospitalGalleryImage(hospitalSlug, index));
+    }
+
     @GetMapping("/specialities")
     public List<PublicSpecialitySummaryResponse> specialities(
             @RequestParam(required = false) String q,

@@ -56,4 +56,12 @@ public class ProviderDocumentEntity {
     public String getStorageKey() { return storageKey; }
     public String getVirusScanStatus() { return virusScanStatus; }
     public OffsetDateTime getUploadedAt() { return uploadedAt; }
+
+    public void update(String originalFilename, String contentType, long sizeBytes, String storageKey) {
+        this.originalFilename = originalFilename;
+        this.contentType = contentType;
+        this.sizeBytes = sizeBytes;
+        this.storageKey = storageKey;
+        this.uploadedAt = OffsetDateTime.now();
+    }
 }

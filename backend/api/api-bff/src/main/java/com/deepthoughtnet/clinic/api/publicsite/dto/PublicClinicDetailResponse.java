@@ -9,6 +9,7 @@ public record PublicClinicDetailResponse(
         String clinicDisplayName,
         String logoUrl,
         String coverUrl,
+        String bookingMode,
         String address,
         String area,
         String city,

@@ -22,6 +22,9 @@ public class DiscoverPublicProviderProfileEntity {
     @Column(name = "provider_type", nullable = false, length = 32)
     private ProviderType providerType;
 
+    @Column(name = "source_system", nullable = false, length = 64)
+    private String sourceSystem;
+
     @Column(name = "canonical_slug", nullable = false, unique = true, length = 256)
     private String canonicalSlug;
 
@@ -123,6 +126,9 @@ public class DiscoverPublicProviderProfileEntity {
     @Column(name = "gallery_count", nullable = false)
     private int galleryCount;
 
+    @Column(name = "booking_mode", nullable = false, length = 32)
+    private String bookingMode;
+
     @Column(name = "published_at", nullable = false)
     private OffsetDateTime publishedAt;
 
@@ -145,6 +151,7 @@ public class DiscoverPublicProviderProfileEntity {
     public static DiscoverPublicProviderProfileEntity create(
             UUID providerId,
             ProviderType providerType,
+            String sourceSystem,
             String canonicalSlug,
             UUID latestPublishedVersionId,
             int latestPublishedVersionNumber,
@@ -179,11 +186,13 @@ public class DiscoverPublicProviderProfileEntity {
             int serviceCount,
             int departmentCount,
             int galleryCount,
+            String bookingMode,
             OffsetDateTime publishedAt
     ) {
         DiscoverPublicProviderProfileEntity entity = new DiscoverPublicProviderProfileEntity();
         entity.providerId = providerId;
         entity.providerType = providerType;
+        entity.sourceSystem = sourceSystem;
         entity.canonicalSlug = canonicalSlug;
         entity.latestPublishedVersionId = latestPublishedVersionId;
         entity.latestPublishedVersionNumber = latestPublishedVersionNumber;
@@ -218,6 +227,7 @@ public class DiscoverPublicProviderProfileEntity {
         entity.serviceCount = serviceCount;
         entity.departmentCount = departmentCount;
         entity.galleryCount = galleryCount;
+        entity.bookingMode = bookingMode;
         entity.publishedAt = publishedAt;
         entity.publicationStatus = "PUBLISHED";
         entity.createdAt = publishedAt;
@@ -228,6 +238,7 @@ public class DiscoverPublicProviderProfileEntity {
 
     public UUID getProviderId() { return providerId; }
     public ProviderType getProviderType() { return providerType; }
+    public String getSourceSystem() { return sourceSystem; }
     public String getCanonicalSlug() { return canonicalSlug; }
     public int getLatestPublishedVersionNumber() { return latestPublishedVersionNumber; }
     public UUID getLatestPublishedVersionId() { return latestPublishedVersionId; }
@@ -262,6 +273,7 @@ public class DiscoverPublicProviderProfileEntity {
     public int getServiceCount() { return serviceCount; }
     public int getDepartmentCount() { return departmentCount; }
     public int getGalleryCount() { return galleryCount; }
+    public String getBookingMode() { return bookingMode; }
     public OffsetDateTime getPublishedAt() { return publishedAt; }
     public String getPublicationStatus() { return publicationStatus; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
@@ -303,6 +315,7 @@ public class DiscoverPublicProviderProfileEntity {
             int serviceCount,
             int departmentCount,
             int galleryCount,
+            String bookingMode,
             OffsetDateTime publishedAt
     ) {
         this.canonicalSlug = canonicalSlug;
@@ -339,8 +352,14 @@ public class DiscoverPublicProviderProfileEntity {
         this.serviceCount = serviceCount;
         this.departmentCount = departmentCount;
         this.galleryCount = galleryCount;
+        this.bookingMode = bookingMode;
         this.publishedAt = publishedAt;
         this.updatedAt = publishedAt;
         this.publicationStatus = "PUBLISHED";
+    }
+
+    public void markUnpublished(OffsetDateTime unpublishedAt) {
+        this.publicationStatus = "UNPUBLISHED";
+        this.updatedAt = unpublishedAt;
     }
 }

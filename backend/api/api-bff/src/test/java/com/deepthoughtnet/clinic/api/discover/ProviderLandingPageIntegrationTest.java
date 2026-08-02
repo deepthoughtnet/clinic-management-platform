@@ -282,6 +282,7 @@ class ProviderLandingPageIntegrationTest extends PostgresTestContainerSupport {
         PublicProviderProfileSnapshot snapshot = new PublicProviderProfileSnapshot(
                 providerId,
                 ProviderType.CLINIC,
+                "DISCOVER_ONBOARDING_APPLICATION",
                 "REF-001",
                 "Sunrise Family Clinic",
                 "Sunrise Family Clinic Private Limited",
@@ -325,7 +326,8 @@ class ProviderLandingPageIntegrationTest extends PostgresTestContainerSupport {
                 2,
                 2,
                 1,
-                true,
+                "ONLINE_BOOKING",
+                false,
                 publishedAt,
                 1,
                 "/discover/clinics/%s".formatted(slug)
@@ -334,6 +336,7 @@ class ProviderLandingPageIntegrationTest extends PostgresTestContainerSupport {
         DiscoverPublicProviderProfileEntity profile = DiscoverPublicProviderProfileEntity.create(
                 providerId,
                 ProviderType.CLINIC,
+                "DISCOVER_ONBOARDING_APPLICATION",
                 slug,
                 versionId,
                 1,
@@ -368,6 +371,7 @@ class ProviderLandingPageIntegrationTest extends PostgresTestContainerSupport {
                 2,
                 2,
                 1,
+                "ONLINE_BOOKING",
                 publishedAt
         );
         publicProfileRepository.save(profile);

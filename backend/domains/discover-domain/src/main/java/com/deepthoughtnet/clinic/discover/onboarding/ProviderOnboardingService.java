@@ -17,6 +17,7 @@ import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.Pr
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.ProviderDashboardRecord;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.ProviderOnboardingAccessRecord;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.ProviderPreviewRecord;
+import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.ProviderSubmissionSummaryRecord;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.ProviderReviewDetailRecord;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.ProviderReviewSummaryRecord;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.ProviderTimelineEventRecord;
@@ -46,7 +47,6 @@ import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderSubmissionReposi
 import com.deepthoughtnet.clinic.discover.reference.DiscoverReferenceDataService;
 import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService;
 import com.deepthoughtnet.clinic.discover.verification.DiscoverContactNormalizer;
-import com.deepthoughtnet.clinic.discover.verification.VerificationChannel;
 import com.deepthoughtnet.clinic.discover.verification.DiscoverVerificationService;
 import com.deepthoughtnet.clinic.discover.verification.VerificationChannel;
 import com.deepthoughtnet.clinic.discover.verification.VerificationChallengeRequest;
@@ -54,6 +54,7 @@ import com.deepthoughtnet.clinic.discover.verification.VerificationPurpose;
 import com.deepthoughtnet.clinic.discover.verification.DiscoverVerificationService.VerificationVerificationRequest;
 import com.deepthoughtnet.clinic.platform.storage.ObjectStorageService;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -851,6 +852,10 @@ public class ProviderOnboardingService {
         );
         List<ProviderTimelineEventRecord> timeline = history.findByProviderIdOrderByCreatedAtAsc(entity.getId()).stream().map(this::toTimelineEvent).toList();
         List<ProviderChangeRequestRecord> requestRecords = changeRequests.findByProviderIdOrderByRequestedAtDesc(entity.getId()).stream().map(this::toChangeRequest).toList();
+        ProviderSubmissionSummaryRecord submittedSnapshot = latestSubmissionSummary(entity);
+        String publicProfilePath = publicProfileService.findByProviderId(entity.getId())
+                .map(record -> record.publicPath())
+                .orElse(null);
         String nextAction = completion.canSubmit()
                 ? "Submit for verification"
                 : completion.incompleteSteps().isEmpty() ? "Continue registration" : "Complete " + completion.recommendedNextStep();
@@ -863,7 +868,7 @@ public class ProviderOnboardingService {
         if (entity.getStatus() == ProviderLifecycleStatus.DISCARDED) {
             nextAction = "Onboarding discarded";
         }
-        return new ProviderDashboardRecord(application, completion, timeline, requestRecords, isReadOnly(entity.getStatus()), nextAction);
+        return new ProviderDashboardRecord(application, completion, timeline, requestRecords, submittedSnapshot, publicProfilePath, isReadOnly(entity.getStatus()), nextAction);
     }
 
     private ProviderReviewDetailRecord toReviewDetail(ProviderApplicationEntity entity) {
@@ -916,6 +921,191 @@ public class ProviderOnboardingService {
                 entity.getResolvedAt(),
                 entity.isResolved()
         );
+    }
+
+    private ProviderSubmissionSummaryRecord latestSubmissionSummary(ProviderApplicationEntity entity) {
+        ProviderSubmissionEntity submission = submissions.findFirstByProviderIdOrderByVersionNumberDesc(entity.getId()).orElse(null);
+        if (submission == null) {
+            return null;
+        }
+        return submissionSummary(submission);
+    }
+
+    private ProviderSubmissionSummaryRecord submissionSummary(ProviderSubmissionEntity submission) {
+        try {
+            JsonNode snapshot = objectMapper.readTree(submission.getSnapshotJson());
+            ProviderType providerType = ProviderType.valueOf(stringValue(snapshot, "providerType", ProviderType.INDIVIDUAL_DOCTOR.name()));
+            List<JsonNode> services = childArray(snapshot, "services");
+            List<JsonNode> locations = childArray(snapshot, "locations");
+            List<JsonNode> documents = childArray(snapshot, "documents");
+            Integer yearsOfExperience = providerType == ProviderType.INDIVIDUAL_DOCTOR ? nullableInteger(snapshot, "yearsOfExperience") : null;
+            Integer beds = providerType == ProviderType.HOSPITAL ? nullableInteger(snapshot, "beds") : null;
+            return new ProviderSubmissionSummaryRecord(
+                    submission.getVersionNumber(),
+                    submission.getSubmittedAt(),
+                    providerType,
+                    stringValue(snapshot, "displayName", null),
+                    stringValue(snapshot, "legalName", null),
+                    firstText(firstEntry(firstListValue(snapshot, "specialities")), firstEntry(firstListValue(snapshot, "subSpecialities")), stringValue(snapshot, "qualification", null), stringValue(snapshot, "organisationType", null), stringValue(snapshot, "hospitalType", null)),
+                    firstListValue(snapshot, "specialities"),
+                    firstListValue(snapshot, "subSpecialities"),
+                    firstListValue(snapshot, "languages"),
+                    stringValue(snapshot, "qualification", null),
+                    stringValue(snapshot, "medicalCouncil", null),
+                    yearsOfExperience,
+                    stringValue(snapshot, "organisationType", null),
+                    stringValue(snapshot, "ownership", null),
+                    stringValue(snapshot, "hospitalType", null),
+                    beds,
+                    booleanValue(snapshot, "emergencyAvailable"),
+                    stringValue(snapshot, "medicalDirector", null),
+                    decimalValue(snapshot, "consultationFee"),
+                    firstListValue(snapshot, "departments"),
+                    firstListValue(snapshot, "facilities"),
+                    services.stream().map(item -> stringValue(item, "label", null)).filter(StringUtils::hasText).toList(),
+                    locations.stream().map(item -> firstText(stringValue(item, "label", null), stringValue(item, "city", null), stringValue(item, "address", null))).filter(StringUtils::hasText).toList(),
+                    services.size(),
+                    locations.size(),
+                    documents.size(),
+                    galleryCount(snapshot),
+                    documentId(documents, "LOGO"),
+                    documentId(documents, "COVER_IMAGE"),
+                    documentId(documents, "DOCTOR_PHOTO"),
+                    submissionGalleryDocumentIds(documents),
+                    stringValue(snapshot, "biography", null),
+                    stringValue(snapshot.path("branding"), "tagline", null)
+            );
+        } catch (JsonProcessingException ex) {
+            throw new IllegalStateException("Unable to parse submission snapshot", ex);
+        }
+    }
+
+    private List<JsonNode> childArray(JsonNode node, String field) {
+        if (node == null) {
+            return List.of();
+        }
+        JsonNode array = node.path(field);
+        if (!array.isArray()) {
+            return List.of();
+        }
+        List<JsonNode> items = new ArrayList<>();
+        array.forEach(items::add);
+        return items;
+    }
+
+    private String stringValue(JsonNode node, String field, String fallback) {
+        if (node == null) {
+            return fallback;
+        }
+        JsonNode value = node.path(field);
+        if (!value.isTextual() || !StringUtils.hasText(value.asText())) {
+            return fallback;
+        }
+        return value.asText().trim();
+    }
+
+    private List<String> firstListValue(JsonNode node, String field) {
+        if (node == null) {
+            return List.of();
+        }
+        JsonNode value = node.path(field);
+        if (!value.isArray()) {
+            return List.of();
+        }
+        List<String> values = new ArrayList<>();
+        value.forEach(item -> {
+            if (item != null && item.isTextual() && StringUtils.hasText(item.asText())) {
+                values.add(item.asText().trim());
+            }
+        });
+        return values;
+    }
+
+    private Integer nullableInteger(JsonNode node, String field) {
+        if (node == null) {
+            return null;
+        }
+        JsonNode value = node.path(field);
+        if (value.isInt() || value.canConvertToInt()) {
+            return value.asInt();
+        }
+        if (value.isLong() || value.canConvertToLong()) {
+            long longValue = value.asLong();
+            return longValue >= Integer.MIN_VALUE && longValue <= Integer.MAX_VALUE ? (int) longValue : null;
+        }
+        if (!value.isNumber()) {
+            return null;
+        }
+        try {
+            return value.intValue();
+        } catch (RuntimeException ex) {
+            return null;
+        }
+    }
+
+    private boolean booleanValue(JsonNode node, String field) {
+        if (node == null) {
+            return false;
+        }
+        JsonNode value = node.path(field);
+        return value.isBoolean() ? value.asBoolean() : Boolean.parseBoolean(value.asText());
+    }
+
+    private BigDecimal decimalValue(JsonNode node, String field) {
+        if (node == null) {
+            return null;
+        }
+        JsonNode value = node.path(field);
+        if (value.isNumber()) {
+            return value.decimalValue();
+        }
+        if (!StringUtils.hasText(value.asText())) {
+            return null;
+        }
+        try {
+            return new BigDecimal(value.asText().trim());
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
+    private int galleryCount(JsonNode snapshot) {
+        JsonNode documents = snapshot.path("documents");
+        if (!documents.isArray()) {
+            return 0;
+        }
+        int count = 0;
+        for (JsonNode document : documents) {
+            if ("GALLERY_IMAGE".equalsIgnoreCase(stringValue(document, "documentType", null))) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private UUID documentId(List<JsonNode> documents, String documentType) {
+        for (JsonNode document : documents) {
+            if (document != null && documentType.equalsIgnoreCase(stringValue(document, "documentType", null))) {
+                String id = stringValue(document, "id", null);
+                if (StringUtils.hasText(id)) {
+                    return UUID.fromString(id);
+                }
+            }
+        }
+        return null;
+    }
+
+    private List<UUID> submissionGalleryDocumentIds(List<JsonNode> documents) {
+        List<UUID> ids = new ArrayList<>();
+        for (JsonNode document : documents) {
+            if (document != null && "GALLERY_IMAGE".equalsIgnoreCase(stringValue(document, "documentType", null))) {
+                String id = stringValue(document, "id", null);
+                if (StringUtils.hasText(id)) {
+                    ids.add(UUID.fromString(id));
+                }
+            }
+        }
+        return ids;
     }
 
     private String snapshotJson(ProviderApplicationEntity entity, List<ProviderLocationEntity> locationRecords, List<ProviderServiceEntity> serviceRecords, List<ProviderDocumentEntity> documentRecords) {
@@ -1468,6 +1658,18 @@ public class ProviderOnboardingService {
     private String firstText(String... values) {
         for (String value : values) if (StringUtils.hasText(value)) return value;
         return "";
+    }
+
+    private String firstEntry(List<String> values) {
+        if (values == null) {
+            return null;
+        }
+        for (String value : values) {
+            if (StringUtils.hasText(value)) {
+                return value.trim();
+            }
+        }
+        return null;
     }
 
     private String join(List<String> values) {

@@ -61,7 +61,7 @@ test("doctor directory emphasizes comparison, popularity, and booking without a 
   assert.ok(pages.includes("Popular specialities"));
   assert.ok(pages.includes("directory-card-grid--doctors"));
   assert.ok(components.includes("DoctorDirectoryCard"));
-  assert.ok(components.includes("Book appointment"));
+  assert.ok(components.includes("providerBookingPrimaryLabel(bookingMode)"));
   assert.ok(components.includes("View profile"));
   assert.ok(pages.includes("Consultation fee"));
   assert.ok(components.includes("Experience"));
@@ -89,7 +89,7 @@ test("clinic and hospital directory cards stay landscape and only render support
   assert.ok(components.includes("HospitalDirectoryCard"));
   assert.ok(components.includes("View clinic"));
   assert.ok(components.includes("View doctors"));
-  assert.ok(components.includes("Explore departments"));
+  assert.ok(components.includes("BookingCapabilityBadge"));
   assert.ok(styles.includes(".directory-card-grid--clinics"));
   assert.ok(styles.includes(".directory-card-grid--hospitals"));
   assert.ok(styles.includes(".directory-card--clinic"));
