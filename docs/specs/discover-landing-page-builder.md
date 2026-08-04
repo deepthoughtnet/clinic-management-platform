@@ -111,6 +111,14 @@ Frontend validation must verify:
 - revert flow
 - responsive rendering across desktop, tablet, and mobile
 
+## Provider Workspace UX Constraints
+
+- Provider preview must render persisted draft data only.
+- Empty states must replace fabricated business content.
+- Readiness and publication summaries must be rendered from backend DTOs.
+- Provider-facing preview and public-profile routing must be derived from the persisted slug/public path, not from placeholder route values.
+- The UI must distinguish unpublished draft preview from published public view.
+
 ## File Ownership Map
 
 - `backend/domains/discover-domain/src/main/java/com/deepthoughtnet/clinic/discover/landingpage/**`
@@ -134,4 +142,3 @@ Required tests for implementation:
 - frontend builder interaction tests
 - frontend responsive rendering tests
 - integration test covering provider edit, preview, publish, and public read
-

@@ -63,11 +63,15 @@ export type LandingCompare = {
 
 export type LandingProfileLocation = {
   label: string | null;
+  addressLine1: string | null;
+  addressLine2: string | null;
   address: string | null;
+  area: string | null;
   city: string | null;
   state: string | null;
   country: string | null;
   pinCode: string | null;
+  postalCode?: string | null;
   workingHours: string | null;
   parkingAvailable: boolean;
   accessibilityAvailable: boolean;
@@ -103,6 +107,12 @@ export type LandingProfile = {
   imageUrl: string | null;
   coverUrl: string | null;
   logoUrl: string | null;
+  weeklyTimings?: unknown;
+  timezone?: string | null;
+  establishedYear?: number | null;
+  registrationNumber?: string | null;
+  clinicPhilosophy?: string | null;
+  emergencyAvailability?: string | null;
   contactPhone: string | null;
   contactEmail: string | null;
   website: string | null;
@@ -134,6 +144,18 @@ export type LandingPageResponse = {
   publicPath: string;
   editable: boolean;
   published: boolean;
+  pageMode: string;
+  publicationReadiness: {
+    ready: boolean;
+    completenessPercentage: number;
+    missingFields: string[];
+    invalidFields: string[];
+    warnings: string[];
+    currentStatus: string;
+    sourceRevision: number;
+    sourceUpdatedAt: string | null;
+  };
+  allowedActions: string[];
   draftVersionNumber: number;
   publishedVersionNumber: number | null;
   publishedAt: string | null;
@@ -159,6 +181,18 @@ export type PublicLandingPageResponse = LandingPageRenderable & {
   published: boolean;
   publishedVersionNumber: number | null;
   publishedAt: string | null;
+  pageMode: string;
+  publicationReadiness: {
+    ready: boolean;
+    completenessPercentage: number;
+    missingFields: string[];
+    invalidFields: string[];
+    warnings: string[];
+    currentStatus: string;
+    sourceRevision: number;
+    sourceUpdatedAt: string | null;
+  };
+  allowedActions: string[];
 };
 
 export type LandingPageUpdate = {

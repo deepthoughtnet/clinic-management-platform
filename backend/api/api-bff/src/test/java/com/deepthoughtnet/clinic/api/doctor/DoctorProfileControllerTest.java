@@ -9,7 +9,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.deepthoughtnet.clinic.api.doctor.dto.DoctorProfileResponse;
-import com.deepthoughtnet.clinic.api.platform.discover.HealthcarePublicListingSyncService;
 import com.deepthoughtnet.clinic.clinic.service.DoctorProfileService;
 import com.deepthoughtnet.clinic.clinic.service.model.DoctorProfilePhotoRecord;
 import com.deepthoughtnet.clinic.clinic.service.model.DoctorProfileRecord;
@@ -17,7 +16,6 @@ import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
 import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
 import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
 import com.deepthoughtnet.clinic.platform.core.context.TenantId;
-import com.deepthoughtnet.clinic.platform.modulith.events.ModuleBusinessEventPublisher;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
@@ -34,8 +32,6 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 class DoctorProfileControllerTest {
     private DoctorProfileService doctorProfileService;
     private TenantUserManagementService tenantUserManagementService;
-    private HealthcarePublicListingSyncService healthcarePublicListingSyncService;
-    private ModuleBusinessEventPublisher moduleBusinessEventPublisher;
     private MockMvc mockMvc;
     private UUID tenantId;
     private UUID doctorUserId;
@@ -44,9 +40,7 @@ class DoctorProfileControllerTest {
     void setUp() {
         doctorProfileService = mock(DoctorProfileService.class);
         tenantUserManagementService = mock(TenantUserManagementService.class);
-        healthcarePublicListingSyncService = mock(HealthcarePublicListingSyncService.class);
-        moduleBusinessEventPublisher = mock(ModuleBusinessEventPublisher.class);
-        DoctorProfileController controller = new DoctorProfileController(doctorProfileService, tenantUserManagementService, healthcarePublicListingSyncService, moduleBusinessEventPublisher);
+        DoctorProfileController controller = new DoctorProfileController(doctorProfileService, tenantUserManagementService);
         mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
 
         tenantId = UUID.randomUUID();

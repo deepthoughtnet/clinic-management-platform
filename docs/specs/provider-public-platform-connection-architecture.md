@@ -2,7 +2,7 @@
 
 ## Status
 
-Approved for Batch A, Batch B hardening, and Batch C publication lifecycle synchronization.
+Approved for Batch A, Batch B hardening, Batch C publication lifecycle synchronization, Batch E2A ownership/consent separation, and Batch E2B public profile authoring/publication.
 
 ## Scope
 
@@ -21,6 +21,8 @@ In scope:
 - Platform Admin provider-connection console and read-only review/listing workflows
 - Batch B hardening for booking-reference security, relinking, and lifecycle validation
 - Batch C publication lifecycle synchronization from Healthcare/Platform into Discover-owned drafts and published profiles
+- Batch E2A tenant consent separation, provider ownership, membership, claim intent, and dispute foundations
+- Batch E2B provider public profile authoring, completeness, preview, moderation, and publication lifecycle
 
 Out of scope:
 
@@ -36,6 +38,390 @@ Out of scope:
 - automatic link activation
 - direct cross-application repository coupling
 - platform-driven edits to Healthcare or Discover-owned operational data
+
+## Batch E2A Additions
+
+Batch E2A introduces a clearer separation between:
+
+- Healthcare tenant consent to participate in public discovery
+- Discover-owned provider profile ownership and memberships
+- Platform-owned cross-application connection approval
+- bounded disputes and ownership-transfer foundations
+
+This batch does not remove the legacy public-listing boolean immediately. Existing runtime paths may continue to mirror the legacy field for compatibility, but new browser-facing contracts must prefer the richer consent/ownership summaries and opaque claim references.
+
+### Consent semantics
+
+Healthcare tenant state is consent only:
+
+- `DISABLED`
+- `ENABLED`
+- `REVOKED`
+
+Consent indicates that the tenant permits a clinic/provider entity to participate in Discover connection workflows. It does not itself grant publication, ownership, or booking capability.
+
+### Provider ownership
+
+Discover owns:
+
+- public profile ownership records
+- provider profile memberships
+- claim-intent validation after provider OTP authentication
+
+Recommended ownership states:
+
+- `UNCLAIMED`
+- `CLAIM_PENDING`
+- `VERIFIED`
+- `REJECTED`
+- `REVOKED`
+- `DISPUTED`
+- `TRANSFER_PENDING`
+
+Provider workspace projections must derive a separate business work-item status from
+the latest ownership lifecycle. A verified ownership record is authoritative over a
+stale claim-intent or review status. The initial supported projection states are:
+
+- `CLAIM_SUBMITTED`
+- `PLATFORM_REVIEW`
+- `OWNERSHIP_VERIFIED`
+- `CONSENT_REQUIRED`
+- `READY_FOR_PUBLICATION`
+- `PUBLISHED`
+- `DISPUTED`
+- `REJECTED`
+- `REVOKED`
+
+The projection may retain legacy claim and review fields for compatibility, but UI
+copy and allowed actions must use the derived work-item status. `OWNERSHIP_VERIFIED`
+must not display pending-review copy or expose an open-claim action. If tenant
+consent remains disabled, the item may remain actionable with `Tenant consent
+required` as its reason; consent, publication, platform connection, and booking
+capability remain independent states.
+
+### Batch E2A ownership-state cleanup
+
+The provider details page and Healthcare presence card must render from the latest
+persisted ownership lifecycle, not from the existence of a claim reference alone.
+
+Required provider page modes:
+
+- `CLAIM_INTENT_CREATED`
+- `PROVIDER_AUTHENTICATED`
+- `CLAIM_SUBMITTED`
+- `CLAIM_PENDING`
+- `OWNERSHIP_VERIFIED`
+- `CLAIM_REJECTED`
+- `CLAIM_DISPUTED`
+- `CLAIM_REVOKED`
+- `CLAIM_EXPIRED`
+
+Mode selection must be driven by the persisted lifecycle and latest ownership
+projection. Unknown or inconsistent states must fall back to a read-only view and
+must never expose claim submission controls.
+
+Provider-safe detail responses must include:
+
+- ownership status
+- review status
+- derived work-item or page mode
+- tenant consent status
+- publication status
+- platform connection status
+- booking capability
+- submitted timestamp
+- reviewed timestamp
+- ownership updated timestamp
+- claim note as read-only data
+- allowed actions
+
+Healthcare presence responses must include:
+
+- ownership status
+- current opaque connection reference when available
+- ownership updated timestamp
+- public profile synchronized timestamp when relevant
+- allowed actions
+
+Duplicate claim-intent creation must be rejected when an active claim or verified
+ownership already exists, using a lifecycle-specific conflict response code such as
+`ownership_already_verified` or `active_claim_exists`.
+
+The lifecycle policy must be authoritative in the discover domain and the API
+controllers must consume projected `allowedActions` from the backend instead of
+deriving claim actions from status strings locally. Provider workspace and
+Healthcare presence responses should prefer the current active lifecycle, not the
+presence of historical claim rows alone.
+
+The Healthcare action label must change with the lifecycle:
+
+- `UNCLAIMED`: `Connect a Provider account`
+- `CLAIM_PENDING`: `Open Provider Dashboard` or `View pending claim`
+- `VERIFIED`: `Open Provider Dashboard` or `View ownership`
+
+Verified ownership must keep the Provider workspace as the canonical place for
+public-profile management and must not auto-authenticate Healthcare admins as
+provider users.
+
+Recommended membership roles:
+
+- `OWNER`
+- `MANAGER`
+- `CONTENT_EDITOR`
+- `VIEWER`
+
+### Connection lifecycle
+
+Platform owns the connection lifecycle:
+
+- `NOT_CONNECTED`
+- `PROPOSED`
+- `PENDING_VERIFICATION`
+- `APPROVED`
+- `LINKED`
+- `DISCONNECTED`
+- `DISPUTED`
+- `REJECTED`
+
+Platform approval and ownership verification are related but separate decisions.
+
+## Batch E2B Additions
+
+Batch E2B uses the existing Discover landing-page/public-profile subsystem as the
+provider-facing public profile authoring and publication workflow. It must remain
+separate from provider ownership, Healthcare tenant consent, and platform
+connection approval.
+
+### Product boundary
+
+Provider public profile authoring must support:
+
+- section-based editing rather than a single long form
+- structured profile completeness and actionable missing-item guidance
+- preview that reuses the canonical public Discover rendering
+- draft publication workflow with immutable published versions
+- platform moderation queue for pending, ready, needs-changes, approved, rejected,
+  and published states
+
+The provider editor may be a structured landing-page builder as long as it is the
+canonical authoring surface for the public profile content.
+
+### Provider-facing lifecycle
+
+Public profile authoring is driven by the latest persisted public-profile lifecycle,
+not by ownership or onboarding draft state alone.
+
+Required phases:
+
+- `DRAFT`
+- `PROFILE_INCOMPLETE`
+- `READY_FOR_REVIEW`
+- `SUBMITTED`
+- `UNDER_REVIEW`
+- `CHANGES_REQUESTED`
+- `APPROVED`
+- `PUBLISHED`
+- `SUSPENDED`
+
+Ownership verification is a prerequisite to editing, but ownership state does not
+replace publication state. Tenant consent is independent. Platform connection is
+independent. Booking capability is independent.
+
+### Batch E2B.1 draft lifecycle
+
+Batch E2B.1 introduces the first provider-owned public-profile draft workflow
+without publication. It is limited to draft creation, section editing, saving,
+preview, and deterministic readiness evaluation.
+
+Required draft states:
+
+- `NO_DRAFT`
+- `DRAFT`
+- `DRAFT_INCOMPLETE`
+- `READY_FOR_REVIEW`
+
+Required readiness states:
+
+- `INCOMPLETE`
+- `READY`
+- `INVALID`
+
+Draft persistence must remain Discover-owned and versioned. The first draft may
+be created lazily for a verified Provider owner and must remain private. Draft
+creation and save operations must be idempotent and reload-safe.
+
+Batch E2B.1 must not activate submission, moderation, publication, or public
+visibility. Tenant consent remains a separate blocker and may disable
+submission, but it must not prevent draft editing.
+
+Preferred backend contract shape:
+
+- `discover-domain` owns draft entities, draft version history, readiness
+  evaluation, preview projection, and draft lifecycle policy
+
+### Batch E2B.2 moderation and publication
+
+Batch E2B.2 layers maker-checker moderation and explicit publication on top of
+the provider-owned draft lifecycle.
+
+Required moderation phases:
+
+- `NOT_SUBMITTED`
+- `SUBMITTED`
+- `UNDER_REVIEW`
+- `CHANGES_REQUESTED`
+- `APPROVED`
+- `REJECTED`
+- `WITHDRAWN`
+
+Required publication phases:
+
+- `UNPUBLISHED`
+- `PUBLISHED`
+- `SUSPENDED`
+
+Submission is only allowed when the current draft is `READY`, ownership is
+`VERIFIED`, tenant consent is enabled, and there is no active dispute or active
+submission. The submission command must capture an immutable snapshot of the
+current draft version.
+
+Reviewers inspect an immutable submitted snapshot. Provider edits must not
+mutate a submitted version. Review decisions are distinct from publication.
+Approval does not publish. Publication requires an explicit publish command and
+must only act on the approved version.
+
+Tenant consent revocation must remove anonymous visibility safely and
+idempotently without deleting draft, submission, review, or publication history.
+- `api-bff` exposes provider draft commands/queries and platform inspection
+  reads
+- `web-discover` owns the provider editor, preview, and readiness UI
+- `web-admin` may show read-only draft summary information only
+
+Recommended draft persistence tables:
+
+- `discover_public_profile_drafts`
+- `discover_public_profile_draft_versions`
+
+The provider-facing draft workspace should expose:
+
+- Overview
+- About
+- Contact
+- Services
+- Specialities
+- Facilities
+- Timings
+- Fees
+- Languages
+- Media
+- SEO
+- Preview
+- Readiness
+
+Provider action visibility must come from backend `allowedActions` and not from
+frontend status inference.
+
+### Completeness
+
+Completeness must be computed from persisted profile content and surfaced as
+actionable guidance. The UI should expose missing and optional items rather than a
+generic "incomplete" message.
+
+Typical completeness inputs include:
+
+- clinic name / display name
+- address / city / state
+- description / about content
+- at least one speciality
+- at least one service
+- opening hours / timings
+- media assets such as logo, cover image, and gallery
+- consultation fees
+- languages
+- SEO-friendly slug and metadata
+
+The implementation may reuse the existing `publicationReadiness` domain record as
+the canonical backend summary if it exposes the same persisted state.
+
+### Preview
+
+Preview must render the same public Discover components used by the public route.
+Preview mode may switch between desktop, tablet, and mobile shells, but it must not
+introduce editing affordances or a separate public canvas.
+
+### Publication moderation
+
+Platform moderation is a lifecycle state on the public profile publication workflow.
+Moderation does not alter ownership, consent, or connection state.
+
+The platform queue should be able to list:
+
+- pending profiles
+- ready profiles
+- profiles needing changes
+- approved profiles
+- rejected profiles
+- published profiles
+
+Reviewers may approve, reject, or request changes. Publishing creates an immutable
+published profile version and does not auto-enable booking or platform connection.
+
+### Discover visibility
+
+Only published profiles may appear in public discovery/search.
+Draft, submitted, under-review, and changes-requested profiles must remain hidden
+from public search and listing routes.
+
+### Allowed actions
+
+Provider editor allowed actions should be lifecycle-specific and read from the
+persisted public profile state. Typical actions:
+
+- save draft
+- preview
+- submit for review
+- view publication status
+- open public Discover page when published
+- revert to a prior version where supported
+
+Platform admin allowed actions should be lifecycle-specific and read from the same
+publication state:
+
+- approve
+- reject
+- request changes
+- view preview and completeness
+- open published page after publication
+
+### Ownership and persistence
+
+Ownership remains in Discover provider-ownership tables. Public profile authoring
+remains in Discover landing-page/public-profile tables. The API layer may
+orchestrate between them, but the storage ownership must not be merged.
+
+### Claim intent
+
+Healthcare may create a short-lived opaque claim/connection reference that the verified provider account resolves after OTP authentication. The reference must be:
+
+- random or server-protected
+- expiring
+- single-use or explicitly replay-safe
+- opaque to the browser
+- auditable across creation, authentication, submission, expiry, rejection, and revocation
+
+### Disputes
+
+Disputes are bounded records with statuses such as:
+
+- `OPEN`
+- `UNDER_REVIEW`
+- `EVIDENCE_REQUESTED`
+- `RESOLVED_FOR_CLAIMANT`
+- `RESOLVED_FOR_EXISTING_OWNER`
+- `CONNECTION_REVOKED`
+- `CLOSED`
+
+Disputes must not delete the public profile or merge identities automatically.
 
 ## Ownership
 

@@ -709,6 +709,7 @@ function normalizeUuidOrNull(value: string | null | undefined) {
 
 type BookingDoctorChoice = {
   publicDoctorId: string;
+  bookingReference: string | null;
   doctorSlug: string;
   doctorName: string;
   specialization: string | null;
@@ -787,6 +788,7 @@ function careBookingCapabilityTone(mode: CareBookingMode | null) {
 function mapPublicDoctorSummaryToBookingChoice(doctor: PublicDoctorSummaryResponse): BookingDoctorChoice {
   return {
     publicDoctorId: doctor.publicDoctorId,
+    bookingReference: doctor.bookingReference ?? null,
     doctorSlug: doctor.doctorSlug,
     doctorName: doctor.doctorDisplayName,
     specialization: doctor.speciality,
@@ -819,6 +821,7 @@ function mapPublicDoctorDetailToBookingChoice(
 ): BookingDoctorChoice {
   return {
     publicDoctorId: doctor.publicDoctorId,
+    bookingReference: doctor.bookingReference ?? null,
     doctorSlug: doctor.doctorSlug,
     doctorName: doctor.doctorDisplayName,
     specialization: doctor.specialities[0] ?? null,
@@ -1430,10 +1433,11 @@ export function PatientLoginPage({
       clinicSlug: portalClinicContext.clinicSlug,
       doctorId: portalClinicContext.doctorId,
       tenantId: portalClinicContext.tenantId,
+      bookingReference: portalClinicContext.bookingReference,
       nextPath: portalClinicContext.nextPath,
       mobile: patientAuthContext.mobile ?? null,
     });
-  }, [patientAuthContext.mobile, portalClinicContext]);
+  }, [patientAuthContext.mobile, portalClinicContext.bookingReference, portalClinicContext.clinicId, portalClinicContext.clinicSlug, portalClinicContext.doctorId, portalClinicContext.nextPath, portalClinicContext.tenantId]);
 
   useEffect(() => {
     if (!doctorDetail.data || session || doctorDetail.data.clinics.length !== 1) {
@@ -1483,6 +1487,7 @@ export function PatientLoginPage({
       clinicSlug: nextClinicCode,
       doctorId: portalClinicContext.doctorId,
       tenantId: portalClinicContext.tenantId,
+      bookingReference: portalClinicContext.bookingReference,
       nextPath: portalClinicContext.nextPath,
     });
   }
@@ -3055,6 +3060,7 @@ export function PatientBookAppointmentPage({
   const [selectedSpeciality, setSelectedSpeciality] = useState("All");
   const [selectedDoctorId, setSelectedDoctorId] = useState("");
   const [selectedDoctorSlug, setSelectedDoctorSlug] = useState("");
+  const [selectedBookingReference, setSelectedBookingReference] = useState<string | null>(publicBookingContext.bookingReference ?? null);
   const [selectedClinicId, setSelectedClinicId] = useState("");
   const [selectedClinicSlug, setSelectedClinicSlug] = useState("");
   const [selectedTenantId, setSelectedTenantId] = useState("");
@@ -3108,9 +3114,10 @@ export function PatientBookAppointmentPage({
       clinicSlug: publicBookingContext.clinicSlug ?? publicBookingContext.clinicCode ?? null,
       tenantId: bookingTenantId,
       doctorId: publicBookingContext.doctorId ?? null,
+      bookingReference: publicBookingContext.bookingReference ?? null,
       nextPath: currentBookingPath,
     });
-  }, [bookingClinicId, bookingTenantId, currentBookingPath, publicBookingContext]);
+  }, [bookingClinicId, bookingTenantId, currentBookingPath, publicBookingContext.bookingReference, publicBookingContext.clinicCode, publicBookingContext.clinicSlug, publicBookingContext.doctorId]);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -3215,6 +3222,7 @@ export function PatientBookAppointmentPage({
       clinicSlug,
       tenantId: nextTenantId,
       doctorId: selectedDoctorId || null,
+      bookingReference: selectedBookingReference,
       nextPath: currentBookingPath,
     });
   }
@@ -3360,6 +3368,7 @@ export function PatientBookAppointmentPage({
     if (seededDoctor) {
       setSelectedDoctorId(seededDoctor.publicDoctorId);
       setSelectedDoctorSlug(seededDoctor.doctorSlug);
+      setSelectedBookingReference(seededDoctor.bookingReference ?? publicBookingContext.bookingReference ?? null);
       if (bookingClinicCode) {
         setSelectedClinicId(bookingClinicId || "");
         setSelectedClinicSlug(bookingClinicCode);
@@ -3380,6 +3389,7 @@ export function PatientBookAppointmentPage({
     setDoctorSearchTerm("");
     setSelectedDoctorId("");
     setSelectedDoctorSlug("");
+    setSelectedBookingReference(null);
     setSelectedClinicId("");
     setSelectedClinicSlug("");
     setSelectedTenantId("");
@@ -3423,6 +3433,7 @@ export function PatientBookAppointmentPage({
         clinicSlug: resolvedSelectedClinicSlug,
         tenantId: resolvedTenantId,
         clinicId: resolvedClinicId,
+        bookingReference: selectedDoctorBookingReference,
         appointmentDate: selectedDate,
         appointmentTime: selectedSlotTime,
         reason: reason.trim() ? reason.trim() : null,
@@ -3446,6 +3457,9 @@ export function PatientBookAppointmentPage({
     () => allDoctorOptions.find((doctor) => doctor.publicDoctorId === selectedDoctorId) ?? null,
     [allDoctorOptions, selectedDoctorId],
   );
+  const selectedDoctorBookingReference =
+    selectedDoctor?.bookingReference || selectedBookingReference || publicBookingContext.bookingReference || null;
+  const selectedDoctorBookingMode = normalizeCareBookingMode(selectedDoctor?.bookingMode ?? null);
   const selectedDoctorClinics = doctorContextDetail.data?.clinics ?? [];
   const resolvedSelectedClinicSlug =
     selectedClinicSlug
@@ -3529,6 +3543,7 @@ export function PatientBookAppointmentPage({
       const matchedDoctor = doctorOptions.find((doctor) => doctor.publicDoctorId === bookingDoctorId) ?? null;
       setSelectedDoctorId(bookingDoctorId);
       setSelectedDoctorSlug(matchedDoctor?.doctorSlug ?? bookingDoctorSlug ?? "");
+      setSelectedBookingReference(matchedDoctor?.bookingReference ?? publicBookingContext.bookingReference ?? null);
       return;
     }
 
@@ -3537,6 +3552,7 @@ export function PatientBookAppointmentPage({
       if (matchedDoctor) {
         setSelectedDoctorId(matchedDoctor.publicDoctorId);
         setSelectedDoctorSlug(matchedDoctor.doctorSlug);
+        setSelectedBookingReference(matchedDoctor.bookingReference ?? publicBookingContext.bookingReference ?? null);
         return;
       }
     }
@@ -3549,13 +3565,15 @@ export function PatientBookAppointmentPage({
     if (firstDoctor) {
       setSelectedDoctorId(firstDoctor.publicDoctorId);
       setSelectedDoctorSlug(firstDoctor.doctorSlug);
+      setSelectedBookingReference(firstDoctor.bookingReference ?? publicBookingContext.bookingReference ?? null);
     } else {
       setSelectedDoctorId("");
       setSelectedDoctorSlug("");
+      setSelectedBookingReference(null);
       setSelectedClinicId("");
       setSelectedClinicSlug("");
     }
-  }, [bookingDoctorId, bookingDoctorSlug, doctorOptions, selectedDoctorId]);
+  }, [bookingDoctorId, bookingDoctorSlug, doctorOptions, publicBookingContext.bookingReference, selectedDoctorId]);
 
   useEffect(() => {
     if (!selectedDoctorId) {
@@ -3599,9 +3617,17 @@ export function PatientBookAppointmentPage({
     const slotRequestClinicSlug = resolvedSelectedClinicSlug || "";
     const slotRequestClinicId = resolvedSelectedClinicId || "";
     const slotRequestTenantId = resolvedSelectedTenantId || "";
-    const slotRequestKey = `${slotRequestDoctorId}|${slotRequestClinicId}|${slotRequestTenantId}|${slotRequestClinicSlug}|${selectedDate}`;
+    const slotRequestKey = `${selectedDoctorBookingReference || ""}|${slotRequestDoctorId}|${slotRequestClinicId}|${slotRequestTenantId}|${slotRequestClinicSlug}|${selectedDate}`;
 
     if (!slotRequestDoctorId || !slotRequestClinicSlug || !selectedDate) {
+      setSlots([]);
+      setSlotsLoading(false);
+      setSlotsError(null);
+      lastSlotRequestKeyRef.current = null;
+      return;
+    }
+
+    if (normalizeCareBookingMode(selectedDoctor?.bookingMode ?? null) !== "ONLINE_BOOKING") {
       setSlots([]);
       setSlotsLoading(false);
       setSlotsError(null);
@@ -3635,6 +3661,7 @@ export function PatientBookAppointmentPage({
         publicDoctorId: selectedDoctor?.publicDoctorId ?? null,
         id: selectedDoctorId || null,
         slug: selectedDoctor?.doctorSlug || null,
+        bookingReference: selectedDoctorBookingReference,
         clinicId: resolvedSelectedClinicId,
         tenantId: resolvedSelectedTenantId,
       });
@@ -3650,6 +3677,7 @@ export function PatientBookAppointmentPage({
 
     loadPatientPortalDoctorSlots(
       {
+        bookingReference: selectedDoctorBookingReference || null,
         doctorId: slotRequestDoctorId,
         clinicSlug: slotRequestClinicSlug,
         tenantId: slotRequestTenantId || null,
@@ -3696,6 +3724,8 @@ export function PatientBookAppointmentPage({
     resolvedSelectedTenantId,
     selectedDate,
     selectedDoctorId,
+    selectedDoctorBookingReference,
+    selectedDoctor?.bookingMode,
   ]);
 
   useEffect(() => {
@@ -3729,6 +3759,7 @@ export function PatientBookAppointmentPage({
           }
           setSelectedDoctorId(doctor.publicDoctorId);
           setSelectedDoctorSlug(doctor.doctorSlug);
+          setSelectedBookingReference(doctor.bookingReference ?? null);
           if (bookingClinicCode) {
             setSelectedClinicId(bookingClinicId || "");
             setSelectedClinicSlug(bookingClinicCode);
@@ -3758,6 +3789,7 @@ export function PatientBookAppointmentPage({
             clinicSlug: bookingClinicCode || (doctorContextDetail.data?.clinics.length === 1 ? doctor.clinicSlug : null),
             tenantId: bookingTenantId,
             doctorId: doctor.publicDoctorId,
+            bookingReference: doctor.bookingReference ?? null,
             nextPath: currentBookingPath,
           });
         }}
@@ -3998,84 +4030,108 @@ export function PatientBookAppointmentPage({
               <h2>Select date and slot</h2>
               <span className="panel-caption">Step 2</span>
             </div>
-            <div className="patient-form-field">
-              <span>Date</span>
-              <div className="booking-date-strip" role="list" aria-label="Available booking dates">
-                {Array.from({ length: 7 }, (_, index) => {
-                  const candidate = new Date(`${bookingDateStartIso}T00:00:00Z`);
-                  candidate.setUTCDate(candidate.getUTCDate() + index);
-                  const iso = candidate.toISOString().slice(0, 10);
-                  const label = index === 0 ? "Today" : index === 1 ? "Tomorrow" : formatDate(iso);
-                  const isActive = selectedDate === iso;
-                  return (
-                    <button
-                      key={iso}
-                      className={`booking-date-pill${isActive ? " is-active" : ""}`}
-                      type="button"
-                      onClick={() => setSelectedDate(iso)}
-                      aria-pressed={isActive}
-                    >
-                      <strong>{label}</strong>
-                      <span>{formatDate(iso)}</span>
-                    </button>
-                  );
-                })}
-              </div>
-              <input
-                className="visually-hidden"
-                type="date"
-                min={currentIsoDateInTimeZone("Asia/Kolkata")}
-                value={selectedDate}
-                onChange={(event) => setSelectedDate(event.target.value)}
-                aria-label="Booking date"
-              />
-              <p className="form-note">Selected date: {formatDate(selectedDate)}</p>
-            </div>
+            {selectedDoctor && normalizeCareBookingMode(selectedDoctor.bookingMode ?? null) === "ONLINE_BOOKING" ? (
+              <>
+                <div className="patient-form-field">
+                  <span>Date</span>
+                  <div className="booking-date-strip" role="list" aria-label="Available booking dates">
+                    {Array.from({ length: 7 }, (_, index) => {
+                      const candidate = new Date(`${bookingDateStartIso}T00:00:00Z`);
+                      candidate.setUTCDate(candidate.getUTCDate() + index);
+                      const iso = candidate.toISOString().slice(0, 10);
+                      const label = index === 0 ? "Today" : index === 1 ? "Tomorrow" : formatDate(iso);
+                      const isActive = selectedDate === iso;
+                      return (
+                        <button
+                          key={iso}
+                          className={`booking-date-pill${isActive ? " is-active" : ""}`}
+                          type="button"
+                          onClick={() => setSelectedDate(iso)}
+                          aria-pressed={isActive}
+                        >
+                          <strong>{label}</strong>
+                          <span>{formatDate(iso)}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <input
+                    className="visually-hidden"
+                    type="date"
+                    min={currentIsoDateInTimeZone("Asia/Kolkata")}
+                    value={selectedDate}
+                    onChange={(event) => setSelectedDate(event.target.value)}
+                    aria-label="Booking date"
+                  />
+                  <p className="form-note">Selected date: {formatDate(selectedDate)}</p>
+                </div>
 
-            {slotsLoading ? <div className="patient-inline-empty">Loading available slots...</div> : null}
-            {slotsError ? (
+                {slotsLoading ? <div className="patient-inline-empty">Loading available slots...</div> : null}
+                {slotsError ? (
+                  <div className="patient-inline-empty">
+                    <strong>Slots unavailable</strong>
+                    <p>{slotsError}</p>
+                  </div>
+                ) : null}
+                {!slotsLoading && !slotsError && availableSlots.length === 0 ? (
+                  <div className="patient-inline-empty">
+                    <strong>No slots available for this date.</strong>
+                    <p>Try the next day or choose another doctor to continue.</p>
+                    <div className="patient-action-row">
+                      <Link className="secondary-button" to="/patient/careai">
+                        Need help booking? Ask AIVA.
+                      </Link>
+                    </div>
+                  </div>
+                ) : null}
+
+                {availableSlotGroups.length > 0 ? (
+                  <div className="booking-slot-groups">
+                    {availableSlotGroups.map((group) => (
+                      <section key={group.date} className="booking-slot-group">
+                        <div className="patient-panel-heading booking-slot-group-heading">
+                          <h3>{group.label}</h3>
+                          <span className="panel-caption">{group.slots.length} slot{group.slots.length === 1 ? "" : "s"}</span>
+                        </div>
+                        <div className="booking-slot-grid">
+                          {group.slots.map((slot) => (
+                            <button
+                              key={`${slot.appointmentDate}-${slot.slotTime}`}
+                              className={`booking-slot-card${selectedSlotTime === slot.slotTime ? " is-active" : ""}`}
+                              type="button"
+                              onClick={() => setSelectedSlot(slot)}
+                            >
+                              <strong>{formatTime(slot.slotTime)}</strong>
+                              <span>{slot.slotEndTime ? `Until ${formatTime(slot.slotEndTime)}` : "Available"}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </section>
+                    ))}
+                  </div>
+                ) : null}
+              </>
+            ) : selectedDoctor ? (
               <div className="patient-inline-empty">
-                <strong>Slots unavailable</strong>
-                <p>{slotsError}</p>
-              </div>
-            ) : null}
-            {!slotsLoading && !slotsError && selectedDoctor && availableSlots.length === 0 ? (
-              <div className="patient-inline-empty">
-                <strong>No slots available for this date.</strong>
-                <p>Try the next day or choose another doctor to continue.</p>
+                <strong>{careBookingCapabilityLabel(normalizeCareBookingMode(selectedDoctor.bookingMode ?? null))}</strong>
+                <p>{careBookingCapabilitySecondaryText(normalizeCareBookingMode(selectedDoctor.bookingMode ?? null))}</p>
                 <div className="patient-action-row">
-                  <Link className="secondary-button" to="/patient/careai">
+                  {selectedDoctor.contactPhone ? (
+                    <a className="secondary-button" href={`tel:${selectedDoctor.contactPhone.replace(/\s+/g, "")}`}>
+                      Call clinic
+                    </a>
+                  ) : null}
+                  <Link className="ghost-button" to="/patient/careai">
                     Need help booking? Ask AIVA.
                   </Link>
                 </div>
               </div>
-            ) : null}
-
-            {availableSlotGroups.length > 0 ? (
-              <div className="booking-slot-groups">
-                {availableSlotGroups.map((group) => (
-                  <section key={group.date} className="booking-slot-group">
-                    <div className="patient-panel-heading booking-slot-group-heading">
-                      <h3>{group.label}</h3>
-                      <span className="panel-caption">{group.slots.length} slot{group.slots.length === 1 ? "" : "s"}</span>
-                    </div>
-                    <div className="booking-slot-grid">
-                      {group.slots.map((slot) => (
-                        <button
-                          key={`${slot.appointmentDate}-${slot.slotTime}`}
-                          className={`booking-slot-card${selectedSlotTime === slot.slotTime ? " is-active" : ""}`}
-                          type="button"
-                          onClick={() => setSelectedSlot(slot)}
-                        >
-                          <strong>{formatTime(slot.slotTime)}</strong>
-                          <span>{slot.slotEndTime ? `Until ${formatTime(slot.slotEndTime)}` : "Available"}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </section>
-                ))}
+            ) : (
+              <div className="patient-inline-empty">
+                <strong>Select a doctor to continue.</strong>
+                <p>Choose a provider from the list above to see booking options.</p>
               </div>
-            ) : null}
+            )}
             </section>
           </div>
 
@@ -4084,58 +4140,81 @@ export function PatientBookAppointmentPage({
               <h2>Confirm booking</h2>
               <span className="panel-caption">Step 3</span>
             </div>
-            <form className="patient-booking-form" onSubmit={handleSubmit}>
-              <label className="patient-form-field">
-                <span>Reason for visit</span>
-                <textarea
-                  value={reason}
-                  onChange={(event) => setReason(event.target.value)}
-                  maxLength={300}
-                  rows={4}
-                  placeholder="Optional symptoms or complaint"
-                />
-              </label>
-              <div className="booking-summary-card">
-                <strong>{selectedDoctor?.doctorName ?? "Select a doctor"}</strong>
-                <span>{selectedDoctor?.specialization ?? "Choose a speciality and doctor first."}</span>
-                <small>
-                  {selectedDoctor?.clinicName ?? "Clinic"} {selectedDate ? `· ${selectedSlotTime ? formatDateTimeFromParts(selectedDate, selectedSlotTime) : formatDate(selectedDate)}` : ""}
-                  <br />
-                  Selected location: {selectedLocation}
-                </small>
-              </div>
-              {submitError ? (
-                <div className="patient-inline-empty">
-                  <strong>Booking unavailable</strong>
-                  <p>{submitError}</p>
+            {selectedDoctor && selectedDoctorBookingMode === "ONLINE_BOOKING" ? (
+              <form className="patient-booking-form" onSubmit={handleSubmit}>
+                <label className="patient-form-field">
+                  <span>Reason for visit</span>
+                  <textarea
+                    value={reason}
+                    onChange={(event) => setReason(event.target.value)}
+                    maxLength={300}
+                    rows={4}
+                    placeholder="Optional symptoms or complaint"
+                  />
+                </label>
+                <div className="booking-summary-card">
+                  <strong>{selectedDoctor?.doctorName ?? "Select a doctor"}</strong>
+                  <span>{selectedDoctor?.specialization ?? "Choose a speciality and doctor first."}</span>
+                  <small>
+                    {selectedDoctor?.clinicName ?? "Clinic"} {selectedDate ? `· ${selectedSlotTime ? formatDateTimeFromParts(selectedDate, selectedSlotTime) : formatDate(selectedDate)}` : ""}
+                    <br />
+                    Selected location: {selectedLocation}
+                    {selectedDoctorBookingReference ? <><br />Booking reference secured</> : null}
+                  </small>
                 </div>
-              ) : null}
-              {confirmation ? (
-                <div className="patient-success-card">
-                  <strong>{confirmation.message}</strong>
-                  <p>
-                    {confirmation.doctorName ?? "Doctor"} · {formatDateTimeFromParts(confirmation.appointmentDate, confirmation.appointmentTime)}
-                  </p>
-                  <span>
-                    {confirmation.clinicName ?? "Clinic"} · {formatStatusLabel(confirmation.status)}
-                  </span>
-                  <Link className="secondary-button" to="/patient/appointments">
-                    View appointments
+                {submitError ? (
+                  <div className="patient-inline-empty">
+                    <strong>Booking unavailable</strong>
+                    <p>{submitError}</p>
+                  </div>
+                ) : null}
+                {confirmation ? (
+                  <div className="patient-success-card">
+                    <strong>{confirmation.message}</strong>
+                    <p>
+                      {confirmation.doctorName ?? "Doctor"} · {formatDateTimeFromParts(confirmation.appointmentDate, confirmation.appointmentTime)}
+                    </p>
+                    <span>
+                      {confirmation.clinicName ?? "Clinic"} · {formatStatusLabel(confirmation.status)}
+                    </span>
+                    <Link className="secondary-button" to="/patient/appointments">
+                      View appointments
+                    </Link>
+                  </div>
+                ) : null}
+                <div className="patient-action-row">
+                  <button className="primary-button" type="submit" disabled={submitPending || !selectedDoctorId || !selectedSlotTime}>
+                    {submitPending ? "Confirming..." : "Confirm booking"}
+                  </button>
+                  <Link className="ghost-button" to="/patient/appointments">
+                    Cancel
+                  </Link>
+                  <Link className="ghost-button" to="/patient/careai">
+                    Need help booking? Ask AIVA.
                   </Link>
                 </div>
-              ) : null}
-              <div className="patient-action-row">
-                <button className="primary-button" type="submit" disabled={submitPending || !selectedDoctorId || !selectedSlotTime}>
-                  {submitPending ? "Confirming..." : "Confirm booking"}
-                </button>
-                <Link className="ghost-button" to="/patient/appointments">
-                  Cancel
-                </Link>
-                <Link className="ghost-button" to="/patient/careai">
-                  Need help booking? Ask AIVA.
-                </Link>
+              </form>
+            ) : selectedDoctor ? (
+              <div className="patient-inline-empty">
+                <strong>{careBookingCapabilityLabel(selectedDoctorBookingMode)}</strong>
+                <p>{careBookingCapabilitySecondaryText(selectedDoctorBookingMode)}</p>
+                <div className="patient-action-row">
+                  {selectedDoctor.contactPhone ? (
+                    <a className="secondary-button" href={`tel:${selectedDoctor.contactPhone.replace(/\s+/g, "")}`}>
+                      Call clinic
+                    </a>
+                  ) : null}
+                  <Link className="ghost-button" to="/patient/careai">
+                    Need help booking? Ask AIVA.
+                  </Link>
+                </div>
               </div>
-            </form>
+            ) : (
+              <div className="patient-inline-empty">
+                <strong>Select a doctor to continue.</strong>
+                <p>Choose a provider from the list above to see booking options.</p>
+              </div>
+            )}
           </section>
         </>
       ) : null}

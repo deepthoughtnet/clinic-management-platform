@@ -5,6 +5,7 @@ import java.util.List;
 
 public record PublicationReadinessRecord(
         boolean ready,
+        int completenessPercentage,
         List<String> missingFields,
         List<String> invalidFields,
         List<String> warnings,

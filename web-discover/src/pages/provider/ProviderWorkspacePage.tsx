@@ -1,6 +1,14 @@
+import * as React from "react";
 import { useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { createProviderOnboardingAccess, type ProviderWorkspaceApplication } from "../../api/providerAuth";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import {
+  createProviderOnboardingAccess,
+  getProviderClaimReview,
+  submitProviderClaim,
+  type ProviderClaimReviewResponse,
+  type ProviderWorkspaceApplication,
+  type ProviderWorkspaceWorkItem,
+} from "../../api/providerAuth";
 import { DiscoverEmptyState } from "../../components/DiscoveryComponents";
 import { useProviderSession } from "../../context/ProviderSessionContext";
 import { DISCOVER_ROUTES } from "../../routes";
@@ -102,21 +110,192 @@ function attentionSubtitle(application: ProviderWorkspaceApplication) {
   return `${application.completionPercent}% complete · ${application.missingRequirementCount} required items remaining`;
 }
 
+function isOwnershipClaimWorkItem(item: ProviderWorkspaceWorkItem) {
+  return item.workItemType === "OWNERSHIP_CLAIM";
+}
+
+function claimSubtitle(item: ProviderWorkspaceWorkItem) {
+  if (item.ownershipStatus === "VERIFIED" || item.workItemStatus === "OWNERSHIP_VERIFIED") {
+    return item.publicDiscoveryConsent === "DISABLED"
+      ? "Tenant consent required"
+      : "Your ownership has been verified.";
+  }
+  if (item.workItemStatus === "PLATFORM_REVIEW" || item.claimStatus === "CLAIM_SUBMITTED" || item.ownershipStatus === "CLAIM_PENDING" || item.reviewStatus === "PENDING_REVIEW") {
+    return "Claim submitted - awaiting Platform review";
+  }
+  if (item.claimStatus === "PROVIDER_AUTHENTICATED") {
+    return "Claim review ready";
+  }
+  if (item.claimStatus === "APPROVED" || item.ownershipStatus === "APPROVED") {
+    return "Claim approved";
+  }
+  if (item.claimStatus === "REJECTED") {
+    return "Claim rejected";
+  }
+  if (item.claimStatus === "REVOKED") {
+    return "Claim revoked";
+  }
+  if (item.claimStatus === "DISPUTED") {
+    return "Claim disputed";
+  }
+  if (item.claimStatus === "EXPIRED" || item.ownershipStatus === "EXPIRED") {
+    return "Claim expired";
+  }
+  return "Claim in progress";
+}
+
+function claimCardTitle(item: ProviderWorkspaceWorkItem) {
+  if (item.ownershipStatus === "VERIFIED" || item.workItemStatus === "OWNERSHIP_VERIFIED") {
+    return "Ownership verified";
+  }
+  return item.displayName || "Pending claim";
+}
+
+function claimPrimaryActionLabel(item: ProviderWorkspaceWorkItem) {
+  if (item.allowedActions.includes("OPEN_PUBLIC_PROFILE")) {
+    return "Open public profile";
+  }
+  if (item.allowedActions.includes("VIEW_PREVIEW")) {
+    return "Preview profile";
+  }
+  if (item.allowedActions.includes("VIEW_READINESS")) {
+    return "View readiness";
+  }
+  if (item.allowedActions.includes("OPEN_CLAIM")) {
+    return "Open claim";
+  }
+  if (item.allowedActions.includes("OPEN_PROFILE")) {
+    return "Open profile";
+  }
+  if (item.allowedActions.includes("VIEW_DETAILS")) {
+    return "View details";
+  }
+  return null;
+}
+
+function claimPrimaryActionHref(item: ProviderWorkspaceWorkItem) {
+  if (item.allowedActions.includes("OPEN_PUBLIC_PROFILE") || item.allowedActions.includes("VIEW_PREVIEW") || item.allowedActions.includes("VIEW_READINESS")) {
+    const profileReference = item.publicProfileReference?.trim();
+    if (!profileReference) {
+      return null;
+    }
+    const section = item.allowedActions.includes("VIEW_PREVIEW")
+      ? "preview"
+      : item.allowedActions.includes("VIEW_READINESS")
+        ? "readiness"
+        : "overview";
+    return DISCOVER_ROUTES.providerPublicProfileDraft.path
+      .replace(":profileReference", encodeURIComponent(profileReference))
+      .replace(":section", section);
+  }
+  const reference = item.connectionReference?.trim();
+  if (!reference) {
+    return null;
+  }
+  return `${DISCOVER_ROUTES.providerWorkspace.path}?connectionReference=${encodeURIComponent(reference)}`;
+}
+
+function claimLocationLabel(item: ProviderWorkspaceWorkItem) {
+  if (!item.city) {
+    return "—";
+  }
+  return item.area ? `${item.city} · ${item.area}` : item.city;
+}
+
+function publicProfileTypeLabel(value: string) {
+  switch (value) {
+    case "DOCTOR":
+      return "Doctor";
+    case "HOSPITAL":
+      return "Hospital";
+    case "CLINIC":
+      return "Clinic";
+    default:
+      return value.replaceAll("_", " ").replace(/\b\w/g, (char) => char.toUpperCase());
+  }
+}
+
+function claimStatusPill(item: ProviderWorkspaceWorkItem) {
+  return item.workItemStatus || item.ownershipStatus || item.reviewStatus || item.claimStatus || "PENDING";
+}
+
+function claimReviewStateLabel(review: ProviderClaimReviewResponse) {
+  return review.pageMode || review.workItemStatus || review.status || "READ_ONLY_FALLBACK";
+}
+
+function claimReviewTitle(review: ProviderClaimReviewResponse) {
+  if (review.pageMode === "OWNERSHIP_VERIFIED") {
+    return "Ownership verified";
+  }
+  if (review.pageMode === "CLAIM_REJECTED") {
+    return "Claim rejected";
+  }
+  if (review.pageMode === "CLAIM_DISPUTED") {
+    return "Claim disputed";
+  }
+  if (review.pageMode === "CLAIM_REVOKED") {
+    return "Claim revoked";
+  }
+  if (review.pageMode === "CLAIM_EXPIRED") {
+    return "Claim expired";
+  }
+  return "Claim review";
+}
+
+function claimReviewSubtitle(review: ProviderClaimReviewResponse) {
+  if (review.pageMode === "OWNERSHIP_VERIFIED") {
+    return `Your ownership of ${review.displayName || "this provider"} has been verified. Tenant consent is required before the public profile can proceed toward publication.`;
+  }
+  if (review.pageMode === "CLAIM_PENDING" || review.pageMode === "CLAIM_SUBMITTED") {
+    return "Your claim is being reviewed.";
+  }
+  if (review.pageMode === "PROVIDER_AUTHENTICATED" || review.pageMode === "CLAIM_INTENT_CREATED") {
+    return "Your claim can be submitted after you review the details.";
+  }
+  return "This ownership record is read-only.";
+}
+
+function claimReviewCanSubmit(review: ProviderClaimReviewResponse) {
+  return review.allowedActions.includes("SUBMIT_CLAIM");
+}
+
 export function ProviderWorkspacePage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { workspace, logout } = useProviderSession();
   const [loggingOut, setLoggingOut] = useState(false);
   const [openingReference, setOpeningReference] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [claimReference, setClaimReference] = useState<string | null>(null);
+  const [claimReview, setClaimReview] = useState<ProviderClaimReviewResponse | null>(null);
+  const [claimLoading, setClaimLoading] = useState(false);
+  const [claimSubmitting, setClaimSubmitting] = useState(false);
+  const [claimNote, setClaimNote] = useState("");
 
   const activeApplications = workspace?.applications ?? [];
   const publishedProfiles = workspace?.publishedProfiles ?? [];
+  const workItems = workspace?.workItems ?? [];
   const supportedProviderTypes = workspace?.supportedProviderTypes ?? [];
   const attentionItems = useMemo(
-    () => [...activeApplications]
-      .filter(isAttentionApplication)
-      .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()),
-    [activeApplications],
+    () => [
+      ...workItems
+        .filter(isOwnershipClaimWorkItem)
+        .filter((item) => item.workItemStatus !== "PUBLISHED")
+        .filter((item) => item.workItemStatus !== "OWNERSHIP_VERIFIED" || item.publicDiscoveryConsent === "DISABLED")
+        .map((item) => ({
+          kind: "OWNERSHIP_CLAIM" as const,
+          updatedAt: item.lastUpdatedAt ?? null,
+          item,
+        })),
+      ...activeApplications
+        .filter(isAttentionApplication)
+        .map((application) => ({
+          kind: "ONBOARDING_APPLICATION" as const,
+          updatedAt: application.updatedAt,
+          application,
+        })),
+    ].sort((left, right) => new Date(right.updatedAt ?? 0).getTime() - new Date(left.updatedAt ?? 0).getTime()),
+    [activeApplications, workItems],
   );
   const recentActivity = useMemo(
     () => [...activeApplications, ...publishedProfiles]
@@ -134,6 +313,39 @@ export function ProviderWorkspacePage() {
 
   const emailSummary = maskContact(workspace?.contactEmail ?? null, "email");
   const phoneSummary = maskContact(workspace?.contactPhone ?? null, "phone");
+  const connectionReference = searchParams.get("connectionReference")?.trim() || null;
+
+  React.useEffect(() => {
+    let cancelled = false;
+    async function loadClaim() {
+      if (!connectionReference) {
+        setClaimReference(null);
+        setClaimReview(null);
+        return;
+      }
+      setClaimLoading(true);
+      try {
+        const review = await getProviderClaimReview(connectionReference);
+        if (!cancelled) {
+          setClaimReference(connectionReference);
+          setClaimReview(review);
+          setClaimNote(review.claimNote ?? review.reason ?? "");
+        }
+      } catch (ex) {
+        if (!cancelled) {
+          setError(ex instanceof Error ? ex.message : "Could not load claim review.");
+        }
+      } finally {
+        if (!cancelled) {
+          setClaimLoading(false);
+        }
+      }
+    }
+    void loadClaim();
+    return () => {
+      cancelled = true;
+    };
+  }, [connectionReference]);
 
   async function endSession(targetPath: string) {
     setLoggingOut(true);
@@ -162,6 +374,22 @@ export function ProviderWorkspacePage() {
       setError(ex instanceof Error ? ex.message : "Could not open the selected application.");
     } finally {
       setOpeningReference(null);
+    }
+  }
+
+  async function submitClaim() {
+    if (!claimReference) {
+      return;
+    }
+    setClaimSubmitting(true);
+    setError(null);
+    try {
+      const review = await submitProviderClaim(claimReference, { reason: claimNote.trim() || null });
+      setClaimReview(review);
+    } catch (ex) {
+      setError(ex instanceof Error ? ex.message : "Could not submit claim.");
+    } finally {
+      setClaimSubmitting(false);
     }
   }
 
@@ -198,6 +426,111 @@ export function ProviderWorkspacePage() {
 
       {error ? <p className="inline-error" role="alert">{error}</p> : null}
 
+      {connectionReference ? (
+        <section className="provider-account-section" aria-label="Claim review">
+          <div className="provider-account-section-heading">
+            <div>
+              <h2>{claimReview ? claimReviewTitle(claimReview) : "Claim review"}</h2>
+              <p>{claimReview ? claimReviewSubtitle(claimReview) : "Loading ownership lifecycle state."}</p>
+            </div>
+            <span className="provider-account-session-pill">{claimReview ? claimReviewStateLabel(claimReview) : "Pending"}</span>
+          </div>
+          {claimLoading ? (
+            <div className="provider-dashboard-skeleton" role="status" aria-label="Loading claim review">
+              <span />
+              <span />
+              <span />
+            </div>
+          ) : claimReview ? (
+            <div className="provider-account-section">
+              <div className="provider-account-summary-grid">
+                <article className="provider-account-summary-card">
+                  <span>Provider</span>
+                  <strong>{claimReview.displayName || "Selected provider"}</strong>
+                  <p>{claimReview.city || "—"}{claimReview.area ? ` · ${claimReview.area}` : ""}</p>
+                </article>
+                <article className="provider-account-summary-card">
+                  <span>Ownership</span>
+                  <strong>{claimReview.ownershipStatus}</strong>
+                  <p>{claimReview.maskedProviderMobile ? `Owner mobile ending ${claimReview.maskedProviderMobile.slice(-4)}` : "Verified provider account"}</p>
+                </article>
+                <article className="provider-account-summary-card">
+                  <span>Review</span>
+                  <strong>{claimReview.reviewStatus}</strong>
+                  <p>{claimReview.workItemStatus}</p>
+                </article>
+                <article className="provider-account-summary-card">
+                  <span>Tenant consent</span>
+                  <strong>{claimReview.tenantConsentStatus}</strong>
+                  <p>Publication {claimReview.publicProfileStatus}</p>
+                </article>
+                <article className="provider-account-summary-card">
+                  <span>Connection</span>
+                  <strong>{claimReview.platformConnectionStatus}</strong>
+                  <p>{claimReview.bookingCapability}</p>
+                </article>
+                <article className="provider-account-summary-card">
+                  <span>Ownership updated</span>
+                  <strong>{formatDateTime(claimReview.ownershipUpdatedAt)}</strong>
+                  <p>{claimReview.publicProfileStatus === "PUBLISHED" ? "Public profile synchronized" : "Public profile not yet synchronized"}</p>
+                </article>
+              </div>
+              <div className="provider-account-section">
+                <label className="field-label">Submitted claim note</label>
+                <p className="body-small">{claimReview.claimNote?.trim() || claimReview.reason?.trim() || "No claim note was submitted."}</p>
+                <dl className="provider-account-detail-list">
+                  <div>
+                    <dt>Submitted at</dt>
+                    <dd>{formatDateTime(claimReview.submittedAt)}</dd>
+                  </div>
+                  <div>
+                    <dt>Reviewed at</dt>
+                    <dd>{formatDateTime(claimReview.reviewedAt)}</dd>
+                  </div>
+                  <div>
+                    <dt>Connection reference</dt>
+                    <dd>{claimReview.connectionReference}</dd>
+                  </div>
+                </dl>
+                {claimReviewCanSubmit(claimReview) ? (
+                  <>
+                    <label className="field-label" htmlFor="claim-note">Claim note</label>
+                    <textarea
+                      id="claim-note"
+                      className="text-area"
+                      value={claimNote}
+                      onChange={(event) => setClaimNote(event.target.value)}
+                      rows={3}
+                      aria-label="Claim note"
+                    />
+                    <div className="cta-row">
+                      <button className="primary-button" type="button" onClick={() => void submitClaim()} disabled={claimSubmitting}>
+                        {claimSubmitting ? "Submitting..." : "Submit claim"}
+                      </button>
+                      <button className="secondary-button" type="button" onClick={() => setClaimNote("")}>
+                        Clear note
+                      </button>
+                    </div>
+                  </>
+                ) : null}
+                <div className="cta-row">
+                  {claimReview.allowedActions.includes("BACK_TO_DASHBOARD") ? (
+                    <Link className="primary-button" to={DISCOVER_ROUTES.providerWorkspace.path}>
+                      Back to dashboard
+                    </Link>
+                  ) : null}
+                  {claimReview.allowedActions.includes("VIEW_OWNERSHIP") ? (
+                    <Link className="secondary-button" to={`${DISCOVER_ROUTES.providerWorkspace.path}?connectionReference=${encodeURIComponent(claimReview.connectionReference)}`}>
+                      View ownership details
+                    </Link>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
       <section className="provider-account-summary-grid" aria-label="Provider account summary">
         {summaryCards.map((card) => (
           <article className="provider-account-summary-card" key={card.label}>
@@ -211,7 +544,7 @@ export function ProviderWorkspacePage() {
         <div className="provider-account-section-heading">
           <div>
             <h2>Attention</h2>
-            <p>These applications are incomplete or waiting on your next action.</p>
+            <p>These work items are incomplete or waiting on your next action.</p>
           </div>
           {supportedProviderTypes.length ? (
             <Link className="primary-button" to={`${DISCOVER_ROUTES.listPractice.path}?mode=add`}>
@@ -221,34 +554,63 @@ export function ProviderWorkspacePage() {
         </div>
         {attentionItems.length ? (
           <div className="provider-account-attention-list">
-            {attentionItems.map((application) => (
-              <article className="provider-account-attention-item" key={`${application.id}-attention`}>
-                <div className="provider-account-attention-copy">
-                  <strong>{supportText(application)}</strong>
-                  <p>{application.referenceNumber}</p>
-                  <span>{attentionSubtitle(application)}</span>
-                  <small>Current step: {currentStepLabel(application.currentStep)}</small>
-                </div>
-                <div className="provider-account-attention-meta">
-                  <span>{statusLabel(application.status)}</span>
-                  <div className="cta-row">
-                    {application.status === "PUBLISHED" ? null : (
-                      <button
-                        className="primary-button"
-                        type="button"
-                        onClick={() => void continueRegistration(application)}
-                        disabled={openingReference === application.referenceNumber}
-                      >
-                        Continue registration
-                      </button>
-                    )}
-                    <Link className="secondary-button" to={primaryActionHref(application)}>
-                      View details
-                    </Link>
+            {attentionItems.map((entry) =>
+              entry.kind === "OWNERSHIP_CLAIM" ? (
+                <article className="provider-account-attention-item" key={`${entry.item.workItemReference}-attention`}>
+                  <div className="provider-account-attention-copy">
+                    <strong>{claimCardTitle(entry.item)}</strong>
+                    <p>{entry.item.displayName || "Pending claim"} · {publicProfileTypeLabel(entry.item.publicProfileType)}</p>
+                    <span>{claimSubtitle(entry.item)}</span>
+                    <small>{claimLocationLabel(entry.item)}</small>
                   </div>
-                </div>
-              </article>
-            ))}
+                  <div className="provider-account-attention-meta">
+                    <span>{claimStatusPill(entry.item)}</span>
+                    <small>Ownership: {entry.item.ownershipStatus || "UNCLAIMED"}</small>
+                    <small>Publication: {entry.item.publicationStatus || "UNPUBLISHED"}</small>
+                    <small>Connection: {entry.item.platformConnectionStatus || "NOT_CONNECTED"}</small>
+                    <div className="cta-row">
+                      {claimPrimaryActionLabel(entry.item) && claimPrimaryActionHref(entry.item) ? (
+                        <Link className="primary-button" to={claimPrimaryActionHref(entry.item)!}>
+                          {claimPrimaryActionLabel(entry.item)}
+                        </Link>
+                      ) : null}
+                      {claimPrimaryActionLabel(entry.item) !== "View details" ? (
+                        <Link className="secondary-button" to={claimPrimaryActionHref(entry.item) ?? DISCOVER_ROUTES.providerWorkspace.path}>
+                          View details
+                        </Link>
+                      ) : null}
+                    </div>
+                  </div>
+                </article>
+              ) : (
+                <article className="provider-account-attention-item" key={`${entry.application.id}-attention`}>
+                  <div className="provider-account-attention-copy">
+                    <strong>{supportText(entry.application)}</strong>
+                    <p>{entry.application.referenceNumber}</p>
+                    <span>{attentionSubtitle(entry.application)}</span>
+                    <small>Current step: {currentStepLabel(entry.application.currentStep)}</small>
+                  </div>
+                  <div className="provider-account-attention-meta">
+                    <span>{statusLabel(entry.application.status)}</span>
+                    <div className="cta-row">
+                      {entry.application.status === "PUBLISHED" ? null : (
+                        <button
+                          className="primary-button"
+                          type="button"
+                          onClick={() => void continueRegistration(entry.application)}
+                          disabled={openingReference === entry.application.referenceNumber}
+                        >
+                          Continue registration
+                        </button>
+                      )}
+                      <Link className="secondary-button" to={primaryActionHref(entry.application)}>
+                        View details
+                      </Link>
+                    </div>
+                  </div>
+                </article>
+              ),
+            )}
           </div>
         ) : (
           <DiscoverEmptyState
@@ -338,7 +700,7 @@ export function ProviderWorkspacePage() {
         <section className="provider-account-section">
           <div className="provider-account-section-heading">
             <div>
-              <h2>My public profiles</h2>
+              <h2>My managed profiles</h2>
               <p>Published profiles that are already visible in Discover.</p>
             </div>
           </div>

@@ -126,6 +126,7 @@ public final class Permissions {
     public static final String PLATFORM_PROVIDER_CONNECTION_UNLINK = "platform.provider_connection.unlink";
     public static final String PLATFORM_PROVIDER_CONNECTION_RECONCILE = "platform.provider_connection.reconcile";
     public static final String PLATFORM_PROVIDER_CONNECTION_AUDIT = "platform.provider_connection.audit";
+    public static final String PLATFORM_PROVIDER_CONNECTION_IDENTITY_OVERRIDE = "platform.provider_connection.identity_override";
     public static final String NOTIFICATION_READ = "notification.read";
     public static final String NOTIFICATION_MANAGE = "notification.manage";
     public static final String NOTIFICATION_SEND = "notification.send";

@@ -76,7 +76,10 @@ test("provider login keeps auth state in memory and does not fake local login in
   assert.ok(api.includes("cache: \"no-store\""));
   assert.ok(api.includes("credentials: \"include\""));
   assert.ok(page.includes("const { status, refreshSession } = useProviderSession();"));
-  assert.ok(page.includes("const returnTo = searchParams.get(\"returnTo\")?.trim() || DISCOVER_ROUTES.providerWorkspace.path;"));
+  assert.ok(page.includes("function resolveSafeReturnTo(rawReturnTo: string | null): string"));
+  assert.ok(page.includes("trimmed.startsWith(\"/provider/\")"));
+  assert.ok(page.includes("trimmed.startsWith(\"//\")"));
+  assert.ok(page.includes("const returnTo = resolveSafeReturnTo(searchParams.get(\"returnTo\"));"));
   assert.ok(page.includes("await refreshSession(true);"));
   assert.ok(page.includes("Restoring your provider session"));
   assert.ok(app.includes("function ProviderProtectedRoute()"));
@@ -86,4 +89,5 @@ test("provider login keeps auth state in memory and does not fake local login in
   assert.ok(workspace.includes("await logout();"));
   assert.ok(workspace.includes("navigate(targetPath, { replace: true });"));
   assert.ok(workspace.includes("Switch account"));
+  assert.ok(!page.includes("localhost:5173"));
 });

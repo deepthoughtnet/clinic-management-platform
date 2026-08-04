@@ -32,6 +32,7 @@ import { ProviderDashboardPage } from "./pages/provider/ProviderDashboardPage";
 import { ProviderLoginPage } from "./pages/provider/ProviderLoginPage";
 import { ProviderLandingPagePage } from "./pages/provider/ProviderLandingPagePage";
 import { ProviderOnboardingPage } from "./pages/provider/ProviderOnboardingPage";
+import { ProviderPublicProfileDraftPage } from "./pages/provider/ProviderPublicProfileDraftPage";
 import { ProviderWorkspacePage } from "./pages/provider/ProviderWorkspacePage";
 import { DISCOVER_ROUTES, primaryNavigationRoutes } from "./routes";
 import { providerOnboardingStepRoute } from "./features/provider/providerOnboardingRoutes";
@@ -820,14 +821,15 @@ function App() {
         <Route path={DISCOVER_ROUTES.providerLogin.path} element={<ProviderLoginPage />} />
         <Route element={<ProviderProtectedRoute />}>
           <Route path={DISCOVER_ROUTES.providerWorkspace.path} element={<ProviderWorkspacePage />} />
-          <Route path={DISCOVER_ROUTES.providerApplications.path} element={<Navigate to={DISCOVER_ROUTES.providerWorkspace.path} replace />} />
+          <Route path={DISCOVER_ROUTES.providerApplications.path} element={<LegacyRedirect to={DISCOVER_ROUTES.providerWorkspace.path} />} />
           <Route path={DISCOVER_ROUTES.providerApplicationDashboard.path} element={<ProviderDashboardPage />} />
+          <Route path={DISCOVER_ROUTES.providerPublicProfileDraft.path} element={<ProviderPublicProfileDraftPage />} />
           <Route path={DISCOVER_ROUTES.providerLandingPage.path} element={<ProviderLandingPagePage />} />
           <Route path={DISCOVER_ROUTES.providerAccount.path} element={<ProviderWorkspacePage />} />
         </Route>
-        <Route path="/provider/workspace" element={<Navigate to={DISCOVER_ROUTES.providerWorkspace.path} replace />} />
-        <Route path="/provider/dashboard" element={<Navigate to={DISCOVER_ROUTES.providerWorkspace.path} replace />} />
-        <Route path="/provider/landing-page" element={<Navigate to={DISCOVER_ROUTES.providerLandingPage.path} replace />} />
+        <Route path="/provider/workspace" element={<LegacyRedirect to={DISCOVER_ROUTES.providerWorkspace.path} />} />
+        <Route path="/provider/dashboard" element={<LegacyRedirect to={DISCOVER_ROUTES.providerWorkspace.path} />} />
+        <Route path="/provider/landing-page" element={<LegacyRedirect to={DISCOVER_ROUTES.providerLandingPage.path} />} />
           <Route path="/provider/onboarding/:applicationId/:step" element={<ProviderOnboardingPage />} />
           <Route path={DISCOVER_ROUTES.login.path} element={<LoginChooserPage />} />
           <Route path={DISCOVER_ROUTES.about.path} element={<ShellPage eyebrow="About" title="About Jeevanam." body="Jeevanam connects public discovery, patient care access, and healthcare operations through focused applications." ctaLabel="Find Care" ctaTo={`${DISCOVER_ROUTES.home.path}#find-care`} />} />

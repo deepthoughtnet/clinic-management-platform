@@ -89,6 +89,7 @@ class PatientPortalCareAiBusinessLookupService {
     }
 
     List<PatientPortalDoctorSlotResponse> findSlots(
+            String bookingReference,
             String publicDoctorId,
             String clinicSlug,
             String tenantId,
@@ -96,12 +97,12 @@ class PatientPortalCareAiBusinessLookupService {
             LocalDate date
     ) {
         if (StringUtils.hasText(clinicId) || StringUtils.hasText(tenantId)) {
-            return patientPortalService.doctorSlots(publicDoctorId, clinicSlug, tenantId, clinicId, date);
+            return patientPortalService.doctorSlots(bookingReference, publicDoctorId, clinicSlug, tenantId, clinicId, date);
         }
         if (StringUtils.hasText(clinicSlug)) {
-            return patientPortalService.doctorSlots(publicDoctorId, clinicSlug, date);
+            return patientPortalService.doctorSlots(bookingReference, publicDoctorId, clinicSlug, null, null, date);
         }
-        return patientPortalService.doctorSlots(publicDoctorId, date);
+        return patientPortalService.doctorSlots(bookingReference, publicDoctorId, date);
     }
 
     List<com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiAppointmentOption> upcomingAppointments() {

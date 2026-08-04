@@ -1,11 +1,13 @@
 import { discoverConfig } from "../../config";
 import type { LocationCoordinates, LocationMapEntry } from "./locationTypes";
+import { buildPublicAddressView, formatPublicAddressCompact } from "../../utils/publicProfileFormatting";
 
-export function locationAddressLine(location: Pick<LocationMapEntry, "address" | "city" | "state" | "country" | "pinCode"> | null | undefined) {
-  if (!location) {
-    return "";
-  }
-  return [location.address, location.city, location.state, location.country, location.pinCode].filter(Boolean).join(", ");
+export function locationAddressLine(location: Pick<LocationMapEntry, "addressLine1" | "addressLine2" | "address" | "area" | "city" | "state" | "country" | "pinCode" | "postalCode"> | null | undefined) {
+  return buildPublicAddressView(location).lines.join("\n");
+}
+
+export function locationAddressCompact(location: Pick<LocationMapEntry, "addressLine1" | "addressLine2" | "address" | "area" | "city" | "state" | "country" | "pinCode" | "postalCode"> | null | undefined) {
+  return formatPublicAddressCompact(location);
 }
 
 export function locationDisplayLabel(location: Pick<LocationMapEntry, "label" | "city" | "state"> | null | undefined, fallback: string) {

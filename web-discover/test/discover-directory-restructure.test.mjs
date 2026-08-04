@@ -75,7 +75,7 @@ test("doctor directory emphasizes comparison, popularity, and booking without a 
   assert.ok(styles.includes(".directory-sort-trigger"));
 });
 
-test("clinic and hospital directory cards stay landscape and only render supported fields", () => {
+test("clinic and hospital directory cards use the shared vertical result list and only render supported fields", () => {
   const pages = read("src/pages/discovery/PublicDiscoveryPages.tsx");
   const components = read("src/components/directory/DirectoryComponents.tsx");
   const styles = read("src/styles.css");
@@ -85,15 +85,23 @@ test("clinic and hospital directory cards stay landscape and only render support
   assert.ok(pages.includes("Popular areas"));
   assert.ok(pages.includes("Popular departments"));
   assert.ok(pages.includes("Clinic services"));
+  assert.ok(components.includes("DirectoryResultList"));
   assert.ok(components.includes("ClinicDirectoryCard"));
   assert.ok(components.includes("HospitalDirectoryCard"));
   assert.ok(components.includes("View clinic"));
   assert.ok(components.includes("View doctors"));
   assert.ok(components.includes("BookingCapabilityBadge"));
+  assert.ok(pages.includes('loadMoreLabel="Load more clinics"'));
+  assert.ok(pages.includes('loadMoreLabel="Load more hospitals"'));
+  assert.ok(styles.includes(".directory-result-list"));
+  assert.ok(styles.includes(".directory-result-list__footer"));
   assert.ok(styles.includes(".directory-card-grid--clinics"));
   assert.ok(styles.includes(".directory-card-grid--hospitals"));
   assert.ok(styles.includes(".directory-card--clinic"));
   assert.ok(styles.includes(".directory-card--hospital"));
+  assert.ok(styles.includes("grid-template-columns: minmax(0, 1fr)"));
+  assert.ok(!styles.includes("repeat(auto-fit, minmax(280px, 1fr))"));
+  assert.ok(!styles.includes("repeat(auto-fit, minmax(300px, 1fr))"));
   assert.ok(!components.includes("ICU"));
   assert.ok(!components.includes("bed count"));
   assert.ok(!components.includes("accreditation"));

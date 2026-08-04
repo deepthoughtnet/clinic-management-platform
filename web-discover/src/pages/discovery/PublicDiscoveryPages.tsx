@@ -22,7 +22,7 @@ import type {
   PublicSpecialityDetailResponse,
   PublicSpecialitySummaryResponse,
 } from "../../api/publicCatalog";
-import { fetchPublicJson } from "../../api/publicCatalog";
+import { fetchPublicJson, normalizePublicPageResponse } from "../../api/publicCatalog";
 import { discoverConfig } from "../../config";
 import {
   AivaDiscoveryAssistantCard,
@@ -63,6 +63,7 @@ import {
   DirectoryHero,
   DirectoryPageShell,
   DirectoryPageStickyPanel,
+  DirectoryResultList,
   DirectoryResultsToolbar,
   DirectorySearchPanel,
   DirectoryFilterChips,
@@ -98,6 +99,11 @@ import {
   usePublicLocation,
 } from "../../context/PublicLocationContext";
 import { DISCOVER_DETAIL_PATHS, DISCOVER_ROUTES } from "../../routes";
+import {
+  buildPublicAddressView,
+  normalizeDisplayList,
+  parseFiniteExperienceYears,
+} from "../../utils/publicProfileFormatting";
 import {
   discoveryEmptyMessage,
   matchesDiscoveryQuery,
@@ -253,6 +259,134 @@ function usePublicResource<T>(path: string, params: Record<string, string | numb
   }, [path, JSON.stringify(params)]);
 
   return state;
+}
+
+type LoadMoreDirectoryPageState<T> = {
+  items: T[];
+  totalItems: number;
+  totalPages: number;
+  loadingInitial: boolean;
+  loadingMore: boolean;
+  initialError: string | null;
+  loadMoreError: string | null;
+  hasMore: boolean;
+  loadMore: () => void;
+  retryLoadMore: () => void;
+};
+
+function useLoadMoreDirectoryResults<T>({
+  path,
+  params,
+  pageSize = 7,
+}: {
+  path: string;
+  params: Record<string, string | number | undefined | null>;
+  pageSize?: number;
+}): LoadMoreDirectoryPageState<T> {
+  const [pages, setPages] = useState<Record<number, PublicPageResponse<T> | undefined>>({});
+  const [pageStatus, setPageStatus] = useState<Record<number, "loading" | "loaded" | "failed">>({});
+  const [visiblePageCount, setVisiblePageCount] = useState(1);
+  const [retryNonce, setRetryNonce] = useState(0);
+  const requestedPagesRef = useRef<Set<number>>(new Set());
+  const paramsKey = useMemo(() => JSON.stringify(params), [params]);
+  const resolvedParams = useMemo(() => params, [paramsKey]);
+  const [initialError, setInitialError] = useState<string | null>(null);
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
+  const currentPages = useMemo(() => Array.from({ length: visiblePageCount }, (_, page) => pages[page]).filter(Boolean) as PublicPageResponse<T>[], [pages, visiblePageCount]);
+  const totalPages = currentPages[0]?.totalPages ?? 0;
+  const totalItems = currentPages[0]?.totalItems ?? currentPages.reduce((count, page) => count + page.items.length, 0);
+  const loadingInitial = !pages[0] && !initialError;
+  const loadingMore = Object.entries(pageStatus).some(([page, status]) => Number(page) > 0 && status === "loading");
+  const hasMore = totalPages > visiblePageCount;
+
+  useEffect(() => {
+    setPages({});
+    setPageStatus({});
+    setVisiblePageCount(1);
+    setRetryNonce(0);
+    requestedPagesRef.current = new Set();
+    setInitialError(null);
+    setLoadMoreError(null);
+  }, [path, pageSize, paramsKey]);
+
+  useEffect(() => {
+    const missingPages = Array.from({ length: visiblePageCount }, (_, page) => page).filter(
+      (page) => !pages[page] && !requestedPagesRef.current.has(page),
+    );
+    if (!missingPages.length) {
+      return;
+    }
+
+    let cancelled = false;
+    missingPages.forEach((page) => {
+      requestedPagesRef.current.add(page);
+      setPageStatus((current) => ({ ...current, [page]: "loading" }));
+      fetchPublicJson<PublicPageResponse<T>>(path, { ...resolvedParams, page, size: pageSize })
+        .then((result) => {
+          if (cancelled) {
+            return;
+          }
+          setPages((current) => ({ ...current, [page]: normalizePublicPageResponse(result) }));
+          setPageStatus((current) => ({ ...current, [page]: "loaded" }));
+          if (page === 0) {
+            setInitialError(null);
+          } else {
+            setLoadMoreError(null);
+          }
+          requestedPagesRef.current.delete(page);
+        })
+        .catch((error: unknown) => {
+          if (cancelled) {
+            return;
+          }
+          const message = error instanceof Error ? error.message : "Unable to load directory results.";
+          setPageStatus((current) => ({ ...current, [page]: "failed" }));
+          requestedPagesRef.current.delete(page);
+          if (page === 0) {
+            setInitialError(message);
+          } else {
+            setLoadMoreError(message);
+          }
+        });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [pageSize, paramsKey, path, resolvedParams, retryNonce, visiblePageCount]);
+
+  function loadMore() {
+    setVisiblePageCount((current) => current + 1);
+  }
+
+  function retryLoadMore() {
+    setRetryNonce((current) => current + 1);
+    setLoadMoreError(null);
+    setPageStatus((current) => {
+      const next = { ...current };
+      Object.keys(next).forEach((value) => {
+        const page = Number(value);
+        if (page > 0 && next[page] === "failed") {
+          delete next[page];
+        }
+      });
+      requestedPagesRef.current = new Set(Array.from(requestedPagesRef.current).filter((page) => next[page] !== "failed"));
+      return next;
+    });
+  }
+
+  return {
+    items: currentPages.flatMap((page) => page.items),
+    totalItems,
+    totalPages,
+    loadingInitial,
+    loadingMore,
+    initialError,
+    loadMoreError,
+    hasMore,
+    loadMore,
+    retryLoadMore,
+  };
 }
 
 function filterAndSortDoctorResults(doctors: PublicDoctorSummaryResponse[], query: string, selectedLocation: string) {
@@ -743,6 +877,7 @@ function filterClinicsDirectory(
   const availableToday = getBooleanParam(searchParams, "availableToday");
   const specialities = getStringListParam(searchParams, "specialities").map((item) => item.toLowerCase());
   const sort = searchParams.get("sort") ?? "relevance";
+  const normalizedQuery = query.trim();
 
   return [...clinics]
     .filter((clinic) =>
@@ -755,7 +890,7 @@ function filterClinicsDirectory(
           clinic.specialities.join(" "),
           clinic.doctorsCount,
         ],
-        query,
+        normalizedQuery,
       ),
     )
     .filter((clinic) => (availableToday ? clinic.availableToday : true))
@@ -868,15 +1003,33 @@ function primaryLocation(locations?: PublicProviderLocationResponse[]) {
 }
 
 function locationSummary(location: PublicProviderLocationResponse | null, fallback?: string | null) {
-  return [location?.city, location?.state].filter(Boolean).join(", ") || fallback || null;
+  return buildPublicAddressView({
+    addressLine1: null,
+    addressLine2: null,
+    address: null,
+    area: location?.label ?? null,
+    city: location?.city ?? null,
+    state: location?.state ?? null,
+    country: location?.country ?? null,
+    postalCode: location?.pinCode ?? null,
+  }).compact || fallback || null;
 }
 
 function locationAddress(location: PublicProviderLocationResponse | null, fallbackParts?: Array<string | null | undefined>) {
-  const fromLocation = [location?.address, location?.city, location?.state, location?.country, location?.pinCode].filter(Boolean).join(", ");
+  const fromLocation = buildPublicAddressView({
+    address: location?.address ?? null,
+    addressLine1: null,
+    addressLine2: null,
+    area: null,
+    city: location?.city ?? null,
+    state: location?.state ?? null,
+    country: location?.country ?? null,
+    postalCode: location?.pinCode ?? null,
+  }).lines.join("\n");
   if (fromLocation) {
     return fromLocation;
   }
-  return (fallbackParts ?? []).filter(Boolean).join(", ") || null;
+  return null;
 }
 
 function locationFacilityLabels(location: PublicProviderLocationResponse | null) {
@@ -932,15 +1085,15 @@ function buildDoctorWorkingSchedule(detail: PublicDoctorDetailResponse) {
 
 function buildDoctorProfile(detail: PublicDoctorDetailResponse, consultationFeeLabel: string | null) {
   const location = primaryLocation(detail.locations);
-  const languages = detail.languages ?? [];
-  const consultationModes = detail.consultationModes ?? [];
+  const languages = normalizeDisplayList(detail.languages ?? []);
+  const consultationModes = normalizeDisplayList(detail.consultationModes ?? []);
   const bookingMode = normalizeBookingMode(detail.bookingMode) ?? "ONLINE_BOOKING";
-  const expertise = (detail.subSpecialities?.length ? detail.subSpecialities : detail.specialities).filter(Boolean).slice(0, 8);
+  const expertise = normalizeDisplayList(detail.subSpecialities?.length ? detail.subSpecialities : detail.specialities).slice(0, 8);
   const schedule = buildDoctorWorkingSchedule(detail);
   const professionalInformation = [
     detail.medicalCouncil?.trim() ? { label: "Medical Council", value: detail.medicalCouncil.trim() } : null,
     detail.qualification?.trim() ? { label: "Qualifications", value: detail.qualification.trim(), wide: true } : null,
-    detail.yearsOfExperience != null ? { label: "Experience", value: `${detail.yearsOfExperience} years` } : null,
+    parseFiniteExperienceYears(detail.yearsOfExperience) != null ? { label: "Experience", value: `${parseFiniteExperienceYears(detail.yearsOfExperience)} years experience` } : null,
     consultationFeeLabel ? { label: "Consultation Fee", value: consultationFeeLabel } : null,
     (detail.primarySpeciality ?? detail.specialities[0]) ? { label: "Specialty", value: detail.primarySpeciality ?? detail.specialities[0] } : null,
     languages.length ? { label: "Languages", value: languages.join(" • "), wide: true } : null,
@@ -1036,9 +1189,9 @@ function buildClinicProfile(detail: PublicClinicDetailResponse) {
   const location = primaryLocation(detail.locations);
   const bookingMode = normalizeBookingMode(detail.bookingMode) ?? "ONLINE_BOOKING";
   const professionalInformation = [
-    detail.specialities.length ? { label: "Specialties", value: compactList(detail.specialities, 6), wide: true } : null,
-    detail.departments?.length ? { label: "Departments", value: compactList(detail.departments, 6), wide: true } : null,
-    detail.consultationModes?.length ? { label: "Consultation Modes", value: detail.consultationModes.join(" • "), wide: true } : null,
+    normalizeDisplayList(detail.specialities).length ? { label: "Specialties", value: compactList(normalizeDisplayList(detail.specialities), 6), wide: true } : null,
+    normalizeDisplayList(detail.departments ?? []).length ? { label: "Departments", value: compactList(normalizeDisplayList(detail.departments ?? []), 6), wide: true } : null,
+    normalizeDisplayList(detail.consultationModes ?? []).length ? { label: "Consultation Modes", value: normalizeDisplayList(detail.consultationModes ?? []).join(" • "), wide: true } : null,
     detail.timings.length ? { label: "Working Hours", value: detail.timings.join(" • "), wide: true } : null,
   ].filter(Boolean) as PublicProviderProfileDefinitionItem[];
 
@@ -1054,7 +1207,7 @@ function buildClinicProfile(detail: PublicClinicDetailResponse) {
     locationSummary: locationSummary(location, [detail.city].filter(Boolean).join(", ")),
     consultationFeeLabel: null,
     languages: [],
-    teleconsultationAvailable: (detail.consultationModes ?? []).some((item) => item.toLowerCase().includes("tele")),
+    teleconsultationAvailable: normalizeDisplayList(detail.consultationModes ?? []).some((item) => item.toLowerCase().includes("tele")),
     bookingUrl: bookingMode === "CALL_TO_BOOK"
       ? (detail.contactPhone?.trim() ? `tel:${detail.contactPhone.trim()}` : detail.publicPath ?? DISCOVER_DETAIL_PATHS.clinic(detail.clinicSlug))
       : bookingMode === "NOT_AVAILABLE"
@@ -1067,9 +1220,9 @@ function buildClinicProfile(detail: PublicClinicDetailResponse) {
     biography: detail.description?.trim() || detail.summary?.trim() || null,
     biographyEmptyDescription: "Clinic description will appear here when it is shared publicly.",
     professionalInformation,
-    services: detail.services ?? [],
+    services: normalizeDisplayList(detail.services ?? []),
     facilitiesTitle: detail.facilities?.length ? "Clinic facilities at this location" : null,
-    facilities: detail.facilities ?? [],
+    facilities: normalizeDisplayList(detail.facilities ?? []),
     galleryItems: dedupeGallery(detail.galleryImageUrls ?? [], detail.clinicDisplayName),
     locationName: location?.label || detail.clinicDisplayName,
     locationAddress: locationAddress(location, [detail.address, detail.area, detail.city]),
@@ -1085,9 +1238,9 @@ function buildHospitalProfile(detail: PublicHospitalDetailResponse) {
   const location = primaryLocation(detail.locations);
   const bookingMode = normalizeBookingMode(detail.bookingMode) ?? "ONLINE_BOOKING";
   const professionalInformation = [
-    detail.departments.length ? { label: "Departments", value: compactList(detail.departments, 6), wide: true } : null,
-    detail.services.length ? { label: "Clinical Services", value: compactList(detail.services, 6), wide: true } : null,
-    detail.consultationModes.length ? { label: "Consultation Modes", value: detail.consultationModes.join(" • "), wide: true } : null,
+    normalizeDisplayList(detail.departments).length ? { label: "Departments", value: compactList(normalizeDisplayList(detail.departments), 6), wide: true } : null,
+    normalizeDisplayList(detail.services).length ? { label: "Clinical Services", value: compactList(normalizeDisplayList(detail.services), 6), wide: true } : null,
+    normalizeDisplayList(detail.consultationModes).length ? { label: "Consultation Modes", value: normalizeDisplayList(detail.consultationModes).join(" • "), wide: true } : null,
     detail.emergencyAvailable ? { label: "Emergency Care", value: "Available" } : null,
   ].filter(Boolean) as PublicProviderProfileDefinitionItem[];
 
@@ -1116,9 +1269,9 @@ function buildHospitalProfile(detail: PublicHospitalDetailResponse) {
     biography: detail.description?.trim() || detail.summary?.trim() || null,
     biographyEmptyDescription: "Hospital overview will appear here when it is shared publicly.",
     professionalInformation,
-    services: detail.services ?? [],
+    services: normalizeDisplayList(detail.services ?? []),
     facilitiesTitle: detail.facilities.length ? "Hospital facilities" : null,
-    facilities: detail.facilities ?? [],
+    facilities: normalizeDisplayList(detail.facilities ?? []),
     galleryItems: dedupeGallery(detail.galleryImageUrls ?? [], detail.hospitalDisplayName),
     locationName: location?.label || detail.hospitalDisplayName,
     locationAddress: locationAddress(location, [detail.address, detail.area, detail.city]),
@@ -1618,8 +1771,8 @@ export function PublicDoctorsPage() {
       <DirectoryToggleFilters
         label="Availability"
         items={[{ value: "availableToday", label: "Available today" }]}
-        active={new Set(state.searchParams.get("availableToday") ? ["availableToday"] : [])}
-        onToggle={() => state.updateParams(DISCOVER_ROUTES.doctors.path, { availableToday: state.searchParams.get("availableToday") ? null : true })}
+        active={new Set(getBooleanParam(state.searchParams, "availableToday") ? ["availableToday"] : [])}
+        onToggle={() => state.updateParams(DISCOVER_ROUTES.doctors.path, { availableToday: getBooleanParam(state.searchParams, "availableToday") ? null : true })}
       />
       <DirectoryToggleFilters
         label="Consultation fee"
@@ -1930,41 +2083,42 @@ export function PublicDoctorDetailPage() {
 export function PublicClinicsPage() {
   const state = useDirectoryPageState();
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const clinics = usePublicResource<PublicPageResponse<PublicClinicSummaryResponse>>(
-    "/api/public/clinics",
-    {
+  const clinicDirectory = useLoadMoreDirectoryResults<PublicClinicSummaryResponse>({
+    path: "/api/public/clinics",
+    params: {
       q: state.searchParams.get("q"),
       city: state.selectedLocation,
       lat: state.selectedCoordinates ? `${state.selectedCoordinates.latitude}` : null,
       lng: state.selectedCoordinates ? `${state.selectedCoordinates.longitude}` : null,
       radiusKm: state.selectedCoordinates ? state.radiusKm : null,
-      page: state.page,
-      size: state.size,
+      availableToday: state.searchParams.get("availableToday"),
+      specialities: state.searchParams.get("specialities"),
     },
-    emptyClinicsPage,
-  );
+    pageSize: 7,
+  });
   const visibleClinics = useMemo(
-    () => filterClinicsDirectory(clinics.data.items, state.searchParams.get("q") ?? "", state.searchParams, state.selectedLocation),
-    [clinics.data.items, state.searchParams, state.selectedLocation],
+    () => filterClinicsDirectory(clinicDirectory.items, state.searchParams.get("q") ?? "", state.searchParams, state.selectedLocation),
+    [clinicDirectory.items, state.searchParams, state.selectedLocation],
   );
   const popularAreas = useMemo(() => {
-    const values = clinics.data.items.map((clinic) => clinic.area ?? clinic.city ?? "").filter(Boolean);
+    const values = clinicDirectory.items.map((clinic) => clinic.area ?? clinic.city ?? "").filter(Boolean);
     return Array.from(new Set(values)).slice(0, 8);
-  }, [clinics.data.items]);
+  }, [clinicDirectory.items]);
   const popularServices = useMemo(
-    () => Array.from(new Set(clinics.data.items.flatMap((clinic) => clinic.specialities))).filter(Boolean).slice(0, 8),
-    [clinics.data.items],
+    () => Array.from(new Set(clinicDirectory.items.flatMap((clinic) => clinic.specialities))).filter(Boolean).slice(0, 8),
+    [clinicDirectory.items],
   );
   const selectedServices = getStringListParam(state.searchParams, "specialities");
   const filterSummary = buildClinicFilterSummary(state.searchParams, state.selectedCoordinates);
-  const resultLabel = buildDirectoryResultLabel(visibleClinics.length, "clinic", state.selectedLocation);
+  const resultLabel = buildDirectoryResultLabel(clinicDirectory.totalItems, "clinic", state.selectedLocation);
+  const loadMoreSummary = clinicDirectory.totalItems > visibleClinics.length ? `Showing ${visibleClinics.length} of ${clinicDirectory.totalItems} clinics` : null;
   const clinicFilterControls = (
     <>
       <DirectoryToggleFilters
         label="Availability"
         items={[{ value: "availableToday", label: "Available today" }]}
-        active={new Set(state.searchParams.get("availableToday") ? ["availableToday"] : [])}
-        onToggle={() => state.updateParams(DISCOVER_ROUTES.clinics.path, { availableToday: state.searchParams.get("availableToday") ? null : true })}
+        active={new Set(getBooleanParam(state.searchParams, "availableToday") ? ["availableToday"] : [])}
+        onToggle={() => state.updateParams(DISCOVER_ROUTES.clinics.path, { availableToday: getBooleanParam(state.searchParams, "availableToday") ? null : true })}
       />
       <DirectoryFilterChips
         label="Clinic services"
@@ -2037,9 +2191,9 @@ export function PublicClinicsPage() {
         </DirectoryPageStickyPanel>
         <div className="directory-results-column">
           <DirectoryState
-            loading={clinics.loading}
-            error={clinics.error}
-            empty={visibleClinics.length === 0}
+            loading={clinicDirectory.loadingInitial}
+            error={clinicDirectory.initialError}
+            empty={!clinicDirectory.loadingInitial && !clinicDirectory.initialError && visibleClinics.length === 0}
             emptyIcon="CL"
             emptyTitle={`No clinics found for ${state.selectedLocation}`}
             emptyMessage="Try a different location, clear filters, or browse doctors and specialities."
@@ -2049,16 +2203,20 @@ export function PublicClinicsPage() {
             secondaryTo={DISCOVER_ROUTES.doctors.path}
             errorTitle="We could not load clinics right now."
           >
-            <div className="directory-card-grid directory-card-grid--clinics">
+            <DirectoryResultList
+              className="directory-card-grid directory-card-grid--clinics"
+              hasMore={clinicDirectory.hasMore}
+              loadMoreLabel="Load more clinics"
+              loadMoreSummary={loadMoreSummary}
+              loadMoreError={clinicDirectory.loadMoreError}
+              loadingMore={clinicDirectory.loadingMore}
+              onLoadMore={clinicDirectory.loadMore}
+              onRetryLoadMore={clinicDirectory.retryLoadMore}
+            >
               {visibleClinics.map((clinic) => (
                 <ClinicDirectoryCard key={clinic.clinicSlug} clinic={clinic} />
               ))}
-            </div>
-            <PaginationBar
-              page={clinics.data.page}
-              totalPages={clinics.data.totalPages}
-              onPageChange={(nextPage) => state.updateParams(DISCOVER_ROUTES.clinics.path, { page: nextPage })}
-            />
+            </DirectoryResultList>
           </DirectoryState>
         </div>
       </div>
@@ -2113,30 +2271,30 @@ export function PublicClinicDetailPage() {
 export function PublicHospitalsPage() {
   const state = useDirectoryPageState();
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const hospitals = usePublicResource<PublicPageResponse<PublicHospitalSummaryResponse>>(
-    "/api/public/hospitals",
-    {
+  const hospitalDirectory = useLoadMoreDirectoryResults<PublicHospitalSummaryResponse>({
+    path: "/api/public/hospitals",
+    params: {
       q: state.searchParams.get("q"),
       city: state.selectedLocation,
       lat: state.selectedCoordinates ? `${state.selectedCoordinates.latitude}` : null,
       lng: state.selectedCoordinates ? `${state.selectedCoordinates.longitude}` : null,
       radiusKm: state.selectedCoordinates ? state.radiusKm : null,
-      page: state.page,
-      size: state.size,
+      departments: state.searchParams.get("departments"),
     },
-    { items: [], page: 0, size: state.size, totalItems: 0, totalPages: 0 },
-  );
+    pageSize: 7,
+  });
   const visibleHospitals = useMemo(
-    () => filterHospitalsDirectory(hospitals.data.items, state.searchParams.get("q") ?? "", state.searchParams, state.selectedLocation),
-    [hospitals.data.items, state.searchParams, state.selectedLocation],
+    () => filterHospitalsDirectory(hospitalDirectory.items, state.searchParams.get("q") ?? "", state.searchParams, state.selectedLocation),
+    [hospitalDirectory.items, state.searchParams, state.selectedLocation],
   );
   const popularDepartments = useMemo(() => {
-    const values = hospitals.data.items.flatMap((hospital) => hospital.departments).filter(Boolean);
+    const values = hospitalDirectory.items.flatMap((hospital) => hospital.departments).filter(Boolean);
     return Array.from(new Set(values)).slice(0, 8);
-  }, [hospitals.data.items]);
+  }, [hospitalDirectory.items]);
   const selectedDepartments = getStringListParam(state.searchParams, "departments");
   const filterSummary = buildHospitalFilterSummary(state.searchParams, state.selectedCoordinates);
-  const resultLabel = buildDirectoryResultLabel(visibleHospitals.length, "hospital", state.selectedLocation);
+  const resultLabel = buildDirectoryResultLabel(hospitalDirectory.totalItems, "hospital", state.selectedLocation);
+  const loadMoreSummary = hospitalDirectory.totalItems > visibleHospitals.length ? `Showing ${visibleHospitals.length} of ${hospitalDirectory.totalItems} hospitals` : null;
   const hospitalFilterControls = (
     <>
       <DirectoryFilterChips
@@ -2204,9 +2362,9 @@ export function PublicHospitalsPage() {
         </DirectoryPageStickyPanel>
         <div className="directory-results-column">
           <DirectoryState
-            loading={hospitals.loading}
-            error={hospitals.error}
-            empty={visibleHospitals.length === 0}
+            loading={hospitalDirectory.loadingInitial}
+            error={hospitalDirectory.initialError}
+            empty={!hospitalDirectory.loadingInitial && !hospitalDirectory.initialError && visibleHospitals.length === 0}
             emptyIcon="H"
             emptyTitle={`No hospitals found for ${state.selectedLocation}`}
             emptyMessage="Try changing the location, clearing filters, or browsing clinics and specialities."
@@ -2216,16 +2374,20 @@ export function PublicHospitalsPage() {
             secondaryTo={DISCOVER_ROUTES.clinics.path}
             errorTitle="We could not load hospitals right now."
           >
-            <div className="directory-card-grid directory-card-grid--hospitals">
+            <DirectoryResultList
+              className="directory-card-grid directory-card-grid--hospitals"
+              hasMore={hospitalDirectory.hasMore}
+              loadMoreLabel="Load more hospitals"
+              loadMoreSummary={loadMoreSummary}
+              loadMoreError={hospitalDirectory.loadMoreError}
+              loadingMore={hospitalDirectory.loadingMore}
+              onLoadMore={hospitalDirectory.loadMore}
+              onRetryLoadMore={hospitalDirectory.retryLoadMore}
+            >
               {visibleHospitals.map((hospital) => (
                 <HospitalDirectoryCard key={hospital.hospitalSlug} hospital={hospital} />
               ))}
-            </div>
-            <PaginationBar
-              page={hospitals.data.page}
-              totalPages={hospitals.data.totalPages}
-              onPageChange={(nextPage) => state.updateParams(DISCOVER_ROUTES.hospitals.path, { page: nextPage })}
-            />
+            </DirectoryResultList>
           </DirectoryState>
         </div>
       </div>

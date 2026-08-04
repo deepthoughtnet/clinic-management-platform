@@ -5,11 +5,15 @@ export type LocationCoordinates = {
 
 export type LocationMapEntry = {
   label?: string | null;
+  addressLine1?: string | null;
+  addressLine2?: string | null;
   address?: string | null;
+  area?: string | null;
   city?: string | null;
   state?: string | null;
   country?: string | null;
   pinCode?: string | null;
+  postalCode?: string | null;
   workingHours?: string | null;
   parkingAvailable?: boolean;
   accessibilityAvailable?: boolean;

@@ -15,11 +15,13 @@ RUN mkdir -p /workspace/frontend/packages/form-validation-kit && \
     ln -s /workspace/web-admin/node_modules /workspace/frontend/packages/form-validation-kit/node_modules
 
 ARG VITE_API_BASE_URL=
+ARG VITE_PROVIDER_APP_URL=
 ARG VITE_KEYCLOAK_URL=http://localhost:8182/auth
 ARG VITE_KEYCLOAK_REALM=clinic-management
 ARG VITE_KEYCLOAK_CLIENT_ID=clinic-web-admin
 
 ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
+ENV VITE_PROVIDER_APP_URL=${VITE_PROVIDER_APP_URL}
 ENV VITE_KEYCLOAK_URL=${VITE_KEYCLOAK_URL}
 ENV VITE_KEYCLOAK_REALM=${VITE_KEYCLOAK_REALM}
 ENV VITE_KEYCLOAK_CLIENT_ID=${VITE_KEYCLOAK_CLIENT_ID}

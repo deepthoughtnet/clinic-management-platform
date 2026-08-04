@@ -214,6 +214,15 @@ record ProviderConnectionsLifecycleResponse(
         String city,
         String area,
         String publicationStatus,
+        String ownershipStatus,
+        String tenantConsentStatus,
+        String draftReference,
+        String draftStatus,
+        String draftReadinessStatus,
+        int draftCompletenessPercentage,
+        int draftVersionNumber,
+        OffsetDateTime draftLastSavedAt,
+        List<String> draftAllowedActions,
         long sourceRevision,
         OffsetDateTime sourceUpdatedAt,
         OffsetDateTime projectedAt,
@@ -221,7 +230,15 @@ record ProviderConnectionsLifecycleResponse(
         boolean ready,
         List<String> missingFields,
         List<String> invalidFields,
-        List<String> warnings
+        List<String> warnings,
+        String moderationStatus,
+        String submissionReference,
+        OffsetDateTime submittedAt,
+        String assignedReviewer,
+        OffsetDateTime assignedAt,
+        long ageInQueueDays,
+        String sourceType,
+        List<String> moderationAllowedActions
 ) {
 }
 
@@ -256,6 +273,38 @@ record ProviderConnectionsReconcileRequest(
         PublicProfileType publicProfileType,
         UUID linkId,
         String tenantReference
+) {
+}
+
+record ProviderConnectionsOwnershipResponse(
+        UUID ownershipId,
+        PublicProfileType publicProfileType,
+        String publicProfileReference,
+        String displayName,
+        String city,
+        String area,
+        String maskedProviderMobile,
+        String consentState,
+        String publicProfileStatus,
+        String platformConnectionStatus,
+        String bookingCapability,
+        String ownershipStatus,
+        String ownershipMethod,
+        String reason,
+        boolean active,
+        long sourceRevision,
+        OffsetDateTime verifiedAt,
+        OffsetDateTime revokedAt,
+        OffsetDateTime createdAt,
+        OffsetDateTime updatedAt,
+        List<String> membershipRoles,
+        List<String> disputeStatuses,
+        List<String> allowedActions
+) {
+}
+
+record ProviderConnectionsOwnershipDecisionRequest(
+        String reason
 ) {
 }
 

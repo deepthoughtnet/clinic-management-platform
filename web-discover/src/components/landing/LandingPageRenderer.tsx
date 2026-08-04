@@ -1,8 +1,15 @@
-import { type CSSProperties, type ReactNode } from "react";
+import { type CSSProperties, type ReactNode, useEffect, useState } from "react";
 import type { LandingPageRenderable, LandingProfile, LandingSection, LandingSnapshot, LandingTheme } from "../../api/providerLandingPage";
 import { initials } from "../DiscoveryComponents";
 import { LocationDisplayMap } from "../location";
 import { PublicMediaImage } from "./PublicMediaImage";
+import { ChevronLeftRounded, ChevronRightRounded, CloseRounded } from "@mui/icons-material";
+import {
+  buildPublicAddressView,
+  formatWeeklyTimings,
+  normalizeDisplayList,
+  resolveClinicEstablishedYear,
+} from "../../utils/publicProfileFormatting";
 
 function themeVars(theme: LandingTheme): CSSProperties {
   return {
@@ -27,21 +34,50 @@ function sectionLabel(section: LandingSection) {
 }
 
 function locationText(profile: LandingProfile) {
-  const first = profile.locations[0];
-  if (!first) {
-    return [profile.area, profile.city].filter(Boolean).join(", ") || "Location details will be published soon.";
-  }
-  return [first.label, first.address, first.city, first.state, first.country, first.pinCode].filter(Boolean).join(" • ");
+  const first = profile.locations?.[0];
+  const view = buildPublicAddressView(first ?? {
+    addressLine1: null,
+    addressLine2: null,
+    address: null,
+    area: profile.area,
+    city: profile.city,
+    state: profile.state,
+    country: profile.country,
+    pinCode: null,
+    postalCode: null,
+  });
+  return view.compact || first?.label || "Location not pinned.";
+}
+
+function publicRouteLabel(profile: LandingProfile) {
+  return profile.publicPath || `/discover/${profile.providerType.toLowerCase()}s/${profile.canonicalSlug}`;
+}
+
+function publicRouteHref(profile: LandingProfile) {
+  return profile.publicPath || `/discover/${profile.providerType.toLowerCase()}s/${profile.canonicalSlug}`;
+}
+
+function sanitizeText(value: unknown, fallback: string) {
+  const text = typeof value === "string" ? value.trim() : "";
+  return text || fallback;
 }
 
 function summaryChips(profile: LandingProfile) {
   const chips = [
     profile.primarySpeciality,
-    profile.yearsOfExperience != null ? `${profile.yearsOfExperience}+ years experience` : null,
+    profile.yearsOfExperience != null && Number.isFinite(profile.yearsOfExperience) && profile.yearsOfExperience >= 0 ? `${profile.yearsOfExperience} years experience` : null,
     profile.onlineConsultation ? "Online consultations" : null,
     profile.emergencyAvailable ? "Emergency care" : null,
   ];
-  return chips.filter((chip): chip is string => Boolean(chip));
+  return normalizeDisplayList(chips);
+}
+
+function safeList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function safeLocationList(profile: LandingProfile) {
+  return Array.isArray(profile.locations) ? profile.locations : [];
 }
 
 function sectionCard(title: string, description?: string | null, children?: ReactNode) {
@@ -66,8 +102,20 @@ function landingImageAlt(profile: LandingProfile, kind: "logo" | "cover" | "gall
   return `${profile.displayName} logo`;
 }
 
-export function LandingHero({ profile, section }: { profile: LandingProfile; section: LandingSection }) {
+export function LandingHero({ profile, section, renderMode = "PUBLIC_PROFILE" }: { profile: LandingProfile; section: LandingSection; renderMode?: "PROVIDER_DRAFT_PREVIEW" | "PLATFORM_REVIEW_PREVIEW" | "PUBLIC_PROFILE" }) {
   const avatarUrl = profile.providerType === "INDIVIDUAL_DOCTOR" ? profile.imageUrl || profile.logoUrl : profile.logoUrl || profile.imageUrl;
+  const specialities = normalizeDisplayList(safeList(profile.specialities));
+  const locationView = buildPublicAddressView(profile.locations?.[0] ?? {
+    addressLine1: null,
+    addressLine2: null,
+    address: null,
+    area: profile.area,
+    city: profile.city,
+    state: profile.state,
+    country: profile.country,
+    pinCode: null,
+    postalCode: null,
+  });
   return sectionCard(sectionLabel(section), section.description, (
     <div className="landing-hero">
       <div className="landing-hero-media">
@@ -100,30 +148,30 @@ export function LandingHero({ profile, section }: { profile: LandingProfile; sec
         <div className="landing-hero-copy">
           <span className="landing-eyebrow">{profile.providerType === "INDIVIDUAL_DOCTOR" ? "Doctor profile" : profile.providerType === "CLINIC" ? "Clinic profile" : "Hospital profile"}</span>
           <h1>{profile.displayName}</h1>
-          <p>{profile.summary || profile.biography || "A professional landing page built from structured provider information."}</p>
+          <p>{profile.summary || profile.biography || "Description not provided."}</p>
           <div className="landing-chip-row">
             {summaryChips(profile).map((chip) => (
               <span className="landing-chip" key={chip}>{chip}</span>
             ))}
           </div>
-          <div className="cta-row">
-            <a className="primary-button" href={profile.publicPath}>
-              View public profile
-            </a>
-            {profile.contactPhone ? (
-              <a className="secondary-button" href={`tel:${profile.contactPhone}`}>
-                Call practice
-              </a>
-            ) : null}
-          </div>
         </div>
         <div className="landing-hero-panel">
-          <strong>{locationText(profile)}</strong>
-          <ul>
-            <li>{profile.specialities.slice(0, 4).join(" • ") || "Speciality details available after publication"}</li>
-            <li>{profile.services.slice(0, 4).join(" • ") || "Services will appear here"}</li>
-            <li>{profile.contactEmail || "Contact details will be shared here"}</li>
-          </ul>
+          <div className="landing-mini-card">
+            <strong>Location</strong>
+            <span>{locationView.compact || "Location not pinned."}</span>
+          </div>
+          {specialities.length ? (
+            <div className="landing-mini-card">
+              <strong>Primary care</strong>
+              <span>{specialities.slice(0, 3).join(" • ")}</span>
+            </div>
+          ) : null}
+          {profile.contactEmail ? (
+            <div className="landing-mini-card">
+              <strong>Contact</strong>
+              <span>{profile.contactEmail}</span>
+            </div>
+          ) : null}
         </div>
       </div>
     </div>
@@ -133,114 +181,257 @@ export function LandingHero({ profile, section }: { profile: LandingProfile; sec
 export function LandingAbout({ profile, section }: { profile: LandingProfile; section: LandingSection }) {
   return sectionCard(sectionLabel(section), section.description, (
     <div className="landing-prose-grid">
-      <p>{profile.biography || profile.summary || "About this provider will appear here once the profile is published."}</p>
-      <ul className="landing-info-list">
-        <li>
-          <strong>Qualification</strong>
-          <span>{profile.qualification || "Shared after review"}</span>
-        </li>
-        <li>
-          <strong>Medical council</strong>
-          <span>{profile.medicalCouncil || "Shared after review"}</span>
-        </li>
-        <li>
-          <strong>Experience</strong>
-          <span>{profile.yearsOfExperience != null ? `${profile.yearsOfExperience}+ years` : "Shared after review"}</span>
-        </li>
-      </ul>
+      <p>{profile.biography || profile.summary || "Not provided."}</p>
+      <dl className="landing-info-list">
+        {profile.providerType === "INDIVIDUAL_DOCTOR" ? (
+          <>
+            <div>
+              <dt>Qualification</dt>
+              <dd>{profile.qualification?.trim() || "Not provided"}</dd>
+            </div>
+            <div>
+              <dt>Medical council</dt>
+              <dd>{profile.medicalCouncil?.trim() || "Not provided"}</dd>
+            </div>
+            <div>
+              <dt>Experience</dt>
+              <dd>{profile.yearsOfExperience != null && Number.isFinite(profile.yearsOfExperience) && profile.yearsOfExperience >= 0 ? `${profile.yearsOfExperience} years experience` : "Not provided"}</dd>
+            </div>
+          </>
+        ) : profile.providerType === "CLINIC" ? (
+          <>
+            <div>
+              <dt>Established year</dt>
+              <dd>{resolveClinicEstablishedYear(profile.establishedYear, profile.registrationNumber) ?? "Not provided"}</dd>
+            </div>
+            <div>
+              <dt>Registration number</dt>
+              <dd>{profile.registrationNumber?.trim() || "Not provided"}</dd>
+            </div>
+            <div>
+              <dt>Clinic philosophy</dt>
+              <dd>{profile.clinicPhilosophy?.trim() || "Not provided"}</dd>
+            </div>
+            <div>
+              <dt>Emergency availability</dt>
+              <dd>{profile.emergencyAvailability?.trim() || (profile.emergencyAvailable ? "Available" : "Not provided")}</dd>
+            </div>
+          </>
+        ) : (
+          <>
+            <div>
+              <dt>Hospital facts</dt>
+              <dd>{profile.summary || "Not provided"}</dd>
+            </div>
+            <div>
+              <dt>Emergency availability</dt>
+              <dd>{profile.emergencyAvailable ? "Available" : "Not provided"}</dd>
+            </div>
+          </>
+        )}
+      </dl>
     </div>
   ));
 }
 
 export function LandingServices({ profile, section }: { profile: LandingProfile; section: LandingSection }) {
+  const services = normalizeDisplayList(safeList(profile.services));
   return sectionCard(sectionLabel(section), section.description, (
-    <div className="landing-chip-grid">
-      {(profile.services.length ? profile.services : ["Consultations", "Preventive care", "Referral support"]).map((service) => (
-        <span key={service} className="landing-pill">{service}</span>
-      ))}
-    </div>
+    services.length ? (
+      <div className="landing-chip-grid">
+        {services.map((service) => (
+          <span key={service} className="landing-pill">{service}</span>
+        ))}
+      </div>
+    ) : (
+      <p className="landing-empty-state">No services added yet.</p>
+    )
   ));
 }
 
 export function LandingDoctors({ profile, section }: { profile: LandingProfile; section: LandingSection }) {
+  const specialities = normalizeDisplayList(safeList(profile.specialities));
   const teams = profile.providerType === "INDIVIDUAL_DOCTOR"
     ? [
         profile.displayName,
         profile.qualification,
         profile.primarySpeciality,
       ]
-    : profile.specialities.slice(0, 6);
+    : specialities.slice(0, 6);
   return sectionCard(sectionLabel(section), section.description, (
-    <div className="landing-doctor-grid">
-      {teams.filter(Boolean).map((entry) => (
-        <article className="landing-mini-card" key={entry as string}>
-          <strong>{entry as string}</strong>
-          <span>{profile.providerType === "INDIVIDUAL_DOCTOR" ? "Lead practitioner" : "Associated care team"}</span>
-        </article>
-      ))}
-    </div>
+    teams.filter(Boolean).length ? (
+      <div className="landing-doctor-grid">
+        {teams.filter(Boolean).map((entry) => (
+          <article className="landing-mini-card" key={entry as string}>
+            <strong>{entry as string}</strong>
+            <span>{profile.providerType === "INDIVIDUAL_DOCTOR" ? "Lead practitioner" : "Associated care team"}</span>
+          </article>
+        ))}
+      </div>
+    ) : (
+      <p className="landing-empty-state">{profile.providerType === "INDIVIDUAL_DOCTOR" ? "Qualifications not provided." : "No specialities added yet."}</p>
+    )
   ));
 }
 
 export function LandingDepartments({ profile, section }: { profile: LandingProfile; section: LandingSection }) {
+  const departments = normalizeDisplayList(safeList(profile.departments));
   return sectionCard(sectionLabel(section), section.description, (
-    <div className="landing-chip-grid">
-      {(profile.departments.length ? profile.departments : ["Primary care", "Diagnostics", "Speciality support"]).map((item) => (
-        <span key={item} className="landing-pill">{item}</span>
-      ))}
-    </div>
+    departments.length ? (
+      <div className="landing-chip-grid">
+        {departments.map((item) => (
+          <span key={item} className="landing-pill">{item}</span>
+        ))}
+      </div>
+    ) : (
+      <p className="landing-empty-state">No specialities added yet.</p>
+    )
   ));
 }
 
 export function LandingFacilities({ profile, section }: { profile: LandingProfile; section: LandingSection }) {
+  const facilities = normalizeDisplayList(safeList(profile.facilities));
   return sectionCard(sectionLabel(section), section.description, (
-    <div className="landing-chip-grid">
-      {(profile.facilities.length ? profile.facilities : ["Waiting area", "Accessible entry", "Front desk support"]).map((item) => (
-        <span key={item} className="landing-pill">{item}</span>
-      ))}
-    </div>
+    facilities.length ? (
+      <div className="landing-chip-grid">
+        {facilities.map((item) => (
+          <span key={item} className="landing-pill">{item}</span>
+        ))}
+      </div>
+    ) : (
+      <p className="landing-empty-state">No facilities configured.</p>
+    )
   ));
 }
 
 export function LandingHours({ profile, section }: { profile: LandingProfile; section: LandingSection }) {
-  const hours = profile.locations
+  const weekly = formatWeeklyTimings(profile.weeklyTimings, profile.timezone);
+  const hours = safeLocationList(profile)
     .map((location) => ({ label: location.label || location.city || "Location", workingHours: location.workingHours }))
     .filter((item) => Boolean(item.workingHours));
   return sectionCard(sectionLabel(section), section.description, (
     <div className="landing-hours-list">
-      {hours.length ? hours.map((item) => (
+      {weekly.rows.some((row) => !row.closed) ? weekly.rows.map((item) => (
+        <article key={item.day} className={`landing-mini-card${item.closed ? " is-closed" : ""}`}>
+          <strong>{item.day}</strong>
+          <span>{item.hours}</span>
+        </article>
+      )) : hours.length ? hours.map((item) => (
         <article key={item.label} className="landing-mini-card">
           <strong>{item.label}</strong>
           <span>{item.workingHours}</span>
         </article>
-      )) : <p>Working hours will appear after the provider publishes location details.</p>}
+      )) : <p className="landing-empty-state">Working hours have not been configured.</p>}
+      {weekly.warnings.length ? <p className="landing-empty-state landing-empty-state--warning">{weekly.warnings[0]}</p> : null}
+      {weekly.timezone ? <p className="landing-empty-state landing-empty-state--timezone">Timezone: {weekly.timezone}</p> : null}
     </div>
   ));
 }
 
 export function LandingGallery({ profile, section }: { profile: LandingProfile; section: LandingSection }) {
-  const galleryImages = profile.galleryImageUrls.length
-    ? profile.galleryImageUrls.map((url, index) => ({
-        url,
-        caption: profile.gallery[index]?.caption || `Gallery image ${index + 1}`,
-      }))
+  const galleryImageUrls = Array.isArray(profile.galleryImageUrls) ? profile.galleryImageUrls : [];
+  const gallery = Array.isArray(profile.gallery) ? profile.gallery : [];
+  const [selectedGalleryIndex, setSelectedGalleryIndex] = useState<number | null>(null);
+  const galleryImages = galleryImageUrls.length
+    ? galleryImageUrls.map((url, index) => {
+        const item = gallery[index] ?? { caption: null };
+        const fallbackCaption = `Clinic gallery image ${index + 1}`;
+        const caption = sanitizeText(item.caption, fallbackCaption);
+        return {
+          url,
+          caption,
+          alt: sanitizeText((item as { alt?: string | null }).alt, caption),
+          position: `${index + 1} of ${galleryImageUrls.length}`,
+        };
+      })
     : [];
+
+  useEffect(() => {
+    if (selectedGalleryIndex == null) {
+      return;
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setSelectedGalleryIndex(null);
+      }
+      if (event.key === "ArrowLeft") {
+        setSelectedGalleryIndex((current) => (current == null ? null : (current - 1 + galleryImages.length) % galleryImages.length));
+      }
+      if (event.key === "ArrowRight") {
+        setSelectedGalleryIndex((current) => (current == null ? null : (current + 1) % galleryImages.length));
+      }
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [galleryImages.length, selectedGalleryIndex]);
+
   return sectionCard(sectionLabel(section), section.description, (
     <div className="landing-gallery-grid">
       {galleryImages.length ? galleryImages.map((item, index) => (
         <article className="landing-gallery-card" key={`${item.url}-${index}`}>
-          <div className="landing-gallery-media">
-            <PublicMediaImage
-              src={item.url}
-              alt={landingImageAlt(profile, "gallery", index + 1)}
-              className="landing-gallery-image"
-              objectFit="cover"
-              fallback={<div className="landing-gallery-fallback" aria-hidden="true" />}
-            />
-          </div>
-          <strong>{item.caption}</strong>
+          <button
+            className="landing-gallery-card__trigger"
+            type="button"
+            onClick={() => setSelectedGalleryIndex(index)}
+            aria-label={`Open ${item.caption}`}
+          >
+            <div className="landing-gallery-media">
+              <PublicMediaImage
+                src={item.url}
+                alt={item.alt}
+                className="landing-gallery-image"
+                objectFit="cover"
+                fallback={<div className="landing-gallery-fallback" aria-hidden="true" />}
+              />
+            </div>
+            <strong>{item.caption}</strong>
+            <span className="landing-gallery-position">{item.position}</span>
+          </button>
         </article>
-      )) : <p className="landing-gallery-empty">Gallery images will appear here once the provider uploads them.</p>}
+      )) : <p className="landing-gallery-empty">No gallery images uploaded.</p>}
+      {selectedGalleryIndex != null && galleryImages[selectedGalleryIndex] ? (
+        <div className="provider-preview-gallery-lightbox" role="dialog" aria-modal="true" aria-label={galleryImages[selectedGalleryIndex].caption}>
+          <button
+            className="provider-preview-gallery-lightbox__backdrop"
+            type="button"
+            aria-label="Close gallery preview"
+            onClick={() => setSelectedGalleryIndex(null)}
+          />
+          <div className="provider-preview-gallery-lightbox__dialog">
+            <div className="provider-preview-gallery-lightbox__header">
+              <strong>{galleryImages[selectedGalleryIndex].caption}</strong>
+              <button className="icon-button" type="button" aria-label="Close preview" onClick={() => setSelectedGalleryIndex(null)}>
+                <CloseRounded fontSize="small" aria-hidden="true" />
+              </button>
+            </div>
+            <div className="provider-preview-gallery-lightbox__media">
+              <button
+                className="icon-button provider-preview-gallery-lightbox__nav"
+                type="button"
+                aria-label="Previous image"
+                onClick={() => setSelectedGalleryIndex((current) => (current == null ? null : (current - 1 + galleryImages.length) % galleryImages.length))}
+              >
+                <ChevronLeftRounded fontSize="small" aria-hidden="true" />
+              </button>
+              <PublicMediaImage
+                src={galleryImages[selectedGalleryIndex].url}
+                alt={galleryImages[selectedGalleryIndex].alt}
+                className="provider-preview-gallery-lightbox__image"
+                objectFit="contain"
+                fallback={<div className="landing-gallery-fallback" aria-hidden="true" />}
+              />
+              <button
+                className="icon-button provider-preview-gallery-lightbox__nav"
+                type="button"
+                aria-label="Next image"
+                onClick={() => setSelectedGalleryIndex((current) => (current == null ? null : (current + 1) % galleryImages.length))}
+              >
+                <ChevronRightRounded fontSize="small" aria-hidden="true" />
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   ));
 }
@@ -248,12 +439,7 @@ export function LandingGallery({ profile, section }: { profile: LandingProfile; 
 export function LandingInsurance({ profile: _profile, section }: { profile: LandingProfile; section: LandingSection }) {
   return sectionCard(sectionLabel(section), section.description, (
     <div className="landing-prose-grid">
-      <p>Insurance and payment options will be listed here when enabled for this provider.</p>
-      <div className="landing-chip-grid">
-        <span className="landing-pill">Cash</span>
-        <span className="landing-pill">Card</span>
-        <span className="landing-pill">Insurance-ready</span>
-      </div>
+      <p>Consultation fees have not been configured.</p>
     </div>
   ));
 }
@@ -261,17 +447,20 @@ export function LandingInsurance({ profile: _profile, section }: { profile: Land
 export function LandingAwards({ profile, section }: { profile: LandingProfile; section: LandingSection }) {
   return sectionCard(sectionLabel(section), section.description, (
     <div className="landing-chip-grid">
-      {(profile.emergencyAvailable ? ["Emergency care", "Safety protocols"] : ["Accreditation-ready", "Safety-first"]).map((item) => (
-        <span key={item} className="landing-pill">{item}</span>
-      ))}
+      {profile.emergencyAvailable ? (
+        <span className="landing-pill">Emergency care</span>
+      ) : (
+        <span className="landing-empty-state">No awards added.</span>
+      )}
     </div>
   ));
 }
 
 export function LandingFAQ({ profile, section }: { profile: LandingProfile; section: LandingSection }) {
+  const services = safeList(profile.services);
   const items = [
     ["How do I book an appointment?", "Use the appointment call to action or contact the practice directly."],
-    ["What services are available?", profile.services.length ? profile.services.slice(0, 4).join(", ") : "Services will appear when published."],
+    ["What services are available?", services.length ? services.slice(0, 4).join(", ") : "No services added yet."],
     ["Where is the practice located?", locationText(profile)],
   ] as const;
   return sectionCard(sectionLabel(section), section.description, (
@@ -286,56 +475,88 @@ export function LandingFAQ({ profile, section }: { profile: LandingProfile; sect
   ));
 }
 
-export function LandingContact({ profile, section }: { profile: LandingProfile; section: LandingSection }) {
-  const firstLocation = profile.locations[0];
+export function LandingContact({ profile, section, renderMode = "PUBLIC_PROFILE" }: { profile: LandingProfile; section: LandingSection; renderMode?: "PROVIDER_DRAFT_PREVIEW" | "PLATFORM_REVIEW_PREVIEW" | "PUBLIC_PROFILE" }) {
+  const firstLocation = safeLocationList(profile)[0];
+  const addressView = buildPublicAddressView(firstLocation ?? {
+    addressLine1: null,
+    addressLine2: null,
+    address: null,
+    area: profile.area,
+    city: profile.city,
+    state: profile.state,
+    country: profile.country,
+    pinCode: null,
+    postalCode: null,
+  });
+  const phoneHref = profile.contactPhone ? `tel:${profile.contactPhone.replace(/[^\d+]/g, "")}` : null;
+  const whatsappHref = profile.contactPhone ? `https://wa.me/${profile.contactPhone.replace(/\D/g, "")}` : null;
   return sectionCard(sectionLabel(section), section.description, (
     <>
       <div className="landing-contact-grid">
         <div className="landing-mini-card">
           <strong>Contact</strong>
-          <span>{profile.contactPhone || "Phone will be shared after publication"}</span>
-          <span>{profile.contactEmail || "Email will be shared after publication"}</span>
+          {profile.contactPhone ? <div className="landing-contact-row"><span>Phone</span><a href={phoneHref ?? undefined}>{profile.contactPhone}</a></div> : null}
+          {profile.contactEmail ? <div className="landing-contact-row"><span>Email</span><a href={`mailto:${profile.contactEmail}`}>{profile.contactEmail}</a></div> : null}
+          {profile.website ? <div className="landing-contact-row"><span>Website</span><a href={profile.website} target="_blank" rel="noopener noreferrer">{profile.website}</a></div> : null}
+          {profile.contactPhone && whatsappHref ? <div className="landing-contact-row"><span>WhatsApp</span><a href={whatsappHref} target="_blank" rel="noopener noreferrer">{profile.contactPhone}</a></div> : null}
+          {!profile.contactPhone && !profile.contactEmail && !profile.website ? <span>Contact details not configured.</span> : null}
         </div>
         <div className="landing-mini-card">
           <strong>Address</strong>
-          <span>{firstLocation?.address || locationText(profile)}</span>
-          <span>{[firstLocation?.city, firstLocation?.state, firstLocation?.country].filter(Boolean).join(", ")}</span>
+          {addressView.lines.length ? addressView.lines.map((line) => <div key={line}>{line}</div>) : <span>Location not pinned. Pinning an exact location will help patients find the clinic.</span>}
         </div>
         <div className="landing-mini-card">
-          <strong>Public route</strong>
-          <span>{profile.publicPath}</span>
-          <span>{profile.website || "Website link will appear here"}</span>
+          <strong>Public URL</strong>
+          {renderMode === "PUBLIC_PROFILE" ? (
+            <a href={publicRouteHref(profile)} className="landing-route-link">{publicRouteLabel(profile)}</a>
+          ) : (
+            <span>{publicRouteLabel(profile)}</span>
+          )}
         </div>
       </div>
-      <LocationDisplayMap
-        providerName={profile.displayName}
-        locations={profile.locations}
-        compact
-        title="Find us on the map"
-        directionsLabel="Get directions"
-      />
+      {safeLocationList(profile).length ? (
+        <LocationDisplayMap
+          providerName={profile.displayName}
+          locations={safeLocationList(profile)}
+          compact
+          title="Find us on the map"
+          directionsLabel="Get directions"
+        />
+      ) : <p className="landing-empty-state">Location not pinned. Pinning an exact location will help patients find the clinic.</p>}
     </>
   ));
 }
 
-export function LandingCTA({ profile, section }: { profile: LandingProfile; section: LandingSection }) {
+export function LandingCTA({ profile, section, renderMode = "PUBLIC_PROFILE" }: { profile: LandingProfile; section: LandingSection; renderMode?: "PROVIDER_DRAFT_PREVIEW" | "PLATFORM_REVIEW_PREVIEW" | "PUBLIC_PROFILE" }) {
   return sectionCard(sectionLabel(section), section.description, (
-    <div className="landing-cta-band">
-      <div>
-        <strong>Ready to book?</strong>
-        <p>Use the public profile or call the practice to continue.</p>
+    renderMode === "PUBLIC_PROFILE" ? (
+      <div className="landing-cta-band">
+        <div>
+          <strong>Ready to book?</strong>
+          <p>{profile.contactPhone ? "Use the public profile or call the practice to continue." : "Public contact methods have not been configured."}</p>
+        </div>
+        <div className="cta-row">
+          <a className="primary-button" href={profile.publicPath}>
+            Open profile
+          </a>
+          {profile.contactPhone ? <a className="secondary-button" href={`tel:${profile.contactPhone}`}>Call now</a> : null}
+        </div>
       </div>
-      <div className="cta-row">
-        <a className="primary-button" href={profile.publicPath}>
-          Open profile
-        </a>
-        {profile.contactPhone ? <a className="secondary-button" href={`tel:${profile.contactPhone}`}>Call now</a> : null}
+    ) : (
+      <div className="landing-cta-band landing-cta-band--preview">
+        <div>
+          <strong>DRAFT PREVIEW - NOT PUBLIC</strong>
+          <p>Public actions are hidden until the profile is published.</p>
+        </div>
+        <div className="cta-row">
+          <span className="landing-hero-meta">Public URL: {publicRouteLabel(profile)}</span>
+        </div>
       </div>
-    </div>
+    )
   ));
 }
 
-function renderSection(profile: LandingProfile, section: LandingSection) {
+function renderSection(profile: LandingProfile, section: LandingSection, renderMode: "PROVIDER_DRAFT_PREVIEW" | "PLATFORM_REVIEW_PREVIEW" | "PUBLIC_PROFILE") {
   switch (section.key) {
     case "HERO":
       return <LandingHero profile={profile} section={section} />;
@@ -360,15 +581,15 @@ function renderSection(profile: LandingProfile, section: LandingSection) {
     case "FAQ":
       return <LandingFAQ profile={profile} section={section} />;
     case "CONTACT":
-      return <LandingContact profile={profile} section={section} />;
+      return <LandingContact profile={profile} section={section} renderMode={renderMode} />;
     case "CTA":
-      return <LandingCTA profile={profile} section={section} />;
+      return <LandingCTA profile={profile} section={section} renderMode={renderMode} />;
     default:
       return sectionCard(sectionLabel(section), section.description, <p>{section.title || "Configured section"}</p>);
   }
 }
 
-export function LandingPageRenderer({ page, snapshot }: { page: LandingPageRenderable; snapshot?: LandingSnapshot | null }) {
+export function LandingPageRenderer({ page, snapshot, renderMode = "PUBLIC_PROFILE" }: { page: LandingPageRenderable; snapshot?: LandingSnapshot | null; renderMode?: "PROVIDER_DRAFT_PREVIEW" | "PLATFORM_REVIEW_PREVIEW" | "PUBLIC_PROFILE" }) {
   const activeSnapshot = snapshot ?? page.publishedSnapshot ?? page.draft;
   if (!activeSnapshot) {
     return (
@@ -378,7 +599,7 @@ export function LandingPageRenderer({ page, snapshot }: { page: LandingPageRende
             <div>
               <span className="landing-eyebrow">Structured landing page</span>
               <h1>{page.displayName}</h1>
-              <p>A published landing page will appear here after configuration is published.</p>
+              <p>No landing page content is available yet.</p>
             </div>
           </header>
         </div>
@@ -393,16 +614,16 @@ export function LandingPageRenderer({ page, snapshot }: { page: LandingPageRende
           <div>
             <span className="landing-eyebrow">Structured landing page</span>
             <h1>{page.displayName}</h1>
-            <p>{page.profile.summary || page.profile.biography || "A structured landing page built from the published profile and template settings."}</p>
+            <p>{page.profile?.summary || page.profile?.biography || "A structured landing page built from the published profile and template settings."}</p>
           </div>
           <div className="landing-page-meta">
-            <span>{page.profile.providerType.replaceAll("_", " ").toLowerCase()}</span>
-            <span>{page.canonicalSlug}</span>
-            <span>{page.publicPath}</span>
+            <span>{page.profile?.providerType?.replaceAll("_", " ").toLowerCase() || "provider"}</span>
+            <span>{page.canonicalSlug || "unassigned slug"}</span>
+            <span>{page.publicPath || "public path pending"}</span>
           </div>
         </header>
         <div className="landing-page-sections">
-          {sections.map((section) => renderSection(page.profile, section))}
+          {sections.map((section) => renderSection(page.profile, section, renderMode))}
         </div>
       </div>
     </div>

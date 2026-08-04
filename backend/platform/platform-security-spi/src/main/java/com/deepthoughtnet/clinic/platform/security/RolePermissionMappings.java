@@ -76,6 +76,7 @@ public final class RolePermissionMappings {
             Permissions.PLATFORM_PROVIDER_CONNECTION_UNLINK,
             Permissions.PLATFORM_PROVIDER_CONNECTION_RECONCILE,
             Permissions.PLATFORM_PROVIDER_CONNECTION_AUDIT,
+            Permissions.PLATFORM_PROVIDER_CONNECTION_IDENTITY_OVERRIDE,
             Permissions.NOTIFICATION_READ,
             Permissions.NOTIFICATION_MANAGE,
             Permissions.NOTIFICATION_SEND,

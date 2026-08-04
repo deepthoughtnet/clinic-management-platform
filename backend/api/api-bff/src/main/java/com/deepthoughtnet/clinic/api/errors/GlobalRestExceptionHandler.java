@@ -8,6 +8,7 @@ import com.deepthoughtnet.clinic.api.medicationsafety.MedicationSafetyGuardError
 import com.deepthoughtnet.clinic.api.medicationsafety.MedicationSafetyGuardException;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityConflictException;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingConflictException;
+import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipConflictException;
 import com.deepthoughtnet.clinic.discover.reference.InvalidReferenceValueException;
 import com.deepthoughtnet.clinic.identity.service.TenantProvisioningException;
 import com.deepthoughtnet.clinic.patient.service.model.PatientConflictException;
@@ -185,6 +186,11 @@ public class GlobalRestExceptionHandler {
     @ExceptionHandler(ProviderOnboardingConflictException.class)
     public ResponseEntity<?> handleProviderOnboardingConflict(ProviderOnboardingConflictException ex, HttpServletRequest req) {
         return build(HttpStatus.CONFLICT, "conflict", userMessage(ex.getMessage(), "Provider application changed in another session."), req);
+    }
+
+    @ExceptionHandler(ProviderOwnershipConflictException.class)
+    public ResponseEntity<?> handleProviderOwnershipConflict(ProviderOwnershipConflictException ex, HttpServletRequest req) {
+        return build(HttpStatus.CONFLICT, ex.getCode(), userMessage(ex.getMessage(), "Provider ownership state conflict."), req);
     }
 
     @ExceptionHandler(InvalidReferenceValueException.class)

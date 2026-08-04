@@ -65,8 +65,8 @@ Shared shell expectations:
 Page-specific expectations:
 
 - Doctors: compact comparison-oriented cards, specialist discovery emphasis, booking emphasis
-- Clinics: landscape cards, practice/team/facility emphasis, nearby and service emphasis
-- Hospitals: wider destination cards, departments/capabilities emphasis
+- Clinics: one-result-per-row vertical cards, practice/team/facility emphasis, nearby and service emphasis, bounded load-more continuation
+- Hospitals: one-result-per-row vertical cards, departments/capabilities emphasis, bounded load-more continuation
 - Specialities: icon-grid browsing, A–Z navigation where useful, specialist discovery hierarchy, AIVA coming-soon panel
 
 ## Compatibility Plan
@@ -118,4 +118,5 @@ Required tests for implementation:
 - public-safe media tests
 - footer presence tests
 - page-specific card layout tests
+- bounded load-more tests for clinic and hospital result lists
 - regression tests for home, public detail pages, provider auth header, patient login, and booking handoff

@@ -24,7 +24,11 @@ import com.deepthoughtnet.clinic.api.lab.service.LabService;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderResultRecord;
 import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
+import com.deepthoughtnet.clinic.api.reliability.service.IdempotencyService;
 import com.deepthoughtnet.clinic.api.prescriptiontemplate.service.PrescriptionBrandingDocumentResolver;
+import com.deepthoughtnet.clinic.platform.contracts.providerintegration.BookingSlotSummary;
+import com.deepthoughtnet.clinic.platform.contracts.providerintegration.BookingTargetReference;
+import com.deepthoughtnet.clinic.platform.contracts.providerintegration.port.HealthcareAvailabilityPort;
 import com.deepthoughtnet.clinic.appointment.service.AppointmentService;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentPriority;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentRecord;
@@ -66,6 +70,10 @@ import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionPdf;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionMedicineRecord;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionRecord;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionTestRecord;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.nio.charset.StandardCharsets;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
@@ -75,14 +83,17 @@ import java.util.LinkedHashMap;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
+import org.springframework.web.server.ResponseStatusException;
 import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiAppointmentOption;
 
 @Service
@@ -106,6 +117,9 @@ public class PatientPortalService {
     private final NotificationHistoryService notificationHistoryService;
     private final NotificationActionService notificationActionService;
     private final PrescriptionBrandingDocumentResolver brandingDocumentResolver;
+    private final IdempotencyService idempotencyService;
+    private final ObjectMapper objectMapper;
+    private final HealthcareAvailabilityPort healthcareAvailabilityPort;
 
     @Autowired
     public PatientPortalService(
@@ -124,7 +138,10 @@ public class PatientPortalService {
             LabService labService,
             NotificationHistoryService notificationHistoryService,
             NotificationActionService notificationActionService,
-            PrescriptionBrandingDocumentResolver brandingDocumentResolver
+            PrescriptionBrandingDocumentResolver brandingDocumentResolver,
+            IdempotencyService idempotencyService,
+            ObjectMapper objectMapper,
+            HealthcareAvailabilityPort healthcareAvailabilityPort
     ) {
         this.appUserRepository = appUserRepository;
         this.tenantRepository = tenantRepository;
@@ -142,77 +159,9 @@ public class PatientPortalService {
         this.notificationHistoryService = notificationHistoryService;
         this.notificationActionService = notificationActionService;
         this.brandingDocumentResolver = brandingDocumentResolver;
-    }
-
-    public PatientPortalService(
-            AppUserRepository appUserRepository,
-            TenantRepository tenantRepository,
-            PatientRepository patientRepository,
-            ClinicProfileService clinicProfileService,
-            TenantUserManagementService tenantUserManagementService,
-            DoctorProfileService doctorProfileService,
-            PatientService patientService,
-            AppUserProvisioner appUserProvisioner,
-            ClinicTimeZoneResolver clinicTimeZoneResolver,
-            AppointmentService appointmentService,
-            PrescriptionService prescriptionService,
-            BillingService billingService,
-            LabService labService,
-            NotificationHistoryService notificationHistoryService,
-            NotificationActionService notificationActionService
-    ) {
-        this(
-                appUserRepository,
-                tenantRepository,
-                patientRepository,
-                clinicProfileService,
-                tenantUserManagementService,
-                doctorProfileService,
-                patientService,
-                appUserProvisioner,
-                clinicTimeZoneResolver,
-                appointmentService,
-                prescriptionService,
-                billingService,
-                labService,
-                notificationHistoryService,
-                notificationActionService,
-                null
-        );
-    }
-
-    public PatientPortalService(
-            AppUserRepository appUserRepository,
-            TenantRepository tenantRepository,
-            PatientRepository patientRepository,
-            ClinicProfileService clinicProfileService,
-            TenantUserManagementService tenantUserManagementService,
-            DoctorProfileService doctorProfileService,
-            PatientService patientService,
-            AppUserProvisioner appUserProvisioner,
-            ClinicTimeZoneResolver clinicTimeZoneResolver,
-            AppointmentService appointmentService,
-            PrescriptionService prescriptionService,
-            BillingService billingService
-    ) {
-        this(
-                appUserRepository,
-                tenantRepository,
-                patientRepository,
-                clinicProfileService,
-                tenantUserManagementService,
-                doctorProfileService,
-                patientService,
-                appUserProvisioner,
-                clinicTimeZoneResolver,
-                appointmentService,
-                prescriptionService,
-                billingService,
-                null,
-                null,
-                null,
-                null
-        );
+        this.idempotencyService = idempotencyService;
+        this.objectMapper = objectMapper;
+        this.healthcareAvailabilityPort = healthcareAvailabilityPort;
     }
 
     public PatientPortalDashboardResponse dashboard() {
@@ -456,19 +405,28 @@ public class PatientPortalService {
     }
 
     public List<PatientPortalDoctorSlotResponse> doctorSlots(String publicDoctorId, LocalDate date) {
-        return doctorSlots(publicDoctorId, null, null, null, date);
+        return doctorSlots(null, publicDoctorId, null, null, null, date);
     }
 
     public List<PatientPortalDoctorSlotResponse> doctorSlots(String publicDoctorId, String clinicSlug, LocalDate date) {
-        return doctorSlots(publicDoctorId, clinicSlug, null, null, date);
+        return doctorSlots(null, publicDoctorId, clinicSlug, null, null, date);
     }
 
     public List<PatientPortalDoctorSlotResponse> doctorSlots(String publicDoctorId, String clinicSlug, String tenantId, String clinicId, LocalDate date) {
+        return doctorSlots(null, publicDoctorId, clinicSlug, tenantId, clinicId, date);
+    }
+
+    public List<PatientPortalDoctorSlotResponse> doctorSlots(String bookingReference, String publicDoctorId, String clinicSlug, String tenantId, String clinicId, LocalDate date) {
         PatientAccess access = requireCurrentPatientAccess();
         requireAppointmentDate(date);
-        BookingDoctorAccess bookingDoctor = resolveBookingDoctor(access, publicDoctorId, clinicSlug, tenantId, clinicId);
-        ZoneId tenantZone = resolveTenantZone(bookingDoctor.tenantId());
+        BookingDoctorAccess bookingDoctor = resolveBookingDoctor(access, bookingReference, publicDoctorId, clinicSlug, tenantId, clinicId);
         debugBookingResolution("doctorSlots", publicDoctorId, clinicSlug, tenantId, clinicId, bookingDoctor);
+        if (bookingDoctor.bookingTargetReference() != null && healthcareAvailabilityPort != null) {
+            return healthcareAvailabilityPort.getBookableSlots(bookingDoctor.bookingTargetReference(), date).stream()
+                    .map(this::toDoctorSlotResponse)
+                    .toList();
+        }
+        ZoneId tenantZone = resolveTenantZone(bookingDoctor.tenantId());
         ZonedDateTime clinicNow = ZonedDateTime.now(tenantZone);
         return appointmentService.listSlots(bookingDoctor.tenantId(), bookingDoctor.doctor().user().appUserId(), date, tenantZone).stream()
                 .filter(slot -> AppointmentTimingRules.isSlotBookableForPatient(slot.appointmentDate(), slot.slotTime(), tenantZone, clinicNow))
@@ -482,21 +440,33 @@ public class PatientPortalService {
         if (request == null) {
             throw new IllegalArgumentException("Appointment request is required");
         }
-        requireAppointmentDate(request.appointmentDate());
+        LocalDate appointmentDate = resolveBookingDate(request);
         if (request.appointmentTime() == null) {
             throw new IllegalArgumentException("Appointment time is required");
         }
 
-        BookingDoctorAccess bookingDoctor = resolveBookingDoctor(access, request.publicDoctorId(), request.clinicSlug(), request.tenantId(), request.clinicId());
-        PatientEntity bookingPatient = resolveBookingPatient(access, bookingDoctor.tenantId());
+        String idempotencyKey = normalizeNullable(firstNonBlank(request.idempotencyKey(), null));
+        String requestSignature = bookingRequestSignature(request, appointmentDate);
+        if (StringUtils.hasText(idempotencyKey)) {
+            UUID bookingIdempotencyScope = bookingIdempotencyScope(access, request);
+            var cached = idempotencyService.findCachedResponse(bookingIdempotencyScope, idempotencyKey, requestSignature);
+            if (cached.isPresent()) {
+                return deserializeConfirmation(cached.get());
+            }
+        }
+
+        BookingDoctorAccess bookingDoctor = resolveBookingDoctor(access, request.bookingReference(), request.publicDoctorId(), request.clinicSlug(), request.tenantId(), request.clinicId());
+        ZoneId tenantZone = resolveTenantZone(bookingDoctor.tenantId());
+        debugBookingResolution("bookAppointment", request.publicDoctorId(), request.clinicSlug(), request.tenantId(), request.clinicId(), bookingDoctor);
+        SelectedSlotResolution selectedSlot = resolveSelectedSlot(access, bookingDoctor, request, appointmentDate, tenantZone);
+        BookingPatientResolution bookingPatientResolution = resolveBookingPatientResolution(access, bookingDoctor.tenantId(), request);
+        PatientEntity bookingPatient = bookingPatientResolution.patient();
         UUID actorAppUserId = bookingDoctor.tenantId().equals(access.tenantId())
                 ? requireActorAppUserId()
                 : ensurePatientPortalActor(bookingDoctor.tenantId(), bookingPatient);
-        ZoneId tenantZone = resolveTenantZone(bookingDoctor.tenantId());
-        debugBookingResolution("bookAppointment", request.publicDoctorId(), request.clinicSlug(), request.tenantId(), request.clinicId(), bookingDoctor);
         if (log.isDebugEnabled()) {
             log.debug(
-                    "patient.portal.booking.create patientPortalSessionId={} patientId={} patientMobile={} selectedClinicSlug={} selectedTenantId={} resolvedClinicTenantId={} doctorId={} bookingPatientId={}",
+                    "patient.portal.booking.create patientPortalSessionId={} patientId={} patientMobile={} selectedClinicSlug={} selectedTenantId={} resolvedClinicTenantId={} doctorId={} bookingPatientId={} slotReference={} appointmentDate={} appointmentTime={}",
                     RequestContextHolder.require().correlationId(),
                     access.patient().getId(),
                     resolveVerifiedMobile(access),
@@ -504,60 +474,67 @@ public class PatientPortalService {
                     request.tenantId(),
                     bookingDoctor.tenantId(),
                     request.publicDoctorId(),
-                    bookingPatient.getId()
+                    bookingPatient.getId(),
+                    selectedSlot.slotReference(),
+                    appointmentDate,
+                    selectedSlot.appointmentTime()
             );
-        }
-        List<DoctorAvailabilitySlotRecord> slots = appointmentService.listSlots(
-                bookingDoctor.tenantId(),
-                bookingDoctor.doctor().user().appUserId(),
-                request.appointmentDate(),
-                tenantZone
-        );
-        ZonedDateTime clinicNow = ZonedDateTime.now(tenantZone);
-        boolean slotSelectable = slots.stream()
-                .filter(slot -> AppointmentTimingRules.isSlotBookableForPatient(slot.appointmentDate(), slot.slotTime(), tenantZone, clinicNow))
-                .anyMatch(slot -> request.appointmentTime().equals(slot.slotTime()) && slot.selectable());
-        if (!slotSelectable) {
-            throw new IllegalArgumentException("Selected slot is no longer available.");
         }
 
-        var booked = appointmentService.createScheduled(
-                bookingDoctor.tenantId(),
-                new AppointmentUpsertCommand(
-                        bookingPatient.getId(),
-                        bookingDoctor.doctor().user().appUserId(),
-                        request.appointmentDate(),
-                        request.appointmentTime(),
-                        normalizeBookingReason(request.reason()),
-                        AppointmentType.SCHEDULED,
-                        null,
-                        AppointmentPriority.NORMAL,
-                        false
-                ),
-                actorAppUserId,
-                false,
-                tenantZone
-        );
-        if (log.isDebugEnabled()) {
-            log.debug(
-                    "patient.portal.booking.created patientPortalSessionId={} appointmentId={} appointmentPatientId={} appointmentTenantId={} appointmentStatus={}",
-                    RequestContextHolder.require().correlationId(),
-                    booked.id(),
-                    booked.patientId(),
+        PatientPortalAppointmentConfirmationResponse confirmation;
+        try {
+            var booked = appointmentService.createScheduled(
                     bookingDoctor.tenantId(),
-                    booked.status()
+                    new AppointmentUpsertCommand(
+                            bookingPatient.getId(),
+                            bookingDoctor.doctor().user().appUserId(),
+                            appointmentDate,
+                            selectedSlot.appointmentTime(),
+                            normalizeBookingReason(firstNonBlank(request.patientNotes(), request.reason())),
+                            AppointmentType.SCHEDULED,
+                            null,
+                            AppointmentPriority.NORMAL,
+                            false
+                    ),
+                    actorAppUserId,
+                    false,
+                    tenantZone
             );
+            if (log.isDebugEnabled()) {
+                log.debug(
+                        "patient.portal.booking.created patientPortalSessionId={} appointmentId={} appointmentPatientId={} appointmentTenantId={} appointmentStatus={}",
+                        RequestContextHolder.require().correlationId(),
+                        booked.id(),
+                        booked.patientId(),
+                        bookingDoctor.tenantId(),
+                        booked.status()
+                );
+            }
+            confirmation = buildConfirmationResponse(
+                    booked,
+                    bookingDoctor.tenantId(),
+                    tenantZone,
+                    bookingPatient,
+                    request,
+                    bookingPatientResolution.created(),
+                    "Appointment confirmed successfully."
+            );
+        } catch (IllegalArgumentException ex) {
+            if (looksLikeSlotConflict(ex)) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "This time is no longer available. Please choose another slot.");
+            }
+            throw ex;
         }
-        return new PatientPortalAppointmentConfirmationResponse(
-                booked.appointmentDate(),
-                booked.appointmentTime(),
-                booked.doctorName(),
-                clinicName(bookingDoctor.tenantId()),
-                appointmentSource(booked),
-                booked.status() == null ? null : booked.status().name(),
-                summarize(booked.reason()),
-                "Appointment booked successfully."
-        );
+
+        if (StringUtils.hasText(idempotencyKey)) {
+            UUID bookingIdempotencyScope = bookingIdempotencyScope(access, request);
+            try {
+                idempotencyService.storeResponse(bookingIdempotencyScope, idempotencyKey, requestSignature, objectMapper.writeValueAsString(confirmation));
+            } catch (JsonProcessingException ex) {
+                throw new IllegalStateException("Unable to cache booking confirmation", ex);
+            }
+        }
+        return confirmation;
     }
 
     @Transactional
@@ -916,11 +893,29 @@ public class PatientPortalService {
 
     private PatientPortalDoctorSlotResponse toDoctorSlotResponse(DoctorAvailabilitySlotRecord slot) {
         return new PatientPortalDoctorSlotResponse(
+                null,
                 slot.appointmentDate(),
                 slot.slotTime(),
                 slot.slotEndTime(),
                 slot.status() == null ? null : slot.status().name(),
                 slot.selectable()
+        );
+    }
+
+    private PatientPortalDoctorSlotResponse toDoctorSlotResponse(BookingSlotSummary slot) {
+        if (slot == null) {
+            throw new IllegalArgumentException("Slot summary is required");
+        }
+        LocalDate slotDate = slot.startsAt() == null ? null : slot.startsAt().toLocalDate();
+        LocalTime slotStart = slot.startsAt() == null ? null : slot.startsAt().toLocalTime();
+        LocalTime slotEnd = slot.endsAt() == null ? null : slot.endsAt().toLocalTime();
+        return new PatientPortalDoctorSlotResponse(
+                slot.slotId(),
+                slotDate,
+                slotStart,
+                slotEnd,
+                slot.available() ? "AVAILABLE" : "UNAVAILABLE",
+                slot.available()
         );
     }
 
@@ -1155,9 +1150,25 @@ public class PatientPortalService {
                 .toList();
     }
 
-    private BookingDoctorAccess resolveBookingDoctor(PatientAccess access, String publicDoctorId, String clinicSlug, String tenantId, String clinicId) {
+    private BookingDoctorAccess resolveBookingDoctor(
+            PatientAccess access,
+            String bookingReference,
+            String publicDoctorId,
+            String clinicSlug,
+            String tenantId,
+            String clinicId
+    ) {
+        if (StringUtils.hasText(bookingReference) && healthcareAvailabilityPort != null) {
+            BookingTargetReference targetReference = new BookingTargetReference(bookingReference.trim(), 0L);
+            var resolved = healthcareAvailabilityPort.resolveBookingTarget(targetReference)
+                    .orElseThrow(() -> new IllegalArgumentException("Selected booking target could not be resolved."));
+            UUID bookingTenantId = parseUuid(resolved.tenantReference(), "Clinic is not available for online booking.");
+            DoctorSnapshot doctor = requireBookingDoctor(bookingTenantId, resolved.tenantDoctorUserReference(), resolved.tenantDoctorProfileReference(), publicDoctorId);
+            return new BookingDoctorAccess(bookingTenantId, doctor, resolved.bookingTargetReference());
+        }
+
         UUID bookingTenantId = resolveBookingTenantId(access.tenantId(), clinicSlug, tenantId, clinicId);
-        return new BookingDoctorAccess(bookingTenantId, requirePublicBookableDoctor(bookingTenantId, publicDoctorId));
+        return new BookingDoctorAccess(bookingTenantId, requirePublicBookableDoctor(bookingTenantId, publicDoctorId), null);
     }
 
     private UUID resolveBookingTenantId(UUID fallbackTenantId, String clinicSlug, String tenantId, String clinicId) {
@@ -1223,6 +1234,22 @@ public class PatientPortalService {
                 .orElse(null);
         if (doctor == null) {
             logBookingEligibility("requirePublicBookableDoctor", publicDoctorId, null, null, null, tenantId, tenantId, null, null, null, "doctor not public/bookable for tenant");
+            throw new IllegalArgumentException("Doctor not found");
+        }
+        return doctor;
+    }
+
+    private DoctorSnapshot requireBookingDoctor(UUID tenantId, String tenantDoctorUserReference, String tenantDoctorProfileReference, String publicDoctorId) {
+        UUID doctorUserId = parseDoctorUserId(StringUtils.hasText(tenantDoctorUserReference) ? tenantDoctorUserReference : publicDoctorId);
+        DoctorSnapshot doctor = activeDoctorSnapshots(tenantId).stream()
+                .filter(snapshot -> doctorUserId.equals(snapshot.user().appUserId()))
+                .findFirst()
+                .orElse(null);
+        if (doctor == null) {
+            throw new IllegalArgumentException("Doctor not found");
+        }
+        if (StringUtils.hasText(tenantDoctorProfileReference) && doctor.profile().id() != null && !tenantDoctorProfileReference.trim().equals(doctor.profile().id().toString())) {
+            logBookingEligibility("requireBookingDoctor", publicDoctorId, null, null, null, tenantId, tenantId, null, null, doctor, "doctor profile mismatch");
             throw new IllegalArgumentException("Doctor not found");
         }
         return doctor;
@@ -1320,6 +1347,17 @@ public class PatientPortalService {
         }
     }
 
+    private UUID parseUuid(String value, String message) {
+        if (!StringUtils.hasText(value)) {
+            throw new IllegalArgumentException(message);
+        }
+        try {
+            return UUID.fromString(value.trim());
+        } catch (IllegalArgumentException ex) {
+            throw new IllegalArgumentException(message);
+        }
+    }
+
     private void requireAppointmentDate(LocalDate appointmentDate) {
         if (appointmentDate == null) {
             throw new IllegalArgumentException("Appointment date is required");
@@ -1375,14 +1413,30 @@ public class PatientPortalService {
     }
 
     private PatientEntity resolveBookingPatient(PatientAccess access, UUID bookingTenantId) {
+        return resolveBookingPatientResolution(access, bookingTenantId, null).patient();
+    }
+
+    private PatientEntity resolveBookingPatient(PatientAccess access, UUID bookingTenantId, PatientPortalAppointmentBookingRequest request) {
+        return resolveBookingPatientResolution(access, bookingTenantId, request).patient();
+    }
+
+    private BookingPatientResolution resolveBookingPatientResolution(PatientAccess access, UUID bookingTenantId, PatientPortalAppointmentBookingRequest request) {
         if (bookingTenantId.equals(access.tenantId())) {
-            return access.patient();
+            return new BookingPatientResolution(access.patient(), false);
+        }
+
+        if (!isSelfBookingRequest(request)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "We need to verify the patient details before completing this booking.");
         }
 
         String mobile = resolveVerifiedMobile(access);
-        PatientEntity existingPatient = resolvePrimaryActivePatientByTenantAndMobile(bookingTenantId, mobile);
-        if (existingPatient != null) {
-            return existingPatient;
+        List<PatientEntity> candidates = patientRepository.findByTenantIdAndMobileIgnoreCaseAndActiveTrue(bookingTenantId, mobile);
+        if (candidates.size() > 1) {
+            log.warn("patient.portal.booking.ambiguous_patient tenantId={} phone={} matches={}", bookingTenantId, mobile, candidates.size());
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "We need to verify the patient details before completing this booking.");
+        }
+        if (candidates.size() == 1) {
+            return new BookingPatientResolution(candidates.getFirst(), false);
         }
 
         var created = patientService.create(
@@ -1413,23 +1467,9 @@ public class PatientPortalService {
                 ),
                 requireActorAppUserId()
         );
-        return patientRepository.findByTenantIdAndId(bookingTenantId, created.id())
+        PatientEntity persisted = patientRepository.findByTenantIdAndId(bookingTenantId, created.id())
                 .orElseThrow(() -> new IllegalStateException("Patient record was not found for booking"));
-    }
-
-    private PatientEntity resolvePrimaryActivePatientByTenantAndMobile(UUID tenantId, String mobile) {
-        List<PatientEntity> candidates = patientRepository.findByTenantIdAndMobileIgnoreCaseAndActiveTrue(tenantId, mobile);
-        if (candidates.isEmpty()) {
-            return null;
-        }
-        PatientEntity primary = candidates.stream()
-                .min(Comparator.comparing(PatientEntity::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder()))
-                        .thenComparing(PatientEntity::getId))
-                .orElse(candidates.get(0));
-        if (candidates.size() > 1) {
-            log.warn("patient.portal.booking.duplicate_mobile tenantId={} phone={} matches={} primaryPatientId={}", tenantId, mobile, candidates.size(), primary.getId());
-        }
-        return primary;
+        return new BookingPatientResolution(persisted, true);
     }
 
     private UUID ensurePatientPortalActor(UUID tenantId, PatientEntity patient) {
@@ -1442,6 +1482,198 @@ public class PatientPortalService {
                     appUser.updateProfile(patient.getEmail(), displayName);
                 });
         return appUserId;
+    }
+
+    private boolean isSelfBookingRequest(PatientPortalAppointmentBookingRequest request) {
+        if (request == null) {
+            return false;
+        }
+        String relationship = normalizeNullable(request.relationshipToPatient());
+        return !StringUtils.hasText(relationship) || "SELF".equalsIgnoreCase(relationship);
+    }
+
+    private LocalDate resolveBookingDate(PatientPortalAppointmentBookingRequest request) {
+        LocalDate selectedDate = request.selectedDate() == null ? request.appointmentDate() : request.selectedDate();
+        LocalDate appointmentDate = request.appointmentDate();
+        if (selectedDate == null) {
+            requireAppointmentDate(appointmentDate);
+            return appointmentDate;
+        }
+        if (appointmentDate != null && !selectedDate.equals(appointmentDate)) {
+            throw new IllegalArgumentException("Selected date does not match appointment date.");
+        }
+        requireAppointmentDate(selectedDate);
+        return selectedDate;
+    }
+
+    private SelectedSlotResolution resolveSelectedSlot(
+            PatientAccess access,
+            BookingDoctorAccess bookingDoctor,
+            PatientPortalAppointmentBookingRequest request,
+            LocalDate appointmentDate,
+            ZoneId tenantZone
+    ) {
+        if (request == null || request.appointmentTime() == null) {
+            throw new IllegalArgumentException("Appointment time is required");
+        }
+        LocalTime requestedTime = request.appointmentTime();
+        String slotReference = normalizeNullable(request.slotReference());
+        if (StringUtils.hasText(slotReference)
+                && bookingDoctor.bookingTargetReference() != null
+                && healthcareAvailabilityPort != null) {
+            BookingSlotSummary selected = healthcareAvailabilityPort.getBookableSlots(bookingDoctor.bookingTargetReference(), appointmentDate).stream()
+                    .filter(slot -> slotReference.equals(slot.slotId()))
+                    .findFirst()
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "This time is no longer available. Please choose another slot."));
+            if (selected.startsAt() == null || selected.startsAt().toLocalDate() == null || selected.startsAt().toLocalTime() == null) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "This time is no longer available. Please choose another slot.");
+            }
+            if (!appointmentDate.equals(selected.startsAt().toLocalDate()) || !requestedTime.equals(selected.startsAt().toLocalTime())) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "This time is no longer available. Please choose another slot.");
+            }
+            validateAuthoritativeSlot(bookingDoctor.tenantId(), bookingDoctor.doctor().user().appUserId(), appointmentDate, requestedTime, tenantZone);
+            return new SelectedSlotResolution(slotReference, requestedTime);
+        }
+        validateAuthoritativeSlot(bookingDoctor.tenantId(), bookingDoctor.doctor().user().appUserId(), appointmentDate, requestedTime, tenantZone);
+        return new SelectedSlotResolution(slotReference, requestedTime);
+    }
+
+    private void validateAuthoritativeSlot(UUID tenantId, UUID doctorUserId, LocalDate appointmentDate, LocalTime requestedTime, ZoneId tenantZone) {
+        List<DoctorAvailabilitySlotRecord> slots = appointmentService.listSlots(tenantId, doctorUserId, appointmentDate, tenantZone);
+        ZonedDateTime clinicNow = ZonedDateTime.now(tenantZone);
+        boolean slotSelectable = slots.stream()
+                .filter(slot -> AppointmentTimingRules.isSlotBookableForPatient(slot.appointmentDate(), slot.slotTime(), tenantZone, clinicNow))
+                .anyMatch(slot -> requestedTime.equals(slot.slotTime()) && slot.selectable());
+        if (!slotSelectable) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "This time is no longer available. Please choose another slot.");
+        }
+    }
+
+    private String bookingRequestSignature(PatientPortalAppointmentBookingRequest request, LocalDate resolvedDate) {
+        return String.join("|",
+                normalizeNullable(request.publicDoctorId()),
+                normalizeNullable(request.clinicSlug()),
+                normalizeNullable(request.tenantId()),
+                normalizeNullable(request.clinicId()),
+                normalizeNullable(request.bookingReference()),
+                normalizeNullable(request.slotReference()),
+                resolvedDate == null ? "" : resolvedDate.toString(),
+                request.appointmentDate() == null ? "" : request.appointmentDate().toString(),
+                request.appointmentTime() == null ? "" : request.appointmentTime().toString(),
+                normalizeNullable(request.consultationMode()),
+                normalizeNullable(request.patientSubjectReference()),
+                normalizeNullable(request.accountHolderReference()),
+                normalizeNullable(request.relationshipToPatient()),
+                normalizeNullable(request.patientNotes()),
+                normalizeNullable(request.reason()),
+                normalizeNullable(request.notificationPreferences())
+        );
+    }
+
+    private UUID bookingIdempotencyScope(PatientAccess access, PatientPortalAppointmentBookingRequest request) {
+        if (request != null && StringUtils.hasText(request.bookingReference())) {
+            String normalized = request.bookingReference().trim().toLowerCase(java.util.Locale.ROOT);
+            return UUID.nameUUIDFromBytes(("care-booking:" + normalized).getBytes(StandardCharsets.UTF_8));
+        }
+        return access == null || access.tenantId() == null ? UUID.nameUUIDFromBytes("care-booking:anonymous".getBytes(StandardCharsets.UTF_8)) : access.tenantId();
+    }
+
+    private PatientPortalAppointmentConfirmationResponse deserializeConfirmation(String json) {
+        try {
+            return objectMapper.readValue(json, PatientPortalAppointmentConfirmationResponse.class);
+        } catch (Exception ex) {
+            throw new IllegalStateException("Unable to deserialize cached booking confirmation", ex);
+        }
+    }
+
+    private PatientPortalAppointmentConfirmationResponse buildConfirmationResponse(
+            AppointmentRecord booked,
+            UUID tenantId,
+            ZoneId tenantZone,
+            PatientEntity bookingPatient,
+            PatientPortalAppointmentBookingRequest request,
+            boolean tenantRelationshipCreated,
+            String message
+    ) {
+        ClinicProfileRecord clinic = clinicProfileService.findByTenantId(tenantId).orElse(null);
+        DoctorProfileRecord doctorProfile = doctorProfileService.findByDoctorUserId(tenantId, booked.doctorUserId()).orElse(null);
+        String practiceLocation = clinic == null ? null : summarizeClinicLocation(clinic);
+        BigDecimal fee = doctorProfile == null ? null : doctorProfile.consultationFee() != null ? doctorProfile.consultationFee() : doctorProfile.opdFee();
+        String patientDisplayName = bookingPatient == null ? null : fullName(bookingPatient.getFirstName(), bookingPatient.getLastName());
+        String notificationSummary = "Notifications queued";
+        return new PatientPortalAppointmentConfirmationResponse(
+                booked.displayReference() == null ? booked.id().toString() : booked.displayReference(),
+                "CONFIRMED",
+                booked.appointmentDate(),
+                booked.appointmentTime(),
+                tenantZone == null ? null : tenantZone.getId(),
+                booked.doctorName(),
+                clinicName(tenantId),
+                practiceLocation,
+                normalizeNullable(request == null ? null : request.consultationMode()),
+                appointmentSource(booked),
+                booked.status() == null ? null : booked.status().name(),
+                summarize(firstNonBlank(booked.reason(), request == null ? null : request.patientNotes(), request == null ? null : request.reason())),
+                message,
+                fee,
+                patientDisplayName,
+                tenantRelationshipCreated,
+                booked.createdAt(),
+                notificationSummary
+        );
+    }
+
+    private String summarizeClinicLocation(ClinicProfileRecord clinic) {
+        if (clinic == null) {
+            return null;
+        }
+        List<String> parts = new java.util.ArrayList<>();
+        if (StringUtils.hasText(clinic.addressLine1())) {
+            parts.add(clinic.addressLine1().trim());
+        }
+        if (StringUtils.hasText(clinic.addressLine2())) {
+            parts.add(clinic.addressLine2().trim());
+        }
+        if (StringUtils.hasText(clinic.city())) {
+            parts.add(clinic.city().trim());
+        }
+        if (StringUtils.hasText(clinic.state()) && (parts.isEmpty() || !parts.get(parts.size() - 1).equalsIgnoreCase(clinic.state().trim()))) {
+            parts.add(clinic.state().trim());
+        }
+        return parts.isEmpty() ? null : String.join(", ", parts);
+    }
+
+    private String firstNonBlank(String... values) {
+        if (values == null) {
+            return null;
+        }
+        for (String value : values) {
+            if (StringUtils.hasText(value)) {
+                return value.trim();
+            }
+        }
+        return null;
+    }
+
+    private String normalizeNullable(String value) {
+        return StringUtils.hasText(value) ? value.trim() : null;
+    }
+
+    private boolean looksLikeSlotConflict(IllegalArgumentException ex) {
+        if (ex == null || ex.getMessage() == null) {
+            return false;
+        }
+        String message = ex.getMessage().toLowerCase(java.util.Locale.ROOT);
+        return message.contains("selected slot is no longer available")
+                || message.contains("slot is no longer available")
+                || message.contains("already exists")
+                || message.contains("current or future appointment date");
+    }
+
+    private record SelectedSlotResolution(String slotReference, LocalTime appointmentTime) {
+    }
+
+    private record BookingPatientResolution(PatientEntity patient, boolean created) {
     }
 
     private String resolveVerifiedMobile(PatientAccess access) {
@@ -1497,7 +1729,7 @@ public class PatientPortalService {
     private record PatientAccess(UUID tenantId, PatientEntity patient) {
     }
 
-    private record BookingDoctorAccess(UUID tenantId, DoctorSnapshot doctor) {
+    private record BookingDoctorAccess(UUID tenantId, DoctorSnapshot doctor, BookingTargetReference bookingTargetReference) {
     }
 
     private record DoctorSnapshot(TenantUserRecord user, DoctorProfileRecord profile) {

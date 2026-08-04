@@ -1327,6 +1327,42 @@ export type ClinicProfile = {
   updatedAt: string;
 };
 
+export type ClinicDiscoverPresence = {
+  tenantReference: string;
+  displayName: string | null;
+  city: string | null;
+  area: string | null;
+  publicDiscoveryConsent: "ENABLED" | "DISABLED" | "REVOKED" | string;
+  ownershipStatus: string;
+  ownershipId: string | null;
+  maskedProviderMobile: string | null;
+  publicProfileStatus: string;
+  platformConnectionStatus: string;
+  bookingCapability: string;
+  ownershipUpdatedAt: string | null;
+  publicProfileSynchronizedAt: string | null;
+  connectionReference: string | null;
+  allowedActions: string[];
+  lastSynchronizedAt: string | null;
+  publicPath: string | null;
+  draftReference: string | null;
+  draftStatus: string | null;
+  draftReadinessStatus: string | null;
+  draftCompletenessPercentage: number;
+  draftLastSavedAt: string | null;
+  draftAllowedActions: string[];
+};
+
+export type ClinicDiscoverPresenceClaimIntent = {
+  connectionReference: string;
+  status: string;
+  expiresAt: string;
+  returnTo: string;
+  displayName: string | null;
+  city: string | null;
+  area: string | null;
+};
+
 export type ClinicProfileInput = Omit<ClinicProfile, "id" | "tenantId" | "createdAt" | "updatedAt">;
 
 export type ClinicUser = {
@@ -3512,6 +3548,14 @@ export async function getClinicProfile(token: string, tenantId: string) {
   return httpGet<ClinicProfile>("/api/clinic/profile", { token, tenantId });
 }
 
+export async function getClinicDiscoverPresence(token: string, tenantId: string) {
+  return httpGet<ClinicDiscoverPresence>("/api/clinic/discover-presence", { token, tenantId });
+}
+
+export async function createClinicDiscoverClaimIntent(token: string, tenantId: string) {
+  return httpPost<ClinicDiscoverPresenceClaimIntent>("/api/clinic/discover-presence/claim-intents", {}, { token, tenantId });
+}
+
 export async function listHelpPages(token?: string | null, tenantId?: string | null) {
   return httpGet<HelpPageSummary[]>("/api/platform/help/pages", {
     ...buildHelpRequestOptions(token),
@@ -3666,6 +3710,14 @@ export async function skipTenantOnboarding(token: string, tenantId: string) {
 
 export async function getDoctorProfile(token: string, tenantId: string, doctorUserId: string) {
   return httpGet<DoctorProfile>(`/api/doctors/${doctorUserId}/profile`, { token, tenantId });
+}
+
+export async function getDoctorDiscoverPresence(token: string, tenantId: string, doctorUserId: string) {
+  return httpGet<ClinicDiscoverPresence>(`/api/doctors/${doctorUserId}/discover-presence`, { token, tenantId });
+}
+
+export async function createDoctorDiscoverClaimIntent(token: string, tenantId: string, doctorUserId: string) {
+  return httpPost<ClinicDiscoverPresenceClaimIntent>(`/api/doctors/${doctorUserId}/discover-presence/claim-intents`, {}, { token, tenantId });
 }
 
 export async function updateDoctorProfile(token: string, tenantId: string, doctorUserId: string, body: DoctorProfileInput) {
@@ -10028,6 +10080,15 @@ export type ProviderConnectionsLifecycleResponse = {
   missingFields: string[];
   invalidFields: string[];
   warnings: string[];
+  ownershipStatus: string | null;
+  tenantConsentStatus: string | null;
+  draftReference: string | null;
+  draftStatus: string | null;
+  draftReadinessStatus: string | null;
+  draftCompletenessPercentage: number;
+  draftVersionNumber: number;
+  draftLastSavedAt: string | null;
+  draftAllowedActions: string[];
 };
 
 export type ProviderConnectionsPlatformEntityResponse = {
@@ -10201,6 +10262,36 @@ export type ProviderConnectionsReconcileRequest = {
   tenantReference: string | null;
 };
 
+export type ProviderConnectionsOwnershipResponse = {
+  ownershipId: string;
+  publicProfileType: ProviderConnectionsPublicProfileType;
+  publicProfileReference: string | null;
+  displayName: string | null;
+  city: string | null;
+  area: string | null;
+  maskedProviderMobile: string | null;
+  consentState: string | null;
+  publicProfileStatus: string | null;
+  platformConnectionStatus: string | null;
+  bookingCapability: string | null;
+  ownershipStatus: string | null;
+  ownershipMethod: string | null;
+  reason: string | null;
+  active: boolean;
+  sourceRevision: number;
+  verifiedAt: string | null;
+  revokedAt: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+  membershipRoles: string[];
+  disputeStatuses: string[];
+  allowedActions: string[];
+};
+
+export type ProviderConnectionsOwnershipDecisionRequest = {
+  reason: string | null;
+};
+
 export async function getProviderConnectionsOverview(token: string) {
   return httpGet<ProviderConnectionsOverviewResponse>("/api/platform/provider-connections/overview", { token, platformOperation: true });
 }
@@ -10296,6 +10387,26 @@ export async function rejectProviderConnectionSuggestion(token: string, suggesti
 
 export async function listProviderConnectionsConflicts(token: string) {
   return httpGet<ProviderConnectionsConflictResponse[]>("/api/platform/provider-connections/conflicts", { token, platformOperation: true });
+}
+
+export async function listProviderConnectionsOwnerships(token: string) {
+  return httpGet<ProviderConnectionsOwnershipResponse[]>("/api/platform/provider-connections/ownerships", { token, platformOperation: true });
+}
+
+export async function approveProviderConnectionOwnership(token: string, ownershipId: string, body?: ProviderConnectionsOwnershipDecisionRequest | null) {
+  return httpPost<ProviderConnectionsOwnershipResponse>(`/api/platform/provider-connections/ownerships/${encodeURIComponent(ownershipId)}/approve`, body ?? {}, { token, platformOperation: true });
+}
+
+export async function rejectProviderConnectionOwnership(token: string, ownershipId: string, body?: ProviderConnectionsOwnershipDecisionRequest | null) {
+  return httpPost<ProviderConnectionsOwnershipResponse>(`/api/platform/provider-connections/ownerships/${encodeURIComponent(ownershipId)}/reject`, body ?? {}, { token, platformOperation: true });
+}
+
+export async function disputeProviderConnectionOwnership(token: string, ownershipId: string, body?: ProviderConnectionsOwnershipDecisionRequest | null) {
+  return httpPost<ProviderConnectionsOwnershipResponse>(`/api/platform/provider-connections/ownerships/${encodeURIComponent(ownershipId)}/dispute`, body ?? {}, { token, platformOperation: true });
+}
+
+export async function revokeProviderConnectionOwnership(token: string, ownershipId: string, body?: ProviderConnectionsOwnershipDecisionRequest | null) {
+  return httpPost<ProviderConnectionsOwnershipResponse>(`/api/platform/provider-connections/ownerships/${encodeURIComponent(ownershipId)}/revoke`, body ?? {}, { token, platformOperation: true });
 }
 
 export async function proposeProviderConnectionLink(token: string, body: ProviderConnectionsLinkProposalRequest) {

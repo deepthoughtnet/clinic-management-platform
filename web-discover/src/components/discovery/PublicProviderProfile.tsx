@@ -14,6 +14,7 @@ import { type ReactNode, useEffect, useState } from "react";
 import { PublicMediaImage } from "../landing/PublicMediaImage";
 import { LocationDisplayMap } from "../location";
 import type { LocationDisplayMapProps } from "../location/LocationDisplayMap";
+import { parseFiniteExperienceYears } from "../../utils/publicProfileFormatting";
 import {
   BookingCapabilityBadge,
   type BookingMode,
@@ -282,23 +283,30 @@ export function PublicProviderProfile({
             <div className="provider-preview-hero-facts">
               {primarySpeciality ? <span className="provider-preview-fact-chip"><MedicalServicesOutlined fontSize="small" aria-hidden="true" />{primarySpeciality}</span> : null}
               {locationSummary ? <span className="provider-preview-fact-chip"><PlaceOutlined fontSize="small" aria-hidden="true" />{locationSummary}</span> : null}
-              {yearsOfExperience != null && !Number.isNaN(yearsOfExperience) ? <span className="provider-preview-fact-chip"><AssignmentOutlined fontSize="small" aria-hidden="true" />{yearsOfExperience} Years Experience</span> : null}
+              {parseFiniteExperienceYears(yearsOfExperience) != null ? <span className="provider-preview-fact-chip"><AssignmentOutlined fontSize="small" aria-hidden="true" />{parseFiniteExperienceYears(yearsOfExperience)} Years Experience</span> : null}
               {consultationFeeLabel ? <span className="provider-preview-fact-chip"><SchoolOutlined fontSize="small" aria-hidden="true" />{consultationFeeLabel} Consultation</span> : null}
               {languages.length ? <span className="provider-preview-fact-chip"><LanguageOutlined fontSize="small" aria-hidden="true" />{languages.join(" • ")}</span> : null}
               {teleconsultationAvailable ? <span className="provider-preview-fact-chip"><DirectionsCarOutlined fontSize="small" aria-hidden="true" />Teleconsultation available</span> : null}
               {bookingMode ? <BookingCapabilityBadge mode={bookingMode} compact /> : null}
             </div>
             {heroSupplement ? <div className="provider-preview-hero-supplement">{heroSupplement}</div> : null}
-            <div className="provider-preview-hero-actions">
-              <a className="primary-button" href={bookingUrl}>
-                {bookingLabel}
-              </a>
-              {callHref && callLabel ? (
-                <a className="secondary-button" href={callHref}>
-                  {callLabel}
+            {preview ? (
+              <div className="provider-preview-empty-state">
+                <strong>DRAFT PREVIEW - NOT PUBLIC</strong>
+                <p>Public booking and profile actions are hidden while reviewing content.</p>
+              </div>
+            ) : (
+              <div className="provider-preview-hero-actions">
+                <a className="primary-button" href={bookingUrl}>
+                  {bookingLabel}
                 </a>
-              ) : null}
-            </div>
+                {callHref && callLabel ? (
+                  <a className="secondary-button" href={callHref}>
+                    {callLabel}
+                  </a>
+                ) : null}
+              </div>
+            )}
           </div>
         </div>
       </section>

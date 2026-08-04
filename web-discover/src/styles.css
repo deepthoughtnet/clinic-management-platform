@@ -2460,6 +2460,15 @@ main {
 
 .provider-account-attention-item {
   flex-wrap: wrap;
+  align-items: stretch;
+}
+
+.provider-account-attention-copy,
+.provider-account-attention-meta {
+  min-width: 0;
+  flex: 1 1 280px;
+  display: grid;
+  gap: 6px;
 }
 
 .provider-account-attention-item strong,
@@ -2470,9 +2479,10 @@ main {
 }
 
 .provider-account-attention-meta {
-  display: flex;
-  gap: 12px;
-  align-items: center;
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  justify-items: start;
   flex-wrap: wrap;
 }
 
@@ -2481,6 +2491,12 @@ main {
   color: var(--discover-text-muted);
   font-size: 0.88rem;
   font-weight: 700;
+}
+
+.provider-account-attention-meta small {
+  color: var(--discover-text-body);
+  line-height: 1.5;
+  word-break: break-word;
 }
 
 .provider-account-application-grid,
@@ -2603,6 +2619,11 @@ main {
   .provider-account-attention-item,
   .provider-account-section-heading {
     flex-direction: column;
+  }
+
+  .provider-account-attention-copy,
+  .provider-account-attention-meta {
+    flex-basis: 100%;
   }
 
   .provider-account-card-actions .primary-button,
@@ -3982,6 +4003,7 @@ main {
 .location-display-map__details p {
   margin: 0;
   color: var(--discover-text-body);
+  white-space: pre-line;
 }
 
 .location-map__fallback,
@@ -5168,6 +5190,31 @@ main {
   gap: 10px;
 }
 
+.landing-info-list div {
+  display: grid;
+  gap: 5px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--landing-primary) 5%, #ffffff);
+  border: 1px solid color-mix(in srgb, var(--discover-border) 72%, transparent);
+}
+
+.landing-info-list dt {
+  color: var(--discover-text-muted);
+  font-size: 0.8rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.landing-info-list dd {
+  margin: 0;
+  color: var(--discover-text-heading);
+  font-weight: 700;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
 .landing-eyebrow {
   display: inline-flex;
   width: fit-content;
@@ -5208,6 +5255,36 @@ main {
 .landing-version-card,
 .landing-compare-card {
   padding: 16px;
+}
+
+.landing-contact-row {
+  display: grid;
+  gap: 4px;
+  padding: 10px 0;
+  border-top: 1px solid color-mix(in srgb, var(--discover-border) 74%, transparent);
+}
+
+.landing-contact-row:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.landing-contact-row span:first-child {
+  color: var(--discover-text-muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.landing-route-link {
+  display: inline-flex;
+  width: fit-content;
+  word-break: break-word;
+}
+
+.landing-cta-band--preview {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--landing-primary) 10%, #ffffff), color-mix(in srgb, var(--landing-accent) 6%, #ffffff));
 }
 
 .landing-mini-card strong,
@@ -5870,17 +5947,63 @@ main {
   gap: 12px;
 }
 
+.directory-result-list {
+  display: grid;
+  gap: 12px;
+}
+
+.directory-result-list__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-top: 2px;
+}
+
+.directory-result-list__footer-copy {
+  display: grid;
+  gap: 2px;
+}
+
+.directory-result-list__footer-copy strong {
+  font-size: 0.92rem;
+  line-height: 1.2;
+}
+
+.directory-result-list__footer-copy span,
+.directory-result-list__error {
+  margin: 0;
+  color: var(--discover-text-body);
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.directory-result-list__footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.directory-result-list__load-more {
+  min-width: 0;
+}
+
 .directory-card-grid--doctors {
   grid-template-columns: minmax(0, 1fr);
   justify-items: start;
 }
 
 .directory-card-grid--clinics {
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: stretch;
 }
 
 .directory-card-grid--hospitals {
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: stretch;
 }
 
 .directory-card {
@@ -6154,6 +6277,7 @@ main {
   row-gap: 16px;
   align-items: stretch;
   min-height: 220px;
+  width: 100%;
 }
 
 .directory-card--hospital {
@@ -6569,6 +6693,21 @@ main {
   .directory-speciality-results,
   .directory-popular-grid--specialities {
     grid-template-columns: 1fr;
+  }
+
+  .directory-result-list__footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .directory-result-list__footer-actions {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .directory-result-list__load-more,
+  .directory-result-list__footer-actions .secondary-button {
+    width: 100%;
   }
 
   .provider-card-media--home-banner {

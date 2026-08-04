@@ -30,6 +30,9 @@ public final class LandingPageDtoMapper {
                 record.publicPath(),
                 record.editable(),
                 record.published(),
+                record.pageMode(),
+                record.publicationReadiness(),
+                record.allowedActions(),
                 record.draftVersionNumber(),
                 record.publishedVersionNumber(),
                 record.publishedAt(),
@@ -51,6 +54,9 @@ public final class LandingPageDtoMapper {
                 record.published(),
                 record.publishedVersionNumber(),
                 record.publishedAt(),
+                record.pageMode(),
+                record.publicationReadiness(),
+                record.allowedActions(),
                 record.publishedSnapshot() == null ? null : toSnapshotResponse(record.publishedSnapshot()),
                 record.profile()
         );

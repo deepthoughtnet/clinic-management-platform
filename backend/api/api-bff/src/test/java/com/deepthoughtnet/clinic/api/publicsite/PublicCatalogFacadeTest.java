@@ -16,7 +16,19 @@ import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileMod
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderProfileSummaryRecord;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicSpecialitySummaryRecord;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderSearchCriteria;
+import com.deepthoughtnet.clinic.platform.contracts.providerintegration.AvailabilityState;
+import com.deepthoughtnet.clinic.platform.contracts.providerintegration.BookingCapability;
+import com.deepthoughtnet.clinic.platform.contracts.providerintegration.BookingTargetReference;
+import com.deepthoughtnet.clinic.platform.contracts.providerintegration.BookingTargetResolution;
+import com.deepthoughtnet.clinic.platform.contracts.providerintegration.LinkLifecycleStatus;
+import com.deepthoughtnet.clinic.platform.contracts.providerintegration.PlatformConnectionStatus;
+import com.deepthoughtnet.clinic.platform.contracts.providerintegration.PublicProfileType;
+import com.deepthoughtnet.clinic.platform.contracts.providerintegration.PublicProviderReference;
+import com.deepthoughtnet.clinic.platform.contracts.providerintegration.ProviderSourceReference;
+import com.deepthoughtnet.clinic.platform.contracts.providerintegration.SourceSystem;
+import com.deepthoughtnet.clinic.platform.providerintegration.service.ProviderLinkingService;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -30,7 +42,7 @@ class PublicCatalogFacadeTest {
     @Test
     void mapsPublishedProfilesIntoPublicListsAndSearchResults() {
         ProviderPublicProfileService publicProfileService = mock(ProviderPublicProfileService.class);
-        PublicCatalogFacade facade = new PublicCatalogFacade(publicProfileService);
+        PublicCatalogFacade facade = facade(publicProfileService);
 
         var doctor = summaryRecord(
                 ProviderType.INDIVIDUAL_DOCTOR,
@@ -138,7 +150,7 @@ class PublicCatalogFacadeTest {
     @Test
     void clinicDetailUsesPublicMediaRoutesForPublishedAssets() {
         ProviderPublicProfileService publicProfileService = mock(ProviderPublicProfileService.class);
-        PublicCatalogFacade facade = new PublicCatalogFacade(publicProfileService);
+        PublicCatalogFacade facade = facade(publicProfileService);
 
         when(publicProfileService.findBySlug("sunrise-clinic")).thenReturn(Optional.of(
                 detailRecord(
@@ -207,9 +219,101 @@ class PublicCatalogFacadeTest {
     }
 
     @Test
+    void doctorDetailIncludesOpaqueBookingReferenceWhenPlatformLinkExists() {
+        ProviderPublicProfileService publicProfileService = mock(ProviderPublicProfileService.class);
+        ProviderLinkingService providerLinkingService = mock(ProviderLinkingService.class);
+        PublicCatalogFacade facade = new PublicCatalogFacade(publicProfileService, providerLinkingService);
+
+        PublicProviderProfileDetailRecord detail = detailRecord(
+                ProviderType.INDIVIDUAL_DOCTOR,
+                "DR-0007",
+                "dr-asha-menon",
+                "/discover/doctors/dr-asha-menon",
+                "Dr. Asha Menon",
+                "Dr. Asha Menon",
+                "Experienced doctor",
+                "Doctor summary",
+                "Doctor biography",
+                "MBBS",
+                "MMC",
+                8,
+                new BigDecimal("800"),
+                15,
+                true,
+                List.of("English"),
+                List.of("Dermatology"),
+                List.of(),
+                List.of("Consultation"),
+                List.of(),
+                List.of(),
+                List.of("In-person"),
+                List.of(new PublicProviderLocationSnapshot("Primary Clinic", "Main Road", "Pune", "Maharashtra", "India", "411001", null, true, true, null, null)),
+                List.of(),
+                List.of(),
+                "https://example.com/doctor.png",
+                null,
+                null,
+                "+911111111111",
+                "doctor@example.com",
+                "https://example.com",
+                "Pune",
+                "Baner",
+                "Maharashtra",
+                "India",
+                "Dermatology",
+                null,
+                null,
+                null,
+                null,
+                false,
+                "ONLINE_BOOKING",
+                false,
+                OffsetDateTime.parse("2026-01-01T10:00:00Z"),
+                1,
+                "dr-asha-menon",
+                null,
+                true
+        );
+        String practiceReference = UUID.nameUUIDFromBytes(
+                String.join("|",
+                        detail.providerId().toString(),
+                        "0",
+                        "Primary Clinic",
+                        "Main Road",
+                        "Pune"
+                ).getBytes(StandardCharsets.UTF_8)
+        ).toString();
+        when(publicProfileService.findBySlug("dr-asha-menon")).thenReturn(Optional.of(detail));
+        when(providerLinkingService.resolveBookingTarget(new PublicProviderReference(detail.providerId().toString(), practiceReference))).thenReturn(Optional.of(
+                new BookingTargetResolution(
+                        new BookingTargetReference("opaque-booking-reference", 11L),
+                        new ProviderSourceReference(SourceSystem.HEALTHCARE_DOCTOR, detail.referenceNumber(), 8L, OffsetDateTime.parse("2026-01-01T10:00:00Z")),
+                        PublicProfileType.DOCTOR,
+                        new PublicProviderReference(detail.providerId().toString(), practiceReference),
+                        "tenant-1",
+                        "platform-clinic-1",
+                        "tenant-doctor-user-1",
+                        "tenant-doctor-profile-1",
+                        BookingCapability.ONLINE_BOOKING,
+                        AvailabilityState.AVAILABLE_TODAY,
+                        PlatformConnectionStatus.CONNECTED,
+                        LinkLifecycleStatus.LINKED,
+                        11L,
+                        22L,
+                        OffsetDateTime.parse("2026-01-01T10:00:00Z")
+                )
+        ));
+
+        var doctor = facade.doctorDetail("dr-asha-menon");
+
+        assertThat(doctor.bookingReference()).isEqualTo("opaque-booking-reference");
+        assertThat(doctor.clinics()).singleElement().satisfies(clinic -> assertThat(clinic.bookingReference()).isEqualTo("opaque-booking-reference"));
+    }
+
+    @Test
     void hospitalDetailUsesPublicMediaRoutesForPublishedAssets() {
         ProviderPublicProfileService publicProfileService = mock(ProviderPublicProfileService.class);
-        PublicCatalogFacade facade = new PublicCatalogFacade(publicProfileService);
+        PublicCatalogFacade facade = facade(publicProfileService);
 
         when(publicProfileService.findBySlug("city-care-hospital")).thenReturn(Optional.of(
                 detailRecord(
@@ -280,7 +384,7 @@ class PublicCatalogFacadeTest {
     @Test
     void doctorDetailReturnsCanonicalPublishedPath() {
         ProviderPublicProfileService publicProfileService = mock(ProviderPublicProfileService.class);
-        PublicCatalogFacade facade = new PublicCatalogFacade(publicProfileService);
+        PublicCatalogFacade facade = facade(publicProfileService);
 
         when(publicProfileService.findBySlug("dr-asha-menon")).thenReturn(Optional.of(
                 detailRecord(
@@ -499,5 +603,9 @@ class PublicCatalogFacadeTest {
                 previousSlug,
                 canonical
         );
+    }
+
+    private static PublicCatalogFacade facade(ProviderPublicProfileService publicProfileService) {
+        return new PublicCatalogFacade(publicProfileService, mock(ProviderLinkingService.class));
     }
 }

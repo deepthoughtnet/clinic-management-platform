@@ -27,7 +27,12 @@ class ProviderConnectionsControllerSecurityTest {
         Method auditEvents = ProviderConnectionsController.class.getMethod("auditEvents", String.class, String.class, String.class, String.class, String.class);
         Method suggestions = ProviderConnectionsController.class.getMethod("suggestions", String.class);
         Method conflicts = ProviderConnectionsController.class.getMethod("conflicts");
+        Method ownerships = ProviderConnectionsController.class.getMethod("ownerships");
         Method rejectSuggestion = ProviderConnectionsController.class.getMethod("rejectSuggestion", String.class, ProviderConnectionsSuggestionDecisionRequest.class);
+        Method approveOwnership = ProviderConnectionsController.class.getMethod("approveOwnership", java.util.UUID.class, ProviderConnectionsOwnershipDecisionRequest.class);
+        Method rejectOwnership = ProviderConnectionsController.class.getMethod("rejectOwnership", java.util.UUID.class, ProviderConnectionsOwnershipDecisionRequest.class);
+        Method disputeOwnership = ProviderConnectionsController.class.getMethod("disputeOwnership", java.util.UUID.class, ProviderConnectionsOwnershipDecisionRequest.class);
+        Method revokeOwnership = ProviderConnectionsController.class.getMethod("revokeOwnership", java.util.UUID.class, ProviderConnectionsOwnershipDecisionRequest.class);
         Method propose = ProviderConnectionsController.class.getMethod("propose", ProviderConnectionsLinkProposalRequest.class);
         Method approve = ProviderConnectionsController.class.getMethod("approve", java.util.UUID.class, ProviderConnectionsLinkUpdateRequest.class);
         Method activate = ProviderConnectionsController.class.getMethod("activate", java.util.UUID.class, ProviderConnectionsLinkUpdateRequest.class);
@@ -45,7 +50,12 @@ class ProviderConnectionsControllerSecurityTest {
         assertThat(auditEvents.getAnnotation(PreAuthorize.class)).isNull();
         assertThat(suggestions.getAnnotation(PreAuthorize.class)).isNull();
         assertThat(conflicts.getAnnotation(PreAuthorize.class)).isNull();
+        assertThat(ownerships.getAnnotation(PreAuthorize.class)).isNull();
         assertThat(rejectSuggestion.getAnnotation(PreAuthorize.class).value()).isEqualTo("@permissionChecker.hasPermission('platform.provider_connection.reject')");
+        assertThat(approveOwnership.getAnnotation(PreAuthorize.class).value()).isEqualTo("@permissionChecker.hasPermission('platform.provider_connection.approve')");
+        assertThat(rejectOwnership.getAnnotation(PreAuthorize.class).value()).isEqualTo("@permissionChecker.hasPermission('platform.provider_connection.reject')");
+        assertThat(disputeOwnership.getAnnotation(PreAuthorize.class).value()).isEqualTo("@permissionChecker.hasPermission('platform.provider_connection.identity_override')");
+        assertThat(revokeOwnership.getAnnotation(PreAuthorize.class).value()).isEqualTo("@permissionChecker.hasPermission('platform.provider_connection.unlink')");
         assertThat(propose.getAnnotation(PreAuthorize.class).value()).isEqualTo("@permissionChecker.hasPermission('platform.provider_connection.propose')");
         assertThat(approve.getAnnotation(PreAuthorize.class).value()).isEqualTo("@permissionChecker.hasPermission('platform.provider_connection.approve')");
         assertThat(activate.getAnnotation(PreAuthorize.class).value()).isEqualTo("@permissionChecker.hasPermission('platform.provider_connection.approve')");

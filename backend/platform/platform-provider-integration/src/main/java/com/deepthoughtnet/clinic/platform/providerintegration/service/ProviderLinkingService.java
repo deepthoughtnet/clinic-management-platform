@@ -182,6 +182,32 @@ public class ProviderLinkingService implements PlatformConnectionPort {
         return findEntity(bookingTargetReference).map(this::toResolution);
     }
 
+    @Transactional(readOnly = true)
+    public Optional<BookingTargetResolution> resolveBookingTarget(PublicProviderReference publicReference) {
+        if (publicReference == null || blank(publicReference.publicProviderId())) {
+            return Optional.empty();
+        }
+
+        Optional<PublicClinicPlatformLinkEntity> clinic = clinicRepository.findAll().stream()
+                .filter(AbstractProviderLinkEntity::isActive)
+                .filter(entity -> publicReference.publicProviderId().equals(entity.getPublicClinicReference()))
+                .findFirst();
+        if (clinic.isPresent()) {
+            return clinic.map(this::toResolution);
+        }
+
+        java.util.stream.Stream<PublicDoctorPracticePlatformLinkEntity> doctorLinks = doctorRepository.findAll().stream()
+                .filter(AbstractProviderLinkEntity::isActive)
+                .filter(entity -> publicReference.publicProviderId().equals(entity.getPublicDoctorReference()));
+        if (blank(publicReference.publicPracticeId())) {
+            return doctorLinks.findFirst().map(this::toResolution);
+        }
+        return doctorLinks
+                .filter(entity -> publicReference.publicPracticeId().equals(entity.getPublicPracticeReference()))
+                .findFirst()
+                .map(this::toResolution);
+    }
+
     @Transactional
     public Optional<PublicProviderSummary> toPublicSummary(BookingTargetReference bookingTargetReference) {
         return resolveBookingTarget(bookingTargetReference).map(resolution -> new PublicProviderSummary(

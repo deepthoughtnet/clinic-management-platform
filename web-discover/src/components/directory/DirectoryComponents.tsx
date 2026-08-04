@@ -78,14 +78,85 @@ function formatDirectoryLocationLabel(fallback: string, ...values: Array<string 
     new Set(
       values
         .map((value) => value?.trim() || "")
-        .filter((value) => value && value.toLowerCase() !== "primary" && value.toLowerCase() !== normalizedFallback),
+        .filter((value) => value && value.toLowerCase() !== normalizedFallback),
     ),
   );
   return unique.length ? unique.join(" · ") : fallback;
 }
 
+function isCountLikeSpeciality(value: string, clinic: PublicClinicSummaryResponse) {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    return true;
+  }
+  const normalizedCity = clinic.city?.trim().toLowerCase() ?? "";
+  const normalizedArea = clinic.area?.trim().toLowerCase() ?? "";
+  if (normalized === normalizedCity || normalized === normalizedArea) {
+    return true;
+  }
+  return /^\d+\s+(doctors?|services?|departments?)$/.test(normalized);
+}
+
+function sanitizeClinicSpecialities(clinic: PublicClinicSummaryResponse) {
+  return clinic.specialities
+    .map((item) => item.trim())
+    .filter((item) => !isCountLikeSpeciality(item, clinic))
+    .slice(0, 3);
+}
+
 export function DirectoryPageShell({ className, children }: { className?: string; children: ReactNode }) {
   return <section className={`page-section directory-page-shell ${className ?? ""}`.trim()}>{children}</section>;
+}
+
+export function DirectoryResultList({
+  className,
+  children,
+  hasMore = false,
+  loadMoreLabel = "Load more",
+  loadMoreSummary,
+  loadMoreError,
+  loadingMore = false,
+  onLoadMore,
+  onRetryLoadMore,
+}: {
+  className?: string;
+  children: ReactNode;
+  hasMore?: boolean;
+  loadMoreLabel?: string;
+  loadMoreSummary?: string | null;
+  loadMoreError?: string | null;
+  loadingMore?: boolean;
+  onLoadMore?: () => void;
+  onRetryLoadMore?: () => void;
+}) {
+  const pendingLabel = loadMoreLabel.replace(/^Load more\b/i, "Loading more");
+  return (
+    <div className={`directory-result-list ${className ?? ""}`.trim()}>
+      {children}
+      {hasMore && onLoadMore ? (
+        <div className="directory-result-list__footer" aria-live="polite">
+          <div className="directory-result-list__footer-copy">
+            <strong>{loadMoreLabel}</strong>
+            {loadMoreSummary ? <span>{loadMoreSummary}</span> : null}
+          </div>
+          {loadMoreError ? (
+            <div className="directory-result-list__footer-actions">
+              <p className="directory-result-list__error">{loadMoreError}</p>
+              {onRetryLoadMore ? (
+                <button className="secondary-button" type="button" onClick={onRetryLoadMore}>
+                  Try again
+                </button>
+              ) : null}
+            </div>
+          ) : (
+            <button className="secondary-button directory-result-list__load-more" type="button" onClick={onLoadMore} disabled={loadingMore}>
+              {loadingMore ? `${pendingLabel}…` : loadMoreLabel}
+            </button>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 export function DirectoryHero({
@@ -618,7 +689,7 @@ export function ClinicDirectoryCard({
   const distance = formatDistanceKm(clinic.distanceKm ?? null);
   const tagLine = clinic.subtitle?.trim() || clinic.summary?.trim() || null;
   const departments = clinic.serviceCount || clinic.departmentCount ? `${clinic.serviceCount ?? 0} services · ${clinic.departmentCount ?? 0} departments` : null;
-  const specialities = clinic.specialities.slice(0, 3);
+  const specialities = sanitizeClinicSpecialities(clinic);
   const bookingMode = normalizeBookingMode(clinic.bookingMode) ?? "ONLINE_BOOKING";
   const callHref = clinic.contactPhone?.trim() ? `tel:${clinic.contactPhone.trim()}` : null;
 

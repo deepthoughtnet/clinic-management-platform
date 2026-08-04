@@ -388,11 +388,11 @@ public class ProviderPublicProfileService {
     @Transactional(readOnly = true)
     public PublicationReadinessRecord publicationReadiness(UUID providerId) {
         if (providerId == null) {
-            return new PublicationReadinessRecord(false, List.of("MISSING_PROVIDER"), List.of(), List.of(), "UNKNOWN", 0L, null);
+            return new PublicationReadinessRecord(false, 0, List.of("MISSING_PROVIDER"), List.of(), List.of(), "UNKNOWN", 0L, null);
         }
         DiscoverPublicProviderProfileEntity profile = profiles.findByProviderId(providerId).orElse(null);
         if (profile == null) {
-            return new PublicationReadinessRecord(false, List.of("PROFILE_NOT_FOUND"), List.of(), List.of(), "UNKNOWN", 0L, null);
+            return new PublicationReadinessRecord(false, 0, List.of("PROFILE_NOT_FOUND"), List.of(), List.of(), "UNKNOWN", 0L, null);
         }
         List<String> missing = new ArrayList<>();
         List<String> invalid = new ArrayList<>();
@@ -406,6 +406,30 @@ public class ProviderPublicProfileService {
         if (!StringUtils.hasText(profile.getContactPhone())) {
             missing.add("PUBLIC_CONTACT");
         }
+        if (!StringUtils.hasText(profile.getSummary())) {
+            missing.add("ABOUT_SECTION");
+        }
+        if (profile.getCoverImageDocumentId() == null) {
+            missing.add("COVER_PHOTO");
+        }
+        if (profile.getLogoDocumentId() == null && profile.getDoctorPhotoDocumentId() == null) {
+            missing.add("LOGO");
+        }
+        if (!StringUtils.hasText(profile.getServices())) {
+            missing.add("AT_LEAST_ONE_SERVICE");
+        }
+        if (!StringUtils.hasText(profile.getSpecialities())) {
+            missing.add("AT_LEAST_ONE_SPECIALITY");
+        }
+        if (profile.getGalleryCount() <= 0) {
+            warnings.add("GALLERY_RECOMMENDED");
+        }
+        if (profile.getBookingMode() == null || !StringUtils.hasText(profile.getBookingMode())) {
+            missing.add("OPENING_HOURS");
+        }
+        if (profile.getDoctorPhotoDocumentId() == null && profile.getCoverImageDocumentId() == null && profile.getLogoDocumentId() == null) {
+            warnings.add("BRANDING_RECOMMENDED");
+        }
         if (!StringUtils.hasText(profile.getSourceSystem())) {
             invalid.add("SOURCE_SYSTEM");
         }
@@ -416,7 +440,8 @@ public class ProviderPublicProfileService {
             warnings.add("NOT_YET_PUBLISHED");
         }
         boolean ready = missing.isEmpty() && invalid.isEmpty();
-        return new PublicationReadinessRecord(ready, missing, invalid, warnings, profile.getPublicationStatus(), profile.getSourceRevision(), profile.getSourceUpdatedAt());
+        int completenessPercentage = ready ? 100 : Math.max(0, 100 - (missing.size() * 12));
+        return new PublicationReadinessRecord(ready, completenessPercentage, missing, invalid, warnings, profile.getPublicationStatus(), profile.getSourceRevision(), profile.getSourceUpdatedAt());
     }
 
     @Transactional(readOnly = true)

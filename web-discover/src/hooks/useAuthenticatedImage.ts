@@ -64,9 +64,39 @@ export function useAuthenticatedImage(url: string | null | undefined, options: U
       }
 
       if (!options.token) {
-        setLoading(false);
-        setError("Missing authentication context for image request.");
-        return;
+        try {
+          setLoading(true);
+          const response = await fetch(nextUrl, {
+            method: "GET",
+            signal: abortController.signal,
+            credentials: "include",
+            headers: {
+              Accept: "application/octet-stream,image/*,*/*",
+            },
+          });
+          if (!response.ok) {
+            throw new Error(`Request failed with status ${response.status}`);
+          }
+          const blob = await response.blob();
+          if (!blob.size) {
+            throw new Error("Image response is empty.");
+          }
+          const nextObjectUrl = URL.createObjectURL(blob);
+          if (cancelled) {
+            revokeObjectUrl(nextObjectUrl);
+            return;
+          }
+          setObjectUrl(nextObjectUrl);
+          setLoading(false);
+          return;
+        } catch (err) {
+          if (!cancelled) {
+            setLoading(false);
+            setError(err instanceof Error ? err.message : "Failed to load image.");
+            setObjectUrl(null);
+          }
+          return;
+        }
       }
 
       setLoading(true);

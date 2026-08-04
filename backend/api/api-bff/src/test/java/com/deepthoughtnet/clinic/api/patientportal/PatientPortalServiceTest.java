@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -26,6 +27,8 @@ import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderResultRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderStatusRecord;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalAppointmentBookingRequest;
+import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalAppointmentConfirmationResponse;
+import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorSlotResponse;
 import com.deepthoughtnet.clinic.billing.service.BillingService;
 import com.deepthoughtnet.clinic.billing.service.model.BillItemType;
 import com.deepthoughtnet.clinic.billing.service.model.BillLineRecord;
@@ -50,16 +53,31 @@ import com.deepthoughtnet.clinic.patient.service.PatientService;
 import com.deepthoughtnet.clinic.platform.core.security.AppUserProvisioner;
 import com.deepthoughtnet.clinic.notification.service.NotificationHistoryService;
 import com.deepthoughtnet.clinic.notification.service.model.NotificationHistoryRecord;
+import com.deepthoughtnet.clinic.api.reliability.service.IdempotencyService;
 import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
 import com.deepthoughtnet.clinic.platform.core.context.TenantId;
 import com.deepthoughtnet.clinic.platform.core.errors.ForbiddenException;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
+import com.deepthoughtnet.clinic.platform.contracts.providerintegration.AvailabilityState;
+import com.deepthoughtnet.clinic.platform.contracts.providerintegration.BookingCapability;
+import com.deepthoughtnet.clinic.platform.contracts.providerintegration.BookingSlotSummary;
+import com.deepthoughtnet.clinic.platform.contracts.providerintegration.BookingTargetReference;
+import com.deepthoughtnet.clinic.platform.contracts.providerintegration.BookingTargetResolution;
+import com.deepthoughtnet.clinic.platform.contracts.providerintegration.LinkLifecycleStatus;
+import com.deepthoughtnet.clinic.platform.contracts.providerintegration.PlatformConnectionStatus;
+import com.deepthoughtnet.clinic.platform.contracts.providerintegration.PublicProfileType;
+import com.deepthoughtnet.clinic.platform.contracts.providerintegration.PublicProviderReference;
+import com.deepthoughtnet.clinic.platform.contracts.providerintegration.ProviderSourceReference;
+import com.deepthoughtnet.clinic.platform.contracts.providerintegration.SourceSystem;
+import com.deepthoughtnet.clinic.platform.contracts.providerintegration.port.HealthcareAvailabilityPort;
+import com.deepthoughtnet.clinic.api.prescriptiontemplate.service.PrescriptionBrandingDocumentResolver;
 import com.deepthoughtnet.clinic.prescription.service.PrescriptionService;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionRecord;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionStatus;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.ZoneId;
@@ -68,10 +86,12 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import org.mockito.ArgumentCaptor;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import static org.mockito.ArgumentMatchers.argThat;
+import org.springframework.web.server.ResponseStatusException;
 
 class PatientPortalServiceTest {
     private static final UUID TENANT_ID = UUID.randomUUID();
@@ -94,6 +114,10 @@ class PatientPortalServiceTest {
     private LabService labService;
     private NotificationHistoryService notificationHistoryService;
     private NotificationActionService notificationActionService;
+    private PrescriptionBrandingDocumentResolver brandingDocumentResolver;
+    private IdempotencyService idempotencyService;
+    private ObjectMapper objectMapper;
+    private HealthcareAvailabilityPort healthcareAvailabilityPort;
     private PatientPortalService service;
 
     @BeforeEach
@@ -113,6 +137,10 @@ class PatientPortalServiceTest {
         labService = mock(LabService.class);
         notificationHistoryService = mock(NotificationHistoryService.class);
         notificationActionService = mock(NotificationActionService.class);
+        brandingDocumentResolver = mock(PrescriptionBrandingDocumentResolver.class);
+        idempotencyService = mock(IdempotencyService.class);
+        objectMapper = new ObjectMapper().findAndRegisterModules();
+        healthcareAvailabilityPort = mock(HealthcareAvailabilityPort.class);
         service = new PatientPortalService(
                 appUserRepository,
                 tenantRepository,
@@ -128,7 +156,11 @@ class PatientPortalServiceTest {
                 billingService,
                 labService,
                 notificationHistoryService,
-                notificationActionService
+                notificationActionService,
+                brandingDocumentResolver,
+                idempotencyService,
+                objectMapper,
+                healthcareAvailabilityPort
         );
         when(clinicTimeZoneResolver.resolve(any())).thenReturn(ZoneId.of("Asia/Kolkata"));
         RequestContextHolder.set(new RequestContext(new TenantId(TENANT_ID), APP_USER_ID, "patient-sub", Set.of("PATIENT"), "PATIENT", "corr-1"));
@@ -273,6 +305,7 @@ class PatientPortalServiceTest {
         appUser.setPatientId(PATIENT_ID);
         PatientEntity patient = patientEntity(TENANT_ID, PATIENT_ID, "PAT-001");
         UUID doctorUserId = UUID.randomUUID();
+        DoctorProfileRecord doctorProfile = doctorProfile(TENANT_ID, doctorUserId, true);
         LocalDate appointmentDate = LocalDate.now().plusDays(2);
         var appointment = appointmentRecord(PATIENT_ID, doctorUserId, appointmentDate, java.time.LocalTime.of(10, 30));
 
@@ -450,6 +483,292 @@ class PatientPortalServiceTest {
     }
 
     @Test
+    void patientCanLoadDoctorSlotsUsingOpaqueBookingReference() {
+        AppUserEntity appUser = AppUserEntity.create(TENANT_ID, "patient-sub", "patient@example.com", "Portal Patient");
+        appUser.setPatientId(PATIENT_ID);
+        UUID doctorUserId = UUID.randomUUID();
+        DoctorProfileRecord doctorProfile = doctorProfile(TENANT_ID, doctorUserId, true);
+        String bookingReference = "opaque-booking-ref-123";
+        LocalDate appointmentDate = LocalDate.now().plusDays(2);
+        BookingTargetReference targetReference = new BookingTargetReference(bookingReference, 0L);
+        BookingTargetResolution resolution = new BookingTargetResolution(
+                targetReference,
+                new ProviderSourceReference(SourceSystem.HEALTHCARE_DOCTOR, doctorUserId.toString(), 9L, OffsetDateTime.now()),
+                PublicProfileType.DOCTOR,
+                new PublicProviderReference(doctorUserId.toString(), "practice-ref-1"),
+                TENANT_ID.toString(),
+                TENANT_ID.toString(),
+                doctorUserId.toString(),
+                doctorProfile.id().toString(),
+                BookingCapability.ONLINE_BOOKING,
+                AvailabilityState.AVAILABLE_TODAY,
+                PlatformConnectionStatus.CONNECTED,
+                LinkLifecycleStatus.LINKED,
+                4L,
+                7L,
+                OffsetDateTime.now()
+        );
+        BookingSlotSummary bookingSlot = new BookingSlotSummary(
+                "slot-1",
+                LocalDateTime.of(appointmentDate, LocalTime.of(11, 30)),
+                LocalDateTime.of(appointmentDate, LocalTime.of(12, 0)),
+                "11:30 AM",
+                true
+        );
+
+        when(appUserRepository.findByTenantIdAndId(TENANT_ID, APP_USER_ID)).thenReturn(Optional.of(appUser));
+        when(patientRepository.findByTenantIdAndId(TENANT_ID, PATIENT_ID)).thenReturn(Optional.of(patientEntity(TENANT_ID, PATIENT_ID, "PAT-001")));
+        when(healthcareAvailabilityPort.resolveBookingTarget(eq(targetReference))).thenReturn(Optional.of(resolution));
+        when(healthcareAvailabilityPort.getBookableSlots(eq(targetReference), eq(appointmentDate))).thenReturn(List.of(bookingSlot));
+        when(tenantUserManagementService.list(TENANT_ID)).thenReturn(List.of(doctorUser(doctorUserId, "Dr. Mehta", TENANT_ID)));
+        when(doctorProfileService.findByDoctorUserId(TENANT_ID, doctorUserId)).thenReturn(Optional.of(doctorProfile));
+
+        var slots = service.doctorSlots(bookingReference, doctorUserId.toString(), "demo-clinic", TENANT_ID.toString(), null, appointmentDate);
+
+        assertThat(slots).singleElement().satisfies(slot -> {
+            assertThat(slot.slotReference()).isEqualTo("slot-1");
+            assertThat(slot.slotTime()).isEqualTo(LocalTime.of(11, 30));
+            assertThat(slot.selectable()).isTrue();
+        });
+        verify(healthcareAvailabilityPort).getBookableSlots(eq(targetReference), eq(appointmentDate));
+        verify(appointmentService, never()).listSlots(eq(TENANT_ID), eq(doctorUserId), eq(appointmentDate), any());
+    }
+
+    @Test
+    void patientCanConfirmAppointmentUsingOpaqueBookingReferenceSlotReferenceAndIdempotency() throws Exception {
+        AppUserEntity appUser = AppUserEntity.create(TENANT_ID, "patient-sub", "patient@example.com", "Portal Patient");
+        appUser.setPatientId(PATIENT_ID);
+        PatientEntity patient = patientEntity(TENANT_ID, PATIENT_ID, "PAT-001");
+        UUID doctorUserId = UUID.randomUUID();
+        DoctorProfileRecord doctorProfile = doctorProfile(TENANT_ID, doctorUserId, true);
+        String bookingReference = "opaque-booking-ref-123";
+        LocalDate appointmentDate = LocalDate.now().plusDays(2);
+        LocalTime appointmentTime = LocalTime.of(11, 30);
+        BookingTargetReference targetReference = new BookingTargetReference(bookingReference, 0L);
+        BookingTargetResolution resolution = new BookingTargetResolution(
+                targetReference,
+                new ProviderSourceReference(SourceSystem.HEALTHCARE_DOCTOR, doctorUserId.toString(), 9L, OffsetDateTime.now()),
+                PublicProfileType.DOCTOR,
+                new PublicProviderReference(doctorUserId.toString(), "practice-ref-1"),
+                TENANT_ID.toString(),
+                TENANT_ID.toString(),
+                doctorUserId.toString(),
+                doctorProfile.id().toString(),
+                BookingCapability.ONLINE_BOOKING,
+                AvailabilityState.AVAILABLE_TODAY,
+                PlatformConnectionStatus.CONNECTED,
+                LinkLifecycleStatus.LINKED,
+                4L,
+                7L,
+                OffsetDateTime.now()
+        );
+        BookingSlotSummary bookingSlot = new BookingSlotSummary(
+                "slot-1",
+                LocalDateTime.of(appointmentDate, appointmentTime),
+                LocalDateTime.of(appointmentDate, appointmentTime.plusMinutes(30)),
+                "11:30 AM",
+                true
+        );
+        AppointmentRecord booked = new AppointmentRecord(
+                UUID.randomUUID(),
+                TENANT_ID,
+                PATIENT_ID,
+                "PAT-001",
+                "Riya Sharma",
+                "9999999999",
+                doctorUserId,
+                "Dr. Mehta",
+                null,
+                appointmentDate,
+                appointmentTime,
+                17,
+                "Seasonal fever",
+                AppointmentType.SCHEDULED,
+                AppointmentPriority.NORMAL,
+                AppointmentStatus.BOOKED,
+                OffsetDateTime.parse("2026-08-01T10:00:00Z"),
+                OffsetDateTime.parse("2026-08-01T10:00:00Z")
+        );
+        PatientPortalAppointmentConfirmationResponse expected = new PatientPortalAppointmentConfirmationResponse(
+                booked.id().toString(),
+                "CONFIRMED",
+                booked.appointmentDate(),
+                booked.appointmentTime(),
+                "Asia/Kolkata",
+                booked.doctorName(),
+                "Sunrise Clinic",
+                "Mumbai, MH",
+                "IN_PERSON",
+                "Scheduled",
+                "BOOKED",
+                "Seasonal fever",
+                "Appointment confirmed successfully.",
+                null,
+                "Riya Sharma",
+                false,
+                booked.createdAt(),
+                "Notifications queued"
+        );
+
+        when(appUserRepository.findByTenantIdAndId(TENANT_ID, APP_USER_ID)).thenReturn(Optional.of(appUser));
+        when(patientRepository.findByTenantIdAndId(TENANT_ID, PATIENT_ID)).thenReturn(Optional.of(patient));
+        when(healthcareAvailabilityPort.resolveBookingTarget(eq(targetReference))).thenReturn(Optional.of(resolution));
+        when(healthcareAvailabilityPort.getBookableSlots(eq(targetReference), eq(appointmentDate))).thenReturn(List.of(bookingSlot));
+        when(clinicProfileService.findByTenantId(TENANT_ID)).thenReturn(Optional.of(clinicProfile(TENANT_ID, "Sunrise Clinic", true)));
+        when(tenantUserManagementService.list(TENANT_ID)).thenReturn(List.of(doctorUser(doctorUserId, "Dr. Mehta", TENANT_ID)));
+        when(doctorProfileService.findByDoctorUserId(TENANT_ID, doctorUserId)).thenReturn(Optional.of(doctorProfile));
+        when(appointmentService.listSlots(eq(TENANT_ID), eq(doctorUserId), eq(appointmentDate), any()))
+                .thenReturn(List.of(slotRecord(doctorUserId, appointmentDate, appointmentTime, DoctorAvailabilitySlotStatus.AVAILABLE, true)));
+        when(appointmentService.createScheduled(eq(TENANT_ID), any(AppointmentUpsertCommand.class), eq(APP_USER_ID), eq(false), any()))
+                .thenReturn(booked);
+        when(idempotencyService.findCachedResponse(any(), eq("booking-key-1"), anyString()))
+                .thenReturn(Optional.empty(), Optional.of(objectMapper.writeValueAsString(expected)));
+
+        PatientPortalAppointmentBookingRequest request = new PatientPortalAppointmentBookingRequest(
+                doctorUserId.toString(),
+                null,
+                null,
+                null,
+                bookingReference,
+                "slot-1",
+                appointmentDate,
+                appointmentDate,
+                appointmentTime,
+                "IN_PERSON",
+                "SELF",
+                "SELF",
+                "SELF",
+                "Seasonal fever",
+                "booking-key-1",
+                "SMS",
+                "Seasonal fever"
+        );
+
+        PatientPortalAppointmentConfirmationResponse first = service.bookAppointment(request);
+        PatientPortalAppointmentConfirmationResponse second = service.bookAppointment(request);
+
+        assertThat(first).isEqualTo(expected);
+        assertThat(second).isEqualTo(expected);
+        verify(appointmentService, times(1)).createScheduled(eq(TENANT_ID), any(AppointmentUpsertCommand.class), eq(APP_USER_ID), eq(false), any());
+        verify(idempotencyService, times(1)).storeResponse(any(), eq("booking-key-1"), anyString(), anyString());
+    }
+
+    @Test
+    void patientCannotConfirmAppointmentWithMismatchedSlotReference() {
+        AppUserEntity appUser = AppUserEntity.create(TENANT_ID, "patient-sub", "patient@example.com", "Portal Patient");
+        appUser.setPatientId(PATIENT_ID);
+        PatientEntity patient = patientEntity(TENANT_ID, PATIENT_ID, "PAT-001");
+        UUID doctorUserId = UUID.randomUUID();
+        DoctorProfileRecord doctorProfile = doctorProfile(TENANT_ID, doctorUserId, true);
+        String bookingReference = "opaque-booking-ref-123";
+        LocalDate appointmentDate = LocalDate.now().plusDays(2);
+        LocalTime appointmentTime = LocalTime.of(11, 30);
+        BookingTargetReference targetReference = new BookingTargetReference(bookingReference, 0L);
+        BookingTargetResolution resolution = new BookingTargetResolution(
+                targetReference,
+                new ProviderSourceReference(SourceSystem.HEALTHCARE_DOCTOR, doctorUserId.toString(), 9L, OffsetDateTime.now()),
+                PublicProfileType.DOCTOR,
+                new PublicProviderReference(doctorUserId.toString(), "practice-ref-1"),
+                TENANT_ID.toString(),
+                TENANT_ID.toString(),
+                doctorUserId.toString(),
+                doctorProfile.id().toString(),
+                BookingCapability.ONLINE_BOOKING,
+                AvailabilityState.AVAILABLE_TODAY,
+                PlatformConnectionStatus.CONNECTED,
+                LinkLifecycleStatus.LINKED,
+                4L,
+                7L,
+                OffsetDateTime.now()
+        );
+        BookingSlotSummary bookingSlot = new BookingSlotSummary(
+                "slot-1",
+                LocalDateTime.of(appointmentDate, appointmentTime),
+                LocalDateTime.of(appointmentDate, appointmentTime.plusMinutes(30)),
+                "11:30 AM",
+                true
+        );
+
+        when(appUserRepository.findByTenantIdAndId(TENANT_ID, APP_USER_ID)).thenReturn(Optional.of(appUser));
+        when(patientRepository.findByTenantIdAndId(TENANT_ID, PATIENT_ID)).thenReturn(Optional.of(patient));
+        when(healthcareAvailabilityPort.resolveBookingTarget(eq(targetReference))).thenReturn(Optional.of(resolution));
+        when(healthcareAvailabilityPort.getBookableSlots(eq(targetReference), eq(appointmentDate))).thenReturn(List.of(bookingSlot));
+        when(tenantUserManagementService.list(TENANT_ID)).thenReturn(List.of(doctorUser(doctorUserId, "Dr. Mehta", TENANT_ID)));
+        when(doctorProfileService.findByDoctorUserId(TENANT_ID, doctorUserId)).thenReturn(Optional.of(doctorProfile));
+
+        assertThatThrownBy(() -> service.bookAppointment(new PatientPortalAppointmentBookingRequest(
+                doctorUserId.toString(),
+                null,
+                null,
+                null,
+                bookingReference,
+                "slot-9",
+                appointmentDate,
+                appointmentDate,
+                appointmentTime,
+                "IN_PERSON",
+                "SELF",
+                "SELF",
+                "SELF",
+                "Seasonal fever",
+                "booking-key-2",
+                "SMS",
+                "Seasonal fever"
+        )))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("no longer available");
+
+        verify(appointmentService, never()).createScheduled(eq(TENANT_ID), any(AppointmentUpsertCommand.class), eq(APP_USER_ID), eq(false), any());
+    }
+
+    @Test
+    void patientCannotConfirmAppointmentWhenTenantPatientMatchIsAmbiguous() {
+        AppUserEntity appUser = AppUserEntity.create(TENANT_ID, "patient-sub", "patient@example.com", "Portal Patient");
+        appUser.setPatientId(PATIENT_ID);
+        PatientEntity patient = patientEntity(TENANT_ID, PATIENT_ID, "PAT-001");
+        UUID doctorUserId = UUID.randomUUID();
+        UUID bookingTenantId = OTHER_TENANT_ID;
+        LocalDate appointmentDate = LocalDate.now().plusDays(2);
+        LocalTime appointmentTime = LocalTime.of(11, 30);
+        PatientEntity candidateOne = patientEntity(bookingTenantId, UUID.randomUUID(), "PAT-201");
+        PatientEntity candidateTwo = patientEntity(bookingTenantId, UUID.randomUUID(), "PAT-202");
+
+        when(appUserRepository.findByTenantIdAndId(TENANT_ID, APP_USER_ID)).thenReturn(Optional.of(appUser));
+        when(patientRepository.findByTenantIdAndId(TENANT_ID, PATIENT_ID)).thenReturn(Optional.of(patient));
+        when(tenantRepository.findById(bookingTenantId)).thenReturn(Optional.of(tenant("demo-clinic", bookingTenantId)));
+        when(clinicProfileService.findByTenantId(bookingTenantId)).thenReturn(Optional.of(clinicProfile(bookingTenantId, "Demo Clinic", true)));
+        when(tenantUserManagementService.list(bookingTenantId)).thenReturn(List.of(doctorUser(doctorUserId, "Dr. Mehta", bookingTenantId)));
+        when(doctorProfileService.findByDoctorUserId(bookingTenantId, doctorUserId)).thenReturn(Optional.of(doctorProfile(bookingTenantId, doctorUserId, true)));
+        when(appointmentService.listSlots(eq(bookingTenantId), eq(doctorUserId), eq(appointmentDate), any()))
+                .thenReturn(List.of(slotRecord(doctorUserId, appointmentDate, appointmentTime, DoctorAvailabilitySlotStatus.AVAILABLE, true)));
+        when(patientRepository.findByTenantIdAndMobileIgnoreCaseAndActiveTrue(bookingTenantId, "9999999999")).thenReturn(List.of(candidateOne, candidateTwo));
+
+        assertThatThrownBy(() -> service.bookAppointment(new PatientPortalAppointmentBookingRequest(
+                doctorUserId.toString(),
+                "demo-clinic",
+                bookingTenantId.toString(),
+                null,
+                null,
+                null,
+                appointmentDate,
+                appointmentDate,
+                appointmentTime,
+                "IN_PERSON",
+                "SELF",
+                "SELF",
+                "SELF",
+                "Seasonal fever",
+                "booking-key-3",
+                "SMS",
+                "Seasonal fever"
+        )))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("verify the patient details");
+
+        verify(appointmentService, never()).createScheduled(eq(bookingTenantId), any(AppointmentUpsertCommand.class), any(UUID.class), eq(false), any());
+    }
+
+    @Test
     void patientDoctorSlotsExcludePastSlotsBeforeReturningThem() {
         AppUserEntity appUser = AppUserEntity.create(TENANT_ID, "patient-sub", "patient@example.com", "Portal Patient");
         appUser.setPatientId(PATIENT_ID);
@@ -623,8 +942,8 @@ class PatientPortalServiceTest {
                 java.time.LocalTime.of(9, 0),
                 "Follow-up"
         )))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Selected slot is no longer available");
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("no longer available");
     }
 
     @Test

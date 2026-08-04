@@ -2,6 +2,7 @@ package com.deepthoughtnet.clinic.discover.landingpage;
 
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderType;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderProfileDetailRecord;
+import com.deepthoughtnet.clinic.discover.publicprofile.PublicationReadinessRecord;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
@@ -85,6 +86,9 @@ public final class LandingPageModels {
             String publicPath,
             boolean editable,
             boolean published,
+            String pageMode,
+            PublicationReadinessRecord publicationReadiness,
+            List<String> allowedActions,
             int draftVersionNumber,
             Integer publishedVersionNumber,
             OffsetDateTime publishedAt,

@@ -4,6 +4,10 @@ public record PublicClinicMiniResponse(
         String clinicSlug,
         String clinicDisplayName,
         String area,
-        String city
+        String city,
+        String bookingReference
 ) {
+    public PublicClinicMiniResponse(String clinicSlug, String clinicDisplayName, String area, String city) {
+        this(clinicSlug, clinicDisplayName, area, city, null);
+    }
 }

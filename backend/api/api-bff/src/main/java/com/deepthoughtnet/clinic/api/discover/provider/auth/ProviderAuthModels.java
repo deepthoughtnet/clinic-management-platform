@@ -69,10 +69,64 @@ public final class ProviderAuthModels {
             String contactPhone,
             OffsetDateTime emailVerifiedAt,
             OffsetDateTime phoneVerifiedAt,
+            List<ProviderWorkspaceWorkItemResponse> workItems,
             List<WorkspaceApplicationResponse> applications,
             List<WorkspaceApplicationResponse> publishedProfiles,
             int attentionCount,
             List<ProviderType> supportedProviderTypes
+    ) {
+    }
+
+    public record ProviderWorkspaceWorkItemResponse(
+            String workItemType,
+            String publicProfileType,
+            String workItemReference,
+            String publicProfileReference,
+            String connectionReference,
+            String displayName,
+            String city,
+            String area,
+            String claimStatus,
+            String ownershipStatus,
+            String reviewStatus,
+            String workItemStatus,
+            String publicDiscoveryConsent,
+            String platformConnectionStatus,
+            String publicationStatus,
+            String membershipRole,
+            OffsetDateTime lastUpdatedAt,
+            List<String> allowedActions
+    ) {
+    }
+
+    public record ProviderClaimReviewResponse(
+            String connectionReference,
+            String status,
+            String pageMode,
+            String workItemStatus,
+            String reviewStatus,
+            OffsetDateTime submittedAt,
+            OffsetDateTime reviewedAt,
+            OffsetDateTime ownershipUpdatedAt,
+            String reason,
+            String claimNote,
+            String maskedProviderMobile,
+            String publicProfileType,
+            String displayName,
+            String city,
+            String area,
+            String qualification,
+            String specialty,
+            Integer yearsOfExperience,
+            String tenantConsentStatus,
+            String publicProfileStatus,
+            String platformConnectionStatus,
+            String bookingCapability,
+            String ownershipStatus,
+            List<String> membershipRoles,
+            List<String> disputeStatuses,
+            String doctorUserDisplayName,
+            List<String> allowedActions
     ) {
     }
 

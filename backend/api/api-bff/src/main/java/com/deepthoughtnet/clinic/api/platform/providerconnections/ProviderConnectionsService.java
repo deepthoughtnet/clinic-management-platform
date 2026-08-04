@@ -34,9 +34,17 @@ import com.deepthoughtnet.clinic.platform.providerintegration.model.PublicClinic
 import com.deepthoughtnet.clinic.platform.providerintegration.model.PublicDoctorPracticePlatformLinkUpsertRequest;
 import com.deepthoughtnet.clinic.platform.providerintegration.service.ProviderLinkingService;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderType;
+import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipModels.MembershipRecord;
+import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipModels.DisputeRecord;
+import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipModels.OwnershipRecord;
+import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipService;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProfileLifecycleRecord;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicationReadinessRecord;
 import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService;
+import com.deepthoughtnet.clinic.discover.publicprofilemoderation.ProviderPublicProfileModerationService;
+import com.deepthoughtnet.clinic.discover.publicprofilemoderation.PublicProfileModerationModels.PublicProfileModerationQueueRecord;
+import com.deepthoughtnet.clinic.discover.publicprofiledraft.ProviderPublicProfileDraftService;
+import com.deepthoughtnet.clinic.discover.publicprofiledraft.PublicProfileDraftModels.PublicProfileDraftWorkspaceRecord;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -63,10 +71,13 @@ public class ProviderConnectionsService {
     private final LocalHealthcareProviderFactsAdapter healthcareFactsAdapter;
     private final ProviderLinkingService providerLinkingService;
     private final ProviderPublicProfileService publicProfileService;
+    private final ProviderPublicProfileModerationService moderationService;
+    private final ProviderPublicProfileDraftService draftService;
     private final PlatformTenantManagementService tenantManagementService;
     private final ClinicProfileService clinicProfileService;
     private final DoctorProfileService doctorProfileService;
     private final TenantUserManagementService tenantUserManagementService;
+    private final ProviderOwnershipService providerOwnershipService;
     private final AuditEventQueryService auditEventQueryService;
     private final ProviderConnectionSuggestionRejectionRepository suggestionRejectionRepository;
     private final ObjectMapper objectMapper;
@@ -76,10 +87,13 @@ public class ProviderConnectionsService {
             LocalHealthcareProviderFactsAdapter healthcareFactsAdapter,
             ProviderLinkingService providerLinkingService,
             ProviderPublicProfileService publicProfileService,
+            ProviderPublicProfileModerationService moderationService,
+            ProviderPublicProfileDraftService draftService,
             PlatformTenantManagementService tenantManagementService,
             ClinicProfileService clinicProfileService,
             DoctorProfileService doctorProfileService,
             TenantUserManagementService tenantUserManagementService,
+            ProviderOwnershipService providerOwnershipService,
             AuditEventQueryService auditEventQueryService,
             ProviderConnectionSuggestionRejectionRepository suggestionRejectionRepository,
             ObjectMapper objectMapper
@@ -88,10 +102,13 @@ public class ProviderConnectionsService {
         this.healthcareFactsAdapter = healthcareFactsAdapter;
         this.providerLinkingService = providerLinkingService;
         this.publicProfileService = publicProfileService;
+        this.moderationService = moderationService;
+        this.draftService = draftService;
         this.tenantManagementService = tenantManagementService;
         this.clinicProfileService = clinicProfileService;
         this.doctorProfileService = doctorProfileService;
         this.tenantUserManagementService = tenantUserManagementService;
+        this.providerOwnershipService = providerOwnershipService;
         this.auditEventQueryService = auditEventQueryService;
         this.suggestionRejectionRepository = suggestionRejectionRepository;
         this.objectMapper = objectMapper;
@@ -147,9 +164,29 @@ public class ProviderConnectionsService {
         if (providerType == null) {
             return List.of();
         }
-        List<PublicProfileLifecycleRecord> records = publicProfileService.listLifecycleProfiles(providerType, normalize(query), normalize(city));
-        return records.stream()
+        List<ProviderConnectionsLifecycleResponse> lifecycleRows = publicProfileService.listLifecycleProfiles(providerType, normalize(query), normalize(city)).stream()
                 .map(this::toLifecycleResponse)
+                .toList();
+        List<ProviderConnectionsLifecycleResponse> draftRows = draftService.listDraftLifecycle().stream()
+                .filter(record -> record.publicProfileType() == providerType)
+                .filter(record -> matchesQuery(record.displayName(), normalize(query).toLowerCase(Locale.ROOT))
+                        || matchesQuery(record.canonicalSlug(), normalize(query).toLowerCase(Locale.ROOT))
+                        || matchesQuery(record.city(), normalize(city).toLowerCase(Locale.ROOT)))
+                .map(this::toLifecycleResponse)
+                .toList();
+        List<ProviderConnectionsLifecycleResponse> moderationRows = moderationService.listQueue().stream()
+                .filter(record -> record.publicProfileType() == providerType)
+                .filter(record -> matchesQuery(record.displayName(), normalize(query).toLowerCase(Locale.ROOT))
+                        || matchesQuery(record.city(), normalize(city).toLowerCase(Locale.ROOT))
+                        || matchesQuery(record.submissionReference(), normalize(query).toLowerCase(Locale.ROOT)))
+                .map(this::toLifecycleResponse)
+                .toList();
+        List<ProviderConnectionsLifecycleResponse> combined = new ArrayList<>();
+        combined.addAll(lifecycleRows);
+        combined.addAll(draftRows);
+        combined.addAll(moderationRows);
+        return combined.stream()
+                .sorted(Comparator.comparing(ProviderConnectionsLifecycleResponse::projectedAt, Comparator.nullsLast(Comparator.reverseOrder())))
                 .toList();
     }
 
@@ -413,6 +450,39 @@ public class ProviderConnectionsService {
                 .orElseGet(() -> new ReconciliationResult("provider-link", 1, 0, 0, 0, 0, 0, 1, List.of(), OffsetDateTime.now(), OffsetDateTime.now()));
     }
 
+    public List<ProviderConnectionsOwnershipResponse> ownerships() {
+        Map<String, ProviderConnectionsLinkResponse> clinicLinks = clinicLinkIndex();
+        Map<String, ProviderConnectionsLinkResponse> doctorLinks = doctorLinkIndex();
+        return providerOwnershipService.listOwnerships().stream()
+                .map(ownership -> toOwnershipResponse(ownership,
+                        providerOwnershipService.listMemberships(ownership.publicProfileReference()),
+                        providerOwnershipService.listDisputes(ownership.publicProfileReference()),
+                        clinicLinks,
+                        doctorLinks))
+                .sorted(Comparator.comparing(ProviderConnectionsOwnershipResponse::updatedAt, Comparator.nullsLast(Comparator.reverseOrder())))
+                .toList();
+    }
+
+    public ProviderConnectionsOwnershipResponse approveOwnership(UUID ownershipId, String reason) {
+        var ownership = providerOwnershipService.approveOwnership(ownershipId, null, reason);
+        return ownershipResponse(ownership, providerOwnershipService.listMemberships(ownership.publicProfileReference()), providerOwnershipService.listDisputes(ownership.publicProfileReference()));
+    }
+
+    public ProviderConnectionsOwnershipResponse rejectOwnership(UUID ownershipId, String reason) {
+        var ownership = providerOwnershipService.rejectOwnership(ownershipId, null, reason);
+        return ownershipResponse(ownership, providerOwnershipService.listMemberships(ownership.publicProfileReference()), providerOwnershipService.listDisputes(ownership.publicProfileReference()));
+    }
+
+    public ProviderConnectionsOwnershipResponse disputeOwnership(UUID ownershipId, String reason) {
+        var ownership = providerOwnershipService.markDisputed(ownershipId, null, reason);
+        return ownershipResponse(ownership, providerOwnershipService.listMemberships(ownership.publicProfileReference()), providerOwnershipService.listDisputes(ownership.publicProfileReference()));
+    }
+
+    public ProviderConnectionsOwnershipResponse revokeOwnership(UUID ownershipId, String reason) {
+        var ownership = providerOwnershipService.revokeOwnership(ownershipId, null, reason);
+        return ownershipResponse(ownership, providerOwnershipService.listMemberships(ownership.publicProfileReference()), providerOwnershipService.listDisputes(ownership.publicProfileReference()));
+    }
+
     private ProviderConnectionsMetricResponse metric(String key, String label, long value, String helperText, String path) {
         return new ProviderConnectionsMetricResponse(key, label, value, helperText, path);
     }
@@ -445,6 +515,113 @@ public class ProviderConnectionsService {
         );
     }
 
+    private ProviderConnectionsOwnershipResponse toOwnershipResponse(
+            OwnershipRecord ownership,
+            List<MembershipRecord> memberships,
+            List<DisputeRecord> disputes,
+            Map<String, ProviderConnectionsLinkResponse> clinicLinks,
+            Map<String, ProviderConnectionsLinkResponse> doctorLinks
+    ) {
+        ProviderConnectionsLinkResponse linked = ownership.publicProfileType() == PublicProfileType.DOCTOR
+                ? doctorLinks.get(ownership.publicProfileReference())
+                : clinicLinks.get(ownership.publicProfileReference());
+        return ownershipResponse(ownership, memberships, disputes, linked);
+    }
+
+    private ProviderConnectionsOwnershipResponse ownershipResponse(
+            OwnershipRecord ownership,
+            List<MembershipRecord> memberships,
+            List<DisputeRecord> disputes
+    ) {
+        ProviderConnectionsLinkResponse linked = ownership.publicProfileType() == PublicProfileType.DOCTOR
+                ? doctorLinkIndex().get(ownership.publicProfileReference())
+                : clinicLinkIndex().get(ownership.publicProfileReference());
+        return ownershipResponse(ownership, memberships, disputes, linked);
+    }
+
+    private ProviderConnectionsOwnershipResponse ownershipResponse(
+            OwnershipRecord ownership,
+            List<MembershipRecord> memberships,
+            List<DisputeRecord> disputes,
+            ProviderConnectionsLinkResponse linked
+    ) {
+        ProviderConnectionsPublicProfileResponse publicProfile = ownership.publicProfileType() == PublicProfileType.DOCTOR
+                ? publicProfileByDoctorReference(ownership.publicProfileReference(), null)
+                : publicProfileByClinicReference(ownership.publicProfileReference());
+        OwnershipDisplayContext display = ownershipDisplayContext(ownership, publicProfile);
+        List<String> membershipRoles = memberships.stream().map(membership -> membership.role().name() + ":" + membership.status()).toList();
+        List<String> disputeStatuses = disputes.stream().map(dispute -> dispute.status().name()).toList();
+        List<String> allowedActions = providerOwnershipService.ownershipAllowedActions(ownership, disputes);
+        String maskedMobile = providerOwnershipService.maskedProviderMobile(ownership.providerAccountId()).orElse(null);
+        return new ProviderConnectionsOwnershipResponse(
+                ownership.id(),
+                ownership.publicProfileType(),
+                ownership.publicProfileReference(),
+                display.displayName(),
+                display.city(),
+                display.area(),
+                maskedMobile,
+                ownership.active() ? "ENABLED" : "DISABLED",
+                publicProfile == null ? "UNPUBLISHED" : publicProfile.publicationStatus().name(),
+                linked == null ? "NOT_CONNECTED" : linked.connectionStatus().name(),
+                linked == null ? "NOT_AVAILABLE" : linked.bookingCapability().name(),
+                ownership.status().name(),
+                ownership.ownershipMethod(),
+                ownership.reason(),
+                ownership.active(),
+                ownership.sourceRevision(),
+                ownership.verifiedAt(),
+                ownership.revokedAt(),
+                ownership.createdAt(),
+                ownership.updatedAt(),
+                membershipRoles,
+                disputeStatuses,
+                allowedActions
+        );
+    }
+
+    private OwnershipDisplayContext ownershipDisplayContext(OwnershipRecord ownership, ProviderConnectionsPublicProfileResponse publicProfile) {
+        if (publicProfile != null && StringUtils.hasText(publicProfile.displayName())) {
+            return new OwnershipDisplayContext(publicProfile.displayName(), publicProfile.city(), publicProfile.area());
+        }
+        UUID tenantId = tenantIdFromReference(ownership.tenantReference());
+        if (tenantId == null) {
+            return new OwnershipDisplayContext("Clinic ownership claim", null, null);
+        }
+        if (ownership.publicProfileType() == PublicProfileType.DOCTOR) {
+            UUID doctorUserId = parseUuid(ownership.publicProfileReference());
+            DoctorProfileRecord doctorProfile = doctorUserId == null ? null : doctorProfileService.findByDoctorUserId(tenantId, doctorUserId).orElse(null);
+            ClinicProfileRecord clinicProfile = clinicProfileService.findByTenantId(tenantId).orElse(null);
+            TenantUserRecord doctorUser = doctorUserId == null ? null : tenantUserManagementService.list(tenantId).stream()
+                    .filter(user -> doctorUserId.equals(user.appUserId()))
+                    .findFirst()
+                    .orElse(null);
+            return new OwnershipDisplayContext(
+                    doctorUser == null ? "Doctor ownership claim" : firstText(doctorUser.displayName(), doctorProfile == null ? null : doctorProfile.specialization(), "Doctor ownership claim"),
+                    clinicProfile == null ? null : clinicProfile.city(),
+                    doctorProfile == null ? null : doctorProfile.consultationRoom()
+            );
+        }
+        ClinicProfileRecord clinicProfile = clinicProfileService.findByTenantId(tenantId).orElse(null);
+        return new OwnershipDisplayContext(
+                clinicProfile == null ? "Clinic ownership claim" : firstText(clinicProfile.displayName(), clinicProfile.clinicName(), "Clinic ownership claim"),
+                clinicProfile == null ? null : clinicProfile.city(),
+                clinicProfile == null ? null : clinicProfile.addressLine1()
+        );
+    }
+
+    private String firstText(String... values) {
+        for (String value : values) {
+            if (StringUtils.hasText(value)) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private record OwnershipDisplayContext(String displayName, String city, String area) {
+    }
+
     private ProviderConnectionsLifecycleResponse toLifecycleResponse(PublicProfileLifecycleRecord record) {
         PublicationReadinessRecord readiness = publicProfileService.publicationReadiness(record.providerId());
         return new ProviderConnectionsLifecycleResponse(
@@ -457,6 +634,15 @@ public class ProviderConnectionsService {
                 record.city(),
                 record.area(),
                 record.publicationStatus(),
+                null,
+                null,
+                null,
+                null,
+                null,
+                0,
+                0,
+                null,
+                List.of(),
                 record.sourceRevision(),
                 record.sourceUpdatedAt(),
                 record.projectedAt(),
@@ -464,7 +650,93 @@ public class ProviderConnectionsService {
                 readiness.ready(),
                 readiness.missingFields(),
                 readiness.invalidFields(),
-                readiness.warnings()
+                readiness.warnings(),
+                null,
+                null,
+                null,
+                null,
+                null,
+                0L,
+                record.sourceSystem(),
+                List.of()
+        );
+    }
+
+    private ProviderConnectionsLifecycleResponse toLifecycleResponse(PublicProfileDraftWorkspaceRecord record) {
+        return new ProviderConnectionsLifecycleResponse(
+                record.publicProfileType() == null ? PublicProfileType.CLINIC : toPublicProfileType(record.publicProfileType()),
+                record.sourceSystem(),
+                record.sourceReference(),
+                record.displayName(),
+                record.canonicalSlug(),
+                record.publicProfilePath(),
+                record.city(),
+                record.area(),
+                record.publicProfileStatus(),
+                record.ownershipStatus(),
+                record.tenantConsentStatus(),
+                record.draftReference(),
+                record.contentStatus(),
+                record.readinessStatus(),
+                record.completenessPercentage(),
+                record.currentVersion(),
+                record.lastSavedAt(),
+                record.allowedActions(),
+                record.sourceRevision(),
+                record.sourceUpdatedAt(),
+                record.updatedAt(),
+                record.currentVersion(),
+                record.readiness() == null ? false : record.readiness().ready(),
+                record.readiness() == null ? List.of() : record.readiness().missingMandatoryFields(),
+                record.readiness() == null ? List.of() : record.readiness().invalidFields(),
+                record.readiness() == null ? List.of() : record.readiness().warnings(),
+                null,
+                null,
+                null,
+                null,
+                null,
+                0L,
+                record.sourceSystem(),
+                record.allowedActions()
+        );
+    }
+
+    private ProviderConnectionsLifecycleResponse toLifecycleResponse(PublicProfileModerationQueueRecord record) {
+        return new ProviderConnectionsLifecycleResponse(
+                record.publicProfileType() == null ? PublicProfileType.CLINIC : toPublicProfileType(record.publicProfileType()),
+                "PROVIDER_PUBLIC_PROFILE_DRAFT",
+                record.submissionReference(),
+                record.displayName(),
+                null,
+                null,
+                record.city(),
+                record.area(),
+                record.publicationStatus(),
+                record.ownershipStatus(),
+                record.tenantConsentStatus(),
+                record.submissionReference(),
+                record.contentStatus(),
+                record.readinessStatus(),
+                record.completenessPercentage(),
+                record.submittedDraftVersion() == null ? 0 : record.submittedDraftVersion(),
+                record.submittedAt(),
+                record.allowedActions(),
+                0L,
+                record.submittedAt(),
+                record.submittedAt(),
+                0L,
+                true,
+                List.of(),
+                List.of(),
+                List.of(),
+                record.moderationStatus(),
+                record.submissionReference(),
+                record.submittedAt(),
+                record.assignedReviewer(),
+                record.assignedAt(),
+                record.ageInQueueDays(),
+                record.sourceType(),
+                record.allowedActions()
         );
     }
 

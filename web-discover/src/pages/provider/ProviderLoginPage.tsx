@@ -79,6 +79,17 @@ function safeVerificationError(ex: unknown) {
   return message;
 }
 
+function resolveSafeReturnTo(rawReturnTo: string | null): string {
+  const trimmed = rawReturnTo?.trim() || DISCOVER_ROUTES.providerWorkspace.path;
+  if (!trimmed.startsWith("/provider/") && trimmed !== "/provider") {
+    return DISCOVER_ROUTES.providerWorkspace.path;
+  }
+  if (trimmed.startsWith("//")) {
+    return DISCOVER_ROUTES.providerWorkspace.path;
+  }
+  return trimmed;
+}
+
 export function ProviderLoginPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -153,7 +164,7 @@ export function ProviderLoginPage() {
   const canVerify = codeDigits.length === 6 && !!activeChallenge;
   const sending = loading && step === "identifier";
   const verifying = loading && step === "code";
-  const returnTo = searchParams.get("returnTo")?.trim() || DISCOVER_ROUTES.providerWorkspace.path;
+  const returnTo = resolveSafeReturnTo(searchParams.get("returnTo"));
   async function sendCode(event?: FormEvent) {
     event?.preventDefault();
     if (sendLockRef.current) {

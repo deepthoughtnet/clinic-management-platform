@@ -37,4 +37,14 @@ class ProviderLandingPageControllerTest {
                 .extracting(component -> component.getName())
                 .containsExactly("key", "enabled", "displayOrder", "title", "description", "visibilityRule", "content");
     }
+
+    @Test
+    void responseDtosExposeReadinessAndAllowedActions() {
+        assertThat(List.of(com.deepthoughtnet.clinic.api.discover.landingpage.dto.LandingPageDtos.LandingPageResponse.class.getRecordComponents()))
+                .extracting(component -> component.getName())
+                .contains("pageMode", "publicationReadiness", "allowedActions");
+        assertThat(List.of(com.deepthoughtnet.clinic.api.discover.landingpage.dto.LandingPageDtos.PublicLandingPageResponse.class.getRecordComponents()))
+                .extracting(component -> component.getName())
+                .contains("pageMode", "publicationReadiness", "allowedActions");
+    }
 }

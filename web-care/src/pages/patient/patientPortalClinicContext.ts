@@ -11,6 +11,7 @@ export type PatientPortalClinicContext = {
   doctorSlug: string | null;
   doctorName: string | null;
   tenantId: string | null;
+  bookingReference: string | null;
   isResolved: boolean;
   needsClinicSelection: boolean;
   nextPath: string | null;
@@ -26,6 +27,7 @@ export type PatientAuthContext = {
   doctorId?: string;
   doctorSlug?: string;
   doctorName?: string;
+  bookingReference?: string;
   selectedSlot?: Record<string, unknown>;
   appointmentIntent?: {
     nextPath?: string;
@@ -47,6 +49,7 @@ export type PatientPortalLinkContext = {
   doctorId?: string | null;
   doctorSlug?: string | null;
   doctorName?: string | null;
+  bookingReference?: string | null;
   nextPath?: string | null;
   mobile?: string | null;
   selectedSlot?: Record<string, unknown> | null;
@@ -65,6 +68,7 @@ export type PatientPortalRouteSelectedClinicState = {
   doctorName: string | null;
   tenantId: string | null;
   tenantSlug: string | null;
+  bookingReference: string | null;
   nextPath: string | null;
   mobile: string | null;
   selectedSlot: Record<string, unknown> | null;
@@ -139,13 +143,14 @@ function normalizeRouteSelectedClinicState(value: unknown): PatientPortalRouteSe
   );
   const doctorSlug = normalizeClinicCode(typeof selectedClinic.doctorSlug === "string" ? selectedClinic.doctorSlug : null);
   const doctorId = normalizeClinicCode(typeof selectedClinic.doctorId === "string" ? selectedClinic.doctorId : null);
+  const bookingReference = normalizeClinicCode(typeof selectedClinic.bookingReference === "string" ? selectedClinic.bookingReference : null);
   const nextPath = normalizeNextPath(typeof selectedClinic.nextPath === "string" ? selectedClinic.nextPath : null) || null;
   const mobile = normalizeClinicCode(typeof selectedClinic.mobile === "string" ? selectedClinic.mobile : null) || null;
   const selectedSlot =
     selectedClinic.selectedSlot && typeof selectedClinic.selectedSlot === "object"
       ? (selectedClinic.selectedSlot as Record<string, unknown>)
       : null;
-  if (!clinicCode && !doctorSlug && !doctorId && !nextPath && !mobile) {
+  if (!clinicCode && !doctorSlug && !doctorId && !bookingReference && !nextPath && !mobile) {
     return null;
   }
   return {
@@ -158,6 +163,7 @@ function normalizeRouteSelectedClinicState(value: unknown): PatientPortalRouteSe
     doctorName: normalizeClinicCode(typeof selectedClinic.doctorName === "string" ? selectedClinic.doctorName : null) || null,
     tenantId: normalizeClinicCode(typeof selectedClinic.tenantId === "string" ? selectedClinic.tenantId : null) || null,
     tenantSlug: normalizeClinicCode(typeof selectedClinic.tenantSlug === "string" ? selectedClinic.tenantSlug : null) || null,
+    bookingReference: bookingReference || null,
     nextPath,
     mobile,
     selectedSlot,
@@ -199,12 +205,13 @@ export function persistPatientPortalClinicContext(context: PatientPortalLinkCont
     const clinicCode = normalizeClinicCode(context.clinicCode || context.clinicSlug);
     const doctorSlug = normalizeClinicCode(context.doctorSlug);
     const doctorId = normalizeClinicCode(context.doctorId);
+    const bookingReference = normalizeClinicCode(context.bookingReference);
     const nextPath = normalizeNextPath(context.nextPath) || null;
     const mobile = normalizeClinicCode(context.mobile) || null;
     const selectedSlot = context.selectedSlot && typeof context.selectedSlot === "object"
       ? context.selectedSlot
       : null;
-    if (!clinicCode && !doctorSlug && !doctorId && !nextPath && !mobile) {
+    if (!clinicCode && !doctorSlug && !doctorId && !bookingReference && !nextPath && !mobile) {
       return;
     }
     const payload = JSON.stringify({
@@ -212,6 +219,7 @@ export function persistPatientPortalClinicContext(context: PatientPortalLinkCont
       clinicCode,
       clinicSlug: normalizeClinicCode(context.clinicSlug) || null,
       doctorId: doctorId || null,
+      bookingReference: bookingReference || null,
       tenantId: isUuid(normalizeClinicCode(context.tenantId)) ? normalizeClinicCode(context.tenantId) : null,
       tenantSlug: normalizeClinicCode(context.tenantSlug) || null,
       nextPath,
@@ -252,6 +260,7 @@ function resolvePatientPortalDevContext(): PatientPortalClinicContext | null {
     doctorSlug: null,
     doctorName: null,
     tenantId: null,
+    bookingReference: null,
     isResolved: true,
     needsClinicSelection: false,
     nextPath: null,
@@ -302,6 +311,10 @@ export function resolvePatientPortalContext(
     || doctorName
     || storedClinic?.doctorName
     || null;
+  const bookingReference = routeSelectedClinic?.bookingReference
+    || normalizeClinicCode(searchParams.get("bookingReference"))
+    || storedClinic?.bookingReference
+    || null;
   const nextPath = routeSelectedClinic?.nextPath
     || normalizeNextPath(searchParams.get("next"))
     || storedClinic?.nextPath
@@ -315,7 +328,7 @@ export function resolvePatientPortalContext(
     || tenantId
     || storedClinic?.tenantId
     || null;
-  const needsClinicSelection = Boolean((resolvedDoctorSlug || resolvedDoctorId) && !clinicCode);
+  const needsClinicSelection = Boolean((resolvedDoctorSlug || resolvedDoctorId || bookingReference) && !clinicCode);
   if (!clinicCode) {
     const devFallback = resolvePatientPortalDevContext();
     if (devFallback) {
@@ -343,6 +356,7 @@ export function resolvePatientPortalContext(
     doctorSlug: resolvedDoctorSlug,
     doctorName: resolvedDoctorName,
     tenantId: resolvedTenantId,
+    bookingReference,
     isResolved: Boolean(clinicCode),
     needsClinicSelection,
     nextPath,
@@ -373,6 +387,7 @@ export function resolvePatientAuthContext(
     ...(portalContext.doctorId ? { doctorId: portalContext.doctorId } : {}),
     ...(portalContext.doctorSlug ? { doctorSlug: portalContext.doctorSlug } : {}),
     ...(portalContext.doctorName ? { doctorName: portalContext.doctorName } : {}),
+    ...(portalContext.bookingReference ? { bookingReference: portalContext.bookingReference } : {}),
     ...(appointmentNextPath ? { appointmentIntent: { nextPath: appointmentNextPath } } : {}),
     source,
   };
@@ -429,13 +444,14 @@ function createBookingRouteState(context?: PatientPortalLinkContext): PatientPor
   const clinicCode = normalizeClinicCode(context?.clinicCode || context?.clinicSlug);
   const doctorId = normalizeClinicCode(context?.doctorId);
   const doctorSlug = normalizeClinicCode(context?.doctorSlug);
+  const bookingReference = normalizeClinicCode(context?.bookingReference);
   const nextPath = normalizeNextPath(context?.nextPath) || null;
   const mobile = normalizeClinicCode(context?.mobile) || null;
   const clinicIdValue = normalizeClinicCode(context?.clinicId);
   const tenantIdValue = normalizeClinicCode(context?.tenantId);
   const clinicId = isUuid(clinicIdValue) ? clinicIdValue : null;
   const tenantId = isUuid(tenantIdValue) ? tenantIdValue : null;
-  if (!clinicCode && !clinicId && !tenantId && !doctorId && !doctorSlug && !nextPath && !mobile) {
+  if (!clinicCode && !clinicId && !tenantId && !doctorId && !doctorSlug && !bookingReference && !nextPath && !mobile) {
     return undefined;
   }
   return {
@@ -449,6 +465,7 @@ function createBookingRouteState(context?: PatientPortalLinkContext): PatientPor
       doctorName: null,
       tenantId,
       tenantSlug: null,
+      bookingReference,
       nextPath,
       mobile,
       selectedSlot: context?.selectedSlot ?? null,
@@ -467,6 +484,7 @@ export function withPatientPortalClinicContext(path: string, context?: PatientPo
     tenantId: !clinicId && tenantId ? tenantId : undefined,
     clinicSlug: !clinicId && !tenantId ? context.clinicSlug : undefined,
     doctorId: context.doctorId,
+    bookingReference: context.bookingReference,
   });
 }
 

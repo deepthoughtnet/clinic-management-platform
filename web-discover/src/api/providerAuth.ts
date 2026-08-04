@@ -40,15 +40,72 @@ export type ProviderWorkspaceApplication = {
   publicProfilePath: string | null;
 };
 
+export type ProviderWorkspaceWorkItem = {
+  workItemType: "OWNERSHIP_CLAIM" | "ONBOARDING_APPLICATION" | "PUBLIC_PROFILE" | string;
+  publicProfileType: string;
+  workItemReference: string;
+  publicProfileReference: string | null;
+  connectionReference: string | null;
+  displayName: string | null;
+  city: string | null;
+  area: string | null;
+  claimStatus: string | null;
+  ownershipStatus: string | null;
+  reviewStatus: string | null;
+  workItemStatus: string | null;
+  publicDiscoveryConsent: string | null;
+  platformConnectionStatus: string | null;
+  publicationStatus: string | null;
+  membershipRole: string | null;
+  lastUpdatedAt: string | null;
+  allowedActions: string[];
+};
+
 export type ProviderWorkspaceResponse = {
   contactEmail: string | null;
   contactPhone: string | null;
   emailVerifiedAt: string | null;
   phoneVerifiedAt: string | null;
+  workItems: ProviderWorkspaceWorkItem[];
   applications: ProviderWorkspaceApplication[];
   publishedProfiles: ProviderWorkspaceApplication[];
   attentionCount: number;
   supportedProviderTypes: ProviderType[];
+};
+
+export type ProviderClaimReviewResponse = {
+  connectionReference: string;
+  status: string;
+  pageMode: string;
+  workItemStatus: string;
+  reviewStatus: string;
+  submittedAt: string | null;
+  reviewedAt: string | null;
+  ownershipUpdatedAt: string | null;
+  reason: string | null;
+  claimNote: string | null;
+  maskedProviderMobile: string | null;
+  publicProfileType: string;
+  displayName: string | null;
+  city: string | null;
+  area: string | null;
+  qualification: string | null;
+  specialty: string | null;
+  yearsOfExperience: number | null;
+  tenantConsentStatus: string;
+  publicProfileStatus: string;
+  platformConnectionStatus: string;
+  bookingCapability: string;
+  ownershipStatus: string;
+  membershipRoles: string[];
+  disputeStatuses: string[];
+  doctorUserDisplayName: string | null;
+  allowedActions: string[];
+};
+
+export type ProviderClaimSubmissionRequest = {
+  reason?: string | null;
+  evidenceSnapshotJson?: string | null;
 };
 
 export type ProviderOnboardingAccessResponse = {
@@ -140,6 +197,14 @@ export function loadProviderApplicationDashboard(applicationReference: string) {
 
 export function createProviderOnboardingAccess(applicationReference: string) {
   return request<ProviderOnboardingAccessResponse>(`/api/provider/applications/${encodeURIComponent(applicationReference)}/onboarding-access`, "POST");
+}
+
+export function getProviderClaimReview(connectionReference: string) {
+  return request<ProviderClaimReviewResponse>(`/api/provider/claims/${encodeURIComponent(connectionReference)}`, "GET");
+}
+
+export function submitProviderClaim(connectionReference: string, body?: ProviderClaimSubmissionRequest | null) {
+  return request<ProviderClaimReviewResponse>(`/api/provider/claims/${encodeURIComponent(connectionReference)}/submit`, "POST", body ?? {});
 }
 
 export function startProviderApplication(providerType: ProviderType, createNew = false) {

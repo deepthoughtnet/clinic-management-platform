@@ -146,12 +146,14 @@ export type PatientPortalAppointmentBookingRequest = {
   clinicSlug?: string | null;
   tenantId?: string | null;
   clinicId?: string | null;
+  bookingReference?: string | null;
   appointmentDate: string;
   appointmentTime: string;
   reason: string | null;
 };
 
 export type PatientPortalDoctorSlotQuery = {
+  bookingReference?: string | null;
   doctorId: string;
   clinicSlug: string;
   tenantId?: string | null;
@@ -451,6 +453,9 @@ export async function loadPatientPortalDoctorSlots(
   signal?: AbortSignal,
 ) {
   const params = new URLSearchParams();
+  if (query.bookingReference?.trim()) {
+    params.set("bookingReference", query.bookingReference.trim());
+  }
   if (isUuid(query.clinicId)) {
     params.set("clinicId", query.clinicId);
   }

@@ -46,3 +46,4 @@ export const PLATFORM_PROVIDER_CONNECTION_REJECT = "platform.provider_connection
 export const PLATFORM_PROVIDER_CONNECTION_UNLINK = "platform.provider_connection.unlink" as const;
 export const PLATFORM_PROVIDER_CONNECTION_RECONCILE = "platform.provider_connection.reconcile" as const;
 export const PLATFORM_PROVIDER_CONNECTION_AUDIT = "platform.provider_connection.audit" as const;
+export const PLATFORM_PROVIDER_CONNECTION_IDENTITY_OVERRIDE = "platform.provider_connection.identity_override" as const;

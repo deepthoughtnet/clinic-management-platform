@@ -1,5 +1,6 @@
 import { type ChangeEvent, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
+import { Alert, Box, Button, Chip, Paper, Stack, TextField, Typography } from "@mui/material";
 import {
   compareLandingPageVersions,
   loadLandingPage,
@@ -13,7 +14,7 @@ import {
 } from "../../api/providerLandingPage";
 import { DiscoverEmptyState } from "../../components/DiscoveryComponents";
 import { LandingPageRenderer } from "../../components/landing/LandingPageRenderer";
-import { DISCOVER_ROUTES } from "../../routes";
+import { DISCOVER_LANDING_PATHS, DISCOVER_ROUTES } from "../../routes";
 
 const TOKEN_KEYS = [
   "jeevanam.discover.providerOnboardingToken.INDIVIDUAL_DOCTOR",
@@ -46,6 +47,172 @@ function deviceClass(device: string) {
       return "device-frame is-mobile";
     default:
       return "device-frame";
+  }
+}
+
+function readinessLabel(code: string) {
+  return code
+    .replaceAll("_", " ")
+    .toLowerCase()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function readinessDescription(code: string) {
+  switch (code) {
+    case "DISPLAY_NAME":
+      return "Add the display name shown on Discover.";
+    case "PUBLIC_LOCATION":
+      return "Add the city and area that identify the practice.";
+    case "PUBLIC_CONTACT":
+      return "Add a public phone number for patients.";
+    case "ABOUT_SECTION":
+      return "Write the public about section.";
+    case "COVER_PHOTO":
+      return "Upload a cover image.";
+    case "LOGO":
+      return "Upload a logo or profile image.";
+    case "AT_LEAST_ONE_SERVICE":
+      return "Choose at least one service.";
+    case "AT_LEAST_ONE_SPECIALITY":
+      return "Choose at least one speciality.";
+    case "OPENING_HOURS":
+      return "Add opening hours or consultation timing details.";
+    case "GALLERY_RECOMMENDED":
+      return "Add a gallery image if you want richer visual presentation.";
+    case "BRANDING_RECOMMENDED":
+      return "Add branded media so the profile looks complete.";
+    case "SLUG_PENDING":
+      return "Choose an editable public slug.";
+    case "NOT_YET_PUBLISHED":
+      return "Submit the profile for publication when it is ready.";
+    default:
+      return "Review this item before publishing.";
+  }
+}
+
+function readinessChecklistLabel(code: string) {
+  switch (code) {
+    case "DISPLAY_NAME":
+      return "Clinic name";
+    case "PUBLIC_LOCATION":
+      return "Address";
+    case "PUBLIC_CONTACT":
+      return "Contact methods";
+    case "ABOUT_SECTION":
+      return "Description";
+    case "COVER_PHOTO":
+      return "Cover photo";
+    case "LOGO":
+      return "Logo";
+    case "AT_LEAST_ONE_SERVICE":
+      return "Services";
+    case "AT_LEAST_ONE_SPECIALITY":
+      return "Specialities";
+    case "OPENING_HOURS":
+      return "Timings";
+    case "GALLERY_RECOMMENDED":
+      return "Gallery";
+    case "BRANDING_RECOMMENDED":
+      return "Branding";
+    case "SLUG_PENDING":
+      return "Public slug";
+    case "NOT_YET_PUBLISHED":
+      return "Publication";
+    default:
+      return readinessLabel(code);
+  }
+}
+
+function readableLifecycleStatus(code: string) {
+  switch (code) {
+    case "PROFILE_INCOMPLETE":
+      return "Profile needs more information";
+    case "TENANT_CONSENT_REQUIRED":
+      return "Clinic has not enabled Discover publishing yet";
+    case "NOT_SUBMITTED":
+      return "Draft";
+    case "READY":
+      return "Content Ready";
+    case "SUBMITTED":
+      return "Submitted";
+    case "UNDER_REVIEW":
+      return "Under Review";
+    case "CHANGES_REQUESTED":
+      return "Changes requested";
+    case "APPROVED":
+      return "Approved";
+    case "PUBLISHED":
+      return "Published";
+    default:
+      return code.replaceAll("_", " ").replace(/\b\w/g, (char) => char.toUpperCase());
+  }
+}
+
+function publicationSummary(readiness: LandingPageResponse["publicationReadiness"]) {
+  if (readiness.ready && readiness.missingFields.length === 0 && readiness.invalidFields.length === 0) {
+    return "Content complete";
+  }
+  return "Profile needs more information";
+}
+
+function missingFieldEditorSection(code: string) {
+  switch (code) {
+    case "DISPLAY_NAME":
+    case "ABOUT_SECTION":
+      return "about";
+    case "PUBLIC_LOCATION":
+    case "PUBLIC_CONTACT":
+      return "contact";
+    case "AT_LEAST_ONE_SERVICE":
+      return "services";
+    case "AT_LEAST_ONE_SPECIALITY":
+      return "specialities";
+    case "OPENING_HOURS":
+      return "timings";
+    case "LOGO":
+    case "COVER_PHOTO":
+    case "GALLERY_RECOMMENDED":
+    case "BRANDING_RECOMMENDED":
+      return "media";
+    case "SLUG_PENDING":
+      return "seo";
+    default:
+      return "overview";
+  }
+}
+
+function sectionDisplayLabel(key: string) {
+  switch (key) {
+    case "HERO":
+      return "Overview";
+    case "ABOUT":
+      return "About";
+    case "SERVICES":
+      return "Services";
+    case "DOCTORS":
+      return "Specialities";
+    case "DEPARTMENTS":
+      return "Specialities";
+    case "FACILITIES":
+      return "Facilities";
+    case "CONSULTATION_MODES":
+      return "Timings";
+    case "WORKING_HOURS":
+      return "Timings";
+    case "GALLERY":
+      return "Photos";
+    case "INSURANCE":
+      return "Fees";
+    case "AWARDS":
+      return "Media";
+    case "FAQ":
+      return "SEO";
+    case "CONTACT":
+      return "Contact";
+    case "CTA":
+      return "Publication";
+    default:
+      return key.replaceAll("_", " ").replace(/\b\w/g, (char) => char.toUpperCase());
   }
 }
 
@@ -253,18 +420,51 @@ export function ProviderLandingPagePage() {
   }
 
   const visibleSnapshot = draftSnapshot ?? page.draft;
-  const statusText = page.applicationStatus === "APPROVED"
-    ? "Your profile is approved. Complete publication setup to make it visible in Discover."
-    : page.applicationStatus === "PUBLISHED"
-      ? "Your profile is published and visible in Discover."
-      : "Your profile is ready to be configured.";
+  const canEdit = page.allowedActions.includes("EDIT_PUBLIC_PROFILE");
+  const canSubmit = page.allowedActions.includes("SUBMIT_FOR_PUBLICATION");
+  const readiness = page.publicationReadiness;
+  const completionPercent = readiness.completenessPercentage;
+  const statusText = page.pageMode === "PUBLIC_PROFILE_PUBLISHED"
+    ? "Your public profile is published and visible in Discover."
+    : page.pageMode === "PUBLIC_PROFILE_READY"
+      ? "Your public profile is ready for publication."
+      : "Ownership is verified. Complete the profile before submitting it for review.";
+  const futurePublicPath = page.profile?.canonicalSlug
+    ? (page.profile.providerType === "INDIVIDUAL_DOCTOR"
+      ? DISCOVER_LANDING_PATHS.doctor(page.profile.canonicalSlug)
+      : page.profile.providerType === "HOSPITAL"
+        ? DISCOVER_LANDING_PATHS.hospital(page.profile.canonicalSlug)
+        : DISCOVER_LANDING_PATHS.clinic(page.profile.canonicalSlug))
+    : page.publicPath;
+  const readinessChecklist = [
+    ["OWNERSHIP", "Ownership verified", true],
+    ["DRAFT", "Draft saved", Boolean(page.draftVersionNumber ?? page.draft)],
+    ["DISPLAY_NAME", "Clinic name", !readiness.missingFields.includes("DISPLAY_NAME")],
+    ["ABOUT_SECTION", "Description", !readiness.missingFields.includes("ABOUT_SECTION")],
+    ["PUBLIC_LOCATION", "Address", !readiness.missingFields.includes("PUBLIC_LOCATION")],
+    ["PUBLIC_CONTACT", "Contact methods", !readiness.missingFields.includes("PUBLIC_CONTACT")],
+    ["AT_LEAST_ONE_SPECIALITY", "Specialities", !readiness.missingFields.includes("AT_LEAST_ONE_SPECIALITY")],
+    ["AT_LEAST_ONE_SERVICE", "Services", !readiness.missingFields.includes("AT_LEAST_ONE_SERVICE")],
+    ["OPENING_HOURS", "Timings", !readiness.missingFields.includes("OPENING_HOURS")],
+    ["LOGO", "Logo", !readiness.missingFields.includes("LOGO")],
+    ["COVER_PHOTO", "Cover photo", !readiness.missingFields.includes("COVER_PHOTO")],
+    ["SLUG", "Public slug", Boolean(page.canonicalSlug && page.canonicalSlug.trim())],
+    ["GALLERY", "Gallery", !readiness.warnings.includes("GALLERY_RECOMMENDED")],
+    ["BRANDING", "Branding", !readiness.warnings.includes("BRANDING_RECOMMENDED")],
+  ] as const;
+  const blockingSummary = readiness.missingFields.length
+    ? readiness.missingFields.map((item) => readinessDescription(item)).join(" · ")
+    : readiness.invalidFields.length
+      ? readiness.invalidFields.map((item) => readinessLabel(item)).join(" · ")
+      : "Submission becomes available once all required items are completed.";
 
   return (
     <section className="page-section landing-builder-page">
       <div className="provider-dashboard-panel">
-        <span className="eyebrow">Provider profiles</span>
-        <h1>{page.displayName}</h1>
+        <span className="eyebrow">Public Profile</span>
+        <h1>Ownership verified</h1>
         <p>{statusText}</p>
+        <p>{page.displayName}</p>
       </div>
 
       <div className="landing-builder-hero">
@@ -274,19 +474,77 @@ export function ProviderLandingPagePage() {
           <p>{page.profile?.canonicalSlug ?? page.canonicalSlug}</p>
         </div>
         <div className="landing-builder-actions">
-          <button className="secondary-button" type="button" onClick={() => void saveDraft()} disabled={saving}>
+          <button className="secondary-button" type="button" onClick={() => void saveDraft()} disabled={saving || !canEdit}>
             Save draft
           </button>
-          <button className="primary-button" type="button" onClick={() => void publish()} disabled={saving}>
-            Publish landing page
+          <Button component={Link} to={page.published ? futurePublicPath : `${DISCOVER_ROUTES.providerLandingPage.path}?tab=preview`} variant="outlined">
+            {page.published ? "View Public Profile" : "Preview Draft"}
+          </Button>
+          <button className="primary-button" type="button" onClick={() => void publish()} disabled={saving || !canSubmit}>
+            {page.published ? "Update publication" : "Submit for Review"}
           </button>
           {page.publishedVersionNumber ? (
-            <button className="secondary-button" type="button" onClick={() => void revertToPublished()} disabled={saving}>
+            <button className="secondary-button" type="button" onClick={() => void revertToPublished()} disabled={saving || !canEdit}>
               Revert to published
             </button>
           ) : null}
         </div>
       </div>
+
+      <section className="provider-dashboard-panel" aria-label="Publication readiness">
+        <div className="provider-account-section-heading">
+          <div>
+            <span className="eyebrow">Profile completeness</span>
+            <h2>{completionPercent}% complete</h2>
+          </div>
+          <span>{publicationSummary(readiness)}</span>
+        </div>
+        <div className="provider-account-summary-grid">
+          <article className="provider-account-summary-card">
+            <span>Publication</span>
+            <strong>{page.published ? "Published" : "Draft"}</strong>
+            <p>{page.published ? "View Public Profile" : "Preview Draft"}</p>
+          </article>
+          <article className="provider-account-summary-card">
+            <span>Last ownership update</span>
+            <strong>{readiness.sourceUpdatedAt ? new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(readiness.sourceUpdatedAt)) : "Not yet synchronized"}</strong>
+            <p>{readableLifecycleStatus(readiness.currentStatus)}</p>
+          </article>
+          <article className="provider-account-summary-card">
+            <span>Public URL</span>
+            <strong>{futurePublicPath}</strong>
+            <p>{page.published ? "Public profile" : "Draft preview"}</p>
+          </article>
+        </div>
+        <div className="provider-account-section" style={{ marginTop: "1rem" }}>
+          <label className="field-label">Profile readiness</label>
+          <ul className="provider-account-detail-list" aria-label="Profile readiness checklist">
+            {readinessChecklist
+              .filter((item, index, current) => current.findIndex((candidate) => candidate[1] === item[1]) === index)
+              .map(([key, label, complete]) => (
+                <li key={key}>
+                  <strong>{complete ? "✓" : "✗"} {label}</strong>
+                  <div>{complete ? "Completed" : readinessDescription(key)}</div>
+                </li>
+              ))}
+          </ul>
+          <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" sx={{ mt: 1.5 }}>
+            {readiness.missingFields.map((item) => (
+              <Chip
+                key={item}
+                label={readinessChecklistLabel(item)}
+                component={Link}
+                to={`${DISCOVER_ROUTES.providerLandingPage.path}?tab=builder#landing-section-${missingFieldEditorSection(item)}`}
+                clickable
+                variant="outlined"
+              />
+            ))}
+          </Stack>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+            {blockingSummary}
+          </Typography>
+        </div>
+      </section>
 
       <div className="landing-builder-layout">
         <aside className="landing-builder-sidebar">
@@ -338,20 +596,20 @@ export function ProviderLandingPagePage() {
           </div>
 
           <div className="landing-builder-panel">
-            <div className="panel-heading">
-              <h2>Sections</h2>
-              <span>{draftSections.length} sections</span>
-            </div>
-            <div className="landing-section-editor-list">
-              {draftSections.map((section, index) => (
-                <article className="landing-section-editor" key={section.key}>
-                  <div className="panel-heading">
-                    <strong>{section.key}</strong>
-                    <div className="cta-row">
-                      <button className="text-button" type="button" onClick={() => moveSection(index, -1)}>Up</button>
-                      <button className="text-button" type="button" onClick={() => moveSection(index, 1)}>Down</button>
+              <div className="panel-heading">
+                <h2>Profile sections</h2>
+                <span>{draftSections.length} sections</span>
+              </div>
+              <div className="landing-section-editor-list">
+                {draftSections.map((section, index) => (
+                  <article className="landing-section-editor" key={section.key} id={`landing-section-${section.key.toLowerCase()}`}>
+                    <div className="panel-heading">
+                      <strong>{sectionDisplayLabel(section.key)}</strong>
+                      <div className="cta-row">
+                        <button className="text-button" type="button" onClick={() => moveSection(index, -1)}>Up</button>
+                        <button className="text-button" type="button" onClick={() => moveSection(index, 1)}>Down</button>
+                      </div>
                     </div>
-                  </div>
                   <label className="checkbox-row">
                     <input type="checkbox" checked={section.enabled} onChange={(event) => updateSection(index, { enabled: event.target.checked })} />
                     Enabled
@@ -449,7 +707,7 @@ export function ProviderLandingPagePage() {
               ) : (
                 <div className="provider-dashboard-panel">
                   <h2>Complete publication setup</h2>
-                  <p>Your profile is approved. Configure the landing page and publish when ready.</p>
+                  <p>Your profile is approved. Configure the public profile and submit it for review when ready.</p>
                 </div>
               )}
             </div>

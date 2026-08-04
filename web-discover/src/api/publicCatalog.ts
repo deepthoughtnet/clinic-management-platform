@@ -6,6 +6,23 @@ export type PublicPageResponse<T> = {
   totalPages: number;
 };
 
+export function normalizePublicPageResponse<T>(
+  response: Partial<PublicPageResponse<T>> | null | undefined,
+): PublicPageResponse<T> {
+  const items = Array.isArray(response?.items) ? response.items : [];
+  const page = Number.isFinite(response?.page) ? Number(response?.page) : 0;
+  const size = Number.isFinite(response?.size) ? Number(response?.size) : items.length;
+  const totalItems = Number.isFinite(response?.totalItems) ? Number(response?.totalItems) : items.length;
+  const totalPages = Number.isFinite(response?.totalPages) ? Number(response?.totalPages) : totalItems > 0 && size > 0 ? Math.ceil(totalItems / size) : 0;
+  return {
+    items,
+    page,
+    size,
+    totalItems,
+    totalPages,
+  };
+}
+
 export type PublicDoctorSummaryResponse = {
   publicDoctorId: string;
   doctorSlug: string;

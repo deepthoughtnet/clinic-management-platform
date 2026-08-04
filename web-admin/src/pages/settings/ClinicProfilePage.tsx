@@ -25,11 +25,14 @@ import {
 } from "@deepthoughtnet/form-validation-kit";
 
 import { useAuth } from "../../auth/useAuth";
+import { adminConfig } from "../../config";
 import AutocompleteTextInput from "../../components/forms/AutocompleteTextInput";
 import RequiredLabel from "../../components/forms/RequiredLabel";
 import TenantOnboardingWizardDialog from "../../components/onboarding/TenantOnboardingWizardDialog";
 import { useAuthenticatedImage } from "../../hooks/useAuthenticatedImage";
 import {
+  createClinicDiscoverClaimIntent,
+  getClinicDiscoverPresence,
   getClinicProfile,
   getPrescriptionTemplate,
   getPrescriptionTemplateHistory,
@@ -37,6 +40,8 @@ import {
   previewPrescriptionTemplate,
   removePrescriptionTemplateLogo,
   uploadPrescriptionTemplateLogo,
+  type ClinicDiscoverPresence,
+  type ClinicDiscoverPresenceClaimIntent,
   type TenantOnboardingStatus,
   type ClinicProfileInput,
   type PrescriptionTemplateConfig,
@@ -132,6 +137,38 @@ function normalizeHexColor(value: string, fallback: string): string {
   return normalized;
 }
 
+function formatPresenceDateTime(value: string | null | undefined) {
+  if (!value) {
+    return "Not yet synchronized";
+  }
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+}
+
+function clinicPresenceConnectionReference(presence: ClinicDiscoverPresence | null, claimIntent: ClinicDiscoverPresenceClaimIntent | null) {
+  return presence?.connectionReference ?? claimIntent?.connectionReference ?? null;
+}
+
+function clinicPresenceActionLabel(presence: ClinicDiscoverPresence | null) {
+  if (presence?.allowedActions?.includes("OPEN_PROVIDER_DASHBOARD")) {
+    return "Open Provider Dashboard";
+  }
+  return "Connect a Provider account";
+}
+
+function clinicPresenceActionHelpText(presence: ClinicDiscoverPresence | null) {
+  if (presence?.ownershipStatus === "VERIFIED") {
+    return "Provider ownership is verified. Manage public profile details in the Provider workspace.";
+  }
+  if (presence?.allowedActions?.includes("OPEN_PROVIDER_DASHBOARD")) {
+    return "Provider ownership is pending. Continue the existing claim in the Provider workspace.";
+  }
+  return "Create a provider claim from Healthcare to start the ownership flow.";
+}
+
+function clinicPresenceCanCreateClaim(presence: ClinicDiscoverPresence | null) {
+  return !presence || presence.allowedActions?.includes("CONNECT_PROVIDER_ACCOUNT");
+}
+
 function isValidHexColor(value: string): boolean {
   return /^#[0-9A-Fa-f]{6}$/.test(value.trim());
 }
@@ -224,6 +261,9 @@ export default function ClinicProfilePage() {
   const [savedTemplateForm, setSavedTemplateForm] = React.useState<TemplateFormState>(emptyTemplate);
   const [templateHistory, setTemplateHistory] = React.useState<PrescriptionTemplateConfig[]>([]);
   const [onboardingStatus, setOnboardingStatus] = React.useState<TenantOnboardingStatus | null>(null);
+  const [presence, setPresence] = React.useState<ClinicDiscoverPresence | null>(null);
+  const [claimIntent, setClaimIntent] = React.useState<ClinicDiscoverPresenceClaimIntent | null>(null);
+  const [claimBusy, setClaimBusy] = React.useState(false);
   const [wizardOpen, setWizardOpen] = React.useState(false);
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
@@ -247,14 +287,16 @@ export default function ClinicProfilePage() {
       setLoading(true);
       setError(null);
       try {
-        const [profile, template, history, onboarding] = await Promise.all([
+        const [profile, presenceResponse, template, history, onboarding] = await Promise.all([
           getClinicProfile(auth.accessToken, auth.tenantId).catch(() => null),
+          getClinicDiscoverPresence(auth.accessToken, auth.tenantId).catch(() => null),
           getPrescriptionTemplate(auth.accessToken, auth.tenantId),
           getPrescriptionTemplateHistory(auth.accessToken, auth.tenantId),
           getTenantOnboardingStatus(auth.accessToken, auth.tenantId).catch(() => null),
         ]);
         if (!cancelled) {
           setForm(profile ? toFormState(profile) : emptyForm());
+          setPresence(presenceResponse);
           setTemplateForm(templateToForm(template));
           setSavedTemplateForm(templateToForm(template));
           setTemplateHistory(history);
@@ -283,6 +325,19 @@ export default function ClinicProfilePage() {
     };
   }, [auth.accessToken, auth.tenantId]);
 
+  const refreshPresence = React.useCallback(async (options?: { silent?: boolean }) => {
+    if (!auth.accessToken || !auth.tenantId) {
+      return;
+    }
+    try {
+      setPresence(await getClinicDiscoverPresence(auth.accessToken, auth.tenantId));
+    } catch (err) {
+      if (!options?.silent) {
+        setError(err instanceof Error ? err.message : "Could not refresh discover presence.");
+      }
+    }
+  }, [auth.accessToken, auth.tenantId]);
+
   React.useEffect(() => {
     if (!loading && onboardingStatus && !onboardingStatus.completed && canEdit) {
       setWizardOpen(true);
@@ -302,6 +357,24 @@ export default function ClinicProfilePage() {
 
   const updatePublicListingEnabled = (event: React.ChangeEvent<HTMLInputElement>) => {
     setForm((current) => ({ ...current, publicListingEnabled: event.target.checked }));
+  };
+
+  const launchProviderClaim = async () => {
+    if (!auth.accessToken || !auth.tenantId || claimBusy) {
+      return;
+    }
+    setClaimBusy(true);
+    setError(null);
+    try {
+      const intent = await createClinicDiscoverClaimIntent(auth.accessToken, auth.tenantId);
+      setClaimIntent(intent);
+      const target = `${adminConfig.providerAppUrl.replace(/\/$/, "")}/provider/login?returnTo=${encodeURIComponent(intent.returnTo)}`;
+      window.location.assign(target);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to create a provider claim intent right now.");
+    } finally {
+      setClaimBusy(false);
+    }
   };
 
   const countrySuggestions = getCountrySuggestions(form.country);
@@ -402,8 +475,7 @@ export default function ClinicProfilePage() {
     }
   };
 
-  const onSubmit = async (event: React.FormEvent) => {
-    event.preventDefault();
+  const saveClinicProfile = async (nextForm: ClinicProfileFormState) => {
     if (!auth.accessToken || !auth.tenantId) {
       return;
     }
@@ -412,7 +484,7 @@ export default function ClinicProfilePage() {
     setError(null);
     setSuccess(null);
     try {
-      const payload = toInput(form);
+      const payload = toInput(nextForm);
       const parsed = clinicProfileSchema.safeParse(payload);
       if (!parsed.success) {
         const nextFieldErrors = mapZodErrors(parsed.error);
@@ -428,12 +500,18 @@ export default function ClinicProfilePage() {
       setFieldErrors({});
       const saved = await updateClinicProfile(auth.accessToken, auth.tenantId, payload);
       setForm(toFormState(saved));
+      await refreshPresence({ silent: true });
       setSuccess("Clinic profile saved");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save clinic profile");
     } finally {
       setSaving(false);
     }
+  };
+
+  const onSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    await saveClinicProfile(form);
   };
 
   const saveTemplate = async () => {
@@ -457,6 +535,13 @@ export default function ClinicProfilePage() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const revokeConsent = async () => {
+    if (!canEdit) {
+      return;
+    }
+    await saveClinicProfile({ ...form, publicListingEnabled: false });
   };
 
   const previewTemplate = async () => {
@@ -589,7 +674,7 @@ export default function ClinicProfilePage() {
                         disabled={!canEdit || saving}
                       />
                     }
-                    label={form.publicListingEnabled ? "Public listing enabled" : "Public listing disabled"}
+                    label={form.publicListingEnabled ? "Discover public presence enabled" : "Discover public presence disabled"}
                     sx={{ mt: 1 }}
                   />
                 </Grid>
@@ -605,7 +690,7 @@ export default function ClinicProfilePage() {
                 </Grid>
                 <Grid size={12}>
                   <Alert severity="info">
-                    Public Profile settings control whether this clinic appears in public discovery. Only public-safe details are exposed.
+                    Discover public presence records tenant consent. Publication and provider ownership are handled separately.
                   </Alert>
                 </Grid>
               </Grid>
@@ -619,6 +704,117 @@ export default function ClinicProfilePage() {
               ) : null}
             </Stack>
           )}
+        </CardContent>
+      </Card>
+
+      <Card variant="outlined">
+        <CardContent>
+          <Stack spacing={2.5}>
+            <Box>
+              <Typography variant="h6" sx={{ fontWeight: 900 }}>Discover public presence</Typography>
+              <Typography variant="body2" color="text.secondary">
+                Tenant consent, provider ownership, and Discover publication are independent states.
+              </Typography>
+            </Box>
+
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 12, md: 4 }}>
+                <Stack spacing={0.5}>
+                  <Typography variant="caption" color="text.secondary">Tenant consent</Typography>
+                  <Typography sx={{ fontWeight: 700 }}>{presence?.publicDiscoveryConsent ?? (form.publicListingEnabled ? "ENABLED" : "DISABLED")}</Typography>
+                </Stack>
+              </Grid>
+              <Grid size={{ xs: 12, md: 4 }}>
+                <Stack spacing={0.5}>
+                  <Typography variant="caption" color="text.secondary">Provider ownership</Typography>
+                  <Typography sx={{ fontWeight: 700 }}>{presence?.ownershipStatus ?? "UNCLAIMED"}</Typography>
+                  {presence?.maskedProviderMobile ? (
+                    <Typography variant="caption" color="text.secondary">Owner mobile ending {presence.maskedProviderMobile.slice(-4)}</Typography>
+                  ) : null}
+                </Stack>
+              </Grid>
+              <Grid size={{ xs: 12, md: 4 }}>
+                <Stack spacing={0.5}>
+                  <Typography variant="caption" color="text.secondary">Discover publication</Typography>
+                  <Typography sx={{ fontWeight: 700 }}>{presence?.publicProfileStatus ?? "UNPUBLISHED"}</Typography>
+                  <Typography variant="caption" color="text.secondary">Connection {presence?.platformConnectionStatus ?? "NOT_CONNECTED"}</Typography>
+                </Stack>
+              </Grid>
+              <Grid size={{ xs: 12, md: 4 }}>
+                <Stack spacing={0.5}>
+                  <Typography variant="caption" color="text.secondary">Booking capability</Typography>
+                  <Typography sx={{ fontWeight: 700 }}>{presence?.bookingCapability ?? "NOT_AVAILABLE"}</Typography>
+                </Stack>
+              </Grid>
+              <Grid size={{ xs: 12, md: 8 }}>
+                <Stack spacing={0.5}>
+                  <Typography variant="caption" color="text.secondary">Last ownership update</Typography>
+                  <Typography sx={{ fontWeight: 700 }}>{formatPresenceDateTime(presence?.ownershipUpdatedAt)}</Typography>
+                  <Typography variant="caption" color="text.secondary">Public profile last synchronized</Typography>
+                  <Typography sx={{ fontWeight: 700 }}>{formatPresenceDateTime(presence?.publicProfileSynchronizedAt ?? presence?.lastSynchronizedAt)}</Typography>
+                </Stack>
+              </Grid>
+              <Grid size={{ xs: 12 }}>
+                <Stack spacing={0.5}>
+                  <Typography variant="caption" color="text.secondary">Draft lifecycle</Typography>
+                  <Typography sx={{ fontWeight: 700 }}>
+                    {presence?.draftStatus ?? "NO_DRAFT"}
+                    {presence?.draftReference ? ` · ${presence.draftReference}` : ""}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    Readiness {presence?.draftReadinessStatus ?? "—"} · Completeness {presence?.draftCompletenessPercentage ?? 0}%
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    Last draft save {formatPresenceDateTime(presence?.draftLastSavedAt)}
+                  </Typography>
+                </Stack>
+              </Grid>
+            </Grid>
+
+            <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+              {clinicPresenceCanCreateClaim(presence) ? (
+                <Button type="button" variant="contained" onClick={() => void launchProviderClaim()} disabled={!canEdit || claimBusy || !auth.accessToken}>
+                  Connect a Provider account
+                </Button>
+              ) : null}
+              <Button
+                type="button"
+                variant="outlined"
+                disabled={!clinicPresenceConnectionReference(presence, claimIntent)}
+                onClick={() => {
+                  const connectionReference = clinicPresenceConnectionReference(presence, claimIntent);
+                  if (connectionReference) {
+                    void navigator.clipboard.writeText(connectionReference);
+                  }
+                }}
+              >
+                Copy connection reference
+              </Button>
+              <Button
+                type="button"
+                variant="outlined"
+                disabled={!clinicPresenceConnectionReference(presence, claimIntent)}
+                onClick={() => {
+                  const connectionReference = clinicPresenceConnectionReference(presence, claimIntent);
+                  if (connectionReference) {
+                    const target = `${adminConfig.providerAppUrl.replace(/\/$/, "")}/provider/workspace?connectionReference=${encodeURIComponent(connectionReference)}`;
+                    window.location.assign(target);
+                  }
+                }}
+              >
+                {clinicPresenceActionLabel(presence)}
+              </Button>
+              <Button type="button" variant="text" onClick={() => void refreshPresence()} disabled={!auth.accessToken}>
+                Refresh status
+              </Button>
+              <Button type="button" variant="text" color="warning" onClick={() => void revokeConsent()} disabled={!canEdit || saving}>
+                Revoke tenant consent
+              </Button>
+            </Stack>
+            <Typography variant="caption" color="text.secondary">
+              {clinicPresenceActionHelpText(presence)}
+            </Typography>
+          </Stack>
         </CardContent>
       </Card>
 

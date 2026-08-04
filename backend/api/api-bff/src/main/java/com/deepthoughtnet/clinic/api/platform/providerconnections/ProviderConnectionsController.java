@@ -102,6 +102,11 @@ public class ProviderConnectionsController {
         return service.conflicts();
     }
 
+    @GetMapping("/ownerships")
+    public List<ProviderConnectionsOwnershipResponse> ownerships() {
+        return service.ownerships();
+    }
+
     @PostMapping("/suggestions/{suggestionId}/reject")
     @PreAuthorize("@permissionChecker.hasPermission('platform.provider_connection.reject')")
     public ProviderConnectionsSuggestionResponse rejectSuggestion(
@@ -109,6 +114,42 @@ public class ProviderConnectionsController {
             @RequestBody(required = false) ProviderConnectionsSuggestionDecisionRequest request
     ) {
         return service.rejectSuggestion(suggestionId, request == null ? null : request.reason());
+    }
+
+    @PostMapping("/ownerships/{ownershipId}/approve")
+    @PreAuthorize("@permissionChecker.hasPermission('platform.provider_connection.approve')")
+    public ProviderConnectionsOwnershipResponse approveOwnership(
+            @PathVariable UUID ownershipId,
+            @RequestBody(required = false) ProviderConnectionsOwnershipDecisionRequest request
+    ) {
+        return service.approveOwnership(ownershipId, request == null ? null : request.reason());
+    }
+
+    @PostMapping("/ownerships/{ownershipId}/reject")
+    @PreAuthorize("@permissionChecker.hasPermission('platform.provider_connection.reject')")
+    public ProviderConnectionsOwnershipResponse rejectOwnership(
+            @PathVariable UUID ownershipId,
+            @RequestBody(required = false) ProviderConnectionsOwnershipDecisionRequest request
+    ) {
+        return service.rejectOwnership(ownershipId, request == null ? null : request.reason());
+    }
+
+    @PostMapping("/ownerships/{ownershipId}/dispute")
+    @PreAuthorize("@permissionChecker.hasPermission('platform.provider_connection.identity_override')")
+    public ProviderConnectionsOwnershipResponse disputeOwnership(
+            @PathVariable UUID ownershipId,
+            @RequestBody(required = false) ProviderConnectionsOwnershipDecisionRequest request
+    ) {
+        return service.disputeOwnership(ownershipId, request == null ? null : request.reason());
+    }
+
+    @PostMapping("/ownerships/{ownershipId}/revoke")
+    @PreAuthorize("@permissionChecker.hasPermission('platform.provider_connection.unlink')")
+    public ProviderConnectionsOwnershipResponse revokeOwnership(
+            @PathVariable UUID ownershipId,
+            @RequestBody(required = false) ProviderConnectionsOwnershipDecisionRequest request
+    ) {
+        return service.revokeOwnership(ownershipId, request == null ? null : request.reason());
     }
 
     @PostMapping("/links/propose")

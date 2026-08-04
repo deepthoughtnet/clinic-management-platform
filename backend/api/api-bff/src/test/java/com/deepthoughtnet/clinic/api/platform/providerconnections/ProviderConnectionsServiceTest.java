@@ -7,15 +7,21 @@ import static org.mockito.Mockito.when;
 
 import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
 import com.deepthoughtnet.clinic.clinic.service.DoctorProfileService;
+import com.deepthoughtnet.clinic.clinic.service.model.ClinicProfileRecord;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderType;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProfileLifecycleRecord;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicationReadinessRecord;
 import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService;
+import com.deepthoughtnet.clinic.discover.publicprofilemoderation.ProviderPublicProfileModerationService;
+import com.deepthoughtnet.clinic.discover.publicprofiledraft.ProviderPublicProfileDraftService;
+import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipModels.OwnershipRecord;
+import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipService;
 import com.deepthoughtnet.clinic.identity.service.PlatformTenantManagementService;
 import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventQueryService;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventRecord;
 import com.deepthoughtnet.clinic.platform.contracts.providerintegration.PublicProfileType;
+import com.deepthoughtnet.clinic.platform.contracts.providerintegration.PublicProfileOwnershipStatus;
 import com.deepthoughtnet.clinic.platform.contracts.providerintegration.SourceSystem;
 import com.deepthoughtnet.clinic.platform.contracts.providerintegration.port.DiscoverCatalogPort;
 import com.deepthoughtnet.clinic.platform.providerintegration.db.ProviderConnectionSuggestionRejectionRepository;
@@ -42,6 +48,10 @@ class ProviderConnectionsServiceTest {
     @Mock
     private ProviderPublicProfileService publicProfileService;
     @Mock
+    private ProviderPublicProfileModerationService moderationService;
+    @Mock
+    private ProviderPublicProfileDraftService draftService;
+    @Mock
     private PlatformTenantManagementService tenantManagementService;
     @Mock
     private ClinicProfileService clinicProfileService;
@@ -49,6 +59,8 @@ class ProviderConnectionsServiceTest {
     private DoctorProfileService doctorProfileService;
     @Mock
     private TenantUserManagementService tenantUserManagementService;
+    @Mock
+    private ProviderOwnershipService providerOwnershipService;
     @Mock
     private AuditEventQueryService auditEventQueryService;
     @Mock
@@ -63,10 +75,13 @@ class ProviderConnectionsServiceTest {
                 healthcareFactsAdapter,
                 providerLinkingService,
                 publicProfileService,
+                moderationService,
+                draftService,
                 tenantManagementService,
                 clinicProfileService,
                 doctorProfileService,
                 tenantUserManagementService,
+                providerOwnershipService,
                 auditEventQueryService,
                 suggestionRejectionRepository,
                 new ObjectMapper()
@@ -99,6 +114,7 @@ class ProviderConnectionsServiceTest {
         when(publicProfileService.listLifecycleProfiles(eq(ProviderType.CLINIC), anyString(), anyString())).thenReturn(List.of(record));
         when(publicProfileService.publicationReadiness(providerId)).thenReturn(new PublicationReadinessRecord(
                 false,
+                88,
                 List.of("PUBLIC_CONTACT"),
                 List.of(),
                 List.of("SLUG_PENDING"),
@@ -157,5 +173,130 @@ class ProviderConnectionsServiceTest {
         assertThat(row.result()).isEqualTo("OK");
         assertThat(row.correlationId()).isEqualTo("corr-123");
         assertThat(row.occurredAt()).isEqualTo(occurredAt);
+    }
+
+    @Test
+    void ownershipsFallsBackToHealthcareDisplayNameWhenPublicProfileMissing() {
+        UUID tenantId = UUID.fromString("407dbc68-107d-4f64-83c8-6499e50e5c78");
+        UUID providerAccountId = UUID.fromString("e9ca829d-69ee-4d1c-8403-4f04a03a6d30");
+        when(providerLinkingService.listClinicLinks()).thenReturn(List.of());
+        when(providerLinkingService.listDoctorPracticeLinks()).thenReturn(List.of());
+        when(providerOwnershipService.ownershipAllowedActions(
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.anyList()
+        )).thenReturn(List.of("APPROVE_OWNERSHIP", "REJECT_OWNERSHIP", "DISPUTE_OWNERSHIP", "REVOKE_CLAIM", "VIEW_OWNERSHIP"));
+        when(providerOwnershipService.listOwnerships()).thenReturn(List.of(new OwnershipRecord(
+                UUID.fromString("898d8b7c-199e-491b-b508-1fd9849c1e7c"),
+                tenantId.toString(),
+                PublicProfileType.CLINIC,
+                providerAccountId,
+                PublicProfileOwnershipStatus.CLAIM_PENDING,
+                "HEALTHCARE_INITIATED_CONNECTION",
+                tenantId.toString(),
+                0L,
+                null,
+                null,
+                null,
+                null,
+                false,
+                "Healthcare initiated connection",
+                "{}",
+                OffsetDateTime.parse("2026-08-03T03:59:50.331079Z"),
+                OffsetDateTime.parse("2026-08-03T03:59:50.335138Z")
+        )));
+        when(providerOwnershipService.listMemberships(tenantId.toString())).thenReturn(List.of());
+        when(providerOwnershipService.listDisputes(tenantId.toString())).thenReturn(List.of());
+        when(discoverCatalogPort.searchPublishedProviders(null, null, PublicProfileType.CLINIC)).thenReturn(List.of());
+        when(clinicProfileService.findByTenantId(tenantId)).thenReturn(java.util.Optional.of(new ClinicProfileRecord(
+                UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+                tenantId,
+                "Green Valley Family Clinic",
+                "Green Valley Family Clinic",
+                "9876502201",
+                null,
+                "Wakad",
+                null,
+                "Pune",
+                "Maharashtra",
+                "India",
+                "411057",
+                null,
+                null,
+                null,
+                true,
+                false,
+                "green-valley-family-clinic",
+                OffsetDateTime.parse("2026-08-01T00:00:00Z"),
+                OffsetDateTime.parse("2026-08-03T03:00:00Z")
+        )));
+
+        List<ProviderConnectionsOwnershipResponse> ownerships = service.ownerships();
+
+        assertThat(ownerships).hasSize(1);
+        assertThat(ownerships.get(0).displayName()).isEqualTo("Green Valley Family Clinic");
+        assertThat(ownerships.get(0).ownershipStatus()).isEqualTo("CLAIM_PENDING");
+        assertThat(ownerships.get(0).platformConnectionStatus()).isEqualTo("NOT_CONNECTED");
+        assertThat(ownerships.get(0).allowedActions()).containsExactly("APPROVE_OWNERSHIP", "REJECT_OWNERSHIP", "DISPUTE_OWNERSHIP", "REVOKE_CLAIM", "VIEW_OWNERSHIP");
+    }
+
+    @Test
+    void verifiedOwnershipExposesOnlyPostApprovalActions() {
+        UUID tenantId = UUID.fromString("407dbc68-107d-4f64-83c8-6499e50e5c78");
+        UUID providerAccountId = UUID.fromString("e9ca829d-69ee-4d1c-8403-4f04a03a6d30");
+        when(providerLinkingService.listClinicLinks()).thenReturn(List.of());
+        when(providerLinkingService.listDoctorPracticeLinks()).thenReturn(List.of());
+        when(providerOwnershipService.ownershipAllowedActions(
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.anyList()
+        )).thenReturn(List.of("VIEW_OWNERSHIP", "DISPUTE_OWNERSHIP", "REVOKE_OWNERSHIP"));
+        when(providerOwnershipService.listOwnerships()).thenReturn(List.of(new OwnershipRecord(
+                UUID.fromString("898d8b7c-199e-491b-b508-1fd9849c1e7c"),
+                tenantId.toString(),
+                PublicProfileType.CLINIC,
+                providerAccountId,
+                PublicProfileOwnershipStatus.VERIFIED,
+                "HEALTHCARE_INITIATED_CONNECTION",
+                tenantId.toString(),
+                0L,
+                OffsetDateTime.parse("2026-08-03T05:40:23.787793Z"),
+                null,
+                null,
+                null,
+                true,
+                "Approved from console",
+                "{}",
+                OffsetDateTime.parse("2026-08-03T03:59:50.331079Z"),
+                OffsetDateTime.parse("2026-08-03T05:40:23.787793Z")
+        )));
+        when(providerOwnershipService.listMemberships(tenantId.toString())).thenReturn(List.of());
+        when(providerOwnershipService.listDisputes(tenantId.toString())).thenReturn(List.of());
+        when(discoverCatalogPort.searchPublishedProviders(null, null, PublicProfileType.CLINIC)).thenReturn(List.of());
+        when(clinicProfileService.findByTenantId(tenantId)).thenReturn(java.util.Optional.of(new ClinicProfileRecord(
+                UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+                tenantId,
+                "Green Valley Family Clinic",
+                "Green Valley Family Clinic",
+                "9876502201",
+                null,
+                "Wakad",
+                null,
+                "Pune",
+                "Maharashtra",
+                "India",
+                "411057",
+                null,
+                null,
+                null,
+                true,
+                false,
+                "green-valley-family-clinic",
+                OffsetDateTime.parse("2026-08-01T00:00:00Z"),
+                OffsetDateTime.parse("2026-08-03T03:00:00Z")
+        )));
+
+        List<ProviderConnectionsOwnershipResponse> ownerships = service.ownerships();
+
+        assertThat(ownerships).hasSize(1);
+        assertThat(ownerships.get(0).allowedActions()).containsExactly("VIEW_OWNERSHIP", "DISPUTE_OWNERSHIP", "REVOKE_OWNERSHIP");
     }
 }

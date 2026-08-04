@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { LocationMapEntry, LocationCoordinates } from "./locationTypes";
-import { buildDirectionsUrl, locationAddressLine, locationCoordinates, locationDisplayLabel } from "./locationHelpers";
+import { buildDirectionsUrl, locationAddressCompact, locationAddressLine, locationCoordinates, locationDisplayLabel } from "./locationHelpers";
 import { LocationMap } from "./LocationMap";
 
 const EMPTY_LOCATIONS: LocationMapEntry[] = [];
@@ -48,6 +48,7 @@ export function LocationDisplayMap({
   const directionsUrl = buildDirectionsUrl(activeLocation);
   const locationLabel = locationDisplayLabel(activeLocation, providerName);
   const address = locationAddressLine(activeLocation);
+  const compactAddress = locationAddressCompact(activeLocation);
 
   return (
     <section className={`location-display-map ${compact ? "is-compact" : ""} ${className ?? ""}`.trim()} aria-label={`${providerName} location`}>
@@ -74,7 +75,7 @@ export function LocationDisplayMap({
         )}
       />
       <div className="location-display-map__details">
-        <p>{address || "Address shared after publication."}</p>
+        <p style={{ whiteSpace: "pre-line" }}>{address || compactAddress || "Address shared after publication."}</p>
         {locationList.length > 1 ? (
           <div className="location-branch-list" role="tablist" aria-label={`${providerName} branches`}>
             {locationList.map((location, index) => {
@@ -96,7 +97,7 @@ export function LocationDisplayMap({
         ) : null}
         <div className="cta-row">
           {directionsUrl ? (
-            <a className="secondary-button" href={directionsUrl} target="_blank" rel="noreferrer">
+            <a className="secondary-button" href={directionsUrl} target="_blank" rel="noopener noreferrer">
               {directionsLabel}
             </a>
           ) : null}

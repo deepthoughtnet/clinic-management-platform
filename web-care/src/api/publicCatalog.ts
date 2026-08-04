@@ -30,6 +30,7 @@ export type PublicDoctorSummaryResponse = {
   bookingMode?: string | null;
   availableToday: boolean;
   nextAvailableSlotSummary: string | null;
+  bookingReference?: string | null;
 };
 
 export type PublicClinicSummaryResponse = {
@@ -51,6 +52,7 @@ export type PublicClinicMiniResponse = {
   clinicDisplayName: string;
   area: string | null;
   city: string | null;
+  bookingReference?: string | null;
 };
 
 export type PublicDoctorClinicSummaryResponse = PublicClinicMiniResponse;
@@ -69,6 +71,7 @@ export type PublicDoctorDetailResponse = {
   availableDays: string[];
   nextAvailableSlots: string[];
   availableToday: boolean;
+  bookingReference?: string | null;
 };
 
 export type PublicClinicDetailResponse = {

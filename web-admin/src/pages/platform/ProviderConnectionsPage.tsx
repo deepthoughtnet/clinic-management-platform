@@ -34,11 +34,13 @@ import { useAuth } from "../../auth/useAuth";
 import {
   activateProviderConnectionLink,
   approveProviderConnectionLink,
+  approveProviderConnectionOwnership,
   getProviderConnectionsLinkDetail,
   getProviderConnectionsAuditEvents,
   getProviderConnectionsOverview,
   listProviderConnectionsConflicts,
   listProviderConnectionsLinks,
+  listProviderConnectionsOwnerships,
   listProviderConnectionsPublicProfileLifecycle,
   listProviderConnectionsPlatformEntities,
   listProviderConnectionsPublicPractices,
@@ -46,6 +48,9 @@ import {
   listProviderConnectionsSuggestions,
   proposeProviderConnectionLink,
   rejectProviderConnectionSuggestion,
+  rejectProviderConnectionOwnership,
+  disputeProviderConnectionOwnership,
+  revokeProviderConnectionOwnership,
   reconcileProviderConnection,
   relinkProviderConnectionLink,
   unlinkProviderConnectionLink,
@@ -63,6 +68,7 @@ import {
   type ProviderConnectionsSuggestionResponse,
   type ProviderConnectionsMatchMethod,
   type ProviderConnectionsAuditResponse,
+  type ProviderConnectionsOwnershipResponse,
 } from "../../api/clinicApi";
 
 type ConsoleSection =
@@ -72,10 +78,20 @@ type ConsoleSection =
   | "platform-entities"
   | "suggestions"
   | "links"
+  | "ownerships"
   | "conflicts"
   | "audit";
 
 type ProposalKind = "CLINIC" | "DOCTOR";
+
+type OwnershipAction =
+  | "APPROVE_OWNERSHIP"
+  | "REJECT_OWNERSHIP"
+  | "DISPUTE_OWNERSHIP"
+  | "REVOKE_CLAIM"
+  | "REVOKE_OWNERSHIP"
+  | "VIEW_OWNERSHIP"
+  | "RESOLVE_DISPUTE";
 
 type ProposalDraft = {
   kind: ProposalKind;
@@ -106,6 +122,7 @@ const SECTIONS: Array<{ key: ConsoleSection; label: string; path: string }> = [
   { key: "platform-entities", label: "Platform Entities", path: "/platform/provider-connections/platform-entities" },
   { key: "suggestions", label: "Suggestions", path: "/platform/provider-connections/suggestions" },
   { key: "links", label: "Links", path: "/platform/provider-connections/links" },
+  { key: "ownerships", label: "Ownerships", path: "/platform/provider-connections/ownerships" },
   { key: "conflicts", label: "Conflicts", path: "/platform/provider-connections/conflicts" },
   { key: "audit", label: "Audit", path: "/platform/provider-connections/audit" },
 ];
@@ -180,6 +197,87 @@ function evidenceTone(strength: string | null | undefined) {
       return "info" as const;
     default:
       return "default" as const;
+  }
+}
+
+function isOwnershipAction(value: string): value is OwnershipAction {
+  return [
+    "APPROVE_OWNERSHIP",
+    "REJECT_OWNERSHIP",
+    "DISPUTE_OWNERSHIP",
+    "REVOKE_CLAIM",
+    "REVOKE_OWNERSHIP",
+    "VIEW_OWNERSHIP",
+    "RESOLVE_DISPUTE",
+  ].includes(value);
+}
+
+function ownershipActionLabel(action: OwnershipAction) {
+  switch (action) {
+    case "APPROVE_OWNERSHIP":
+      return "Approve";
+    case "REJECT_OWNERSHIP":
+      return "Reject";
+    case "DISPUTE_OWNERSHIP":
+      return "Dispute";
+    case "REVOKE_CLAIM":
+      return "Revoke claim";
+    case "REVOKE_OWNERSHIP":
+      return "Revoke ownership";
+    case "VIEW_OWNERSHIP":
+      return "View ownership";
+    case "RESOLVE_DISPUTE":
+      return "Resolve dispute";
+  }
+}
+
+function ownershipActionVariant(action: OwnershipAction) {
+  switch (action) {
+    case "APPROVE_OWNERSHIP":
+      return "contained" as const;
+    case "REJECT_OWNERSHIP":
+      return "outlined" as const;
+    case "DISPUTE_OWNERSHIP":
+      return "outlined" as const;
+    case "REVOKE_CLAIM":
+    case "REVOKE_OWNERSHIP":
+      return "text" as const;
+    case "VIEW_OWNERSHIP":
+      return "outlined" as const;
+    case "RESOLVE_DISPUTE":
+      return "outlined" as const;
+  }
+}
+
+function ownershipActionColor(action: OwnershipAction) {
+  switch (action) {
+    case "APPROVE_OWNERSHIP":
+      return "success" as const;
+    case "REJECT_OWNERSHIP":
+    case "DISPUTE_OWNERSHIP":
+    case "REVOKE_CLAIM":
+    case "REVOKE_OWNERSHIP":
+      return "error" as const;
+    case "VIEW_OWNERSHIP":
+    case "RESOLVE_DISPUTE":
+      return "primary" as const;
+  }
+}
+
+function ownershipActionPermission(action: OwnershipAction) {
+  switch (action) {
+    case "APPROVE_OWNERSHIP":
+      return "platform.provider_connection.approve";
+    case "REJECT_OWNERSHIP":
+      return "platform.provider_connection.reject";
+    case "DISPUTE_OWNERSHIP":
+      return "platform.provider_connection.identity_override";
+    case "REVOKE_CLAIM":
+    case "REVOKE_OWNERSHIP":
+      return "platform.provider_connection.unlink";
+    case "VIEW_OWNERSHIP":
+    case "RESOLVE_DISPUTE":
+      return "platform.provider_connection.view";
   }
 }
 
@@ -305,6 +403,8 @@ function sectionTitle(section: ConsoleSection) {
       return "Suggested Matches";
     case "links":
       return "Links";
+    case "ownerships":
+      return "Ownerships";
     case "conflicts":
       return "Conflicts";
     case "audit":
@@ -540,7 +640,9 @@ export default function ProviderConnectionsPage() {
   const [linkRows, setLinkRows] = React.useState<ProviderConnectionsLinkResponse[]>([]);
   const [suggestions, setSuggestions] = React.useState<ProviderConnectionsSuggestionResponse[]>([]);
   const [conflicts, setConflicts] = React.useState<ProviderConnectionsConflictResponse[]>([]);
+  const [ownershipRows, setOwnershipRows] = React.useState<ProviderConnectionsOwnershipResponse[]>([]);
   const [auditRows, setAuditRows] = React.useState<ProviderConnectionsAuditResponse[]>([]);
+  const [selectedOwnership, setSelectedOwnership] = React.useState<ProviderConnectionsOwnershipResponse | null>(null);
   const [selectedLinkDetail, setSelectedLinkDetail] = React.useState<ProviderConnectionsLinkDetailResponse | null>(null);
   const [selectedLinkId, setSelectedLinkId] = React.useState<string | null>(null);
   const [publicType, setPublicType] = React.useState<ProviderConnectionsPublicProfileType>("CLINIC");
@@ -571,7 +673,7 @@ export default function ProviderConnectionsPage() {
     setLoading(true);
     setError(null);
     try {
-      const [overviewRes, publicRes, lifecycleRes, clinicEntitiesRes, doctorEntitiesRes, linksRes, suggestionsRes, conflictsRes, auditRes, detailRes] = await Promise.allSettled([
+      const [overviewRes, publicRes, lifecycleRes, clinicEntitiesRes, doctorEntitiesRes, linksRes, suggestionsRes, ownershipsRes, conflictsRes, auditRes, detailRes] = await Promise.allSettled([
         getProviderConnectionsOverview(auth.accessToken),
         publicType === "DOCTOR"
           ? listProviderConnectionsPublicPractices(auth.accessToken, { q: publicQuery || null, city: publicCity || null })
@@ -581,6 +683,7 @@ export default function ProviderConnectionsPage() {
         listProviderConnectionsPlatformEntities(auth.accessToken, { type: "DOCTOR", q: entityQuery || null }),
         listProviderConnectionsLinks(auth.accessToken, { type: linkType || null, status: linkStatus || null, q: linkQuery || null }),
         listProviderConnectionsSuggestions(auth.accessToken, suggestionQuery || null),
+        listProviderConnectionsOwnerships(auth.accessToken),
         listProviderConnectionsConflicts(auth.accessToken),
         getProviderConnectionsAuditEvents(auth.accessToken, { action: auditAction || null, tenantReference: auditTenant || null, providerType: auditProviderType || null, result: auditResult || null, q: auditQuery || null }),
         selectedLinkId ? getProviderConnectionsLinkDetail(auth.accessToken, selectedLinkId) : Promise.resolve(null),
@@ -593,11 +696,12 @@ export default function ProviderConnectionsPage() {
       setPlatformDoctorRows(doctorEntitiesRes.status === "fulfilled" ? doctorEntitiesRes.value : []);
       setLinkRows(linksRes.status === "fulfilled" ? linksRes.value : []);
       setSuggestions(suggestionsRes.status === "fulfilled" ? suggestionsRes.value : []);
+      setOwnershipRows(ownershipsRes.status === "fulfilled" ? ownershipsRes.value : []);
       setConflicts(conflictsRes.status === "fulfilled" ? conflictsRes.value : []);
       setAuditRows(auditRes.status === "fulfilled" ? auditRes.value : []);
       setSelectedLinkDetail(detailRes.status === "fulfilled" ? detailRes.value : null);
 
-      if (overviewRes.status === "rejected" || publicRes.status === "rejected" || lifecycleRes.status === "rejected" || clinicEntitiesRes.status === "rejected" || doctorEntitiesRes.status === "rejected" || linksRes.status === "rejected" || suggestionsRes.status === "rejected" || conflictsRes.status === "rejected" || auditRes.status === "rejected") {
+      if (overviewRes.status === "rejected" || publicRes.status === "rejected" || lifecycleRes.status === "rejected" || clinicEntitiesRes.status === "rejected" || doctorEntitiesRes.status === "rejected" || linksRes.status === "rejected" || suggestionsRes.status === "rejected" || ownershipsRes.status === "rejected" || conflictsRes.status === "rejected" || auditRes.status === "rejected") {
         const reason = overviewRes.status === "rejected"
           ? overviewRes.reason
           : publicRes.status === "rejected"
@@ -612,6 +716,8 @@ export default function ProviderConnectionsPage() {
                   ? linksRes.reason
                   : suggestionsRes.status === "rejected"
                     ? suggestionsRes.reason
+                    : ownershipsRes.status === "rejected"
+                      ? ownershipsRes.reason
                     : conflictsRes.status === "rejected"
                       ? conflictsRes.reason
                       : auditRes.status === "rejected"
@@ -629,6 +735,109 @@ export default function ProviderConnectionsPage() {
   React.useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  const renderOwnershipAction = React.useCallback((row: ProviderConnectionsOwnershipResponse, action: string) => {
+    if (!isOwnershipAction(action)) {
+      return null;
+    }
+    const normalized = action;
+    const label = ownershipActionLabel(normalized);
+    const variant = ownershipActionVariant(normalized);
+    const color = ownershipActionColor(normalized);
+    const permission = ownershipActionPermission(normalized);
+    const hasPermission = auth.hasPermission(permission);
+
+    const commonProps = {
+      size: "small" as const,
+      variant,
+      color,
+      disabled: !hasPermission || saving,
+    };
+
+    switch (normalized) {
+      case "APPROVE_OWNERSHIP":
+        return (
+          <Button
+            {...commonProps}
+            onClick={async () => {
+              if (auth.accessToken) {
+                await approveProviderConnectionOwnership(auth.accessToken, row.ownershipId, { reason: "Approved from console" });
+                await refresh();
+              }
+            }}
+          >
+            {label}
+          </Button>
+        );
+      case "REJECT_OWNERSHIP":
+        return (
+          <Button
+            {...commonProps}
+            onClick={async () => {
+              if (auth.accessToken) {
+                await rejectProviderConnectionOwnership(auth.accessToken, row.ownershipId, { reason: "Rejected from console" });
+                await refresh();
+              }
+            }}
+          >
+            {label}
+          </Button>
+        );
+      case "DISPUTE_OWNERSHIP":
+        return (
+          <Button
+            {...commonProps}
+            onClick={async () => {
+              if (auth.accessToken) {
+                await disputeProviderConnectionOwnership(auth.accessToken, row.ownershipId, { reason: "Marked disputed from console" });
+                await refresh();
+              }
+            }}
+          >
+            {label}
+          </Button>
+        );
+      case "REVOKE_CLAIM":
+      case "REVOKE_OWNERSHIP":
+        return (
+          <Button
+            {...commonProps}
+            onClick={async () => {
+              if (auth.accessToken) {
+                await revokeProviderConnectionOwnership(auth.accessToken, row.ownershipId, { reason: "Revoked from console" });
+                await refresh();
+              }
+            }}
+          >
+            {label}
+          </Button>
+        );
+      case "VIEW_OWNERSHIP":
+        return (
+          <Button
+            {...commonProps}
+            onClick={() => {
+              setSelectedOwnership(row);
+            }}
+          >
+            {label}
+          </Button>
+        );
+      case "RESOLVE_DISPUTE":
+        return (
+          <Button
+            {...commonProps}
+            onClick={() => {
+              setSelectedOwnership(row);
+            }}
+          >
+            {label}
+          </Button>
+        );
+      default:
+        return null;
+    }
+  }, [auth, refresh, saving]);
 
   const onOpenProposal = React.useCallback((row: ProviderConnectionsPublicProfileResponse) => {
     const kind: ProposalKind = row.publicProfileType === "DOCTOR" ? "DOCTOR" : "CLINIC";
@@ -958,8 +1167,9 @@ export default function ProviderConnectionsPage() {
                             <TableCell>Profile</TableCell>
                             <TableCell>Source</TableCell>
                             <TableCell>Status</TableCell>
+                            <TableCell>Draft</TableCell>
                             <TableCell>Readiness</TableCell>
-                            <TableCell>Projection</TableCell>
+                            <TableCell>Saved</TableCell>
                             <TableCell align="right">Actions</TableCell>
                           </TableRow>
                         </TableHead>
@@ -985,6 +1195,17 @@ export default function ProviderConnectionsPage() {
                               </TableCell>
                               <TableCell>
                                 <Stack spacing={0.5}>
+                                  <Chip size="small" label={(row.draftStatus || "NO_DRAFT").replaceAll("_", " ")} color={actionChipColor(row.draftStatus)} variant="outlined" sx={{ alignSelf: "flex-start" }} />
+                                  <Typography variant="caption" color="text.secondary">
+                                    {row.draftReference || "No draft yet"}
+                                  </Typography>
+                                  <Typography variant="caption" color="text.secondary">
+                                    Version {row.draftVersionNumber || 0}
+                                  </Typography>
+                                </Stack>
+                              </TableCell>
+                              <TableCell>
+                                <Stack spacing={0.5}>
                                   <Chip size="small" label={row.ready ? "Ready" : "Needs work"} color={row.ready ? "success" : "warning"} variant="outlined" sx={{ alignSelf: "flex-start" }} />
                                   <Typography variant="caption" color="text.secondary">
                                     {row.missingFields.length ? `Missing: ${row.missingFields.join(", ")}` : "No missing fields"}
@@ -996,8 +1217,10 @@ export default function ProviderConnectionsPage() {
                               </TableCell>
                               <TableCell>
                                 <Stack spacing={0.25}>
-                                  <Typography variant="body2">{formatDateTime(row.projectedAt)}</Typography>
-                                  <Typography variant="caption" color="text.secondary">Connection rev {row.connectionRevision}</Typography>
+                                  <Typography variant="body2">{formatDateTime(row.draftLastSavedAt || row.projectedAt)}</Typography>
+                                  <Typography variant="caption" color="text.secondary">
+                                    {row.draftLastSavedAt ? "Draft last saved" : "Projection updated"} · rev {row.connectionRevision}
+                                  </Typography>
                                 </Stack>
                               </TableCell>
                               <TableCell align="right">
@@ -1013,7 +1236,7 @@ export default function ProviderConnectionsPage() {
                           ))}
                           {!lifecycleRows.length ? (
                             <TableRow>
-                              <TableCell colSpan={6}>
+                              <TableCell colSpan={7}>
                                 <Typography variant="body2" color="text.secondary">
                                   No lifecycle records matched the current filters.
                                 </Typography>
@@ -1256,6 +1479,80 @@ export default function ProviderConnectionsPage() {
                   </Stack>
                 ) : null}
 
+                {section === "ownerships" ? (
+                  <Stack spacing={2}>
+                    <Typography variant="body2" color="text.secondary">
+                      Review provider ownership and platform review state separately from link lifecycle.
+                    </Typography>
+                    <TableContainer component={Paper} variant="outlined">
+                      <Table size="small">
+                        <TableHead>
+                          <TableRow>
+                            <TableCell>Profile</TableCell>
+                            <TableCell>Ownership</TableCell>
+                            <TableCell>Connection</TableCell>
+                            <TableCell>Memberships</TableCell>
+                            <TableCell>Updated</TableCell>
+                            <TableCell align="right">Actions</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {ownershipRows.map((row) => (
+                            <TableRow key={row.ownershipId} hover>
+                              <TableCell>
+                                <Stack spacing={0.25}>
+                                  <Typography sx={{ fontWeight: 700 }}>{row.displayName || "Unnamed profile"}</Typography>
+                                  <Typography variant="caption" color="text.secondary">{row.publicProfileType} · {row.publicProfileReference || "—"}</Typography>
+                                  <Typography variant="caption" color="text.secondary">{row.city || "—"}{row.area ? ` · ${row.area}` : ""}</Typography>
+                                </Stack>
+                              </TableCell>
+                              <TableCell>
+                                <Stack spacing={0.5}>
+                                  <Chip size="small" label={row.ownershipStatus || "UNCLAIMED"} color={actionChipColor(row.ownershipStatus)} variant="outlined" />
+                                  <Typography variant="caption" color="text.secondary">{row.ownershipMethod || "—"}</Typography>
+                                  <Typography variant="caption" color="text.secondary">{row.consentState || "—"}</Typography>
+                                </Stack>
+                              </TableCell>
+                              <TableCell>
+                                <Stack spacing={0.5}>
+                                  <Chip size="small" label={row.platformConnectionStatus || "NOT_CONNECTED"} color={actionChipColor(row.platformConnectionStatus)} variant="outlined" />
+                                  <Typography variant="caption" color="text.secondary">{row.bookingCapability || "NOT_AVAILABLE"}</Typography>
+                                  {row.maskedProviderMobile ? <Typography variant="caption" color="text.secondary">Mobile ending {row.maskedProviderMobile.slice(-4)}</Typography> : null}
+                                </Stack>
+                              </TableCell>
+                              <TableCell>
+                                <Stack spacing={0.25}>
+                                  {(row.membershipRoles || []).map((membership) => (
+                                    <Chip key={membership} size="small" label={membership.replaceAll("_", " ")} variant="outlined" />
+                                  ))}
+                                </Stack>
+                              </TableCell>
+                              <TableCell>{formatDateTime(row.updatedAt)}</TableCell>
+                              <TableCell align="right">
+                                <Stack direction="row" spacing={1} justifyContent="flex-end" flexWrap="wrap">
+                                  {(row.allowedActions || []).map((action) => {
+                                    const button = renderOwnershipAction(row, action);
+                                    return button ? <React.Fragment key={`${row.ownershipId}-${action}`}>{button}</React.Fragment> : null;
+                                  })}
+                                </Stack>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                          {!ownershipRows.length ? (
+                            <TableRow>
+                              <TableCell colSpan={6}>
+                                <Typography variant="body2" color="text.secondary">
+                                  No provider ownership records matched the current filters.
+                                </Typography>
+                              </TableCell>
+                            </TableRow>
+                          ) : null}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  </Stack>
+                ) : null}
+
                 {section === "conflicts" ? (
                   <Stack spacing={1.5}>
                     {conflicts.map((row) => (
@@ -1492,6 +1789,45 @@ export default function ProviderConnectionsPage() {
         onClose={() => setDialogOpen(false)}
         onSubmit={submitProposal}
       />
+
+      <Dialog open={Boolean(selectedOwnership)} onClose={() => setSelectedOwnership(null)} fullWidth maxWidth="sm">
+        <DialogTitle>Ownership details</DialogTitle>
+        <DialogContent dividers>
+          {selectedOwnership ? (
+            <Stack spacing={2} sx={{ pt: 1 }}>
+              <Alert severity="info" variant="outlined">
+                Ownership actions are controlled by the backend `allowedActions` list for this row.
+              </Alert>
+              <Stack spacing={0.75}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>{selectedOwnership.displayName || "Unnamed profile"}</Typography>
+                <Typography variant="body2" color="text.secondary">{selectedOwnership.publicProfileType} · {selectedOwnership.publicProfileReference || "—"}</Typography>
+                <Typography variant="body2" color="text.secondary">{selectedOwnership.city || "—"}{selectedOwnership.area ? ` · ${selectedOwnership.area}` : ""}</Typography>
+              </Stack>
+              <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                <Chip size="small" label={selectedOwnership.ownershipStatus || "UNCLAIMED"} color={actionChipColor(selectedOwnership.ownershipStatus)} variant="outlined" />
+                <Chip size="small" label={selectedOwnership.platformConnectionStatus || "NOT_CONNECTED"} color={actionChipColor(selectedOwnership.platformConnectionStatus)} variant="outlined" />
+                <Chip size="small" label={selectedOwnership.bookingCapability || "NOT_AVAILABLE"} color={actionChipColor(selectedOwnership.bookingCapability)} variant="outlined" />
+              </Stack>
+              <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                {(selectedOwnership.allowedActions || []).map((action) => (
+                  <Chip key={`selected-ownership-${selectedOwnership.ownershipId}-${action}`} size="small" label={ownershipActionLabel(action as OwnershipAction)} variant="outlined" />
+                ))}
+              </Stack>
+              <Stack spacing={0.75}>
+                <Typography variant="caption" color="text.secondary">Memberships</Typography>
+                <Typography variant="body2">{(selectedOwnership.membershipRoles || []).join(", ") || "—"}</Typography>
+                <Typography variant="caption" color="text.secondary">Disputes</Typography>
+                <Typography variant="body2">{(selectedOwnership.disputeStatuses || []).join(", ") || "—"}</Typography>
+                <Typography variant="caption" color="text.secondary">Updated</Typography>
+                <Typography variant="body2">{formatDateTime(selectedOwnership.updatedAt)}</Typography>
+              </Stack>
+            </Stack>
+          ) : null}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setSelectedOwnership(null)}>Close</Button>
+        </DialogActions>
+      </Dialog>
 
       <Dialog open={rejectDialogOpen} onClose={() => setRejectDialogOpen(false)} fullWidth maxWidth="sm">
         <DialogTitle>Reject suggestion</DialogTitle>

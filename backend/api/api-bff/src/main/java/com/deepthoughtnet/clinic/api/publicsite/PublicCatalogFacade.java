@@ -22,7 +22,10 @@ import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileMod
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicSpecialitySummaryRecord;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderSearchCriteria;
 import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService;
+import com.deepthoughtnet.clinic.platform.providerintegration.service.ProviderLinkingService;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.util.Objects;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
@@ -32,14 +35,19 @@ import java.util.stream.Stream;
 import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class PublicCatalogFacade {
     private final ProviderPublicProfileService publicProfileService;
+    private final ProviderLinkingService providerLinkingService;
 
-    public PublicCatalogFacade(ProviderPublicProfileService publicProfileService) {
-        this.publicProfileService = publicProfileService;
+    @Autowired
+    public PublicCatalogFacade(ProviderPublicProfileService publicProfileService, ProviderLinkingService providerLinkingService) {
+        this.publicProfileService = Objects.requireNonNull(publicProfileService, "publicProfileService");
+        this.providerLinkingService = Objects.requireNonNull(providerLinkingService, "providerLinkingService");
     }
 
     public PublicPageResponse<PublicClinicSummaryResponse> listClinics(
@@ -256,7 +264,8 @@ public class PublicCatalogFacade {
                         slugify(detail.locations().get(0).label() == null ? detail.canonicalSlug() : detail.locations().get(0).label()),
                         firstNonBlank(detail.locations().get(0).label(), detail.displayName()),
                         detail.locations().get(0).city(),
-                        detail.city()
+                        detail.city(),
+                        resolveBookingReference(detail.providerId().toString(), practiceReference(detail.providerId(), 0, detail.locations().get(0).label(), detail.locations().get(0).address(), detail.locations().get(0).city()))
                 ));
         return new PublicDoctorDetailResponse(
                 detail.providerId().toString(),
@@ -295,6 +304,8 @@ public class PublicCatalogFacade {
                 List.of(),
                 List.of(),
                 false
+                ,
+                resolveBookingReference(detail.providerId().toString(), detail.locations().isEmpty() ? null : practiceReference(detail.providerId(), 0, detail.locations().get(0).label(), detail.locations().get(0).address(), detail.locations().get(0).city()))
         );
     }
 
@@ -448,7 +459,8 @@ public class PublicCatalogFacade {
                 slugify(firstNonBlank(location == null ? null : location.label(), record.area(), record.city(), record.displayName())),
                 false,
                 null,
-                record.distanceKm()
+                record.distanceKm(),
+                resolveBookingReference(record.providerId().toString(), detail == null || location == null ? null : practiceReference(detail.providerId(), 0, location.label(), location.address(), location.city()))
         );
     }
 
@@ -477,6 +489,15 @@ public class PublicCatalogFacade {
         );
     }
 
+    private String resolveBookingReference(String publicProviderId, String publicPracticeId) {
+        if (!StringUtils.hasText(publicProviderId)) {
+            return null;
+        }
+        return providerLinkingService.resolveBookingTarget(new com.deepthoughtnet.clinic.platform.contracts.providerintegration.PublicProviderReference(publicProviderId, publicPracticeId))
+                .map(resolution -> resolution.bookingTargetReference() == null ? null : resolution.bookingTargetReference().opaqueBookingReference())
+                .orElse(null);
+    }
+
     private PublicHospitalSummaryResponse toHospitalSummary(PublicProviderProfileSummaryRecord record) {
         return new PublicHospitalSummaryResponse(
                 record.canonicalSlug(),
@@ -498,6 +519,17 @@ public class PublicCatalogFacade {
                 record.summary(),
                 record.distanceKm()
         );
+    }
+
+    private String practiceReference(java.util.UUID providerId, int index, String label, String address, String city) {
+        String seed = String.join("|",
+                providerId == null ? "" : providerId.toString(),
+                String.valueOf(index),
+                value(label),
+                value(address),
+                value(city)
+        );
+        return java.util.UUID.nameUUIDFromBytes(seed.getBytes(StandardCharsets.UTF_8)).toString();
     }
 
     private Page<PublicDoctorSummaryResponse> mapDoctorSummaries(Page<PublicProviderProfileSummaryRecord> page) {
@@ -545,5 +577,9 @@ public class PublicCatalogFacade {
             }
         }
         return null;
+    }
+
+    private String value(String value) {
+        return value == null ? "" : value;
     }
 }

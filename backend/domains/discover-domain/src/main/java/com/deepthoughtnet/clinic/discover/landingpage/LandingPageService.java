@@ -19,6 +19,7 @@ import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.Pro
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingModels.ProviderApplicationRecord;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingService;
 import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService;
+import com.deepthoughtnet.clinic.discover.publicprofile.PublicationReadinessRecord;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderProfileDetailRecord;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderGalleryImageSnapshot;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderLocationSnapshot;
@@ -191,6 +192,7 @@ public class LandingPageService {
 
     private LandingPageWorkspaceRecord workspaceFor(ProviderApplicationRecord application) {
         PublicProviderProfileDetailRecord profile = resolveProfile(application);
+        PublicationReadinessRecord publicationReadiness = publicProfileService.publicationReadiness(profile.providerId());
         LandingPageEntity entity = loadOrCreateEntity(application, profile);
         LandingPageTemplateEntity draftTemplate = selectTemplate(application.providerType(), entity.getTemplateKey());
         LandingPageSnapshotRecord draft = readSnapshot(entity.getDraftSnapshotJson()).orElseGet(() -> defaultSnapshot(draftTemplate, application));
@@ -208,6 +210,9 @@ public class LandingPageService {
                 profile.publicPath(),
                 true,
                 published != null,
+                pageMode(application.status(), publicationReadiness, published != null),
+                publicationReadiness,
+                allowedActions(application.status(), publicationReadiness, published != null),
                 Math.toIntExact(entity.getRowVersion()),
                 entity.getPublishedVersionNumber(),
                 entity.getPublishedAt(),
@@ -223,6 +228,7 @@ public class LandingPageService {
         LandingPageEntity entity = landingPages.findByProviderId(profile.providerId()).orElse(null);
         LandingPageTemplateEntity template = selectTemplate(profile.providerType(), entity == null ? null : entity.getTemplateKey());
         LandingPageSnapshotRecord published = entity == null ? defaultSnapshot(template, profile) : readSnapshot(entity.getPublishedSnapshotJson()).orElseGet(() -> defaultSnapshot(template, profile));
+        PublicationReadinessRecord publicationReadiness = publicProfileService.publicationReadiness(profile.providerId());
         List<LandingPageVersionRecord> history = entity == null ? List.of() : versions.findByProviderIdOrderByVersionNumberDesc(profile.providerId()).stream().map(this::toVersionRecord).toList();
         return new LandingPageWorkspaceRecord(
                 profile.providerId(),
@@ -233,6 +239,9 @@ public class LandingPageService {
                 profile.publicPath(),
                 false,
                 true,
+                "PUBLIC_PROFILE_PUBLISHED",
+                publicationReadiness,
+                List.of("VIEW_PUBLIC_PROFILE"),
                 entity == null ? 0 : Math.toIntExact(entity.getRowVersion()),
                 entity == null ? null : entity.getPublishedVersionNumber(),
                 entity == null ? null : entity.getPublishedAt(),
@@ -514,6 +523,35 @@ public class LandingPageService {
             modes.add("Appointment duration " + application.appointmentDurationMinutes() + " mins");
         }
         return modes.stream().distinct().toList();
+    }
+
+    private String pageMode(ProviderLifecycleStatus status, PublicationReadinessRecord publicationReadiness, boolean published) {
+        if (published || status == ProviderLifecycleStatus.PUBLISHED) {
+            return "PUBLIC_PROFILE_PUBLISHED";
+        }
+        if (status == ProviderLifecycleStatus.APPROVED) {
+            return publicationReadiness != null && publicationReadiness.ready() ? "PUBLIC_PROFILE_READY" : "PUBLIC_PROFILE_DRAFT";
+        }
+        return "PUBLIC_PROFILE_READ_ONLY";
+    }
+
+    private List<String> allowedActions(ProviderLifecycleStatus status, PublicationReadinessRecord publicationReadiness, boolean published) {
+        List<String> actions = new ArrayList<>();
+        if (published) {
+            actions.add("VIEW_PUBLIC_PROFILE");
+            actions.add("EDIT_PUBLIC_PROFILE");
+            return actions;
+        }
+        if (status == ProviderLifecycleStatus.APPROVED) {
+            actions.add("PREVIEW_PUBLIC_PROFILE");
+            actions.add("EDIT_PUBLIC_PROFILE");
+            if (publicationReadiness != null && publicationReadiness.ready()) {
+                actions.add("SUBMIT_FOR_PUBLICATION");
+            }
+            return actions;
+        }
+        actions.add("VIEW_PUBLIC_PROFILE");
+        return actions;
     }
 
     private String titleFor(String key) {
