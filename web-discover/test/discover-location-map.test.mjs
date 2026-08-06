@@ -49,7 +49,8 @@ test("reusable location map support is wired across Discover surfaces", () => {
   assert.ok(locationPicker.includes("LocationSearchInput"));
   assert.ok(locationDisplayMap.includes("Get directions"));
   assert.ok(locationDisplayMap.includes("location-branch-list"));
-  assert.ok(locationDisplayMap.includes("Map location has not been pinned yet."));
+  assert.ok(locationDisplayMap.includes("Map unavailable"));
+  assert.ok(locationDisplayMap.includes("Clinic location has not been pinned yet."));
   assert.ok(locationDisplayMap.includes("Map is temporarily unavailable."));
   assert.ok(locationMap.includes("MapContainer"));
   assert.ok(locationMap.includes("TileLayer"));

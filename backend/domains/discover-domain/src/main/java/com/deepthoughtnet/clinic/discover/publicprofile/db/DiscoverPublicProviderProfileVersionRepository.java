@@ -9,5 +9,9 @@ public interface DiscoverPublicProviderProfileVersionRepository extends JpaRepos
     List<DiscoverPublicProviderProfileVersionEntity> findByProviderIdOrderByVersionNumberDesc(UUID providerId);
     Optional<DiscoverPublicProviderProfileVersionEntity> findFirstByProviderIdOrderByVersionNumberDesc(UUID providerId);
     Optional<DiscoverPublicProviderProfileVersionEntity> findByProviderIdAndVersionNumber(UUID providerId, int versionNumber);
+    Optional<DiscoverPublicProviderProfileVersionEntity> findFirstByProviderIdAndSourceSubmissionVersionNumberOrderByVersionNumberDesc(
+            UUID providerId,
+            int sourceSubmissionVersionNumber
+    );
     Optional<DiscoverPublicProviderProfileVersionEntity> findFirstByProviderIdAndSnapshotHashOrderByVersionNumberDesc(UUID providerId, String snapshotHash);
 }

@@ -103,6 +103,17 @@ public class ProviderPublicProfileDraftController {
                 .body(toResponse(service.getDraft(principal.providerAccountId(), publicProfileReference)).readiness());
     }
 
+    @PostMapping("/{publicProfileReference}/readiness/recalculate")
+    public ResponseEntity<ProviderPublicProfileDraftReadinessResponse> recalculateReadiness(
+            Authentication authentication,
+            @PathVariable String publicProfileReference
+    ) {
+        ProviderSessionPrincipal principal = requirePrincipal(authentication);
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.noStore())
+                .body(toResponse(service.recalculateReadiness(principal.providerAccountId(), publicProfileReference)).readiness());
+    }
+
     @GetMapping("/{publicProfileReference}/preview")
     public ResponseEntity<ProviderPublicProfileDraftResponse> preview(
             Authentication authentication,
@@ -215,7 +226,8 @@ public class ProviderPublicProfileDraftController {
                 record.invalidFields(),
                 record.warnings(),
                 record.blockingReasons(),
-                record.lastEvaluatedAt()
+                record.lastEvaluatedAt(),
+                record.evaluatedDraftVersion()
         );
     }
 

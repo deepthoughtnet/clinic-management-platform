@@ -11,6 +11,7 @@ import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderLocationReposito
 import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderServiceEntity;
 import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderServiceRepository;
 import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderSubmissionEntity;
+import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipConflictException;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderGalleryImageSnapshot;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProfileMediaContent;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderLocationSnapshot;
@@ -30,8 +31,10 @@ import com.deepthoughtnet.clinic.discover.publicprofile.db.DiscoverPublicProvide
 import com.deepthoughtnet.clinic.discover.publicprofile.db.DiscoverPublicProviderProfileVersionRepository;
 import com.deepthoughtnet.clinic.platform.storage.ObjectStorageService;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
@@ -64,6 +67,7 @@ import org.springframework.util.StringUtils;
 public class ProviderPublicProfileService {
     private static final Duration MEDIA_URL_TTL = Duration.ofDays(7);
     private static final String SOURCE_SYSTEM_ONBOARDING = "DISCOVER_ONBOARDING_APPLICATION";
+    private static final String SOURCE_SYSTEM_MODERATED_PROFILE = "PROVIDER_PUBLIC_PROFILE_DRAFT";
     private static final String BOOKING_MODE_ONLINE = "ONLINE_BOOKING";
 
     private final DiscoverPublicProviderProfileRepository profiles;
@@ -158,38 +162,56 @@ public class ProviderPublicProfileService {
         require(snapshot.providerId() != null, "public profile source reference is required");
         require(snapshot.providerType() != null, "public profile type is required");
         require(StringUtils.hasText(snapshot.sourceSystem()), "public profile source system is required");
+        UUID effectiveProviderId = resolveEffectiveProviderId(snapshot);
         OffsetDateTime resolvedProjectedAt = projectedAt == null ? OffsetDateTime.now() : projectedAt;
         String lifecycleStatus = StringUtils.hasText(publicationStatus) ? publicationStatus : "PUBLISHED";
+        DiscoverPublicProviderProfileEntity existingProfile = profiles.findByProviderId(effectiveProviderId).orElse(null);
         String resolvedSourceSystem = StringUtils.hasText(sourceSystem) ? sourceSystem : snapshot.sourceSystem();
         String resolvedSourceEntityReference = StringUtils.hasText(sourceEntityReference) ? sourceEntityReference : snapshot.providerId().toString();
+        if (existingProfile != null && shouldPreserveModeratedProjection(existingProfile, resolvedSourceSystem)) {
+            return currentPublicationRecord(existingProfile);
+        }
+        if (existingProfile != null && !effectiveProviderId.equals(snapshot.providerId())) {
+            resolvedSourceSystem = existingProfile.getSourceSystem();
+            resolvedSourceEntityReference = existingProfile.getSourceEntityReference();
+        }
         long resolvedSourceRevision = sourceRevision;
         OffsetDateTime resolvedSourceUpdatedAt = sourceUpdatedAt == null ? resolvedProjectedAt : sourceUpdatedAt;
 
         String snapshotJson = snapshotJson(snapshot);
         String snapshotHash = digest(snapshotJson);
-        int nextVersion = versions.findFirstByProviderIdOrderByVersionNumberDesc(snapshot.providerId())
+        int targetVersionNumber = sourceSubmissionVersionNumber == null
+                ? versions.findFirstByProviderIdOrderByVersionNumberDesc(effectiveProviderId)
                 .map(DiscoverPublicProviderProfileVersionEntity::getVersionNumber)
-                .orElse(0) + 1;
+                .orElse(0) + 1
+                : sourceSubmissionVersionNumber;
 
-        Optional<DiscoverPublicProviderProfileVersionEntity> duplicate = versions.findFirstByProviderIdAndSnapshotHashOrderByVersionNumberDesc(snapshot.providerId(), snapshotHash);
+        Optional<DiscoverPublicProviderProfileVersionEntity> duplicate = versions.findByProviderIdAndVersionNumber(effectiveProviderId, targetVersionNumber);
         if (duplicate.isPresent()) {
             DiscoverPublicProviderProfileVersionEntity version = duplicate.get();
-            upsertSlugAlias(snapshot.providerId(), version.getId(), version.getVersionNumber(), snapshot.canonicalSlug(), resolvedProjectedAt);
-            upsertAggregate(snapshot, version.getId(), version.getVersionNumber(), resolvedProjectedAt, lifecycleStatus, resolvedSourceSystem, resolvedSourceEntityReference, resolvedSourceRevision, resolvedSourceUpdatedAt, connectionRevision);
-            return new PublicProviderPublicationRecord(
-                    snapshot.providerId(),
-                    snapshot.providerType(),
-                    snapshot.canonicalSlug(),
-                    version.getVersionNumber(),
-                    resolvedProjectedAt,
-                    publicPath(snapshot.providerType(), snapshot.canonicalSlug())
-            );
+            if (hasSameProjectedContent(version, snapshot)) {
+                return projectExistingVersion(snapshot, effectiveProviderId, version, resolvedProjectedAt, lifecycleStatus,
+                        resolvedSourceSystem, resolvedSourceEntityReference, resolvedSourceRevision,
+                        resolvedSourceUpdatedAt, connectionRevision);
+            }
+            Optional<DiscoverPublicProviderProfileVersionEntity> existingApprovedProjection = sourceSubmissionVersionNumber == null
+                    ? Optional.empty()
+                    : versions.findFirstByProviderIdAndSourceSubmissionVersionNumberOrderByVersionNumberDesc(
+                    effectiveProviderId,
+                    sourceSubmissionVersionNumber
+            ).filter(existing -> hasSameProjectedContent(existing, snapshot));
+            if (existingApprovedProjection.isPresent()) {
+                return projectExistingVersion(snapshot, effectiveProviderId, existingApprovedProjection.get(), resolvedProjectedAt,
+                        lifecycleStatus, resolvedSourceSystem, resolvedSourceEntityReference, resolvedSourceRevision,
+                        resolvedSourceUpdatedAt, connectionRevision);
+            }
+            targetVersionNumber = nextProjectionVersionNumber(effectiveProviderId, targetVersionNumber);
         }
 
         DiscoverPublicProviderProfileVersionEntity version = versions.save(DiscoverPublicProviderProfileVersionEntity.create(
-                snapshot.providerId(),
-                nextVersion,
-                sourceSubmissionVersionNumber == null ? nextVersion : sourceSubmissionVersionNumber,
+                effectiveProviderId,
+                targetVersionNumber,
+                sourceSubmissionVersionNumber == null ? targetVersionNumber : sourceSubmissionVersionNumber,
                 statusBefore,
                 statusAfter == null ? lifecycleStatus : statusAfter,
                 snapshot.sourceSystem(),
@@ -200,17 +222,95 @@ public class ProviderPublicProfileService {
                 resolvedProjectedAt
         ));
 
-        upsertSlugAlias(snapshot.providerId(), version.getId(), nextVersion, snapshot.canonicalSlug(), resolvedProjectedAt);
-        upsertAggregate(snapshot, version.getId(), nextVersion, resolvedProjectedAt, lifecycleStatus, resolvedSourceSystem, resolvedSourceEntityReference, resolvedSourceRevision, resolvedSourceUpdatedAt, connectionRevision);
+        upsertSlugAlias(effectiveProviderId, version.getId(), targetVersionNumber, snapshot.canonicalSlug(), resolvedProjectedAt);
+        upsertAggregate(snapshot, effectiveProviderId, version.getId(), targetVersionNumber, resolvedProjectedAt, lifecycleStatus, resolvedSourceSystem, resolvedSourceEntityReference, resolvedSourceRevision, resolvedSourceUpdatedAt, connectionRevision);
 
         return new PublicProviderPublicationRecord(
-                snapshot.providerId(),
+                effectiveProviderId,
                 snapshot.providerType(),
                 snapshot.canonicalSlug(),
-                nextVersion,
+                targetVersionNumber,
                 resolvedProjectedAt,
                 publicPath(snapshot.providerType(), snapshot.canonicalSlug())
         );
+    }
+
+    private PublicProviderPublicationRecord projectExistingVersion(
+            PublicProviderProfileSnapshot snapshot,
+            UUID providerId,
+            DiscoverPublicProviderProfileVersionEntity version,
+            OffsetDateTime projectedAt,
+            String publicationStatus,
+            String sourceSystem,
+            String sourceEntityReference,
+            long sourceRevision,
+            OffsetDateTime sourceUpdatedAt,
+            long connectionRevision
+    ) {
+        upsertSlugAlias(providerId, version.getId(), version.getVersionNumber(), snapshot.canonicalSlug(), projectedAt);
+        upsertAggregate(snapshot, providerId, version.getId(), version.getVersionNumber(), projectedAt, publicationStatus,
+                sourceSystem, sourceEntityReference, sourceRevision, sourceUpdatedAt, connectionRevision);
+        return new PublicProviderPublicationRecord(
+                providerId,
+                snapshot.providerType(),
+                snapshot.canonicalSlug(),
+                version.getVersionNumber(),
+                projectedAt,
+                publicPath(snapshot.providerType(), snapshot.canonicalSlug())
+        );
+    }
+
+    private int nextProjectionVersionNumber(UUID providerId, int occupiedVersionNumber) {
+        int latestVersionNumber = versions.findFirstByProviderIdOrderByVersionNumberDesc(providerId)
+                .map(DiscoverPublicProviderProfileVersionEntity::getVersionNumber)
+                .orElse(0);
+        return Math.max(latestVersionNumber, occupiedVersionNumber) + 1;
+    }
+
+    private boolean shouldPreserveModeratedProjection(
+            DiscoverPublicProviderProfileEntity existingProfile,
+            String incomingSourceSystem
+    ) {
+        if (SOURCE_SYSTEM_MODERATED_PROFILE.equalsIgnoreCase(incomingSourceSystem)) {
+            return false;
+        }
+        return versions.findById(existingProfile.getLatestPublishedVersionId())
+                .map(DiscoverPublicProviderProfileVersionEntity::getPublishedBy)
+                .filter(StringUtils::hasText)
+                .filter(SOURCE_SYSTEM_MODERATED_PROFILE::equalsIgnoreCase)
+                .isPresent();
+    }
+
+    private PublicProviderPublicationRecord currentPublicationRecord(DiscoverPublicProviderProfileEntity profile) {
+        return new PublicProviderPublicationRecord(
+                profile.getProviderId(),
+                profile.getProviderType(),
+                profile.getCanonicalSlug(),
+                profile.getLatestPublishedVersionNumber(),
+                profile.getProjectedAt(),
+                publicPath(profile.getProviderType(), profile.getCanonicalSlug())
+        );
+    }
+
+    private boolean hasSameProjectedContent(
+            DiscoverPublicProviderProfileVersionEntity existingVersion,
+            PublicProviderProfileSnapshot requestedSnapshot
+    ) {
+        try {
+            JsonNode existingContent = objectMapper.readTree(existingVersion.getSnapshotJson());
+            JsonNode requestedContent = objectMapper.valueToTree(requestedSnapshot);
+            removeProjectionMetadata(existingContent);
+            removeProjectionMetadata(requestedContent);
+            return Objects.equals(existingContent, requestedContent);
+        } catch (JsonProcessingException ex) {
+            return false;
+        }
+    }
+
+    private void removeProjectionMetadata(JsonNode snapshot) {
+        if (snapshot instanceof ObjectNode objectNode) {
+            objectNode.remove("publishedAt");
+        }
     }
 
     @Transactional
@@ -793,6 +893,7 @@ public class ProviderPublicProfileService {
 
     private void upsertAggregate(
             PublicProviderProfileSnapshot snapshot,
+            UUID providerId,
             UUID latestVersionId,
             int latestVersionNumber,
             OffsetDateTime projectedAt,
@@ -803,8 +904,8 @@ public class ProviderPublicProfileService {
             OffsetDateTime sourceUpdatedAt,
             long connectionRevision
     ) {
-        DiscoverPublicProviderProfileEntity entity = profiles.findByProviderId(snapshot.providerId()).orElseGet(() -> DiscoverPublicProviderProfileEntity.create(
-                snapshot.providerId(),
+        DiscoverPublicProviderProfileEntity entity = profiles.findByProviderId(providerId).orElseGet(() -> DiscoverPublicProviderProfileEntity.create(
+                providerId,
                 snapshot.providerType(),
                 sourceSystem,
                 firstNonBlank(sourceEntityReference, snapshot.providerId().toString()),
@@ -897,6 +998,30 @@ public class ProviderPublicProfileService {
         profiles.save(entity);
     }
 
+    private UUID resolveEffectiveProviderId(PublicProviderProfileSnapshot snapshot) {
+        UUID requestedProviderId = snapshot.providerId();
+        if (profiles.findByProviderId(requestedProviderId).isPresent()) {
+            return requestedProviderId;
+        }
+        return profiles.findByCanonicalSlug(snapshot.canonicalSlug())
+                .filter(existing -> canAdoptExistingProfile(existing, snapshot))
+                .map(DiscoverPublicProviderProfileEntity::getProviderId)
+                .orElse(requestedProviderId);
+    }
+
+    private boolean canAdoptExistingProfile(DiscoverPublicProviderProfileEntity existing, PublicProviderProfileSnapshot snapshot) {
+        if (existing == null || snapshot == null) {
+            return false;
+        }
+        if (!StringUtils.hasText(existing.getCanonicalSlug()) || !StringUtils.hasText(snapshot.canonicalSlug())) {
+            return false;
+        }
+        if (!existing.getCanonicalSlug().equalsIgnoreCase(snapshot.canonicalSlug())) {
+            return false;
+        }
+        return existing.getProviderType() == snapshot.providerType();
+    }
+
     private void upsertSlugAlias(UUID providerId, UUID versionId, int versionNumber, String slug, OffsetDateTime publishedAt) {
         DiscoverPublicProviderProfileSlugEntity alias = slugs.findFirstBySlug(slug).orElse(null);
         if (alias == null) {
@@ -910,7 +1035,10 @@ public class ProviderPublicProfileService {
             return;
         }
         if (!alias.getProviderId().equals(providerId)) {
-            throw new IllegalStateException("public profile slug is already in use");
+            throw new ProviderOwnershipConflictException(
+                    "public_profile_slug_conflict",
+                    "The requested public profile URL is already used by another provider."
+            );
         }
         alias.activate(versionId, versionNumber, publishedAt);
         slugs.save(alias);

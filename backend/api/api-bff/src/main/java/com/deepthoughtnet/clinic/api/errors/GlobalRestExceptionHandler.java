@@ -3,6 +3,7 @@ package com.deepthoughtnet.clinic.api.errors;
 import com.deepthoughtnet.clinic.platform.core.errors.BadRequestException;
 import com.deepthoughtnet.clinic.carepilot.shared.exception.CampaignConflictException;
 import com.deepthoughtnet.clinic.platform.core.errors.ForbiddenException;
+import com.deepthoughtnet.clinic.platform.core.errors.NotFoundException;
 import com.deepthoughtnet.clinic.platform.core.errors.UnauthorizedException;
 import com.deepthoughtnet.clinic.api.medicationsafety.MedicationSafetyGuardErrorResponse;
 import com.deepthoughtnet.clinic.api.medicationsafety.MedicationSafetyGuardException;
@@ -61,6 +62,11 @@ public class GlobalRestExceptionHandler {
     @ExceptionHandler(ForbiddenException.class)
     public ResponseEntity<?> handleForbidden(ForbiddenException ex, HttpServletRequest req) {
         return build(HttpStatus.FORBIDDEN, "forbidden", userMessage(ex.getMessage(), "You do not have permission to perform this action"), req);
+    }
+
+    @ExceptionHandler(NotFoundException.class)
+    public ResponseEntity<?> handleNotFound(NotFoundException ex, HttpServletRequest req) {
+        return build(HttpStatus.NOT_FOUND, "not_found", userMessage(ex.getMessage(), "Requested resource was not found"), req);
     }
 
     @ExceptionHandler(AccessDeniedException.class)

@@ -38,6 +38,7 @@ export type ProviderWorkspaceApplication = {
   updatedAt: string;
   submittedAt: string | null;
   publicProfilePath: string | null;
+  allowedActions: string[];
 };
 
 export type ProviderWorkspaceWorkItem = {
@@ -61,6 +62,38 @@ export type ProviderWorkspaceWorkItem = {
   allowedActions: string[];
 };
 
+export type ProviderWorkspaceProfile = {
+  draftId: string;
+  draftReference: string;
+  publicProfileReference: string;
+  profileType: ProviderType;
+  displayName: string;
+  city: string | null;
+  area: string | null;
+  ownershipStatus: string;
+  tenantConsentStatus: string;
+  draftVersion: number;
+  contentStatus: string;
+  readinessStatus: string;
+  completenessPercentage: number;
+  moderationStatus: string;
+  activeSubmissionReference: string | null;
+  publicationStatus: string;
+  effectiveVisibility: string;
+  platformConnectionStatus: string;
+  bookingCapability: string;
+  lastUpdatedAt: string | null;
+  blockingReasons: string[];
+  allowedActions: string[];
+  primaryAction: string | null;
+  secondaryActions: string[];
+  lifecycleLabel: string;
+  attentionLabel: string;
+  nextActionLabel: string;
+  publicProfilePath: string | null;
+  providerActionRequired: boolean;
+};
+
 export type ProviderWorkspaceResponse = {
   contactEmail: string | null;
   contactPhone: string | null;
@@ -69,7 +102,13 @@ export type ProviderWorkspaceResponse = {
   workItems: ProviderWorkspaceWorkItem[];
   applications: ProviderWorkspaceApplication[];
   publishedProfiles: ProviderWorkspaceApplication[];
+  profiles: ProviderWorkspaceProfile[];
   attentionCount: number;
+  activeProfileCount: number;
+  readyForReviewCount: number;
+  underReviewCount: number;
+  publishedCount: number;
+  needsAttentionCount: number;
   supportedProviderTypes: ProviderType[];
 };
 

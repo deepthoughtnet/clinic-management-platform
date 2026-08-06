@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.api.discover.provider.publicprofile;
 
 import com.deepthoughtnet.clinic.api.discover.provider.auth.ProviderSessionPrincipal;
+import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipConflictException;
 import com.deepthoughtnet.clinic.discover.publicprofilemoderation.ProviderPublicProfileModerationService;
 import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
 import com.deepthoughtnet.clinic.clinic.service.model.ClinicProfileRecord;
@@ -8,6 +9,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.http.CacheControl;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
@@ -35,6 +38,29 @@ public class ProviderPublicProfileModerationController {
         ProviderSessionPrincipal principal = requirePrincipal(authentication);
         boolean consentEnabled = consentEnabled(publicProfileReference);
         return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(service.submissionEligibility(principal.providerAccountId(), publicProfileReference, consentEnabled));
+    }
+
+    @GetMapping("/{publicProfileReference}/review")
+    public ResponseEntity<?> review(Authentication authentication, @PathVariable String publicProfileReference) {
+        requirePrincipal(authentication);
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(service.findSubmission(publicProfileReference)
+                .orElseThrow(() -> new ProviderOwnershipConflictException("public_profile_submission_not_found", "Submission not found.")));
+    }
+
+    @GetMapping("/{publicProfileReference}/submissions/{submissionReference}/media/{mediaReference}/content")
+    public ResponseEntity<byte[]> submissionMediaContent(
+            Authentication authentication,
+            @PathVariable String publicProfileReference,
+            @PathVariable String submissionReference,
+            @PathVariable String mediaReference
+    ) {
+        ProviderSessionPrincipal principal = requirePrincipal(authentication);
+        var content = service.providerSubmissionMediaContent(principal.providerAccountId(), publicProfileReference, submissionReference, mediaReference);
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.noStore())
+                .contentType(MediaType.parseMediaType(content.contentType()))
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + content.originalFilename() + "\"")
+                .body(content.bytes());
     }
 
     @PostMapping("/{publicProfileReference}/submissions")

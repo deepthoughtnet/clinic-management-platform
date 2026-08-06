@@ -90,6 +90,7 @@ class DiscoverPresenceControllerTest {
         assertThat(response.maskedProviderMobile()).isEqualTo("******2201");
         assertThat(response.connectionReference()).isEqualTo("ebb7fb57-71a3-4dc6-bb4a-079164cafdf9");
         assertThat(response.ownershipUpdatedAt()).isEqualTo(OffsetDateTime.parse("2026-08-03T03:59:50.335138Z"));
+        assertThat(response.lastPublishedAt()).isNull();
         assertThat(response.publicProfileSynchronizedAt()).isNull();
         assertThat(response.allowedActions()).contains("OPEN_PROVIDER_DASHBOARD", "VIEW_OWNERSHIP");
     }
@@ -115,7 +116,7 @@ class DiscoverPresenceControllerTest {
                 "CALL_TO_BOOK",
                 "UNPUBLISHED",
                 OffsetDateTime.parse("2026-08-03T03:29:00Z"),
-                null,
+                OffsetDateTime.parse("2026-08-03T03:29:00Z"),
                 0L,
                 "/provider/green-valley-family-clinic"
         )));
@@ -140,6 +141,7 @@ class DiscoverPresenceControllerTest {
         assertThat(response.ownershipStatus()).isEqualTo("VERIFIED");
         assertThat(response.connectionReference()).isEqualTo("ebb7fb57-71a3-4dc6-bb4a-079164cafdf9");
         assertThat(response.ownershipUpdatedAt()).isEqualTo(OffsetDateTime.parse("2026-08-03T03:59:50.335138Z"));
+        assertThat(response.lastPublishedAt()).isEqualTo(OffsetDateTime.parse("2026-08-03T03:29:00Z"));
         assertThat(response.publicProfileSynchronizedAt()).isEqualTo(OffsetDateTime.parse("2026-08-03T03:29:00Z"));
         assertThat(response.allowedActions()).contains("OPEN_PROVIDER_DASHBOARD", "VIEW_OWNERSHIP");
     }

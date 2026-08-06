@@ -1340,6 +1340,7 @@ export type ClinicDiscoverPresence = {
   platformConnectionStatus: string;
   bookingCapability: string;
   ownershipUpdatedAt: string | null;
+  lastPublishedAt: string | null;
   publicProfileSynchronizedAt: string | null;
   connectionReference: string | null;
   allowedActions: string[];
@@ -10091,6 +10092,90 @@ export type ProviderConnectionsLifecycleResponse = {
   draftAllowedActions: string[];
 };
 
+export type ProviderPublicProfileReviewFindingResponse = {
+  id: string;
+  findingReference: string;
+  submissionReference: string;
+  section: string | null;
+  fieldKey: string | null;
+  category: string | null;
+  severity: string | null;
+  required: boolean;
+  reviewerNote: string | null;
+  providerFacingMessage: string | null;
+  internalNote: string | null;
+  resolutionStatus: string | null;
+  providerResolutionNote: string | null;
+  createdAt: string | null;
+  resolvedAt: string | null;
+};
+
+export type ProviderPublicProfileReviewResponse = {
+  id: string;
+  submissionReference: string;
+  publicProfileReference: string;
+  publicProfileType: ProviderConnectionsPublicProfileType;
+  draftReference: string;
+  submittedDraftVersion: number;
+  moderationStatus: string;
+  publicationStatusSnapshot: string;
+  tenantConsentStatusSnapshot: string;
+  ownershipSnapshot: Record<string, unknown>;
+  readinessSnapshot: Record<string, unknown>;
+  contentSnapshot: Record<string, unknown>;
+  sourceAttributionSnapshot: Record<string, unknown>;
+  mediaSnapshot: Record<string, unknown>;
+  submittedByProviderAccountId: string | null;
+  submittedAt: string | null;
+  assignedReviewerId: string | null;
+  assignedReviewerReference: string | null;
+  assignedReviewerDisplayName: string | null;
+  assignedReviewerEmail: string | null;
+  assignedAt: string | null;
+  decisionById: string | null;
+  decisionAt: string | null;
+  decisionReason: string | null;
+  moderationRevision: number;
+  current: boolean;
+  approvedVersionNumber: number | null;
+  publishedAt: string | null;
+  unpublishedAt: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+  effectiveVisibility: string | null;
+  visibilityReason: string | null;
+  publicUrl: string | null;
+  findings: ProviderPublicProfileReviewFindingResponse[];
+  providerAllowedActions: string[];
+  allowedActions: string[];
+};
+
+export type ProviderPublicProfileReviewQueueResponse = {
+  publicProfileReference: string;
+  publicProfileType: ProviderConnectionsPublicProfileType;
+  displayName: string | null;
+  city: string | null;
+  area: string | null;
+  ownershipStatus: string | null;
+  tenantConsentStatus: string | null;
+  contentStatus: string | null;
+  readinessStatus: string | null;
+  completenessPercentage: number;
+  moderationStatus: string | null;
+  publicationStatus: string | null;
+  submissionReference: string | null;
+  submittedDraftVersion: number | null;
+  submittedAt: string | null;
+  assignedReviewer: string | null;
+  assignedAt: string | null;
+  ageInQueueDays: number;
+  sourceType: string | null;
+  effectiveVisibility: string | null;
+  visibilityReason: string | null;
+  publicUrl: string | null;
+  allowedActions: string[];
+};
+
 export type ProviderConnectionsPlatformEntityResponse = {
   entityType: string;
   tenantId: string | null;
@@ -10329,6 +10414,86 @@ export async function listProviderConnectionsPublicProfileLifecycle(
   if (filters?.city?.trim()) query.set("city", filters.city.trim());
   const suffix = query.toString() ? `?${query.toString()}` : "";
   return httpGet<ProviderConnectionsLifecycleResponse[]>(`/api/platform/provider-connections/public-profile-lifecycle${suffix}`, { token, platformOperation: true });
+}
+
+export async function listProviderConnectionsPublicProfileReviews(
+  token: string,
+  filters?: { type?: ProviderConnectionsPublicProfileType | null; q?: string | null; city?: string | null },
+) {
+  const query = new URLSearchParams();
+  if (filters?.type) query.set("type", filters.type);
+  if (filters?.q?.trim()) query.set("q", filters.q.trim());
+  if (filters?.city?.trim()) query.set("city", filters.city.trim());
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return httpGet<ProviderPublicProfileReviewQueueResponse[]>(`/api/platform/provider-connections/public-profile-reviews${suffix}`, { token, platformOperation: true });
+}
+
+export async function getProviderConnectionsPublicProfileReview(token: string, submissionReference: string) {
+  return httpGet<ProviderPublicProfileReviewResponse>(`/api/platform/provider-connections/public-profile-reviews/${encodeURIComponent(submissionReference)}`, { token, platformOperation: true });
+}
+
+export function providerPublicProfileReviewMediaContentPath(submissionReference: string, mediaReference: string) {
+  return `/api/platform/provider-connections/public-profile-reviews/${encodeURIComponent(submissionReference)}/media/${encodeURIComponent(mediaReference)}/content`;
+}
+
+export async function fetchPlatformPublicProfileReviewMedia(
+  token: string,
+  submissionReference: string,
+  mediaReference: string,
+  signal?: AbortSignal,
+) {
+  return fetchAuthenticatedBlob(providerPublicProfileReviewMediaContentPath(submissionReference, mediaReference), {
+    token,
+    signal,
+    platformOperation: true,
+    accept: "image/*,*/*",
+  });
+}
+
+export async function startProviderConnectionsPublicProfileReview(token: string, submissionReference: string, body?: { expectedRevision?: number | null; reason?: string | null }) {
+  return httpPost<ProviderPublicProfileReviewResponse>(`/api/platform/provider-connections/public-profile-reviews/${encodeURIComponent(submissionReference)}/start`, body || {}, { token, platformOperation: true });
+}
+
+export async function requestChangesProviderConnectionsPublicProfileReview(
+  token: string,
+  submissionReference: string,
+  body: { expectedRevision?: number | null; reason: string; findings: Array<Record<string, unknown>> },
+) {
+  return httpPost<ProviderPublicProfileReviewResponse>(`/api/platform/provider-connections/public-profile-reviews/${encodeURIComponent(submissionReference)}/request-changes`, body, { token, platformOperation: true });
+}
+
+export async function addFindingProviderConnectionsPublicProfileReview(
+  token: string,
+  submissionReference: string,
+  body: {
+    expectedRevision?: number | null;
+    section: string;
+    category: string;
+    severity: string;
+    field?: string | null;
+    providerFacingMessage: string;
+    internalNote?: string | null;
+    blocking?: boolean;
+    providerActionRequired?: boolean;
+  },
+) {
+  return httpPost<ProviderPublicProfileReviewResponse>(`/api/platform/provider-connections/public-profile-reviews/${encodeURIComponent(submissionReference)}/findings`, body, { token, platformOperation: true });
+}
+
+export async function approveProviderConnectionsPublicProfileReview(token: string, submissionReference: string, body?: { expectedRevision?: number | null; reason?: string | null }) {
+  return httpPost<ProviderPublicProfileReviewResponse>(`/api/platform/provider-connections/public-profile-reviews/${encodeURIComponent(submissionReference)}/approve`, body || {}, { token, platformOperation: true });
+}
+
+export async function rejectProviderConnectionsPublicProfileReview(token: string, submissionReference: string, body?: { expectedRevision?: number | null; reason?: string | null }) {
+  return httpPost<ProviderPublicProfileReviewResponse>(`/api/platform/provider-connections/public-profile-reviews/${encodeURIComponent(submissionReference)}/reject`, body || {}, { token, platformOperation: true });
+}
+
+export async function publishProviderConnectionsPublicProfileReview(token: string, submissionReference: string, body?: { reason?: string | null }) {
+  return httpPost<ProviderPublicProfileReviewResponse>(`/api/platform/provider-connections/public-profile-reviews/${encodeURIComponent(submissionReference)}/publish`, body || {}, { token, platformOperation: true });
+}
+
+export async function unpublishProviderConnectionsPublicProfileReview(token: string, publicProfileReference: string, body?: { reason?: string | null }) {
+  return httpPost<ProviderPublicProfileReviewResponse>(`/api/platform/provider-connections/public-profile-reviews/${encodeURIComponent(publicProfileReference)}/unpublish`, body || {}, { token, platformOperation: true });
 }
 
 export async function listProviderConnectionsPlatformEntities(

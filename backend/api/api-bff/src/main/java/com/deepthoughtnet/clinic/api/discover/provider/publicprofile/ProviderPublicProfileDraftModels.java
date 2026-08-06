@@ -38,7 +38,8 @@ public final class ProviderPublicProfileDraftModels {
             List<String> invalidFields,
             List<String> warnings,
             List<String> blockingReasons,
-            OffsetDateTime lastEvaluatedAt
+            OffsetDateTime lastEvaluatedAt,
+            Integer evaluatedDraftVersion
     ) {
     }
 

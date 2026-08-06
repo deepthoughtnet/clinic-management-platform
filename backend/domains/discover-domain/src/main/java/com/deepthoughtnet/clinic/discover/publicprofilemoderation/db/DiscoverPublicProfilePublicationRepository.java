@@ -8,5 +8,6 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface DiscoverPublicProfilePublicationRepository extends JpaRepository<DiscoverPublicProfilePublicationEntity, UUID> {
     Optional<DiscoverPublicProfilePublicationEntity> findByPublicationReference(String publicationReference);
     Optional<DiscoverPublicProfilePublicationEntity> findFirstByPublicProfileReferenceAndCurrentTrueOrderByPublishedAtDesc(String publicProfileReference);
+    List<DiscoverPublicProfilePublicationEntity> findByCurrentTrueAndPublicationStatusOrderByPublishedAtAsc(String publicationStatus);
     List<DiscoverPublicProfilePublicationEntity> findByPublicProfileReferenceOrderByPublishedAtDesc(String publicProfileReference);
 }

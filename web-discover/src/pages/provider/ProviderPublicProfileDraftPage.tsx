@@ -1,16 +1,44 @@
 import * as React from "react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { Alert, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Divider, IconButton, Paper, Stack, TextField, Typography } from "@mui/material";
+import { Alert, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, Paper, Stack, TextField, Typography } from "@mui/material";
+import ApartmentOutlinedIcon from "@mui/icons-material/ApartmentOutlined";
+import ArticleOutlinedIcon from "@mui/icons-material/ArticleOutlined";
+import CallOutlinedIcon from "@mui/icons-material/CallOutlined";
+import CurrencyRupeeOutlinedIcon from "@mui/icons-material/CurrencyRupeeOutlined";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
+import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import ArrowUpwardIcon from "@mui/icons-material/ArrowUpward";
 import ArrowDownwardIcon from "@mui/icons-material/ArrowDownward";
+import LanguageOutlinedIcon from "@mui/icons-material/LanguageOutlined";
+import MedicalServicesOutlinedIcon from "@mui/icons-material/MedicalServicesOutlined";
+import PendingActionsOutlinedIcon from "@mui/icons-material/PendingActionsOutlined";
+import PersonOutlineOutlinedIcon from "@mui/icons-material/PersonOutlineOutlined";
 import PhotoCameraIcon from "@mui/icons-material/PhotoCamera";
+import PhotoLibraryOutlinedIcon from "@mui/icons-material/PhotoLibraryOutlined";
+import PublishOutlinedIcon from "@mui/icons-material/PublishOutlined";
+import ScheduleOutlinedIcon from "@mui/icons-material/ScheduleOutlined";
+import TaskAltOutlinedIcon from "@mui/icons-material/TaskAltOutlined";
+import TravelExploreOutlinedIcon from "@mui/icons-material/TravelExploreOutlined";
+import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
+import WarningAmberOutlinedIcon from "@mui/icons-material/WarningAmberOutlined";
 import { LandingPageRenderer } from "../../components/landing/LandingPageRenderer";
 import { PublicMediaImage } from "../../components/landing/PublicMediaImage";
 import { DiscoverEmptyState } from "../../components/DiscoveryComponents";
 import { DISCOVER_ROUTES } from "../../routes";
 import { buildPublicAddressView, resolveClinicEstablishedYear } from "../../utils/publicProfileFormatting";
+import { getProviderConsentPresentation } from "../../utils/providerConsentPresentation";
+import {
+  ProviderEditorFooter,
+  ProviderEditorSectionCard,
+  ProviderFeeEditor,
+  ProviderTagListEditor,
+  ProviderWeeklyScheduleEditor,
+  PublicAddressPreview,
+  normalizeEditorList,
+  normalizeFeeValue,
+  normalizeWeeklyScheduleContent,
+} from "../../components/provider-profile-editor/ProviderProfileEditorControls";
 import {
   createProviderPublicProfileDraft,
   loadProviderPublicProfileDraft,
@@ -28,6 +56,53 @@ import {
 import type { LandingPageRenderable, LandingProfile, LandingSnapshot, LandingTheme } from "../../api/providerLandingPage";
 
 const SECTION_ORDER = ["overview", "about", "contact", "services", "specialities", "facilities", "timings", "fees", "languages", "media", "seo", "preview", "readiness"];
+
+const SERVICE_SUGGESTIONS = [
+  "General Consultation",
+  "Family Medicine",
+  "Internal Medicine",
+  "Diabetes Management",
+  "Preventive Health Check-ups",
+  "Vaccination",
+  "Minor Procedures",
+  "Women’s Health",
+  "Pediatric Care",
+];
+
+const SPECIALITY_SUGGESTIONS = [
+  "General Medicine",
+  "Family Medicine",
+  "Internal Medicine",
+  "Pediatrics",
+  "Gynecology",
+  "Dermatology",
+  "ENT",
+  "Cardiology",
+  "Orthopedics",
+];
+
+const FACILITY_SUGGESTIONS = [
+  "Wheelchair accessibility",
+  "Accessible washroom",
+  "Pharmacy",
+  "Laboratory",
+  "Imaging",
+  "Parking",
+  "Digital payments",
+  "Waiting area",
+  "Emergency first aid",
+];
+
+const LANGUAGE_SUGGESTIONS = [
+  "English",
+  "Hindi",
+  "Marathi",
+  "Gujarati",
+  "Kannada",
+  "Tamil",
+  "Telugu",
+  "Punjabi",
+];
 
 function formatDateTime(value?: string | null) {
   if (!value) {
@@ -117,6 +192,53 @@ function sectionLabel(key: string) {
     default:
       return key.replaceAll("_", " ").replace(/\b\w/g, (char) => char.toUpperCase());
   }
+}
+
+function sectionNavigatorMeta(key: string, completenessPercentage: number, missingFields: string[], invalidFields: string[]) {
+  const hasIssue = missingFields.some((field) => missingFieldSection(field) === key) || invalidFields.some((field) => missingFieldSection(field) === key);
+  const isOptional = key === "fees" || key === "seo";
+  const isPreview = key === "preview";
+  const isReadiness = key === "readiness";
+  const sectionIcon = (() => {
+    switch (key) {
+      case "overview":
+        return <ArticleOutlinedIcon fontSize="small" aria-hidden="true" />;
+      case "about":
+        return <InfoOutlinedIcon fontSize="small" aria-hidden="true" />;
+      case "contact":
+        return <CallOutlinedIcon fontSize="small" aria-hidden="true" />;
+      case "services":
+        return <MedicalServicesOutlinedIcon fontSize="small" aria-hidden="true" />;
+      case "specialities":
+        return <MedicalServicesOutlinedIcon fontSize="small" aria-hidden="true" />;
+      case "facilities":
+        return <ApartmentOutlinedIcon fontSize="small" aria-hidden="true" />;
+      case "timings":
+        return <ScheduleOutlinedIcon fontSize="small" aria-hidden="true" />;
+      case "fees":
+        return <CurrencyRupeeOutlinedIcon fontSize="small" aria-hidden="true" />;
+      case "languages":
+        return <LanguageOutlinedIcon fontSize="small" aria-hidden="true" />;
+      case "media":
+        return <PhotoLibraryOutlinedIcon fontSize="small" aria-hidden="true" />;
+      case "seo":
+        return <TravelExploreOutlinedIcon fontSize="small" aria-hidden="true" />;
+      case "preview":
+        return <VisibilityOutlinedIcon fontSize="small" aria-hidden="true" />;
+      case "readiness":
+        return <TaskAltOutlinedIcon fontSize="small" aria-hidden="true" />;
+      default:
+        return <ArticleOutlinedIcon fontSize="small" aria-hidden="true" />;
+    }
+  })();
+  const icon = hasIssue
+    ? <WarningAmberOutlinedIcon fontSize="small" aria-hidden="true" />
+    : !isOptional && !isPreview && !isReadiness
+      ? <TaskAltOutlinedIcon fontSize="small" aria-hidden="true" />
+      : sectionIcon;
+  const badge = hasIssue ? "Needs attention" : isOptional ? "Optional" : isReadiness ? `${completenessPercentage}%` : null;
+  const state = hasIssue ? "issue" : isOptional ? "optional" : isPreview ? "preview" : isReadiness ? "readiness" : "complete";
+  return { icon, badge, state, hasIssue };
 }
 
 type DraftMediaMetadata = {
@@ -250,13 +372,28 @@ function publicationBlockSummary(readiness: ProviderPublicProfileDraft["readines
   } else if (readiness.missingMandatoryFields.length || readiness.invalidFields.length) {
     blockers.push("Profile needs more information");
   }
-  if (readiness.blockingReasons.includes("TENANT_CONSENT_DISABLED")) {
-    blockers.push("Waiting for the clinic administrator to enable Discover publishing.");
-  }
   if (!blockers.length && moderation?.submissionEligible) {
     blockers.push("Content ready");
   }
   return blockers.length ? blockers.join(" · ") : "Submission becomes available once all required items are completed.";
+}
+
+function publicationCardMessage(
+  readiness: ProviderPublicProfileDraft["readiness"],
+  moderation: ProviderPublicProfileModeration | null,
+  tenantConsentStatus: string | null | undefined,
+) {
+  const consent = getProviderConsentPresentation({ tenantConsentStatus, submissionEligible: moderation?.submissionEligible });
+  if (consent.isBlocked) {
+    return "Enable Discover participation before submitting for platform review.";
+  }
+  if (consent.visible) {
+    return consent.message;
+  }
+  if (moderation?.allowedActions.includes("SUBMIT_FOR_REVIEW")) {
+    return "Ready to submit for platform review.";
+  }
+  return publicationBlockSummary(readiness, moderation);
 }
 
 function missingFieldCategory(field: string) {
@@ -347,10 +484,10 @@ function missingFieldChipLabel(field: string) {
 function draftToLandingPage(draft: ProviderPublicProfileDraft): { page: LandingPageRenderable; snapshot: LandingSnapshot } {
   const about = sectionContent(draft, "about");
   const contact = sectionContent(draft, "contact");
-  const services = normalizeList(sectionContent(draft, "services").items);
-  const specialities = normalizeList(sectionContent(draft, "specialities").items);
-  const languages = normalizeList(sectionContent(draft, "languages").items);
-  const facilities = normalizeList(sectionContent(draft, "facilities").items);
+  const services = normalizeEditorList(sectionContent(draft, "services").items);
+  const specialities = normalizeEditorList(sectionContent(draft, "specialities").items);
+  const languages = normalizeEditorList(sectionContent(draft, "languages").items);
+  const facilities = normalizeEditorList(sectionContent(draft, "facilities").items);
   const timings = sectionContent(draft, "timings");
   const media = mediaSectionContent(draft);
   const seo = sectionContent(draft, "seo");
@@ -407,14 +544,14 @@ function draftToLandingPage(draft: ProviderPublicProfileDraft): { page: LandingP
         label: displayName,
         addressLine1: textValue(contact.addressLine1),
         addressLine2: textValue(contact.addressLine2),
-        address: addressView.lines.join("\n") || null,
+        address: addressView.singleLine || null,
         area: textValue(contact.area),
         city: textValue(contact.city),
         state: textValue(contact.state),
         country: textValue(contact.country),
         pinCode: textValue(contact.postalCode),
         postalCode: textValue(contact.postalCode),
-        workingHours: Array.isArray(timings.weekly) && timings.weekly.length ? "Weekly timings configured" : null,
+        workingHours: normalizeWeeklyScheduleContent(timings).intervals.length ? "Weekly timings configured" : null,
         parkingAvailable: facilities.includes("parking"),
         accessibilityAvailable: facilities.includes("wheelchair access"),
         latitude: null,
@@ -449,7 +586,7 @@ function draftToLandingPage(draft: ProviderPublicProfileDraft): { page: LandingP
     previousSlug: null,
     canonical: true,
     publicPath: draft.publicProfilePath || `/discover/${draft.publicProfileType.toLowerCase()}s/${slug}`,
-    weeklyTimings: timings.weekly,
+    weeklyTimings: normalizeWeeklyScheduleContent(timings).intervals,
     timezone: textValue(timings.timezone),
   };
   const snapshot: LandingSnapshot = {
@@ -729,15 +866,30 @@ export function ProviderPublicProfileDraftPage() {
   }
 
   if (error && !activeDraft) {
+    const reviewPath = DISCOVER_ROUTES.providerPublicProfileReview.path
+      .replace(":profileReference", encodeURIComponent(profileReference));
+    const lockedForReview = Boolean(moderation && ["SUBMITTED", "UNDER_REVIEW", "CHANGES_REQUESTED", "APPROVED", "PUBLISHED"].includes(moderation.moderationStatus));
     return (
       <section className="page-section">
-        <DiscoverEmptyState
-          icon="!"
-          title="We could not load the draft"
-          description={error}
-          primaryAction="Back to workspace"
-          primaryTo={DISCOVER_ROUTES.providerWorkspace.path}
-        />
+        {lockedForReview ? (
+          <DiscoverEmptyState
+            icon="!"
+            title="This draft is locked while review is active"
+            description="The submitted profile cannot be edited while Platform review is in progress."
+            primaryAction="View review status"
+            primaryTo={reviewPath}
+            secondaryAction="Back to workspace"
+            secondaryTo={DISCOVER_ROUTES.providerWorkspace.path}
+          />
+        ) : (
+          <DiscoverEmptyState
+            icon="!"
+            title="We could not load the draft"
+            description={error}
+            primaryAction="Back to workspace"
+            primaryTo={DISCOVER_ROUTES.providerWorkspace.path}
+          />
+        )}
       </section>
     );
   }
@@ -757,9 +909,17 @@ export function ProviderPublicProfileDraftPage() {
   const currentDraft = activeDraft;
   const { page, snapshot } = draftToLandingPage(currentDraft);
   const isPreview = currentSection === "preview";
+  const isCompletionReady = currentDraft.readiness.ready && !currentDraft.readiness.invalidFields.length;
   const currentModeration = moderation;
+  const consentPresentation = getProviderConsentPresentation({
+    tenantConsentStatus: currentDraft.tenantConsentStatus,
+    submissionEligible: currentModeration?.submissionEligible,
+    submissionBlockers: currentModeration?.submissionBlockers,
+    contentStatus: currentDraft.contentStatus,
+    readinessStatus: currentDraft.readinessStatus,
+  });
   const canSubmit = Boolean(currentModeration?.allowedActions.includes("SUBMIT_FOR_REVIEW"));
-  const consentBlocked = currentModeration?.submissionBlockers.includes("TENANT_CONSENT_REQUIRED");
+  const consentBlocked = consentPresentation.isBlocked;
   const previewTarget = currentDraft.publicProfileStatus === "PUBLISHED"
     ? (currentDraft.publicProfilePath ?? page.publicPath)
     : sectionRoute(profileReference, "preview");
@@ -777,39 +937,528 @@ export function ProviderPublicProfileDraftPage() {
     }
     return [...groups.entries()];
   })();
+  const currentSectionIndex = SECTION_ORDER.indexOf(currentSection);
+  const nextSection = SECTION_ORDER[currentSectionIndex + 1] || "preview";
+  const sectionStatus = (item: string) => {
+    if (item === "fees" || item === "seo") {
+      return "Optional";
+    }
+    if (item === "preview" || item === "readiness") {
+      return item === "readiness" ? `${currentDraft.completenessPercentage}%` : "Preview";
+    }
+    const mappedMissing = missingMandatoryFields.some((field) => missingFieldSection(field) === item);
+    if (mappedMissing) {
+      return "Needs attention";
+    }
+    return currentDraft.readiness.invalidFields.some((field) => missingFieldSection(field) === item) ? "Needs attention" : "Complete";
+  };
+  const workflowNextStep = consentBlocked
+    ? "Enable Discover"
+    : currentModeration?.allowedActions.includes("SUBMIT_FOR_REVIEW")
+      ? "Submit for Platform Review"
+      : "Continue editing";
+  const workflowNextStepDetails = consentBlocked
+    ? "Enable Discover participation before submitting for platform review."
+    : currentModeration?.allowedActions.includes("SUBMIT_FOR_REVIEW")
+      ? "Ready when all publication gates are satisfied."
+      : "Continue refining the draft.";
+
+  function renderSectionEditor() {
+    if (isPreview) {
+      return (
+        <Box>
+          <Box className="provider-preview-banner">
+            <div className="provider-preview-banner-copy">
+              <span className="eyebrow">Draft Preview – Not Public</span>
+              <Typography variant="body2" color="text.secondary">
+                Visible only to the Provider while the clinic prepares publication.
+              </Typography>
+            </div>
+            <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" className="provider-preview-banner-actions">
+              <Button component={Link} to={sectionRoute(profileReference, "overview")} variant="outlined" size="small">Back to Editor</Button>
+              <Button component={Link} to={DISCOVER_ROUTES.providerWorkspace.path} variant="outlined" size="small">Back to Workspace</Button>
+              <Button
+                variant="outlined"
+                size="small"
+                onClick={async () => {
+                  try {
+                    if (navigator.clipboard?.writeText) {
+                      await navigator.clipboard.writeText(page.publicPath);
+                      setCopyStatus("Public URL copied.");
+                    } else {
+                      setCopyStatus("Copy is not available in this browser.");
+                    }
+                  } catch {
+                    setCopyStatus("Could not copy the URL. You can copy it manually.");
+                  }
+                }}
+              >
+                Copy Public URL
+              </Button>
+            </Stack>
+          </Box>
+          {copyStatus ? (
+            <Alert severity={copyStatus.startsWith("Public URL copied") ? "success" : "warning"} variant="outlined" sx={{ mb: 1.5 }}>
+              {copyStatus}
+            </Alert>
+          ) : null}
+          <LandingPageRenderer page={page} snapshot={snapshot} renderMode="PROVIDER_DRAFT_PREVIEW" />
+        </Box>
+      );
+    }
+
+    const sectionData = sectionContent(currentDraft, currentSection);
+    switch (currentSection) {
+      case "overview":
+        return (
+          <ProviderEditorSectionCard
+            title="Overview"
+            description="Confirm the profile identity and see the current lifecycle state at a glance."
+            action={<Chip size="small" label={sectionStatus("overview")} color={sectionStatus("overview") === "Needs attention" ? "warning" : "default"} variant="outlined" />}
+          >
+            <Stack spacing={2}>
+              <TextField
+                label="Display name"
+                value={String(sectionData.displayName || currentDraft.displayName || "")}
+                onChange={(event) => updateSection({ ...sectionData, displayName: event.target.value })}
+                helperText="Use the clinic name patients know."
+                fullWidth
+              />
+              <TextField
+                label="Short tagline"
+                value={String(sectionData.shortTagline || "")}
+                onChange={(event) => updateSection({ ...sectionData, shortTagline: event.target.value })}
+                helperText="A concise one-line summary for the hero area."
+                fullWidth
+              />
+              <TextField
+                label="Summary status"
+                value={readableLifecycleLabel(currentDraft.contentStatus)}
+                InputProps={{ readOnly: true }}
+                helperText="This lifecycle state is managed by the system."
+                fullWidth
+              />
+              <Box sx={{ p: 2, borderRadius: 3, border: 1, borderColor: "divider", backgroundColor: "background.paper" }}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 0.5 }}>Preview snippet</Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {String(sectionData.displayName || currentDraft.displayName || "Clinic profile")}
+                </Typography>
+                <Typography variant="body2">{String(sectionData.shortTagline || "No tagline provided.")}</Typography>
+              </Box>
+            </Stack>
+          </ProviderEditorSectionCard>
+        );
+      case "about":
+        return (
+          <ProviderEditorSectionCard
+            title="About"
+            description="Describe the clinic in plain language. These fields power the public profile preview."
+            action={<Chip size="small" label={sectionStatus("about")} color={sectionStatus("about") === "Needs attention" ? "warning" : "default"} variant="outlined" />}
+          >
+            <Stack spacing={2}>
+              <TextField label="Display name" value={String(sectionData.displayName || "")} onChange={(event) => updateSection({ ...sectionData, displayName: event.target.value })} helperText="Clinic name shown publicly." fullWidth />
+              <TextField label="Short tagline" value={String(sectionData.shortTagline || "")} onChange={(event) => updateSection({ ...sectionData, shortTagline: event.target.value })} helperText="Short, public-friendly summary." fullWidth />
+              <TextField label="Description" multiline minRows={5} value={String(sectionData.description || "")} onChange={(event) => updateSection({ ...sectionData, description: event.target.value })} helperText="Write 2-4 short paragraphs that explain the clinic’s care approach." fullWidth />
+              <TextField label="Clinic philosophy" multiline minRows={3} value={String(sectionData.philosophy || "")} onChange={(event) => updateSection({ ...sectionData, philosophy: event.target.value })} helperText="Optional guidance for the public profile." fullWidth />
+              <Stack spacing={1} direction={{ xs: "column", md: "row" }}>
+                <TextField label="Established year" value={String(sectionData.establishedYear || "")} onChange={(event) => updateSection({ ...sectionData, establishedYear: event.target.value })} helperText="Four-digit year only." fullWidth />
+                <TextField label="Registration number" value={String(sectionData.registrationNumber || "")} onChange={(event) => updateSection({ ...sectionData, registrationNumber: event.target.value })} helperText="Provider-facing registration reference." fullWidth />
+              </Stack>
+              <TextField label="Emergency availability" value={String(sectionData.emergencyAvailability || "")} onChange={(event) => updateSection({ ...sectionData, emergencyAvailability: event.target.value })} helperText="Use a short business description such as Available during clinic hours." fullWidth />
+            </Stack>
+          </ProviderEditorSectionCard>
+        );
+      case "contact": {
+        const addressView = buildPublicAddressView({
+          addressLine1: textValue(sectionData.addressLine1),
+          addressLine2: textValue(sectionData.addressLine2),
+          area: textValue(sectionData.area),
+          city: textValue(sectionData.city),
+          state: textValue(sectionData.state),
+          country: textValue(sectionData.country),
+          postalCode: textValue(sectionData.postalCode),
+        });
+        return (
+          <ProviderEditorSectionCard
+            title="Contact"
+            description="Set the public phone, email, website, WhatsApp and address shown on the draft preview."
+            action={<Chip size="small" label={sectionStatus("contact")} color={sectionStatus("contact") === "Needs attention" ? "warning" : "default"} variant="outlined" />}
+          >
+            <Stack spacing={2}>
+              <Stack spacing={1.5} direction={{ xs: "column", lg: "row" }}>
+                <Stack spacing={1.5} flex={1}>
+                  <TextField label="Public phone" value={String(sectionData.publicPhone || "")} onChange={(event) => updateSection({ ...sectionData, publicPhone: event.target.value })} helperText="This number can be shown publicly." fullWidth />
+                  <TextField label="Public email" value={String(sectionData.publicEmail || "")} onChange={(event) => updateSection({ ...sectionData, publicEmail: event.target.value })} helperText="Contact email shown publicly." fullWidth />
+                  <TextField label="Website" value={String(sectionData.website || "")} onChange={(event) => updateSection({ ...sectionData, website: event.target.value })} helperText="Use a full URL such as https://example.com." fullWidth />
+                  <TextField label="WhatsApp number" value={String(sectionData.whatsappNumber || "")} onChange={(event) => updateSection({ ...sectionData, whatsappNumber: event.target.value })} helperText="Include country code if you want to surface WhatsApp contact." fullWidth />
+                </Stack>
+                <Paper variant="outlined" sx={{ p: 2, borderRadius: 3, minWidth: { lg: 320 } }}>
+                  <PublicAddressPreview address={addressView} />
+                </Paper>
+              </Stack>
+              <Stack spacing={1.5} direction={{ xs: "column", md: "row" }}>
+                <TextField label="Address line 1" value={String(sectionData.addressLine1 || "")} onChange={(event) => updateSection({ ...sectionData, addressLine1: event.target.value })} fullWidth />
+                <TextField label="Address line 2" value={String(sectionData.addressLine2 || "")} onChange={(event) => updateSection({ ...sectionData, addressLine2: event.target.value })} fullWidth />
+              </Stack>
+              <Stack spacing={1.5} direction={{ xs: "column", md: "row" }}>
+                <TextField label="Area" value={String(sectionData.area || "")} onChange={(event) => updateSection({ ...sectionData, area: event.target.value })} fullWidth />
+                <TextField label="City" value={String(sectionData.city || "")} onChange={(event) => updateSection({ ...sectionData, city: event.target.value })} fullWidth />
+                <TextField label="State" value={String(sectionData.state || "")} onChange={(event) => updateSection({ ...sectionData, state: event.target.value })} fullWidth />
+              </Stack>
+              <Stack spacing={1.5} direction={{ xs: "column", md: "row" }}>
+                <TextField label="Country" value={String(sectionData.country || "")} onChange={(event) => updateSection({ ...sectionData, country: event.target.value })} fullWidth />
+                <TextField label="Postal code" value={String(sectionData.postalCode || "")} onChange={(event) => updateSection({ ...sectionData, postalCode: event.target.value })} fullWidth />
+              </Stack>
+            </Stack>
+          </ProviderEditorSectionCard>
+        );
+      }
+      case "services":
+        return (
+          <ProviderEditorSectionCard
+            title="Services"
+            description="Add the services patients can select from the public profile."
+            action={<Chip size="small" label={sectionStatus("services")} color={sectionStatus("services") === "Needs attention" ? "warning" : "default"} variant="outlined" />}
+          >
+            <ProviderTagListEditor
+              title="Services offered"
+              values={normalizeEditorList(sectionData.items)}
+              suggestions={SERVICE_SUGGESTIONS}
+              onChange={(values) => updateSection({ ...sectionData, items: values })}
+              emptyState="No services have been configured."
+              addLabel="Add service"
+              placeholder="Search or add a service"
+              helperText="Services are ordered and shown in the public preview."
+            />
+          </ProviderEditorSectionCard>
+        );
+      case "specialities":
+        return (
+          <ProviderEditorSectionCard
+            title="Specialities"
+            description="Choose the main speciality first and keep the list free of duplicates."
+            action={<Chip size="small" label={sectionStatus("specialities")} color={sectionStatus("specialities") === "Needs attention" ? "warning" : "default"} variant="outlined" />}
+          >
+            <ProviderTagListEditor
+              title="Specialities"
+              values={normalizeEditorList(sectionData.items)}
+              suggestions={SPECIALITY_SUGGESTIONS}
+              onChange={(values) => updateSection({ ...sectionData, items: values })}
+              emptyState="No specialities added yet."
+              addLabel="Add speciality"
+              placeholder="Search or add a speciality"
+              helperText="The first speciality appears as the primary speciality in preview."
+              primaryValue={normalizeEditorList(sectionData.items)[0] ?? null}
+              onPrimaryValueChange={(primary) => {
+                if (!primary) {
+                  return;
+                }
+                const values = normalizeEditorList(sectionData.items).filter((item) => item.toLowerCase() !== primary.toLowerCase());
+                updateSection({ ...sectionData, items: [primary, ...values] });
+              }}
+            />
+          </ProviderEditorSectionCard>
+        );
+      case "facilities":
+        return (
+          <ProviderEditorSectionCard
+            title="Facilities"
+            description="Select the facilities available at the clinic."
+            action={<Chip size="small" label={sectionStatus("facilities")} color={sectionStatus("facilities") === "Needs attention" ? "warning" : "default"} variant="outlined" />}
+          >
+            <ProviderTagListEditor
+              title="Facilities"
+              values={normalizeEditorList(sectionData.items)}
+              suggestions={FACILITY_SUGGESTIONS}
+              onChange={(values) => updateSection({ ...sectionData, items: values })}
+              emptyState="No facilities configured."
+              addLabel="Add facility"
+              placeholder="Search or add a facility"
+              helperText="Facilities appear as chips in the public profile."
+            />
+          </ProviderEditorSectionCard>
+        );
+      case "timings":
+        return (
+          <ProviderEditorSectionCard
+            title="Timings"
+            description="Use the visual weekly schedule editor instead of JSON."
+            action={<Chip size="small" label={sectionStatus("timings")} color={sectionStatus("timings") === "Needs attention" ? "warning" : "default"} variant="outlined" />}
+          >
+            <ProviderWeeklyScheduleEditor value={sectionData} onChange={(nextValue) => updateSection(nextValue as Record<string, unknown>)} />
+          </ProviderEditorSectionCard>
+        );
+      case "fees":
+        return (
+          <ProviderEditorSectionCard
+            title="Fees"
+            description="Informational consultation fees that can be shown in the profile preview."
+            action={<Chip size="small" label={sectionStatus("fees")} variant="outlined" />}
+          >
+            <ProviderFeeEditor
+              value={normalizeFeeValue(sectionData as { currency?: string; rows?: any[] } | null | undefined)}
+              onChange={(nextValue) => updateSection(nextValue as Record<string, unknown>)}
+            />
+          </ProviderEditorSectionCard>
+        );
+      case "languages":
+        return (
+          <ProviderEditorSectionCard
+            title="Languages"
+            description="Add the languages the clinic can support."
+            action={<Chip size="small" label={sectionStatus("languages")} color={sectionStatus("languages") === "Needs attention" ? "warning" : "default"} variant="outlined" />}
+          >
+            <ProviderTagListEditor
+              title="Languages"
+              values={normalizeEditorList(sectionData.items)}
+              suggestions={LANGUAGE_SUGGESTIONS}
+              onChange={(values) => updateSection({ ...sectionData, items: values })}
+              emptyState="No languages added yet."
+              addLabel="Add language"
+              placeholder="Search or add a language"
+              helperText="Languages should use the canonical display label."
+            />
+          </ProviderEditorSectionCard>
+        );
+      case "media":
+        return (
+          <ProviderEditorSectionCard
+            title="Media"
+            description="Upload logo, cover and gallery media. Internal document references stay hidden."
+            action={<Chip size="small" label={sectionStatus("media")} color={sectionStatus("media") === "Needs attention" ? "warning" : "default"} variant="outlined" />}
+          >
+            <Stack spacing={2}>
+              <Alert severity="info" variant="outlined">
+                Upload images here. Internal media references stay hidden and the draft preview updates from persisted media only.
+              </Alert>
+              {/* existing media controls remain below */}
+              <Paper variant="outlined" className="provider-media-panel">
+                <Stack spacing={1.25}>
+                  <Typography variant="subtitle1">Logo</Typography>
+                  {currentLogoReference ? (
+                    <Box className="provider-media-preview">
+                      <PublicMediaImage
+                        src={mediaContentPath(profileReference, currentLogoReference)}
+                        alt={`${page.displayName} logo`}
+                        className="provider-media-preview__image provider-media-preview__image--logo"
+                        objectFit="contain"
+                        fallback={<div className="provider-media-empty-state">No logo uploaded.</div>}
+                        loading="eager"
+                      />
+                    </Box>
+                  ) : (
+                    <Box className="provider-media-empty-state">No logo uploaded.</Box>
+                  )}
+                  <Typography variant="body2" color="text.secondary">
+                    Recommended: PNG, JPG, JPEG, or WEBP. Keep the logo crisp and under 5 MB.
+                  </Typography>
+                  <Stack direction="row" spacing={1} flexWrap="wrap">
+                    <Button component="label" variant="contained" startIcon={<PhotoCameraIcon />}>
+                      {uploadingMedia === "LOGO" ? "Uploading..." : currentLogoReference ? "Replace logo" : "Upload logo"}
+                      <input
+                        hidden
+                        type="file"
+                        accept={mediaUploadAccept}
+                        onChange={(event) => {
+                          const input = event.currentTarget;
+                          void handleMediaUpload("LOGO", input.files).finally(() => {
+                            input.value = "";
+                          });
+                        }}
+                      />
+                    </Button>
+                    <Button variant="outlined" onClick={() => setRemoveTarget(currentLogoReference ? { documentReference: currentLogoReference, label: "logo" } : null)} disabled={!currentLogoReference}>Remove logo</Button>
+                  </Stack>
+                </Stack>
+              </Paper>
+              <Paper variant="outlined" className="provider-media-panel">
+                <Stack spacing={1.25}>
+                  <Typography variant="subtitle1">Cover image</Typography>
+                  {currentCoverReference ? (
+                    <Box className="provider-media-preview">
+                      <PublicMediaImage
+                        src={mediaContentPath(profileReference, currentCoverReference)}
+                        alt={`${page.displayName} cover`}
+                        className="provider-media-preview__image provider-media-preview__image--cover"
+                        objectFit="cover"
+                        fallback={<div className="provider-media-empty-state">No cover image uploaded.</div>}
+                        loading="eager"
+                      />
+                    </Box>
+                  ) : (
+                    <Box className="provider-media-empty-state">No cover image uploaded.</Box>
+                  )}
+                  <Typography variant="body2" color="text.secondary">
+                    Recommended: wide landscape image, PNG/JPG/JPEG/WEBP, under 10 MB.
+                  </Typography>
+                  <Stack direction="row" spacing={1} flexWrap="wrap">
+                    <Button component="label" variant="contained" startIcon={<PhotoCameraIcon />}>
+                      {uploadingMedia === "COVER_IMAGE" ? "Uploading..." : currentCoverReference ? "Replace cover" : "Upload cover image"}
+                      <input
+                        hidden
+                        type="file"
+                        accept={mediaUploadAccept}
+                        onChange={(event) => {
+                          const input = event.currentTarget;
+                          void handleMediaUpload("COVER_IMAGE", input.files).finally(() => {
+                            input.value = "";
+                          });
+                        }}
+                      />
+                    </Button>
+                    <Button variant="outlined" onClick={() => setRemoveTarget(currentCoverReference ? { documentReference: currentCoverReference, label: "cover image" } : null)} disabled={!currentCoverReference}>Remove cover</Button>
+                  </Stack>
+                </Stack>
+              </Paper>
+              <Paper variant="outlined" className="provider-media-panel">
+                <Stack spacing={1.25}>
+                  <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={2} flexWrap="wrap">
+                    <div>
+                      <Typography variant="subtitle1">Gallery</Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        {currentGalleryReferences.length} of 20 images uploaded
+                      </Typography>
+                    </div>
+                    <Button component="label" variant="contained" startIcon={<PhotoCameraIcon />}>
+                      {uploadingMedia === "GALLERY_IMAGE" ? "Uploading..." : "Add more images"}
+                      <input
+                        hidden
+                        type="file"
+                        accept={mediaUploadAccept}
+                        multiple
+                        onChange={(event) => {
+                          const input = event.currentTarget;
+                          void handleMediaUpload("GALLERY_IMAGE", input.files).finally(() => {
+                            input.value = "";
+                          });
+                        }}
+                      />
+                    </Button>
+                  </Stack>
+                  {currentGalleryReferences.length ? (
+                    <Stack spacing={1.25}>
+                      {currentGalleryReferences.map((reference, index) => {
+                        const metadata = currentGalleryMetadata[reference];
+                        const altText = currentGalleryAltTexts[reference] ?? "";
+                        const isPrimary = currentPrimaryGalleryReference === reference;
+                        return (
+                          <Paper key={reference} variant="outlined" className="provider-media-gallery-item">
+                            <Stack spacing={1.25}>
+                              <Box className="provider-media-gallery-item__preview">
+                                <PublicMediaImage
+                                  src={mediaContentPath(profileReference, reference)}
+                                  alt={altText.trim() || metadata?.originalFilename || `Gallery image ${index + 1}`}
+                                  className="provider-media-preview__image provider-media-preview__image--gallery"
+                                  objectFit="cover"
+                                  fallback={<div className="provider-media-empty-state">No gallery image preview available.</div>}
+                                />
+                              </Box>
+                              <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                                <Typography variant="subtitle2">
+                                  {metadata?.originalFilename || `Gallery image ${index + 1}`}
+                                  {isPrimary ? " · Primary" : ""}
+                                </Typography>
+                                <Stack direction="row" spacing={0.5}>
+                                  <IconButton aria-label={`Move gallery image ${index + 1} up`} size="small" onClick={() => void reorderGallery(reference, "up")} disabled={index === 0}>
+                                    <ArrowUpwardIcon fontSize="small" />
+                                  </IconButton>
+                                  <IconButton aria-label={`Move gallery image ${index + 1} down`} size="small" onClick={() => void reorderGallery(reference, "down")} disabled={index === currentGalleryReferences.length - 1}>
+                                    <ArrowDownwardIcon fontSize="small" />
+                                  </IconButton>
+                                  <IconButton aria-label={`Remove gallery image ${index + 1}`} size="small" onClick={() => setRemoveTarget({ documentReference: reference, label: metadata?.originalFilename || `gallery image ${index + 1}` })}>
+                                    <DeleteOutlineIcon fontSize="small" />
+                                  </IconButton>
+                                </Stack>
+                              </Stack>
+                              <TextField
+                                label="Alt text"
+                                value={altText}
+                                onChange={(event) => updateSection({
+                                  ...currentMedia,
+                                  galleryAltTextByDocumentId: {
+                                    ...currentGalleryAltTexts,
+                                    [reference]: event.target.value,
+                                  },
+                                })}
+                                onBlur={(event) => void updateGalleryAltText(reference, event.target.value)}
+                                helperText="Describe the image for screen readers."
+                                fullWidth
+                              />
+                              <Stack direction="row" spacing={1} flexWrap="wrap">
+                                <Button variant={isPrimary ? "contained" : "outlined"} size="small" onClick={() => void setPrimaryGallery(reference)}>
+                                  {isPrimary ? "Primary image" : "Set as primary"}
+                                </Button>
+                              </Stack>
+                            </Stack>
+                          </Paper>
+                        );
+                      })}
+                    </Stack>
+                  ) : (
+                    <Box className="provider-media-empty-state">No gallery images uploaded.</Box>
+                  )}
+                </Stack>
+              </Paper>
+            </Stack>
+          </ProviderEditorSectionCard>
+        );
+      case "seo":
+        return (
+          <ProviderEditorSectionCard
+            title="SEO"
+            description="Set the public slug and metadata for the future public URL."
+            action={<Chip size="small" label={sectionStatus("seo")} variant="outlined" />}
+          >
+            <Stack spacing={1.5}>
+              <TextField label="Slug" value={String(sectionData.slug || "")} onChange={(event) => updateSection({ ...sectionData, slug: event.target.value, canonicalPublicPath: `/discover/clinics/${event.target.value}` })} helperText="The slug forms the public URL path." fullWidth />
+              <TextField label="Meta title" value={String(sectionData.metaTitle || "")} onChange={(event) => updateSection({ ...sectionData, metaTitle: event.target.value })} helperText="Title shown in search and social previews." fullWidth />
+              <TextField label="Meta description" multiline minRows={3} value={String(sectionData.metaDescription || "")} onChange={(event) => updateSection({ ...sectionData, metaDescription: event.target.value })} helperText="Short, readable description for search previews." fullWidth />
+            </Stack>
+          </ProviderEditorSectionCard>
+        );
+      case "readiness":
+        return (
+          <ProviderEditorSectionCard
+            title="Readiness"
+            description="Review the backend-authoritative content completion status."
+            action={<Chip size="small" label={`${currentDraft.completenessPercentage}%`} color={currentDraft.readiness.ready ? "success" : "default"} variant="outlined" />}
+          >
+            <Stack spacing={1.5}>
+              <Typography variant="body2" color="text.secondary">Ready for review: {currentDraft.readiness.ready ? "Yes" : "No"}</Typography>
+              <Typography variant="body2" color="text.secondary">Blocking reasons: {currentDraft.readiness.blockingReasons.map((item) => readableLifecycleLabel(item)).join(" · ") || "None"}</Typography>
+              <Typography variant="body2" color="text.secondary">Missing fields: {currentDraft.readiness.missingMandatoryFields.map((item) => missingFieldChipLabel(item)).join(" · ") || "None"}</Typography>
+            </Stack>
+          </ProviderEditorSectionCard>
+        );
+      default:
+        return (
+          <ProviderEditorSectionCard title={sectionLabel(currentSection)} description="This section is available in the profile editor.">
+            <Typography variant="body2" color="text.secondary">Select a different section to continue editing.</Typography>
+          </ProviderEditorSectionCard>
+        );
+    }
+  }
 
   return (
     <section className="page-section provider-status-page">
-      <header className="provider-status-hero">
-        <div>
+      <header className="provider-editor-page-header">
+          <div className="provider-editor-page-header__copy">
           <span className="eyebrow">Public Profile</span>
           <h1>Ownership verified</h1>
           <p>Your ownership of {page.displayName} has been verified.</p>
-          <p>Healthcare tenant consent is currently disabled. You can continue preparing the draft, but submission remains unavailable.</p>
+          {consentPresentation.visible ? <p>{consentPresentation.message}</p> : null}
         </div>
-        <aside className="provider-status-hero-card">
-          <div className="provider-status-hero-card-row">
-            <span className="provider-account-status-pill">Draft</span>
-            <span className="provider-account-status-pill">Version {currentDraft.currentVersion}</span>
-            <span className="provider-account-status-pill">{currentDraft.readiness.ready && !currentDraft.readiness.invalidFields.length ? "Content complete" : "Profile needs more information"}</span>
-            <span className="provider-account-status-pill">{consentBlocked ? "Consent required" : "Consent enabled"}</span>
-          </div>
-          <div className="provider-status-hero-card-meta">
-            <span>Last saved {formatDateTime(activeDraft.lastSavedAt ?? activeDraft.updatedAt)}</span>
-            <span>{consentBlocked ? "Submission will become available after the clinic enables Discover publishing." : currentModeration?.submissionEligible ? "Submission available." : "Submission blocked."}</span>
-          </div>
-        </aside>
       </header>
 
-      <div className="provider-status-layout">
-        <div className="provider-status-main">
+      <div className="provider-status-layout provider-editor-layout">
+        <main className="provider-status-main provider-editor-main">
           <article className="provider-status-panel">
             <div className="provider-status-panel-heading">
               <div>
                 <span className="eyebrow">Profile completeness</span>
                 <h2>{currentDraft.completenessPercentage}% complete</h2>
               </div>
-              <span>{currentDraft.readiness.ready && !currentDraft.readiness.invalidFields.length ? "Content Ready" : "Profile needs more information"}</span>
+              <span>{isCompletionReady ? "Content Ready" : "Profile needs more information"}</span>
             </div>
             <Stack spacing={1.25}>
               <Typography variant="body2" color="text.secondary">
@@ -837,34 +1486,36 @@ export function ProviderPublicProfileDraftPage() {
                   <Typography variant="body2" color="text.secondary">No blocking content items remain.</Typography>
                 )}
               </Stack>
-              <Alert severity="info" variant="outlined">
-                Tenant consent is separate from content completion. Draft editing stays available while consent is disabled.
-              </Alert>
+              {consentPresentation.isBlocked ? (
+                <Alert severity="info" variant="outlined">
+                  Tenant consent is separate from content completion. Draft editing stays available while consent is disabled.
+                </Alert>
+              ) : null}
             </Stack>
           </article>
 
           <article className="provider-status-panel">
-              <div className="provider-status-panel-heading">
+            <div className="provider-status-panel-heading">
               <div>
-                  <span className="eyebrow">Submission</span>
-                  <h2>Draft</h2>
-                </div>
-              <span>{currentDraft.readiness.ready && !currentDraft.readiness.invalidFields.length ? "Content complete" : "Profile needs more information"}</span>
+                <span className="eyebrow">Publication</span>
+                <h2>Draft</h2>
               </div>
+              <span>Not Published</span>
+            </div>
             <Stack spacing={1.25}>
+              <Typography variant="body2" color="text.secondary">Public URL: {page.publicPath}</Typography>
               <Typography variant="body2" color="text.secondary">
-                {publicationBlockSummary(currentDraft.readiness, currentModeration)}
+                {publicationCardMessage(currentDraft.readiness, currentModeration, currentDraft.tenantConsentStatus)}
               </Typography>
-              {consentBlocked ? (
+              {consentPresentation.isBlocked ? (
                 <Alert severity="warning" variant="outlined">
-                  Healthcare tenant consent is currently disabled. You can continue preparing the draft, but submission remains unavailable.
+                  {consentPresentation.message}
                 </Alert>
               ) : null}
               <Stack direction="row" spacing={1}>
                 <Button variant="contained" onClick={() => void submitCurrentDraft()} disabled={!canSubmit || submitting}>
-                  {submitting ? "Submitting..." : "Submit for review"}
+                  {submitting ? "Submitting..." : "Submit for Platform Review"}
                 </Button>
-                <Button component={Link} to={previewTarget} variant="outlined">{currentDraft.publicProfileStatus === "PUBLISHED" ? "View Public Profile" : "Preview Draft"}</Button>
               </Stack>
             </Stack>
           </article>
@@ -877,378 +1528,88 @@ export function ProviderPublicProfileDraftPage() {
               </div>
               <span>{formatDateTime(currentDraft.lastSavedAt ?? currentDraft.updatedAt)}</span>
             </div>
-
-            <Stack spacing={1.25}>
-              <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
-                {SECTION_ORDER.map((item) => (
-                  <Button
-                    key={item}
-                    component={Link}
-                    to={sectionRoute(profileReference, item)}
-                    variant={item === currentSection ? "contained" : "outlined"}
-                    size="small"
-                  >
-                    {sectionLabel(item)}
-                  </Button>
-                ))}
-              </Stack>
-
+            <Stack spacing={2}>
+              {renderSectionEditor()}
               {!isPreview ? (
-                <Stack spacing={1.5}>
-                  {currentSection === "overview" ? (
-                    <Stack spacing={1.5}>
-                      <TextField label="Display name" value={String(sectionContent(currentDraft, "about").displayName || currentDraft.displayName || "")} onChange={(event) => updateSection({ ...sectionContent(currentDraft, "overview"), displayName: event.target.value })} fullWidth />
-                      <TextField label="Short tagline" value={String(sectionContent(currentDraft, "about").shortTagline || "")} onChange={(event) => updateSection({ ...sectionContent(currentDraft, "overview"), shortTagline: event.target.value })} fullWidth />
-                      <TextField label="Summary status" value={readableLifecycleLabel(currentDraft.contentStatus)} InputProps={{ readOnly: true }} fullWidth />
-                    </Stack>
-                  ) : null}
-
-                  {currentSection === "about" ? (
-                    <Stack spacing={1.5}>
-                      <TextField label="Display name" value={String(sectionContent(currentDraft, "about").displayName || "")} onChange={(event) => updateSection({ ...sectionContent(currentDraft, "about"), displayName: event.target.value })} fullWidth />
-                      <TextField label="Short tagline" value={String(sectionContent(currentDraft, "about").shortTagline || "")} onChange={(event) => updateSection({ ...sectionContent(currentDraft, "about"), shortTagline: event.target.value })} fullWidth />
-                      <TextField label="Description" multiline minRows={5} value={String(sectionContent(currentDraft, "about").description || "")} onChange={(event) => updateSection({ ...sectionContent(currentDraft, "about"), description: event.target.value })} fullWidth />
-                      <TextField label="Clinic philosophy" multiline minRows={3} value={String(sectionContent(currentDraft, "about").philosophy || "")} onChange={(event) => updateSection({ ...sectionContent(currentDraft, "about"), philosophy: event.target.value })} fullWidth />
-                      <TextField label="Established year" value={String(sectionContent(currentDraft, "about").establishedYear || "")} onChange={(event) => updateSection({ ...sectionContent(currentDraft, "about"), establishedYear: event.target.value })} fullWidth />
-                      <TextField label="Registration number" value={String(sectionContent(currentDraft, "about").registrationNumber || "")} onChange={(event) => updateSection({ ...sectionContent(currentDraft, "about"), registrationNumber: event.target.value })} fullWidth />
-                      <TextField label="Emergency availability" value={String(sectionContent(currentDraft, "about").emergencyAvailability || "")} onChange={(event) => updateSection({ ...sectionContent(currentDraft, "about"), emergencyAvailability: event.target.value })} fullWidth />
-                    </Stack>
-                  ) : null}
-
-                  {currentSection === "contact" ? (
-                    <Stack spacing={1.5}>
-                      <TextField label="Public phone" value={String(sectionContent(currentDraft, "contact").publicPhone || "")} onChange={(event) => updateSection({ ...sectionContent(currentDraft, "contact"), publicPhone: event.target.value })} fullWidth />
-                      <TextField label="Public email" value={String(sectionContent(currentDraft, "contact").publicEmail || "")} onChange={(event) => updateSection({ ...sectionContent(currentDraft, "contact"), publicEmail: event.target.value })} fullWidth />
-                      <TextField label="Website" value={String(sectionContent(currentDraft, "contact").website || "")} onChange={(event) => updateSection({ ...sectionContent(currentDraft, "contact"), website: event.target.value })} fullWidth />
-                      <TextField label="WhatsApp number" value={String(sectionContent(currentDraft, "contact").whatsappNumber || "")} onChange={(event) => updateSection({ ...sectionContent(currentDraft, "contact"), whatsappNumber: event.target.value })} fullWidth />
-                      <TextField label="Address line 1" value={String(sectionContent(currentDraft, "contact").addressLine1 || "")} onChange={(event) => updateSection({ ...sectionContent(currentDraft, "contact"), addressLine1: event.target.value })} fullWidth />
-                      <TextField label="Address line 2" value={String(sectionContent(currentDraft, "contact").addressLine2 || "")} onChange={(event) => updateSection({ ...sectionContent(currentDraft, "contact"), addressLine2: event.target.value })} fullWidth />
-                      <TextField label="Area" value={String(sectionContent(currentDraft, "contact").area || "")} onChange={(event) => updateSection({ ...sectionContent(currentDraft, "contact"), area: event.target.value })} fullWidth />
-                      <TextField label="City" value={String(sectionContent(currentDraft, "contact").city || "")} onChange={(event) => updateSection({ ...sectionContent(currentDraft, "contact"), city: event.target.value })} fullWidth />
-                      <TextField label="State" value={String(sectionContent(currentDraft, "contact").state || "")} onChange={(event) => updateSection({ ...sectionContent(currentDraft, "contact"), state: event.target.value })} fullWidth />
-                      <TextField label="Country" value={String(sectionContent(currentDraft, "contact").country || "")} onChange={(event) => updateSection({ ...sectionContent(currentDraft, "contact"), country: event.target.value })} fullWidth />
-                      <TextField label="Postal code" value={String(sectionContent(currentDraft, "contact").postalCode || "")} onChange={(event) => updateSection({ ...sectionContent(currentDraft, "contact"), postalCode: event.target.value })} fullWidth />
-                    </Stack>
-                  ) : null}
-
-                  {["services", "specialities", "facilities", "languages"].includes(currentSection) ? (
-                    <Stack spacing={1.5}>
-                      <TextField
-                        label={`${sectionLabel(currentSection)} list`}
-                        multiline
-                        minRows={4}
-                        value={listValue(sectionContent(currentDraft, currentSection).items)}
-                        onChange={(event) => updateSection({ ...sectionContent(currentDraft, currentSection), items: normalizeList(event.target.value) })}
-                        helperText="Separate entries with commas."
-                        fullWidth
-                      />
-                    </Stack>
-                  ) : null}
-
-                  {currentSection === "timings" ? (
-                    <Stack spacing={1.5}>
-                      <TextField
-                        label="Weekly timings"
-                        multiline
-                        minRows={6}
-                        value={JSON.stringify(sectionContent(currentDraft, "timings").weekly ?? [], null, 2)}
-                        onChange={(event) => {
-                          try {
-                            updateSection({ ...sectionContent(currentDraft, "timings"), weekly: JSON.parse(event.target.value) });
-                          } catch {
-                            updateSection({ ...sectionContent(currentDraft, "timings"), weekly: [] });
-                          }
-                        }}
-                        helperText="JSON array of day intervals."
-                        fullWidth
-                      />
-                      <TextField label="Timezone" value={String(sectionContent(currentDraft, "timings").timezone || "")} onChange={(event) => updateSection({ ...sectionContent(currentDraft, "timings"), timezone: event.target.value })} fullWidth />
-                    </Stack>
-                  ) : null}
-
-                  {currentSection === "fees" ? (
-                    <Stack spacing={1.5}>
-                      <TextField label="Currency" value={String(sectionContent(currentDraft, "fees").currency || "INR")} onChange={(event) => updateSection({ ...sectionContent(currentDraft, "fees"), currency: event.target.value })} fullWidth />
-                      <TextField label="In-clinic fee" value={String(sectionContent(currentDraft, "fees").inClinic || "")} onChange={(event) => updateSection({ ...sectionContent(currentDraft, "fees"), inClinic: event.target.value })} fullWidth />
-                      <TextField label="Video fee" value={String(sectionContent(currentDraft, "fees").video || "")} onChange={(event) => updateSection({ ...sectionContent(currentDraft, "fees"), video: event.target.value })} fullWidth />
-                      <TextField label="Home visit fee" value={String(sectionContent(currentDraft, "fees").homeVisit || "")} onChange={(event) => updateSection({ ...sectionContent(currentDraft, "fees"), homeVisit: event.target.value })} fullWidth />
-                      <TextField label="Emergency fee" value={String(sectionContent(currentDraft, "fees").emergency || "")} onChange={(event) => updateSection({ ...sectionContent(currentDraft, "fees"), emergency: event.target.value })} fullWidth />
-                    </Stack>
-                  ) : null}
-
-                  {currentSection === "media" ? (
-                    <Stack spacing={2}>
-                      <Alert severity="info" variant="outlined">
-                        Upload images here. Internal media references stay hidden and the draft preview updates from persisted media only.
-                      </Alert>
-
-                      <Paper variant="outlined" className="provider-media-panel">
-                        <Stack spacing={1.25}>
-                          <Typography variant="subtitle1">Logo</Typography>
-                          {currentLogoReference ? (
-                            <Box className="provider-media-preview">
-                              <PublicMediaImage
-                                src={mediaContentPath(profileReference, currentLogoReference)}
-                                alt={`${page.displayName} logo`}
-                                className="provider-media-preview__image provider-media-preview__image--logo"
-                                objectFit="contain"
-                                fallback={<div className="provider-media-empty-state">No logo uploaded.</div>}
-                                loading="eager"
-                              />
-                            </Box>
-                          ) : (
-                            <Box className="provider-media-empty-state">No logo uploaded.</Box>
-                          )}
-                          <Typography variant="body2" color="text.secondary">
-                            Recommended: PNG, JPG, JPEG, or WEBP. Keep the logo crisp and under 5 MB.
-                          </Typography>
-                          <Stack direction="row" spacing={1} flexWrap="wrap">
-                            <Button component="label" variant="contained" startIcon={<PhotoCameraIcon />}>
-                              {uploadingMedia === "LOGO" ? "Uploading..." : currentLogoReference ? "Replace logo" : "Upload logo"}
-                              <input
-                                hidden
-                                type="file"
-                                accept={mediaUploadAccept}
-                                onChange={(event) => {
-                                  const input = event.currentTarget;
-                                  void handleMediaUpload("LOGO", input.files).finally(() => {
-                                    input.value = "";
-                                  });
-                                }}
-                              />
-                            </Button>
-                            <Button
-                              variant="outlined"
-                              onClick={() => setRemoveTarget(currentLogoReference ? { documentReference: currentLogoReference, label: "logo" } : null)}
-                              disabled={!currentLogoReference}
-                            >
-                              Remove logo
-                            </Button>
-                          </Stack>
-                        </Stack>
-                      </Paper>
-
-                      <Paper variant="outlined" className="provider-media-panel">
-                        <Stack spacing={1.25}>
-                          <Typography variant="subtitle1">Cover image</Typography>
-                          {currentCoverReference ? (
-                            <Box className="provider-media-preview">
-                              <PublicMediaImage
-                                src={mediaContentPath(profileReference, currentCoverReference)}
-                                alt={`${page.displayName} cover`}
-                                className="provider-media-preview__image provider-media-preview__image--cover"
-                                objectFit="cover"
-                                fallback={<div className="provider-media-empty-state">No cover image uploaded.</div>}
-                                loading="eager"
-                              />
-                            </Box>
-                          ) : (
-                            <Box className="provider-media-empty-state">No cover image uploaded.</Box>
-                          )}
-                          <Typography variant="body2" color="text.secondary">
-                            Recommended: wide landscape image, PNG/JPG/JPEG/WEBP, under 10 MB.
-                          </Typography>
-                          <Stack direction="row" spacing={1} flexWrap="wrap">
-                            <Button component="label" variant="contained" startIcon={<PhotoCameraIcon />}>
-                              {uploadingMedia === "COVER_IMAGE" ? "Uploading..." : currentCoverReference ? "Replace cover" : "Upload cover image"}
-                              <input
-                                hidden
-                                type="file"
-                                accept={mediaUploadAccept}
-                                onChange={(event) => {
-                                  const input = event.currentTarget;
-                                  void handleMediaUpload("COVER_IMAGE", input.files).finally(() => {
-                                    input.value = "";
-                                  });
-                                }}
-                              />
-                            </Button>
-                            <Button
-                              variant="outlined"
-                              onClick={() => setRemoveTarget(currentCoverReference ? { documentReference: currentCoverReference, label: "cover image" } : null)}
-                              disabled={!currentCoverReference}
-                            >
-                              Remove cover
-                            </Button>
-                          </Stack>
-                        </Stack>
-                      </Paper>
-
-                      <Paper variant="outlined" className="provider-media-panel">
-                        <Stack spacing={1.25}>
-                          <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={2} flexWrap="wrap">
-                            <div>
-                              <Typography variant="subtitle1">Gallery</Typography>
-                              <Typography variant="body2" color="text.secondary">
-                                {currentGalleryReferences.length} of 20 images uploaded
-                              </Typography>
-                            </div>
-                            <Button component="label" variant="contained" startIcon={<PhotoCameraIcon />}>
-                              {uploadingMedia === "GALLERY_IMAGE" ? "Uploading..." : "Add more images"}
-                              <input
-                                hidden
-                                type="file"
-                                accept={mediaUploadAccept}
-                                multiple
-                                onChange={(event) => {
-                                  const input = event.currentTarget;
-                                  void handleMediaUpload("GALLERY_IMAGE", input.files).finally(() => {
-                                    input.value = "";
-                                  });
-                                }}
-                              />
-                            </Button>
-                          </Stack>
-
-                          {currentGalleryReferences.length ? (
-                            <Stack spacing={1.25}>
-                              {currentGalleryReferences.map((reference, index) => {
-                                const metadata = currentGalleryMetadata[reference];
-                                const altText = currentGalleryAltTexts[reference] ?? "";
-                                const isPrimary = currentPrimaryGalleryReference === reference;
-                                return (
-                                  <Paper key={reference} variant="outlined" className="provider-media-gallery-item">
-                                    <Stack spacing={1.25}>
-                                      <Box className="provider-media-gallery-item__preview">
-                                        <PublicMediaImage
-                                          src={mediaContentPath(profileReference, reference)}
-                                          alt={altText.trim() || metadata?.originalFilename || `Gallery image ${index + 1}`}
-                                          className="provider-media-preview__image provider-media-preview__image--gallery"
-                                          objectFit="cover"
-                                          fallback={<div className="provider-media-empty-state">No gallery image preview available.</div>}
-                                        />
-                                      </Box>
-                                      <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between" flexWrap="wrap">
-                                        <Typography variant="subtitle2">
-                                          {metadata?.originalFilename || `Gallery image ${index + 1}`}
-                                          {isPrimary ? " · Primary" : ""}
-                                        </Typography>
-                                        <Stack direction="row" spacing={0.5}>
-                                          <IconButton
-                                            aria-label={`Move gallery image ${index + 1} up`}
-                                            size="small"
-                                            onClick={() => void reorderGallery(reference, "up")}
-                                            disabled={index === 0}
-                                          >
-                                            <ArrowUpwardIcon fontSize="small" />
-                                          </IconButton>
-                                          <IconButton
-                                            aria-label={`Move gallery image ${index + 1} down`}
-                                            size="small"
-                                            onClick={() => void reorderGallery(reference, "down")}
-                                            disabled={index === currentGalleryReferences.length - 1}
-                                          >
-                                            <ArrowDownwardIcon fontSize="small" />
-                                          </IconButton>
-                                          <IconButton
-                                            aria-label={`Remove gallery image ${index + 1}`}
-                                            size="small"
-                                            onClick={() => setRemoveTarget({ documentReference: reference, label: metadata?.originalFilename || `gallery image ${index + 1}` })}
-                                          >
-                                            <DeleteOutlineIcon fontSize="small" />
-                                          </IconButton>
-                                        </Stack>
-                                      </Stack>
-                                      <TextField
-                                        label="Alt text"
-                                        value={altText}
-                                        onChange={(event) => updateSection({
-                                          ...currentMedia,
-                                          galleryAltTextByDocumentId: {
-                                            ...currentGalleryAltTexts,
-                                            [reference]: event.target.value,
-                                          },
-                                        })}
-                                        onBlur={(event) => void updateGalleryAltText(reference, event.target.value)}
-                                        helperText="Describe the image for screen readers."
-                                        fullWidth
-                                      />
-                                      <Stack direction="row" spacing={1} flexWrap="wrap">
-                                        <Button
-                                          variant={isPrimary ? "contained" : "outlined"}
-                                          size="small"
-                                          onClick={() => void setPrimaryGallery(reference)}
-                                        >
-                                          {isPrimary ? "Primary image" : "Set as primary"}
-                                        </Button>
-                                      </Stack>
-                                    </Stack>
-                                  </Paper>
-                                );
-                              })}
-                            </Stack>
-                          ) : (
-                            <Box className="provider-media-empty-state">No gallery images uploaded.</Box>
-                          )}
-                        </Stack>
-                      </Paper>
-                    </Stack>
-                  ) : null}
-
-                  {currentSection === "seo" ? (
-                    <Stack spacing={1.5}>
-                      <TextField label="Slug" value={String(sectionContent(currentDraft, "seo").slug || "")} onChange={(event) => updateSection({ ...sectionContent(currentDraft, "seo"), slug: event.target.value, canonicalPublicPath: `/discover/clinics/${event.target.value}` })} fullWidth />
-                      <TextField label="Meta title" value={String(sectionContent(currentDraft, "seo").metaTitle || "")} onChange={(event) => updateSection({ ...sectionContent(currentDraft, "seo"), metaTitle: event.target.value })} fullWidth />
-                      <TextField label="Meta description" multiline minRows={3} value={String(sectionContent(currentDraft, "seo").metaDescription || "")} onChange={(event) => updateSection({ ...sectionContent(currentDraft, "seo"), metaDescription: event.target.value })} fullWidth />
-                    </Stack>
-                  ) : null}
-
-                  {currentSection === "readiness" ? (
-                    <Stack spacing={1.5}>
-                      <Typography variant="body2" color="text.secondary">Ready for review: {currentDraft.readiness.ready ? "Yes" : "No"}</Typography>
-                      <Typography variant="body2" color="text.secondary">Blocking reasons: {currentDraft.readiness.blockingReasons.map((item) => readableLifecycleLabel(item)).join(" · ") || "None"}</Typography>
-                      <Typography variant="body2" color="text.secondary">Missing fields: {currentDraft.readiness.missingMandatoryFields.map((item) => missingFieldChipLabel(item)).join(" · ") || "None"}</Typography>
-                    </Stack>
-                  ) : null}
-
-                  <Stack direction="row" spacing={1}>
-                    <Button variant="contained" onClick={() => void saveCurrentSection()} disabled={saving}>Save draft</Button>
-                    <Button component={Link} to={previewTarget} variant="outlined">{currentDraft.publicProfileStatus === "PUBLISHED" ? "View Public Profile" : "Preview Draft"}</Button>
-                    {currentModeration?.allowedActions.includes("SUBMIT_FOR_REVIEW") ? (
-                      <Button variant="outlined" onClick={() => void submitCurrentDraft()} disabled={submitting}>
-                        {submitting ? "Submitting..." : "Submit for review"}
-                      </Button>
-                    ) : null}
+                <ProviderEditorFooter>
+                  <Stack direction={{ xs: "column", sm: "row" }} spacing={1} useFlexGap flexWrap="wrap" alignItems={{ xs: "stretch", sm: "center" }}>
+                    <Button variant="contained" onClick={() => void saveCurrentSection()} disabled={saving}>Save changes</Button>
+                    <Button component={Link} to={previewTarget} variant="outlined">{currentDraft.publicProfileStatus === "PUBLISHED" ? "View Public Profile" : "Preview profile"}</Button>
+                    <Button component={Link} to={sectionRoute(profileReference, nextSection)} variant="outlined">Continue</Button>
                     <Button component={Link} to={DISCOVER_ROUTES.providerWorkspace.path} variant="text">Back to workspace</Button>
                   </Stack>
-                </Stack>
-              ) : (
-                <Box>
-                  <Alert severity="info" variant="outlined" sx={{ mb: 2 }}>
-                    DRAFT PREVIEW - NOT PUBLIC
-                  </Alert>
-                  <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" sx={{ mb: 2 }}>
-                    <Button component={Link} to={sectionRoute(profileReference, "overview")} variant="outlined">Back to editor</Button>
-                    <Button component={Link} to={DISCOVER_ROUTES.providerWorkspace.path} variant="outlined">Back to workspace</Button>
-                    <Button
-                      variant="outlined"
-                      onClick={async () => {
-                        try {
-                          if (navigator.clipboard?.writeText) {
-                            await navigator.clipboard.writeText(page.publicPath);
-                            setCopyStatus("Public URL copied.");
-                          } else {
-                            setCopyStatus("Copy is not available in this browser.");
-                          }
-                        } catch {
-                          setCopyStatus("Could not copy the URL. You can copy it manually.");
-                        }
-                      }}
-                    >
-                      Copy Public URL
-                    </Button>
-                  </Stack>
-                  {copyStatus ? (
-                    <Alert severity={copyStatus.startsWith("Public URL copied") ? "success" : "warning"} variant="outlined" sx={{ mb: 2 }}>
-                      {copyStatus}
-                    </Alert>
-                  ) : null}
-                  <LandingPageRenderer page={page} snapshot={snapshot} renderMode="PROVIDER_DRAFT_PREVIEW" />
-                </Box>
-              )}
+                </ProviderEditorFooter>
+              ) : null}
             </Stack>
           </article>
-      </div>
+        </main>
+
+        <aside className="provider-status-side provider-editor-sidebar">
+          <ProviderEditorSectionCard
+            title="Profile status"
+            description="Quick summary of the current draft."
+          >
+            <div className="provider-status-workflow-card">
+              <div className="provider-status-workflow-heading">
+                <div>
+                  <span className="eyebrow">Profile status</span>
+                  <h2>Draft Version {currentDraft.currentVersion}</h2>
+                </div>
+                <PendingActionsOutlinedIcon fontSize="small" aria-hidden="true" className="provider-status-workflow-heading-icon" />
+              </div>
+              <dl className="provider-status-definition-list provider-status-definition-list--summary provider-status-sidebar-metrics">
+                <div>
+                  <dt><ArticleOutlinedIcon fontSize="small" aria-hidden="true" /> Last saved</dt>
+                  <dd>{formatDateTime(activeDraft.lastSavedAt ?? activeDraft.updatedAt)}</dd>
+                </div>
+                <div>
+                  <dt><TaskAltOutlinedIcon fontSize="small" aria-hidden="true" /> Content</dt>
+                  <dd>{isCompletionReady ? "Complete" : "Needs more information"}</dd>
+                </div>
+                <div>
+                  <dt><PublishOutlinedIcon fontSize="small" aria-hidden="true" /> Publication</dt>
+                  <dd>{consentBlocked ? "Enable Discover participation before submitting for platform review." : currentModeration?.submissionEligible ? "Ready to submit for platform review." : "Submission blocked"}</dd>
+                </div>
+                <div>
+                  <dt><PersonOutlineOutlinedIcon fontSize="small" aria-hidden="true" /> Owner</dt>
+                  <dd>{page.displayName}</dd>
+                </div>
+              </dl>
+              <div className="provider-status-workflow-next-step">
+                <span className="eyebrow">Next step</span>
+                <strong>{workflowNextStep}</strong>
+                <span>{workflowNextStepDetails}</span>
+              </div>
+            </div>
+          </ProviderEditorSectionCard>
+          <ProviderEditorSectionCard
+            title="Profile Sections"
+            description="Jump to any section without losing your place."
+          >
+            <Stack spacing={0.5}>
+              {SECTION_ORDER.map((item) => (
+                (() => {
+                  const meta = sectionNavigatorMeta(item, currentDraft.completenessPercentage, missingMandatoryFields, currentDraft.readiness.invalidFields);
+                  return (
+                    <Button
+                      key={item}
+                      component={Link}
+                      to={sectionRoute(profileReference, item)}
+                      variant="text"
+                      size="small"
+                      aria-current={item === currentSection ? "page" : undefined}
+                      className={`provider-editor-nav-item${item === currentSection ? " is-active" : ""}`}
+                      startIcon={meta.icon}
+                      endIcon={meta.badge ? <span className={`provider-editor-nav-badge is-${meta.state}`}>{meta.badge}</span> : null}
+                    >
+                      <span className="provider-editor-nav-label">{sectionLabel(item)}</span>
+                    </Button>
+                  );
+                })()
+              ))}
+            </Stack>
+          </ProviderEditorSectionCard>
+        </aside>
       </div>
 
       <Dialog open={Boolean(removeTarget)} onClose={() => setRemoveTarget(null)}>

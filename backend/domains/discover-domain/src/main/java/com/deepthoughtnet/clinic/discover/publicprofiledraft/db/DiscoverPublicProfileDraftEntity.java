@@ -218,6 +218,7 @@ public class DiscoverPublicProfileDraftEntity {
             String contentStatus,
             String readinessStatus,
             int completenessPercentage,
+            String tenantConsentStatus,
             String publicProfileStatus,
             int currentVersion,
             String displayName,
@@ -242,6 +243,7 @@ public class DiscoverPublicProfileDraftEntity {
         this.contentStatus = contentStatus;
         this.readinessStatus = readinessStatus;
         this.completenessPercentage = completenessPercentage;
+        this.tenantConsentStatus = tenantConsentStatus;
         this.publicProfileStatus = publicProfileStatus;
         this.currentVersion = currentVersion;
         this.displayName = displayName;

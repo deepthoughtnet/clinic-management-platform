@@ -80,6 +80,7 @@ public class ProviderPublicProfileDraftService {
     private final DiscoverPublicProfileDraftRepository drafts;
     private final DiscoverPublicProfileDraftVersionRepository versions;
     private final ProviderOwnershipService ownershipService;
+    private final ClinicProfileConsentLookup clinicProfileConsentLookup;
     private final ProviderPublicProfileService publicProfileService;
     private final DiscoverPublicProfileSubmissionRepository submissions;
     private final ObjectStorageService storageService;
@@ -89,6 +90,7 @@ public class ProviderPublicProfileDraftService {
             DiscoverPublicProfileDraftRepository drafts,
             DiscoverPublicProfileDraftVersionRepository versions,
             ProviderOwnershipService ownershipService,
+            ClinicProfileConsentLookup clinicProfileConsentLookup,
             ProviderPublicProfileService publicProfileService,
             DiscoverPublicProfileSubmissionRepository submissions,
             ObjectStorageService storageService,
@@ -97,6 +99,7 @@ public class ProviderPublicProfileDraftService {
         this.drafts = drafts;
         this.versions = versions;
         this.ownershipService = ownershipService;
+        this.clinicProfileConsentLookup = clinicProfileConsentLookup;
         this.publicProfileService = publicProfileService;
         this.submissions = submissions;
         this.storageService = storageService;
@@ -111,6 +114,15 @@ public class ProviderPublicProfileDraftService {
     @Transactional(readOnly = true)
     public PublicProfileDraftWorkspaceRecord getDraft(UUID providerAccountId, String publicProfileReference) {
         return loadOrCreate(providerAccountId, publicProfileReference, false);
+    }
+
+    @Transactional
+    public PublicProfileDraftWorkspaceRecord recalculateReadiness(UUID providerAccountId, String publicProfileReference) {
+        requireEditableAccess(providerAccountId, publicProfileReference);
+        DiscoverPublicProfileDraftEntity entity = loadDraftEntity(publicProfileReference)
+                .orElseThrow(() -> new ProviderOwnershipConflictException("public_profile_draft_not_found", "Public profile draft not found."));
+        canonicalDraftState(entity, true);
+        return toWorkspace(entity);
     }
 
     @Transactional
@@ -331,9 +343,10 @@ public class ProviderPublicProfileDraftService {
 
     private PublicProfileDraftWorkspaceRecord createDraft(UUID providerAccountId, String publicProfileReference) {
         PublicProfileLifecycleRecord lifecycle = publicProfileService.findLifecycleByProviderId(parseUuid(publicProfileReference)).orElse(null);
-        Map<String, Object> content = initialContent(lifecycle);
+        String tenantConsentStatus = resolveTenantConsentStatus(publicProfileReference, "DISABLED");
+        Map<String, Object> content = initialContent(lifecycle, tenantConsentStatus);
         Map<String, PublicProfileDraftFieldSourceRecord> sources = initialSources(lifecycle);
-        PublicProfileDraftReadinessRecord readiness = evaluateReadiness(content, providerAccountId, true);
+        PublicProfileDraftReadinessRecord readiness = evaluateReadiness(content, providerAccountId, true, 1);
         String canonicalSlug = resolveSlug(lifecycle, content);
         String publicPath = publicPath(ProviderType.CLINIC, canonicalSlug);
         String draftReference = UUID.randomUUID().toString();
@@ -350,7 +363,7 @@ public class ProviderPublicProfileDraftService {
                     ProviderType.CLINIC,
                     providerAccountId,
                     "VERIFIED",
-                    "DISABLED",
+                    tenantConsentStatus,
                     PUBLIC_PROFILE_STATUS,
                     readiness.ready() ? "READY_FOR_REVIEW" : "DRAFT_INCOMPLETE",
                     readiness.readinessStatus(),
@@ -409,12 +422,13 @@ public class ProviderPublicProfileDraftService {
             Map<String, PublicProfileDraftFieldSourceRecord> sources,
             boolean force
     ) {
-        PublicProfileDraftReadinessRecord readiness = evaluateReadiness(content, providerAccountId, false);
         String contentJson = toJson(content);
         if (!force && Objects.equals(contentJson, entity.getContentJson())) {
             return toWorkspace(entity);
         }
         int nextVersion = entity.getCurrentVersion() + 1;
+        PublicProfileDraftReadinessRecord readiness = evaluateReadiness(content, providerAccountId, false, nextVersion);
+        String tenantConsentStatus = resolveTenantConsentStatus(entity.getPublicProfileReference(), entity.getTenantConsentStatus());
         OffsetDateTime now = OffsetDateTime.now();
         String readinessJson = toJson(readiness);
         String sourcesJson = toJson(sources);
@@ -423,6 +437,7 @@ public class ProviderPublicProfileDraftService {
                 readiness.ready() ? "READY_FOR_REVIEW" : "DRAFT_INCOMPLETE",
                 readiness.readinessStatus(),
                 readiness.completenessPercentage(),
+                tenantConsentStatus,
                 entity.getPublicProfileStatus(),
                 nextVersion,
                 summary.displayName(),
@@ -501,7 +516,7 @@ public class ProviderPublicProfileDraftService {
         Map<String, Object> content = contentMap(entity);
         Map<String, Object> about = asSection(content.get("about"));
         Map<String, PublicProfileDraftFieldSourceRecord> sources = sourceMap(entity);
-        PublicProfileDraftReadinessRecord readiness = readiness(entity);
+        CanonicalDraftState canonical = canonicalDraftState(entity, false);
         List<PublicProfileDraftVersionRecord> versionRecords = versions.findByDraftReferenceOrderByVersionNumberDesc(entity.getDraftReference()).stream()
                 .map(version -> new PublicProfileDraftVersionRecord(
                         version.getId(),
@@ -511,7 +526,7 @@ public class ProviderPublicProfileDraftService {
                         version.getCreatedByProviderAccountId()
                 ))
                 .toList();
-        List<PublicProfileDraftSectionRecord> sections = sections(content, sources);
+        List<PublicProfileDraftSectionRecord> sections = sections(content, sources, canonical);
         return new PublicProfileDraftWorkspaceRecord(
                 entity.getId(),
                 entity.getDraftReference(),
@@ -519,11 +534,11 @@ public class ProviderPublicProfileDraftService {
                 entity.getPublicProfileType(),
                 entity.getProviderAccountId(),
                 entity.getOwnershipStatus(),
-                entity.getTenantConsentStatus(),
+                canonical.tenantConsentStatus(),
                 entity.getPublicProfileStatus(),
-                entity.getContentStatus(),
-                entity.getReadinessStatus(),
-                entity.getCompletenessPercentage(),
+                canonical.contentStatus(),
+                canonical.readinessStatus(),
+                canonical.completenessPercentage(),
                 entity.getCurrentVersion(),
                 entity.getCreatedAt(),
                 entity.getUpdatedAt(),
@@ -546,32 +561,50 @@ public class ProviderPublicProfileDraftService {
                 entity.getSourceRevision(),
                 entity.getSourceUpdatedAt(),
                 entity.getPublicPath(),
-                allowedActions(entity),
+                canonical.allowedActions(),
                 sections,
-                readiness,
+                canonical.readiness(),
                 versionRecords,
                 sources
         );
     }
 
-    private List<PublicProfileDraftSectionRecord> sections(Map<String, Object> content, Map<String, PublicProfileDraftFieldSourceRecord> sources) {
+    private List<PublicProfileDraftSectionRecord> sections(
+            Map<String, Object> content,
+            Map<String, PublicProfileDraftFieldSourceRecord> sources,
+            CanonicalDraftState canonical
+    ) {
         return List.of(
-                section("overview", "Overview", content, sources),
-                section("about", "About", content, sources),
-                section("contact", "Contact", content, sources),
-                section("services", "Services", content, sources),
-                section("specialities", "Specialities", content, sources),
-                section("facilities", "Facilities", content, sources),
-                section("timings", "Timings", content, sources),
-                section("fees", "Fees", content, sources),
-                section("languages", "Languages", content, sources),
-                section("media", "Media", content, sources),
-                section("seo", "SEO", content, sources)
+                section("overview", "Overview", content, sources, canonical),
+                section("about", "About", content, sources, canonical),
+                section("contact", "Contact", content, sources, canonical),
+                section("services", "Services", content, sources, canonical),
+                section("specialities", "Specialities", content, sources, canonical),
+                section("facilities", "Facilities", content, sources, canonical),
+                section("timings", "Timings", content, sources, canonical),
+                section("fees", "Fees", content, sources, canonical),
+                section("languages", "Languages", content, sources, canonical),
+                section("media", "Media", content, sources, canonical),
+                section("seo", "SEO", content, sources, canonical)
         );
     }
 
-    private PublicProfileDraftSectionRecord section(String key, String title, Map<String, Object> content, Map<String, PublicProfileDraftFieldSourceRecord> sources) {
+    private PublicProfileDraftSectionRecord section(
+            String key,
+            String title,
+            Map<String, Object> content,
+            Map<String, PublicProfileDraftFieldSourceRecord> sources,
+            CanonicalDraftState canonical
+    ) {
         Map<String, Object> section = asSection(content.getOrDefault(key, Map.of()));
+        if ("overview".equals(key) && canonical != null) {
+            Map<String, Object> aligned = new LinkedHashMap<>(section);
+            aligned.put("contentStatus", canonical.contentStatus());
+            aligned.put("completenessPercentage", canonical.completenessPercentage());
+            aligned.put("summaryStatus", canonical.readiness().ready() ? "READY" : "DRAFT");
+            aligned.put("tenantConsentStatus", canonical.tenantConsentStatus());
+            section = aligned;
+        }
         Map<String, PublicProfileDraftFieldSourceRecord> sectionSources = sources.entrySet().stream()
                 .filter(entry -> entry.getKey().startsWith(key + "."))
                 .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (left, right) -> left, LinkedHashMap::new));
@@ -582,17 +615,120 @@ public class ProviderPublicProfileDraftService {
         if (entity == null) {
             return List.of();
         }
-        return switch (entity.getContentStatus() == null ? "DRAFT_INCOMPLETE" : entity.getContentStatus()) {
-            case "READY_FOR_REVIEW" -> List.of("VIEW_DETAILS", "OPEN_PUBLIC_PROFILE", "VIEW_PREVIEW", "VIEW_READINESS", "SAVE_DRAFT");
-            default -> List.of("VIEW_DETAILS", "OPEN_PUBLIC_PROFILE", "VIEW_PREVIEW", "VIEW_READINESS", "SAVE_DRAFT");
-        };
+        return canonicalDraftState(entity, false).allowedActions();
     }
 
     private PublicProfileDraftReadinessRecord readiness(DiscoverPublicProfileDraftEntity entity) {
-        return evaluateReadiness(contentMap(entity), entity.getProviderAccountId(), false);
+        return canonicalDraftState(entity, false).readiness();
     }
 
-    private PublicProfileDraftReadinessRecord evaluateReadiness(Map<String, Object> content, UUID providerAccountId, boolean newlyCreated) {
+    private String resolveTenantConsentStatus(String publicProfileReference, String fallbackStatus) {
+        UUID tenantId = parseUuid(publicProfileReference);
+        if (tenantId == null) {
+            return hasText(fallbackStatus) ? fallbackStatus : "DISABLED";
+        }
+        return clinicProfileConsentLookup.findDiscoverPublicListingEnabled(tenantId)
+                .map(enabled -> enabled ? "ENABLED" : "DISABLED")
+                .orElseGet(() -> hasText(fallbackStatus) ? fallbackStatus : "DISABLED");
+    }
+
+    private CanonicalDraftState canonicalDraftState(DiscoverPublicProfileDraftEntity entity) {
+        return canonicalDraftState(entity, false);
+    }
+
+    private CanonicalDraftState canonicalDraftState(DiscoverPublicProfileDraftEntity entity, boolean persistIfChanged) {
+        Map<String, Object> content = contentMap(entity);
+        PublicProfileDraftReadinessRecord readiness = evaluateReadiness(content, entity.getProviderAccountId(), false, entity.getCurrentVersion());
+        String tenantConsentStatus = resolveTenantConsentStatus(entity.getPublicProfileReference(), entity.getTenantConsentStatus());
+        String contentStatus = readiness.ready() ? "READY_FOR_REVIEW" : "DRAFT_INCOMPLETE";
+        String readinessStatus = readiness.readinessStatus();
+        int completenessPercentage = readiness.completenessPercentage();
+        if (persistIfChanged && needsCanonicalUpdate(entity, contentStatus, readinessStatus, completenessPercentage, tenantConsentStatus, readiness)) {
+            OffsetDateTime now = OffsetDateTime.now();
+            entity.update(
+                    contentStatus,
+                    readinessStatus,
+                    completenessPercentage,
+                    tenantConsentStatus,
+                    entity.getPublicProfileStatus(),
+                    entity.getCurrentVersion(),
+                    entity.getDisplayName(),
+                    entity.getCanonicalSlug(),
+                    entity.getCity(),
+                    entity.getArea(),
+                    entity.getState(),
+                    entity.getCountry(),
+                    entity.getPublicPhone(),
+                    entity.getPublicEmail(),
+                    entity.getWebsite(),
+                    entity.getWhatsappNumber(),
+                    entity.getRegistrationNumber(),
+                    entity.getEstablishedYear(),
+                    now,
+                    entity.getUpdatedByProviderAccountId(),
+                    entity.getPublicPath(),
+                    entity.getContentJson(),
+                    entity.getSourceAttributionJson(),
+                    toJson(readiness)
+            );
+            drafts.save(entity);
+        }
+        return new CanonicalDraftState(
+                contentStatus,
+                readinessStatus,
+                completenessPercentage,
+                tenantConsentStatus,
+                readiness,
+                allowedActions(contentStatus, readinessStatus, tenantConsentStatus, entity.getPublicProfileStatus())
+        );
+    }
+
+    private List<String> allowedActions(String contentStatus, String readinessStatus, String tenantConsentStatus, String publicProfileStatus) {
+        if ("PUBLISHED".equals(publicProfileStatus)) {
+            return List.of("VIEW_DETAILS", "OPEN_PUBLIC_PROFILE", "VIEW_PREVIEW", "VIEW_READINESS", "SAVE_DRAFT");
+        }
+        List<String> actions = new ArrayList<>(List.of("VIEW_DETAILS", "OPEN_PUBLIC_PROFILE", "VIEW_PREVIEW", "VIEW_READINESS", "SAVE_DRAFT"));
+        if ("READY_FOR_REVIEW".equals(contentStatus) && "READY".equals(readinessStatus) && "ENABLED".equalsIgnoreCase(tenantConsentStatus)) {
+            actions.add("SUBMIT_FOR_REVIEW");
+        }
+        return List.copyOf(actions);
+    }
+
+    private boolean needsCanonicalUpdate(
+            DiscoverPublicProfileDraftEntity entity,
+            String nextContentStatus,
+            String nextReadinessStatus,
+            int nextCompletenessPercentage,
+            String nextTenantConsentStatus,
+            PublicProfileDraftReadinessRecord nextReadiness
+    ) {
+        PublicProfileDraftReadinessRecord currentReadiness = readReadinessRecord(entity.getReadinessJson()).orElse(null);
+        return !Objects.equals(entity.getContentStatus(), nextContentStatus)
+                || !Objects.equals(entity.getReadinessStatus(), nextReadinessStatus)
+                || entity.getCompletenessPercentage() != nextCompletenessPercentage
+                || !Objects.equals(entity.getTenantConsentStatus(), nextTenantConsentStatus)
+                || !readinessSemanticallyEquals(currentReadiness, nextReadiness);
+    }
+
+    private boolean readinessSemanticallyEquals(PublicProfileDraftReadinessRecord left, PublicProfileDraftReadinessRecord right) {
+        if (left == right) {
+            return true;
+        }
+        if (left == null || right == null) {
+            return false;
+        }
+        return Objects.equals(left.readinessStatus(), right.readinessStatus())
+                && left.ready() == right.ready()
+                && left.completenessPercentage() == right.completenessPercentage()
+                && Objects.equals(left.missingMandatoryFields(), right.missingMandatoryFields())
+                && Objects.equals(left.recommendedFields(), right.recommendedFields())
+                && Objects.equals(left.invalidFields(), right.invalidFields())
+                && Objects.equals(left.warnings(), right.warnings())
+                && Objects.equals(left.blockingReasons(), right.blockingReasons())
+                && Objects.equals(left.evaluatedDraftVersion(), right.evaluatedDraftVersion());
+    }
+
+    private PublicProfileDraftReadinessRecord evaluateReadiness(Map<String, Object> content, UUID providerAccountId, boolean newlyCreated, Integer evaluatedDraftVersion) {
         Map<String, Object> about = asSection(content.get("about"));
         Map<String, Object> contact = asSection(content.get("contact"));
         Map<String, Object> services = asSection(content.get("services"));
@@ -627,7 +763,6 @@ public class ProviderPublicProfileDraftService {
         if (new LinkedHashSet<>(specialityItems).size() != specialityItems.size()) invalid.add("duplicate_specialities");
         if (new LinkedHashSet<>(languageItems).size() != languageItems.size()) invalid.add("duplicate_languages");
         if (overlappingTimings(timings)) invalid.add("overlapping_timings");
-        if (slugConflict(stringValue(seo, "slug"))) invalid.add("slug_conflict");
         if (stringValue(contact, "publicPhone") != null && !stringValue(contact, "publicPhone").trim().matches("[0-9+()\\-\\s]{7,20}")) invalid.add("invalid_phone");
         if (stringValue(contact, "publicEmail") != null && !stringValue(contact, "publicEmail").trim().matches("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")) invalid.add("invalid_email");
         if (stringValue(seo, "canonicalPublicPath") != null && !stringValue(seo, "canonicalPublicPath").startsWith("/discover/")) warnings.add("canonical_path_preview_only");
@@ -637,12 +772,11 @@ public class ProviderPublicProfileDraftService {
         if (ownershipService.findLatestVerifiedOwnership(providerAccountId).isEmpty()) {
             blockingReasons.add("OWNERSHIP_NOT_VERIFIED");
         }
-        blockingReasons.add("TENANT_CONSENT_DISABLED");
 
+        boolean ready = missing.isEmpty() && invalid.isEmpty();
         int mandatoryScore = score(MANDATORY_FIELDS, missing);
         int recommendedScore = recommendedScore(content);
-        int completeness = (int) Math.round((mandatoryScore * 0.8d) + (recommendedScore * 0.2d));
-        boolean ready = missing.isEmpty() && invalid.isEmpty();
+        int completeness = ready ? 100 : (int) Math.round((mandatoryScore * 0.8d) + (recommendedScore * 0.2d));
         String readinessStatus = ready ? "READY" : "INCOMPLETE";
         return new PublicProfileDraftReadinessRecord(
                 readinessStatus,
@@ -653,7 +787,8 @@ public class ProviderPublicProfileDraftService {
                 invalid,
                 warnings,
                 blockingReasons,
-                OffsetDateTime.now()
+                OffsetDateTime.now(),
+                evaluatedDraftVersion
         );
     }
 
@@ -766,7 +901,7 @@ public class ProviderPublicProfileDraftService {
         return publicProfileService.isSlugReserved(slug, null);
     }
 
-    private Map<String, Object> initialContent(PublicProfileLifecycleRecord lifecycle) {
+    private Map<String, Object> initialContent(PublicProfileLifecycleRecord lifecycle, String tenantConsentStatus) {
         Map<String, Object> content = new LinkedHashMap<>();
         String displayName = lifecycle == null ? "Provider profile" : firstNonBlank(lifecycle.displayName(), "Provider profile");
         String city = lifecycle == null ? null : lifecycle.city();
@@ -778,7 +913,7 @@ public class ProviderPublicProfileDraftService {
                 "establishedYear", null,
                 "summaryStatus", "DRAFT",
                 "ownershipStatus", "VERIFIED",
-                "tenantConsentStatus", "DISABLED",
+                "tenantConsentStatus", tenantConsentStatus,
                 "contentStatus", "DRAFT_INCOMPLETE",
                 "completenessPercentage", 0,
                 "lastSavedAt", null
@@ -840,7 +975,7 @@ public class ProviderPublicProfileDraftService {
         putSource(sources, "about.displayName", now, displayName);
         putSource(sources, "contact.city", now, lifecycle == null ? null : lifecycle.city());
         putSource(sources, "contact.area", now, lifecycle == null ? null : lifecycle.area());
-        putSource(sources, "seo.slug", now, resolveSlug(lifecycle, initialContent(lifecycle)));
+        putSource(sources, "seo.slug", now, resolveSlug(lifecycle, initialContent(lifecycle, "DISABLED")));
         putSource(sources, "seo.metaTitle", now, displayName);
         return sources;
     }
@@ -923,6 +1058,48 @@ public class ProviderPublicProfileDraftService {
             present++;
         }
         return (int) Math.round((present * 100d) / Math.max(1, RECOMMENDED_FIELDS.size()));
+    }
+
+    private PublicProfileDraftWorkspaceRecord reconcileReadiness(DiscoverPublicProfileDraftEntity entity, UUID providerAccountId, boolean persistIfChanged) {
+        Map<String, Object> content = contentMap(entity);
+        PublicProfileDraftReadinessRecord readiness = evaluateReadiness(content, providerAccountId, false, entity.getCurrentVersion());
+        String nextContentStatus = readiness.ready() ? "READY_FOR_REVIEW" : "DRAFT_INCOMPLETE";
+        String nextReadinessStatus = readiness.ready() ? "READY" : "INCOMPLETE";
+        boolean changed = !Objects.equals(entity.getContentStatus(), nextContentStatus)
+                || !Objects.equals(entity.getReadinessStatus(), nextReadinessStatus)
+                || entity.getCompletenessPercentage() != readiness.completenessPercentage()
+                || !Objects.equals(entity.getReadinessJson(), toJson(readiness));
+        if (persistIfChanged && changed) {
+            OffsetDateTime now = OffsetDateTime.now();
+            entity.update(
+                    nextContentStatus,
+                    nextReadinessStatus,
+                    readiness.completenessPercentage(),
+                    entity.getTenantConsentStatus(),
+                    entity.getPublicProfileStatus(),
+                    entity.getCurrentVersion(),
+                    entity.getDisplayName(),
+                    entity.getCanonicalSlug(),
+                    entity.getCity(),
+                    entity.getArea(),
+                    entity.getState(),
+                    entity.getCountry(),
+                    entity.getPublicPhone(),
+                    entity.getPublicEmail(),
+                    entity.getWebsite(),
+                    entity.getWhatsappNumber(),
+                    entity.getRegistrationNumber(),
+                    entity.getEstablishedYear(),
+                    now,
+                    providerAccountId,
+                    entity.getPublicPath(),
+                    entity.getContentJson(),
+                    entity.getSourceAttributionJson(),
+                    toJson(readiness)
+            );
+            drafts.save(entity);
+        }
+        return toWorkspace(entity);
     }
 
     private String publicPath(ProviderType providerType, String slug) {
@@ -1258,6 +1435,16 @@ public class ProviderPublicProfileDraftService {
             String whatsappNumber,
             String registrationNumber,
             Integer establishedYear
+    ) {
+    }
+
+    private record CanonicalDraftState(
+            String contentStatus,
+            String readinessStatus,
+            int completenessPercentage,
+            String tenantConsentStatus,
+            PublicProfileDraftReadinessRecord readiness,
+            List<String> allowedActions
     ) {
     }
 }

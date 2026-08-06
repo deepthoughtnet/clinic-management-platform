@@ -109,6 +109,8 @@ public class RequestContextFilter extends OncePerRequestFilter implements Ordere
                             null,
                             null,
                             sub,
+                            safe(auth.email()),
+                            safe(auth.displayName()),
                             tokenRoles,
                             null,
                             corr
@@ -141,6 +143,8 @@ public class RequestContextFilter extends OncePerRequestFilter implements Ordere
                     tenantId,
                     appUserId,
                     sub,
+                    safe(auth.email()),
+                    safe(auth.displayName()),
                     tokenRoles,
                     tenantRole,
                     corr

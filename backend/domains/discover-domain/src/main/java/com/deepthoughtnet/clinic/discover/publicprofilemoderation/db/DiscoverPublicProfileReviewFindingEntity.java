@@ -29,6 +29,10 @@ public class DiscoverPublicProfileReviewFindingEntity {
     private boolean required;
     @Column(name = "reviewer_note", length = 1000)
     private String reviewerNote;
+    @Column(name = "provider_facing_message", length = 1000)
+    private String providerFacingMessage;
+    @Column(name = "internal_note", length = 1000)
+    private String internalNote;
     @Column(name = "resolution_status", nullable = false, length = 32)
     private String resolutionStatus;
     @Column(name = "provider_resolution_note", length = 1000)
@@ -57,6 +61,24 @@ public class DiscoverPublicProfileReviewFindingEntity {
             String resolutionStatus,
             OffsetDateTime createdAt
     ) {
+        return create(id, findingReference, submissionReference, section, fieldKey, category, severity, required, reviewerNote, null, null, resolutionStatus, createdAt);
+    }
+
+    public static DiscoverPublicProfileReviewFindingEntity create(
+            UUID id,
+            String findingReference,
+            String submissionReference,
+            String section,
+            String fieldKey,
+            String category,
+            String severity,
+            boolean required,
+            String reviewerNote,
+            String providerFacingMessage,
+            String internalNote,
+            String resolutionStatus,
+            OffsetDateTime createdAt
+    ) {
         DiscoverPublicProfileReviewFindingEntity entity = new DiscoverPublicProfileReviewFindingEntity();
         entity.id = id;
         entity.findingReference = findingReference;
@@ -67,6 +89,8 @@ public class DiscoverPublicProfileReviewFindingEntity {
         entity.severity = severity;
         entity.required = required;
         entity.reviewerNote = reviewerNote;
+        entity.providerFacingMessage = providerFacingMessage;
+        entity.internalNote = internalNote;
         entity.resolutionStatus = resolutionStatus;
         entity.createdAt = createdAt;
         return entity;
@@ -81,6 +105,8 @@ public class DiscoverPublicProfileReviewFindingEntity {
     public String getSeverity() { return severity; }
     public boolean isRequired() { return required; }
     public String getReviewerNote() { return reviewerNote; }
+    public String getProviderFacingMessage() { return providerFacingMessage; }
+    public String getInternalNote() { return internalNote; }
     public String getResolutionStatus() { return resolutionStatus; }
     public String getProviderResolutionNote() { return providerResolutionNote; }
     public OffsetDateTime getCreatedAt() { return createdAt; }

@@ -60,7 +60,41 @@ public final class ProviderAuthModels {
             boolean previewReady,
             OffsetDateTime updatedAt,
             OffsetDateTime submittedAt,
-            String publicProfilePath
+            String publicProfilePath,
+            List<String> allowedActions
+    ) {
+    }
+
+    public record WorkspaceProfileResponse(
+            UUID draftId,
+            String draftReference,
+            String publicProfileReference,
+            ProviderType profileType,
+            String displayName,
+            String city,
+            String area,
+            String ownershipStatus,
+            String tenantConsentStatus,
+            int draftVersion,
+            String contentStatus,
+            String readinessStatus,
+            int completenessPercentage,
+            String moderationStatus,
+            String activeSubmissionReference,
+            String publicationStatus,
+            String effectiveVisibility,
+            String platformConnectionStatus,
+            String bookingCapability,
+            OffsetDateTime lastUpdatedAt,
+            List<String> blockingReasons,
+            List<String> allowedActions,
+            String primaryAction,
+            List<String> secondaryActions,
+            String lifecycleLabel,
+            String attentionLabel,
+            String nextActionLabel,
+            String publicProfilePath,
+            boolean providerActionRequired
     ) {
     }
 
@@ -72,7 +106,13 @@ public final class ProviderAuthModels {
             List<ProviderWorkspaceWorkItemResponse> workItems,
             List<WorkspaceApplicationResponse> applications,
             List<WorkspaceApplicationResponse> publishedProfiles,
+            List<WorkspaceProfileResponse> profiles,
             int attentionCount,
+            int activeProfileCount,
+            int readyForReviewCount,
+            int underReviewCount,
+            int publishedCount,
+            int needsAttentionCount,
             List<ProviderType> supportedProviderTypes
     ) {
     }

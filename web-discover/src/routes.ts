@@ -22,6 +22,7 @@ export const DISCOVER_ROUTES = {
   providerApplicationDashboard: { path: "/provider/applications/:applicationReference", label: "Provider Application" },
   providerWorkspace: { path: "/provider", label: "Provider Workspace" },
   providerPublicProfileDraft: { path: "/provider/public-profiles/:profileReference/:section", label: "Public Profile Draft" },
+  providerPublicProfileReview: { path: "/provider/public-profiles/:profileReference/review", label: "Public Profile Review" },
   providerLandingPage: { path: "/provider/profiles", label: "Provider Profiles" },
   providerAccount: { path: "/provider/account", label: "Account & Security" },
   providerOnboarding: { path: "/provider/onboarding/:applicationId/:step", label: "Provider Onboarding" },

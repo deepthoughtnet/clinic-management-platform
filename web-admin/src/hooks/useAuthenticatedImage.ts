@@ -1,5 +1,6 @@
 import * as React from "react";
 
+import { fetchPlatformPublicProfileReviewMedia } from "../api/clinicApi";
 import { fetchAuthenticatedBlob } from "../api/restClient";
 import { useAuth } from "../auth/useAuth";
 
@@ -15,6 +16,19 @@ function revokeObjectUrl(url: string | null) {
   }
 }
 
+const PLATFORM_PUBLIC_PROFILE_REVIEW_MEDIA_RE = /^\/api\/platform\/provider-connections\/public-profile-reviews\/([^/]+)\/media\/([^/]+)\/content$/;
+
+function parsePlatformPublicProfileReviewMediaPath(url: string) {
+  const match = url.match(PLATFORM_PUBLIC_PROFILE_REVIEW_MEDIA_RE);
+  if (!match) {
+    return null;
+  }
+  return {
+    submissionReference: decodeURIComponent(match[1]),
+    mediaReference: decodeURIComponent(match[2]),
+  };
+}
+
 export function useAuthenticatedImage(url: string | null | undefined): UseAuthenticatedImageResult {
   const auth = useAuth();
   const [objectUrl, setObjectUrl] = React.useState<string | null>(null);
@@ -23,6 +37,7 @@ export function useAuthenticatedImage(url: string | null | undefined): UseAuthen
 
   React.useEffect(() => {
     let cancelled = false;
+    const abortController = new AbortController();
 
     async function load() {
       const nextUrl = url?.trim() || null;
@@ -46,7 +61,9 @@ export function useAuthenticatedImage(url: string | null | undefined): UseAuthen
         return;
       }
 
-      if (!auth.accessToken || !auth.tenantId) {
+      const platformReviewMedia = parsePlatformPublicProfileReviewMediaPath(nextUrl);
+
+      if (!auth.accessToken || (!auth.tenantId && !platformReviewMedia)) {
         setLoading(false);
         setError("Missing authentication context for image request.");
         return;
@@ -54,10 +71,18 @@ export function useAuthenticatedImage(url: string | null | undefined): UseAuthen
 
       setLoading(true);
       try {
-        const blob = await fetchAuthenticatedBlob(nextUrl, {
-          token: auth.accessToken,
-          tenantId: auth.tenantId,
-        });
+        const blob = platformReviewMedia
+          ? await fetchPlatformPublicProfileReviewMedia(
+            auth.accessToken,
+            platformReviewMedia.submissionReference,
+            platformReviewMedia.mediaReference,
+            abortController.signal,
+          )
+          : await fetchAuthenticatedBlob(nextUrl, {
+            token: auth.accessToken,
+            tenantId: auth.tenantId,
+            signal: abortController.signal,
+          });
         if (!blob.size) {
           throw new Error("Image response is empty.");
         }
@@ -83,6 +108,7 @@ export function useAuthenticatedImage(url: string | null | undefined): UseAuthen
 
     return () => {
       cancelled = true;
+      abortController.abort();
       setObjectUrl((current) => {
         revokeObjectUrl(current);
         return null;
@@ -92,4 +118,3 @@ export function useAuthenticatedImage(url: string | null | undefined): UseAuthen
 
   return { objectUrl, loading, error };
 }
-

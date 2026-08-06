@@ -64,7 +64,12 @@ export function LocationDisplayMap({
         useDefaultCenter={false}
         emptyState={(
           <div className="location-map__fallback-copy">
-            <strong>Map location has not been pinned yet.</strong>
+            <div>
+              <strong>Map unavailable</strong>
+            </div>
+            <div>
+              <span>Clinic location has not been pinned yet.</span>
+            </div>
           </div>
         )}
         unavailableState={(

@@ -139,9 +139,87 @@ function normalizeHexColor(value: string, fallback: string): string {
 
 function formatPresenceDateTime(value: string | null | undefined) {
   if (!value) {
-    return "Not yet synchronized";
+    return "Not yet updated";
   }
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+}
+
+function formatPublicationHistoryDateTime(value: string | null | undefined) {
+  if (!value) {
+    return "No published version yet";
+  }
+  return formatPresenceDateTime(value);
+}
+
+function readableDraftLifecycle(status: string | null | undefined) {
+  switch (status) {
+    case "NO_DRAFT":
+      return "No draft";
+    case "READY_FOR_REVIEW":
+      return "Ready for Platform Review";
+    case "DRAFT_INCOMPLETE":
+      return "Draft incomplete";
+    case "DRAFT":
+      return "Draft";
+    case "SUBMITTED":
+      return "Submitted for Platform Review";
+    case "UNDER_REVIEW":
+      return "Platform review in progress";
+    case "CHANGES_REQUESTED":
+      return "Changes requested";
+    case "APPROVED":
+      return "Approved by Platform";
+    case "PUBLISHED":
+      return "Published";
+    case "UNPUBLISHED":
+      return "Unpublished";
+    default:
+      return status ? "Draft" : "No draft";
+  }
+}
+
+function readableConsentStatus(status: string | null | undefined) {
+  switch (status) {
+    case "ENABLED":
+      return "Discover participation enabled";
+    case "DISABLED":
+      return "Discover participation disabled";
+    case "REVOKED":
+      return "Discover participation revoked";
+    default:
+      return "Discover participation";
+  }
+}
+
+function readableOwnershipStatus(status: string | null | undefined) {
+  switch (status) {
+    case "VERIFIED":
+      return "Verified";
+    case "CLAIM_PENDING":
+      return "Claim pending";
+    case "DISPUTED":
+      return "Disputed";
+    case "REVOKED":
+      return "Revoked";
+    case "UNCLAIMED":
+      return "Unclaimed";
+    default:
+      return "Unclaimed";
+  }
+}
+
+function readableConnectionStatus(status: string | null | undefined) {
+  if (!status || status === "NOT_CONNECTED") {
+    return "Not connected";
+  }
+  return "Unknown";
+}
+
+function readableBookingStatus(status: string | null | undefined) {
+  if (!status || status === "NOT_AVAILABLE") {
+    return "Not available";
+  }
+  return "Unknown";
 }
 
 function clinicPresenceConnectionReference(presence: ClinicDiscoverPresence | null, claimIntent: ClinicDiscoverPresenceClaimIntent | null) {
@@ -163,6 +241,11 @@ function clinicPresenceActionHelpText(presence: ClinicDiscoverPresence | null) {
     return "Provider ownership is pending. Continue the existing claim in the Provider workspace.";
   }
   return "Create a provider claim from Healthcare to start the ownership flow.";
+}
+
+function clinicPresenceConsentEnabled(presence: ClinicDiscoverPresence | null, formEnabled: boolean) {
+  const consent = presence?.publicDiscoveryConsent ?? (formEnabled ? "ENABLED" : "DISABLED");
+  return consent === "ENABLED";
 }
 
 function clinicPresenceCanCreateClaim(presence: ClinicDiscoverPresence | null) {
@@ -537,11 +620,12 @@ export default function ClinicProfilePage() {
     }
   };
 
-  const revokeConsent = async () => {
+  const toggleConsent = async () => {
     if (!canEdit) {
       return;
     }
-    await saveClinicProfile({ ...form, publicListingEnabled: false });
+    const nextEnabled = !clinicPresenceConsentEnabled(presence, form.publicListingEnabled);
+    await saveClinicProfile({ ...form, publicListingEnabled: nextEnabled });
   };
 
   const previewTemplate = async () => {
@@ -721,13 +805,13 @@ export default function ClinicProfilePage() {
               <Grid size={{ xs: 12, md: 4 }}>
                 <Stack spacing={0.5}>
                   <Typography variant="caption" color="text.secondary">Tenant consent</Typography>
-                  <Typography sx={{ fontWeight: 700 }}>{presence?.publicDiscoveryConsent ?? (form.publicListingEnabled ? "ENABLED" : "DISABLED")}</Typography>
+                  <Typography sx={{ fontWeight: 700 }}>{readableConsentStatus(presence?.publicDiscoveryConsent ?? (form.publicListingEnabled ? "ENABLED" : "DISABLED"))}</Typography>
                 </Stack>
               </Grid>
               <Grid size={{ xs: 12, md: 4 }}>
                 <Stack spacing={0.5}>
                   <Typography variant="caption" color="text.secondary">Provider ownership</Typography>
-                  <Typography sx={{ fontWeight: 700 }}>{presence?.ownershipStatus ?? "UNCLAIMED"}</Typography>
+                  <Typography sx={{ fontWeight: 700 }}>{readableOwnershipStatus(presence?.ownershipStatus ?? "UNCLAIMED")}</Typography>
                   {presence?.maskedProviderMobile ? (
                     <Typography variant="caption" color="text.secondary">Owner mobile ending {presence.maskedProviderMobile.slice(-4)}</Typography>
                   ) : null}
@@ -735,34 +819,34 @@ export default function ClinicProfilePage() {
               </Grid>
               <Grid size={{ xs: 12, md: 4 }}>
                 <Stack spacing={0.5}>
-                  <Typography variant="caption" color="text.secondary">Discover publication</Typography>
-                  <Typography sx={{ fontWeight: 700 }}>{presence?.publicProfileStatus ?? "UNPUBLISHED"}</Typography>
-                  <Typography variant="caption" color="text.secondary">Connection {presence?.platformConnectionStatus ?? "NOT_CONNECTED"}</Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {presence?.lastPublishedAt ? "Last published" : "Published profile"}
+                  </Typography>
+                  <Typography sx={{ fontWeight: 700 }}>{formatPublicationHistoryDateTime(presence?.lastPublishedAt)}</Typography>
                 </Stack>
               </Grid>
               <Grid size={{ xs: 12, md: 4 }}>
                 <Stack spacing={0.5}>
-                  <Typography variant="caption" color="text.secondary">Booking capability</Typography>
-                  <Typography sx={{ fontWeight: 700 }}>{presence?.bookingCapability ?? "NOT_AVAILABLE"}</Typography>
+                  <Typography variant="caption" color="text.secondary">Booking</Typography>
+                  <Typography sx={{ fontWeight: 700 }}>{readableBookingStatus(presence?.bookingCapability)}</Typography>
                 </Stack>
               </Grid>
               <Grid size={{ xs: 12, md: 8 }}>
                 <Stack spacing={0.5}>
                   <Typography variant="caption" color="text.secondary">Last ownership update</Typography>
                   <Typography sx={{ fontWeight: 700 }}>{formatPresenceDateTime(presence?.ownershipUpdatedAt)}</Typography>
-                  <Typography variant="caption" color="text.secondary">Public profile last synchronized</Typography>
-                  <Typography sx={{ fontWeight: 700 }}>{formatPresenceDateTime(presence?.publicProfileSynchronizedAt ?? presence?.lastSynchronizedAt)}</Typography>
+                  <Typography variant="caption" color="text.secondary">Platform connection</Typography>
+                  <Typography sx={{ fontWeight: 700 }}>{readableConnectionStatus(presence?.platformConnectionStatus)}</Typography>
                 </Stack>
               </Grid>
               <Grid size={{ xs: 12 }}>
                 <Stack spacing={0.5}>
                   <Typography variant="caption" color="text.secondary">Draft lifecycle</Typography>
                   <Typography sx={{ fontWeight: 700 }}>
-                    {presence?.draftStatus ?? "NO_DRAFT"}
-                    {presence?.draftReference ? ` · ${presence.draftReference}` : ""}
+                    {readableDraftLifecycle(presence?.draftStatus)}
                   </Typography>
                   <Typography variant="caption" color="text.secondary">
-                    Readiness {presence?.draftReadinessStatus ?? "—"} · Completeness {presence?.draftCompletenessPercentage ?? 0}%
+                    Readiness {presence?.draftReadinessStatus === "READY" ? "Ready" : presence?.draftReadinessStatus === "INCOMPLETE" ? "Incomplete" : presence?.draftReadinessStatus ?? "—"} · Completeness {presence?.draftCompletenessPercentage ?? 0}%
                   </Typography>
                   <Typography variant="caption" color="text.secondary">
                     Last draft save {formatPresenceDateTime(presence?.draftLastSavedAt)}
@@ -807,8 +891,8 @@ export default function ClinicProfilePage() {
               <Button type="button" variant="text" onClick={() => void refreshPresence()} disabled={!auth.accessToken}>
                 Refresh status
               </Button>
-              <Button type="button" variant="text" color="warning" onClick={() => void revokeConsent()} disabled={!canEdit || saving}>
-                Revoke tenant consent
+              <Button type="button" variant="text" color="warning" onClick={() => void toggleConsent()} disabled={!canEdit || saving}>
+                {clinicPresenceConsentEnabled(presence, form.publicListingEnabled) ? "Revoke Discover Consent" : "Enable Discover"}
               </Button>
             </Stack>
             <Typography variant="caption" color="text.secondary">

@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.api.discover.provider.auth;
 
 import com.deepthoughtnet.clinic.api.discover.provider.auth.ProviderAuthModels.WorkspaceApplicationResponse;
+import com.deepthoughtnet.clinic.api.discover.provider.auth.ProviderAuthModels.WorkspaceProfileResponse;
 import com.deepthoughtnet.clinic.api.discover.provider.auth.ProviderAuthModels.ProviderOnboardingAccessResponse;
 import com.deepthoughtnet.clinic.api.discover.provider.auth.ProviderAuthModels.ProviderWorkspaceStartRequest;
 import com.deepthoughtnet.clinic.api.discover.provider.auth.ProviderAuthModels.ProviderWorkspaceStartResponse;
@@ -17,6 +18,11 @@ import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipMod
 import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipModels.MembershipRecord;
 import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipModels.OwnershipRecord;
 import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipService;
+import com.deepthoughtnet.clinic.discover.publicprofiledraft.ProviderPublicProfileDraftService;
+import com.deepthoughtnet.clinic.discover.publicprofiledraft.PublicProfileDraftModels.PublicProfileDraftWorkspaceRecord;
+import com.deepthoughtnet.clinic.discover.publicprofilemoderation.ProviderPublicProfileModerationService;
+import com.deepthoughtnet.clinic.discover.publicprofilemoderation.PublicProfileModerationModels.PublicProfileModerationSubmissionRecord;
+import com.deepthoughtnet.clinic.discover.publicprofilemoderation.PublicProfileModerationModels.PublicProfilePublicationRecord;
 import com.deepthoughtnet.clinic.discover.verification.DiscoverVerificationService;
 import com.deepthoughtnet.clinic.discover.verification.db.DiscoverProviderAccountEntity;
 import com.deepthoughtnet.clinic.discover.verification.ProviderWorkspaceApplicationRecord;
@@ -31,6 +37,7 @@ import com.deepthoughtnet.clinic.platform.contracts.providerintegration.Platform
 import com.deepthoughtnet.clinic.platform.contracts.providerintegration.PublicProfileType;
 import com.deepthoughtnet.clinic.platform.contracts.providerintegration.PublicProviderReference;
 import com.deepthoughtnet.clinic.platform.providerintegration.service.ProviderLinkingService;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderLifecycleStatus;
@@ -57,6 +64,8 @@ public class ProviderWorkspaceController {
     private final DoctorProfileService doctorProfileService;
     private final TenantUserManagementService tenantUserManagementService;
     private final ProviderPublicProfileService publicProfileService;
+    private final ProviderPublicProfileDraftService draftService;
+    private final ProviderPublicProfileModerationService moderationService;
     private final ProviderLinkingService providerLinkingService;
 
     public ProviderWorkspaceController(
@@ -67,6 +76,8 @@ public class ProviderWorkspaceController {
             DoctorProfileService doctorProfileService,
             TenantUserManagementService tenantUserManagementService,
             ProviderPublicProfileService publicProfileService,
+            ProviderPublicProfileDraftService draftService,
+            ProviderPublicProfileModerationService moderationService,
             ProviderLinkingService providerLinkingService
     ) {
         this.verificationService = verificationService;
@@ -76,6 +87,8 @@ public class ProviderWorkspaceController {
         this.doctorProfileService = doctorProfileService;
         this.tenantUserManagementService = tenantUserManagementService;
         this.publicProfileService = publicProfileService;
+        this.draftService = draftService;
+        this.moderationService = moderationService;
         this.providerLinkingService = providerLinkingService;
     }
 
@@ -88,10 +101,17 @@ public class ProviderWorkspaceController {
         List<WorkspaceApplicationResponse> activeApplications = summaries.stream()
                 .filter(this::isActiveApplication)
                 .toList();
+        List<WorkspaceProfileResponse> profiles = loadProfiles(principal.providerAccountId());
         List<WorkspaceApplicationResponse> publishedProfiles = summaries.stream()
                 .filter(application -> application.status() == ProviderLifecycleStatus.PUBLISHED)
                 .toList();
         List<ProviderAuthModels.ProviderWorkspaceWorkItemResponse> workItems = loadWorkItems(principal.providerAccountId());
+        int activeProfileCount = profiles.size();
+        int readyForReviewCount = (int) profiles.stream().filter(this::isReadyForReviewProfile).count();
+        int underReviewCount = (int) profiles.stream().filter(this::isUnderReviewProfile).count();
+        int publishedCount = (int) profiles.stream().filter(profile -> "PUBLISHED".equals(profile.publicationStatus())).count();
+        int needsAttentionCount = (int) profiles.stream().filter(WorkspaceProfileResponse::providerActionRequired).count();
+        int attentionCount = needsAttentionCount + (int) workItems.stream().filter(this::requiresAttention).count();
         return ResponseEntity.ok()
                 .cacheControl(CacheControl.noStore())
                 .body(new WorkspaceResponse(
@@ -102,8 +122,13 @@ public class ProviderWorkspaceController {
                 workItems,
                 activeApplications,
                 publishedProfiles,
-                (int) (activeApplications.stream().filter(WorkspaceApplicationResponse::requiresAttention).count()
-                        + workItems.stream().filter(this::requiresAttention).count()),
+                profiles,
+                attentionCount,
+                activeProfileCount,
+                readyForReviewCount,
+                underReviewCount,
+                publishedCount,
+                needsAttentionCount,
                 List.of(ProviderType.INDIVIDUAL_DOCTOR, ProviderType.CLINIC, ProviderType.HOSPITAL)
         ));
     }
@@ -182,6 +207,14 @@ public class ProviderWorkspaceController {
                 .toList();
     }
 
+    private List<WorkspaceProfileResponse> loadProfiles(UUID providerAccountId) {
+        return draftService.listDraftLifecycle().stream()
+                .filter(profile -> providerAccountId.equals(profile.providerAccountId()))
+                .sorted((left, right) -> right.updatedAt().compareTo(left.updatedAt()))
+                .map(profile -> toWorkspaceProfile(providerAccountId, profile))
+                .toList();
+    }
+
     private List<ProviderAuthModels.ProviderWorkspaceWorkItemResponse> loadWorkItems(UUID providerAccountId) {
         List<ClaimIntentRecord> claimIntents = providerOwnershipService.listClaimIntents(providerAccountId);
         List<OwnershipRecord> ownerships = providerOwnershipService.listOwnerships();
@@ -245,6 +278,23 @@ public class ProviderWorkspaceController {
                 );
     }
 
+    private boolean isReadyForReviewProfile(WorkspaceProfileResponse profile) {
+        return "READY_FOR_REVIEW".equals(profile.contentStatus())
+                && "READY".equals(profile.readinessStatus())
+                && profile.completenessPercentage() == 100
+                && !"SUBMITTED".equals(profile.moderationStatus())
+                && !"UNDER_REVIEW".equals(profile.moderationStatus())
+                && !"CHANGES_REQUESTED".equals(profile.moderationStatus())
+                && !"APPROVED".equals(profile.moderationStatus())
+                && !"PUBLISHED".equals(profile.publicationStatus());
+    }
+
+    private boolean isUnderReviewProfile(WorkspaceProfileResponse profile) {
+        return "SUBMITTED".equals(profile.moderationStatus())
+                || "UNDER_REVIEW".equals(profile.moderationStatus())
+                || "CHANGES_REQUESTED".equals(profile.moderationStatus());
+    }
+
     private ProviderContext resolveProviderContext(PublicProfileType type, String tenantReference, String publicProfileReference) {
         if (type == PublicProfileType.DOCTOR) {
             UUID tenantId = parseUuid(tenantReference);
@@ -282,6 +332,170 @@ public class ProviderWorkspaceController {
         );
     }
 
+    private WorkspaceProfileResponse toWorkspaceProfile(UUID providerAccountId, PublicProfileDraftWorkspaceRecord draft) {
+        PublicProfileModerationSubmissionRecord submission = moderationService.findSubmission(draft.publicProfileReference()).orElse(null);
+        PublicProfilePublicationRecord publication = moderationService.findCurrentPublication(draft.publicProfileReference()).orElse(null);
+        Optional<BookingTargetResolution> bookingTarget = providerLinkingService.resolveBookingTarget(new PublicProviderReference(draft.publicProfileReference(), null));
+        String moderationStatus = submission == null ? "NOT_SUBMITTED" : submission.moderationStatus();
+        String publicationStatus = publication == null ? draft.publicProfileStatus() : publication.publicationStatus();
+        String effectiveVisibility = publication == null ? "NOT_PUBLISHED" : publication.effectiveVisibility();
+        String platformConnectionStatus = bookingTarget.map(BookingTargetResolution::connectionStatus).orElse(PlatformConnectionStatus.NOT_CONNECTED).name();
+        String bookingCapability = bookingTarget.map(BookingTargetResolution::bookingCapability).orElse(com.deepthoughtnet.clinic.platform.contracts.providerintegration.BookingCapability.NOT_AVAILABLE).name();
+        String primaryAction = primaryProfileAction(draft, moderationStatus, publicationStatus);
+        List<String> allowedActions = profileAllowedActions(draft, moderationStatus, publicationStatus, primaryAction);
+        List<String> secondaryActions = allowedActions.stream().filter(action -> !action.equals(primaryAction)).toList();
+        List<String> blockingReasons = draft.readiness() == null ? List.of() : draft.readiness().blockingReasons();
+        String lifecycleLabel = lifecycleLabel(draft, moderationStatus, publicationStatus);
+        String attentionLabel = attentionLabel(draft, moderationStatus, publicationStatus);
+        String nextActionLabel = nextActionLabel(draft, moderationStatus, publicationStatus, primaryAction);
+        boolean providerActionRequired = switch (primaryAction) {
+            case "SUBMIT_FOR_REVIEW", "REVIEW_CHANGES", "CONTINUE_PROFILE", "OPEN_PROFILE" -> true;
+            default -> !blockingReasons.isEmpty() && !"PUBLISHED".equals(publicationStatus);
+        };
+        OffsetDateTime lastUpdatedAt = draft.updatedAt();
+        return new WorkspaceProfileResponse(
+                draft.draftId(),
+                draft.draftReference(),
+                draft.publicProfileReference(),
+                draft.publicProfileType(),
+                draft.displayName(),
+                draft.city(),
+                draft.area(),
+                draft.ownershipStatus(),
+                draft.tenantConsentStatus(),
+                draft.currentVersion(),
+                draft.contentStatus(),
+                draft.readinessStatus(),
+                draft.completenessPercentage(),
+                moderationStatus,
+                submission == null ? null : submission.submissionReference(),
+                publicationStatus,
+                effectiveVisibility,
+                platformConnectionStatus,
+                bookingCapability,
+                lastUpdatedAt,
+                blockingReasons,
+                allowedActions,
+                primaryAction,
+                secondaryActions,
+                lifecycleLabel,
+                attentionLabel,
+                nextActionLabel,
+                publication == null ? draft.publicProfilePath() : publication.publicPath(),
+                providerActionRequired
+        );
+    }
+
+    private String primaryProfileAction(PublicProfileDraftWorkspaceRecord draft, String moderationStatus, String publicationStatus) {
+        if ("PUBLISHED".equals(publicationStatus)) {
+            return "VIEW_PUBLIC_PROFILE";
+        }
+        if ("SUBMITTED".equals(moderationStatus) || "UNDER_REVIEW".equals(moderationStatus)) {
+            return "VIEW_REVIEW_STATUS";
+        }
+        if ("CHANGES_REQUESTED".equals(moderationStatus)) {
+            return "REVIEW_CHANGES";
+        }
+        if ("APPROVED".equals(moderationStatus)) {
+            return "VIEW_APPROVAL_STATUS";
+        }
+        if ("READY".equals(draft.readinessStatus()) && "READY_FOR_REVIEW".equals(draft.contentStatus()) && "ENABLED".equalsIgnoreCase(draft.tenantConsentStatus())) {
+            return "SUBMIT_FOR_REVIEW";
+        }
+        if ("READY".equals(draft.readinessStatus()) && "READY_FOR_REVIEW".equals(draft.contentStatus())) {
+            return "CONTINUE_PROFILE";
+        }
+        return "CONTINUE_PROFILE";
+    }
+
+    private List<String> profileAllowedActions(PublicProfileDraftWorkspaceRecord draft, String moderationStatus, String publicationStatus, String primaryAction) {
+        if ("PUBLISHED".equals(publicationStatus)) {
+            return List.of("VIEW_PUBLIC_PROFILE", "VIEW_PREVIEW", "VIEW_READINESS");
+        }
+        if ("SUBMITTED".equals(moderationStatus) || "UNDER_REVIEW".equals(moderationStatus)) {
+            return List.of("VIEW_REVIEW_STATUS", "VIEW_PREVIEW", "VIEW_READINESS");
+        }
+        if ("CHANGES_REQUESTED".equals(moderationStatus)) {
+            return List.of("REVIEW_CHANGES", "EDIT_PUBLIC_PROFILE", "VIEW_PREVIEW", "VIEW_READINESS");
+        }
+        if ("APPROVED".equals(moderationStatus)) {
+            return List.of("VIEW_APPROVAL_STATUS", "VIEW_PREVIEW", "VIEW_READINESS");
+        }
+        if ("READY".equals(draft.readinessStatus()) && "READY_FOR_REVIEW".equals(draft.contentStatus()) && "ENABLED".equalsIgnoreCase(draft.tenantConsentStatus())) {
+            return List.of("SUBMIT_FOR_REVIEW", "VIEW_PREVIEW", "VIEW_READINESS", "EDIT_PUBLIC_PROFILE");
+        }
+        return List.of("CONTINUE_PROFILE", "VIEW_PREVIEW", "VIEW_READINESS", "EDIT_PUBLIC_PROFILE");
+    }
+
+    private String lifecycleLabel(PublicProfileDraftWorkspaceRecord draft, String moderationStatus, String publicationStatus) {
+        if ("PUBLISHED".equals(publicationStatus)) {
+            return "Published";
+        }
+        if ("APPROVED".equals(moderationStatus)) {
+            return "Approved by Platform";
+        }
+        if ("SUBMITTED".equals(moderationStatus)) {
+            return "Submitted for Platform Review";
+        }
+        if ("UNDER_REVIEW".equals(moderationStatus)) {
+            return "Platform review in progress";
+        }
+        if ("CHANGES_REQUESTED".equals(moderationStatus)) {
+            return "Changes requested";
+        }
+        if ("REJECTED".equals(moderationStatus)) {
+            return "Rejected by Platform";
+        }
+        if ("READY".equals(draft.readinessStatus()) && "READY_FOR_REVIEW".equals(draft.contentStatus())) {
+            return "Ready for Platform Review";
+        }
+        return "Draft incomplete";
+    }
+
+    private String attentionLabel(PublicProfileDraftWorkspaceRecord draft, String moderationStatus, String publicationStatus) {
+        if ("PUBLISHED".equals(publicationStatus)) {
+            return "Published profile";
+        }
+        if ("APPROVED".equals(moderationStatus)) {
+            return "Waiting for publication";
+        }
+        if ("SUBMITTED".equals(moderationStatus) || "UNDER_REVIEW".equals(moderationStatus)) {
+            return "Platform review pending";
+        }
+        if ("CHANGES_REQUESTED".equals(moderationStatus)) {
+            return "Resolve platform review findings";
+        }
+        if ("REJECTED".equals(moderationStatus)) {
+            return "Start a new revision";
+        }
+        if ("READY".equals(draft.readinessStatus()) && "READY_FOR_REVIEW".equals(draft.contentStatus()) && "ENABLED".equalsIgnoreCase(draft.tenantConsentStatus())) {
+            return "Submit profile for review";
+        }
+        if ("READY".equals(draft.readinessStatus()) && "READY_FOR_REVIEW".equals(draft.contentStatus())) {
+            return "Enable Discover participation in Healthcare Admin";
+        }
+        return "Complete required profile sections";
+    }
+
+    private String nextActionLabel(PublicProfileDraftWorkspaceRecord draft, String moderationStatus, String publicationStatus, String primaryAction) {
+        return switch (primaryAction) {
+            case "SUBMIT_FOR_REVIEW" -> "Submit profile for review";
+            case "VIEW_REVIEW_STATUS" -> "Platform review pending";
+            case "REVIEW_CHANGES" -> "Resolve platform review findings";
+            case "VIEW_APPROVAL_STATUS" -> "Waiting for publication";
+            case "VIEW_PUBLIC_PROFILE" -> "View public profile";
+            default -> {
+                if ("READY".equals(draft.readinessStatus()) && "READY_FOR_REVIEW".equals(draft.contentStatus()) && !"ENABLED".equalsIgnoreCase(draft.tenantConsentStatus())) {
+                    yield "Enable Discover participation in Healthcare Admin";
+                }
+                if ("READY".equals(draft.readinessStatus()) && "READY_FOR_REVIEW".equals(draft.contentStatus())) {
+                    yield "Continue editing";
+                }
+                yield "Continue editing";
+            }
+        };
+    }
+
     private UUID parseUuid(String value) {
         if (value == null || value.isBlank()) {
             return null;
@@ -314,8 +528,22 @@ public class ProviderWorkspaceController {
                 record.previewReady(),
                 record.updatedAt(),
                 record.submittedAt(),
-                record.publicProfilePath()
+                record.publicProfilePath(),
+                allowedActions(record)
         );
+    }
+
+    private List<String> allowedActions(ProviderWorkspaceApplicationRecord record) {
+        return switch (record.status()) {
+            case DRAFT -> List.of("OPEN_PROFILE", "CONTINUE_PROFILE");
+            case CONTACT_VERIFIED, PROFILE_INCOMPLETE -> List.of("CONTINUE_PROFILE", "ENABLE_DISCOVER");
+            case READY_FOR_REVIEW -> List.of("SUBMIT_FOR_REVIEW", "CONTINUE_PROFILE");
+            case SUBMITTED, UNDER_REVIEW -> List.of("VIEW_UNDER_REVIEW", "AWAITING_APPROVAL");
+            case CHANGES_REQUESTED -> List.of("REVIEW_CHANGES", "CONTINUE_PROFILE");
+            case APPROVED -> List.of("AWAITING_APPROVAL", "VIEW_REVIEW");
+            case PUBLISHED -> List.of("VIEW_PUBLISHED_PROFILE");
+            case DISCARDED, SUSPENDED, ARCHIVED -> List.of("VIEW_DETAILS");
+        };
     }
 
     private boolean isActiveApplication(WorkspaceApplicationResponse application) {

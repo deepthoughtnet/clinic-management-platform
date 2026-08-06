@@ -31,6 +31,8 @@ public class DiscoverPublicProfilePublicationEntity {
     private String reason;
     @Column(name = "published_at", nullable = false)
     private OffsetDateTime publishedAt;
+    @Column(name = "published_by", nullable = false, length = 160)
+    private String publishedBy;
     @Column(name = "unpublished_at")
     private OffsetDateTime unpublishedAt;
     @Column(name = "current_flag", nullable = false)
@@ -57,6 +59,7 @@ public class DiscoverPublicProfilePublicationEntity {
             String publicPath,
             String reason,
             OffsetDateTime publishedAt,
+            String publishedBy,
             OffsetDateTime createdAt,
             OffsetDateTime updatedAt
     ) {
@@ -71,10 +74,36 @@ public class DiscoverPublicProfilePublicationEntity {
         entity.publicPath = publicPath;
         entity.reason = reason;
         entity.publishedAt = publishedAt;
+        entity.publishedBy = publishedBy;
         entity.createdAt = createdAt;
         entity.updatedAt = updatedAt;
         entity.current = true;
         return entity;
+    }
+
+    public static DiscoverPublicProfilePublicationEntity create(
+            UUID id,
+            String publicationReference,
+            String publicProfileReference,
+            String approvedSubmissionReference,
+            int publishedVersion,
+            String publicationStatus,
+            String slug,
+            String publicPath,
+            String reason,
+            OffsetDateTime publishedAt,
+            OffsetDateTime createdAt,
+            OffsetDateTime updatedAt
+    ) {
+        return create(id, publicationReference, publicProfileReference, approvedSubmissionReference, publishedVersion,
+                publicationStatus, slug, publicPath, reason, publishedAt, "system:lifecycle-reconciliation", createdAt, updatedAt);
+    }
+
+    public void setPublishedByIfMissing(String publishedBy, OffsetDateTime updatedAt) {
+        if (this.publishedBy == null || this.publishedBy.isBlank()) {
+            this.publishedBy = publishedBy;
+            this.updatedAt = updatedAt;
+        }
     }
 
     public void unpublish(String reason, OffsetDateTime unpublishedAt, OffsetDateTime updatedAt) {
@@ -83,6 +112,11 @@ public class DiscoverPublicProfilePublicationEntity {
         this.unpublishedAt = unpublishedAt;
         this.updatedAt = updatedAt;
         this.current = false;
+    }
+
+    public void supersede(OffsetDateTime updatedAt) {
+        this.current = false;
+        this.updatedAt = updatedAt;
     }
 
     public UUID getId() { return id; }
@@ -95,6 +129,7 @@ public class DiscoverPublicProfilePublicationEntity {
     public String getPublicPath() { return publicPath; }
     public String getReason() { return reason; }
     public OffsetDateTime getPublishedAt() { return publishedAt; }
+    public String getPublishedBy() { return publishedBy; }
     public OffsetDateTime getUnpublishedAt() { return unpublishedAt; }
     public boolean isCurrent() { return current; }
     public OffsetDateTime getCreatedAt() { return createdAt; }

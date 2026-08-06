@@ -20,6 +20,8 @@ public final class PublicProfileModerationModels {
             String severity,
             boolean required,
             String reviewerNote,
+            String providerFacingMessage,
+            String internalNote,
             String resolutionStatus,
             String providerResolutionNote,
             OffsetDateTime createdAt,
@@ -39,7 +41,9 @@ public final class PublicProfileModerationModels {
             String reason,
             OffsetDateTime publishedAt,
             OffsetDateTime unpublishedAt,
-            boolean current
+            boolean current,
+            String effectiveVisibility,
+            String visibilityReason
     ) {
     }
 
@@ -61,6 +65,9 @@ public final class PublicProfileModerationModels {
             UUID submittedByProviderAccountId,
             OffsetDateTime submittedAt,
             UUID assignedReviewerId,
+            String assignedReviewerReference,
+            String assignedReviewerDisplayName,
+            String assignedReviewerEmail,
             OffsetDateTime assignedAt,
             UUID decisionById,
             OffsetDateTime decisionAt,
@@ -72,7 +79,11 @@ public final class PublicProfileModerationModels {
             OffsetDateTime unpublishedAt,
             OffsetDateTime createdAt,
             OffsetDateTime updatedAt,
+            String effectiveVisibility,
+            String visibilityReason,
+            String publicUrl,
             List<PublicProfileReviewFindingRecord> findings,
+            List<String> providerAllowedActions,
             List<String> allowedActions
     ) {
     }
@@ -97,6 +108,9 @@ public final class PublicProfileModerationModels {
             OffsetDateTime assignedAt,
             long ageInQueueDays,
             String sourceType,
+            String effectiveVisibility,
+            String visibilityReason,
+            String publicUrl,
             List<String> allowedActions
     ) {
     }

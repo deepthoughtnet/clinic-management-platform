@@ -2,17 +2,15 @@ import * as React from "react";
 import { useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
-  createProviderOnboardingAccess,
   getProviderClaimReview,
   submitProviderClaim,
   type ProviderClaimReviewResponse,
-  type ProviderWorkspaceApplication,
+  type ProviderWorkspaceProfile,
   type ProviderWorkspaceWorkItem,
 } from "../../api/providerAuth";
 import { DiscoverEmptyState } from "../../components/DiscoveryComponents";
 import { useProviderSession } from "../../context/ProviderSessionContext";
 import { DISCOVER_ROUTES } from "../../routes";
-import { providerOnboardingStepRoute } from "../../features/provider/providerOnboardingRoutes";
 
 const TOKEN_KEY = "jeevanam.discover.providerOnboardingToken";
 const TOKEN_KEYS = [
@@ -22,8 +20,53 @@ const TOKEN_KEYS = [
   `${TOKEN_KEY}.HOSPITAL`,
 ];
 
-function statusLabel(status: ProviderWorkspaceApplication["status"]) {
-  return status.replaceAll("_", " ").toLowerCase().replace(/^\w/, (char) => char.toUpperCase());
+function allowedActionLabel(action: string) {
+  switch (action) {
+    case "CREATE_PUBLIC_PROFILE_DRAFT":
+      return "Open Profile";
+    case "START_PROFILE":
+      return "Open Profile";
+    case "OPEN_PROFILE":
+      return "Open Profile";
+    case "CONTINUE_PROFILE":
+      return "Continue Profile";
+    case "CONTINUE_EDITING":
+      return "Continue Profile";
+    case "ENABLE_DISCOVER":
+      return "Enable Discover";
+    case "SUBMIT_FOR_REVIEW":
+      return "Submit for Platform Review";
+    case "REVIEW_CHANGES":
+      return "Review Changes";
+    case "VIEW_REVIEW":
+      return "View Under Review";
+    case "VIEW_UNDER_REVIEW":
+      return "View Under Review";
+    case "VIEW_REVIEW_STATUS":
+      return "View Review";
+    case "AWAITING_APPROVAL":
+      return "Awaiting Approval";
+    case "VIEW_APPROVAL_STATUS":
+      return "Awaiting Approval";
+    case "VIEW_PUBLISHED_PROFILE":
+      return "View Published Profile";
+    case "VIEW_DETAILS":
+      return "View Details";
+    case "OPEN_CLAIM":
+      return "Open claim";
+    case "BACK_TO_DASHBOARD":
+      return "Back to Dashboard";
+    case "VIEW_OWNERSHIP":
+      return "View Ownership";
+    case "VIEW_PREVIEW":
+      return "Preview Profile";
+    case "VIEW_READINESS":
+      return "View Readiness";
+    case "OPEN_PUBLIC_PROFILE":
+      return "Open Public Profile";
+    default:
+      return action.replaceAll("_", " ").replace(/\b\w/g, (char) => char.toUpperCase());
+  }
 }
 
 function providerTypeLabel(providerType: string) {
@@ -71,43 +114,29 @@ function maskContact(value: string | null, kind: "email" | "phone") {
   return `${"*".repeat(Math.max(0, digits.length - 4))}${digits.slice(-4)}`;
 }
 
-function isAttentionApplication(application: ProviderWorkspaceApplication) {
-  return application.requiresAttention || application.completionPercent < 100;
+function allowedActionHrefForProfile(profile: ProviderWorkspaceProfile, action: string | null) {
+  if (!action) {
+    return null;
+  }
+  if (action === "VIEW_PUBLIC_PROFILE") {
+    return profile.publicProfilePath ?? DISCOVER_ROUTES.providerWorkspace.path;
+  }
+  if (action === "VIEW_REVIEW_STATUS" || action === "VIEW_APPROVAL_STATUS") {
+    return DISCOVER_ROUTES.providerPublicProfileReview.path
+      .replace(":profileReference", encodeURIComponent(profile.publicProfileReference));
+  }
+  if (action === "SUBMIT_FOR_REVIEW" || action === "REVIEW_CHANGES" || action === "CONTINUE_PROFILE" || action === "OPEN_PROFILE" || action === "EDIT_PUBLIC_PROFILE") {
+    return DISCOVER_ROUTES.providerPublicProfileDraft.path
+      .replace(":profileReference", encodeURIComponent(profile.publicProfileReference))
+      .replace(":section", action === "SUBMIT_FOR_REVIEW" ? "readiness" : "overview");
+  }
+  return DISCOVER_ROUTES.providerPublicProfileDraft.path
+    .replace(":profileReference", encodeURIComponent(profile.publicProfileReference))
+    .replace(":section", "overview");
 }
 
-function primaryActionLabel(application: ProviderWorkspaceApplication) {
-  if (application.status === "PUBLISHED") {
-    return "Open public profile";
-  }
-  if (isAttentionApplication(application)) {
-    return "Continue registration";
-  }
-  return "View details";
-}
-
-function primaryActionHref(application: ProviderWorkspaceApplication) {
-  if (application.status === "PUBLISHED") {
-    return application.publicProfilePath ?? DISCOVER_ROUTES.providerWorkspace.path;
-  }
-  return DISCOVER_ROUTES.providerApplicationDashboard.path.replace(":applicationReference", encodeURIComponent(application.referenceNumber));
-}
-
-function supportText(application: ProviderWorkspaceApplication) {
-  if (application.status === "PUBLISHED") {
-    return "Published profile";
-  }
-  if (isAttentionApplication(application)) {
-    return `Complete your ${providerTypeLabel(application.providerType)} profile`;
-  }
-  return `${providerTypeLabel(application.providerType)} profile`;
-}
-
-function currentStepLabel(step: string) {
-  return step.replaceAll("_", " ").toLowerCase().replace(/^\w/, (char) => char.toUpperCase());
-}
-
-function attentionSubtitle(application: ProviderWorkspaceApplication) {
-  return `${application.completionPercent}% complete · ${application.missingRequirementCount} required items remaining`;
+function profileActionLabel(profile: ProviderWorkspaceProfile) {
+  return profile.primaryAction ? allowedActionLabel(profile.primaryAction) : null;
 }
 
 function isOwnershipClaimWorkItem(item: ProviderWorkspaceWorkItem) {
@@ -117,7 +146,7 @@ function isOwnershipClaimWorkItem(item: ProviderWorkspaceWorkItem) {
 function claimSubtitle(item: ProviderWorkspaceWorkItem) {
   if (item.ownershipStatus === "VERIFIED" || item.workItemStatus === "OWNERSHIP_VERIFIED") {
     return item.publicDiscoveryConsent === "DISABLED"
-      ? "Tenant consent required"
+      ? "Tenant consent disabled"
       : "Your ownership has been verified.";
   }
   if (item.workItemStatus === "PLATFORM_REVIEW" || item.claimStatus === "CLAIM_SUBMITTED" || item.ownershipStatus === "CLAIM_PENDING" || item.reviewStatus === "PENDING_REVIEW") {
@@ -152,47 +181,30 @@ function claimCardTitle(item: ProviderWorkspaceWorkItem) {
 }
 
 function claimPrimaryActionLabel(item: ProviderWorkspaceWorkItem) {
-  if (item.allowedActions.includes("OPEN_PUBLIC_PROFILE")) {
-    return "Open public profile";
-  }
-  if (item.allowedActions.includes("VIEW_PREVIEW")) {
-    return "Preview profile";
-  }
-  if (item.allowedActions.includes("VIEW_READINESS")) {
-    return "View readiness";
-  }
-  if (item.allowedActions.includes("OPEN_CLAIM")) {
-    return "Open claim";
-  }
-  if (item.allowedActions.includes("OPEN_PROFILE")) {
-    return "Open profile";
-  }
-  if (item.allowedActions.includes("VIEW_DETAILS")) {
-    return "View details";
-  }
-  return null;
+  return item.allowedActions.length ? allowedActionLabel(item.allowedActions[0]) : null;
 }
 
 function claimPrimaryActionHref(item: ProviderWorkspaceWorkItem) {
-  if (item.allowedActions.includes("OPEN_PUBLIC_PROFILE") || item.allowedActions.includes("VIEW_PREVIEW") || item.allowedActions.includes("VIEW_READINESS")) {
+  if (item.allowedActions.length > 0) {
     const profileReference = item.publicProfileReference?.trim();
+    const action = item.allowedActions[0];
+    if (action === "OPEN_CLAIM" || action === "VIEW_DETAILS") {
+      const reference = item.connectionReference?.trim();
+      return reference ? `${DISCOVER_ROUTES.providerWorkspace.path}?connectionReference=${encodeURIComponent(reference)}` : null;
+    }
     if (!profileReference) {
       return null;
     }
-    const section = item.allowedActions.includes("VIEW_PREVIEW")
+    const section = action === "VIEW_PREVIEW"
       ? "preview"
-      : item.allowedActions.includes("VIEW_READINESS")
+      : action === "VIEW_READINESS"
         ? "readiness"
         : "overview";
     return DISCOVER_ROUTES.providerPublicProfileDraft.path
       .replace(":profileReference", encodeURIComponent(profileReference))
       .replace(":section", section);
   }
-  const reference = item.connectionReference?.trim();
-  if (!reference) {
-    return null;
-  }
-  return `${DISCOVER_ROUTES.providerWorkspace.path}?connectionReference=${encodeURIComponent(reference)}`;
+  return null;
 }
 
 function claimLocationLabel(item: ProviderWorkspaceWorkItem) {
@@ -200,6 +212,36 @@ function claimLocationLabel(item: ProviderWorkspaceWorkItem) {
     return "—";
   }
   return item.area ? `${item.city} · ${item.area}` : item.city;
+}
+
+function claimAttentionReason(item: ProviderWorkspaceWorkItem) {
+  if (item.ownershipStatus === "VERIFIED" || item.workItemStatus === "OWNERSHIP_VERIFIED") {
+    return item.publicDiscoveryConsent === "DISABLED" ? "Tenant consent disabled" : "Ownership verified";
+  }
+  if (item.claimStatus === "CLAIM_PENDING" || item.workItemStatus === "PLATFORM_REVIEW") {
+    return "Ownership verification pending";
+  }
+  if (item.reviewStatus === "REJECTED" || item.claimStatus === "REJECTED") {
+    return "Rejected";
+  }
+  if (item.reviewStatus === "PENDING_REVIEW" || item.claimStatus === "CLAIM_SUBMITTED") {
+    return "Platform review in progress";
+  }
+  if (item.claimStatus === "DISPUTED" || item.ownershipStatus === "DISPUTED") {
+    return "Ownership verification pending";
+  }
+  return "Needs attention";
+}
+
+function profileAttentionReason(profile: ProviderWorkspaceProfile) {
+  return profile.attentionLabel || profile.nextActionLabel || null;
+}
+
+function profileLocationLabel(profile: ProviderWorkspaceProfile) {
+  if (!profile.city) {
+    return "—";
+  }
+  return profile.area ? `${profile.city} · ${profile.area}` : profile.city;
 }
 
 function publicProfileTypeLabel(value: string) {
@@ -264,7 +306,6 @@ export function ProviderWorkspacePage() {
   const [searchParams] = useSearchParams();
   const { workspace, logout } = useProviderSession();
   const [loggingOut, setLoggingOut] = useState(false);
-  const [openingReference, setOpeningReference] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [claimReference, setClaimReference] = useState<string | null>(null);
   const [claimReview, setClaimReview] = useState<ProviderClaimReviewResponse | null>(null);
@@ -272,12 +313,18 @@ export function ProviderWorkspacePage() {
   const [claimSubmitting, setClaimSubmitting] = useState(false);
   const [claimNote, setClaimNote] = useState("");
 
-  const activeApplications = workspace?.applications ?? [];
-  const publishedProfiles = workspace?.publishedProfiles ?? [];
+  const providerProfiles = workspace?.profiles ?? [];
   const workItems = workspace?.workItems ?? [];
   const supportedProviderTypes = workspace?.supportedProviderTypes ?? [];
   const attentionItems = useMemo(
     () => [
+      ...providerProfiles
+        .filter((profile) => profile.providerActionRequired)
+        .map((profile) => ({
+          kind: "PUBLIC_PROFILE" as const,
+          updatedAt: profile.lastUpdatedAt ?? null,
+          profile,
+        })),
       ...workItems
         .filter(isOwnershipClaimWorkItem)
         .filter((item) => item.workItemStatus !== "PUBLISHED")
@@ -287,29 +334,18 @@ export function ProviderWorkspacePage() {
           updatedAt: item.lastUpdatedAt ?? null,
           item,
         })),
-      ...activeApplications
-        .filter(isAttentionApplication)
-        .map((application) => ({
-          kind: "ONBOARDING_APPLICATION" as const,
-          updatedAt: application.updatedAt,
-          application,
-        })),
     ].sort((left, right) => new Date(right.updatedAt ?? 0).getTime() - new Date(left.updatedAt ?? 0).getTime()),
-    [activeApplications, workItems],
+    [providerProfiles, workItems],
   );
-  const recentActivity = useMemo(
-    () => [...activeApplications, ...publishedProfiles]
-      .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime())
-      .slice(0, 5),
-    [activeApplications, publishedProfiles],
-  );
+  const recentActivity = useMemo(() => providerProfiles.slice(0, 5), [providerProfiles]);
 
-  const summaryCards = [
-    { label: "Active applications", value: activeApplications.length },
-    { label: "Published profiles", value: publishedProfiles.length },
-    { label: "Items needing attention", value: workspace?.attentionCount ?? attentionItems.length },
-    { label: "Supported profile types", value: supportedProviderTypes.length },
-  ];
+  const summaryCards = workspace ? [
+    { label: "Active Profiles", value: workspace.activeProfileCount },
+    { label: "Ready for Review", value: workspace.readyForReviewCount },
+    { label: "Under Platform Review", value: workspace.underReviewCount },
+    { label: "Published", value: workspace.publishedCount },
+    { label: "Needs Attention", value: workspace.needsAttentionCount },
+  ] : [];
 
   const emailSummary = maskContact(workspace?.contactEmail ?? null, "email");
   const phoneSummary = maskContact(workspace?.contactPhone ?? null, "phone");
@@ -360,23 +396,6 @@ export function ProviderWorkspacePage() {
     }
   }
 
-  async function continueRegistration(application: ProviderWorkspaceApplication) {
-    setOpeningReference(application.referenceNumber);
-    setError(null);
-    try {
-      const access = await createProviderOnboardingAccess(application.referenceNumber);
-      for (const key of TOKEN_KEYS) {
-        localStorage.removeItem(key);
-      }
-      localStorage.setItem(TOKEN_KEY, access.onboardingToken);
-      navigate(`/provider/onboarding/${access.applicationId}/${providerOnboardingStepRoute(application.currentStep)}`);
-    } catch (ex) {
-      setError(ex instanceof Error ? ex.message : "Could not open the selected application.");
-    } finally {
-      setOpeningReference(null);
-    }
-  }
-
   async function submitClaim() {
     if (!claimReference) {
       return;
@@ -396,16 +415,15 @@ export function ProviderWorkspacePage() {
   if (!workspace) {
     return null;
   }
-
-  const hasAnyApplication = activeApplications.length > 0 || publishedProfiles.length > 0;
+  const profileCards = providerProfiles;
 
   return (
     <section className="page-section provider-account-page">
       <header className="provider-account-header">
         <div className="provider-account-heading">
           <span className="eyebrow">Provider account</span>
-          <h1>Manage your applications and published profiles.</h1>
-          <p>Review what still needs attention, continue the right onboarding step, and keep published profiles separate from unfinished drafts.</p>
+          <h1>Manage your provider profiles.</h1>
+          <p>Review what still needs attention, continue the right profile workflow, and keep published profiles separate from work in progress.</p>
         </div>
         <aside className="provider-account-session-card">
           <div className="provider-account-session-row">
@@ -543,24 +561,46 @@ export function ProviderWorkspacePage() {
       <section className="provider-account-section">
         <div className="provider-account-section-heading">
           <div>
-            <h2>Attention</h2>
-            <p>These work items are incomplete or waiting on your next action.</p>
+            <h2>Needs Attention</h2>
+            <p>Each card shows the exact blocker that needs your next action.</p>
           </div>
           {supportedProviderTypes.length ? (
             <Link className="primary-button" to={`${DISCOVER_ROUTES.listPractice.path}?mode=add`}>
-              Add another profile
+              Create another profile
             </Link>
           ) : null}
         </div>
         {attentionItems.length ? (
           <div className="provider-account-attention-list">
             {attentionItems.map((entry) =>
-              entry.kind === "OWNERSHIP_CLAIM" ? (
+              entry.kind === "PUBLIC_PROFILE" ? (
+                <article className="provider-account-attention-item" key={`${entry.profile.draftReference}-attention`}>
+                  <div className="provider-account-attention-copy">
+                    <strong>{entry.profile.displayName || "Provider profile"}</strong>
+                    <p>{providerTypeLabel(entry.profile.profileType)} · {profileLocationLabel(entry.profile)}</p>
+                    <span>{profileAttentionReason(entry.profile)}</span>
+                    <small>{entry.profile.lifecycleLabel}</small>
+                  </div>
+                  <div className="provider-account-attention-meta">
+                    <span>{entry.profile.nextActionLabel}</span>
+                    <small>Ownership: {entry.profile.ownershipStatus}</small>
+                    <small>Publication: {entry.profile.publicationStatus}</small>
+                    <small>Connection: {entry.profile.platformConnectionStatus}</small>
+                    {entry.profile.primaryAction && allowedActionHrefForProfile(entry.profile, entry.profile.primaryAction) ? (
+                      <div className="cta-row">
+                        <Link className="primary-button" to={allowedActionHrefForProfile(entry.profile, entry.profile.primaryAction)!}>
+                          {profileActionLabel(entry.profile)}
+                        </Link>
+                      </div>
+                    ) : null}
+                  </div>
+                </article>
+              ) : entry.kind === "OWNERSHIP_CLAIM" ? (
                 <article className="provider-account-attention-item" key={`${entry.item.workItemReference}-attention`}>
                   <div className="provider-account-attention-copy">
                     <strong>{claimCardTitle(entry.item)}</strong>
-                    <p>{entry.item.displayName || "Pending claim"} · {publicProfileTypeLabel(entry.item.publicProfileType)}</p>
-                    <span>{claimSubtitle(entry.item)}</span>
+                    <p>{entry.item.displayName || "Provider profile"} · {publicProfileTypeLabel(entry.item.publicProfileType)}</p>
+                    <span>{claimAttentionReason(entry.item) ?? claimSubtitle(entry.item)}</span>
                     <small>{claimLocationLabel(entry.item)}</small>
                   </div>
                   <div className="provider-account-attention-meta">
@@ -568,55 +608,23 @@ export function ProviderWorkspacePage() {
                     <small>Ownership: {entry.item.ownershipStatus || "UNCLAIMED"}</small>
                     <small>Publication: {entry.item.publicationStatus || "UNPUBLISHED"}</small>
                     <small>Connection: {entry.item.platformConnectionStatus || "NOT_CONNECTED"}</small>
-                    <div className="cta-row">
-                      {claimPrimaryActionLabel(entry.item) && claimPrimaryActionHref(entry.item) ? (
+                    {claimPrimaryActionLabel(entry.item) && claimPrimaryActionHref(entry.item) ? (
+                      <div className="cta-row">
                         <Link className="primary-button" to={claimPrimaryActionHref(entry.item)!}>
                           {claimPrimaryActionLabel(entry.item)}
                         </Link>
-                      ) : null}
-                      {claimPrimaryActionLabel(entry.item) !== "View details" ? (
-                        <Link className="secondary-button" to={claimPrimaryActionHref(entry.item) ?? DISCOVER_ROUTES.providerWorkspace.path}>
-                          View details
-                        </Link>
-                      ) : null}
-                    </div>
+                      </div>
+                    ) : null}
                   </div>
                 </article>
-              ) : (
-                <article className="provider-account-attention-item" key={`${entry.application.id}-attention`}>
-                  <div className="provider-account-attention-copy">
-                    <strong>{supportText(entry.application)}</strong>
-                    <p>{entry.application.referenceNumber}</p>
-                    <span>{attentionSubtitle(entry.application)}</span>
-                    <small>Current step: {currentStepLabel(entry.application.currentStep)}</small>
-                  </div>
-                  <div className="provider-account-attention-meta">
-                    <span>{statusLabel(entry.application.status)}</span>
-                    <div className="cta-row">
-                      {entry.application.status === "PUBLISHED" ? null : (
-                        <button
-                          className="primary-button"
-                          type="button"
-                          onClick={() => void continueRegistration(entry.application)}
-                          disabled={openingReference === entry.application.referenceNumber}
-                        >
-                          Continue registration
-                        </button>
-                      )}
-                      <Link className="secondary-button" to={primaryActionHref(entry.application)}>
-                        View details
-                      </Link>
-                    </div>
-                  </div>
-                </article>
-              ),
+              ) : null,
             )}
           </div>
         ) : (
           <DiscoverEmptyState
             icon="◌"
             title="No actions currently require your attention."
-            description="Finished or published profiles will stay visible below. Any incomplete application will appear here."
+            description="Provider profiles that are complete or published will remain visible below."
             variant="compact"
           />
         )}
@@ -625,155 +633,96 @@ export function ProviderWorkspacePage() {
       <section className="provider-account-section">
         <div className="provider-account-section-heading">
           <div>
-            <h2>My applications</h2>
-            <p>Active applications are shown here. Published profiles remain separate.</p>
+            <h2>My Provider Profiles</h2>
+            <p>Profile lifecycle, review, publication, and visibility are shown here.</p>
           </div>
-          {hasAnyApplication && supportedProviderTypes.length ? (
+          {supportedProviderTypes.length ? (
             <Link className="secondary-button" to={`${DISCOVER_ROUTES.listPractice.path}?mode=add`}>
-              Add another profile
+              Create another profile
             </Link>
           ) : null}
         </div>
-        {activeApplications.length ? (
+        {profileCards.length ? (
           <div className="provider-account-application-grid">
-            {activeApplications.map((application) => (
-              <article className="provider-account-application-card" key={application.id}>
+            {profileCards.map((profile) => (
+              <article className="provider-account-application-card" key={profile.draftReference}>
                 <div className="provider-account-card-header">
                   <div>
-                    <strong>{supportText(application)}</strong>
-                    <p>{providerTypeLabel(application.providerType)}</p>
+                    <strong>{profile.displayName}</strong>
+                    <p>{providerTypeLabel(profile.profileType)}</p>
                   </div>
-                  <span className="provider-account-status-pill">{statusLabel(application.status)}</span>
+                  <span className="provider-account-status-pill">{profile.lifecycleLabel}</span>
                 </div>
                 <dl className="provider-account-detail-list">
                   <div>
-                    <dt>Business reference</dt>
-                    <dd>{application.referenceNumber}</dd>
+                    <dt>Lifecycle</dt>
+                    <dd>{profile.lifecycleLabel}</dd>
                   </div>
                   <div>
                     <dt>Completion</dt>
-                    <dd>{application.completionPercent}% complete</dd>
+                    <dd>{profile.completenessPercentage}% complete</dd>
                   </div>
                   <div>
-                    <dt>Current step</dt>
-                    <dd>{currentStepLabel(application.currentStep)}</dd>
-                  </div>
-                  <div>
-                    <dt>Missing items</dt>
-                    <dd>{application.missingRequirementCount}</dd>
+                    <dt>Visibility</dt>
+                    <dd>{profile.publicationStatus === "PUBLISHED" ? "Published" : "Private"}</dd>
                   </div>
                   <div>
                     <dt>Last updated</dt>
-                    <dd>{formatDateTime(application.updatedAt)}</dd>
+                    <dd>{formatDateTime(profile.lastUpdatedAt)}</dd>
+                  </div>
+                  <div>
+                    <dt>Reference</dt>
+                    <dd>{profile.publicProfileReference}</dd>
                   </div>
                 </dl>
-                <div className="provider-account-card-actions">
-                  {isAttentionApplication(application) ? (
-                    <button
-                      className="primary-button"
-                      type="button"
-                      onClick={() => void continueRegistration(application)}
-                      disabled={openingReference === application.referenceNumber}
-                    >
-                      Continue registration
-                    </button>
-                  ) : null}
-                  <Link className={isAttentionApplication(application) ? "secondary-button" : "primary-button"} to={primaryActionHref(application)}>
-                    View details
-                  </Link>
-                </div>
+                {profile.primaryAction && allowedActionHrefForProfile(profile, profile.primaryAction) ? (
+                  <div className="provider-account-card-actions">
+                    <Link className="primary-button" to={allowedActionHrefForProfile(profile, profile.primaryAction)!}>
+                      {profileActionLabel(profile)}
+                    </Link>
+                  </div>
+                ) : null}
               </article>
             ))}
           </div>
         ) : (
           <DiscoverEmptyState
             icon="◌"
-            title="No applications are linked to this provider account yet"
-            description="Start a doctor, clinic, or hospital registration to see it appear here."
-            primaryAction="Start registration"
+            title="No provider profiles yet"
+            description="Create a provider profile to manage its draft, review, publication, and visibility lifecycle from one place."
+            primaryAction="Create Profile"
             primaryTo={DISCOVER_ROUTES.listPractice.path}
           />
         )}
       </section>
 
-      <div className="provider-account-two-column">
-        <section className="provider-account-section">
-          <div className="provider-account-section-heading">
-            <div>
-              <h2>My managed profiles</h2>
-              <p>Published profiles that are already visible in Discover.</p>
-            </div>
+      <section className="provider-account-section">
+        <div className="provider-account-section-heading">
+          <div>
+            <h2>Recent activity</h2>
+            <p>Recent provider profile updates ordered by the latest change.</p>
           </div>
-          {publishedProfiles.length ? (
-            <div className="provider-account-profile-grid">
-              {publishedProfiles.map((application) => (
-                <article className="provider-account-profile-card" key={`${application.id}-profile`}>
-                  <div className="provider-account-card-header">
-                    <div>
-                      <strong>{providerTypeLabel(application.providerType)}</strong>
-                      <p>{application.displayName}</p>
-                    </div>
-                    <span className="provider-account-status-pill">Published</span>
-                  </div>
-                  <dl className="provider-account-detail-list">
-                    <div>
-                      <dt>Public path</dt>
-                      <dd>{application.publicProfilePath}</dd>
-                    </div>
-                    <div>
-                      <dt>Updated</dt>
-                      <dd>{formatDateTime(application.updatedAt)}</dd>
-                    </div>
-                  </dl>
-                  <div className="provider-account-card-actions">
-                    <Link className="secondary-button" to={application.publicProfilePath ?? DISCOVER_ROUTES.providerLandingPage.path}>
-                      Open public profile
-                    </Link>
-                    <Link className="secondary-button" to={DISCOVER_ROUTES.providerApplicationDashboard.path.replace(":applicationReference", encodeURIComponent(application.referenceNumber))}>
-                      View details
-                    </Link>
-                  </div>
-                </article>
-              ))}
-            </div>
-          ) : (
-            <DiscoverEmptyState
-              icon="□"
-              title="No published profiles yet"
-              description="Published provider profiles will appear here after review and publication."
-              variant="compact"
-            />
-          )}
-        </section>
-
-        <section className="provider-account-section">
-          <div className="provider-account-section-heading">
-            <div>
-              <h2>Recent activity</h2>
-              <p>Recent provider workspace changes ordered by the latest update.</p>
-            </div>
+        </div>
+        {recentActivity.length ? (
+          <div className="provider-account-activity-list">
+            {recentActivity.map((profile) => (
+              <article className="provider-account-activity-item" key={`${profile.draftReference}-activity`}>
+                <strong>{profile.displayName || providerTypeLabel(profile.profileType)}</strong>
+                <p>{profile.publicProfileReference}</p>
+                <span>{profile.lifecycleLabel} · {profile.completenessPercentage}% complete</span>
+                <small>{formatDateTime(profile.lastUpdatedAt)}</small>
+              </article>
+            ))}
           </div>
-          {recentActivity.length ? (
-            <div className="provider-account-activity-list">
-              {recentActivity.map((application) => (
-                <article className="provider-account-activity-item" key={`${application.id}-activity`}>
-                  <strong>{supportText(application)}</strong>
-                  <p>{application.referenceNumber}</p>
-                  <span>{statusLabel(application.status)} · {application.completionPercent}% complete</span>
-                  <small>{formatDateTime(application.updatedAt)}</small>
-                </article>
-              ))}
-            </div>
-          ) : (
-            <DiscoverEmptyState
-              icon="·"
-              title="No recent activity"
-              description="Provider application updates will appear here once work begins."
-              variant="compact"
-            />
-          )}
-        </section>
-      </div>
+        ) : (
+          <DiscoverEmptyState
+            icon="·"
+            title="No recent activity"
+            description="Provider profile updates will appear here once work begins."
+            variant="compact"
+          />
+        )}
+      </section>
     </section>
   );
 }

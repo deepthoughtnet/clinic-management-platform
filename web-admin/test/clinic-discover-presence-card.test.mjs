@@ -44,15 +44,21 @@ test("publicProfileSynchronizationLabelIsPrecise", () => {
   const api = readSource("api/clinicApi.ts");
   const config = readSource("config.ts");
 
-  assert.ok(page.includes("Public profile last synchronized"));
-  assert.ok(page.includes("formatPresenceDateTime(presence?.publicProfileSynchronizedAt ?? presence?.lastSynchronizedAt)"));
+  assert.ok(page.includes("Published profile"));
+  assert.ok(page.includes("formatPublicationHistoryDateTime(presence?.lastPublishedAt)"));
   assert.ok(page.includes("Draft lifecycle"));
-  assert.ok(page.includes("presence?.draftStatus ?? \"NO_DRAFT\""));
+  assert.ok(page.includes("readableDraftLifecycle(presence?.draftStatus)"));
+  assert.ok(page.includes("Platform connection"));
+  assert.ok(page.includes("readableConnectionStatus(presence?.platformConnectionStatus)"));
+  assert.ok(page.includes("Booking"));
+  assert.ok(page.includes("readableBookingStatus(presence?.bookingCapability)"));
   assert.ok(page.includes("Copy connection reference"));
-  assert.ok(page.includes("Revoke tenant consent"));
+  assert.ok(page.includes("Enable Discover"));
+  assert.ok(page.includes("Revoke Discover Consent"));
   assert.ok(page.includes("clinicPresenceConnectionReference(presence, claimIntent)"));
   assert.ok(page.includes("returnTo=${encodeURIComponent(intent.returnTo)}"));
   assert.ok(api.includes("ownershipUpdatedAt: string | null"));
+  assert.ok(api.includes("lastPublishedAt: string | null"));
   assert.ok(api.includes("publicProfileSynchronizedAt: string | null"));
   assert.ok(api.includes("draftStatus: string | null"));
   assert.ok(api.includes("allowedActions: string[]"));

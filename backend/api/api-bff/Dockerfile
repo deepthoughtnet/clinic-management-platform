@@ -4,7 +4,7 @@ WORKDIR /workspace
 COPY pom.xml /workspace/pom.xml
 COPY backend /workspace/backend
 
-RUN mvn -pl backend/api/api-bff -am -DskipTests clean package
+RUN mvn -pl backend/api/api-bff -am -Dmaven.test.skip=true clean package
 
 FROM eclipse-temurin:21-jre-jammy
 WORKDIR /app

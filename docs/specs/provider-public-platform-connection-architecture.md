@@ -372,6 +372,187 @@ Only published profiles may appear in public discovery/search.
 Draft, submitted, under-review, and changes-requested profiles must remain hidden
 from public search and listing routes.
 
+### Batch E2C.1 publication moderation and publish workflow
+
+Batch E2C.1 makes the Platform Admin moderation workspace authoritative for the
+publication lifecycle. It does not introduce any Clinic Admin profile-approval
+step. The responsibilities remain:
+
+- Healthcare Clinic Admin controls only tenant Discover consent.
+- Provider owns and edits the public profile draft.
+- Platform Admin owns moderation review, approval, publication, and unpublish.
+
+Approval and publication are separate commands. Approval marks an immutable
+submission as accepted for publication; it does not make the public profile
+visible. Publication creates the public projection from the approved submission
+and only succeeds when ownership remains `VERIFIED`, tenant consent remains
+`ENABLED`, and the approved submission is still valid.
+
+If tenant consent is later disabled while a profile is published, the approved
+publication history remains intact but effective visibility becomes hidden until
+tenant consent is restored and the current policy allows visibility to resume.
+The chosen visibility rule is:
+
+- published profile + consent disabled => `HIDDEN_BY_TENANT_CONSENT`
+- published profile + ownership not verified => `HIDDEN_BY_OWNERSHIP`
+- unpublished profile => `NOT_PUBLISHED`
+- published profile + all gates satisfied => `VISIBLE`
+
+#### State transitions
+
+| State | Allowed next states |
+| --- | --- |
+| `DRAFT` | `SUBMITTED` |
+| `SUBMITTED` | `UNDER_REVIEW`, `CHANGES_REQUESTED`, `REJECTED` |
+| `UNDER_REVIEW` | `CHANGES_REQUESTED`, `REJECTED`, `APPROVED` |
+| `CHANGES_REQUESTED` | `SUBMITTED` through a new resubmission |
+| `REJECTED` | `SUBMITTED` through a new submission |
+| `APPROVED` | `PUBLISHED` |
+| `PUBLISHED` | `UNPUBLISHED` |
+| `UNPUBLISHED` | `PUBLISHED` only if the approved submission remains valid |
+
+The Platform Admin queue should expose submitted, under-review, changes-requested,
+approved, published, rejected, and unpublished rows using backend-authoritative
+`allowedActions`.
+
+#### Approved submission projection replacement
+
+Publication treats the approved immutable submission as the source of truth for
+the mutable Discover public and search projection. An existing projection for the
+same provider/profile must be updated, its canonical slug must be reused, and a
+new immutable public-projection history row must be appended when the requested
+submission version number is already occupied by different historical projection
+content. The projection history version and source submission version are separate
+identities; a collision in the former must not reject the latter.
+
+Repeated publication of the same approved submission remains idempotent. A current
+publication for an older approved submission is superseded without deletion before
+the new current publication record is created, preserving publication audit history.
+Submission content, moderation decisions, review findings, and request-changes and
+approval history are never mutated by publication.
+
+Conflicts remain valid only when a slug or projection is owned by another provider,
+or when persistence detects an optimistic-locking/concurrent version conflict.
+
+Compatibility and rollback:
+
+- no schema migration or backfill is required
+- existing public slugs and historical projection/publication rows are preserved
+- rollback restores the previous service behavior without transforming stored data
+- regression coverage must prove that a different-content projection-version
+  collision appends history, refreshes the aggregate/search projection, and leaves
+  the approved submission unchanged
+
+### Batch E2C.3 publication lifecycle consistency repair
+
+The publication lifecycle record is authoritative for moderation, review, and
+provider-workspace publication state. The public provider profile is its public
+catalogue/search projection. A successful publish transaction must update both
+models atomically; review APIs must never infer workflow state from the catalogue.
+
+Publishing an approved immutable submission performs these operations in one
+transaction:
+
+- reuse or update the public projection owned by the same provider/profile and
+  retain its canonical slug
+- reuse an already-current publication for the same approved submission, or
+  supersede an older current publication and append a new current publication
+- persist `PUBLISHED`, `published_at`, and the publishing actor on the lifecycle
+  records without changing moderation approval or immutable submission content
+- expose `UNPUBLISH_PROFILE`, remove `PUBLISH_PROFILE`, and make moderation queue
+  counters and provider workspace counters consume the resulting lifecycle state
+
+Repeated publication of the same approved submission is an idempotent success. It
+must also reconcile a legacy state where the current publication and catalogue
+projection are already `PUBLISHED` but the approved submission's lifecycle fields
+remain stale. That reconciliation may update only publication lifecycle metadata;
+it must not rewrite content, ownership/readiness/media snapshots, moderation
+decisions, findings, or historical publication rows.
+
+Application startup first reprojects every authoritative current `PUBLISHED`
+publication from its referenced approved immutable submission. Only then may the
+legacy Healthcare clinic synchronizer run. Once the active projection version was
+produced by `PROVIDER_PUBLIC_PROFILE_DRAFT`, lower-authority legacy Healthcare
+snapshots cannot repoint the aggregate or slug alias to an older projection. This
+source-precedence rule is idempotent and preserves all projection history.
+
+Unpublishing updates the current publication and its source approved submission
+to `UNPUBLISHED` while retaining all audit rows. Current-publication selection is
+defined by `public_profile_reference`, `current_flag = true`, and optimistic
+locking. Submitted version, projection version, creation time, and historical
+approved submissions must not override that current record.
+
+Compatibility, backfill, and rollback:
+
+- migration V145 adds publication actor audit metadata and reconciles submission
+  lifecycle fields only where a current `PUBLISHED` publication already points to
+  that submission
+- the data repair is set-based and idempotent; it creates no submissions,
+  publications, profiles, projection versions, or slug aliases
+- historical publication and projection rows remain unchanged
+- rollback is application-only; the nullable audit column and reconciled lifecycle
+  metadata are safe to retain
+
+### Batch E2C.3.1 review workspace UX and immutable snapshot completeness
+
+Batch E2C.3.1 improves the provider-facing review-status experience and the
+Platform Admin moderation workspace without changing lifecycle transitions,
+approval policy, publication policy, ownership policy, consent semantics, or
+booking behavior.
+
+In scope:
+
+- provider review-status route for active submissions
+- backend provider-facing review action labels derived from submission status
+- provider-facing immutable submitted snapshot preview
+- reviewer assignment persistence and refresh after `Start Review`
+- Platform Admin moderation workspace layout and compact queue rows
+- immutable review preview rendering through the structured landing-page renderer
+- submitted timings preservation from draft snapshot through review rendering
+
+Out of scope:
+
+- lifecycle transition changes
+- publication policy changes
+- approval/rejection policy changes
+- ownership or consent semantics changes
+- booking or connection semantics changes
+- rewriting the immutable snapshot schema
+
+### Placement and ownership
+
+- Owning bounded context: `discover-domain`
+- API adapter: `backend/api/api-bff`
+- Provider-facing browser app: `web-discover`
+- Platform Admin browser app: `web-admin`
+- Persistence ownership: `discover-domain`
+- Migration owner: none unless a forward-only schema change becomes necessary
+
+### Compatibility plan
+
+- The provider workspace action `VIEW_REVIEW_STATUS` must navigate to the new
+  review-status route instead of the editable draft preview.
+- The provider locked-draft route may continue to exist, but it must no longer
+  present the generic draft-load error when a submission is under review.
+- The Platform Admin public-profile reviews workspace must remain on the same
+  base route, but the rendered layout must separate moderation from the generic
+  link-inspection workspace.
+- Existing moderation history, findings, and immutable submitted snapshot data
+  remain authoritative.
+
+### Validation
+
+- provider review-status route opens from the workspace action
+- locked draft no longer shows the generic draft-load error during active review
+- provider review page shows the immutable submission version, moderation
+  status, reviewer history, findings, and backend-driven allowed actions
+- Platform Admin review queue remains compact without horizontal scrolling
+- reviewer assignment persists after review start and refreshes in the UI
+- submitted timings appear in the immutable review preview
+- selected link panel is not shown on the public-profile reviews tab
+- provider review preview and platform review preview render the same immutable
+  snapshot, including structured timings, media, and section content
+
 ### Allowed actions
 
 Provider editor allowed actions should be lifecycle-specific and read from the

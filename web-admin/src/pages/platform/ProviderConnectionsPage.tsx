@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   Alert,
   Box,
@@ -25,40 +25,54 @@ import {
   Typography,
 } from "@mui/material";
 import AddLinkRoundedIcon from "@mui/icons-material/AddLinkRounded";
+import FactCheckRoundedIcon from "@mui/icons-material/FactCheckRounded";
 import LinkRoundedIcon from "@mui/icons-material/LinkRounded";
+import HistoryRoundedIcon from "@mui/icons-material/HistoryRounded";
+import PlayArrowRoundedIcon from "@mui/icons-material/PlayArrowRounded";
+import PublishRoundedIcon from "@mui/icons-material/PublishRounded";
+import RateReviewRoundedIcon from "@mui/icons-material/RateReviewRounded";
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
+import UndoRoundedIcon from "@mui/icons-material/UndoRounded";
 import VisibilityRoundedIcon from "@mui/icons-material/VisibilityRounded";
+import { PlatformPublicProfileReviewPreview } from "../../components/platform-review/PlatformPublicProfileReviewPreview";
 
 import { useAuth } from "../../auth/useAuth";
 import {
   activateProviderConnectionLink,
   approveProviderConnectionLink,
   approveProviderConnectionOwnership,
+  approveProviderConnectionsPublicProfileReview,
+  addFindingProviderConnectionsPublicProfileReview,
   getProviderConnectionsLinkDetail,
   getProviderConnectionsAuditEvents,
   getProviderConnectionsOverview,
+  getProviderConnectionsPublicProfileReview,
   listProviderConnectionsConflicts,
   listProviderConnectionsLinks,
   listProviderConnectionsOwnerships,
-  listProviderConnectionsPublicProfileLifecycle,
   listProviderConnectionsPlatformEntities,
   listProviderConnectionsPublicPractices,
   listProviderConnectionsPublicProfiles,
+  listProviderConnectionsPublicProfileReviews,
   listProviderConnectionsSuggestions,
   proposeProviderConnectionLink,
+  publishProviderConnectionsPublicProfileReview,
   rejectProviderConnectionSuggestion,
   rejectProviderConnectionOwnership,
+  rejectProviderConnectionsPublicProfileReview,
   disputeProviderConnectionOwnership,
   revokeProviderConnectionOwnership,
   reconcileProviderConnection,
   relinkProviderConnectionLink,
+  requestChangesProviderConnectionsPublicProfileReview,
   unlinkProviderConnectionLink,
+  startProviderConnectionsPublicProfileReview,
+  unpublishProviderConnectionsPublicProfileReview,
   type ProviderConnectionsConflictResponse,
   type ProviderConnectionsLinkDetailResponse,
   type ProviderConnectionsLinkProposalRequest,
   type ProviderConnectionsLinkResponse,
-  type ProviderConnectionsLifecycleResponse,
   type ProviderConnectionsOverviewResponse,
   type ProviderConnectionsPlatformEntityResponse,
   type ProviderConnectionsPublicProfileResponse,
@@ -69,12 +83,14 @@ import {
   type ProviderConnectionsMatchMethod,
   type ProviderConnectionsAuditResponse,
   type ProviderConnectionsOwnershipResponse,
+  type ProviderPublicProfileReviewQueueResponse,
+  type ProviderPublicProfileReviewResponse,
 } from "../../api/clinicApi";
 
 type ConsoleSection =
   | "overview"
   | "public-profiles"
-  | "public-profile-lifecycle"
+  | "public-profile-reviews"
   | "platform-entities"
   | "suggestions"
   | "links"
@@ -115,10 +131,35 @@ type ProposalDraft = {
   evidence: ProviderConnectionsEvidence[];
 };
 
+type ReviewAction =
+  | "START_REVIEW"
+  | "ADD_REVIEW_FINDING"
+  | "REQUEST_CHANGES"
+  | "REJECT_SUBMISSION"
+  | "APPROVE_SUBMISSION"
+  | "PUBLISH_PROFILE"
+  | "UNPUBLISH_PROFILE"
+  | "VIEW_SUBMISSION"
+  | "VIEW_PUBLIC_PROFILE"
+  | "VIEW_REVIEW_HISTORY";
+
+type ReviewFindingDraft = {
+  section: string;
+  field: string;
+  category: string;
+  severity: string;
+  required: boolean;
+  blocking: boolean;
+  providerActionRequired: boolean;
+  reviewerNote: string;
+  providerFacingMessage: string;
+  internalNote: string;
+};
+
 const SECTIONS: Array<{ key: ConsoleSection; label: string; path: string }> = [
   { key: "overview", label: "Overview", path: "/platform/provider-connections" },
   { key: "public-profiles", label: "Public Profiles", path: "/platform/provider-connections/public-profiles" },
-  { key: "public-profile-lifecycle", label: "Public Profile Lifecycle", path: "/platform/provider-connections/public-profile-lifecycle" },
+  { key: "public-profile-reviews", label: "Public Profile Reviews", path: "/platform/provider-connections/public-profile-reviews" },
   { key: "platform-entities", label: "Platform Entities", path: "/platform/provider-connections/platform-entities" },
   { key: "suggestions", label: "Suggestions", path: "/platform/provider-connections/suggestions" },
   { key: "links", label: "Links", path: "/platform/provider-connections/links" },
@@ -157,15 +198,155 @@ function formatProviderType(type: ProviderConnectionsPublicProfileType | string 
   }
 }
 
+function formatModerationStatus(status: string | null | undefined) {
+  switch ((status || "").toUpperCase()) {
+    case "DRAFT":
+    case "NOT_SUBMITTED":
+      return "Draft";
+    case "SUBMITTED":
+      return "Pending review";
+    case "UNDER_REVIEW":
+      return "Review in progress";
+    case "CHANGES_REQUESTED":
+      return "Changes requested";
+    case "REJECTED":
+      return "Rejected";
+    case "APPROVED":
+      return "Approved";
+    case "PUBLISHED":
+      return "Published";
+    case "UNPUBLISHED":
+      return "Unpublished";
+    case "WITHDRAWN":
+      return "Withdrawn";
+    default:
+      return status ? status.replaceAll("_", " ").toLowerCase().replace(/^\w/, (value) => value.toUpperCase()) : "—";
+  }
+}
+
+function formatVisibilityStatus(status: string | null | undefined) {
+  switch ((status || "").toUpperCase()) {
+    case "VISIBLE":
+      return "Visible";
+    case "NOT_PUBLISHED":
+      return "Not published";
+    case "HIDDEN_BY_TENANT_CONSENT":
+      return "Hidden by tenant consent";
+    case "HIDDEN_BY_OWNERSHIP":
+      return "Hidden by ownership";
+    case "HIDDEN_BY_PLATFORM":
+      return "Hidden by platform";
+    case "INVALID_PROJECTION":
+      return "Invalid projection";
+    default:
+      return status ? status.replaceAll("_", " ").toLowerCase().replace(/^\w/, (value) => value.toUpperCase()) : "—";
+  }
+}
+
+function formatReviewAction(action: ReviewAction) {
+  switch (action) {
+    case "START_REVIEW":
+      return "Start review";
+    case "ADD_REVIEW_FINDING":
+      return "Add finding";
+    case "REQUEST_CHANGES":
+      return "Request changes";
+    case "REJECT_SUBMISSION":
+      return "Reject submission";
+    case "APPROVE_SUBMISSION":
+      return "Approve submission";
+    case "PUBLISH_PROFILE":
+      return "Publish profile";
+    case "UNPUBLISH_PROFILE":
+      return "Unpublish profile";
+    case "VIEW_SUBMISSION":
+      return "View submission";
+    case "VIEW_PUBLIC_PROFILE":
+      return "View public profile";
+    case "VIEW_REVIEW_HISTORY":
+      return "View review history";
+  }
+}
+
+function isReviewAction(value: string): value is ReviewAction {
+  return [
+    "START_REVIEW",
+    "ADD_REVIEW_FINDING",
+    "REQUEST_CHANGES",
+    "REJECT_SUBMISSION",
+    "APPROVE_SUBMISSION",
+    "PUBLISH_PROFILE",
+    "UNPUBLISH_PROFILE",
+    "VIEW_SUBMISSION",
+    "VIEW_PUBLIC_PROFILE",
+    "VIEW_REVIEW_HISTORY",
+  ].includes(value);
+}
+
+function reviewActionPermission(action: ReviewAction) {
+  switch (action) {
+    case "START_REVIEW":
+    case "ADD_REVIEW_FINDING":
+    case "REQUEST_CHANGES":
+    case "APPROVE_SUBMISSION":
+    case "PUBLISH_PROFILE":
+      return "platform.provider_connection.approve";
+    case "REJECT_SUBMISSION":
+    case "UNPUBLISH_PROFILE":
+      return "platform.provider_connection.reject";
+    case "VIEW_SUBMISSION":
+    case "VIEW_PUBLIC_PROFILE":
+    case "VIEW_REVIEW_HISTORY":
+      return "platform.provider_connection.view";
+  }
+}
+
+function reviewActionVariant(action: ReviewAction) {
+  switch (action) {
+    case "APPROVE_SUBMISSION":
+    case "PUBLISH_PROFILE":
+      return "contained" as const;
+    case "REJECT_SUBMISSION":
+    case "UNPUBLISH_PROFILE":
+      return "outlined" as const;
+    case "REQUEST_CHANGES":
+      return "outlined" as const;
+    case "START_REVIEW":
+    case "ADD_REVIEW_FINDING":
+      return "contained" as const;
+    default:
+      return "outlined" as const;
+  }
+}
+
+function reviewActionColor(action: ReviewAction) {
+  switch (action) {
+    case "APPROVE_SUBMISSION":
+    case "PUBLISH_PROFILE":
+      return "success" as const;
+    case "REJECT_SUBMISSION":
+    case "UNPUBLISH_PROFILE":
+      return "error" as const;
+    case "REQUEST_CHANGES":
+      return "warning" as const;
+    case "START_REVIEW":
+    case "ADD_REVIEW_FINDING":
+      return "primary" as const;
+    default:
+      return "primary" as const;
+  }
+}
+
 function activeSection(pathname: string): ConsoleSection {
-  const entry = SECTIONS.find((section) => section.path === pathname);
+  const normalized = pathname === "/platform/provider-connections/public-profile-lifecycle" ? "/platform/provider-connections/public-profile-reviews" : pathname;
+  const entry = SECTIONS.find((section) => section.path === normalized);
   return entry?.key || "overview";
 }
 
 function actionChipColor(status: string | null | undefined) {
   const normalized = (status || "").toUpperCase();
-  if (["LINKED", "CONNECTED", "ONLINE_BOOKING", "ENABLED", "READY", "AVAILABLE_TODAY", "NEXT_AVAILABLE"].includes(normalized)) return "success" as const;
-  if (["APPROVED", "PROPOSED", "PENDING_VERIFICATION", "REQUEST_APPOINTMENT"].includes(normalized)) return "warning" as const;
+  if (["LINKED", "CONNECTED", "ONLINE_BOOKING", "ENABLED", "READY", "AVAILABLE_TODAY", "NEXT_AVAILABLE", "APPROVED", "PUBLISHED", "VISIBLE"].includes(normalized)) return "success" as const;
+  if (["SUBMITTED", "UNDER_REVIEW", "CHANGES_REQUESTED", "PROPOSED", "PENDING_VERIFICATION", "REQUEST_APPOINTMENT"].includes(normalized)) return "warning" as const;
   if (["DISPUTED", "REJECTED", "FAILED", "CONFLICT", "INACTIVE", "UNAVAILABLE", "NOT_LINKED", "NOT_CONNECTED", "DISABLED"].includes(normalized)) return "error" as const;
   return "default" as const;
 }
@@ -198,6 +379,76 @@ function evidenceTone(strength: string | null | undefined) {
     default:
       return "default" as const;
   }
+}
+
+function reviewSection(review: ProviderPublicProfileReviewResponse | null, key: string) {
+  const value = review?.contentSnapshot?.[key];
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+function reviewText(review: ProviderPublicProfileReviewResponse | null, section: string, field: string) {
+  const value = reviewSection(review, section)[field];
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value == null) {
+    return null;
+  }
+  return String(value);
+}
+
+function reviewOwnershipStatus(review: ProviderPublicProfileReviewResponse | null) {
+  const ownership = review?.ownershipSnapshot && typeof review.ownershipSnapshot === "object" ? review.ownershipSnapshot as Record<string, unknown> : {};
+  const value = ownership.ownershipStatus;
+  return typeof value === "string" && value.trim().length ? value : null;
+}
+
+function reviewReadinessSnapshot(review: ProviderPublicProfileReviewResponse | null) {
+  const readiness = review?.readinessSnapshot && typeof review.readinessSnapshot === "object" ? review.readinessSnapshot as Record<string, unknown> : {};
+  const completeness = typeof readiness.completenessPercentage === "number"
+    ? readiness.completenessPercentage
+    : Number(readiness.completenessPercentage);
+  const readinessStatus = typeof readiness.readinessStatus === "string" ? readiness.readinessStatus : null;
+  return {
+    completenessPercentage: Number.isFinite(completeness) ? completeness : null,
+    readinessStatus,
+  };
+}
+
+function reviewDetailPath(submissionReference: string) {
+  return `/platform/provider-connections/public-profile-reviews/${encodeURIComponent(submissionReference)}`;
+}
+
+function reviewStatusCounts(rows: ProviderPublicProfileReviewQueueResponse[]) {
+  const counts = {
+    submitted: 0,
+    underReview: 0,
+    changesRequested: 0,
+    approved: 0,
+    published: 0,
+  };
+  for (const row of rows) {
+    switch ((row.moderationStatus || "").toUpperCase()) {
+      case "SUBMITTED":
+        counts.submitted += 1;
+        break;
+      case "UNDER_REVIEW":
+        counts.underReview += 1;
+        break;
+      case "CHANGES_REQUESTED":
+        counts.changesRequested += 1;
+        break;
+      case "APPROVED":
+        counts.approved += 1;
+        break;
+      case "PUBLISHED":
+        counts.published += 1;
+        break;
+      default:
+        break;
+    }
+  }
+  return counts;
 }
 
 function isOwnershipAction(value: string): value is OwnershipAction {
@@ -395,8 +646,8 @@ function sectionTitle(section: ConsoleSection) {
   switch (section) {
     case "public-profiles":
       return "Public Profiles";
-    case "public-profile-lifecycle":
-      return "Public Profile Lifecycle";
+    case "public-profile-reviews":
+      return "Public Profile Reviews";
     case "platform-entities":
       return "Platform Entities";
     case "suggestions":
@@ -627,14 +878,175 @@ function ProposalDialog({
   );
 }
 
+function ReviewCommandDialog({
+  open,
+  action,
+  review,
+  reason,
+  findings,
+  onClose,
+  onReasonChange,
+  onFindingsChange,
+  onAddFinding,
+  onRemoveFinding,
+  onSubmit,
+  saving,
+}: {
+  open: boolean;
+  action: ReviewAction | null;
+  review: ProviderPublicProfileReviewResponse | null;
+  reason: string;
+  findings: ReviewFindingDraft[];
+  onClose: () => void;
+  onReasonChange: (value: string) => void;
+  onFindingsChange: (index: number, patch: Partial<ReviewFindingDraft>) => void;
+  onAddFinding: () => void;
+  onRemoveFinding: (index: number) => void;
+  onSubmit: () => void;
+  saving: boolean;
+}) {
+  const requiresFindings = action === "REQUEST_CHANGES" || action === "ADD_REVIEW_FINDING";
+  const isFindingAction = action === "ADD_REVIEW_FINDING";
+
+  return (
+    <Dialog open={open} onClose={onClose} fullWidth maxWidth="md">
+      <DialogTitle>{action ? formatReviewAction(action) : "Review action"}</DialogTitle>
+      <DialogContent dividers>
+        <Stack spacing={2} sx={{ pt: 1 }}>
+          <Alert severity="info" variant="outlined">
+            {action === "START_REVIEW"
+              ? "Start review locks the selected submission to a reviewer."
+              : action === "ADD_REVIEW_FINDING"
+                ? "Add finding records a non-decision review observation while the review remains in progress."
+              : action === "REQUEST_CHANGES"
+                ? "Request changes captures structured findings grouped by editor section."
+                : action === "REJECT_SUBMISSION"
+                  ? "Reject submission keeps ownership and consent unchanged."
+                  : action === "APPROVE_SUBMISSION"
+                    ? "Approval marks the submission approved but does not publish it."
+                    : action === "PUBLISH_PROFILE"
+                      ? "Publish creates or updates the public projection."
+                      : action === "UNPUBLISH_PROFILE"
+                        ? "Unpublish hides the public projection and preserves history."
+                        : "Use the backend-authoritative moderation action."}
+          </Alert>
+          {!isFindingAction ? (
+            <TextField
+              label={action === "START_REVIEW" ? "Review note" : action === "REQUEST_CHANGES" ? "Provider-facing message" : action === "APPROVE_SUBMISSION" ? "Approval note" : action === "UNPUBLISH_PROFILE" ? "Unpublish reason" : "Reason"}
+              value={reason}
+              onChange={(event) => onReasonChange(event.target.value)}
+              fullWidth
+              multiline
+              minRows={3}
+              helperText={action === "START_REVIEW"
+                ? "Optional internal note recorded when the review begins."
+                : action === "APPROVE_SUBMISSION"
+                  ? "Optional note recorded with the approval."
+                  : action === "REQUEST_CHANGES"
+                    ? "Use this message for the Provider-facing correction request."
+                    : undefined}
+            />
+          ) : null}
+          {requiresFindings ? (
+            <Stack spacing={1.5}>
+              <Stack direction="row" alignItems="center" justifyContent="space-between" gap={1} flexWrap="wrap">
+                <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>{isFindingAction ? "Finding details" : "Structured findings"}</Typography>
+                <Button size="small" variant="outlined" onClick={onAddFinding}>
+                  Add finding
+                </Button>
+              </Stack>
+              {findings.map((finding, index) => (
+                <Paper key={`${finding.section}-${finding.field}-${index}`} variant="outlined" sx={{ p: 1.5 }}>
+                  <Stack spacing={1}>
+                    <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                      <TextField select label="Section" value={finding.section} onChange={(event) => onFindingsChange(index, { section: event.target.value })} fullWidth>
+                        {["Overview", "About", "Contact", "Services", "Specialities", "Facilities", "Timings", "Fees", "Languages", "Media", "SEO", "Other"].map((sectionOption) => (
+                          <MenuItem key={sectionOption} value={sectionOption}>{sectionOption}</MenuItem>
+                        ))}
+                      </TextField>
+                      <TextField label="Category" value={finding.category} onChange={(event) => onFindingsChange(index, { category: event.target.value })} fullWidth />
+                    </Stack>
+                    <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                      <TextField select label="Severity" value={finding.severity} onChange={(event) => onFindingsChange(index, { severity: event.target.value })} fullWidth>
+                        {["Info", "Warning", "Critical"].map((severityOption) => (
+                          <MenuItem key={severityOption} value={severityOption}>{severityOption}</MenuItem>
+                        ))}
+                      </TextField>
+                      <TextField label="Field" value={finding.field} onChange={(event) => onFindingsChange(index, { field: event.target.value })} fullWidth />
+                    </Stack>
+                    <TextField
+                      label="Provider-facing message"
+                      value={finding.providerFacingMessage}
+                      onChange={(event) => onFindingsChange(index, { providerFacingMessage: event.target.value })}
+                      fullWidth
+                      multiline
+                      minRows={2}
+                    />
+                    <TextField
+                      label="Internal review note"
+                      value={finding.internalNote}
+                      onChange={(event) => onFindingsChange(index, { internalNote: event.target.value })}
+                      fullWidth
+                      multiline
+                      minRows={2}
+                      helperText="Optional private note for the Platform review record."
+                    />
+                    <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                      <TextField select label="Blocking" value={finding.blocking ? "true" : "false"} onChange={(event) => onFindingsChange(index, { blocking: event.target.value === "true", required: event.target.value === "true" || finding.providerActionRequired })} fullWidth>
+                        <MenuItem value="false">No</MenuItem>
+                        <MenuItem value="true">Yes</MenuItem>
+                      </TextField>
+                      <TextField select label="Provider action required" value={finding.providerActionRequired ? "true" : "false"} onChange={(event) => onFindingsChange(index, { providerActionRequired: event.target.value === "true", required: finding.blocking || event.target.value === "true" })} fullWidth>
+                        <MenuItem value="false">No</MenuItem>
+                        <MenuItem value="true">Yes</MenuItem>
+                      </TextField>
+                    </Stack>
+                    <Box sx={{ display: "flex", justifyContent: "flex-end" }}>
+                      <Button size="small" variant="text" color="error" onClick={() => onRemoveFinding(index)} disabled={findings.length === 1}>
+                        Remove finding
+                      </Button>
+                    </Box>
+                  </Stack>
+                </Paper>
+              ))}
+            </Stack>
+          ) : null}
+          {review ? (
+            <Paper variant="outlined" sx={{ p: 1.5 }}>
+              <Stack spacing={0.75}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Selected submission</Typography>
+                <Typography variant="body2" color="text.secondary">{reviewText(review, "about", "displayName") || review.publicProfileReference || "Selected profile"}</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Submitted version {review.submittedDraftVersion} · {formatModerationStatus(review.moderationStatus)} · {formatVisibilityStatus(review.effectiveVisibility)}
+                </Typography>
+              </Stack>
+            </Paper>
+          ) : null}
+        </Stack>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>Cancel</Button>
+        <Button variant="contained" onClick={onSubmit} disabled={saving}>
+          {action ? formatReviewAction(action) : "Submit"}
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
 export default function ProviderConnectionsPage() {
   const auth = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
 
   const section = activeSection(location.pathname);
+  const selectedReviewRouteReference = React.useMemo(() => {
+    const match = location.pathname.match(/^\/platform\/provider-connections\/public-profile-reviews\/([^/]+)$/);
+    return match ? decodeURIComponent(match[1]) : null;
+  }, [location.pathname]);
   const [overview, setOverview] = React.useState<ProviderConnectionsOverviewResponse | null>(null);
   const [publicRows, setPublicRows] = React.useState<ProviderConnectionsPublicProfileResponse[]>([]);
-  const [lifecycleRows, setLifecycleRows] = React.useState<ProviderConnectionsLifecycleResponse[]>([]);
+  const [reviewRows, setReviewRows] = React.useState<ProviderPublicProfileReviewQueueResponse[]>([]);
   const [platformClinicRows, setPlatformClinicRows] = React.useState<ProviderConnectionsPlatformEntityResponse[]>([]);
   const [platformDoctorRows, setPlatformDoctorRows] = React.useState<ProviderConnectionsPlatformEntityResponse[]>([]);
   const [linkRows, setLinkRows] = React.useState<ProviderConnectionsLinkResponse[]>([]);
@@ -663,22 +1075,57 @@ export default function ProviderConnectionsPage() {
   const [error, setError] = React.useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = React.useState(false);
   const [proposalDraft, setProposalDraft] = React.useState<ProposalDraft | null>(null);
+  const [selectedReviewReference, setSelectedReviewReference] = React.useState<string | null>(null);
+  const [selectedReview, setSelectedReview] = React.useState<ProviderPublicProfileReviewResponse | null>(null);
+  const [reviewCommandAction, setReviewCommandAction] = React.useState<ReviewAction | null>(null);
+  const [reviewCommandReason, setReviewCommandReason] = React.useState("");
+  const [reviewFindings, setReviewFindings] = React.useState<ReviewFindingDraft[]>([
+    {
+      section: "About",
+      field: "description",
+      category: "Description",
+      severity: "Critical",
+      required: true,
+      blocking: true,
+      providerActionRequired: true,
+      reviewerNote: "",
+      providerFacingMessage: "",
+      internalNote: "",
+    },
+  ]);
   const [rejectDialogOpen, setRejectDialogOpen] = React.useState(false);
   const [rejectTarget, setRejectTarget] = React.useState<ProviderConnectionsSuggestionResponse | null>(null);
   const [rejectReason, setRejectReason] = React.useState("");
   const [saving, setSaving] = React.useState(false);
+
+  React.useEffect(() => {
+    if (section !== "public-profile-reviews") {
+      if (selectedReviewReference !== null) {
+        setSelectedReviewReference(null);
+      }
+      return;
+    }
+    if (selectedReviewRouteReference && selectedReviewReference !== selectedReviewRouteReference) {
+      setSelectedReviewReference(selectedReviewRouteReference);
+      return;
+    }
+    if (!selectedReviewRouteReference && reviewRows.length && !selectedReviewReference) {
+      setSelectedReviewReference(reviewRows[0].submissionReference);
+    }
+  }, [reviewRows, section, selectedReviewReference, selectedReviewRouteReference]);
 
   const refresh = React.useCallback(async () => {
     if (!auth.accessToken) return;
     setLoading(true);
     setError(null);
     try {
-      const [overviewRes, publicRes, lifecycleRes, clinicEntitiesRes, doctorEntitiesRes, linksRes, suggestionsRes, ownershipsRes, conflictsRes, auditRes, detailRes] = await Promise.allSettled([
+      const [overviewRes, publicRes, reviewRes, reviewDetailRes, clinicEntitiesRes, doctorEntitiesRes, linksRes, suggestionsRes, ownershipsRes, conflictsRes, auditRes, detailRes] = await Promise.allSettled([
         getProviderConnectionsOverview(auth.accessToken),
         publicType === "DOCTOR"
           ? listProviderConnectionsPublicPractices(auth.accessToken, { q: publicQuery || null, city: publicCity || null })
           : listProviderConnectionsPublicProfiles(auth.accessToken, { type: publicType, q: publicQuery || null, city: publicCity || null }),
-        listProviderConnectionsPublicProfileLifecycle(auth.accessToken, { type: publicType, q: publicQuery || null, city: publicCity || null }),
+        listProviderConnectionsPublicProfileReviews(auth.accessToken, { type: publicType, q: publicQuery || null, city: publicCity || null }),
+        selectedReviewReference ? getProviderConnectionsPublicProfileReview(auth.accessToken, selectedReviewReference) : Promise.resolve(null),
         listProviderConnectionsPlatformEntities(auth.accessToken, { type: "CLINIC", q: entityQuery || null }),
         listProviderConnectionsPlatformEntities(auth.accessToken, { type: "DOCTOR", q: entityQuery || null }),
         listProviderConnectionsLinks(auth.accessToken, { type: linkType || null, status: linkStatus || null, q: linkQuery || null }),
@@ -691,7 +1138,8 @@ export default function ProviderConnectionsPage() {
 
       setOverview(overviewRes.status === "fulfilled" ? overviewRes.value : null);
       setPublicRows(publicRes.status === "fulfilled" ? publicRes.value : []);
-      setLifecycleRows(lifecycleRes.status === "fulfilled" ? lifecycleRes.value : []);
+      setReviewRows(reviewRes.status === "fulfilled" ? reviewRes.value : []);
+      setSelectedReview(reviewDetailRes.status === "fulfilled" ? reviewDetailRes.value : null);
       setPlatformClinicRows(clinicEntitiesRes.status === "fulfilled" ? clinicEntitiesRes.value : []);
       setPlatformDoctorRows(doctorEntitiesRes.status === "fulfilled" ? doctorEntitiesRes.value : []);
       setLinkRows(linksRes.status === "fulfilled" ? linksRes.value : []);
@@ -701,14 +1149,16 @@ export default function ProviderConnectionsPage() {
       setAuditRows(auditRes.status === "fulfilled" ? auditRes.value : []);
       setSelectedLinkDetail(detailRes.status === "fulfilled" ? detailRes.value : null);
 
-      if (overviewRes.status === "rejected" || publicRes.status === "rejected" || lifecycleRes.status === "rejected" || clinicEntitiesRes.status === "rejected" || doctorEntitiesRes.status === "rejected" || linksRes.status === "rejected" || suggestionsRes.status === "rejected" || ownershipsRes.status === "rejected" || conflictsRes.status === "rejected" || auditRes.status === "rejected") {
+      if (overviewRes.status === "rejected" || publicRes.status === "rejected" || reviewRes.status === "rejected" || reviewDetailRes.status === "rejected" || clinicEntitiesRes.status === "rejected" || doctorEntitiesRes.status === "rejected" || linksRes.status === "rejected" || suggestionsRes.status === "rejected" || ownershipsRes.status === "rejected" || conflictsRes.status === "rejected" || auditRes.status === "rejected") {
         const reason = overviewRes.status === "rejected"
           ? overviewRes.reason
           : publicRes.status === "rejected"
             ? publicRes.reason
-            : lifecycleRes.status === "rejected"
-              ? lifecycleRes.reason
-            : clinicEntitiesRes.status === "rejected"
+            : reviewRes.status === "rejected"
+              ? reviewRes.reason
+              : reviewDetailRes.status === "rejected"
+                ? reviewDetailRes.reason
+              : clinicEntitiesRes.status === "rejected"
               ? clinicEntitiesRes.reason
               : doctorEntitiesRes.status === "rejected"
                 ? doctorEntitiesRes.reason
@@ -730,7 +1180,7 @@ export default function ProviderConnectionsPage() {
     } finally {
       setLoading(false);
     }
-  }, [auth.accessToken, publicCity, publicQuery, publicType, entityQuery, linkQuery, linkStatus, linkType, suggestionQuery, selectedLinkId, auditAction, auditTenant, auditProviderType, auditResult, auditQuery]);
+  }, [auth.accessToken, publicCity, publicQuery, publicType, entityQuery, linkQuery, linkStatus, linkType, suggestionQuery, selectedLinkId, auditAction, auditTenant, auditProviderType, auditResult, auditQuery, selectedReviewReference]);
 
   React.useEffect(() => {
     void refresh();
@@ -970,6 +1420,174 @@ export default function ProviderConnectionsPage() {
     }
   }, [auth.accessToken, rejectReason, rejectTarget, refresh]);
 
+  const openReviewCommand = React.useCallback((action: ReviewAction) => {
+    setReviewCommandAction(action);
+    setReviewCommandReason("");
+    setReviewFindings([
+      {
+        section: "About",
+        field: "description",
+        category: "Description",
+        severity: "Critical",
+        required: true,
+        blocking: true,
+        providerActionRequired: true,
+        reviewerNote: "",
+        providerFacingMessage: "",
+        internalNote: "",
+      },
+    ]);
+  }, []);
+
+  const updateReviewFinding = React.useCallback((index: number, patch: Partial<ReviewFindingDraft>) => {
+    setReviewFindings((current) => current.map((finding, currentIndex) => (currentIndex === index ? { ...finding, ...patch } : finding)));
+  }, []);
+
+  const addReviewFinding = React.useCallback(() => {
+    setReviewFindings((current) => [
+      ...current,
+      {
+        section: "Other",
+        field: "",
+        category: "Observation",
+        severity: "Warning",
+        required: false,
+        blocking: false,
+        providerActionRequired: true,
+        reviewerNote: "",
+        providerFacingMessage: "",
+        internalNote: "",
+      },
+    ]);
+  }, []);
+
+  const removeReviewFinding = React.useCallback((index: number) => {
+    setReviewFindings((current) => (current.length <= 1 ? current : current.filter((_, currentIndex) => currentIndex !== index)));
+  }, []);
+
+  const closeReviewCommand = React.useCallback(() => {
+    setReviewCommandAction(null);
+    setReviewCommandReason("");
+    setReviewFindings([]);
+  }, []);
+
+  const submitReviewCommand = React.useCallback(async () => {
+    if (!auth.accessToken || !selectedReviewReference || !reviewCommandAction) {
+      return;
+    }
+    setSaving(true);
+    try {
+      const reason = reviewCommandReason.trim() || null;
+      switch (reviewCommandAction) {
+        case "START_REVIEW":
+          await startProviderConnectionsPublicProfileReview(auth.accessToken, selectedReviewReference, { reason });
+          break;
+        case "ADD_REVIEW_FINDING":
+          await addFindingProviderConnectionsPublicProfileReview(auth.accessToken, selectedReviewReference, {
+            expectedRevision: selectedReview?.moderationRevision,
+            section: reviewFindings[0]?.section || "Other",
+            category: reviewFindings[0]?.category || "Observation",
+            severity: reviewFindings[0]?.severity || "Warning",
+            field: reviewFindings[0]?.field || null,
+            providerFacingMessage: reviewFindings[0]?.providerFacingMessage || reviewFindings[0]?.reviewerNote || "Review observation",
+            internalNote: reviewFindings[0]?.internalNote || null,
+            blocking: reviewFindings[0]?.blocking || false,
+            providerActionRequired: reviewFindings[0]?.providerActionRequired ?? true,
+          });
+          break;
+        case "REQUEST_CHANGES":
+          await requestChangesProviderConnectionsPublicProfileReview(auth.accessToken, selectedReviewReference, {
+            reason: reviewCommandReason.trim() || "Changes requested",
+            findings: reviewFindings.map((finding) => ({
+              section: finding.section,
+              field: finding.field,
+              category: finding.category,
+              severity: finding.severity,
+              required: finding.required || finding.blocking || finding.providerActionRequired,
+              reviewerNote: finding.reviewerNote || finding.providerFacingMessage || finding.internalNote,
+              providerFacingMessage: finding.providerFacingMessage,
+              internalNote: finding.internalNote,
+            })),
+          });
+          break;
+        case "REJECT_SUBMISSION":
+          await rejectProviderConnectionsPublicProfileReview(auth.accessToken, selectedReviewReference, { reason });
+          break;
+        case "APPROVE_SUBMISSION":
+          await approveProviderConnectionsPublicProfileReview(auth.accessToken, selectedReviewReference, { reason });
+          break;
+        case "PUBLISH_PROFILE":
+          await publishProviderConnectionsPublicProfileReview(auth.accessToken, selectedReviewReference, { reason });
+          break;
+        case "UNPUBLISH_PROFILE":
+          await unpublishProviderConnectionsPublicProfileReview(auth.accessToken, selectedReview?.publicProfileReference || "", { reason });
+          break;
+        default:
+          break;
+      }
+      closeReviewCommand();
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update public profile review.");
+    } finally {
+      setSaving(false);
+    }
+  }, [auth.accessToken, closeReviewCommand, refresh, reviewCommandAction, reviewCommandReason, reviewFindings, selectedReview?.moderationRevision, selectedReview?.publicProfileReference, selectedReviewReference]);
+
+  const renderReviewActionButton = React.useCallback((action: string, targetReference: string | null, targetUrl: string | null) => {
+    if (!isReviewAction(action)) {
+      return null;
+    }
+    const label = formatReviewAction(action);
+    const permission = reviewActionPermission(action);
+    if (!auth.hasPermission(permission)) {
+      return null;
+    }
+    if (action === "VIEW_PUBLIC_PROFILE") {
+      return targetUrl ? (
+        <Button key={`${targetReference}-${action}`} size="small" variant="outlined" component={Link} to={targetUrl} target="_blank" rel="noreferrer">
+          {label}
+        </Button>
+      ) : null;
+    }
+    if (action === "VIEW_SUBMISSION" || action === "VIEW_REVIEW_HISTORY") {
+      return (
+        <Button
+          key={`${targetReference}-${action}`}
+          size="small"
+          variant="outlined"
+          onClick={() => {
+            if (targetReference) {
+              setSelectedReview(null);
+              setSelectedReviewReference(targetReference);
+              navigate(reviewDetailPath(targetReference as string));
+            }
+          }}
+        >
+          {label}
+        </Button>
+      );
+    }
+    return (
+      <Button
+        key={`${targetReference}-${action}`}
+        size="small"
+        variant={reviewActionVariant(action)}
+        color={reviewActionColor(action)}
+        disabled={saving}
+        onClick={() => {
+          if (targetReference) {
+            setSelectedReview(null);
+            setSelectedReviewReference(targetReference);
+            openReviewCommand(action);
+          }
+        }}
+      >
+        {label}
+      </Button>
+    );
+  }, [auth, openReviewCommand, saving]);
+
   const selectedLink = selectedLinkDetail?.link || linkRows.find((item) => item.id === selectedLinkId) || null;
 
   const detailActions = selectedLink ? (
@@ -1149,104 +1767,151 @@ export default function ProviderConnectionsPage() {
                   </Stack>
                 ) : null}
 
-                {section === "public-profile-lifecycle" ? (
-                  <Stack spacing={1.5}>
-                    <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
-                      <TextField select label="Type" value={publicType} onChange={(event) => setPublicType(event.target.value as ProviderConnectionsPublicProfileType)} fullWidth>
-                        <MenuItem value="CLINIC">Clinic</MenuItem>
-                        <MenuItem value="DOCTOR">Doctor</MenuItem>
-                        <MenuItem value="HOSPITAL">Hospital</MenuItem>
-                      </TextField>
-                      <TextField label="Search" value={publicQuery} onChange={(event) => setPublicQuery(event.target.value)} fullWidth />
-                      <TextField label="City" value={publicCity} onChange={(event) => setPublicCity(event.target.value)} fullWidth />
-                    </Stack>
-                    <TableContainer component={Paper} variant="outlined">
-                      <Table size="small">
-                        <TableHead>
-                          <TableRow>
-                            <TableCell>Profile</TableCell>
-                            <TableCell>Source</TableCell>
-                            <TableCell>Status</TableCell>
-                            <TableCell>Draft</TableCell>
-                            <TableCell>Readiness</TableCell>
-                            <TableCell>Saved</TableCell>
-                            <TableCell align="right">Actions</TableCell>
-                          </TableRow>
-                        </TableHead>
-                        <TableBody>
-                          {lifecycleRows.map((row) => (
-                            <TableRow key={`${row.publicProfileType}-${row.sourceSystem}-${row.sourceEntityReference}-${row.canonicalSlug || "draft"}`} hover>
-                              <TableCell>
-                                <Stack spacing={0.5}>
-                                  <Typography sx={{ fontWeight: 700 }}>{row.displayName || "Unnamed profile"}</Typography>
-                                  <Typography variant="caption" color="text.secondary">{formatProviderType(row.publicProfileType)} · {row.canonicalSlug || "No slug yet"}</Typography>
-                                  <Typography variant="caption" color="text.secondary">{row.publicPath || "No public path"}</Typography>
+                {section === "public-profile-reviews" ? (
+                  <Grid container spacing={2}>
+                    <Grid size={{ xs: 12, lg: 5 }}>
+                      <Stack spacing={1.5}>
+                        <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
+                          <TextField select label="Type" value={publicType} onChange={(event) => setPublicType(event.target.value as ProviderConnectionsPublicProfileType)} fullWidth>
+                            <MenuItem value="CLINIC">Clinic</MenuItem>
+                            <MenuItem value="DOCTOR">Doctor</MenuItem>
+                            <MenuItem value="HOSPITAL">Hospital</MenuItem>
+                          </TextField>
+                          <TextField label="Search" value={publicQuery} onChange={(event) => setPublicQuery(event.target.value)} fullWidth />
+                          <TextField label="City" value={publicCity} onChange={(event) => setPublicCity(event.target.value)} fullWidth />
+                        </Stack>
+                        <Paper variant="outlined" sx={{ p: 1.5 }}>
+                          <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                            {[
+                              { label: "Pending Review", count: reviewStatusCounts(reviewRows).submitted },
+                              { label: "In Review", count: reviewStatusCounts(reviewRows).underReview },
+                              { label: "Changes Requested", count: reviewStatusCounts(reviewRows).changesRequested },
+                              { label: "Approved", count: reviewStatusCounts(reviewRows).approved },
+                              { label: "Published", count: reviewStatusCounts(reviewRows).published },
+                            ].map((item) => (
+                              <Chip key={item.label} label={`${item.label}: ${item.count}`} color="primary" variant="outlined" />
+                            ))}
+                          </Stack>
+                        </Paper>
+                        <Stack spacing={1.25}>
+                          {reviewRows.map((row) => {
+                            const selected = selectedReviewReference === row.submissionReference;
+                            const primaryActionLabel = (row.moderationStatus || "").toUpperCase() === "UNDER_REVIEW" ? "Continue review" : "Open review";
+                            return (
+                              <Paper
+                                key={row.submissionReference}
+                                variant="outlined"
+                                onClick={() => {
+                                  if (!row.submissionReference) {
+                                    return;
+                                  }
+                                  setSelectedReview(null);
+                                  setSelectedReviewReference(row.submissionReference);
+                                  navigate(reviewDetailPath(row.submissionReference));
+                                }}
+                                sx={{
+                                  p: 1.5,
+                                  borderColor: selected ? "primary.main" : "divider",
+                                  bgcolor: selected ? "action.selected" : "background.paper",
+                                  cursor: "pointer",
+                                }}
+                              >
+                                <Stack spacing={1}>
+                                  <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1} useFlexGap flexWrap="wrap">
+                                    <Stack spacing={0.25} sx={{ minWidth: 0 }}>
+                                      <Typography sx={{ fontWeight: 800 }}>{row.displayName || "Unnamed profile"}</Typography>
+                                      <Typography variant="body2" color="text.secondary">{formatProviderType(row.publicProfileType)} · Version {row.submittedDraftVersion ?? 0}</Typography>
+                                      <Typography variant="caption" color="text.secondary">{formatDateTime(row.submittedAt)}</Typography>
+                                    </Stack>
+                                    <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" justifyContent="flex-end">
+                                      <Chip size="small" label={formatModerationStatus(row.moderationStatus)} color={actionChipColor(row.moderationStatus)} variant="outlined" />
+                                      <Chip size="small" label={`${row.completenessPercentage}% Ready`} color={row.readinessStatus === "READY" ? "success" : "warning"} variant="outlined" />
+                                    </Stack>
+                                  </Stack>
+                                  <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                                    <Chip size="small" label={`Reviewer: ${row.assignedReviewer || "Unassigned"}`} variant="outlined" />
+                                    <Chip size="small" label={row.publicationStatus || "UNPUBLISHED"} variant="outlined" />
+                                    <Chip size="small" label={row.tenantConsentStatus || "—"} variant="outlined" />
+                                    <Chip size="small" label={row.ownershipStatus || "—"} variant="outlined" />
+                                  </Stack>
+                                  <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1} useFlexGap flexWrap="wrap">
+                                    <Box sx={{ minWidth: 0 }}>
+                                      <Typography variant="body2" color="text.secondary">{row.publicUrl || "No public URL yet"}</Typography>
+                                      <Typography variant="caption" color="text.secondary">{row.publicProfileReference || "No public reference"}</Typography>
+                                    </Box>
+                                    <Button
+                                      size="small"
+                                      variant="outlined"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        if (row.submissionReference) {
+                                          setSelectedReview(null);
+                                          setSelectedReviewReference(row.submissionReference);
+                                          navigate(reviewDetailPath(row.submissionReference));
+                                        }
+                                      }}
+                                    >
+                                      {primaryActionLabel}
+                                    </Button>
+                                  </Stack>
                                 </Stack>
-                              </TableCell>
-                              <TableCell>
-                                <Stack spacing={0.25}>
-                                  <Typography variant="body2">{row.sourceSystem || "—"}</Typography>
-                                  <Typography variant="caption" color="text.secondary">{row.sourceEntityReference || "—"}</Typography>
-                                  <Typography variant="caption" color="text.secondary">Revision {row.sourceRevision}</Typography>
-                                </Stack>
-                              </TableCell>
-                              <TableCell>
-                                <Chip size="small" label={(row.publicationStatus || "UNKNOWN").replaceAll("_", " ")} color={actionChipColor(row.publicationStatus)} variant="outlined" />
-                              </TableCell>
-                              <TableCell>
-                                <Stack spacing={0.5}>
-                                  <Chip size="small" label={(row.draftStatus || "NO_DRAFT").replaceAll("_", " ")} color={actionChipColor(row.draftStatus)} variant="outlined" sx={{ alignSelf: "flex-start" }} />
-                                  <Typography variant="caption" color="text.secondary">
-                                    {row.draftReference || "No draft yet"}
-                                  </Typography>
-                                  <Typography variant="caption" color="text.secondary">
-                                    Version {row.draftVersionNumber || 0}
-                                  </Typography>
-                                </Stack>
-                              </TableCell>
-                              <TableCell>
-                                <Stack spacing={0.5}>
-                                  <Chip size="small" label={row.ready ? "Ready" : "Needs work"} color={row.ready ? "success" : "warning"} variant="outlined" sx={{ alignSelf: "flex-start" }} />
-                                  <Typography variant="caption" color="text.secondary">
-                                    {row.missingFields.length ? `Missing: ${row.missingFields.join(", ")}` : "No missing fields"}
-                                  </Typography>
-                                  <Typography variant="caption" color="text.secondary">
-                                    {row.invalidFields.length ? `Invalid: ${row.invalidFields.join(", ")}` : "No invalid fields"}
-                                  </Typography>
-                                </Stack>
-                              </TableCell>
-                              <TableCell>
-                                <Stack spacing={0.25}>
-                                  <Typography variant="body2">{formatDateTime(row.draftLastSavedAt || row.projectedAt)}</Typography>
-                                  <Typography variant="caption" color="text.secondary">
-                                    {row.draftLastSavedAt ? "Draft last saved" : "Projection updated"} · rev {row.connectionRevision}
-                                  </Typography>
-                                </Stack>
-                              </TableCell>
-                              <TableCell align="right">
-                                {row.publicPath ? (
-                                  <Button size="small" component={Link} to={row.publicPath} target="_blank" rel="noreferrer">
-                                    View public profile
-                                  </Button>
-                                ) : (
-                                  <Typography variant="caption" color="text.secondary">No public path</Typography>
-                                )}
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                          {!lifecycleRows.length ? (
-                            <TableRow>
-                              <TableCell colSpan={7}>
-                                <Typography variant="body2" color="text.secondary">
-                                  No lifecycle records matched the current filters.
-                                </Typography>
-                              </TableCell>
-                            </TableRow>
+                              </Paper>
+                            );
+                          })}
+                          {!reviewRows.length ? (
+                            <Alert severity="info" variant="outlined">No profile review submissions matched the current filters.</Alert>
                           ) : null}
-                        </TableBody>
-                      </Table>
-                    </TableContainer>
-                  </Stack>
+                        </Stack>
+                      </Stack>
+                    </Grid>
+                    <Grid size={{ xs: 12, lg: 7 }}>
+                      <Paper variant="outlined" sx={{ p: 2, position: { lg: "sticky" }, top: { lg: 24 } }}>
+                        {selectedReview ? (() => {
+                          const blockingCount = (selectedReview.findings || []).filter((finding) => (finding.severity || "").toUpperCase() === "BLOCKING" || finding.required).length;
+                          const openCount = (selectedReview.findings || []).filter((finding) => (finding.resolutionStatus || "OPEN").toUpperCase() === "OPEN").length;
+                          const readiness = reviewReadinessSnapshot(selectedReview);
+                          return (
+                            <Stack spacing={2}>
+                              <Stack spacing={0.5}>
+                                <Typography variant="h6" sx={{ fontWeight: 900 }}>{reviewText(selectedReview, "about", "displayName") || selectedReview.publicProfileReference || "Review detail"}</Typography>
+                                <Typography variant="body2" color="text.secondary">{formatProviderType(selectedReview.publicProfileType)} · Submission Version {selectedReview.submittedDraftVersion}</Typography>
+                                <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                                  <Chip size="small" label={`Moderation: ${formatModerationStatus(selectedReview.moderationStatus)}`} color={actionChipColor(selectedReview.moderationStatus)} variant="outlined" />
+                                  <Chip size="small" label={`Publication: ${formatModerationStatus(selectedReview.publicationStatusSnapshot)}`} variant="outlined" />
+                                  <Chip size="small" label={`Consent: ${selectedReview.tenantConsentStatusSnapshot || "—"}`} variant="outlined" />
+                                  <Chip size="small" label={`Ownership: ${reviewOwnershipStatus(selectedReview) || "—"}`} variant="outlined" />
+                                  <Chip size="small" label={`Readiness: ${readiness.completenessPercentage == null ? "—" : `${readiness.completenessPercentage}% Ready`}`} color={readiness.readinessStatus === "READY" ? "success" : "warning"} variant="outlined" />
+                                  <Chip size="small" label={`Reviewer: ${selectedReview.assignedReviewerDisplayName || selectedReview.assignedReviewerReference || selectedReview.assignedReviewerEmail || selectedReview.assignedReviewerId || "Unassigned"}`} variant="outlined" />
+                                  <Chip size="small" label={`Review started: ${formatDateTime(selectedReview.assignedAt)}`} variant="outlined" />
+                                </Stack>
+                              </Stack>
+                              <Alert severity="info" variant="outlined">
+                                You are reviewing the exact profile version submitted by the Provider. Later draft changes will not affect this submission.
+                              </Alert>
+                              <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                                <Chip size="small" label={`Open findings: ${openCount}`} variant="outlined" />
+                                <Chip size="small" label={`Blocking findings: ${blockingCount}`} color={blockingCount ? "error" : "default"} variant="outlined" />
+                              </Stack>
+                              <PlatformPublicProfileReviewPreview review={selectedReview} />
+                              <Paper variant="outlined" sx={{ p: 1.5 }}>
+                                <Stack spacing={1}>
+                                  <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Action panel</Typography>
+                                  <Typography variant="body2" color="text.secondary">Actions are rendered only from backend allowedActions.</Typography>
+                                  <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                                    {(selectedReview.allowedActions || []).map((action) => renderReviewActionButton(action, selectedReview.submissionReference, selectedReview.publicUrl))}
+                                  </Stack>
+                                </Stack>
+                              </Paper>
+                            </Stack>
+                          );
+                        })() : (
+                          <Alert severity="info" variant="outlined">
+                            Select a submission row to inspect the immutable submitted version.
+                          </Alert>
+                        )}
+                      </Paper>
+                    </Grid>
+                  </Grid>
                 ) : null}
 
                 {section === "platform-entities" ? (
@@ -1655,10 +2320,10 @@ export default function ProviderConnectionsPage() {
                         <Stack spacing={1.5}>
                           <Stack direction="row" spacing={1} alignItems="center">
                             <VisibilityRoundedIcon fontSize="small" />
-                            <Typography variant="h6" sx={{ fontWeight: 900 }}>Public profile lifecycle</Typography>
+                            <Typography variant="h6" sx={{ fontWeight: 900 }}>Public profile reviews</Typography>
                           </Stack>
-                          <Typography variant="body2" color="text.secondary">Review Discover drafts, publication readiness, and source synchronization state.</Typography>
-                          <Button component={Link} to={sectionPath("public-profile-lifecycle")} variant="contained">Open workspace</Button>
+                          <Typography variant="body2" color="text.secondary">Review immutable submissions, moderation decisions, and publication state.</Typography>
+                          <Button component={Link} to={sectionPath("public-profile-reviews")} variant="contained">Open review workspace</Button>
                         </Stack>
                       </Paper>
                     </Grid>
@@ -1705,80 +2370,82 @@ export default function ProviderConnectionsPage() {
           </Card>
         </Grid>
 
-        <Grid size={{ xs: 12, lg: 4 }}>
-          <Paper variant="outlined" sx={{ p: 2.25, position: "sticky", top: 24 }}>
-            <Stack spacing={2}>
-              <Stack spacing={0.5}>
-                <Typography variant="h6" sx={{ fontWeight: 900 }}>Selected link</Typography>
-                <Typography variant="body2" color="text.secondary">Inspect the active link and run lifecycle actions.</Typography>
-              </Stack>
-              {selectedLink ? (
-                <Stack spacing={1.25}>
-                  <Chip size="small" label={`${selectedLink.publicProfileType} · ${selectedLink.linkStatus.replaceAll("_", " ")}`} color={actionChipColor(selectedLink.linkStatus)} variant="outlined" sx={{ alignSelf: "flex-start" }} />
-                  <Typography sx={{ fontWeight: 800 }}>{selectedLink.publicDisplayName || selectedLink.publicReference || "Selected link"}</Typography>
-                  <Typography variant="body2" color="text.secondary">{selectedLink.tenantName || "—"}</Typography>
-                  <Stack spacing={0.5}>
-                    <Typography variant="caption" color="text.secondary">Public identity</Typography>
-                    <Typography variant="body2">{selectedLink.publicReference || "—"}</Typography>
-                    {selectedLink.publicPracticeReference ? <Typography variant="caption" color="text.secondary">{selectedLink.publicPracticeReference}</Typography> : null}
-                    <Typography variant="caption" color="text.secondary">{selectedLink.publicPath || "No public path"}</Typography>
-                  </Stack>
-                  <Stack spacing={0.5}>
-                    <Typography variant="caption" color="text.secondary">Connection</Typography>
-                    <Typography variant="body2">{selectedLink.connectionStatus.replaceAll("_", " ")}</Typography>
-                    <Typography variant="caption" color="text.secondary">Lifecycle {selectedLink.linkStatus.replaceAll("_", " ")}</Typography>
-                  </Stack>
-                  <Stack spacing={0.5}>
-                    <Typography variant="caption" color="text.secondary">Booking capability</Typography>
-                    <Typography variant="body2">{selectedLink.bookingCapability.replaceAll("_", " ")}</Typography>
-                    <Typography variant="caption" color="text.secondary">Availability {selectedLink.availabilityState.replaceAll("_", " ")}</Typography>
-                  </Stack>
-                  <Stack spacing={0.5}>
-                    <Typography variant="caption" color="text.secondary">Opaque booking reference</Typography>
-                    <Typography variant="body2">{selectedLink.bookingReferenceMasked || "—"}</Typography>
-                  </Stack>
-                  <Stack spacing={0.5}>
-                    <Typography variant="caption" color="text.secondary">Source revision</Typography>
-                    <Typography variant="body2">{selectedLink.sourceRevision}</Typography>
-                  </Stack>
-                  <Stack spacing={0.5}>
-                    <Typography variant="caption" color="text.secondary">Match</Typography>
-                    <Typography variant="body2">{selectedLink.matchMethod?.replaceAll("_", " ") || "—"}</Typography>
-                    <Typography variant="caption" color="text.secondary">{selectedLink.matchConfidence || "—"}</Typography>
-                  </Stack>
-                  {detailActions}
-                  {selectedLinkDetail?.comparison?.length ? (
-                    <Stack spacing={1}>
-                      <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Comparison</Typography>
-                      {selectedLinkDetail.comparison.map((row) => (
-                        <Box key={row.key} sx={{ p: 1.25, border: "1px solid", borderColor: "divider", borderRadius: 1.5 }}>
-                          <Typography variant="caption" color="text.secondary">{row.label}</Typography>
-                          <Typography variant="body2">{row.publicValue || "—"} → {row.platformValue || "—"}</Typography>
-                          <Typography variant="caption" color="text.secondary">{row.status}</Typography>
-                        </Box>
-                      ))}
-                    </Stack>
-                  ) : null}
-                  {selectedLinkDetail?.audit?.length ? (
-                    <Stack spacing={1}>
-                      <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Audit</Typography>
-                      {selectedLinkDetail.audit.slice(0, 4).map((row) => (
-                        <Paper key={row.id} variant="outlined" sx={{ p: 1.25 }}>
-                          <Typography variant="body2" sx={{ fontWeight: 700 }}>{row.action}</Typography>
-                          <Typography variant="caption" color="text.secondary">{formatDateTime(row.occurredAt)}</Typography>
-                        </Paper>
-                      ))}
-                    </Stack>
-                  ) : null}
+        {section !== "public-profile-reviews" ? (
+          <Grid size={{ xs: 12, lg: 4 }}>
+            <Paper variant="outlined" sx={{ p: 2.25, position: "sticky", top: 24 }}>
+              <Stack spacing={2}>
+                <Stack spacing={0.5}>
+                  <Typography variant="h6" sx={{ fontWeight: 900 }}>Selected link</Typography>
+                  <Typography variant="body2" color="text.secondary">Inspect the active link and run lifecycle actions.</Typography>
                 </Stack>
-              ) : (
-                <Alert severity="info" variant="outlined">
-                  Pick a row from Links to inspect a specific link.
-                </Alert>
-              )}
-            </Stack>
-          </Paper>
-        </Grid>
+                {selectedLink ? (
+                  <Stack spacing={1.25}>
+                    <Chip size="small" label={`${selectedLink.publicProfileType} · ${selectedLink.linkStatus.replaceAll("_", " ")}`} color={actionChipColor(selectedLink.linkStatus)} variant="outlined" sx={{ alignSelf: "flex-start" }} />
+                    <Typography sx={{ fontWeight: 800 }}>{selectedLink.publicDisplayName || selectedLink.publicReference || "Selected link"}</Typography>
+                    <Typography variant="body2" color="text.secondary">{selectedLink.tenantName || "—"}</Typography>
+                    <Stack spacing={0.5}>
+                      <Typography variant="caption" color="text.secondary">Public identity</Typography>
+                      <Typography variant="body2">{selectedLink.publicReference || "—"}</Typography>
+                      {selectedLink.publicPracticeReference ? <Typography variant="caption" color="text.secondary">{selectedLink.publicPracticeReference}</Typography> : null}
+                      <Typography variant="caption" color="text.secondary">{selectedLink.publicPath || "No public path"}</Typography>
+                    </Stack>
+                    <Stack spacing={0.5}>
+                      <Typography variant="caption" color="text.secondary">Connection</Typography>
+                      <Typography variant="body2">{selectedLink.connectionStatus.replaceAll("_", " ")}</Typography>
+                      <Typography variant="caption" color="text.secondary">Lifecycle {selectedLink.linkStatus.replaceAll("_", " ")}</Typography>
+                    </Stack>
+                    <Stack spacing={0.5}>
+                      <Typography variant="caption" color="text.secondary">Booking capability</Typography>
+                      <Typography variant="body2">{selectedLink.bookingCapability.replaceAll("_", " ")}</Typography>
+                      <Typography variant="caption" color="text.secondary">Availability {selectedLink.availabilityState.replaceAll("_", " ")}</Typography>
+                    </Stack>
+                    <Stack spacing={0.5}>
+                      <Typography variant="caption" color="text.secondary">Opaque booking reference</Typography>
+                      <Typography variant="body2">{selectedLink.bookingReferenceMasked || "—"}</Typography>
+                    </Stack>
+                    <Stack spacing={0.5}>
+                      <Typography variant="caption" color="text.secondary">Source revision</Typography>
+                      <Typography variant="body2">{selectedLink.sourceRevision}</Typography>
+                    </Stack>
+                    <Stack spacing={0.5}>
+                      <Typography variant="caption" color="text.secondary">Match</Typography>
+                      <Typography variant="body2">{selectedLink.matchMethod?.replaceAll("_", " ") || "—"}</Typography>
+                      <Typography variant="caption" color="text.secondary">{selectedLink.matchConfidence || "—"}</Typography>
+                    </Stack>
+                    {detailActions}
+                    {selectedLinkDetail?.comparison?.length ? (
+                      <Stack spacing={1}>
+                        <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Comparison</Typography>
+                        {selectedLinkDetail.comparison.map((row) => (
+                          <Box key={row.key} sx={{ p: 1.25, border: "1px solid", borderColor: "divider", borderRadius: 1.5 }}>
+                            <Typography variant="caption" color="text.secondary">{row.label}</Typography>
+                            <Typography variant="body2">{row.publicValue || "—"} → {row.platformValue || "—"}</Typography>
+                            <Typography variant="caption" color="text.secondary">{row.status}</Typography>
+                          </Box>
+                        ))}
+                      </Stack>
+                    ) : null}
+                    {selectedLinkDetail?.audit?.length ? (
+                      <Stack spacing={1}>
+                        <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Audit</Typography>
+                        {selectedLinkDetail.audit.slice(0, 4).map((row) => (
+                          <Paper key={row.id} variant="outlined" sx={{ p: 1.25 }}>
+                            <Typography variant="body2" sx={{ fontWeight: 700 }}>{row.action}</Typography>
+                            <Typography variant="caption" color="text.secondary">{formatDateTime(row.occurredAt)}</Typography>
+                          </Paper>
+                        ))}
+                      </Stack>
+                    ) : null}
+                  </Stack>
+                ) : (
+                  <Alert severity="info" variant="outlined">
+                    Pick a row from Links to inspect a specific link.
+                  </Alert>
+                )}
+              </Stack>
+            </Paper>
+          </Grid>
+        ) : null}
       </Grid>
 
       <ProposalDialog
@@ -1788,6 +2455,20 @@ export default function ProviderConnectionsPage() {
         doctorOptions={platformDoctorRows}
         onClose={() => setDialogOpen(false)}
         onSubmit={submitProposal}
+      />
+      <ReviewCommandDialog
+        open={Boolean(reviewCommandAction)}
+        action={reviewCommandAction}
+        review={selectedReview}
+        reason={reviewCommandReason}
+        findings={reviewFindings}
+        onClose={closeReviewCommand}
+        onReasonChange={setReviewCommandReason}
+        onFindingsChange={updateReviewFinding}
+        onAddFinding={addReviewFinding}
+        onRemoveFinding={removeReviewFinding}
+        onSubmit={() => void submitReviewCommand()}
+        saving={saving}
       />
 
       <Dialog open={Boolean(selectedOwnership)} onClose={() => setSelectedOwnership(null)} fullWidth maxWidth="sm">

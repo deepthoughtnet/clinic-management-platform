@@ -49,6 +49,12 @@ public class DiscoverPublicProfileSubmissionEntity {
     private OffsetDateTime submittedAt;
     @Column(name = "assigned_reviewer_id")
     private UUID assignedReviewerId;
+    @Column(name = "assigned_reviewer_reference", length = 256)
+    private String assignedReviewerReference;
+    @Column(name = "assigned_reviewer_display_name", length = 256)
+    private String assignedReviewerDisplayName;
+    @Column(name = "assigned_reviewer_email", length = 256)
+    private String assignedReviewerEmail;
     @Column(name = "assigned_at")
     private OffsetDateTime assignedAt;
     @Column(name = "decision_by_id")
@@ -135,7 +141,14 @@ public class DiscoverPublicProfileSubmissionEntity {
     }
 
     public void startReview(UUID reviewerId, OffsetDateTime assignedAt, OffsetDateTime updatedAt) {
+        startReview(reviewerId, null, null, null, assignedAt, updatedAt);
+    }
+
+    public void startReview(UUID reviewerId, String reviewerReference, String reviewerDisplayName, String reviewerEmail, OffsetDateTime assignedAt, OffsetDateTime updatedAt) {
         this.assignedReviewerId = reviewerId;
+        this.assignedReviewerReference = reviewerReference;
+        this.assignedReviewerDisplayName = reviewerDisplayName;
+        this.assignedReviewerEmail = reviewerEmail;
         this.assignedAt = assignedAt;
         this.updatedAt = updatedAt;
         this.moderationStatus = "UNDER_REVIEW";
@@ -183,6 +196,24 @@ public class DiscoverPublicProfileSubmissionEntity {
         this.moderationRevision++;
     }
 
+    public void touchReview(OffsetDateTime updatedAt) {
+        this.updatedAt = updatedAt;
+        this.moderationRevision++;
+    }
+
+    public void markPublished(OffsetDateTime publishedAt, OffsetDateTime updatedAt) {
+        this.publicationStatusSnapshot = "PUBLISHED";
+        this.publishedAt = publishedAt;
+        this.unpublishedAt = null;
+        this.updatedAt = updatedAt;
+    }
+
+    public void markUnpublished(OffsetDateTime unpublishedAt, OffsetDateTime updatedAt) {
+        this.publicationStatusSnapshot = "UNPUBLISHED";
+        this.unpublishedAt = unpublishedAt;
+        this.updatedAt = updatedAt;
+    }
+
     public UUID getId() { return id; }
     public String getSubmissionReference() { return submissionReference; }
     public String getPublicProfileReference() { return publicProfileReference; }
@@ -200,6 +231,9 @@ public class DiscoverPublicProfileSubmissionEntity {
     public UUID getSubmittedByProviderAccountId() { return submittedByProviderAccountId; }
     public OffsetDateTime getSubmittedAt() { return submittedAt; }
     public UUID getAssignedReviewerId() { return assignedReviewerId; }
+    public String getAssignedReviewerReference() { return assignedReviewerReference; }
+    public String getAssignedReviewerDisplayName() { return assignedReviewerDisplayName; }
+    public String getAssignedReviewerEmail() { return assignedReviewerEmail; }
     public OffsetDateTime getAssignedAt() { return assignedAt; }
     public UUID getDecisionById() { return decisionById; }
     public OffsetDateTime getDecisionAt() { return decisionAt; }

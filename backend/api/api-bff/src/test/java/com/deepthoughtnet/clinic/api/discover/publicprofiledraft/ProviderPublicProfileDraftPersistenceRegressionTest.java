@@ -13,12 +13,16 @@ import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.Pro
 import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipModels.MembershipRecord;
 import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipModels.OwnershipRecord;
 import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipService;
+import com.deepthoughtnet.clinic.clinic.service.model.ClinicProfileRecord;
+import com.deepthoughtnet.clinic.discover.publicprofiledraft.ClinicProfileConsentLookup;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProfileLifecycleRecord;
 import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService;
 import com.deepthoughtnet.clinic.discover.publicprofiledraft.ProviderPublicProfileDraftService;
 import com.deepthoughtnet.clinic.discover.publicprofiledraft.PublicProfileDraftModels.PublicProfileDraftSectionUpdateRequest;
 import com.deepthoughtnet.clinic.discover.publicprofiledraft.PublicProfileDraftModels.PublicProfileDraftWorkspaceRecord;
 import com.deepthoughtnet.clinic.discover.publicprofiledraft.PublicProfileDraftModels.PublicProfileDraftMediaUploadRecord;
+import com.deepthoughtnet.clinic.discover.publicprofilemoderation.ProviderPublicProfileModerationService;
+import com.deepthoughtnet.clinic.discover.publicprofilemoderation.PublicProfileModerationModels.PublicProfileSubmissionEligibilityRecord;
 import com.deepthoughtnet.clinic.discover.publicprofiledraft.db.DiscoverPublicProfileDraftEntity;
 import com.deepthoughtnet.clinic.discover.publicprofiledraft.db.DiscoverPublicProfileDraftRepository;
 import com.deepthoughtnet.clinic.discover.publicprofiledraft.db.DiscoverPublicProfileDraftVersionEntity;
@@ -32,6 +36,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import java.time.OffsetDateTime;
+import java.util.LinkedHashMap;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -84,8 +89,11 @@ class ProviderPublicProfileDraftPersistenceRegressionTest extends PostgresTestCo
     @PersistenceContext
     private EntityManager entityManager;
 
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
     private ProviderPublicProfileDraftService service;
     private ProviderOwnershipService ownershipService;
+    private ClinicProfileConsentLookup clinicProfileService;
     private ProviderPublicProfileService publicProfileService;
     private DiscoverPublicProfileSubmissionRepository submissionRepository;
     private ObjectStorageService storageService;
@@ -93,6 +101,7 @@ class ProviderPublicProfileDraftPersistenceRegressionTest extends PostgresTestCo
     @BeforeEach
     void setUp() {
         ownershipService = mock(ProviderOwnershipService.class);
+        clinicProfileService = mock(ClinicProfileConsentLookup.class);
         publicProfileService = mock(ProviderPublicProfileService.class);
         submissionRepository = mock(DiscoverPublicProfileSubmissionRepository.class);
         storageService = mock(ObjectStorageService.class);
@@ -134,6 +143,8 @@ class ProviderPublicProfileDraftPersistenceRegressionTest extends PostgresTestCo
                 .thenReturn(List.of(membershipRecord));
         when(ownershipService.findLatestVerifiedOwnership(PROVIDER_ACCOUNT_ID))
                 .thenReturn(Optional.of(ownershipRecord));
+        when(clinicProfileService.findDiscoverPublicListingEnabled(PUBLIC_PROFILE_REFERENCE))
+                .thenReturn(Optional.of(true));
         when(publicProfileService.findLifecycleByProviderId(PUBLIC_PROFILE_REFERENCE))
                 .thenReturn(Optional.of(new PublicProfileLifecycleRecord(
                         PUBLIC_PROFILE_REFERENCE,
@@ -162,6 +173,7 @@ class ProviderPublicProfileDraftPersistenceRegressionTest extends PostgresTestCo
                 draftRepository,
                 versionRepository,
                 ownershipService,
+                clinicProfileService,
                 publicProfileService,
                 submissionRepository,
                 storageService,
@@ -191,12 +203,12 @@ class ProviderPublicProfileDraftPersistenceRegressionTest extends PostgresTestCo
 
         assertThat(workspace.currentVersion()).isEqualTo(1);
         assertThat(workspace.draftReference()).isNotBlank();
-        assertThat(workspace.establishedYear()).isEqualTo(2022);
-        assertThat(workspace.readiness().ready()).isTrue();
-        assertThat(workspace.readiness().completenessPercentage()).isEqualTo(100);
-        assertThat(workspace.readiness().missingMandatoryFields()).isEmpty();
-        assertThat(workspace.readiness().invalidFields()).isEmpty();
-        assertThat(workspace.readiness().blockingReasons()).contains("TENANT_CONSENT_DISABLED");
+        assertThat(workspace.tenantConsentStatus()).isEqualTo("ENABLED");
+        assertThat(workspace.readiness().ready()).isFalse();
+        assertThat(workspace.contentStatus()).isEqualTo("DRAFT_INCOMPLETE");
+        assertThat(workspace.readiness().readinessStatus()).isEqualTo("INCOMPLETE");
+        assertThat(workspace.readiness().completenessPercentage()).isLessThan(100);
+        assertThat(workspace.readiness().blockingReasons()).isEmpty();
         assertThat(versionRepository.findByDraftReferenceOrderByVersionNumberDesc(workspace.draftReference()))
                 .hasSize(1)
                 .first()
@@ -270,6 +282,480 @@ class ProviderPublicProfileDraftPersistenceRegressionTest extends PostgresTestCo
         assertThat(versionRepository.findByDraftReferenceOrderByVersionNumberDesc(created.draftReference()))
                 .extracting(DiscoverPublicProfileDraftVersionEntity::getVersionNumber)
                 .containsExactly(1);
+    }
+
+    private void markDraftReadinessStale(String publicProfileReference) {
+        jdbcTemplate.update("""
+                update discover_public_profile_drafts
+                set content_status = 'DRAFT_INCOMPLETE',
+                    readiness_status = 'INCOMPLETE',
+                    completeness_percentage = 100,
+                    readiness_json = ?,
+                    updated_at = now(),
+                    last_saved_at = now()
+                where public_profile_reference = ?
+                """,
+                """
+                {"readinessStatus":"INCOMPLETE","ready":false,"completenessPercentage":100,"missingMandatoryFields":[],"recommendedFields":["gallery","establishedYear","facilities","languages","fees","website","whatsappNumber","metaTitle","metaDescription"],"invalidFields":["invalid_established_year"],"warnings":[],"blockingReasons":[],"lastEvaluatedAt":"2026-08-04T02:07:33.357711686Z","evaluatedDraftVersion":15}
+                """,
+                publicProfileReference
+        );
+        entityManager.clear();
+    }
+
+    private void markDraftMissingMandatoryField(String publicProfileReference, String fieldPath) throws Exception {
+        String contentJson = jdbcTemplate.queryForObject("""
+                select content_json from discover_public_profile_drafts where public_profile_reference = ?
+                """, String.class, publicProfileReference);
+        Map<String, Object> content = objectMapper.readValue(contentJson, LinkedHashMap.class);
+        if ("addressLine1".equals(fieldPath)) {
+            ((Map<String, Object>) content.get("contact")).remove("addressLine1");
+        }
+        jdbcTemplate.update("""
+                update discover_public_profile_drafts
+                set content_json = ?,
+                    content_status = 'DRAFT_INCOMPLETE',
+                    readiness_status = 'INCOMPLETE',
+                    completeness_percentage = 90,
+                    readiness_json = ?,
+                    updated_at = now(),
+                    last_saved_at = now()
+                where public_profile_reference = ?
+                """,
+                objectMapper.writeValueAsString(content),
+                """
+                {"readinessStatus":"INCOMPLETE","ready":false,"completenessPercentage":90,"missingMandatoryFields":["addressLine1"],"recommendedFields":["gallery","establishedYear","facilities","languages","fees","website","whatsappNumber","metaTitle","metaDescription"],"invalidFields":[],"warnings":[],"blockingReasons":[],"lastEvaluatedAt":"2026-08-04T02:07:33.357711686Z","evaluatedDraftVersion":15}
+                """,
+                publicProfileReference
+        );
+        entityManager.clear();
+    }
+
+    @Test
+    void completeDraftPersistsReadyStatus() {
+        PublicProfileDraftWorkspaceRecord created = buildReadyDraft();
+        markDraftReadinessStale(created.publicProfileReference());
+
+        PublicProfileDraftWorkspaceRecord repaired = service.recalculateReadiness(PROVIDER_ACCOUNT_ID, PUBLIC_PROFILE_REFERENCE_VALUE);
+        Map<String, Object> overview = repaired.sections().stream()
+                .filter(section -> "overview".equals(section.key()))
+                .findFirst()
+                .orElseThrow()
+                .content();
+
+        assertThat(repaired.currentVersion()).isEqualTo(created.currentVersion());
+        assertThat(repaired.contentStatus()).isEqualTo("READY_FOR_REVIEW");
+        assertThat(repaired.readinessStatus()).isEqualTo("READY");
+        assertThat(repaired.readiness().ready()).isTrue();
+        assertThat(repaired.readiness().completenessPercentage()).isEqualTo(100);
+        assertThat(repaired.readiness().invalidFields()).isEmpty();
+        assertThat(repaired.readiness().missingMandatoryFields()).isEmpty();
+        assertThat(repaired.readiness().evaluatedDraftVersion()).isEqualTo(created.currentVersion());
+        assertThat(overview.get("contentStatus")).isEqualTo("READY_FOR_REVIEW");
+        assertThat(overview.get("completenessPercentage")).isEqualTo(100);
+        assertThat(overview.get("summaryStatus")).isEqualTo("READY");
+    }
+
+    @Test
+    void incompleteDraftPersistsIncompleteStatus() throws Exception {
+        PublicProfileDraftWorkspaceRecord created = service.createOrLoadDraft(PROVIDER_ACCOUNT_ID, PUBLIC_PROFILE_REFERENCE_VALUE);
+        markDraftMissingMandatoryField(created.publicProfileReference(), "addressLine1");
+
+        PublicProfileDraftWorkspaceRecord repaired = service.recalculateReadiness(PROVIDER_ACCOUNT_ID, PUBLIC_PROFILE_REFERENCE_VALUE);
+
+        assertThat(repaired.contentStatus()).isEqualTo("DRAFT_INCOMPLETE");
+        assertThat(repaired.readinessStatus()).isEqualTo("INCOMPLETE");
+        assertThat(repaired.readiness().ready()).isFalse();
+        assertThat(repaired.readiness().missingMandatoryFields()).contains("addressLine1");
+    }
+
+    @Test
+    void completenessAndReadinessStatusCannotContradict() {
+        PublicProfileDraftWorkspaceRecord created = buildReadyDraft();
+        markDraftReadinessStale(created.publicProfileReference());
+
+        PublicProfileDraftWorkspaceRecord repaired = service.recalculateReadiness(PROVIDER_ACCOUNT_ID, PUBLIC_PROFILE_REFERENCE_VALUE);
+
+        assertThat(repaired.readiness().ready()).isTrue();
+        assertThat(repaired.contentStatus()).isEqualTo("READY_FOR_REVIEW");
+        assertThat(repaired.readinessStatus()).isEqualTo("READY");
+        assertThat(repaired.readiness().completenessPercentage()).isEqualTo(repaired.completenessPercentage());
+    }
+
+    @Test
+    void tenantConsentDoesNotChangeContentReadiness() {
+        PublicProfileDraftWorkspaceRecord created = buildReadyDraft();
+        PublicProfileDraftWorkspaceRecord repaired = service.recalculateReadiness(PROVIDER_ACCOUNT_ID, PUBLIC_PROFILE_REFERENCE_VALUE);
+
+        ProviderPublicProfileModerationService moderationService = new ProviderPublicProfileModerationService(
+                service,
+                ownershipService,
+                publicProfileService,
+                submissionRepository,
+                mock(com.deepthoughtnet.clinic.discover.publicprofilemoderation.db.DiscoverPublicProfileReviewFindingRepository.class),
+                mock(com.deepthoughtnet.clinic.discover.publicprofilemoderation.db.DiscoverPublicProfilePublicationRepository.class),
+                storageService,
+                new ObjectMapper()
+        );
+        PublicProfileSubmissionEligibilityRecord eligibility = moderationService.submissionEligibility(PROVIDER_ACCOUNT_ID, repaired.publicProfileReference(), false);
+
+        assertThat(repaired.readiness().ready()).isTrue();
+        assertThat(eligibility.submissionEligible()).isFalse();
+        assertThat(eligibility.submissionBlockers()).contains("TENANT_CONSENT_REQUIRED");
+        assertThat(eligibility.submissionBlockers()).doesNotContain("PROFILE_INCOMPLETE");
+    }
+
+    @Test
+    void readinessRecalculationUsesCurrentDraftVersion() {
+        PublicProfileDraftWorkspaceRecord created = buildReadyDraft();
+        PublicProfileDraftWorkspaceRecord repaired = service.recalculateReadiness(PROVIDER_ACCOUNT_ID, PUBLIC_PROFILE_REFERENCE_VALUE);
+
+        assertThat(repaired.readiness().evaluatedDraftVersion()).isEqualTo(created.currentVersion());
+    }
+
+    @Test
+    void mediaCompletionTransitionsDraftToReady() throws Exception {
+        PublicProfileDraftWorkspaceRecord created = buildDraftWithoutMedia();
+        service.uploadMedia(
+                PROVIDER_ACCOUNT_ID,
+                PUBLIC_PROFILE_REFERENCE_VALUE,
+                ProviderDocumentType.LOGO,
+                "logo.png",
+                "image/png",
+                12,
+                new byte[] {(byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3, 4},
+                null
+        );
+        service.uploadMedia(
+                PROVIDER_ACCOUNT_ID,
+                PUBLIC_PROFILE_REFERENCE_VALUE,
+                ProviderDocumentType.COVER_IMAGE,
+                "cover.png",
+                "image/png",
+                12,
+                new byte[] {(byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3, 4},
+                null
+        );
+        entityManager.clear();
+
+        PublicProfileDraftWorkspaceRecord repaired = service.recalculateReadiness(PROVIDER_ACCOUNT_ID, PUBLIC_PROFILE_REFERENCE_VALUE);
+
+        assertThat(repaired.contentStatus()).isEqualTo("READY_FOR_REVIEW");
+        assertThat(repaired.readinessStatus()).isEqualTo("READY");
+        assertThat(repaired.readiness().missingMandatoryFields()).isEmpty();
+        assertThat(repaired.readiness().ready()).isTrue();
+    }
+
+    @Test
+    void timingCompletionTransitionsDraftToReady() throws Exception {
+        PublicProfileDraftWorkspaceRecord created = buildDraftWithoutTimings();
+        service.saveSection(PROVIDER_ACCOUNT_ID, PUBLIC_PROFILE_REFERENCE_VALUE, new PublicProfileDraftSectionUpdateRequest(
+                "timings",
+                Map.of(
+                        "timezone", "Asia/Kolkata",
+                        "weekly", List.of(
+                                Map.of("dayOfWeek", "MONDAY", "startTime", "09:00", "endTime", "13:00"),
+                                Map.of("dayOfWeek", "MONDAY", "startTime", "16:00", "endTime", "20:00")
+                        )
+                ),
+                Long.valueOf(created.currentVersion()),
+                "Complete timings"
+        ));
+        entityManager.clear();
+
+        PublicProfileDraftWorkspaceRecord repaired = service.recalculateReadiness(PROVIDER_ACCOUNT_ID, PUBLIC_PROFILE_REFERENCE_VALUE);
+
+        assertThat(repaired.contentStatus()).isEqualTo("READY_FOR_REVIEW");
+        assertThat(repaired.readinessStatus()).isEqualTo("READY");
+    }
+
+    @Test
+    void noOpReadinessRecalculationDoesNotCreateVersion() {
+        PublicProfileDraftWorkspaceRecord created = buildReadyDraft();
+        List<Integer> versionsBefore = versionRepository.findByDraftReferenceOrderByVersionNumberDesc(created.draftReference())
+                .stream()
+                .map(DiscoverPublicProfileDraftVersionEntity::getVersionNumber)
+                .toList();
+
+        service.recalculateReadiness(PROVIDER_ACCOUNT_ID, PUBLIC_PROFILE_REFERENCE_VALUE);
+        service.recalculateReadiness(PROVIDER_ACCOUNT_ID, PUBLIC_PROFILE_REFERENCE_VALUE);
+
+        assertThat(versionRepository.findByDraftReferenceOrderByVersionNumberDesc(created.draftReference()))
+                .extracting(DiscoverPublicProfileDraftVersionEntity::getVersionNumber)
+                .containsExactlyElementsOf(versionsBefore);
+    }
+
+    @Test
+    void existingCompleteDraftCanBeReconciledIdempotently() {
+        PublicProfileDraftWorkspaceRecord created = buildReadyDraft();
+        List<Integer> versionsBefore = versionRepository.findByDraftReferenceOrderByVersionNumberDesc(created.draftReference())
+                .stream()
+                .map(DiscoverPublicProfileDraftVersionEntity::getVersionNumber)
+                .toList();
+        markDraftReadinessStale(created.publicProfileReference());
+
+        PublicProfileDraftWorkspaceRecord repairedOnce = service.recalculateReadiness(PROVIDER_ACCOUNT_ID, PUBLIC_PROFILE_REFERENCE_VALUE);
+        PublicProfileDraftWorkspaceRecord repairedTwice = service.recalculateReadiness(PROVIDER_ACCOUNT_ID, PUBLIC_PROFILE_REFERENCE_VALUE);
+
+        assertThat(repairedOnce.contentStatus()).isEqualTo("READY_FOR_REVIEW");
+        assertThat(repairedTwice.contentStatus()).isEqualTo("READY_FOR_REVIEW");
+        assertThat(versionRepository.findByDraftReferenceOrderByVersionNumberDesc(created.draftReference()))
+                .extracting(DiscoverPublicProfileDraftVersionEntity::getVersionNumber)
+                .containsExactlyElementsOf(versionsBefore);
+    }
+
+    @Test
+    void submitEligibilityIsBlockedOnlyByConsentAfterReadinessRepair() {
+        PublicProfileDraftWorkspaceRecord created = buildReadyDraft();
+        PublicProfileDraftWorkspaceRecord repaired = service.recalculateReadiness(PROVIDER_ACCOUNT_ID, PUBLIC_PROFILE_REFERENCE_VALUE);
+
+        ProviderPublicProfileModerationService moderationService = new ProviderPublicProfileModerationService(
+                service,
+                ownershipService,
+                publicProfileService,
+                submissionRepository,
+                mock(com.deepthoughtnet.clinic.discover.publicprofilemoderation.db.DiscoverPublicProfileReviewFindingRepository.class),
+                mock(com.deepthoughtnet.clinic.discover.publicprofilemoderation.db.DiscoverPublicProfilePublicationRepository.class),
+                storageService,
+                new ObjectMapper()
+        );
+        PublicProfileSubmissionEligibilityRecord eligibility = moderationService.submissionEligibility(PROVIDER_ACCOUNT_ID, repaired.publicProfileReference(), false);
+
+        assertThat(eligibility.submissionEligible()).isFalse();
+        assertThat(eligibility.submissionBlockers()).containsExactly("TENANT_CONSENT_REQUIRED");
+        assertThat(eligibility.moderationStatus()).isEqualTo("NOT_SUBMITTED");
+        assertThat(eligibility.publicationStatus()).isEqualTo("UNPUBLISHED");
+    }
+
+    @Test
+    void readyDraftWithEnabledConsentCanSubmitForReview() {
+        PublicProfileDraftWorkspaceRecord repaired = buildReadyDraft();
+
+        ProviderPublicProfileModerationService moderationService = new ProviderPublicProfileModerationService(
+                service,
+                ownershipService,
+                publicProfileService,
+                submissionRepository,
+                mock(com.deepthoughtnet.clinic.discover.publicprofilemoderation.db.DiscoverPublicProfileReviewFindingRepository.class),
+                mock(com.deepthoughtnet.clinic.discover.publicprofilemoderation.db.DiscoverPublicProfilePublicationRepository.class),
+                storageService,
+                new ObjectMapper()
+        );
+        PublicProfileSubmissionEligibilityRecord eligibility = moderationService.submissionEligibility(PROVIDER_ACCOUNT_ID, repaired.publicProfileReference(), true);
+
+        assertThat(repaired.tenantConsentStatus()).isEqualTo("ENABLED");
+        assertThat(repaired.contentStatus()).isEqualTo("READY_FOR_REVIEW");
+        assertThat(repaired.readinessStatus()).isEqualTo("READY");
+        assertThat(repaired.allowedActions()).contains("SUBMIT_FOR_REVIEW");
+        assertThat(eligibility.submissionEligible()).isTrue();
+        assertThat(eligibility.submissionBlockers()).isEmpty();
+        assertThat(draftRepository.findByPublicProfileReference(PUBLIC_PROFILE_REFERENCE_VALUE).orElseThrow().getTenantConsentStatus())
+                .isEqualTo("ENABLED");
+        assertThat(draftRepository.findByPublicProfileReference(PUBLIC_PROFILE_REFERENCE_VALUE).orElseThrow().getContentStatus())
+                .isEqualTo("READY_FOR_REVIEW");
+        assertThat(draftRepository.findByPublicProfileReference(PUBLIC_PROFILE_REFERENCE_VALUE).orElseThrow().getReadinessStatus())
+                .isEqualTo("READY");
+    }
+
+    private Map<String, Object> readyAboutSection() {
+        Map<String, Object> about = new LinkedHashMap<>();
+        about.put("displayName", "Green Valley Family Clinic");
+        about.put("shortTagline", "Comprehensive family healthcare with compassionate doctors and modern facilities.");
+        about.put("description", "Green Valley Family Clinic provides clear, practical, continuity-focused outpatient care for families across Wakad and nearby Pune neighborhoods. The practice emphasizes accessible communication, careful follow-up, and trustworthy day-to-day primary care with modern, patient-centered services.");
+        about.put("philosophy", "Patient-first family care");
+        about.put("establishedYear", "2022");
+        about.put("registrationNumber", "PMC/CLINIC/2022/10458");
+        about.put("emergencyAvailability", "Available during clinic hours");
+        return about;
+    }
+
+    private Map<String, Object> readyContactSection() {
+        Map<String, Object> contact = new LinkedHashMap<>();
+        contact.put("publicPhone", "+91 98765 02201");
+        contact.put("publicEmail", "contact@greenvalleyclinic.in");
+        contact.put("website", "https://www.greenvalleyclinic.in");
+        contact.put("whatsappNumber", "+91 98765 02201");
+        contact.put("addressLine1", "Survey No. 58, Green Valley Medical Centre");
+        contact.put("addressLine2", "Near Bhumkar Chowk");
+        contact.put("area", "Wakad");
+        contact.put("city", "Pune");
+        contact.put("state", "Maharashtra");
+        contact.put("country", "India");
+        contact.put("postalCode", "411057");
+        contact.put("phoneVisible", true);
+        contact.put("emailVisible", true);
+        contact.put("whatsappVisible", false);
+        return contact;
+    }
+
+    private Map<String, Object> readyServicesSection() {
+        Map<String, Object> services = new LinkedHashMap<>();
+        services.put("items", List.of("General Physician Consultation", "Family Medicine"));
+        return services;
+    }
+
+    private Map<String, Object> readySpecialitiesSection() {
+        Map<String, Object> specialities = new LinkedHashMap<>();
+        specialities.put("items", List.of("Family Medicine", "General Medicine"));
+        specialities.put("primary", "Family Medicine");
+        return specialities;
+    }
+
+    private Map<String, Object> readyTimingsSection() {
+        Map<String, Object> timings = new LinkedHashMap<>();
+        timings.put("timezone", "Asia/Kolkata");
+        timings.put("weekly", List.of(
+                Map.of("dayOfWeek", "MONDAY", "startTime", "09:00", "endTime", "13:00"),
+                Map.of("dayOfWeek", "MONDAY", "startTime", "16:00", "endTime", "20:00"),
+                Map.of("dayOfWeek", "TUESDAY", "startTime", "09:00", "endTime", "13:00"),
+                Map.of("dayOfWeek", "TUESDAY", "startTime", "16:00", "endTime", "20:00")
+        ));
+        return timings;
+    }
+
+    private PublicProfileDraftWorkspaceRecord buildReadyDraft() {
+        PublicProfileDraftWorkspaceRecord workspace = service.createOrLoadDraft(PROVIDER_ACCOUNT_ID, PUBLIC_PROFILE_REFERENCE_VALUE);
+        workspace = service.saveSection(PROVIDER_ACCOUNT_ID, PUBLIC_PROFILE_REFERENCE_VALUE, new PublicProfileDraftSectionUpdateRequest(
+                "about",
+                readyAboutSection(),
+                Long.valueOf(workspace.currentVersion()),
+                "Complete about section"
+        ));
+        workspace = service.saveSection(PROVIDER_ACCOUNT_ID, PUBLIC_PROFILE_REFERENCE_VALUE, new PublicProfileDraftSectionUpdateRequest(
+                "contact",
+                readyContactSection(),
+                Long.valueOf(workspace.currentVersion()),
+                "Complete contact section"
+        ));
+        workspace = service.saveSection(PROVIDER_ACCOUNT_ID, PUBLIC_PROFILE_REFERENCE_VALUE, new PublicProfileDraftSectionUpdateRequest(
+                "services",
+                readyServicesSection(),
+                Long.valueOf(workspace.currentVersion()),
+                "Complete services"
+        ));
+        workspace = service.saveSection(PROVIDER_ACCOUNT_ID, PUBLIC_PROFILE_REFERENCE_VALUE, new PublicProfileDraftSectionUpdateRequest(
+                "specialities",
+                readySpecialitiesSection(),
+                Long.valueOf(workspace.currentVersion()),
+                "Complete specialities"
+        ));
+        workspace = service.saveSection(PROVIDER_ACCOUNT_ID, PUBLIC_PROFILE_REFERENCE_VALUE, new PublicProfileDraftSectionUpdateRequest(
+                "timings",
+                readyTimingsSection(),
+                Long.valueOf(workspace.currentVersion()),
+                "Complete timings"
+        ));
+        byte[] png = new byte[] {(byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3, 4};
+        workspace = service.uploadMedia(
+                PROVIDER_ACCOUNT_ID,
+                PUBLIC_PROFILE_REFERENCE_VALUE,
+                ProviderDocumentType.LOGO,
+                "logo.png",
+                "image/png",
+                png.length,
+                png,
+                null
+        ).draft();
+        workspace = service.uploadMedia(
+                PROVIDER_ACCOUNT_ID,
+                PUBLIC_PROFILE_REFERENCE_VALUE,
+                ProviderDocumentType.COVER_IMAGE,
+                "cover.png",
+                "image/png",
+                png.length,
+                png,
+                null
+        ).draft();
+        return service.recalculateReadiness(PROVIDER_ACCOUNT_ID, PUBLIC_PROFILE_REFERENCE_VALUE);
+    }
+
+    private PublicProfileDraftWorkspaceRecord buildDraftWithoutMedia() {
+        PublicProfileDraftWorkspaceRecord workspace = service.createOrLoadDraft(PROVIDER_ACCOUNT_ID, PUBLIC_PROFILE_REFERENCE_VALUE);
+        workspace = service.saveSection(PROVIDER_ACCOUNT_ID, PUBLIC_PROFILE_REFERENCE_VALUE, new PublicProfileDraftSectionUpdateRequest(
+                "about",
+                readyAboutSection(),
+                Long.valueOf(workspace.currentVersion()),
+                "Complete about section"
+        ));
+        workspace = service.saveSection(PROVIDER_ACCOUNT_ID, PUBLIC_PROFILE_REFERENCE_VALUE, new PublicProfileDraftSectionUpdateRequest(
+                "contact",
+                readyContactSection(),
+                Long.valueOf(workspace.currentVersion()),
+                "Complete contact section"
+        ));
+        workspace = service.saveSection(PROVIDER_ACCOUNT_ID, PUBLIC_PROFILE_REFERENCE_VALUE, new PublicProfileDraftSectionUpdateRequest(
+                "services",
+                readyServicesSection(),
+                Long.valueOf(workspace.currentVersion()),
+                "Complete services"
+        ));
+        workspace = service.saveSection(PROVIDER_ACCOUNT_ID, PUBLIC_PROFILE_REFERENCE_VALUE, new PublicProfileDraftSectionUpdateRequest(
+                "specialities",
+                readySpecialitiesSection(),
+                Long.valueOf(workspace.currentVersion()),
+                "Complete specialities"
+        ));
+        workspace = service.saveSection(PROVIDER_ACCOUNT_ID, PUBLIC_PROFILE_REFERENCE_VALUE, new PublicProfileDraftSectionUpdateRequest(
+                "timings",
+                readyTimingsSection(),
+                Long.valueOf(workspace.currentVersion()),
+                "Complete timings"
+        ));
+        return workspace;
+    }
+
+    private PublicProfileDraftWorkspaceRecord workspaceWithMediaForCurrentDraft() {
+        PublicProfileDraftWorkspaceRecord workspace = service.uploadMedia(
+                PROVIDER_ACCOUNT_ID,
+                PUBLIC_PROFILE_REFERENCE_VALUE,
+                ProviderDocumentType.LOGO,
+                "logo.png",
+                "image/png",
+                12,
+                new byte[] {(byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3, 4},
+                null
+        ).draft();
+        workspace = service.uploadMedia(
+                PROVIDER_ACCOUNT_ID,
+                PUBLIC_PROFILE_REFERENCE_VALUE,
+                ProviderDocumentType.COVER_IMAGE,
+                "cover.png",
+                "image/png",
+                12,
+                new byte[] {(byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3, 4},
+                null
+        ).draft();
+        return workspace;
+    }
+
+    private PublicProfileDraftWorkspaceRecord buildDraftWithoutTimings() {
+        PublicProfileDraftWorkspaceRecord workspace = service.createOrLoadDraft(PROVIDER_ACCOUNT_ID, PUBLIC_PROFILE_REFERENCE_VALUE);
+        workspace = service.saveSection(PROVIDER_ACCOUNT_ID, PUBLIC_PROFILE_REFERENCE_VALUE, new PublicProfileDraftSectionUpdateRequest(
+                "about",
+                readyAboutSection(),
+                Long.valueOf(workspace.currentVersion()),
+                "Complete about section"
+        ));
+        workspace = service.saveSection(PROVIDER_ACCOUNT_ID, PUBLIC_PROFILE_REFERENCE_VALUE, new PublicProfileDraftSectionUpdateRequest(
+                "contact",
+                readyContactSection(),
+                Long.valueOf(workspace.currentVersion()),
+                "Complete contact section"
+        ));
+        workspace = service.saveSection(PROVIDER_ACCOUNT_ID, PUBLIC_PROFILE_REFERENCE_VALUE, new PublicProfileDraftSectionUpdateRequest(
+                "services",
+                readyServicesSection(),
+                Long.valueOf(workspace.currentVersion()),
+                "Complete services"
+        ));
+        workspace = service.saveSection(PROVIDER_ACCOUNT_ID, PUBLIC_PROFILE_REFERENCE_VALUE, new PublicProfileDraftSectionUpdateRequest(
+                "specialities",
+                readySpecialitiesSection(),
+                Long.valueOf(workspace.currentVersion()),
+                "Complete specialities"
+        ));
+        workspace = workspaceWithMediaForCurrentDraft();
+        return workspace;
     }
 
     @Test
@@ -461,6 +947,7 @@ class ProviderPublicProfileDraftPersistenceRegressionTest extends PostgresTestCo
                 failingDraftRepository,
                 versionRepository,
                 ownershipService,
+                clinicProfileService,
                 publicProfileService,
                 submissionRepository,
                 storageService,

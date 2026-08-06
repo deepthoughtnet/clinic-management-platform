@@ -18,6 +18,11 @@ import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipMod
 import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipModels.MembershipRecord;
 import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipModels.OwnershipRecord;
 import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipService;
+import com.deepthoughtnet.clinic.discover.publicprofiledraft.ProviderPublicProfileDraftService;
+import com.deepthoughtnet.clinic.discover.publicprofiledraft.PublicProfileDraftModels.PublicProfileDraftReadinessRecord;
+import com.deepthoughtnet.clinic.discover.publicprofiledraft.PublicProfileDraftModels.PublicProfileDraftWorkspaceRecord;
+import com.deepthoughtnet.clinic.discover.publicprofilemoderation.PublicProfileModerationModels.PublicProfileModerationSubmissionRecord;
+import com.deepthoughtnet.clinic.discover.publicprofilemoderation.PublicProfileModerationModels.PublicProfilePublicationRecord;
 import com.deepthoughtnet.clinic.discover.verification.DiscoverVerificationService;
 import com.deepthoughtnet.clinic.discover.verification.db.DiscoverProviderAccountEntity;
 import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
@@ -28,6 +33,7 @@ import com.deepthoughtnet.clinic.platform.contracts.providerintegration.PublicPr
 import com.deepthoughtnet.clinic.platform.contracts.providerintegration.PublicProviderReference;
 import com.deepthoughtnet.clinic.platform.contracts.providerintegration.PublicProfileType;
 import com.deepthoughtnet.clinic.platform.providerintegration.service.ProviderLinkingService;
+import com.deepthoughtnet.clinic.discover.publicprofilemoderation.ProviderPublicProfileModerationService;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Set;
@@ -50,6 +56,8 @@ class ProviderWorkspaceControllerTest {
         DoctorProfileService doctorProfileService = Mockito.mock(DoctorProfileService.class);
         TenantUserManagementService tenantUserManagementService = Mockito.mock(TenantUserManagementService.class);
         ProviderPublicProfileService publicProfileService = Mockito.mock(ProviderPublicProfileService.class);
+        ProviderPublicProfileDraftService draftService = Mockito.mock(ProviderPublicProfileDraftService.class);
+        ProviderPublicProfileModerationService moderationService = Mockito.mock(ProviderPublicProfileModerationService.class);
         ProviderLinkingService providerLinkingService = Mockito.mock(ProviderLinkingService.class);
         ProviderWorkspaceController controller = new ProviderWorkspaceController(
                 verificationService,
@@ -59,6 +67,8 @@ class ProviderWorkspaceControllerTest {
                 doctorProfileService,
                 tenantUserManagementService,
                 publicProfileService,
+                draftService,
+                moderationService,
                 providerLinkingService
         );
         UUID providerAccountId = UUID.fromString("11111111-1111-1111-1111-111111111111");
@@ -155,6 +165,8 @@ class ProviderWorkspaceControllerTest {
         DoctorProfileService doctorProfileService = Mockito.mock(DoctorProfileService.class);
         TenantUserManagementService tenantUserManagementService = Mockito.mock(TenantUserManagementService.class);
         ProviderPublicProfileService publicProfileService = Mockito.mock(ProviderPublicProfileService.class);
+        ProviderPublicProfileDraftService draftService = Mockito.mock(ProviderPublicProfileDraftService.class);
+        ProviderPublicProfileModerationService moderationService = Mockito.mock(ProviderPublicProfileModerationService.class);
         ProviderLinkingService providerLinkingService = Mockito.mock(ProviderLinkingService.class);
         ProviderWorkspaceController controller = new ProviderWorkspaceController(
                 verificationService,
@@ -164,6 +176,8 @@ class ProviderWorkspaceControllerTest {
                 doctorProfileService,
                 tenantUserManagementService,
                 publicProfileService,
+                draftService,
+                moderationService,
                 providerLinkingService
         );
         UUID providerAccountId = UUID.fromString("77777777-7777-7777-7777-777777777777");
@@ -273,6 +287,8 @@ class ProviderWorkspaceControllerTest {
         DoctorProfileService doctorProfileService = Mockito.mock(DoctorProfileService.class);
         TenantUserManagementService tenantUserManagementService = Mockito.mock(TenantUserManagementService.class);
         ProviderPublicProfileService publicProfileService = Mockito.mock(ProviderPublicProfileService.class);
+        ProviderPublicProfileDraftService draftService = Mockito.mock(ProviderPublicProfileDraftService.class);
+        ProviderPublicProfileModerationService moderationService = Mockito.mock(ProviderPublicProfileModerationService.class);
         ProviderLinkingService providerLinkingService = Mockito.mock(ProviderLinkingService.class);
         ProviderWorkspaceController controller = new ProviderWorkspaceController(
                 verificationService,
@@ -282,6 +298,8 @@ class ProviderWorkspaceControllerTest {
                 doctorProfileService,
                 tenantUserManagementService,
                 publicProfileService,
+                draftService,
+                moderationService,
                 providerLinkingService
         );
         UUID providerAccountId = UUID.fromString("77777777-7777-7777-7777-777777777777");
@@ -376,7 +394,7 @@ class ProviderWorkspaceControllerTest {
     }
 
     @Test
-    void onboardingAccessIssuesFreshTokenForExactOwnedApplication() {
+    void workspaceUsesCanonicalProviderProfileProjectionForMetrics() {
         DiscoverVerificationService verificationService = Mockito.mock(DiscoverVerificationService.class);
         ProviderOnboardingService onboardingService = Mockito.mock(ProviderOnboardingService.class);
         ProviderOwnershipService providerOwnershipService = Mockito.mock(ProviderOwnershipService.class);
@@ -384,6 +402,8 @@ class ProviderWorkspaceControllerTest {
         DoctorProfileService doctorProfileService = Mockito.mock(DoctorProfileService.class);
         TenantUserManagementService tenantUserManagementService = Mockito.mock(TenantUserManagementService.class);
         ProviderPublicProfileService publicProfileService = Mockito.mock(ProviderPublicProfileService.class);
+        ProviderPublicProfileDraftService draftService = Mockito.mock(ProviderPublicProfileDraftService.class);
+        ProviderPublicProfileModerationService moderationService = Mockito.mock(ProviderPublicProfileModerationService.class);
         ProviderLinkingService providerLinkingService = Mockito.mock(ProviderLinkingService.class);
         ProviderWorkspaceController controller = new ProviderWorkspaceController(
                 verificationService,
@@ -393,6 +413,156 @@ class ProviderWorkspaceControllerTest {
                 doctorProfileService,
                 tenantUserManagementService,
                 publicProfileService,
+                draftService,
+                moderationService,
+                providerLinkingService
+        );
+        UUID providerAccountId = UUID.fromString("77777777-7777-7777-7777-777777777777");
+        UUID tenantId = UUID.fromString("407dbc68-107d-4f64-83c8-6499e50e5c78");
+        Authentication authentication = authentication(providerAccountId);
+        DiscoverProviderAccountEntity account = DiscoverProviderAccountEntity.create(null, "9876502201");
+        account.markPhoneVerified();
+        when(verificationService.findAccountById(providerAccountId)).thenReturn(java.util.Optional.of(account));
+        when(verificationService.findOwnedApplicationSummaries(providerAccountId)).thenReturn(List.of());
+        when(draftService.listDraftLifecycle()).thenReturn(List.of(readyDraft(providerAccountId, tenantId)));
+        when(moderationService.findSubmission(tenantId.toString())).thenReturn(java.util.Optional.empty());
+        when(moderationService.findCurrentPublication(tenantId.toString())).thenReturn(java.util.Optional.empty());
+        when(providerLinkingService.resolveBookingTarget(org.mockito.ArgumentMatchers.any(PublicProviderReference.class))).thenReturn(java.util.Optional.empty());
+        when(publicProfileService.findLifecycleByProviderId(tenantId)).thenReturn(java.util.Optional.empty());
+
+        ResponseEntity<WorkspaceResponse> response = controller.me(authentication);
+
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().profiles()).hasSize(1);
+        assertThat(response.getBody().activeProfileCount()).isEqualTo(1);
+        assertThat(response.getBody().readyForReviewCount()).isEqualTo(1);
+        assertThat(response.getBody().underReviewCount()).isEqualTo(0);
+        assertThat(response.getBody().publishedCount()).isEqualTo(0);
+        assertThat(response.getBody().needsAttentionCount()).isEqualTo(1);
+        assertThat(response.getBody().profiles().get(0).primaryAction()).isEqualTo("SUBMIT_FOR_REVIEW");
+        assertThat(response.getBody().profiles().get(0).allowedActions()).contains("SUBMIT_FOR_REVIEW", "VIEW_PREVIEW", "VIEW_READINESS", "EDIT_PUBLIC_PROFILE");
+        assertThat(response.getBody().profiles().get(0).providerActionRequired()).isTrue();
+        assertThat(response.getBody().profiles().get(0).lifecycleLabel()).isEqualTo("Ready for Platform Review");
+        assertThat(response.getBody().profiles().get(0).nextActionLabel()).isEqualTo("Submit profile for review");
+    }
+
+    @Test
+    void workspaceCountsCurrentPublicationAsPublishedAndNotUnderReview() {
+        DiscoverVerificationService verificationService = Mockito.mock(DiscoverVerificationService.class);
+        ProviderOnboardingService onboardingService = Mockito.mock(ProviderOnboardingService.class);
+        ProviderOwnershipService providerOwnershipService = Mockito.mock(ProviderOwnershipService.class);
+        ClinicProfileService clinicProfileService = Mockito.mock(ClinicProfileService.class);
+        DoctorProfileService doctorProfileService = Mockito.mock(DoctorProfileService.class);
+        TenantUserManagementService tenantUserManagementService = Mockito.mock(TenantUserManagementService.class);
+        ProviderPublicProfileService publicProfileService = Mockito.mock(ProviderPublicProfileService.class);
+        ProviderPublicProfileDraftService draftService = Mockito.mock(ProviderPublicProfileDraftService.class);
+        ProviderPublicProfileModerationService moderationService = Mockito.mock(ProviderPublicProfileModerationService.class);
+        ProviderLinkingService providerLinkingService = Mockito.mock(ProviderLinkingService.class);
+        ProviderWorkspaceController controller = new ProviderWorkspaceController(
+                verificationService, onboardingService, providerOwnershipService, clinicProfileService,
+                doctorProfileService, tenantUserManagementService, publicProfileService, draftService,
+                moderationService, providerLinkingService
+        );
+        UUID providerAccountId = UUID.fromString("77777777-7777-7777-7777-777777777777");
+        UUID profileId = UUID.fromString("407dbc68-107d-4f64-83c8-6499e50e5c78");
+        DiscoverProviderAccountEntity account = DiscoverProviderAccountEntity.create(null, "9876502201");
+        account.markPhoneVerified();
+        PublicProfilePublicationRecord publication = new PublicProfilePublicationRecord(
+                UUID.fromString("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+                "publication-20", profileId.toString(), "a01bc24b-3c5c-4038-8feb-02dd6f8de43a", 20, "PUBLISHED",
+                "green-valley-family-clinic", "/discover/clinics/green-valley-family-clinic", "Published",
+                OffsetDateTime.parse("2026-08-06T11:57:41Z"), null, true, "VISIBLE", "Published profile is publicly visible."
+        );
+        when(verificationService.findAccountById(providerAccountId)).thenReturn(java.util.Optional.of(account));
+        when(verificationService.findOwnedApplicationSummaries(providerAccountId)).thenReturn(List.of());
+        when(draftService.listDraftLifecycle()).thenReturn(List.of(readyDraft(providerAccountId, profileId)));
+        when(moderationService.findSubmission(profileId.toString())).thenReturn(java.util.Optional.empty());
+        when(moderationService.findCurrentPublication(profileId.toString())).thenReturn(java.util.Optional.of(publication));
+        when(providerLinkingService.resolveBookingTarget(org.mockito.ArgumentMatchers.any(PublicProviderReference.class)))
+                .thenReturn(java.util.Optional.empty());
+
+        WorkspaceResponse workspace = controller.me(authentication(providerAccountId)).getBody();
+
+        assertThat(workspace).isNotNull();
+        assertThat(workspace.publishedCount()).isEqualTo(1);
+        assertThat(workspace.underReviewCount()).isEqualTo(0);
+        assertThat(workspace.profiles()).singleElement().satisfies(profile -> {
+            assertThat(profile.publicationStatus()).isEqualTo("PUBLISHED");
+            assertThat(profile.effectiveVisibility()).isEqualTo("VISIBLE");
+            assertThat(profile.lifecycleLabel()).isEqualTo("Published");
+            assertThat(profile.primaryAction()).isEqualTo("VIEW_PUBLIC_PROFILE");
+        });
+    }
+
+    @Test
+    void workspaceCountsChangesRequestedProfilesAsActiveModeration() {
+        DiscoverVerificationService verificationService = Mockito.mock(DiscoverVerificationService.class);
+        ProviderOnboardingService onboardingService = Mockito.mock(ProviderOnboardingService.class);
+        ProviderOwnershipService providerOwnershipService = Mockito.mock(ProviderOwnershipService.class);
+        ClinicProfileService clinicProfileService = Mockito.mock(ClinicProfileService.class);
+        DoctorProfileService doctorProfileService = Mockito.mock(DoctorProfileService.class);
+        TenantUserManagementService tenantUserManagementService = Mockito.mock(TenantUserManagementService.class);
+        ProviderPublicProfileService publicProfileService = Mockito.mock(ProviderPublicProfileService.class);
+        ProviderPublicProfileDraftService draftService = Mockito.mock(ProviderPublicProfileDraftService.class);
+        ProviderPublicProfileModerationService moderationService = Mockito.mock(ProviderPublicProfileModerationService.class);
+        ProviderLinkingService providerLinkingService = Mockito.mock(ProviderLinkingService.class);
+        ProviderWorkspaceController controller = new ProviderWorkspaceController(
+                verificationService,
+                onboardingService,
+                providerOwnershipService,
+                clinicProfileService,
+                doctorProfileService,
+                tenantUserManagementService,
+                publicProfileService,
+                draftService,
+                moderationService,
+                providerLinkingService
+        );
+        UUID providerAccountId = UUID.fromString("77777777-7777-7777-7777-777777777777");
+        UUID tenantId = UUID.fromString("407dbc68-107d-4f64-83c8-6499e50e5c78");
+        Authentication authentication = authentication(providerAccountId);
+        DiscoverProviderAccountEntity account = DiscoverProviderAccountEntity.create(null, "9876502201");
+        account.markPhoneVerified();
+        when(verificationService.findAccountById(providerAccountId)).thenReturn(java.util.Optional.of(account));
+        when(verificationService.findOwnedApplicationSummaries(providerAccountId)).thenReturn(List.of());
+        when(draftService.listDraftLifecycle()).thenReturn(List.of(readyDraft(providerAccountId, tenantId)));
+        when(moderationService.findSubmission(tenantId.toString())).thenReturn(java.util.Optional.of(changesRequestedSubmissionRecord(tenantId.toString())));
+        when(moderationService.findCurrentPublication(tenantId.toString())).thenReturn(java.util.Optional.empty());
+        when(providerLinkingService.resolveBookingTarget(org.mockito.ArgumentMatchers.any(PublicProviderReference.class))).thenReturn(java.util.Optional.empty());
+        when(publicProfileService.findLifecycleByProviderId(tenantId)).thenReturn(java.util.Optional.empty());
+
+        ResponseEntity<WorkspaceResponse> response = controller.me(authentication);
+
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().readyForReviewCount()).isEqualTo(0);
+        assertThat(response.getBody().underReviewCount()).isEqualTo(1);
+        assertThat(response.getBody().profiles().get(0).moderationStatus()).isEqualTo("CHANGES_REQUESTED");
+        assertThat(response.getBody().profiles().get(0).primaryAction()).isEqualTo("REVIEW_CHANGES");
+        assertThat(response.getBody().profiles().get(0).allowedActions()).contains("REVIEW_CHANGES", "EDIT_PUBLIC_PROFILE", "VIEW_PREVIEW", "VIEW_READINESS");
+    }
+
+    @Test
+    void onboardingAccessIssuesFreshTokenForExactOwnedApplication() {
+        DiscoverVerificationService verificationService = Mockito.mock(DiscoverVerificationService.class);
+        ProviderOnboardingService onboardingService = Mockito.mock(ProviderOnboardingService.class);
+        ProviderOwnershipService providerOwnershipService = Mockito.mock(ProviderOwnershipService.class);
+        ClinicProfileService clinicProfileService = Mockito.mock(ClinicProfileService.class);
+        DoctorProfileService doctorProfileService = Mockito.mock(DoctorProfileService.class);
+        TenantUserManagementService tenantUserManagementService = Mockito.mock(TenantUserManagementService.class);
+        ProviderPublicProfileService publicProfileService = Mockito.mock(ProviderPublicProfileService.class);
+        ProviderPublicProfileDraftService draftService = Mockito.mock(ProviderPublicProfileDraftService.class);
+        ProviderPublicProfileModerationService moderationService = Mockito.mock(ProviderPublicProfileModerationService.class);
+        ProviderLinkingService providerLinkingService = Mockito.mock(ProviderLinkingService.class);
+        ProviderWorkspaceController controller = new ProviderWorkspaceController(
+                verificationService,
+                onboardingService,
+                providerOwnershipService,
+                clinicProfileService,
+                doctorProfileService,
+                tenantUserManagementService,
+                publicProfileService,
+                draftService,
+                moderationService,
                 providerLinkingService
         );
         UUID providerAccountId = UUID.fromString("33333333-3333-3333-3333-333333333333");
@@ -417,6 +587,8 @@ class ProviderWorkspaceControllerTest {
         DoctorProfileService doctorProfileService = Mockito.mock(DoctorProfileService.class);
         TenantUserManagementService tenantUserManagementService = Mockito.mock(TenantUserManagementService.class);
         ProviderPublicProfileService publicProfileService = Mockito.mock(ProviderPublicProfileService.class);
+        ProviderPublicProfileDraftService draftService = Mockito.mock(ProviderPublicProfileDraftService.class);
+        ProviderPublicProfileModerationService moderationService = Mockito.mock(ProviderPublicProfileModerationService.class);
         ProviderLinkingService providerLinkingService = Mockito.mock(ProviderLinkingService.class);
         ProviderWorkspaceController controller = new ProviderWorkspaceController(
                 verificationService,
@@ -426,6 +598,8 @@ class ProviderWorkspaceControllerTest {
                 doctorProfileService,
                 tenantUserManagementService,
                 publicProfileService,
+                draftService,
+                moderationService,
                 providerLinkingService
         );
         UUID providerAccountId = UUID.fromString("77777777-7777-7777-7777-777777777777");
@@ -452,6 +626,8 @@ class ProviderWorkspaceControllerTest {
         DoctorProfileService doctorProfileService = Mockito.mock(DoctorProfileService.class);
         TenantUserManagementService tenantUserManagementService = Mockito.mock(TenantUserManagementService.class);
         ProviderPublicProfileService publicProfileService = Mockito.mock(ProviderPublicProfileService.class);
+        ProviderPublicProfileDraftService draftService = Mockito.mock(ProviderPublicProfileDraftService.class);
+        ProviderPublicProfileModerationService moderationService = Mockito.mock(ProviderPublicProfileModerationService.class);
         ProviderLinkingService providerLinkingService = Mockito.mock(ProviderLinkingService.class);
         ProviderWorkspaceController controller = new ProviderWorkspaceController(
                 verificationService,
@@ -461,6 +637,8 @@ class ProviderWorkspaceControllerTest {
                 doctorProfileService,
                 tenantUserManagementService,
                 publicProfileService,
+                draftService,
+                moderationService,
                 providerLinkingService
         );
         UUID providerAccountId = UUID.fromString("66666666-6666-6666-6666-666666666666");
@@ -478,6 +656,7 @@ class ProviderWorkspaceControllerTest {
         assertThat(response.getBody().contactPhone()).isEqualTo("9876501402");
         assertThat(response.getBody().phoneVerifiedAt()).isEqualTo(account.getPhoneVerifiedAt());
         assertThat(response.getBody().applications()).isEmpty();
+        assertThat(response.getBody().profiles()).isEmpty();
         assertThat(response.getBody().workItems()).isEmpty();
     }
 
@@ -511,6 +690,104 @@ class ProviderWorkspaceControllerTest {
                     updatedAt
             );
         }
+    }
+
+    private static PublicProfileDraftWorkspaceRecord readyDraft(UUID providerAccountId, UUID tenantId) {
+        OffsetDateTime now = OffsetDateTime.parse("2026-08-04T00:00:00Z");
+        return new PublicProfileDraftWorkspaceRecord(
+                UUID.fromString("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"),
+                "draft-green-valley",
+                tenantId.toString(),
+                ProviderType.CLINIC,
+                providerAccountId,
+                "VERIFIED",
+                "ENABLED",
+                "UNPUBLISHED",
+                "READY_FOR_REVIEW",
+                "READY",
+                100,
+                15,
+                now,
+                now,
+                now,
+                now,
+                "Green Valley Family Clinic",
+                "green-valley-family-clinic",
+                "Pune",
+                "Wakad",
+                "Maharashtra",
+                "India",
+                "+91 98765 02201",
+                "contact@greenvalleyclinic.in",
+                "https://www.greenvalleyclinic.in",
+                "+91 98765 02201",
+                "PMC/CLINIC/2022/10458",
+                2022,
+                "HEALTHCARE_CLINIC_PROFILE",
+                "HEALTHCARE_CLINIC_PROFILE",
+                0L,
+                now,
+                "/discover/clinics/green-valley-family-clinic",
+                List.of("SUBMIT_FOR_REVIEW", "VIEW_PREVIEW", "VIEW_READINESS", "EDIT_PUBLIC_PROFILE"),
+                List.of(),
+                new PublicProfileDraftReadinessRecord(
+                        "READY",
+                        true,
+                        100,
+                        List.of(),
+                        List.of("gallery", "establishedYear", "facilities", "languages", "fees", "website", "whatsappNumber", "metaTitle", "metaDescription"),
+                        List.of(),
+                        List.of(),
+                        List.of(),
+                        now,
+                        15
+                ),
+                List.of(),
+                java.util.Map.of()
+        );
+    }
+
+    private static PublicProfileModerationSubmissionRecord changesRequestedSubmissionRecord(String publicProfileReference) {
+        OffsetDateTime now = OffsetDateTime.parse("2026-08-04T00:00:00Z");
+        return new PublicProfileModerationSubmissionRecord(
+                UUID.fromString("99999999-9999-9999-9999-999999999999"),
+                "submission-req-changes",
+                publicProfileReference,
+                ProviderType.CLINIC,
+                "draft-green-valley",
+                15,
+                "CHANGES_REQUESTED",
+                "UNPUBLISHED",
+                "ENABLED",
+                java.util.Map.of(),
+                java.util.Map.of(),
+                java.util.Map.of(),
+                java.util.Map.of(),
+                java.util.Map.of(),
+                null,
+                now,
+                UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+                "platform.admin@clinic.local",
+                "Platform Admin",
+                "platform.admin@clinic.local",
+                now,
+                UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+                now,
+                "Please revise timings.",
+                1L,
+                false,
+                null,
+                null,
+                null,
+                now,
+                now,
+                "NOT_PUBLISHED",
+                "Profile is not published.",
+                null,
+                java.util.List.of(),
+                java.util.List.of("REVIEW_REQUESTED_CHANGES", "OPEN_EDITABLE_DRAFT", "BACK_TO_WORKSPACE"),
+                java.util.List.of("VIEW_SUBMISSION", "VIEW_REVIEW_HISTORY")
+        );
     }
 
     private static Authentication authentication(UUID providerAccountId) {

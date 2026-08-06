@@ -21,6 +21,11 @@ test("landing page renderer tolerates missing draft sections and media", () => {
   assert.ok(renderer.includes("Array.isArray(profile.gallery)"));
   assert.ok(renderer.includes("landing-contact-row"));
   assert.ok(renderer.includes("landing-route-link"));
+  assert.ok(renderer.includes("landing-section-heading-row"));
+  assert.ok(renderer.includes("landing-mini-card__icon"));
+  assert.ok(renderer.includes("landing-hours-table"));
+  assert.ok(renderer.includes("landing-hours-table__timezone"));
+  assert.ok(renderer.includes("landing-gallery-card__meta"));
   assert.ok(renderer.includes("buildPublicAddressView"));
   assert.ok(renderer.includes("resolveClinicEstablishedYear"));
   assert.ok(renderer.includes("formatWeeklyTimings"));
@@ -28,12 +33,16 @@ test("landing page renderer tolerates missing draft sections and media", () => {
   assert.ok(renderer.includes("specialities.slice(0, 3)"));
   assert.ok(renderer.includes("Contact"));
   assert.ok(renderer.includes("renderMode === \"PUBLIC_PROFILE\""));
+  assert.ok(renderer.includes("Submission under Platform review"));
+  assert.ok(renderer.includes("Later draft changes will not affect this submitted snapshot."));
   assert.ok(renderer.includes("No services added yet."));
   assert.ok(renderer.includes("No facilities configured."));
   assert.ok(renderer.includes("No gallery images uploaded."));
   assert.ok(renderer.includes("Qualifications not provided."));
   assert.ok(renderer.includes("Contact details not configured."));
-  assert.ok(renderer.includes("Location not pinned."));
+  assert.ok(locationMap.includes("Map unavailable"));
+  assert.ok(locationMap.includes("Clinic location has not been pinned yet."));
+  assert.ok(renderer.includes("Public address"));
   assert.ok(renderer.includes("No landing page content is available yet."));
   assert.ok(locationMap.includes('whiteSpace: "pre-line"'));
   assert.ok(locationMap.includes("noopener noreferrer"));
@@ -43,11 +52,12 @@ test("landing page renderer tolerates missing draft sections and media", () => {
 test("provider draft preview tolerates missing profile fields without relying on hook order", () => {
   const page = read("src/pages/provider/ProviderPublicProfileDraftPage.tsx");
 
-  assert.ok(page.includes("DRAFT PREVIEW - NOT PUBLIC"));
+  assert.ok(page.includes("Draft Preview – Not Public"));
   assert.ok(page.includes("const groupedMissingFields = (() =>"));
   assert.ok(page.includes("missingMandatoryFields ?? []"));
-  assert.ok(page.includes("Preview Draft"));
+  assert.ok(page.includes("Preview profile"));
   assert.ok(page.includes("Copy Public URL"));
+  assert.ok(page.includes("ProviderEditorFooter"));
   assert.ok(page.includes("currentDraft.readiness.missingMandatoryFields.length || currentDraft.readiness.invalidFields.length ? \"Required before review:\" : \"No blocking content items remain.\""));
   assert.ok(!page.includes("Call clinic"));
 });

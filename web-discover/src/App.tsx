@@ -33,6 +33,7 @@ import { ProviderLoginPage } from "./pages/provider/ProviderLoginPage";
 import { ProviderLandingPagePage } from "./pages/provider/ProviderLandingPagePage";
 import { ProviderOnboardingPage } from "./pages/provider/ProviderOnboardingPage";
 import { ProviderPublicProfileDraftPage } from "./pages/provider/ProviderPublicProfileDraftPage";
+import { ProviderPublicProfileReviewPage } from "./pages/provider/ProviderPublicProfileReviewPage";
 import { ProviderWorkspacePage } from "./pages/provider/ProviderWorkspacePage";
 import { DISCOVER_ROUTES, primaryNavigationRoutes } from "./routes";
 import { providerOnboardingStepRoute } from "./features/provider/providerOnboardingRoutes";
@@ -102,6 +103,10 @@ const routeMeta: Record<string, { title: string; description: string }> = {
   [DISCOVER_ROUTES.providerWorkspace.path]: {
     title: "Provider Workspace | Jeevanam Discover",
     description: "View your provider applications and public profiles.",
+  },
+  [DISCOVER_ROUTES.providerPublicProfileReview.path]: {
+    title: "Provider Review Status | Jeevanam Discover",
+    description: "Review the submitted public profile status, findings, and moderation history.",
   },
   [DISCOVER_ROUTES.providerLandingPage.path]: {
     title: "Provider Profiles | Jeevanam Discover",
@@ -824,6 +829,7 @@ function App() {
           <Route path={DISCOVER_ROUTES.providerApplications.path} element={<LegacyRedirect to={DISCOVER_ROUTES.providerWorkspace.path} />} />
           <Route path={DISCOVER_ROUTES.providerApplicationDashboard.path} element={<ProviderDashboardPage />} />
           <Route path={DISCOVER_ROUTES.providerPublicProfileDraft.path} element={<ProviderPublicProfileDraftPage />} />
+          <Route path={DISCOVER_ROUTES.providerPublicProfileReview.path} element={<ProviderPublicProfileReviewPage />} />
           <Route path={DISCOVER_ROUTES.providerLandingPage.path} element={<ProviderLandingPagePage />} />
           <Route path={DISCOVER_ROUTES.providerAccount.path} element={<ProviderWorkspacePage />} />
         </Route>

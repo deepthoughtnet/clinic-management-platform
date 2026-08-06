@@ -101,7 +101,7 @@ public class ProviderOwnershipLifecyclePolicy {
     public List<String> workspaceAllowedActions(ClaimIntentRecord intent, OwnershipRecord ownership) {
         String pageMode = pageMode(intent, ownership);
         return switch (pageMode) {
-            case "OWNERSHIP_VERIFIED" -> List.of("VIEW_DETAILS", "OPEN_PUBLIC_PROFILE", "CREATE_PUBLIC_PROFILE_DRAFT", "VIEW_PREVIEW", "VIEW_READINESS");
+            case "OWNERSHIP_VERIFIED" -> List.of("CREATE_PUBLIC_PROFILE_DRAFT", "VIEW_PREVIEW", "VIEW_READINESS", "OPEN_PUBLIC_PROFILE", "VIEW_DETAILS");
             case "CLAIM_PENDING", "CLAIM_SUBMITTED", "PROVIDER_AUTHENTICATED", "CLAIM_INTENT_CREATED" -> List.of("OPEN_CLAIM");
             case "CLAIM_DISPUTED", "CLAIM_REJECTED", "CLAIM_REVOKED", "CLAIM_EXPIRED" -> List.of("VIEW_DETAILS");
             default -> List.of();
