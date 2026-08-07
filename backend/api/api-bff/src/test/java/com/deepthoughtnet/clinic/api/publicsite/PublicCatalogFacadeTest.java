@@ -16,6 +16,7 @@ import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileMod
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderProfileSummaryRecord;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicSpecialitySummaryRecord;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderSearchCriteria;
+import com.deepthoughtnet.clinic.discover.publicprofilemoderation.ProviderPublicProfileModerationService;
 import com.deepthoughtnet.clinic.platform.contracts.providerintegration.AvailabilityState;
 import com.deepthoughtnet.clinic.platform.contracts.providerintegration.BookingCapability;
 import com.deepthoughtnet.clinic.platform.contracts.providerintegration.BookingTargetReference;
@@ -38,6 +39,10 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 
 class PublicCatalogFacadeTest {
+
+    private static ProviderPublicProfileModerationService moderationService() {
+        return mock(ProviderPublicProfileModerationService.class);
+    }
 
     @Test
     void mapsPublishedProfilesIntoPublicListsAndSearchResults() {
@@ -216,13 +221,14 @@ class PublicCatalogFacadeTest {
                 "/api/public/clinics/sunrise-clinic/gallery/0",
                 "/api/public/clinics/sunrise-clinic/gallery/1"
         );
+        assertThat(detail.timings()).containsExactly("MONDAY 09:00-17:00");
     }
 
     @Test
     void doctorDetailIncludesOpaqueBookingReferenceWhenPlatformLinkExists() {
         ProviderPublicProfileService publicProfileService = mock(ProviderPublicProfileService.class);
         ProviderLinkingService providerLinkingService = mock(ProviderLinkingService.class);
-        PublicCatalogFacade facade = new PublicCatalogFacade(publicProfileService, providerLinkingService);
+        PublicCatalogFacade facade = new PublicCatalogFacade(publicProfileService, providerLinkingService, moderationService());
 
         PublicProviderProfileDetailRecord detail = detailRecord(
                 ProviderType.INDIVIDUAL_DOCTOR,
@@ -601,11 +607,15 @@ class PublicCatalogFacadeTest {
                 publishedVersionNumber,
                 slug,
                 previousSlug,
-                canonical
+                canonical,
+                List.of(new com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderTimingSnapshot(
+                        "MONDAY", "09:00", "17:00", 0
+                )),
+                "Asia/Kolkata"
         );
     }
 
     private static PublicCatalogFacade facade(ProviderPublicProfileService publicProfileService) {
-        return new PublicCatalogFacade(publicProfileService, mock(ProviderLinkingService.class));
+        return new PublicCatalogFacade(publicProfileService, mock(ProviderLinkingService.class), moderationService());
     }
 }

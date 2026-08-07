@@ -6,6 +6,7 @@ public enum LinkLifecycleStatus {
     PROPOSED,
     APPROVED,
     LINKED,
+    SUSPENDED,
     REJECTED,
     UNLINKED,
     DISPUTED

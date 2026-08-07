@@ -22,10 +22,12 @@ import {
   TableHead,
   TableRow,
   TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import AddLinkRoundedIcon from "@mui/icons-material/AddLinkRounded";
 import FactCheckRoundedIcon from "@mui/icons-material/FactCheckRounded";
+import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import LinkRoundedIcon from "@mui/icons-material/LinkRounded";
 import HistoryRoundedIcon from "@mui/icons-material/HistoryRounded";
 import PlayArrowRoundedIcon from "@mui/icons-material/PlayArrowRounded";
@@ -64,9 +66,12 @@ import {
   disputeProviderConnectionOwnership,
   revokeProviderConnectionOwnership,
   reconcileProviderConnection,
+  rejectProviderConnectionLink,
   relinkProviderConnectionLink,
+  resumeProviderConnectionLink,
   requestChangesProviderConnectionsPublicProfileReview,
   unlinkProviderConnectionLink,
+  suspendProviderConnectionLink,
   startProviderConnectionsPublicProfileReview,
   unpublishProviderConnectionsPublicProfileReview,
   type ProviderConnectionsConflictResponse,
@@ -156,6 +161,249 @@ type ReviewFindingDraft = {
   internalNote: string;
 };
 
+function activateOnKeyboard(event: React.KeyboardEvent, onActivate: () => void) {
+  if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    onActivate();
+  }
+}
+
+function TechnicalDetails({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <Box component="details" sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1.5, px: 1.5, py: 1 }}>
+      <Box component="summary" sx={{ cursor: "pointer", fontWeight: 700, color: "text.secondary" }}>
+        Technical Details
+      </Box>
+      <Stack spacing={0.5} sx={{ pt: 1 }}>
+        {children}
+      </Stack>
+    </Box>
+  );
+}
+
+const BUSINESS_LABELS: Record<string, string> = {
+  CALL_TO_BOOK: "Call to Book",
+  ONLINE_BOOKING: "Online Booking",
+  NOT_CONNECTED: "Not Connected",
+  NOT_LINKED: "Not Linked",
+  CONNECTION_PENDING: "Connection Pending",
+  PENDING_VERIFICATION: "Pending Verification",
+  VERIFIED: "Verified",
+  APPROVED: "Approved",
+  PUBLISHED: "Published",
+  UNDER_REVIEW: "Under Review",
+  CHANGES_REQUESTED: "Changes Requested",
+  REJECTED: "Rejected",
+  ACTIVE: "Active",
+  INACTIVE: "Inactive",
+  ENABLED: "Enabled",
+  DISABLED: "Disabled",
+  READY: "Ready",
+  UNKNOWN: "Unknown",
+  UNCLAIMED: "Unclaimed",
+  LINKED: "Linked",
+  PROPOSED: "Proposed",
+  SUSPENDED: "Suspended",
+  DISCONNECTED: "Disconnected",
+  AVAILABLE: "Available",
+  AVAILABLE_TODAY: "Available Today",
+  NEXT_AVAILABLE: "Next Available",
+  HEALTHCARE_INITIATED_CONNECTION: "Healthcare Initiated",
+  "OWNER:ACTIVE": "Owner Active",
+  REGISTRATION_EXACT: "Registration Exact",
+  VERIFIED_PHONE_EXACT: "Verified Phone Exact",
+  VERIFIED_EMAIL_EXACT: "Verified Email Exact",
+  VERIFIED_CONTACT_EXACT: "Verified Contact Exact",
+  BUSINESS_IDENTITY_MATCH: "Business Identity Match",
+  REGISTRATION_AND_CONTACT: "Registration And Contact",
+  MANUAL_REFERENCE: "Manual Reference",
+  LOW: "Low",
+  MEDIUM: "Medium",
+  HIGH: "High",
+};
+
+function businessLabel(value: string | null | undefined) {
+  if (!value) return "—";
+  const normalized = value.trim().toUpperCase();
+  if (BUSINESS_LABELS[normalized]) return BUSINESS_LABELS[normalized];
+  return value
+    .replaceAll("_", " ")
+    .replaceAll(":", " ")
+    .toLowerCase()
+    .replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+function fieldHelp(title: string, description: string) {
+  return (
+    <Stack direction="row" spacing={0.5} alignItems="center">
+      <Typography variant="caption" color="text.secondary">{title}</Typography>
+      <Tooltip title={description} arrow>
+        <InfoOutlinedIcon sx={{ fontSize: 14, color: "text.secondary", cursor: "help" }} />
+      </Tooltip>
+    </Stack>
+  );
+}
+
+function EmptyState({
+  title,
+  description,
+  actionLabel,
+  onAction,
+}: {
+  title: string;
+  description: string;
+  actionLabel?: string;
+  onAction?: () => void;
+}) {
+  return (
+    <Paper variant="outlined" sx={{ p: 3, textAlign: "center" }}>
+      <Stack spacing={1.25} alignItems="center">
+        <HistoryRoundedIcon color="action" />
+        <Typography variant="h6" sx={{ fontWeight: 900 }}>{title}</Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 640 }}>{description}</Typography>
+        {actionLabel && onAction ? (
+          <Button variant="outlined" onClick={onAction}>{actionLabel}</Button>
+        ) : null}
+      </Stack>
+    </Paper>
+  );
+}
+
+type PublicProfileInspectionPanelProps = {
+  loading: boolean;
+  error: string | null;
+  selectedProfile: ProviderConnectionsPublicProfileResponse | null;
+  selectedOwnership: ProviderConnectionsOwnershipResponse | null;
+  selectedLink: ProviderConnectionsLinkResponse | null;
+  selectedPlatformClinic: ProviderConnectionsPlatformEntityResponse | null;
+  onProposeLink: (profile: ProviderConnectionsPublicProfileResponse) => void;
+};
+
+function PublicProfileInspectionPanel({
+  loading,
+  error,
+  selectedProfile,
+  selectedOwnership,
+  selectedLink,
+  selectedPlatformClinic,
+  onProposeLink,
+}: PublicProfileInspectionPanelProps) {
+  if (!selectedProfile) {
+    if (loading) {
+      return (
+        <Alert severity="info" variant="outlined">
+          Loading public profile details…
+        </Alert>
+      );
+    }
+    if (error) {
+      return (
+        <Alert severity="error" variant="outlined">
+          Public profile details could not be loaded.
+        </Alert>
+      );
+    }
+    return (
+      <Alert severity="info" variant="outlined">
+        Pick a row from Public Profiles to inspect a specific profile.
+      </Alert>
+    );
+  }
+
+  return (
+    <Stack spacing={1.25}>
+      {error ? (
+        <Alert severity="error" variant="outlined">
+          Public profile details could not be refreshed. Showing the last known selected profile.
+        </Alert>
+      ) : null}
+      {loading ? (
+        <Alert severity="info" variant="outlined">
+          Refreshing public profile details…
+        </Alert>
+      ) : null}
+      <Chip
+        size="small"
+        label={`${formatProviderType(selectedProfile.publicProfileType)} · ${businessLabel(selectedProfile.publicationStatus)}`}
+        color={actionChipColor(selectedProfile.publicationStatus)}
+        variant="outlined"
+        sx={{ alignSelf: "flex-start" }}
+      />
+      <Typography sx={{ fontWeight: 800 }}>
+        {selectedProfile.displayName || "Selected public profile"}
+      </Typography>
+      <Typography variant="body2" color="text.secondary">
+        {selectedProfile.city || "—"}{selectedProfile.area ? ` · ${selectedProfile.area}` : ""}
+      </Typography>
+      <Stack spacing={0.5}>
+        <Typography variant="caption" color="text.secondary">Public URL</Typography>
+        <Typography variant="body2">{selectedProfile.publicPath || "No public path"}</Typography>
+      </Stack>
+      <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+        <Chip size="small" label={`Connection: ${businessLabel(selectedProfile.connectionStatus || "NOT_CONNECTED")}`} variant="outlined" />
+        <Chip size="small" label={`Capability: ${businessLabel(selectedProfile.bookingCapability)}`} variant="outlined" />
+        {selectedOwnership ? (
+          <Chip size="small" label={`Ownership: ${businessLabel(selectedOwnership.ownershipStatus)}`} variant="outlined" />
+        ) : null}
+      </Stack>
+      {selectedOwnership ? (
+        <Stack spacing={0.5}>
+          {fieldHelp("Ownership status", "Shows the verified ownership lifecycle state for this public profile.")}
+          <Typography variant="body2">{businessLabel(selectedOwnership.ownershipStatus)}</Typography>
+          {fieldHelp("Connection", "Represents the lifecycle relationship between a published public profile and an operational clinic.")}
+          <Typography variant="body2">{businessLabel(selectedOwnership.platformConnectionStatus || selectedProfile.connectionStatus || "NOT_CONNECTED")}</Typography>
+          {fieldHelp("Capability", "Shows the public booking capability surfaced to patients.")}
+          <Typography variant="body2">{businessLabel(selectedOwnership.bookingCapability || selectedProfile.bookingCapability)}</Typography>
+        </Stack>
+      ) : null}
+      <Stack spacing={0.5}>
+        <Typography variant="caption" color="text.secondary">Current platform link</Typography>
+        {selectedLink ? (
+          <>
+            <Typography variant="body2">
+              {selectedPlatformClinic?.displayName || selectedPlatformClinic?.tenantName || selectedLink.tenantName || "Linked operational clinic"}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              Lifecycle {businessLabel(selectedLink.linkStatus)} · {businessLabel(selectedLink.connectionStatus)}
+            </Typography>
+          </>
+        ) : (
+          <Typography variant="body2" color="text.secondary">
+            No active platform link is associated with this public profile.
+          </Typography>
+        )}
+      </Stack>
+      <Stack spacing={0.5}>
+        <Typography variant="caption" color="text.secondary">Effective capability</Typography>
+        <Typography variant="body2">{businessLabel(selectedProfile.bookingCapability)}</Typography>
+      </Stack>
+      {selectedProfile.allowedActions.includes("PROPOSE_LINK") ? (
+        <Button
+          variant="contained"
+          startIcon={<LinkRoundedIcon />}
+          onClick={() => onProposeLink(selectedProfile)}
+        >
+          Propose link
+        </Button>
+      ) : null}
+      <TechnicalDetails>
+        <Typography variant="body2" color="text.secondary">Business Reference</Typography>
+        <Typography variant="body2">{selectedProfile.publicReference || "—"}</Typography>
+        <Typography variant="body2" color="text.secondary">Public Reference</Typography>
+        <Typography variant="body2">{selectedProfile.publicReference || "—"}</Typography>
+        <Typography variant="body2" color="text.secondary">Public Practice Reference</Typography>
+        <Typography variant="body2">{selectedProfile.publicPracticeReference || "—"}</Typography>
+        <Typography variant="body2" color="text.secondary">Revision</Typography>
+        <Typography variant="body2">{selectedProfile.sourceRevision ?? "—"}</Typography>
+      </TechnicalDetails>
+    </Stack>
+  );
+}
+
 const SECTIONS: Array<{ key: ConsoleSection; label: string; path: string }> = [
   { key: "overview", label: "Overview", path: "/platform/provider-connections" },
   { key: "public-profiles", label: "Public Profiles", path: "/platform/provider-connections/public-profiles" },
@@ -196,6 +444,410 @@ function formatProviderType(type: ProviderConnectionsPublicProfileType | string 
     default:
       return "Provider";
   }
+}
+
+type PlatformEntityInspectorProps = {
+  loading: boolean;
+  error: string | null;
+  selectedEntity: ProviderConnectionsPlatformEntityResponse | null;
+  linkedProfile: ProviderConnectionsPublicProfileResponse | null;
+  linkedPlatformLink: ProviderConnectionsLinkResponse | null;
+  onReviewMatch: (entity: ProviderConnectionsPlatformEntityResponse) => void;
+};
+
+function PlatformEntityInspector({
+  loading,
+  error,
+  selectedEntity,
+  linkedProfile,
+  linkedPlatformLink,
+  onReviewMatch,
+}: PlatformEntityInspectorProps) {
+  if (!selectedEntity) {
+    return (
+      <Alert severity={loading ? "info" : error ? "error" : "info"} variant="outlined">
+        {loading
+          ? "Loading platform entity details…"
+          : error
+            ? "Platform entity details could not be loaded."
+            : "Pick a platform entity to inspect its operational, publication and connection state."}
+      </Alert>
+    );
+  }
+
+  return (
+    <Stack spacing={1.25}>
+      {error ? <Alert severity="error" variant="outlined">Platform entity details could not be refreshed. Showing the selected entity.</Alert> : null}
+      {loading ? <Alert severity="info" variant="outlined">Refreshing platform entity details…</Alert> : null}
+      <Chip size="small" label={`${formatProviderType(selectedEntity.entityType)} · ${businessLabel(selectedEntity.connectionStatus || "NOT_CONNECTED")}`} variant="outlined" sx={{ alignSelf: "flex-start" }} />
+      <Typography sx={{ fontWeight: 800 }}>{selectedEntity.displayName || "Selected platform entity"}</Typography>
+      <Typography variant="body2" color="text.secondary">
+        {selectedEntity.tenantName || "—"}{selectedEntity.tenantCode ? ` · ${selectedEntity.tenantCode}` : ""}
+      </Typography>
+      <Stack spacing={0.5}>
+        <Typography variant="caption" color="text.secondary">Context</Typography>
+        <Typography variant="body2">{selectedEntity.city || "—"}{selectedEntity.area ? ` · ${selectedEntity.area}` : ""}</Typography>
+        <Typography variant="caption" color="text.secondary">{selectedEntity.active ? "Active" : "Inactive"} · {selectedEntity.publicListingEnabled ? "Public listing enabled" : "Public listing disabled"}</Typography>
+      </Stack>
+      <Stack spacing={0.5}>
+        {fieldHelp("Connection", "Represents the current link state between the operational clinic and the public profile.")}
+        <Typography variant="body2">{businessLabel(selectedEntity.linkStatus || "NOT_LINKED")} · {businessLabel(selectedEntity.connectionStatus || "NOT_CONNECTED")}</Typography>
+        <Typography variant="caption" color="text.secondary">{linkedProfile?.displayName || selectedEntity.linkedPublicReference || "No linked public profile"}</Typography>
+        <Typography variant="caption" color="text.secondary">{businessLabel(linkedPlatformLink?.bookingCapability || selectedEntity.currentDiscoverCapability || selectedEntity.bookingCapability || "CALL_TO_BOOK")}</Typography>
+      </Stack>
+      <Stack spacing={0.5}>
+        {fieldHelp("Capability", "Shows the effective booking capability that patients can use.")}
+        <Typography variant="body2">{businessLabel(selectedEntity.currentDiscoverCapability || selectedEntity.bookingCapability || "CALL_TO_BOOK")}</Typography>
+        <Typography variant="caption" color="text.secondary">{selectedEntity.platformBookingSetup || "—"}</Typography>
+        {selectedEntity.capabilityReason ? <Typography variant="caption" color="text.secondary">{selectedEntity.capabilityReason}</Typography> : null}
+      </Stack>
+      <Stack spacing={0.5}>
+        <Typography variant="caption" color="text.secondary">Availability</Typography>
+        <Typography variant="body2">{businessLabel(selectedEntity.currentAvailability || "UNKNOWN")}</Typography>
+        <Typography variant="caption" color="text.secondary">Revision {selectedEntity.sourceRevision}</Typography>
+        {selectedEntity.sourceUpdatedAt ? <Typography variant="caption" color="text.secondary">{formatDateTime(selectedEntity.sourceUpdatedAt)}</Typography> : null}
+      </Stack>
+      {selectedEntity.linkStatus === "LINKED" ? (
+        <Stack spacing={0.5}>
+          <Typography variant="caption" color="text.secondary">Linked public profile</Typography>
+          <Typography variant="body2">{linkedProfile?.displayName || linkedEntityLabel(selectedEntity)}</Typography>
+        </Stack>
+      ) : null}
+      <Button size="small" variant="contained" onClick={() => onReviewMatch(selectedEntity)}>
+        Review match
+      </Button>
+      <TechnicalDetails>
+        <Typography variant="body2" color="text.secondary">Tenant Reference</Typography>
+        <Typography variant="body2">{selectedEntity.tenantReference || "—"}</Typography>
+        <Typography variant="body2" color="text.secondary">Platform Clinic Reference</Typography>
+        <Typography variant="body2">{selectedEntity.platformClinicReference || "—"}</Typography>
+        <Typography variant="body2" color="text.secondary">Source Revision</Typography>
+        <Typography variant="body2">{selectedEntity.sourceRevision}</Typography>
+      </TechnicalDetails>
+    </Stack>
+  );
+}
+
+type SuggestionInspectorProps = {
+  loading: boolean;
+  error: string | null;
+  selectedSuggestion: ProviderConnectionsSuggestionResponse | null;
+  onReviewMatch: (suggestion: ProviderConnectionsSuggestionResponse) => void;
+  onReject: (suggestion: ProviderConnectionsSuggestionResponse) => void;
+};
+
+function SuggestionInspector({ loading, error, selectedSuggestion, onReviewMatch, onReject }: SuggestionInspectorProps) {
+  if (!selectedSuggestion) {
+    return (
+      <Alert severity={loading ? "info" : error ? "error" : "info"} variant="outlined">
+        {loading
+          ? "Loading suggestion details…"
+          : error
+            ? "Suggestion details could not be loaded."
+            : "Select a suggested match to review the candidate, matching evidence and available actions."}
+      </Alert>
+    );
+  }
+
+  return (
+    <Stack spacing={1.25}>
+      {error ? <Alert severity="error" variant="outlined">Suggestion details could not be refreshed. Showing the selected suggestion.</Alert> : null}
+      {loading ? <Alert severity="info" variant="outlined">Refreshing suggestion details…</Alert> : null}
+      <Chip size="small" label={`${formatProviderType(selectedSuggestion.publicProfileType)} · ${businessLabel(selectedSuggestion.status || "SUGGESTED")}`} variant="outlined" sx={{ alignSelf: "flex-start" }} />
+      <Typography sx={{ fontWeight: 800 }}>{selectedSuggestion.publicDisplayName || "Suggested provider"}</Typography>
+      <Typography variant="body2" color="text.secondary">{selectedSuggestion.platformDisplayName || "Suggested platform entity"}</Typography>
+      <Stack spacing={0.5}>
+        {fieldHelp("Profile and platform", "Shows the public profile and the suggested operational clinic side by side.")}
+        <Typography variant="body2">{selectedSuggestion.publicReference || "—"} · {selectedSuggestion.publicPracticeReference || "—"}</Typography>
+        <Typography variant="body2">{selectedSuggestion.tenantReference || "—"} · {selectedSuggestion.platformClinicReference || "—"}</Typography>
+      </Stack>
+      <Stack spacing={0.5}>
+        {fieldHelp("Comparison", "Shows the candidate fields used for matching.")}
+        <Typography variant="body2">{selectedSuggestion.platformCity || "—"} · {selectedSuggestion.platformArea || "—"}</Typography>
+        <Typography variant="body2">{selectedSuggestion.platformPhone || "—"} · {selectedSuggestion.platformEmail || "—"}</Typography>
+        <Typography variant="body2">{selectedSuggestion.platformRegistrationNumber || "—"}</Typography>
+      </Stack>
+      <Stack spacing={0.5}>
+        {fieldHelp("Match", "Shows the backend-derived match method and confidence.")}
+        <Typography variant="body2">{businessLabel(selectedSuggestion.matchMethod)} · {businessLabel(selectedSuggestion.confidence)}</Typography>
+        <Typography variant="caption" color="text.secondary">{selectedSuggestion.lastEvaluatedAt ? formatDateTime(selectedSuggestion.lastEvaluatedAt) : "No evaluation timestamp"}</Typography>
+        <Typography variant="caption" color="text.secondary">Source revision {selectedSuggestion.sourceRevision}</Typography>
+      </Stack>
+      <Stack spacing={0.5}>
+        <Typography variant="caption" color="text.secondary">Review note</Typography>
+        <Typography variant="body2">{selectedSuggestion.reason || "—"}</Typography>
+      </Stack>
+      <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+        {(selectedSuggestion.evidence || []).map((item) => <Chip key={evidenceSummary(item)} size="small" label={evidenceSummary(item)} color={evidenceTone(item.strength)} variant="outlined" />)}
+      </Stack>
+      <Stack direction="row" spacing={1}>
+        {(selectedSuggestion.allowedActions || []).includes("PROPOSE_LINK") ? (
+          <Button variant="contained" onClick={() => onReviewMatch(selectedSuggestion)}>Review match</Button>
+        ) : null}
+        {(selectedSuggestion.allowedActions || []).includes("REJECT_SUGGESTION") ? (
+          <Button variant="outlined" onClick={() => onReject(selectedSuggestion)}>Reject suggestion</Button>
+        ) : null}
+      </Stack>
+      <TechnicalDetails>
+        <Typography variant="body2" color="text.secondary">Suggestion Id</Typography>
+        <Typography variant="body2">{selectedSuggestion.id}</Typography>
+        <Typography variant="body2" color="text.secondary">Public Reference</Typography>
+        <Typography variant="body2">{selectedSuggestion.publicReference || "—"}</Typography>
+        <Typography variant="body2" color="text.secondary">Platform Clinic Reference</Typography>
+        <Typography variant="body2">{selectedSuggestion.platformClinicReference || "—"}</Typography>
+      </TechnicalDetails>
+    </Stack>
+  );
+}
+
+type LinkInspectorProps = {
+  loading: boolean;
+  error: string | null;
+  selectedLink: ProviderConnectionsLinkResponse | null;
+  selectedLinkDetail: ProviderConnectionsLinkDetailResponse | null;
+  onRetry: () => void;
+  allowedActions: React.ReactNode;
+};
+
+function LinkInspector({ loading, error, selectedLink, selectedLinkDetail, onRetry, allowedActions }: LinkInspectorProps) {
+  if (!selectedLink) {
+    return (
+      <Alert severity={loading ? "info" : error ? "error" : "info"} variant="outlined">
+        {loading
+          ? "Loading link details…"
+          : error
+            ? "Link details could not be loaded."
+            : "Pick a link to inspect its lifecycle, capability, comparison evidence and available actions."}
+      </Alert>
+    );
+  }
+
+  return (
+    <Stack spacing={1.25}>
+      {error ? (
+        <Alert severity="error" variant="outlined">
+          Unable to load link details. <Button size="small" onClick={onRetry}>Refresh Details</Button>
+        </Alert>
+      ) : null}
+      {loading ? <Alert severity="info" variant="outlined">Refreshing link details…</Alert> : null}
+      <Chip size="small" label={`${formatProviderType(selectedLink.publicProfileType)} · ${businessLabel(selectedLink.linkStatus)}`} color={actionChipColor(selectedLink.linkStatus)} variant="outlined" sx={{ alignSelf: "flex-start" }} />
+      <Typography sx={{ fontWeight: 800 }}>{selectedLink.publicDisplayName || selectedLink.publicReference || "Selected link"}</Typography>
+      <Typography variant="body2" color="text.secondary">{selectedLink.tenantName || "—"}</Typography>
+      <Stack spacing={0.5}>
+        {fieldHelp("Public profile", "Shows the business-facing profile linked to this operational clinic.")}
+        <Typography variant="body2">{selectedLink.publicDisplayName || selectedLink.publicPath || "—"}</Typography>
+        <Typography variant="caption" color="text.secondary">{selectedLink.publicPath || "No public path"}</Typography>
+      </Stack>
+      <Stack spacing={0.5}>
+        {fieldHelp("Connection", "Represents the lifecycle relationship between a published public profile and an operational clinic.")}
+        <Typography variant="body2">{businessLabel(selectedLink.connectionStatus)}</Typography>
+        <Typography variant="caption" color="text.secondary">Lifecycle {businessLabel(selectedLink.linkStatus)}</Typography>
+      </Stack>
+      <Stack spacing={0.5}>
+        {fieldHelp("Capability", "Shows the patient-facing booking behavior currently in effect.")}
+        <Typography variant="body2">{businessLabel(selectedLink.bookingCapability)}</Typography>
+        <Typography variant="caption" color="text.secondary">Availability {businessLabel(selectedLink.availabilityState)}</Typography>
+      </Stack>
+      <Stack spacing={0.5}>
+        {fieldHelp("Lifecycle", "Shows the revision and transition history currently used for this link.")}
+        <Typography variant="body2">{selectedLink.sourceRevision}</Typography>
+        <Typography variant="caption" color="text.secondary">Connection revision {selectedLink.connectionRevision}</Typography>
+        <Typography variant="caption" color="text.secondary">{formatDateTime(selectedLink.updatedAt)}</Typography>
+      </Stack>
+      <Stack spacing={0.5}>
+        {fieldHelp("Match", "Shows the matching method and confidence approved for this link.")}
+        <Typography variant="body2">{businessLabel(selectedLink.matchMethod)}</Typography>
+        <Typography variant="caption" color="text.secondary">{businessLabel(selectedLink.matchConfidence)}</Typography>
+      </Stack>
+      <Stack spacing={0.75}>
+        {fieldHelp("Lifecycle timeline", "Ordered timeline of link lifecycle milestones.")}
+        {[
+          { label: "Proposed", value: selectedLink.proposedAt },
+          { label: "Verified", value: selectedLink.verifiedAt },
+          { label: "Activated", value: selectedLink.activatedAt },
+        ].map((step, index, items) => (
+          <Stack key={step.label} direction="row" spacing={1} alignItems="flex-start">
+            <Box sx={{ width: 16, display: "flex", justifyContent: "center", mt: 0.4 }}>
+              <Box sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: "primary.main" }} />
+            </Box>
+            <Stack spacing={0.2} sx={{ flex: 1, pb: index < items.length - 1 ? 1 : 0, borderLeft: index < items.length - 1 ? "2px solid" : "none", borderColor: "divider", pl: 1.5, ml: "-8px" }}>
+              <Typography variant="body2" sx={{ fontWeight: 700 }}>{step.label}</Typography>
+              <Typography variant="caption" color="text.secondary">{formatDateTime(step.value)}</Typography>
+            </Stack>
+          </Stack>
+        ))}
+      </Stack>
+      {selectedLinkDetail?.comparison?.length ? (
+        <Stack spacing={1}>
+          <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Comparison</Typography>
+          {selectedLinkDetail.comparison.map((row) => (
+            <Box key={row.key} sx={{ p: 1.25, border: "1px solid", borderColor: "divider", borderRadius: 1.5 }}>
+              <Typography variant="caption" color="text.secondary">{row.label}</Typography>
+              <Typography variant="body2">{row.publicValue || "—"} → {row.platformValue || "—"}</Typography>
+              <Typography variant="caption" color="text.secondary">{row.status}</Typography>
+            </Box>
+          ))}
+        </Stack>
+      ) : null}
+      {selectedLinkDetail?.audit?.length ? (
+        <Stack spacing={1}>
+          <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Audit</Typography>
+          {selectedLinkDetail.audit.slice(0, 4).map((row) => (
+            <Paper key={row.id} variant="outlined" sx={{ p: 1.25 }}>
+              <Typography variant="body2" sx={{ fontWeight: 700 }}>{businessLabel(row.action)}</Typography>
+              <Typography variant="caption" color="text.secondary">{formatDateTime(row.occurredAt)}</Typography>
+            </Paper>
+          ))}
+        </Stack>
+      ) : null}
+      {allowedActions}
+      {error ? <Button size="small" variant="outlined" onClick={onRetry}>Refresh Details</Button> : null}
+      <TechnicalDetails>
+        <Typography variant="body2" color="text.secondary">Business Reference</Typography>
+        <Typography variant="body2">{selectedLink.publicReference || "—"}</Typography>
+        <Typography variant="body2" color="text.secondary">Internal Link Id</Typography>
+        <Typography variant="body2">{selectedLink.id}</Typography>
+        <Typography variant="body2" color="text.secondary">Connection revision</Typography>
+        <Typography variant="body2">{selectedLink.connectionRevision}</Typography>
+      </TechnicalDetails>
+    </Stack>
+  );
+}
+
+type OwnershipInspectorProps = {
+  selectedOwnership: ProviderConnectionsOwnershipResponse | null;
+};
+
+function OwnershipInspector({ selectedOwnership }: OwnershipInspectorProps) {
+  if (!selectedOwnership) {
+    return (
+      <Alert severity="info" variant="outlined">
+        Pick an ownership row to inspect its complete ownership view.
+      </Alert>
+    );
+  }
+
+  return (
+    <Stack spacing={1.25}>
+      <Alert severity="info" variant="outlined">Ownership actions are controlled by the backend `allowedActions` list for this row.</Alert>
+      <Stack spacing={0.5}>
+        <Typography variant="caption" color="text.secondary">Operational Clinic</Typography>
+        <Typography sx={{ fontWeight: 800 }}>{selectedOwnership.displayName || "Unnamed profile"}</Typography>
+      </Stack>
+      <Stack spacing={0.5}>
+        <Typography variant="caption" color="text.secondary">Owning Tenant</Typography>
+        <Typography variant="body2">See Technical Details</Typography>
+      </Stack>
+      <Stack spacing={0.5}>
+        <Typography variant="caption" color="text.secondary">Location</Typography>
+        <Typography variant="body2" color="text.secondary">{selectedOwnership.city || "—"}{selectedOwnership.area ? ` · ${selectedOwnership.area}` : ""}</Typography>
+      </Stack>
+      <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+        <Chip size="small" label={businessLabel(selectedOwnership.ownershipStatus || "UNCLAIMED")} color={actionChipColor(selectedOwnership.ownershipStatus)} variant="outlined" />
+        <Chip size="small" label={businessLabel(selectedOwnership.platformConnectionStatus || "NOT_CONNECTED")} color={actionChipColor(selectedOwnership.platformConnectionStatus)} variant="outlined" />
+        <Chip size="small" label={businessLabel(selectedOwnership.bookingCapability || "NOT_AVAILABLE")} color={actionChipColor(selectedOwnership.bookingCapability)} variant="outlined" />
+      </Stack>
+      <Typography variant="body2" color="text.secondary">{businessLabel(selectedOwnership.ownershipMethod)} · {businessLabel(selectedOwnership.consentState)}</Typography>
+      <Typography variant="body2" color="text.secondary">Ownership note: {selectedOwnership.reason || "—"}</Typography>
+      {fieldHelp("Membership", "Shows the membership context that supports the verified ownership relationship.")}
+      <Typography variant="body2">{(selectedOwnership.membershipRoles || []).join(", ") || "—"}</Typography>
+      {fieldHelp("Disputes", "Shows any active or historical dispute states associated with this ownership record.")}
+      <Typography variant="body2">{(selectedOwnership.disputeStatuses || []).join(", ") || "—"}</Typography>
+      {fieldHelp("Verified on", "Shows when ownership verification was completed.")}
+      <Typography variant="body2">{formatDateTime(selectedOwnership.verifiedAt)}</Typography>
+      {fieldHelp("Updated", "Shows the most recent ownership record update.")}
+      <Typography variant="body2">{formatDateTime(selectedOwnership.updatedAt)}</Typography>
+      <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+        {(selectedOwnership.allowedActions || []).map((action) => (
+          <Chip key={`selected-ownership-${selectedOwnership.ownershipId}-${action}`} size="small" label={ownershipActionLabel(action as OwnershipAction)} variant="outlined" />
+        ))}
+      </Stack>
+      <TechnicalDetails>
+        <Typography variant="body2" color="text.secondary">Ownership Id</Typography>
+        <Typography variant="body2">{selectedOwnership.ownershipId}</Typography>
+        <Typography variant="body2" color="text.secondary">Public Reference</Typography>
+        <Typography variant="body2">{selectedOwnership.publicProfileReference || "—"}</Typography>
+        <Typography variant="body2" color="text.secondary">Membership Roles</Typography>
+        <Typography variant="body2">{(selectedOwnership.membershipRoles || []).join(", ") || "—"}</Typography>
+      </TechnicalDetails>
+    </Stack>
+  );
+}
+
+type AuditEventInspectorProps = {
+  loading: boolean;
+  error: string | null;
+  selectedAuditEvent: ProviderConnectionsAuditResponse | null;
+};
+
+function AuditEventInspector({ loading, error, selectedAuditEvent }: AuditEventInspectorProps) {
+  if (!selectedAuditEvent) {
+    return (
+      <Alert severity={loading ? "info" : error ? "error" : "info"} variant="outlined">
+        {loading
+          ? "Loading audit event details…"
+          : error
+            ? "Audit event details could not be loaded."
+            : "Select an audit event to inspect the lifecycle transition, actor and request context."}
+      </Alert>
+    );
+  }
+
+  return (
+    <Stack spacing={1.25}>
+      {error ? <Alert severity="error" variant="outlined">Audit event details could not be refreshed. Showing the selected event.</Alert> : null}
+      {loading ? <Alert severity="info" variant="outlined">Refreshing audit event details…</Alert> : null}
+      <Chip size="small" label={businessLabel(selectedAuditEvent.action)} variant="outlined" sx={{ alignSelf: "flex-start" }} />
+      <Typography sx={{ fontWeight: 800 }}>{selectedAuditEvent.providerType || "Audit event"}</Typography>
+      <Typography variant="body2" color="text.secondary">{selectedAuditEvent.tenantReference || "—"} · {selectedAuditEvent.platformClinicReference || "—"}</Typography>
+      <Typography variant="body2" color="text.secondary">{selectedAuditEvent.summary || "Audit event"}</Typography>
+      <Stack spacing={0.5}>
+        {fieldHelp("Lifecycle", "Shows the previous and new lifecycle state for this audit event.")}
+        <Typography variant="body2">{selectedAuditEvent.previousState || "—"} → {selectedAuditEvent.newState || "—"}</Typography>
+        <Typography variant="caption" color="text.secondary">{businessLabel(selectedAuditEvent.result)}</Typography>
+      </Stack>
+      <Stack spacing={0.5}>
+        {fieldHelp("Actor / context", "Shows the actor and correlation context returned by the backend.")}
+        <Typography variant="body2">{selectedAuditEvent.actorAppUserId || "—"}</Typography>
+        <Typography variant="caption" color="text.secondary">{selectedAuditEvent.correlationId || "—"}</Typography>
+      </Stack>
+      <Typography variant="caption" color="text.secondary">{formatDateTime(selectedAuditEvent.occurredAt)}</Typography>
+      <TechnicalDetails>
+        <Typography variant="body2" color="text.secondary">Audit Event Id</Typography>
+        <Typography variant="body2">{selectedAuditEvent.id}</Typography>
+        <Typography variant="body2" color="text.secondary">Correlation Id</Typography>
+        <Typography variant="body2">{selectedAuditEvent.correlationId || "—"}</Typography>
+        <Typography variant="body2" color="text.secondary">Details</Typography>
+        <Typography variant="body2">{selectedAuditEvent.detailsJson || "—"}</Typography>
+      </TechnicalDetails>
+    </Stack>
+  );
+}
+
+type ConflictInspectorProps = {
+  selectedConflict: ProviderConnectionsConflictResponse | null;
+};
+
+function ConflictInspector({ selectedConflict }: ConflictInspectorProps) {
+  if (!selectedConflict) {
+    return (
+      <Alert severity="info" variant="outlined">
+        Select a conflict to inspect the specific mismatch or blockage.
+      </Alert>
+    );
+  }
+
+  return (
+    <Stack spacing={1.25}>
+      <Chip size="small" label={selectedConflict.severity} color="error" variant="outlined" sx={{ alignSelf: "flex-start" }} />
+      <Typography sx={{ fontWeight: 800 }}>{selectedConflict.title}</Typography>
+      <Typography variant="body2" color="text.secondary">{selectedConflict.details}</Typography>
+    </Stack>
+  );
+}
+
+function linkedEntityLabel(entity: ProviderConnectionsPlatformEntityResponse) {
+  return entity.linkedPublicReference || entity.displayName || "Linked profile";
 }
 
 function formatModerationStatus(status: string | null | undefined) {
@@ -749,10 +1401,10 @@ function ProposalDialog({
   const selectedPlatformRegistration = selectedPlatform?.registrationNumber || current.suggestion?.platformRegistrationNumber || "—";
   const selectedPlatformYears = selectedPlatform?.yearsOfExperience?.toString() || current.suggestion?.platformYearsOfExperience?.toString() || "—";
   const selectedPlatformStatus = selectedPlatform
-    ? `${selectedPlatform.active ? "Active" : "Inactive"} · ${selectedPlatform.publicListingEnabled ? "Public listing enabled" : "Public listing disabled"}`
-    : current.suggestion?.status || "—";
-  const selectedPlatformCapability = selectedPlatform?.currentDiscoverCapability || current.suggestion?.currentDiscoverCapability || "—";
-  const selectedPlatformAvailability = selectedPlatform?.currentAvailability || current.suggestion?.currentAvailability || "—";
+    ? `${businessLabel(selectedPlatform.active ? "ACTIVE" : "INACTIVE")} · ${businessLabel(selectedPlatform.publicListingEnabled ? "ENABLED" : "DISABLED")}`
+    : businessLabel(current.suggestion?.status || "—");
+  const selectedPlatformCapability = businessLabel(selectedPlatform?.currentDiscoverCapability || current.suggestion?.currentDiscoverCapability || "—");
+  const selectedPlatformAvailability = businessLabel(selectedPlatform?.currentAvailability || current.suggestion?.currentAvailability || "—");
   const selectedPublicRevision = current.publicProfile?.sourceRevision || current.suggestion?.sourceRevision || 0;
 
   return (
@@ -852,11 +1504,22 @@ function ProposalDialog({
                 ))}
               </Stack>
               <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
-                <TextField label="Match method" value={current.matchMethod.replaceAll("_", " ")} InputProps={{ readOnly: true }} fullWidth />
-                <TextField label="Confidence" value={current.matchConfidence} InputProps={{ readOnly: true }} fullWidth />
+                <TextField label="Match method" value={businessLabel(current.matchMethod)} InputProps={{ readOnly: true }} fullWidth />
+                <TextField label="Confidence" value={businessLabel(current.matchConfidence)} InputProps={{ readOnly: true }} fullWidth />
               </Stack>
             </Stack>
           </Paper>
+
+          <TechnicalDetails>
+            <Typography variant="body2" color="text.secondary">Public Reference</Typography>
+            <Typography variant="body2">{current.publicReference || "—"}</Typography>
+            <Typography variant="body2" color="text.secondary">Public Practice Reference</Typography>
+            <Typography variant="body2">{current.publicPracticeReference || "—"}</Typography>
+            <Typography variant="body2" color="text.secondary">Tenant Reference</Typography>
+            <Typography variant="body2">{current.tenantReference || "—"}</Typography>
+            <Typography variant="body2" color="text.secondary">Platform Clinic Reference</Typography>
+            <Typography variant="body2">{current.platformClinicReference || "—"}</Typography>
+          </TechnicalDetails>
 
           <TextField
             label="Review note"
@@ -1054,9 +1717,16 @@ export default function ProviderConnectionsPage() {
   const [conflicts, setConflicts] = React.useState<ProviderConnectionsConflictResponse[]>([]);
   const [ownershipRows, setOwnershipRows] = React.useState<ProviderConnectionsOwnershipResponse[]>([]);
   const [auditRows, setAuditRows] = React.useState<ProviderConnectionsAuditResponse[]>([]);
-  const [selectedOwnership, setSelectedOwnership] = React.useState<ProviderConnectionsOwnershipResponse | null>(null);
+  const [selectedPublicProfileReference, setSelectedPublicProfileReference] = React.useState<string | null>(null);
+  const [selectedPublicProfileSnapshot, setSelectedPublicProfileSnapshot] = React.useState<ProviderConnectionsPublicProfileResponse | null>(null);
+  const [selectedPlatformEntityReference, setSelectedPlatformEntityReference] = React.useState<string | null>(null);
+  const [selectedSuggestionKey, setSelectedSuggestionKey] = React.useState<string | null>(null);
+  const [selectedLinkReference, setSelectedLinkReference] = React.useState<string | null>(null);
   const [selectedLinkDetail, setSelectedLinkDetail] = React.useState<ProviderConnectionsLinkDetailResponse | null>(null);
-  const [selectedLinkId, setSelectedLinkId] = React.useState<string | null>(null);
+  const [selectedLinkDetailError, setSelectedLinkDetailError] = React.useState<string | null>(null);
+  const [selectedOwnershipReference, setSelectedOwnershipReference] = React.useState<string | null>(null);
+  const [selectedAuditEventReference, setSelectedAuditEventReference] = React.useState<string | null>(null);
+  const [selectedConflictReference, setSelectedConflictReference] = React.useState<string | null>(null);
   const [publicType, setPublicType] = React.useState<ProviderConnectionsPublicProfileType>("CLINIC");
   const [publicCity, setPublicCity] = React.useState("");
   const [publicQuery, setPublicQuery] = React.useState("");
@@ -1114,6 +1784,60 @@ export default function ProviderConnectionsPage() {
     }
   }, [reviewRows, section, selectedReviewReference, selectedReviewRouteReference]);
 
+  React.useEffect(() => {
+    if (!selectedPublicProfileReference) {
+      return;
+    }
+    const current = publicRows.find((row) => row.publicReference === selectedPublicProfileReference);
+    if (current) {
+      setSelectedPublicProfileSnapshot(current);
+    }
+  }, [publicRows, selectedPublicProfileReference]);
+
+  React.useEffect(() => {
+    if (selectedPlatformEntityReference) {
+      const current = platformClinicRows.find((row) => toSelectionValue(row) === selectedPlatformEntityReference)
+        || platformDoctorRows.find((row) => toSelectionValue(row) === selectedPlatformEntityReference)
+        || null;
+      if (current) {
+        return;
+      }
+      setSelectedPlatformEntityReference(null);
+    }
+  }, [platformClinicRows, platformDoctorRows, selectedPlatformEntityReference]);
+
+  React.useEffect(() => {
+    if (selectedSuggestionKey && !suggestions.some((row) => row.id === selectedSuggestionKey)) {
+      setSelectedSuggestionKey(null);
+    }
+  }, [selectedSuggestionKey, suggestions]);
+
+  React.useEffect(() => {
+    if (selectedLinkReference && !linkRows.some((row) => row.id === selectedLinkReference)) {
+      setSelectedLinkReference(null);
+      setSelectedLinkDetail(null);
+      setSelectedLinkDetailError(null);
+    }
+  }, [linkRows, selectedLinkReference]);
+
+  React.useEffect(() => {
+    if (selectedOwnershipReference && !ownershipRows.some((row) => row.ownershipId === selectedOwnershipReference)) {
+      setSelectedOwnershipReference(null);
+    }
+  }, [ownershipRows, selectedOwnershipReference]);
+
+  React.useEffect(() => {
+    if (selectedAuditEventReference && !auditRows.some((row) => row.id === selectedAuditEventReference)) {
+      setSelectedAuditEventReference(null);
+    }
+  }, [auditRows, selectedAuditEventReference]);
+
+  React.useEffect(() => {
+    if (selectedConflictReference && !conflicts.some((row) => row.id === selectedConflictReference)) {
+      setSelectedConflictReference(null);
+    }
+  }, [conflicts, selectedConflictReference]);
+
   const refresh = React.useCallback(async () => {
     if (!auth.accessToken) return;
     setLoading(true);
@@ -1133,7 +1857,7 @@ export default function ProviderConnectionsPage() {
         listProviderConnectionsOwnerships(auth.accessToken),
         listProviderConnectionsConflicts(auth.accessToken),
         getProviderConnectionsAuditEvents(auth.accessToken, { action: auditAction || null, tenantReference: auditTenant || null, providerType: auditProviderType || null, result: auditResult || null, q: auditQuery || null }),
-        selectedLinkId ? getProviderConnectionsLinkDetail(auth.accessToken, selectedLinkId) : Promise.resolve(null),
+        selectedLinkReference ? getProviderConnectionsLinkDetail(auth.accessToken, selectedLinkReference) : Promise.resolve(null),
       ]);
 
       setOverview(overviewRes.status === "fulfilled" ? overviewRes.value : null);
@@ -1148,6 +1872,9 @@ export default function ProviderConnectionsPage() {
       setConflicts(conflictsRes.status === "fulfilled" ? conflictsRes.value : []);
       setAuditRows(auditRes.status === "fulfilled" ? auditRes.value : []);
       setSelectedLinkDetail(detailRes.status === "fulfilled" ? detailRes.value : null);
+      setSelectedLinkDetailError(detailRes.status === "rejected"
+        ? (detailRes.reason instanceof Error ? detailRes.reason.message : "Unable to load link details.")
+        : null);
 
       if (overviewRes.status === "rejected" || publicRes.status === "rejected" || reviewRes.status === "rejected" || reviewDetailRes.status === "rejected" || clinicEntitiesRes.status === "rejected" || doctorEntitiesRes.status === "rejected" || linksRes.status === "rejected" || suggestionsRes.status === "rejected" || ownershipsRes.status === "rejected" || conflictsRes.status === "rejected" || auditRes.status === "rejected") {
         const reason = overviewRes.status === "rejected"
@@ -1180,7 +1907,7 @@ export default function ProviderConnectionsPage() {
     } finally {
       setLoading(false);
     }
-  }, [auth.accessToken, publicCity, publicQuery, publicType, entityQuery, linkQuery, linkStatus, linkType, suggestionQuery, selectedLinkId, auditAction, auditTenant, auditProviderType, auditResult, auditQuery, selectedReviewReference]);
+  }, [auth.accessToken, publicCity, publicQuery, publicType, entityQuery, linkQuery, linkStatus, linkType, suggestionQuery, selectedLinkReference, auditAction, auditTenant, auditProviderType, auditResult, auditQuery, selectedReviewReference]);
 
   React.useEffect(() => {
     void refresh();
@@ -1262,28 +1989,6 @@ export default function ProviderConnectionsPage() {
             {label}
           </Button>
         );
-      case "VIEW_OWNERSHIP":
-        return (
-          <Button
-            {...commonProps}
-            onClick={() => {
-              setSelectedOwnership(row);
-            }}
-          >
-            {label}
-          </Button>
-        );
-      case "RESOLVE_DISPUTE":
-        return (
-          <Button
-            {...commonProps}
-            onClick={() => {
-              setSelectedOwnership(row);
-            }}
-          >
-            {label}
-          </Button>
-        );
       default:
         return null;
     }
@@ -1343,6 +2048,7 @@ export default function ProviderConnectionsPage() {
     const kind: ProposalKind = row.publicProfileType === "DOCTOR" ? "DOCTOR" : "CLINIC";
     const options = kind === "DOCTOR" ? platformDoctorRows : platformClinicRows;
     const selected = options.find((item) => item.tenantReference === row.tenantReference && item.platformClinicReference === row.platformClinicReference) || options[0] || null;
+    setSelectedSuggestionKey(row.id);
     setProposalDraft({
       kind,
       publicProfile: null,
@@ -1392,7 +2098,9 @@ export default function ProviderConnectionsPage() {
         evidence: (draft.evidence.length ? draft.evidence : buildProposalEvidence(draft, draft.kind === "DOCTOR" ? platformDoctorRows.find((row) => toSelectionValue(row) === draft.platformSelection) || null : platformClinicRows.find((row) => toSelectionValue(row) === draft.platformSelection) || null)).map(evidenceSummary),
       };
       const result = await proposeProviderConnectionLink(auth.accessToken, body);
-      setSelectedLinkId(result.id);
+      setSelectedLinkReference(result.id);
+      setSelectedLinkDetail(null);
+      setSelectedLinkDetailError(null);
       setDialogOpen(false);
       await refresh();
     } catch (err) {
@@ -1588,31 +2296,76 @@ export default function ProviderConnectionsPage() {
     );
   }, [auth, openReviewCommand, saving]);
 
-  const selectedLink = selectedLinkDetail?.link || linkRows.find((item) => item.id === selectedLinkId) || null;
+  const selectedPublicProfile = selectedPublicProfileSnapshot || publicRows.find((item) => item.publicReference === selectedPublicProfileReference) || null;
+  const selectedPlatformEntity = selectedPlatformEntityReference
+    ? platformClinicRows.find((row) => toSelectionValue(row) === selectedPlatformEntityReference)
+      || platformDoctorRows.find((row) => toSelectionValue(row) === selectedPlatformEntityReference)
+      || null
+    : null;
+  const selectedSuggestion = selectedSuggestionKey ? suggestions.find((row) => row.id === selectedSuggestionKey) || null : null;
+  const selectedLink = selectedLinkDetail?.link || linkRows.find((item) => item.id === selectedLinkReference) || null;
+  const selectedPublicProfileOwnership = selectedPublicProfile?.publicReference
+    ? ownershipRows.find((row) => row.publicProfileReference === selectedPublicProfile.publicReference) ?? null
+    : null;
+  const selectedPublicProfileLink = selectedPublicProfile?.publicReference
+    ? linkRows.find((row) => row.publicReference === selectedPublicProfile.publicReference) ?? null
+    : null;
+  const selectedPublicPlatformClinic = selectedPublicProfileLink?.platformClinicReference
+    ? platformClinicRows.find((row) => row.platformClinicReference === selectedPublicProfileLink.platformClinicReference) ?? null
+    : null;
+  const selectedPlatformEntityLink = selectedPlatformEntity
+    ? linkRows.find((row) => (
+      selectedPlatformEntity.entityType === "DOCTOR"
+        ? row.tenantDoctorUserReference === selectedPlatformEntity.tenantDoctorUserReference
+        : row.platformClinicReference === selectedPlatformEntity.platformClinicReference
+    )) ?? null
+    : null;
+  const selectedOwnership = selectedOwnershipReference ? ownershipRows.find((row) => row.ownershipId === selectedOwnershipReference) || null : null;
+  const selectedAuditEvent = selectedAuditEventReference ? auditRows.find((row) => row.id === selectedAuditEventReference) || null : null;
+  const selectedConflict = selectedConflictReference ? conflicts.find((row) => row.id === selectedConflictReference) || null : null;
 
   const detailActions = selectedLink ? (
     <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
-      {selectedLink.linkStatus === "PROPOSED" || selectedLink.linkStatus === "PENDING_VERIFICATION" ? (
+      {selectedLink.allowedActions.includes("VERIFY_LINK") ? (
         <Button variant="contained" onClick={async () => { if (auth.accessToken) { await approveProviderConnectionLink(auth.accessToken, selectedLink.id, "Approved from console"); await refresh(); } }}>
-          Approve
+          Verify link
         </Button>
       ) : null}
-      {selectedLink.linkStatus === "APPROVED" ? (
+      {selectedLink.allowedActions.includes("ACTIVATE_LINK") ? (
         <Button variant="contained" onClick={async () => { if (auth.accessToken) { await activateProviderConnectionLink(auth.accessToken, selectedLink.id, "Activated from console"); await refresh(); } }}>
           Activate
         </Button>
       ) : null}
-      {selectedLink.linkStatus !== "UNLINKED" ? (
-        <Button variant="outlined" onClick={async () => { if (auth.accessToken) { await unlinkProviderConnectionLink(auth.accessToken, selectedLink.id, "Unlinked from console"); await refresh(); } }}>
-          Unlink
+      {selectedLink.allowedActions.includes("REJECT_LINK") ? (
+        <Button color="error" variant="outlined" onClick={async () => { if (auth.accessToken) { await rejectProviderConnectionLink(auth.accessToken, selectedLink.id, "Rejected from console"); await refresh(); } }}>
+          Reject
         </Button>
       ) : null}
-      <Button variant="outlined" onClick={async () => { if (auth.accessToken) { await relinkProviderConnectionLink(auth.accessToken, selectedLink.id, "Relinked from console"); await refresh(); } }}>
-        Relink
-      </Button>
-      <Button variant="outlined" onClick={async () => { if (auth.accessToken) { await reconcileProviderConnection(auth.accessToken, { publicProfileType: selectedLink.publicProfileType, linkId: selectedLink.id, tenantReference: selectedLink.tenantReference }); await refresh(); } }}>
-        Reconcile
-      </Button>
+      {selectedLink.allowedActions.includes("SUSPEND_LINK") ? (
+        <Button variant="outlined" onClick={async () => { if (auth.accessToken) { await suspendProviderConnectionLink(auth.accessToken, selectedLink.id, "Suspended from console"); await refresh(); } }}>
+          Suspend
+        </Button>
+      ) : null}
+      {selectedLink.allowedActions.includes("RESUME_LINK") ? (
+        <Button variant="outlined" onClick={async () => { if (auth.accessToken) { await resumeProviderConnectionLink(auth.accessToken, selectedLink.id, "Resumed from console"); await refresh(); } }}>
+          Resume
+        </Button>
+      ) : null}
+      {selectedLink.allowedActions.includes("DISCONNECT_LINK") ? (
+        <Button variant="outlined" onClick={async () => { if (auth.accessToken) { await unlinkProviderConnectionLink(auth.accessToken, selectedLink.id, "Unlinked from console"); await refresh(); } }}>
+          Disconnect
+        </Button>
+      ) : null}
+      {selectedLink.allowedActions.includes("PROPOSE_LINK") ? (
+        <Button variant="outlined" onClick={async () => { if (auth.accessToken) { await relinkProviderConnectionLink(auth.accessToken, selectedLink.id, "Relinked from console"); await refresh(); } }}>
+          Propose again
+        </Button>
+      ) : null}
+      {selectedLink.allowedActions.includes("RECONCILE_LINK") ? (
+        <Button variant="outlined" onClick={async () => { if (auth.accessToken) { await reconcileProviderConnection(auth.accessToken, { publicProfileType: selectedLink.publicProfileType, linkId: selectedLink.id, tenantReference: selectedLink.tenantReference }); await refresh(); } }}>
+          Reconcile
+        </Button>
+      ) : null}
     </Stack>
   ) : null;
 
@@ -1654,21 +2407,86 @@ export default function ProviderConnectionsPage() {
       {loading ? <Alert severity="info">Loading provider connection data…</Alert> : null}
 
       {section === "overview" ? (
-        <Grid container spacing={2}>
-          {(overview?.metrics || []).map((metric) => (
-            <Grid key={metric.key} size={{ xs: 12, sm: 6, md: 3 }}>
-              <Card variant="outlined" sx={{ height: "100%" }}>
-                <CardContent>
-                  <Stack spacing={0.5}>
-                    <Chip size="small" color="primary" variant="outlined" label={metric.label} sx={{ alignSelf: "flex-start" }} />
-                    <Typography variant="h4" sx={{ fontWeight: 900 }}>{metric.value}</Typography>
-                    <Typography variant="body2" color="text.secondary">{metric.helperText}</Typography>
+        <Stack spacing={2.5}>
+          <Grid container spacing={2}>
+            {(overview?.metrics || []).map((metric) => (
+              <Grid key={metric.key} size={{ xs: 12, sm: 6, md: 3 }}>
+                <Card variant="outlined" sx={{ height: "100%" }}>
+                  <CardContent>
+                    <Stack spacing={0.75}>
+                      <Chip size="small" color="primary" variant="outlined" label={metric.label} sx={{ alignSelf: "flex-start" }} />
+                      <Typography variant="h4" sx={{ fontWeight: 900 }}>{metric.value}</Typography>
+                      <Typography variant="body2" color="text.secondary">{metric.helperText}</Typography>
+                    </Stack>
+                  </CardContent>
+                </Card>
+              </Grid>
+            ))}
+          </Grid>
+
+          <Grid container spacing={2}>
+            <Grid size={{ xs: 12, lg: 8 }}>
+              <Paper variant="outlined" sx={{ p: 2 }}>
+                <Stack spacing={1.5}>
+                  <Stack direction="row" spacing={1} alignItems="center">
+                    <HistoryRoundedIcon fontSize="small" />
+                    <Typography variant="h6" sx={{ fontWeight: 900 }}>Recent Provider Connection Activity</Typography>
                   </Stack>
-                </CardContent>
-              </Card>
+                  {!auditRows.length ? (
+                    <EmptyState
+                      title="No recent activity yet"
+                      description="Recent provider connection activity will appear here once the platform records new lifecycle events."
+                      actionLabel="Refresh"
+                      onAction={() => void refresh()}
+                    />
+                  ) : (
+                    <Stack spacing={1}>
+                      {auditRows.slice(0, 4).map((entry) => (
+                        <Paper key={entry.id} variant="outlined" sx={{ p: 1.5 }}>
+                          <Stack spacing={0.5}>
+                            <Typography sx={{ fontWeight: 700 }}>{businessLabel(entry.action)}</Typography>
+                            <Typography variant="body2" color="text.secondary">{entry.summary || "Activity recorded by the provider connection workflow."}</Typography>
+                            <Typography variant="caption" color="text.secondary">{formatDateTime(entry.occurredAt)}</Typography>
+                          </Stack>
+                        </Paper>
+                      ))}
+                    </Stack>
+                  )}
+                </Stack>
+              </Paper>
             </Grid>
-          ))}
-        </Grid>
+            <Grid size={{ xs: 12, lg: 4 }}>
+              <Paper variant="outlined" sx={{ p: 2 }}>
+                <Stack spacing={1.5}>
+                  <Stack direction="row" spacing={1} alignItems="center">
+                    <FactCheckRoundedIcon fontSize="small" />
+                    <Typography variant="h6" sx={{ fontWeight: 900 }}>Quick Actions</Typography>
+                  </Stack>
+                  <Stack spacing={1}>
+                    <Button component={Link} to={sectionPath("suggestions")} variant="outlined">Review Suggestions</Button>
+                    <Button component={Link} to={sectionPath("ownerships")} variant="outlined">Review Ownerships</Button>
+                    <Button component={Link} to={sectionPath("public-profiles")} variant="outlined">Review Public Profiles</Button>
+                    <Button component={Link} to={sectionPath("audit")} variant="outlined">Open Audit</Button>
+                  </Stack>
+                </Stack>
+              </Paper>
+            </Grid>
+          </Grid>
+
+          <Paper variant="outlined" sx={{ p: 2 }}>
+            <Stack spacing={1.5}>
+              <Stack direction="row" spacing={1} alignItems="center">
+                <SearchRoundedIcon fontSize="small" />
+                <Typography variant="h6" sx={{ fontWeight: 900 }}>Connection Health</Typography>
+              </Stack>
+              <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                {(overview?.metrics || []).slice(0, 6).map((metric) => (
+                  <Chip key={metric.key} color="primary" variant="outlined" label={`${metric.label}: ${metric.value}`} />
+                ))}
+              </Stack>
+            </Stack>
+          </Paper>
+        </Stack>
       ) : (
         <Paper variant="outlined" sx={{ p: 1.5 }}>
           <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
@@ -1722,42 +2540,92 @@ export default function ProviderConnectionsPage() {
                           </TableRow>
                         </TableHead>
                         <TableBody>
-                          {publicRows.map((row) => (
-                            <TableRow key={`${row.publicProfileType}-${row.publicReference}-${row.publicPracticeReference || "profile"}`} hover>
+                          {publicRows.map((row) => {
+                            const selected = selectedPublicProfileReference === row.publicReference;
+                            return (
+                            <TableRow
+                              key={`${row.publicProfileType}-${row.publicReference}-${row.publicPracticeReference || "profile"}`}
+                              hover
+                              selected={selected}
+                              aria-selected={selected}
+                              tabIndex={0}
+                              role="button"
+                              sx={{
+                                cursor: "pointer",
+                                ...(selected ? { backgroundColor: "action.selected" } : {}),
+                              }}
+                              onClick={() => {
+                                if (row.publicReference) {
+                                  setSelectedPublicProfileReference(row.publicReference);
+                                  setSelectedPublicProfileSnapshot(row);
+                                }
+                              }}
+                              onKeyDown={(event) => activateOnKeyboard(event, () => {
+                                if (row.publicReference) {
+                                  setSelectedPublicProfileReference(row.publicReference);
+                                  setSelectedPublicProfileSnapshot(row);
+                                }
+                              })}
+                            >
                               <TableCell>
                                 <Stack spacing={0.5}>
                                   <Typography sx={{ fontWeight: 700 }}>{row.displayName || "Unnamed provider"}</Typography>
                                   <Typography variant="caption" color="text.secondary">{formatProviderType(row.publicProfileType)} · {row.slug || "No slug"}</Typography>
-                                  <Typography variant="caption" color="text.secondary">{row.publicReference || "No public reference"}</Typography>
+                                  <Typography variant="caption" color="text.secondary">{row.publicPath || "No public path"}</Typography>
+                                  <TechnicalDetails>
+                                    <Typography variant="body2" color="text.secondary">Reference</Typography>
+                                    <Typography variant="body2">{row.publicReference || "Not assigned"}</Typography>
+                                  </TechnicalDetails>
                                 </Stack>
                               </TableCell>
                               <TableCell>{row.city || "—"}</TableCell>
                               <TableCell>
-                                <Chip size="small" label={row.bookingCapability.replaceAll("_", " ")} color={actionChipColor(row.bookingCapability)} variant="outlined" />
+                                <Chip size="small" label={businessLabel(row.bookingCapability)} color={actionChipColor(row.bookingCapability)} variant="outlined" />
                               </TableCell>
                               <TableCell>
-                                <Chip size="small" label={row.publicationStatus.replaceAll("_", " ")} color={actionChipColor(row.publicationStatus)} variant="outlined" />
+                                <Chip size="small" label={businessLabel(row.publicationStatus)} color={actionChipColor(row.publicationStatus)} variant="outlined" />
                               </TableCell>
                               <TableCell align="right">
                                 <Stack direction="row" spacing={1} justifyContent="flex-end">
-                                  <Button size="small" startIcon={<VisibilityRoundedIcon />} onClick={() => setSelectedLinkId(null)}>
+                                  <Button
+                                    size="small"
+                                    startIcon={<VisibilityRoundedIcon />}
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      if (row.publicReference) {
+                                        setSelectedPublicProfileReference(row.publicReference);
+                                        setSelectedPublicProfileSnapshot(row);
+                                      }
+                                    }}
+                                  >
                                     Inspect
                                   </Button>
-                                  {row.publicProfileType !== "HOSPITAL" ? (
-                                    <Button size="small" startIcon={<LinkRoundedIcon />} variant="contained" onClick={() => onOpenProposal(row)}>
+                                  {row.allowedActions.includes("PROPOSE_LINK") ? (
+                                    <Button
+                                      size="small"
+                                      startIcon={<LinkRoundedIcon />}
+                                      variant="contained"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        onOpenProposal(row);
+                                      }}
+                                    >
                                       Propose link
                                     </Button>
                                   ) : null}
                                 </Stack>
                               </TableCell>
                             </TableRow>
-                          ))}
+                          );})}
                           {!publicRows.length ? (
                             <TableRow>
                               <TableCell colSpan={5}>
-                                <Typography variant="body2" color="text.secondary">
-                                  No public profiles matched the current filters.
-                                </Typography>
+                                <EmptyState
+                                  title="No Public Profiles"
+                                  description="No public profiles matched the current filters. Public profiles appear here after Discover publishes a clinic, doctor, or hospital profile."
+                                  actionLabel="Refresh"
+                                  onAction={() => void refresh()}
+                                />
                               </TableCell>
                             </TableRow>
                           ) : null}
@@ -1830,9 +2698,9 @@ export default function ProviderConnectionsPage() {
                                   </Stack>
                                   <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
                                     <Chip size="small" label={`Reviewer: ${row.assignedReviewer || "Unassigned"}`} variant="outlined" />
-                                    <Chip size="small" label={row.publicationStatus || "UNPUBLISHED"} variant="outlined" />
-                                    <Chip size="small" label={row.tenantConsentStatus || "—"} variant="outlined" />
-                                    <Chip size="small" label={row.ownershipStatus || "—"} variant="outlined" />
+                                    <Chip size="small" label={businessLabel(row.publicationStatus || "UNPUBLISHED")} variant="outlined" />
+                                    <Chip size="small" label={businessLabel(row.tenantConsentStatus)} variant="outlined" />
+                                    <Chip size="small" label={businessLabel(row.ownershipStatus)} variant="outlined" />
                                   </Stack>
                                   <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1} useFlexGap flexWrap="wrap">
                                     <Box sx={{ minWidth: 0 }}>
@@ -1937,12 +2805,28 @@ export default function ProviderConnectionsPage() {
                           </TableRow>
                         </TableHead>
                         <TableBody>
-                          {(entityType === "DOCTOR" ? platformDoctorRows : platformClinicRows).map((row) => (
-                            <TableRow key={`${row.entityType}-${row.tenantId}-${row.slug}`} hover>
+                          {(entityType === "DOCTOR" ? platformDoctorRows : platformClinicRows).map((row) => {
+                            const selectionKey = toSelectionValue(row);
+                            const selected = selectedPlatformEntityReference === selectionKey;
+                            return (
+                            <TableRow
+                              key={`${row.entityType}-${row.tenantId}-${row.slug}`}
+                              hover
+                              selected={selected}
+                              aria-selected={selected}
+                              tabIndex={0}
+                              role="button"
+                              sx={{
+                                cursor: "pointer",
+                                ...(selected ? { backgroundColor: "action.selected" } : {}),
+                              }}
+                              onClick={() => setSelectedPlatformEntityReference(selectionKey)}
+                              onKeyDown={(event) => activateOnKeyboard(event, () => setSelectedPlatformEntityReference(selectionKey))}
+                            >
                               <TableCell>
                                 <Stack spacing={0.5}>
                                   <Typography sx={{ fontWeight: 700 }}>{row.displayName || "Unnamed entity"}</Typography>
-                                  <Typography variant="caption" color="text.secondary">{row.entityType} · {row.slug || "No slug"}</Typography>
+                                  <Typography variant="caption" color="text.secondary">{formatProviderType(row.entityType)} · {row.slug || "No slug"}</Typography>
                                   <Typography variant="caption" color="text.secondary">{row.publicListingConsent || "Unknown listing state"}</Typography>
                                 </Stack>
                               </TableCell>
@@ -1955,33 +2839,35 @@ export default function ProviderConnectionsPage() {
                               </TableCell>
                               <TableCell>
                                 <Stack spacing={0.5}>
-                                  <Chip size="small" label={row.publicListingEnabled ? "Enabled" : "Disabled"} color={row.publicListingEnabled ? "success" : "default"} variant="outlined" />
+                                  <Chip size="small" label={businessLabel(row.publicListingEnabled ? "ENABLED" : "DISABLED")} color={row.publicListingEnabled ? "success" : "default"} variant="outlined" />
                                   <Typography variant="caption" color="text.secondary">{row.publicListingConsent || "—"}</Typography>
                                 </Stack>
                               </TableCell>
                               <TableCell>
                                 <Stack spacing={0.5}>
-                                  <Chip size="small" label={row.linkStatus || "NOT_LINKED"} color={actionChipColor(row.linkStatus)} variant="outlined" />
-                                  <Typography variant="caption" color="text.secondary">{row.connectionStatus || "NOT_CONNECTED"}</Typography>
+                                  <Chip size="small" label={businessLabel(row.linkStatus || "NOT_LINKED")} color={actionChipColor(row.linkStatus)} variant="outlined" />
+                                  <Typography variant="caption" color="text.secondary">{businessLabel(row.connectionStatus || "NOT_CONNECTED")}</Typography>
                                 </Stack>
                               </TableCell>
                               <TableCell>
                                 <Stack spacing={0.5}>
-                                  <Chip size="small" label={row.currentDiscoverCapability || row.bookingCapability || "CALL_TO_BOOK"} color={actionChipColor(row.bookingCapability)} variant="outlined" />
+                                  <Chip size="small" label={businessLabel(row.currentDiscoverCapability || row.bookingCapability || "CALL_TO_BOOK")} color={actionChipColor(row.bookingCapability)} variant="outlined" />
                                   <Typography variant="caption" color="text.secondary">{row.platformBookingSetup || "—"}</Typography>
                                   {row.capabilityReason ? <Typography variant="caption" color="text.secondary">{row.capabilityReason}</Typography> : null}
                                 </Stack>
                               </TableCell>
                               <TableCell>
                                 <Stack spacing={0.5}>
-                                  <Chip size="small" label={row.currentAvailability || "UNKNOWN"} color={actionChipColor(row.currentAvailability)} variant="outlined" />
+                                  <Chip size="small" label={businessLabel(row.currentAvailability || "UNKNOWN")} color={actionChipColor(row.currentAvailability)} variant="outlined" />
                                   <Typography variant="caption" color="text.secondary">Revision {row.sourceRevision}</Typography>
                                 </Stack>
                               </TableCell>
                               <TableCell align="right">
-                                <Button size="small" onClick={() => {
+                                <Button size="small" onClick={(event) => {
+                                  event.stopPropagation();
                                   const selected = row.entityType === "DOCTOR" ? platformDoctorRows.find((item) => item.tenantReference === row.tenantReference && item.platformClinicReference === row.platformClinicReference && item.tenantDoctorUserReference === row.tenantDoctorUserReference) : platformClinicRows.find((item) => item.tenantReference === row.tenantReference && item.platformClinicReference === row.platformClinicReference);
                                   if (selected) {
+                                    setSelectedPlatformEntityReference(selectionKey);
                                     setProposalDraft({
                                       kind: row.entityType === "DOCTOR" ? "DOCTOR" : "CLINIC",
                                       publicProfile: null,
@@ -2030,7 +2916,20 @@ export default function ProviderConnectionsPage() {
                                 </Button>
                               </TableCell>
                             </TableRow>
-                          ))}
+                            );
+                          })}
+                          {!(entityType === "DOCTOR" ? platformDoctorRows : platformClinicRows).length ? (
+                            <TableRow>
+                              <TableCell colSpan={7}>
+                                <EmptyState
+                                  title="No Operational Entities"
+                                  description="No operational entities were found for the current filters. Entities appear after tenant provisioning."
+                                  actionLabel="Refresh"
+                                  onAction={() => void refresh()}
+                                />
+                              </TableCell>
+                            </TableRow>
+                          ) : null}
                         </TableBody>
                       </Table>
                     </TableContainer>
@@ -2045,8 +2944,24 @@ export default function ProviderConnectionsPage() {
                         Refresh suggestions
                       </Button>
                     </Stack>
-                    {suggestions.map((row) => (
-                      <Paper key={row.id} variant="outlined" sx={{ p: 2 }}>
+                    {suggestions.map((row) => {
+                      const selected = selectedSuggestionKey === row.id;
+                      return (
+                      <Paper
+                        key={row.id}
+                        variant="outlined"
+                        tabIndex={0}
+                        role="button"
+                        aria-selected={selected}
+                        onClick={() => setSelectedSuggestionKey(row.id)}
+                        onKeyDown={(event) => activateOnKeyboard(event, () => setSelectedSuggestionKey(row.id))}
+                        sx={{
+                          p: 2,
+                          cursor: "pointer",
+                          borderColor: selected ? "primary.main" : "divider",
+                          bgcolor: selected ? "action.selected" : "background.paper",
+                        }}
+                      >
                         <Stack spacing={1}>
                           <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between" flexWrap="wrap">
                             <Stack spacing={0.25}>
@@ -2055,7 +2970,7 @@ export default function ProviderConnectionsPage() {
                                 {formatProviderType(row.publicProfileType)} · {row.platformCity || "—"}{row.platformArea ? ` · ${row.platformArea}` : ""}
                               </Typography>
                             </Stack>
-                            <Chip size="small" label={row.status || "SUGGESTED"} color="warning" variant="outlined" />
+                            <Chip size="small" label={businessLabel(row.status || "SUGGESTED")} color="warning" variant="outlined" />
                           </Stack>
                           <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
                             <Paper variant="outlined" sx={{ p: 1.25, flex: 1 }}>
@@ -2065,7 +2980,7 @@ export default function ProviderConnectionsPage() {
                             </Paper>
                             <Paper variant="outlined" sx={{ p: 1.25, flex: 1 }}>
                               <Typography variant="caption" color="text.secondary">Confidence</Typography>
-                              <Typography variant="body2" sx={{ fontWeight: 700 }}>{row.confidence || "LOW"}</Typography>
+                              <Typography variant="body2" sx={{ fontWeight: 700 }}>{businessLabel(row.confidence || "LOW")}</Typography>
                               <Typography variant="caption" color="text.secondary">{row.lastEvaluatedAt ? `Last evaluated ${formatDateTime(row.lastEvaluatedAt.toString())}` : "No evaluation timestamp"}</Typography>
                             </Paper>
                           </Stack>
@@ -2076,10 +2991,15 @@ export default function ProviderConnectionsPage() {
                             ))}
                           </Stack>
                           <Stack direction="row" spacing={1}>
-                            <Button size="small" variant="contained" onClick={() => reviewSuggestion(row)}>
+                            <Button size="small" variant="contained" onClick={(event) => {
+                              event.stopPropagation();
+                              reviewSuggestion(row);
+                            }}>
                               Review match
                             </Button>
-                            <Button size="small" variant="outlined" onClick={() => {
+                            <Button size="small" variant="outlined" onClick={(event) => {
+                              event.stopPropagation();
+                              setSelectedSuggestionKey(row.id);
                               setRejectTarget(row);
                               setRejectReason("");
                               setRejectDialogOpen(true);
@@ -2089,11 +3009,15 @@ export default function ProviderConnectionsPage() {
                           </Stack>
                         </Stack>
                       </Paper>
-                    ))}
+                      );
+                    })}
                     {!suggestions.length ? (
-                      <Alert severity="info" variant="outlined">
-                        No provider matches require review.
-                      </Alert>
+                      <EmptyState
+                        title="No Suggested Matches"
+                        description="Automatic matching periodically compares public profiles with operational clinics. New suggestions will appear here."
+                        actionLabel="Refresh"
+                        onAction={() => void refresh()}
+                      />
                     ) : null}
                   </Stack>
                 ) : null}
@@ -2110,15 +3034,35 @@ export default function ProviderConnectionsPage() {
                         <TableHead>
                           <TableRow>
                             <TableCell>Public</TableCell>
-                            <TableCell>Tenant</TableCell>
+                            <TableCell>Operational Clinic</TableCell>
                             <TableCell>Status</TableCell>
                             <TableCell>Capability</TableCell>
                             <TableCell>Updated</TableCell>
                           </TableRow>
                         </TableHead>
                         <TableBody>
-                          {linkRows.map((row) => (
-                            <TableRow key={row.id} hover onClick={() => setSelectedLinkId(row.id)} sx={{ cursor: "pointer" }}>
+                          {linkRows.map((row) => {
+                            const selected = selectedLinkReference === row.id;
+                            return (
+                            <TableRow
+                              key={row.id}
+                              hover
+                              selected={selected}
+                              aria-selected={selected}
+                              tabIndex={0}
+                              role="button"
+                              onClick={() => {
+                                setSelectedLinkReference(row.id);
+                                setSelectedLinkDetail(null);
+                                setSelectedLinkDetailError(null);
+                              }}
+                              onKeyDown={(event) => activateOnKeyboard(event, () => {
+                                setSelectedLinkReference(row.id);
+                                setSelectedLinkDetail(null);
+                                setSelectedLinkDetailError(null);
+                              })}
+                              sx={{ cursor: "pointer", ...(selected ? { backgroundColor: "action.selected" } : {}) }}
+                            >
                               <TableCell>
                                 <Stack spacing={0.5}>
                                   <Typography sx={{ fontWeight: 700 }}>{row.publicDisplayName || row.publicReference || "Unnamed link"}</Typography>
@@ -2127,18 +3071,50 @@ export default function ProviderConnectionsPage() {
                               </TableCell>
                               <TableCell>
                                 <Typography variant="body2">{row.tenantName || "—"}</Typography>
-                                <Typography variant="caption" color="text.secondary">{row.platformClinicReference || "No platform reference"}</Typography>
+                                <Typography variant="caption" color="text.secondary">{row.publicCity || "—"}{row.publicArea ? ` · ${row.publicArea}` : ""}</Typography>
+                                <TechnicalDetails>
+                                  <Typography variant="body2" color="text.secondary">Platform Clinic Reference</Typography>
+                                  <Typography variant="body2">{row.platformClinicReference || "—"}</Typography>
+                                </TechnicalDetails>
                               </TableCell>
                               <TableCell>
-                                <Chip size="small" label={row.linkStatus.replaceAll("_", " ")} color={actionChipColor(row.linkStatus)} variant="outlined" />
+                                <Chip size="small" label={businessLabel(row.linkStatus)} color={actionChipColor(row.linkStatus)} variant="outlined" />
                               </TableCell>
                               <TableCell>
-                                <Chip size="small" label={row.bookingCapability.replaceAll("_", " ")} color={actionChipColor(row.bookingCapability)} variant="outlined" />
+                                <Chip size="small" label={businessLabel(row.bookingCapability)} color={actionChipColor(row.bookingCapability)} variant="outlined" />
                               </TableCell>
                               <TableCell>{formatDateTime(row.updatedAt)}</TableCell>
+                              <TableCell align="right">
+                                <Button
+                                  size="small"
+                                  variant="outlined"
+                                  startIcon={<VisibilityRoundedIcon />}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    setSelectedLinkReference(row.id);
+                                    setSelectedLinkDetail(null);
+                                    setSelectedLinkDetailError(null);
+                                  }}
+                                >
+                                  Inspect
+                                </Button>
+                              </TableCell>
                             </TableRow>
-                          ))}
+                            );
+                          })}
                         </TableBody>
+                        {!linkRows.length ? (
+                          <TableRow>
+                            <TableCell colSpan={6}>
+                              <EmptyState
+                                title="No Links"
+                                description="No provider connection links matched the current filters."
+                                actionLabel="Refresh"
+                                onAction={() => void refresh()}
+                              />
+                            </TableCell>
+                          </TableRow>
+                        ) : null}
                       </Table>
                     </TableContainer>
                   </Stack>
@@ -2162,33 +3138,45 @@ export default function ProviderConnectionsPage() {
                           </TableRow>
                         </TableHead>
                         <TableBody>
-                          {ownershipRows.map((row) => (
-                            <TableRow key={row.ownershipId} hover>
+                          {ownershipRows.map((row) => {
+                            const selected = selectedOwnershipReference === row.ownershipId;
+                            return (
+                            <TableRow
+                              key={row.ownershipId}
+                              hover
+                              selected={selected}
+                              aria-selected={selected}
+                              tabIndex={0}
+                              role="button"
+                              onClick={() => setSelectedOwnershipReference(row.ownershipId)}
+                              onKeyDown={(event) => activateOnKeyboard(event, () => setSelectedOwnershipReference(row.ownershipId))}
+                              sx={{ cursor: "pointer", ...(selected ? { backgroundColor: "action.selected" } : {}) }}
+                            >
                               <TableCell>
                                 <Stack spacing={0.25}>
                                   <Typography sx={{ fontWeight: 700 }}>{row.displayName || "Unnamed profile"}</Typography>
-                                  <Typography variant="caption" color="text.secondary">{row.publicProfileType} · {row.publicProfileReference || "—"}</Typography>
+                                <Typography variant="caption" color="text.secondary">{formatProviderType(row.publicProfileType)} · {row.publicProfileReference || "—"}</Typography>
                                   <Typography variant="caption" color="text.secondary">{row.city || "—"}{row.area ? ` · ${row.area}` : ""}</Typography>
                                 </Stack>
                               </TableCell>
                               <TableCell>
                                 <Stack spacing={0.5}>
-                                  <Chip size="small" label={row.ownershipStatus || "UNCLAIMED"} color={actionChipColor(row.ownershipStatus)} variant="outlined" />
-                                  <Typography variant="caption" color="text.secondary">{row.ownershipMethod || "—"}</Typography>
-                                  <Typography variant="caption" color="text.secondary">{row.consentState || "—"}</Typography>
+                                  <Chip size="small" label={businessLabel(row.ownershipStatus || "UNCLAIMED")} color={actionChipColor(row.ownershipStatus)} variant="outlined" />
+                                  <Typography variant="caption" color="text.secondary">{businessLabel(row.ownershipMethod)}</Typography>
+                                  <Typography variant="caption" color="text.secondary">{businessLabel(row.consentState)}</Typography>
                                 </Stack>
                               </TableCell>
                               <TableCell>
                                 <Stack spacing={0.5}>
-                                  <Chip size="small" label={row.platformConnectionStatus || "NOT_CONNECTED"} color={actionChipColor(row.platformConnectionStatus)} variant="outlined" />
-                                  <Typography variant="caption" color="text.secondary">{row.bookingCapability || "NOT_AVAILABLE"}</Typography>
+                                  <Chip size="small" label={businessLabel(row.platformConnectionStatus || "NOT_CONNECTED")} color={actionChipColor(row.platformConnectionStatus)} variant="outlined" />
+                                  <Typography variant="caption" color="text.secondary">{businessLabel(row.bookingCapability || "NOT_AVAILABLE")}</Typography>
                                   {row.maskedProviderMobile ? <Typography variant="caption" color="text.secondary">Mobile ending {row.maskedProviderMobile.slice(-4)}</Typography> : null}
                                 </Stack>
                               </TableCell>
                               <TableCell>
                                 <Stack spacing={0.25}>
                                   {(row.membershipRoles || []).map((membership) => (
-                                    <Chip key={membership} size="small" label={membership.replaceAll("_", " ")} variant="outlined" />
+                                    <Chip key={membership} size="small" label={businessLabel(membership)} variant="outlined" />
                                   ))}
                                 </Stack>
                               </TableCell>
@@ -2202,13 +3190,17 @@ export default function ProviderConnectionsPage() {
                                 </Stack>
                               </TableCell>
                             </TableRow>
-                          ))}
+                            );
+                          })}
                           {!ownershipRows.length ? (
                             <TableRow>
                               <TableCell colSpan={6}>
-                                <Typography variant="body2" color="text.secondary">
-                                  No provider ownership records matched the current filters.
-                                </Typography>
+                                <EmptyState
+                                  title="No Ownership Records"
+                                  description="Ownership records are created after successful verification."
+                                  actionLabel="Refresh"
+                                  onAction={() => void refresh()}
+                                />
                               </TableCell>
                             </TableRow>
                           ) : null}
@@ -2220,18 +3212,42 @@ export default function ProviderConnectionsPage() {
 
                 {section === "conflicts" ? (
                   <Stack spacing={1.5}>
-                    {conflicts.map((row) => (
-                      <Paper key={row.id} variant="outlined" sx={{ p: 2 }}>
+                    {conflicts.map((row) => {
+                      const selected = selectedConflictReference === row.id;
+                      return (
+                      <Paper
+                        key={row.id}
+                        variant="outlined"
+                        tabIndex={0}
+                        role="button"
+                        aria-selected={selected}
+                        onClick={() => setSelectedConflictReference(row.id)}
+                        onKeyDown={(event) => activateOnKeyboard(event, () => setSelectedConflictReference(row.id))}
+                        sx={{
+                          p: 2,
+                          cursor: "pointer",
+                          borderColor: selected ? "primary.main" : "divider",
+                          bgcolor: selected ? "action.selected" : "background.paper",
+                        }}
+                      >
                         <Stack spacing={0.5}>
                           <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
                             <Typography sx={{ fontWeight: 700 }}>{row.title}</Typography>
-                            <Chip size="small" label={row.severity} color="error" variant="outlined" />
+                            <Chip size="small" label={businessLabel(row.severity)} color="error" variant="outlined" />
                           </Stack>
                           <Typography variant="body2" color="text.secondary">{row.details}</Typography>
                         </Stack>
                       </Paper>
-                    ))}
-                    {!conflicts.length ? <Typography variant="body2" color="text.secondary">No conflicts currently need review.</Typography> : null}
+                      );
+                    })}
+                    {!conflicts.length ? (
+                      <EmptyState
+                        title="No Provider Connection Conflicts"
+                        description="All provider connections are currently consistent. Conflicts automatically appear when multiple operational clinics match one public profile, ownership verification fails, duplicate ownership is detected, link lifecycle becomes inconsistent, or manual Platform Admin review is required."
+                        actionLabel="Refresh"
+                        onAction={() => void refresh()}
+                      />
+                    ) : null}
                   </Stack>
                 ) : null}
 
@@ -2248,9 +3264,14 @@ export default function ProviderConnectionsPage() {
                       <Button variant="outlined" onClick={() => void refresh()}>Refresh audit</Button>
                     </Stack>
                     {!auditRows.length ? (
-                      <Alert severity="info" variant="outlined">
-                        No provider connection activity has been recorded yet.
-                      </Alert>
+                      <EmptyState
+                        title={auditAction || auditTenant || auditProviderType || auditResult || auditQuery ? "No Matching Audit Events" : "No Audit Events Today"}
+                        description={auditAction || auditTenant || auditProviderType || auditResult || auditQuery
+                          ? "No audit events match the current filters. Try adjusting filters or refreshing."
+                          : "No provider connection activity has been recorded yet."}
+                        actionLabel="Refresh"
+                        onAction={() => void refresh()}
+                      />
                     ) : (
                       <TableContainer component={Paper} variant="outlined">
                         <Table size="small">
@@ -2262,15 +3283,28 @@ export default function ProviderConnectionsPage() {
                               <TableCell>Action</TableCell>
                               <TableCell>State</TableCell>
                               <TableCell>Result</TableCell>
+                              <TableCell align="right">Actions</TableCell>
                             </TableRow>
                           </TableHead>
                           <TableBody>
-                            {auditRows.map((entry) => (
-                              <TableRow key={entry.id} hover onClick={() => setSelectedLinkId(null)}>
+                            {auditRows.map((entry) => {
+                              const selected = selectedAuditEventReference === entry.id;
+                              return (
+                              <TableRow
+                                key={entry.id}
+                                hover
+                                selected={selected}
+                                aria-selected={selected}
+                                tabIndex={0}
+                                role="button"
+                                onClick={() => setSelectedAuditEventReference(entry.id)}
+                                onKeyDown={(event) => activateOnKeyboard(event, () => setSelectedAuditEventReference(entry.id))}
+                                sx={{ cursor: "pointer", ...(selected ? { backgroundColor: "action.selected" } : {}) }}
+                              >
                                 <TableCell>{formatDateTime(entry.occurredAt)}</TableCell>
                                 <TableCell>
                                   <Stack spacing={0.25}>
-                                    <Typography sx={{ fontWeight: 700 }}>{entry.providerType || "—"}</Typography>
+                                    <Typography sx={{ fontWeight: 700 }}>{formatProviderType(entry.providerType)}</Typography>
                                     <Typography variant="caption" color="text.secondary">{entry.platformClinicReference || "—"}</Typography>
                                   </Stack>
                                 </TableCell>
@@ -2278,8 +3312,21 @@ export default function ProviderConnectionsPage() {
                                 <TableCell>{entry.action}</TableCell>
                                 <TableCell>{entry.previousState || "—"} → {entry.newState || "—"}</TableCell>
                                 <TableCell>{entry.result || "—"}</TableCell>
+                                <TableCell align="right">
+                                  <Button
+                                    size="small"
+                                    variant="outlined"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      setSelectedAuditEventReference(entry.id);
+                                    }}
+                                  >
+                                    Inspect
+                                  </Button>
+                                </TableCell>
                               </TableRow>
-                            ))}
+                              );
+                            })}
                           </TableBody>
                         </Table>
                       </TableContainer>
@@ -2375,73 +3422,136 @@ export default function ProviderConnectionsPage() {
             <Paper variant="outlined" sx={{ p: 2.25, position: "sticky", top: 24 }}>
               <Stack spacing={2}>
                 <Stack spacing={0.5}>
-                  <Typography variant="h6" sx={{ fontWeight: 900 }}>Selected link</Typography>
-                  <Typography variant="body2" color="text.secondary">Inspect the active link and run lifecycle actions.</Typography>
+                  {section === "public-profiles" ? (
+                    <>
+                      <Typography variant="h6" sx={{ fontWeight: 900 }}>Public Profile Details</Typography>
+                      <Typography variant="body2" color="text.secondary">Pick a public profile to inspect its publication, ownership, connection and capability information.</Typography>
+                    </>
+                  ) : section === "platform-entities" ? (
+                    <>
+                      <Typography variant="h6" sx={{ fontWeight: 900 }}>Platform Entity Details</Typography>
+                      <Typography variant="body2" color="text.secondary">Pick a platform entity to inspect its operational, publication and connection state.</Typography>
+                    </>
+                  ) : section === "suggestions" ? (
+                    <>
+                      <Typography variant="h6" sx={{ fontWeight: 900 }}>Suggestion Details</Typography>
+                      <Typography variant="body2" color="text.secondary">Select a suggested match to review the candidate, matching evidence and available actions.</Typography>
+                    </>
+                  ) : section === "links" ? (
+                    <>
+                      <Typography variant="h6" sx={{ fontWeight: 900 }}>Link Details</Typography>
+                      <Typography variant="body2" color="text.secondary">Pick a link to inspect its lifecycle, capability, comparison evidence and available actions.</Typography>
+                    </>
+                  ) : section === "ownerships" ? (
+                    <>
+                      <Typography variant="h6" sx={{ fontWeight: 900 }}>Ownership Details</Typography>
+                      <Typography variant="body2" color="text.secondary">Inspect the selected ownership record and backend-authorized actions.</Typography>
+                    </>
+                  ) : section === "audit" ? (
+                    <>
+                      <Typography variant="h6" sx={{ fontWeight: 900 }}>Audit Event Details</Typography>
+                      <Typography variant="body2" color="text.secondary">Select an audit event to inspect the lifecycle transition, actor and request context.</Typography>
+                    </>
+                  ) : section === "conflicts" ? (
+                    <>
+                      <Typography variant="h6" sx={{ fontWeight: 900 }}>Conflict Details</Typography>
+                      <Typography variant="body2" color="text.secondary">Inspect the selected mismatch or blockage.</Typography>
+                    </>
+                  ) : null}
                 </Stack>
-                {selectedLink ? (
-                  <Stack spacing={1.25}>
-                    <Chip size="small" label={`${selectedLink.publicProfileType} · ${selectedLink.linkStatus.replaceAll("_", " ")}`} color={actionChipColor(selectedLink.linkStatus)} variant="outlined" sx={{ alignSelf: "flex-start" }} />
-                    <Typography sx={{ fontWeight: 800 }}>{selectedLink.publicDisplayName || selectedLink.publicReference || "Selected link"}</Typography>
-                    <Typography variant="body2" color="text.secondary">{selectedLink.tenantName || "—"}</Typography>
-                    <Stack spacing={0.5}>
-                      <Typography variant="caption" color="text.secondary">Public identity</Typography>
-                      <Typography variant="body2">{selectedLink.publicReference || "—"}</Typography>
-                      {selectedLink.publicPracticeReference ? <Typography variant="caption" color="text.secondary">{selectedLink.publicPracticeReference}</Typography> : null}
-                      <Typography variant="caption" color="text.secondary">{selectedLink.publicPath || "No public path"}</Typography>
-                    </Stack>
-                    <Stack spacing={0.5}>
-                      <Typography variant="caption" color="text.secondary">Connection</Typography>
-                      <Typography variant="body2">{selectedLink.connectionStatus.replaceAll("_", " ")}</Typography>
-                      <Typography variant="caption" color="text.secondary">Lifecycle {selectedLink.linkStatus.replaceAll("_", " ")}</Typography>
-                    </Stack>
-                    <Stack spacing={0.5}>
-                      <Typography variant="caption" color="text.secondary">Booking capability</Typography>
-                      <Typography variant="body2">{selectedLink.bookingCapability.replaceAll("_", " ")}</Typography>
-                      <Typography variant="caption" color="text.secondary">Availability {selectedLink.availabilityState.replaceAll("_", " ")}</Typography>
-                    </Stack>
-                    <Stack spacing={0.5}>
-                      <Typography variant="caption" color="text.secondary">Opaque booking reference</Typography>
-                      <Typography variant="body2">{selectedLink.bookingReferenceMasked || "—"}</Typography>
-                    </Stack>
-                    <Stack spacing={0.5}>
-                      <Typography variant="caption" color="text.secondary">Source revision</Typography>
-                      <Typography variant="body2">{selectedLink.sourceRevision}</Typography>
-                    </Stack>
-                    <Stack spacing={0.5}>
-                      <Typography variant="caption" color="text.secondary">Match</Typography>
-                      <Typography variant="body2">{selectedLink.matchMethod?.replaceAll("_", " ") || "—"}</Typography>
-                      <Typography variant="caption" color="text.secondary">{selectedLink.matchConfidence || "—"}</Typography>
-                    </Stack>
-                    {detailActions}
-                    {selectedLinkDetail?.comparison?.length ? (
-                      <Stack spacing={1}>
-                        <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Comparison</Typography>
-                        {selectedLinkDetail.comparison.map((row) => (
-                          <Box key={row.key} sx={{ p: 1.25, border: "1px solid", borderColor: "divider", borderRadius: 1.5 }}>
-                            <Typography variant="caption" color="text.secondary">{row.label}</Typography>
-                            <Typography variant="body2">{row.publicValue || "—"} → {row.platformValue || "—"}</Typography>
-                            <Typography variant="caption" color="text.secondary">{row.status}</Typography>
-                          </Box>
-                        ))}
-                      </Stack>
-                    ) : null}
-                    {selectedLinkDetail?.audit?.length ? (
-                      <Stack spacing={1}>
-                        <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Audit</Typography>
-                        {selectedLinkDetail.audit.slice(0, 4).map((row) => (
-                          <Paper key={row.id} variant="outlined" sx={{ p: 1.25 }}>
-                            <Typography variant="body2" sx={{ fontWeight: 700 }}>{row.action}</Typography>
-                            <Typography variant="caption" color="text.secondary">{formatDateTime(row.occurredAt)}</Typography>
-                          </Paper>
-                        ))}
-                      </Stack>
-                    ) : null}
-                  </Stack>
-                ) : (
-                  <Alert severity="info" variant="outlined">
-                    Pick a row from Links to inspect a specific link.
-                  </Alert>
-                )}
+                {section === "public-profiles" ? (
+                  <PublicProfileInspectionPanel
+                    loading={loading}
+                    error={error}
+                    selectedProfile={selectedPublicProfile}
+                    selectedOwnership={selectedPublicProfileOwnership}
+                    selectedLink={selectedPublicProfileLink}
+                    selectedPlatformClinic={selectedPublicPlatformClinic}
+                    onProposeLink={onOpenProposal}
+                  />
+                ) : section === "platform-entities" ? (
+                  <PlatformEntityInspector
+                    loading={loading}
+                    error={error}
+                    selectedEntity={selectedPlatformEntity}
+                    linkedProfile={selectedPlatformEntityLink?.publicReference ? publicRows.find((row) => row.publicReference === selectedPlatformEntityLink?.publicReference) ?? null : null}
+                    linkedPlatformLink={selectedPlatformEntityLink}
+                    onReviewMatch={(entity) => {
+                      const selected = entity.entityType === "DOCTOR"
+                        ? platformDoctorRows.find((item) => item.tenantReference === entity.tenantReference && item.platformClinicReference === entity.platformClinicReference && item.tenantDoctorUserReference === entity.tenantDoctorUserReference)
+                        : platformClinicRows.find((item) => item.tenantReference === entity.tenantReference && item.platformClinicReference === entity.platformClinicReference);
+                      if (!selected) {
+                        return;
+                      }
+                      setSelectedPlatformEntityReference(toSelectionValue(selected));
+                      setProposalDraft({
+                        kind: entity.entityType === "DOCTOR" ? "DOCTOR" : "CLINIC",
+                        publicProfile: null,
+                        suggestion: null,
+                        publicReference: "",
+                        publicPracticeReference: null,
+                        sourceSystem: "PLATFORM_ADMIN",
+                        sourceEntityReference: entity.entityType === "DOCTOR" ? (entity.tenantDoctorUserReference || "") : (entity.platformClinicReference || ""),
+                        sourceRevision: entity.sourceRevision,
+                        sourceUpdatedAt: null,
+                        tenantReference: selected.tenantReference || "",
+                        platformClinicReference: selected.platformClinicReference || "",
+                        tenantDoctorUserReference: selected.tenantDoctorUserReference || "",
+                        tenantDoctorProfileReference: selected.tenantDoctorProfileReference || "",
+                        platformEntityRevision: selected.sourceRevision,
+                        platformSelection: toSelectionValue(selected),
+                        matchMethod: "MANUAL_REFERENCE",
+                        matchConfidence: "LOW",
+                        reason: "",
+                        evidence: buildProposalEvidence({
+                          kind: entity.entityType === "DOCTOR" ? "DOCTOR" : "CLINIC",
+                          publicProfile: null,
+                          suggestion: null,
+                          publicReference: "",
+                          publicPracticeReference: null,
+                          sourceSystem: "PLATFORM_ADMIN",
+                          sourceEntityReference: "",
+                          sourceRevision: entity.sourceRevision,
+                          sourceUpdatedAt: null,
+                          tenantReference: selected.tenantReference || "",
+                          platformClinicReference: selected.platformClinicReference || "",
+                          tenantDoctorUserReference: selected.tenantDoctorUserReference || "",
+                          tenantDoctorProfileReference: selected.tenantDoctorProfileReference || "",
+                          platformEntityRevision: selected.sourceRevision,
+                          platformSelection: toSelectionValue(selected),
+                          matchMethod: "MANUAL_REFERENCE",
+                          matchConfidence: "LOW",
+                          reason: "",
+                          evidence: [],
+                        }, selected),
+                      });
+                      setDialogOpen(true);
+                    }}
+                  />
+                ) : section === "suggestions" ? (
+                  <SuggestionInspector
+                    loading={loading}
+                    error={error}
+                    selectedSuggestion={selectedSuggestion}
+                    onReviewMatch={(suggestion) => reviewSuggestion(suggestion)}
+                    onReject={(suggestion) => { setRejectTarget(suggestion); setRejectReason(""); setRejectDialogOpen(true); }}
+                  />
+                ) : section === "links" ? (
+                  <LinkInspector
+                    loading={loading}
+                    error={selectedLinkDetailError || error}
+                    selectedLink={selectedLink}
+                    selectedLinkDetail={selectedLinkDetail}
+                    onRetry={() => void refresh()}
+                    allowedActions={detailActions}
+                  />
+                ) : section === "ownerships" ? (
+                  <OwnershipInspector selectedOwnership={selectedOwnership} />
+                ) : section === "audit" ? (
+                  <AuditEventInspector loading={loading} error={error} selectedAuditEvent={selectedAuditEvent} />
+                ) : section === "conflicts" ? (
+                  <ConflictInspector selectedConflict={selectedConflict} />
+                ) : null}
               </Stack>
             </Paper>
           </Grid>
@@ -2471,7 +3581,7 @@ export default function ProviderConnectionsPage() {
         saving={saving}
       />
 
-      <Dialog open={Boolean(selectedOwnership)} onClose={() => setSelectedOwnership(null)} fullWidth maxWidth="sm">
+      <Dialog open={Boolean(selectedOwnership)} onClose={() => setSelectedOwnershipReference(null)} fullWidth maxWidth="sm">
         <DialogTitle>Ownership details</DialogTitle>
         <DialogContent dividers>
           {selectedOwnership ? (
@@ -2481,13 +3591,13 @@ export default function ProviderConnectionsPage() {
               </Alert>
               <Stack spacing={0.75}>
                 <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>{selectedOwnership.displayName || "Unnamed profile"}</Typography>
-                <Typography variant="body2" color="text.secondary">{selectedOwnership.publicProfileType} · {selectedOwnership.publicProfileReference || "—"}</Typography>
+                <Typography variant="body2" color="text.secondary">{formatProviderType(selectedOwnership.publicProfileType)} · {selectedOwnership.publicProfileReference || "—"}</Typography>
                 <Typography variant="body2" color="text.secondary">{selectedOwnership.city || "—"}{selectedOwnership.area ? ` · ${selectedOwnership.area}` : ""}</Typography>
               </Stack>
               <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
-                <Chip size="small" label={selectedOwnership.ownershipStatus || "UNCLAIMED"} color={actionChipColor(selectedOwnership.ownershipStatus)} variant="outlined" />
-                <Chip size="small" label={selectedOwnership.platformConnectionStatus || "NOT_CONNECTED"} color={actionChipColor(selectedOwnership.platformConnectionStatus)} variant="outlined" />
-                <Chip size="small" label={selectedOwnership.bookingCapability || "NOT_AVAILABLE"} color={actionChipColor(selectedOwnership.bookingCapability)} variant="outlined" />
+                <Chip size="small" label={businessLabel(selectedOwnership.ownershipStatus || "UNCLAIMED")} color={actionChipColor(selectedOwnership.ownershipStatus)} variant="outlined" />
+                <Chip size="small" label={businessLabel(selectedOwnership.platformConnectionStatus || "NOT_CONNECTED")} color={actionChipColor(selectedOwnership.platformConnectionStatus)} variant="outlined" />
+                <Chip size="small" label={businessLabel(selectedOwnership.bookingCapability || "NOT_AVAILABLE")} color={actionChipColor(selectedOwnership.bookingCapability)} variant="outlined" />
               </Stack>
               <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
                 {(selectedOwnership.allowedActions || []).map((action) => (
@@ -2506,7 +3616,7 @@ export default function ProviderConnectionsPage() {
           ) : null}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setSelectedOwnership(null)}>Close</Button>
+          <Button onClick={() => setSelectedOwnershipReference(null)}>Close</Button>
         </DialogActions>
       </Dialog>
 

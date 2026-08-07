@@ -2,6 +2,7 @@ package com.deepthoughtnet.clinic.api.platform.providerconnections;
 
 import com.deepthoughtnet.clinic.platform.contracts.providerintegration.PublicProfileType;
 import com.deepthoughtnet.clinic.platform.contracts.providerintegration.ReconciliationResult;
+import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -155,54 +156,106 @@ public class ProviderConnectionsController {
     @PostMapping("/links/propose")
     @PreAuthorize("@permissionChecker.hasPermission('platform.provider_connection.propose')")
     public ProviderConnectionsLinkResponse propose(@RequestBody ProviderConnectionsLinkProposalRequest request) {
+        String actorReference = actorReference();
         return request.publicProfileType() == PublicProfileType.DOCTOR
-                ? service.proposeDoctorPracticeLink(request)
-                : service.proposeClinicLink(request);
+                ? service.proposeDoctorPracticeLink(request, actorReference)
+                : service.proposeClinicLink(request, actorReference);
     }
 
     @PostMapping("/links/{linkId}/approve")
     @PreAuthorize("@permissionChecker.hasPermission('platform.provider_connection.approve')")
     public ProviderConnectionsLinkResponse approve(@PathVariable UUID linkId, @RequestBody(required = false) ProviderConnectionsLinkUpdateRequest request) {
         String reason = request == null ? null : request.reason();
+        String actorReference = actorReference();
         ProviderConnectionsLinkResponse link = service.linkDetail(linkId).orElseThrow(() -> new IllegalArgumentException("Link not found")).link();
         return link.publicProfileType() == PublicProfileType.DOCTOR
-                ? service.approveDoctorPracticeLink(linkId, reason)
-                : service.approveClinicLink(linkId, reason);
+                ? service.approveDoctorPracticeLink(linkId, reason, actorReference)
+                : service.approveClinicLink(linkId, reason, actorReference);
     }
 
     @PostMapping("/links/{linkId}/activate")
     @PreAuthorize("@permissionChecker.hasPermission('platform.provider_connection.approve')")
     public ProviderConnectionsLinkResponse activate(@PathVariable UUID linkId, @RequestBody(required = false) ProviderConnectionsLinkUpdateRequest request) {
         String reason = request == null ? null : request.reason();
+        String actorReference = actorReference();
         ProviderConnectionsLinkResponse link = service.linkDetail(linkId).orElseThrow(() -> new IllegalArgumentException("Link not found")).link();
         return link.publicProfileType() == PublicProfileType.DOCTOR
-                ? service.activateDoctorPracticeLink(linkId, reason)
-                : service.activateClinicLink(linkId, reason);
+                ? service.activateDoctorPracticeLink(linkId, reason, actorReference)
+                : service.activateClinicLink(linkId, reason, actorReference);
     }
 
     @PostMapping("/links/{linkId}/unlink")
     @PreAuthorize("@permissionChecker.hasPermission('platform.provider_connection.unlink')")
     public ProviderConnectionsLinkResponse unlink(@PathVariable UUID linkId, @RequestBody(required = false) ProviderConnectionsLinkUpdateRequest request) {
         String reason = request == null ? null : request.reason();
+        String actorReference = actorReference();
         ProviderConnectionsLinkResponse link = service.linkDetail(linkId).orElseThrow(() -> new IllegalArgumentException("Link not found")).link();
         return link.publicProfileType() == PublicProfileType.DOCTOR
-                ? service.unlinkDoctorPracticeLink(linkId, reason)
-                : service.unlinkClinicLink(linkId, reason);
+                ? service.unlinkDoctorPracticeLink(linkId, reason, actorReference)
+                : service.unlinkClinicLink(linkId, reason, actorReference);
+    }
+
+    @PostMapping("/links/{linkId}/reject")
+    @PreAuthorize("@permissionChecker.hasPermission('platform.provider_connection.reject')")
+    public ProviderConnectionsLinkResponse reject(@PathVariable UUID linkId, @RequestBody(required = false) ProviderConnectionsLinkUpdateRequest request) {
+        String reason = request == null ? null : request.reason();
+        String actorReference = actorReference();
+        ProviderConnectionsLinkResponse link = service.linkDetail(linkId).orElseThrow(() -> new IllegalArgumentException("Link not found")).link();
+        return link.publicProfileType() == PublicProfileType.DOCTOR
+                ? service.rejectDoctorPracticeLink(linkId, reason, actorReference)
+                : service.rejectClinicLink(linkId, reason, actorReference);
+    }
+
+    @PostMapping("/links/{linkId}/suspend")
+    @PreAuthorize("@permissionChecker.hasPermission('platform.provider_connection.unlink')")
+    public ProviderConnectionsLinkResponse suspend(@PathVariable UUID linkId, @RequestBody(required = false) ProviderConnectionsLinkUpdateRequest request) {
+        String reason = request == null ? null : request.reason();
+        String actorReference = actorReference();
+        ProviderConnectionsLinkResponse link = service.linkDetail(linkId).orElseThrow(() -> new IllegalArgumentException("Link not found")).link();
+        return link.publicProfileType() == PublicProfileType.DOCTOR
+                ? service.suspendDoctorPracticeLink(linkId, reason, actorReference)
+                : service.suspendClinicLink(linkId, reason, actorReference);
+    }
+
+    @PostMapping("/links/{linkId}/resume")
+    @PreAuthorize("@permissionChecker.hasPermission('platform.provider_connection.approve')")
+    public ProviderConnectionsLinkResponse resume(@PathVariable UUID linkId, @RequestBody(required = false) ProviderConnectionsLinkUpdateRequest request) {
+        String reason = request == null ? null : request.reason();
+        String actorReference = actorReference();
+        ProviderConnectionsLinkResponse link = service.linkDetail(linkId).orElseThrow(() -> new IllegalArgumentException("Link not found")).link();
+        return link.publicProfileType() == PublicProfileType.DOCTOR
+                ? service.resumeDoctorPracticeLink(linkId, reason, actorReference)
+                : service.resumeClinicLink(linkId, reason, actorReference);
     }
 
     @PostMapping("/links/{linkId}/relink")
     @PreAuthorize("@permissionChecker.hasPermission('platform.provider_connection.propose')")
     public ProviderConnectionsLinkResponse relink(@PathVariable UUID linkId, @RequestBody(required = false) ProviderConnectionsLinkUpdateRequest request) {
         String reason = request == null ? null : request.reason();
+        String actorReference = actorReference();
         ProviderConnectionsLinkResponse link = service.linkDetail(linkId).orElseThrow(() -> new IllegalArgumentException("Link not found")).link();
         return link.publicProfileType() == PublicProfileType.DOCTOR
-                ? service.relinkDoctorPracticeLink(linkId, reason)
-                : service.relinkClinicLink(linkId, reason);
+                ? service.relinkDoctorPracticeLink(linkId, reason, actorReference)
+                : service.relinkClinicLink(linkId, reason, actorReference);
     }
 
     @PostMapping("/reconcile")
     @PreAuthorize("@permissionChecker.hasPermission('platform.provider_connection.reconcile')")
     public ReconciliationResult reconcile(@RequestBody ProviderConnectionsReconcileRequest request) {
         return service.reconcile(request == null ? null : request.linkId());
+    }
+
+    private String actorReference() {
+        var context = RequestContextHolder.require();
+        if (context.appUserId() != null) {
+            return context.appUserId().toString();
+        }
+        if (context.keycloakSub() != null && !context.keycloakSub().isBlank()) {
+            return context.keycloakSub();
+        }
+        if (context.actorEmail() != null && !context.actorEmail().isBlank()) {
+            return context.actorEmail();
+        }
+        throw new IllegalStateException("Authenticated actor reference is unavailable");
     }
 }

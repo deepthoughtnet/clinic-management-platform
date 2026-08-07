@@ -31,6 +31,25 @@ public final class PublicProviderProfileModels {
     ) {
     }
 
+    public record PublicProviderPublishedMediaSnapshot(
+            UUID mediaReference,
+            String mediaType,
+            String storageKey,
+            String contentType,
+            String originalFilename,
+            String altText,
+            int displayOrder
+    ) {
+    }
+
+    public record PublicProviderTimingSnapshot(
+            String day,
+            String open,
+            String close,
+            int displayOrder
+    ) {
+    }
+
     public record PublicProviderProfileSnapshot(
             UUID providerId,
             ProviderType providerType,
@@ -82,7 +101,10 @@ public final class PublicProviderProfileModels {
             boolean reviewsComingSoon,
             OffsetDateTime publishedAt,
             int publishedVersionNumber,
-            String publicPath
+            String publicPath,
+            List<PublicProviderPublishedMediaSnapshot> publishedMedia,
+            List<PublicProviderTimingSnapshot> weeklyTimings,
+            String timingTimezone
     ) {
     }
 
@@ -160,7 +182,9 @@ public final class PublicProviderProfileModels {
             int publishedVersionNumber,
             String slug,
             String previousSlug,
-            boolean canonical
+            boolean canonical,
+            List<PublicProviderTimingSnapshot> weeklyTimings,
+            String timingTimezone
     ) {
     }
 
@@ -278,7 +302,10 @@ public final class PublicProviderProfileModels {
                 false,
                 publishedAt,
                 publishedVersionNumber,
-                publicPath
+                publicPath,
+                List.of(),
+                List.of(),
+                null
         );
     }
 
@@ -363,7 +390,10 @@ public final class PublicProviderProfileModels {
                 false,
                 publishedAt,
                 publishedVersionNumber,
-                publicPath
+                publicPath,
+                List.of(),
+                List.of(),
+                null
         );
     }
 }

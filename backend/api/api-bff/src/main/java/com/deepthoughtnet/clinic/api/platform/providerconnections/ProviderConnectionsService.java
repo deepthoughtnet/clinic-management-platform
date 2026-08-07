@@ -147,6 +147,7 @@ public class ProviderConnectionsService {
         Map<String, ProviderConnectionsLinkResponse> clinicLinks = clinicLinkIndex();
         Map<String, ProviderConnectionsLinkResponse> doctorLinks = doctorLinkIndex();
         return summaries.stream()
+                .map(this::canonicalizePublishedIdentity)
                 .map(summary -> toPublicProfileResponse(summary, findMatchingLink(summary, clinicLinks, doctorLinks)))
                 .toList();
     }
@@ -155,6 +156,7 @@ public class ProviderConnectionsService {
         List<PublicProviderSummary> summaries = discoverCatalogPort.searchPublishedPractices(normalize(query), normalize(city), PublicProfileType.DOCTOR);
         Map<String, ProviderConnectionsLinkResponse> doctorLinks = doctorLinkIndex();
         return summaries.stream()
+                .map(this::canonicalizePublishedIdentity)
                 .map(summary -> toPublicProfileResponse(summary, findMatchingLink(summary, Map.of(), doctorLinks)))
                 .toList();
     }
@@ -391,52 +393,82 @@ public class ProviderConnectionsService {
         return conflicts;
     }
 
-    public ProviderConnectionsLinkResponse proposeClinicLink(ProviderConnectionsLinkProposalRequest request) {
-        return toLinkResponse(providerLinkingService.upsertClinicLink(toClinicRequest(request, LinkLifecycleStatus.PROPOSED, PlatformConnectionStatus.CONNECTION_PENDING)));
+    public ProviderConnectionsLinkResponse proposeClinicLink(ProviderConnectionsLinkProposalRequest request, String actorReference) {
+        return toLinkResponse(providerLinkingService.upsertClinicLink(toClinicRequest(request, LinkLifecycleStatus.PROPOSED, PlatformConnectionStatus.CONNECTION_PENDING, request.reason(), actorReference)));
     }
 
-    public ProviderConnectionsLinkResponse approveClinicLink(UUID linkId, String reason) {
+    public ProviderConnectionsLinkResponse approveClinicLink(UUID linkId, String reason, String actorReference) {
         PublicClinicPlatformLinkEntity entity = providerLinkingService.findClinicLink(linkId).orElseThrow(() -> new IllegalArgumentException("Clinic link not found"));
-        return toLinkResponse(providerLinkingService.upsertClinicLink(toClinicRequest(entity, LinkLifecycleStatus.APPROVED, PlatformConnectionStatus.NOT_CONNECTED, reason)));
+        return toLinkResponse(providerLinkingService.upsertClinicLink(toClinicRequest(entity, LinkLifecycleStatus.APPROVED, PlatformConnectionStatus.NOT_CONNECTED, reason, actorReference)));
     }
 
-    public ProviderConnectionsLinkResponse activateClinicLink(UUID linkId, String reason) {
+    public ProviderConnectionsLinkResponse activateClinicLink(UUID linkId, String reason, String actorReference) {
         PublicClinicPlatformLinkEntity entity = providerLinkingService.findClinicLink(linkId).orElseThrow(() -> new IllegalArgumentException("Clinic link not found"));
-        return toLinkResponse(providerLinkingService.upsertClinicLink(toClinicRequest(entity, LinkLifecycleStatus.LINKED, PlatformConnectionStatus.CONNECTED, reason)));
+        return toLinkResponse(providerLinkingService.upsertClinicLink(toClinicRequest(entity, LinkLifecycleStatus.LINKED, PlatformConnectionStatus.CONNECTED, reason, actorReference)));
     }
 
-    public ProviderConnectionsLinkResponse unlinkClinicLink(UUID linkId, String reason) {
+    public ProviderConnectionsLinkResponse unlinkClinicLink(UUID linkId, String reason, String actorReference) {
         PublicClinicPlatformLinkEntity entity = providerLinkingService.findClinicLink(linkId).orElseThrow(() -> new IllegalArgumentException("Clinic link not found"));
-        return toLinkResponse(providerLinkingService.upsertClinicLink(toClinicRequest(entity, LinkLifecycleStatus.UNLINKED, PlatformConnectionStatus.DISCONNECTED, reason)));
+        return toLinkResponse(providerLinkingService.upsertClinicLink(toClinicRequest(entity, LinkLifecycleStatus.UNLINKED, PlatformConnectionStatus.DISCONNECTED, reason, actorReference)));
     }
 
-    public ProviderConnectionsLinkResponse relinkClinicLink(UUID linkId, String reason) {
+    public ProviderConnectionsLinkResponse relinkClinicLink(UUID linkId, String reason, String actorReference) {
         PublicClinicPlatformLinkEntity entity = providerLinkingService.findClinicLink(linkId).orElseThrow(() -> new IllegalArgumentException("Clinic link not found"));
-        return toLinkResponse(providerLinkingService.upsertClinicLink(toClinicRequest(entity, LinkLifecycleStatus.PROPOSED, PlatformConnectionStatus.CONNECTION_PENDING, reason)));
+        return toLinkResponse(providerLinkingService.upsertClinicLink(toClinicRequest(entity, LinkLifecycleStatus.PROPOSED, PlatformConnectionStatus.CONNECTION_PENDING, reason, actorReference)));
     }
 
-    public ProviderConnectionsLinkResponse proposeDoctorPracticeLink(ProviderConnectionsLinkProposalRequest request) {
-        return toLinkResponse(providerLinkingService.upsertDoctorPracticeLink(toDoctorRequest(request, LinkLifecycleStatus.PROPOSED, PlatformConnectionStatus.CONNECTION_PENDING)));
+    public ProviderConnectionsLinkResponse rejectClinicLink(UUID linkId, String reason, String actorReference) {
+        PublicClinicPlatformLinkEntity entity = providerLinkingService.findClinicLink(linkId).orElseThrow(() -> new IllegalArgumentException("Clinic link not found"));
+        return toLinkResponse(providerLinkingService.upsertClinicLink(toClinicRequest(entity, LinkLifecycleStatus.REJECTED, PlatformConnectionStatus.NOT_CONNECTED, reason, actorReference)));
     }
 
-    public ProviderConnectionsLinkResponse approveDoctorPracticeLink(UUID linkId, String reason) {
+    public ProviderConnectionsLinkResponse suspendClinicLink(UUID linkId, String reason, String actorReference) {
+        PublicClinicPlatformLinkEntity entity = providerLinkingService.findClinicLink(linkId).orElseThrow(() -> new IllegalArgumentException("Clinic link not found"));
+        return toLinkResponse(providerLinkingService.upsertClinicLink(toClinicRequest(entity, LinkLifecycleStatus.SUSPENDED, PlatformConnectionStatus.DISCONNECTED, reason, actorReference)));
+    }
+
+    public ProviderConnectionsLinkResponse resumeClinicLink(UUID linkId, String reason, String actorReference) {
+        PublicClinicPlatformLinkEntity entity = providerLinkingService.findClinicLink(linkId).orElseThrow(() -> new IllegalArgumentException("Clinic link not found"));
+        return toLinkResponse(providerLinkingService.upsertClinicLink(toClinicRequest(entity, LinkLifecycleStatus.LINKED, PlatformConnectionStatus.CONNECTED, reason, actorReference)));
+    }
+
+    public ProviderConnectionsLinkResponse proposeDoctorPracticeLink(ProviderConnectionsLinkProposalRequest request, String actorReference) {
+        return toLinkResponse(providerLinkingService.upsertDoctorPracticeLink(toDoctorRequest(request, LinkLifecycleStatus.PROPOSED, PlatformConnectionStatus.CONNECTION_PENDING, request.reason(), actorReference)));
+    }
+
+    public ProviderConnectionsLinkResponse approveDoctorPracticeLink(UUID linkId, String reason, String actorReference) {
         PublicDoctorPracticePlatformLinkEntity entity = providerLinkingService.findDoctorPracticeLink(linkId).orElseThrow(() -> new IllegalArgumentException("Doctor practice link not found"));
-        return toLinkResponse(providerLinkingService.upsertDoctorPracticeLink(toDoctorRequest(entity, LinkLifecycleStatus.APPROVED, PlatformConnectionStatus.NOT_CONNECTED, reason)));
+        return toLinkResponse(providerLinkingService.upsertDoctorPracticeLink(toDoctorRequest(entity, LinkLifecycleStatus.APPROVED, PlatformConnectionStatus.NOT_CONNECTED, reason, actorReference)));
     }
 
-    public ProviderConnectionsLinkResponse activateDoctorPracticeLink(UUID linkId, String reason) {
+    public ProviderConnectionsLinkResponse activateDoctorPracticeLink(UUID linkId, String reason, String actorReference) {
         PublicDoctorPracticePlatformLinkEntity entity = providerLinkingService.findDoctorPracticeLink(linkId).orElseThrow(() -> new IllegalArgumentException("Doctor practice link not found"));
-        return toLinkResponse(providerLinkingService.upsertDoctorPracticeLink(toDoctorRequest(entity, LinkLifecycleStatus.LINKED, PlatformConnectionStatus.CONNECTED, reason)));
+        return toLinkResponse(providerLinkingService.upsertDoctorPracticeLink(toDoctorRequest(entity, LinkLifecycleStatus.LINKED, PlatformConnectionStatus.CONNECTED, reason, actorReference)));
     }
 
-    public ProviderConnectionsLinkResponse unlinkDoctorPracticeLink(UUID linkId, String reason) {
+    public ProviderConnectionsLinkResponse unlinkDoctorPracticeLink(UUID linkId, String reason, String actorReference) {
         PublicDoctorPracticePlatformLinkEntity entity = providerLinkingService.findDoctorPracticeLink(linkId).orElseThrow(() -> new IllegalArgumentException("Doctor practice link not found"));
-        return toLinkResponse(providerLinkingService.upsertDoctorPracticeLink(toDoctorRequest(entity, LinkLifecycleStatus.UNLINKED, PlatformConnectionStatus.DISCONNECTED, reason)));
+        return toLinkResponse(providerLinkingService.upsertDoctorPracticeLink(toDoctorRequest(entity, LinkLifecycleStatus.UNLINKED, PlatformConnectionStatus.DISCONNECTED, reason, actorReference)));
     }
 
-    public ProviderConnectionsLinkResponse relinkDoctorPracticeLink(UUID linkId, String reason) {
+    public ProviderConnectionsLinkResponse relinkDoctorPracticeLink(UUID linkId, String reason, String actorReference) {
         PublicDoctorPracticePlatformLinkEntity entity = providerLinkingService.findDoctorPracticeLink(linkId).orElseThrow(() -> new IllegalArgumentException("Doctor practice link not found"));
-        return toLinkResponse(providerLinkingService.upsertDoctorPracticeLink(toDoctorRequest(entity, LinkLifecycleStatus.PROPOSED, PlatformConnectionStatus.CONNECTION_PENDING, reason)));
+        return toLinkResponse(providerLinkingService.upsertDoctorPracticeLink(toDoctorRequest(entity, LinkLifecycleStatus.PROPOSED, PlatformConnectionStatus.CONNECTION_PENDING, reason, actorReference)));
+    }
+
+    public ProviderConnectionsLinkResponse rejectDoctorPracticeLink(UUID linkId, String reason, String actorReference) {
+        PublicDoctorPracticePlatformLinkEntity entity = providerLinkingService.findDoctorPracticeLink(linkId).orElseThrow(() -> new IllegalArgumentException("Doctor practice link not found"));
+        return toLinkResponse(providerLinkingService.upsertDoctorPracticeLink(toDoctorRequest(entity, LinkLifecycleStatus.REJECTED, PlatformConnectionStatus.NOT_CONNECTED, reason, actorReference)));
+    }
+
+    public ProviderConnectionsLinkResponse suspendDoctorPracticeLink(UUID linkId, String reason, String actorReference) {
+        PublicDoctorPracticePlatformLinkEntity entity = providerLinkingService.findDoctorPracticeLink(linkId).orElseThrow(() -> new IllegalArgumentException("Doctor practice link not found"));
+        return toLinkResponse(providerLinkingService.upsertDoctorPracticeLink(toDoctorRequest(entity, LinkLifecycleStatus.SUSPENDED, PlatformConnectionStatus.DISCONNECTED, reason, actorReference)));
+    }
+
+    public ProviderConnectionsLinkResponse resumeDoctorPracticeLink(UUID linkId, String reason, String actorReference) {
+        PublicDoctorPracticePlatformLinkEntity entity = providerLinkingService.findDoctorPracticeLink(linkId).orElseThrow(() -> new IllegalArgumentException("Doctor practice link not found"));
+        return toLinkResponse(providerLinkingService.upsertDoctorPracticeLink(toDoctorRequest(entity, LinkLifecycleStatus.LINKED, PlatformConnectionStatus.CONNECTED, reason, actorReference)));
     }
 
     public ReconciliationResult reconcile(UUID linkId) {
@@ -444,9 +476,9 @@ public class ProviderConnectionsService {
             return new ReconciliationResult("provider-link", 0, 0, 0, 0, 0, 0, 0, List.of(), OffsetDateTime.now(), OffsetDateTime.now());
         }
         return providerLinkingService.findClinicLink(linkId)
-                .map(entity -> providerLinkingService.reconcileClinicLink(toClinicRequest(entity, entity.getLinkStatus(), entity.getConnectionStatus(), entity.getReason())))
+                .map(entity -> providerLinkingService.reconcileClinicLink(toClinicRequest(entity, entity.getLinkStatus(), entity.getConnectionStatus(), entity.getReason(), "SYSTEM_RECONCILIATION")))
                 .or(() -> providerLinkingService.findDoctorPracticeLink(linkId)
-                        .map(entity -> providerLinkingService.reconcileDoctorPracticeLink(toDoctorRequest(entity, entity.getLinkStatus(), entity.getConnectionStatus(), entity.getReason()))))
+                        .map(entity -> providerLinkingService.reconcileDoctorPracticeLink(toDoctorRequest(entity, entity.getLinkStatus(), entity.getConnectionStatus(), entity.getReason(), "SYSTEM_RECONCILIATION"))))
                 .orElseGet(() -> new ReconciliationResult("provider-link", 1, 0, 0, 0, 0, 0, 1, List.of(), OffsetDateTime.now(), OffsetDateTime.now()));
     }
 
@@ -499,8 +531,8 @@ public class ProviderConnectionsService {
                 summary.area(),
                 summary.publicPhone(),
                 summary.publicFee(),
-                summary.bookingCapability(),
-                summary.availabilityState(),
+                link == null ? summary.bookingCapability() : link.bookingCapability(),
+                link == null ? summary.availabilityState() : link.availabilityState(),
                 summary.publicationStatus(),
                 summary.sourceSystem(),
                 summary.sourceRevision(),
@@ -511,7 +543,8 @@ public class ProviderConnectionsService {
                 link == null ? null : link.connectionStatus(),
                 link == null ? null : link.platformClinicReference(),
                 link == null ? null : link.tenantReference(),
-                link == null ? List.of() : tagsForLink(link)
+                link == null ? List.of() : tagsForLink(link),
+                publicProfileAllowedActions(summary, link)
         );
     }
 
@@ -747,9 +780,8 @@ public class ProviderConnectionsService {
         String currentDiscoverCapability = link == null
                 ? (row.active() && row.publicListingEnabled() ? BookingCapability.CALL_TO_BOOK.name() : BookingCapability.NOT_AVAILABLE.name())
                 : link.bookingCapability().name();
-        String platformBookingSetup = link == null
-                ? (row.active() && row.publicListingEnabled() ? "READY" : "INCOMPLETE")
-                : (link.bookingCapability() == BookingCapability.ONLINE_BOOKING ? "READY" : "INCOMPLETE");
+        String platformBookingSetup = BookingCapability.ONLINE_BOOKING.name().equals(row.operationalBookingCapability())
+                ? "READY" : "INCOMPLETE";
         String currentAvailability = link == null ? AvailabilityState.UNKNOWN.name() : link.availabilityState().name();
         return new ProviderConnectionsPlatformEntityResponse(
                 "CLINIC",
@@ -770,14 +802,14 @@ public class ProviderConnectionsService {
                 row.publicListingEnabled(),
                 publicListingConsent,
                 row.slug(),
-                link == null ? row.tenantCode() : link.platformClinicReference(),
+                link == null ? row.platformClinicReference() : link.platformClinicReference(),
                 null,
                 null,
-                link == null ? BookingCapability.CALL_TO_BOOK.name() : link.bookingCapability().name(),
+                row.operationalBookingCapability(),
                 platformBookingSetup,
                 currentDiscoverCapability,
                 currentAvailability,
-                link == null ? "No approved Platform connection" : (link.bookingCapability() == BookingCapability.ONLINE_BOOKING ? "Platform booking ready" : "Booking setup incomplete"),
+                row.capabilityReason(),
                 row.sourceRevision(),
                 row.updatedAt(),
                 link == null ? null : link.publicReference(),
@@ -793,9 +825,8 @@ public class ProviderConnectionsService {
         String currentDiscoverCapability = link == null
                 ? (row.active() && row.publicListingEnabled() ? BookingCapability.CALL_TO_BOOK.name() : BookingCapability.NOT_AVAILABLE.name())
                 : link.bookingCapability().name();
-        String platformBookingSetup = link == null
-                ? (row.active() && row.publicListingEnabled() ? "READY" : "INCOMPLETE")
-                : (link.bookingCapability() == BookingCapability.ONLINE_BOOKING ? "READY" : "INCOMPLETE");
+        String platformBookingSetup = BookingCapability.ONLINE_BOOKING.name().equals(row.operationalBookingCapability())
+                ? "READY" : "INCOMPLETE";
         String currentAvailability = link == null ? AvailabilityState.UNKNOWN.name() : link.availabilityState().name();
         return new ProviderConnectionsPlatformEntityResponse(
                 "DOCTOR",
@@ -816,14 +847,14 @@ public class ProviderConnectionsService {
                 row.publicListingEnabled(),
                 publicListingConsent,
                 row.slug(),
-                link == null ? row.tenantCode() : link.platformClinicReference(),
+                link == null ? row.platformClinicReference() : link.platformClinicReference(),
                 row.tenantDoctorUserReference(),
                 row.tenantDoctorProfileReference(),
-                link == null ? BookingCapability.CALL_TO_BOOK.name() : link.bookingCapability().name(),
+                row.operationalBookingCapability(),
                 platformBookingSetup,
                 currentDiscoverCapability,
                 currentAvailability,
-                link == null ? "No approved Platform connection" : (link.bookingCapability() == BookingCapability.ONLINE_BOOKING ? "Platform booking ready" : "Booking setup incomplete"),
+                row.capabilityReason(),
                 row.sourceRevision(),
                 row.updatedAt(),
                 link == null ? null : link.publicReference(),
@@ -862,7 +893,21 @@ public class ProviderConnectionsService {
                 publicProfile == null ? null : publicProfile.area(),
                 publicProfile == null ? null : publicProfile.publicPath(),
                 entity.getSourceSystem() == null ? null : entity.getSourceSystem().name(),
-                evidence(entity.getEvidenceSnapshotJson())
+                evidence(entity.getEvidenceSnapshotJson()),
+                entity.getProposedBy(),
+                entity.getProposedAt(),
+                entity.getVerifiedBy(),
+                entity.getVerifiedAt(),
+                entity.getActivatedBy(),
+                entity.getActivatedAt(),
+                entity.getSuspendedBy(),
+                entity.getSuspendedAt(),
+                entity.getDisconnectedBy(),
+                entity.getDisconnectedAt(),
+                entity.getCapabilityReason(),
+                entity.getConnectionRevision(),
+                entity.getRowVersion(),
+                linkAllowedActions(entity.getLinkStatus(), entity.getConnectionStatus())
         );
     }
 
@@ -896,7 +941,21 @@ public class ProviderConnectionsService {
                 publicProfile == null ? null : publicProfile.area(),
                 publicProfile == null ? null : publicProfile.publicPath(),
                 entity.getSourceSystem() == null ? null : entity.getSourceSystem().name(),
-                evidence(entity.getEvidenceSnapshotJson())
+                evidence(entity.getEvidenceSnapshotJson()),
+                entity.getProposedBy(),
+                entity.getProposedAt(),
+                entity.getVerifiedBy(),
+                entity.getVerifiedAt(),
+                entity.getActivatedBy(),
+                entity.getActivatedAt(),
+                entity.getSuspendedBy(),
+                entity.getSuspendedAt(),
+                entity.getDisconnectedBy(),
+                entity.getDisconnectedAt(),
+                entity.getCapabilityReason(),
+                entity.getConnectionRevision(),
+                entity.getRowVersion(),
+                linkAllowedActions(entity.getLinkStatus(), entity.getConnectionStatus())
         );
     }
 
@@ -917,7 +976,7 @@ public class ProviderConnectionsService {
         Map<String, ProviderConnectionsLinkResponse> index = new HashMap<>();
         for (ProviderConnectionsLinkResponse link : links("CLINIC", null, null)) {
             if (link.publicReference() != null) {
-                index.put(link.publicReference(), link);
+                index.merge(link.publicReference(), link, this::authoritativeLink);
             }
         }
         return index;
@@ -928,9 +987,9 @@ public class ProviderConnectionsService {
         for (ProviderConnectionsLinkResponse link : links("DOCTOR", null, null)) {
             if (link.publicReference() != null) {
                 if (StringUtils.hasText(link.publicPracticeReference())) {
-                    index.put(link.publicReference() + "|" + link.publicPracticeReference(), link);
+                    index.merge(link.publicReference() + "|" + link.publicPracticeReference(), link, this::authoritativeLink);
                 }
-                index.putIfAbsent(link.publicReference(), link);
+                index.merge(link.publicReference(), link, this::authoritativeLink);
             }
         }
         return index;
@@ -940,23 +999,44 @@ public class ProviderConnectionsService {
         Map<String, ProviderConnectionsLinkResponse> index = new HashMap<>();
         for (ProviderConnectionsLinkResponse link : links(null, null, null)) {
             if (StringUtils.hasText(link.tenantReference()) && "DOCTOR".equals(link.publicProfileType().name()) && StringUtils.hasText(link.tenantDoctorUserReference())) {
-                index.put(link.tenantReference() + "|" + link.tenantDoctorUserReference(), link);
+                index.merge(link.tenantReference() + "|" + link.tenantDoctorUserReference(), link, this::authoritativeLink);
             } else if (StringUtils.hasText(link.tenantReference())) {
-                index.put(link.tenantReference(), link);
+                index.merge(link.tenantReference(), link, this::authoritativeLink);
             }
         }
         return index;
+    }
+
+    private ProviderConnectionsLinkResponse authoritativeLink(ProviderConnectionsLinkResponse left, ProviderConnectionsLinkResponse right) {
+        if (left.linkStatus() == LinkLifecycleStatus.LINKED && right.linkStatus() != LinkLifecycleStatus.LINKED) {
+            return left;
+        }
+        if (right.linkStatus() == LinkLifecycleStatus.LINKED && left.linkStatus() != LinkLifecycleStatus.LINKED) {
+            return right;
+        }
+        OffsetDateTime leftUpdated = left.updatedAt();
+        OffsetDateTime rightUpdated = right.updatedAt();
+        if (leftUpdated == null) {
+            return right;
+        }
+        return rightUpdated != null && rightUpdated.isAfter(leftUpdated) ? right : left;
     }
 
     private List<ProviderConnectionsComparisonRowResponse> comparisonRows(PublicClinicPlatformLinkEntity entity) {
         ProviderConnectionsPublicProfileResponse publicProfile = publicProfileByClinicReference(entity.getPublicClinicReference());
         PlatformTenantRecord tenant = tenantIdFromReference(entity.getTenantReference()) == null ? null : tenantManagementService.get(tenantIdFromReference(entity.getTenantReference()));
         ClinicProfileRecord clinic = tenant == null ? null : clinicProfileService.findByTenantId(tenant.id()).orElse(null);
+        HealthcareProviderFactsRow platform = healthcareFactsAdapter.listClinicRows().stream()
+                .filter(row -> Objects.equals(entity.getPlatformClinicReference(), row.platformClinicReference()))
+                .findFirst()
+                .orElse(null);
+        String platformArea = platform == null ? null : platform.area();
+        String platformPhone = platform == null ? null : platform.phone();
         return List.of(
                 comparison("displayName", "Display name", publicProfile == null ? null : publicProfile.displayName(), clinic == null ? null : clinic.displayName(), status(publicProfile == null ? null : publicProfile.displayName(), clinic == null ? null : clinic.displayName())),
                 comparison("city", "City", publicProfile == null ? null : publicProfile.city(), clinic == null ? null : clinic.city(), status(publicProfile == null ? null : publicProfile.city(), clinic == null ? null : clinic.city())),
-                comparison("area", "Area", publicProfile == null ? null : publicProfile.area(), clinic == null ? null : clinic.state(), status(publicProfile == null ? null : publicProfile.area(), clinic == null ? null : clinic.state())),
-                comparison("phone", "Phone", publicProfile == null ? null : publicProfile.publicPhone(), clinic == null ? null : clinic.phone(), status(publicProfile == null ? null : publicProfile.publicPhone(), clinic == null ? null : clinic.phone())),
+                comparison("area", "Area", publicProfile == null ? null : publicProfile.area(), platformArea, status(publicProfile == null ? null : publicProfile.area(), platformArea)),
+                comparison("phone", "Phone", publicProfile == null ? null : publicProfile.publicPhone(), platformPhone, phoneStatus(publicProfile == null ? null : publicProfile.publicPhone(), platformPhone)),
                 comparison("booking", "Booking capability", publicProfile == null ? null : publicProfile.bookingCapability() == null ? null : publicProfile.bookingCapability().name(), entity.getBookingCapability() == null ? null : entity.getBookingCapability().name(), status(publicProfile == null ? null : publicProfile.bookingCapability() == null ? null : publicProfile.bookingCapability().name(), entity.getBookingCapability() == null ? null : entity.getBookingCapability().name())),
                 comparison("sourceRevision", "Source revision", publicProfile == null ? null : String.valueOf(publicProfile.sourceRevision()), String.valueOf(entity.getSourceRevision()), status(publicProfile == null ? null : String.valueOf(publicProfile.sourceRevision()), String.valueOf(entity.getSourceRevision())))
         );
@@ -990,6 +1070,13 @@ public class ProviderConnectionsService {
             return "MISSING";
         }
         return "DIFFERS";
+    }
+
+    private String phoneStatus(String left, String right) {
+        if (!StringUtils.hasText(left) || !StringUtils.hasText(right)) {
+            return "MISSING";
+        }
+        return equalsPhone(left, right) ? "MATCH" : "DIFFERS";
     }
 
     private ProviderConnectionsAuditResponse toAuditResponse(AuditEventRecord record) {
@@ -1030,6 +1117,7 @@ public class ProviderConnectionsService {
         }
         List<PublicProviderSummary> providers = discoverCatalogPort.searchPublishedProviders(null, null, PublicProfileType.CLINIC);
         return providers.stream()
+                .map(this::canonicalizePublishedIdentity)
                 .filter(item -> clinicReference.equals(item.publicReference() == null ? null : item.publicReference().publicProviderId()))
                 .findFirst()
                 .map(item -> toPublicProfileResponse(item, null))
@@ -1044,6 +1132,7 @@ public class ProviderConnectionsService {
                 ? discoverCatalogPort.searchPublishedProviders(null, null, PublicProfileType.DOCTOR)
                 : discoverCatalogPort.searchPublishedPractices(null, null, PublicProfileType.DOCTOR);
         return providers.stream()
+                .map(this::canonicalizePublishedIdentity)
                 .filter(item -> doctorReference.equals(item.publicReference() == null ? null : item.publicReference().publicProviderId())
                         && (practiceReference == null || practiceReference.equals(item.publicReference() == null ? null : item.publicReference().publicPracticeId())))
                 .findFirst()
@@ -1051,11 +1140,7 @@ public class ProviderConnectionsService {
                 .orElse(null);
     }
 
-    private PublicClinicPlatformLinkUpsertRequest toClinicRequest(ProviderConnectionsLinkProposalRequest request, LinkLifecycleStatus linkStatus, PlatformConnectionStatus connectionStatus) {
-        return toClinicRequest(request, linkStatus, connectionStatus, request.reason());
-    }
-
-    private PublicClinicPlatformLinkUpsertRequest toClinicRequest(ProviderConnectionsLinkProposalRequest request, LinkLifecycleStatus linkStatus, PlatformConnectionStatus connectionStatus, String reason) {
+    private PublicClinicPlatformLinkUpsertRequest toClinicRequest(ProviderConnectionsLinkProposalRequest request, LinkLifecycleStatus linkStatus, PlatformConnectionStatus connectionStatus, String reason, String actorReference) {
         ProposalResolution resolution = resolveClinicProposal(request);
         return new PublicClinicPlatformLinkUpsertRequest(
                 new ProviderSourceReference(
@@ -1074,12 +1159,22 @@ public class ProviderConnectionsService {
                 AvailabilityState.UNKNOWN,
                 resolution.evidenceJson(),
                 "PLATFORM_ADMIN",
-                "platform-admin",
-                reason
+                actorReference,
+                reason,
+                parseBookingCapability(resolution.platformEntity().bookingCapability()),
+                resolution.platformEntity().capabilityReason()
         );
     }
 
-    private PublicClinicPlatformLinkUpsertRequest toClinicRequest(PublicClinicPlatformLinkEntity entity, LinkLifecycleStatus linkStatus, PlatformConnectionStatus connectionStatus, String reason) {
+    private PublicClinicPlatformLinkUpsertRequest toClinicRequest(PublicClinicPlatformLinkEntity entity, LinkLifecycleStatus linkStatus, PlatformConnectionStatus connectionStatus, String reason, String actorReference) {
+        ProviderConnectionsPlatformEntityResponse platform = platformEntities("CLINIC", null).stream()
+                .filter(item -> Objects.equals(item.tenantReference(), entity.getTenantReference())
+                        && Objects.equals(item.platformClinicReference(), entity.getPlatformClinicReference()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("Selected platform clinic could not be found."));
+        if (!platform.active()) {
+            throw new IllegalArgumentException("Selected platform clinic is not active.");
+        }
         return new PublicClinicPlatformLinkUpsertRequest(
                 new ProviderSourceReference(entity.getSourceSystem(), entity.getSourceEntityReference(), entity.getSourceRevision(), entity.getSourceUpdatedAt()),
                 entity.getPublicClinicReference(),
@@ -1092,16 +1187,14 @@ public class ProviderConnectionsService {
                 entity.getAvailabilityState(),
                 entity.getEvidenceSnapshotJson(),
                 "PLATFORM_ADMIN",
-                "platform-admin",
-                reason
+                actorReference,
+                reason,
+                parseBookingCapability(platform.bookingCapability()),
+                platform.capabilityReason()
         );
     }
 
-    private PublicDoctorPracticePlatformLinkUpsertRequest toDoctorRequest(ProviderConnectionsLinkProposalRequest request, LinkLifecycleStatus linkStatus, PlatformConnectionStatus connectionStatus) {
-        return toDoctorRequest(request, linkStatus, connectionStatus, request.reason());
-    }
-
-    private PublicDoctorPracticePlatformLinkUpsertRequest toDoctorRequest(ProviderConnectionsLinkProposalRequest request, LinkLifecycleStatus linkStatus, PlatformConnectionStatus connectionStatus, String reason) {
+    private PublicDoctorPracticePlatformLinkUpsertRequest toDoctorRequest(ProviderConnectionsLinkProposalRequest request, LinkLifecycleStatus linkStatus, PlatformConnectionStatus connectionStatus, String reason, String actorReference) {
         ProposalResolution resolution = resolveDoctorProposal(request);
         return new PublicDoctorPracticePlatformLinkUpsertRequest(
                 new ProviderSourceReference(
@@ -1123,12 +1216,20 @@ public class ProviderConnectionsService {
                 AvailabilityState.UNKNOWN,
                 resolution.evidenceJson(),
                 "PLATFORM_ADMIN",
-                "platform-admin",
-                reason
+                actorReference,
+                reason,
+                parseBookingCapability(resolution.platformEntity().bookingCapability()),
+                resolution.platformEntity().capabilityReason()
         );
     }
 
-    private PublicDoctorPracticePlatformLinkUpsertRequest toDoctorRequest(PublicDoctorPracticePlatformLinkEntity entity, LinkLifecycleStatus linkStatus, PlatformConnectionStatus connectionStatus, String reason) {
+    private PublicDoctorPracticePlatformLinkUpsertRequest toDoctorRequest(PublicDoctorPracticePlatformLinkEntity entity, LinkLifecycleStatus linkStatus, PlatformConnectionStatus connectionStatus, String reason, String actorReference) {
+        ProviderConnectionsPlatformEntityResponse platform = platformEntities("DOCTOR", null).stream()
+                .filter(item -> Objects.equals(item.tenantReference(), entity.getTenantReference())
+                        && Objects.equals(item.platformClinicReference(), entity.getPlatformClinicReference())
+                        && Objects.equals(item.tenantDoctorUserReference(), entity.getTenantDoctorUserReference()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("Selected tenant doctor could not be found."));
         return new PublicDoctorPracticePlatformLinkUpsertRequest(
                 new ProviderSourceReference(entity.getSourceSystem(), entity.getSourceEntityReference(), entity.getSourceRevision(), entity.getSourceUpdatedAt()),
                 new PublicProviderReference(entity.getPublicDoctorReference(), null),
@@ -1144,9 +1245,22 @@ public class ProviderConnectionsService {
                 entity.getAvailabilityState(),
                 entity.getEvidenceSnapshotJson(),
                 "PLATFORM_ADMIN",
-                "platform-admin",
-                reason
+                actorReference,
+                reason,
+                parseBookingCapability(platform.bookingCapability()),
+                platform.capabilityReason()
         );
+    }
+
+    private BookingCapability parseBookingCapability(String value) {
+        if (!StringUtils.hasText(value)) {
+            return BookingCapability.CALL_TO_BOOK;
+        }
+        try {
+            return BookingCapability.valueOf(value.trim().toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException ex) {
+            return BookingCapability.CALL_TO_BOOK;
+        }
     }
 
     private String publicPath(PublicProfileType type, String slug) {
@@ -1170,6 +1284,53 @@ public class ProviderConnectionsService {
             tags.add(link.matchMethod().name());
         }
         return tags;
+    }
+
+    private List<String> publicProfileAllowedActions(PublicProviderSummary summary, ProviderConnectionsLinkResponse link) {
+        List<String> actions = new ArrayList<>();
+        actions.add("VIEW_PUBLIC_PROFILE");
+        if (link == null) {
+            actions.add("REVIEW_MATCH");
+            actions.add("PROPOSE_LINK");
+        } else {
+            actions.addAll(link.allowedActions());
+        }
+        return actions.stream().distinct().toList();
+    }
+
+    private List<String> linkAllowedActions(LinkLifecycleStatus linkStatus, PlatformConnectionStatus connectionStatus) {
+        List<String> actions = new ArrayList<>(List.of(
+                "VIEW_PUBLIC_PROFILE",
+                "VIEW_PLATFORM_ENTITY",
+                "VIEW_LINK_HISTORY",
+                "COPY_CONNECTION_REFERENCE",
+                "RECONCILE_LINK"
+        ));
+        switch (linkStatus) {
+            case PROPOSED, PENDING_VERIFICATION -> {
+                actions.add("VERIFY_LINK");
+                actions.add("REJECT_LINK");
+            }
+            case APPROVED -> {
+                actions.add("ACTIVATE_LINK");
+                actions.add("REJECT_LINK");
+            }
+            case LINKED -> {
+                actions.add("SUSPEND_LINK");
+                actions.add("DISCONNECT_LINK");
+            }
+            case SUSPENDED -> {
+                actions.add("RESUME_LINK");
+                actions.add("DISCONNECT_LINK");
+            }
+            case UNLINKED, REJECTED -> actions.add("PROPOSE_LINK");
+            case DISPUTED -> {
+                actions.add("RESUME_LINK");
+                actions.add("DISCONNECT_LINK");
+            }
+            default -> actions.add("PROPOSE_LINK");
+        }
+        return actions;
     }
 
     private String maskBookingReference(String bookingReference) {
@@ -1373,10 +1534,15 @@ public class ProviderConnectionsService {
             throw new IllegalArgumentException("Public clinic source revision changed; reload and compare again.");
         }
         List<ProviderMatchEvidence> evidence = new ArrayList<>();
+        var publicDetail = publicProfileService.findBySlug(publicProfile.slug()).orElse(null);
         evidence.add(evidenceItem("DISPLAY_NAME_EXACT", equalsText(publicProfile.displayName(), platform.displayName()), publicProfile.displayName(), platform.displayName(), publicProfile.sourceRevision(), "Clinic display names compared."));
         evidence.add(evidenceItem("CITY_EXACT", equalsText(publicProfile.city(), platform.city()), publicProfile.city(), platform.city(), publicProfile.sourceRevision(), "Clinic city compared."));
-        evidence.add(evidenceItem("PHONE_EXACT", equalsText(publicProfile.publicPhone(), platform.phone()), publicProfile.publicPhone(), platform.phone(), publicProfile.sourceRevision(), "Clinic phone compared."));
-        evidence.add(evidenceItem("REGISTRATION_EXACT", equalsText(publicProfile.publicReference(), platform.slug()), publicProfile.publicReference(), platform.slug(), publicProfile.sourceRevision(), "Clinic registration/public reference compared."));
+        evidence.add(evidenceItem("ADDRESS_EXACT", equalsText(publicProfile.area(), platform.area()), publicProfile.area(), platform.area(), publicProfile.sourceRevision(), "Clinic public area and operational address compared."));
+        evidence.add(evidenceItem("VERIFIED_PHONE_EXACT", equalsPhone(publicProfile.publicPhone(), platform.phone()), publicProfile.publicPhone(), platform.phone(), publicProfile.sourceRevision(), "Clinic phone numbers compared after normalization."));
+        evidence.add(evidenceItem("VERIFIED_EMAIL_EXACT", equalsText(publicDetail == null ? null : publicDetail.contactEmail(), platform.email()), publicDetail == null ? null : publicDetail.contactEmail(), platform.email(), publicProfile.sourceRevision(), "Clinic email addresses compared."));
+        evidence.add(evidenceItem("CANONICAL_SLUG_EXACT", equalsText(publicProfile.slug(), platform.slug()), publicProfile.slug(), platform.slug(), publicProfile.sourceRevision(), "Canonical routing slugs compared as supporting evidence."));
+        String publicRegistration = immutableRegistrationNumber(publicProfile.publicReference());
+        evidence.add(evidenceItem("REGISTRATION_EXACT", equalsText(publicRegistration, platform.registrationNumber()), publicRegistration, platform.registrationNumber(), publicProfile.sourceRevision(), "Registration references compared when both sides provide one."));
         return new ProposalResolution(deriveClinicMatchMethod(evidence), deriveConfidence(evidence), evidenceJson(evidence), evidence, publicProfile, platform);
     }
 
@@ -1416,6 +1582,20 @@ public class ProviderConnectionsService {
             return false;
         }
         return left.trim().equalsIgnoreCase(right.trim());
+    }
+
+    private boolean equalsPhone(String left, String right) {
+        String normalizedLeft = normalizePhone(left);
+        String normalizedRight = normalizePhone(right);
+        return StringUtils.hasText(normalizedLeft) && normalizedLeft.equals(normalizedRight);
+    }
+
+    private String normalizePhone(String value) {
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
+        String digits = value.replaceAll("[^0-9]", "");
+        return digits.length() > 10 ? digits.substring(digits.length() - 10) : digits;
     }
 
     private MatchConfidence normalizeMatchConfidenceValue(String value) {
@@ -1519,12 +1699,53 @@ public class ProviderConnectionsService {
                 reason,
                 "SUGGESTED",
                 profile.sourceUpdatedAt(),
-                profile.sourceRevision()
+                profile.sourceRevision(),
+                List.of("REVIEW_MATCH", "PROPOSE_LINK")
         );
     }
 
     private String value(String value) {
         return value == null ? "" : value;
+    }
+
+    private PublicProviderSummary canonicalizePublishedIdentity(PublicProviderSummary summary) {
+        if (summary == null || !StringUtils.hasText(summary.canonicalSlug())) {
+            return summary;
+        }
+        return moderationService.findCurrentPublishedPublicationBySlug(summary.canonicalSlug())
+                .map(publication -> new PublicProviderSummary(
+                        summary.publicProfileType(),
+                        new PublicProviderReference(
+                                publication.publicProfileReference(),
+                                summary.publicReference() == null ? null : summary.publicReference().publicPracticeId()),
+                        summary.canonicalSlug(),
+                        summary.displayName(),
+                        summary.area(),
+                        summary.city(),
+                        summary.state(),
+                        summary.country(),
+                        summary.publicPhone(),
+                        summary.publicFee(),
+                        summary.bookingCapability(),
+                        summary.availabilityState(),
+                        summary.publicationStatus(),
+                        SourceSystem.DISCOVER_PROVIDER,
+                        publication.publishedVersion(),
+                        publication.publishedAt(),
+                        summary.projectedAt()))
+                .orElse(summary);
+    }
+
+    private String immutableRegistrationNumber(String publicProfileReference) {
+        return moderationService.currentSubmission(publicProfileReference)
+                .map(submission -> submission.contentSnapshot().get("about"))
+                .filter(Map.class::isInstance)
+                .map(Map.class::cast)
+                .map(about -> about.get("registrationNumber"))
+                .filter(Objects::nonNull)
+                .map(Object::toString)
+                .filter(StringUtils::hasText)
+                .orElse(null);
     }
 
     private OffsetDateTime now() {

@@ -37,6 +37,9 @@ class ProviderConnectionsControllerSecurityTest {
         Method approve = ProviderConnectionsController.class.getMethod("approve", java.util.UUID.class, ProviderConnectionsLinkUpdateRequest.class);
         Method activate = ProviderConnectionsController.class.getMethod("activate", java.util.UUID.class, ProviderConnectionsLinkUpdateRequest.class);
         Method unlink = ProviderConnectionsController.class.getMethod("unlink", java.util.UUID.class, ProviderConnectionsLinkUpdateRequest.class);
+        Method reject = ProviderConnectionsController.class.getMethod("reject", java.util.UUID.class, ProviderConnectionsLinkUpdateRequest.class);
+        Method suspend = ProviderConnectionsController.class.getMethod("suspend", java.util.UUID.class, ProviderConnectionsLinkUpdateRequest.class);
+        Method resume = ProviderConnectionsController.class.getMethod("resume", java.util.UUID.class, ProviderConnectionsLinkUpdateRequest.class);
         Method relink = ProviderConnectionsController.class.getMethod("relink", java.util.UUID.class, ProviderConnectionsLinkUpdateRequest.class);
         Method reconcile = ProviderConnectionsController.class.getMethod("reconcile", ProviderConnectionsReconcileRequest.class);
 
@@ -60,6 +63,9 @@ class ProviderConnectionsControllerSecurityTest {
         assertThat(approve.getAnnotation(PreAuthorize.class).value()).isEqualTo("@permissionChecker.hasPermission('platform.provider_connection.approve')");
         assertThat(activate.getAnnotation(PreAuthorize.class).value()).isEqualTo("@permissionChecker.hasPermission('platform.provider_connection.approve')");
         assertThat(unlink.getAnnotation(PreAuthorize.class).value()).isEqualTo("@permissionChecker.hasPermission('platform.provider_connection.unlink')");
+        assertThat(reject.getAnnotation(PreAuthorize.class).value()).isEqualTo("@permissionChecker.hasPermission('platform.provider_connection.reject')");
+        assertThat(suspend.getAnnotation(PreAuthorize.class).value()).isEqualTo("@permissionChecker.hasPermission('platform.provider_connection.unlink')");
+        assertThat(resume.getAnnotation(PreAuthorize.class).value()).isEqualTo("@permissionChecker.hasPermission('platform.provider_connection.approve')");
         assertThat(relink.getAnnotation(PreAuthorize.class).value()).isEqualTo("@permissionChecker.hasPermission('platform.provider_connection.propose')");
         assertThat(reconcile.getAnnotation(PreAuthorize.class).value()).isEqualTo("@permissionChecker.hasPermission('platform.provider_connection.reconcile')");
     }

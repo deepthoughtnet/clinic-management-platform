@@ -369,6 +369,57 @@ public class ProviderPublicProfileServiceTest {
         verify(profiles, never()).save(any());
     }
 
+    @Test
+    void currentModeratedProjectionServesOnlyItsImmutablePublishedMedia() {
+        UUID logo = UUID.fromString("3d7b60eb-e869-3184-aaea-4a9719fb2cb2");
+        UUID cover = UUID.fromString("527da827-4f73-31db-8298-b31a2688772f");
+        String snapshotJson = """
+                {
+                  "sourceSystem":"PROVIDER_PUBLIC_PROFILE_DRAFT",
+                  "gallery":[{"documentId":"d746bbda-491a-32e3-b01b-9af80aec6098","caption":"Reception"}],
+                  "publishedMedia":[
+                    {"mediaReference":"3d7b60eb-e869-3184-aaea-4a9719fb2cb2","mediaType":"LOGO","storageKey":"immutable/logo","contentType":"image/png","originalFilename":"logo.png","displayOrder":0},
+                    {"mediaReference":"527da827-4f73-31db-8298-b31a2688772f","mediaType":"COVER","storageKey":"immutable/cover","contentType":"image/png","originalFilename":"cover.png","displayOrder":1},
+                    {"mediaReference":"d746bbda-491a-32e3-b01b-9af80aec6098","mediaType":"GALLERY","storageKey":"immutable/gallery","contentType":"image/png","originalFilename":"reception.png","displayOrder":2}
+                  ]
+                }
+                """;
+        DiscoverPublicProviderProfileVersionEntity currentVersion = DiscoverPublicProviderProfileVersionEntity.create(
+                LEGACY_PROVIDER_ID, 21, 20, "APPROVED", "PUBLISHED", "PROVIDER_PUBLIC_PROFILE_DRAFT",
+                "Published Version 20", "snapshot-hash", snapshotJson, "green-valley-family-clinic", PUBLISHED_AT
+        );
+        DiscoverPublicProviderProfileEntity profile = legacyProfile(currentVersion.getId(), 21, "Version 20");
+        DiscoverPublicProviderProfileSlugEntity historicalAlias = DiscoverPublicProviderProfileSlugEntity.create(
+                LEGACY_PROVIDER_ID, VERSION_ID, "green-valley-family-clinic", 1, true, PUBLISHED_AT.minusDays(2)
+        );
+
+        when(slugs.findFirstBySlug("green-valley-family-clinic")).thenReturn(Optional.of(historicalAlias));
+        when(profiles.findByProviderId(LEGACY_PROVIDER_ID)).thenReturn(Optional.of(profile));
+        when(versions.findById(currentVersion.getId())).thenReturn(Optional.of(currentVersion));
+        when(storageService.getObjectBytes("immutable/logo")).thenReturn(new byte[]{1, 2});
+        when(storageService.getObjectBytes("immutable/cover")).thenReturn(new byte[]{3, 4, 5});
+        when(storageService.getObjectBytes("immutable/gallery")).thenReturn(new byte[]{6});
+
+        assertThat(service.loadPublishedProviderMedia("green-valley-family-clinic", ProviderType.CLINIC,
+                ProviderPublicProfileService.ProviderPublicMediaAsset.LOGO, null).orElseThrow())
+                .satisfies(media -> {
+                    assertThat(media.contentType()).isEqualTo("image/png");
+                    assertThat(media.originalFilename()).isEqualTo("logo.png");
+                    assertThat(media.bytes()).containsExactly(1, 2);
+                });
+        assertThat(service.loadPublishedProviderMedia("green-valley-family-clinic", ProviderType.CLINIC,
+                ProviderPublicProfileService.ProviderPublicMediaAsset.COVER, null).orElseThrow().bytes())
+                .containsExactly(3, 4, 5);
+        assertThat(service.loadPublishedProviderMedia("green-valley-family-clinic", ProviderType.CLINIC,
+                ProviderPublicProfileService.ProviderPublicMediaAsset.GALLERY, 0).orElseThrow().bytes())
+                .containsExactly(6);
+        assertThat(service.loadPublishedProviderMedia("green-valley-family-clinic", ProviderType.CLINIC,
+                ProviderPublicProfileService.ProviderPublicMediaAsset.GALLERY, 1)).isEmpty();
+        assertThat(profile.getLogoDocumentId()).isEqualTo(logo);
+        assertThat(profile.getCoverImageDocumentId()).isEqualTo(cover);
+        verify(documents, never()).findById(any());
+    }
+
     private PublicProviderProfileModels.PublicProviderProfileSnapshot lifecycleSnapshot() {
         return PublicProviderProfileModels.healthcareClinicSnapshot(
                 LIFECYCLE_PROVIDER_ID,

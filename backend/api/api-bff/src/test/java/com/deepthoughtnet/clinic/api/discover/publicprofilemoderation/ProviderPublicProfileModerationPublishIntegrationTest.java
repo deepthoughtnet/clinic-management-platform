@@ -89,6 +89,8 @@ class ProviderPublicProfileModerationPublishIntegrationTest {
         long projectionVersionCountBefore = versions.findByProviderIdOrderByVersionNumberDesc(profileBefore.getProviderId()).size();
 
         var publication = moderationService.publish(SUBMISSION_REFERENCE, REVIEWER_ID, "Publish approved version");
+        long projectionVersionCountAfterFirstPublish = versions
+                .findByProviderIdOrderByVersionNumberDesc(profileBefore.getProviderId()).size();
         var repeatedPublication = moderationService.publish(SUBMISSION_REFERENCE, REVIEWER_ID, "Publish approved version again");
 
         assertThat(publication.publicationStatus()).isEqualTo("PUBLISHED");
@@ -126,9 +128,12 @@ class ProviderPublicProfileModerationPublishIntegrationTest {
         var approvedProjection = versions.findById(profile.getLatestPublishedVersionId()).orElseThrow();
         assertThat(approvedProjection.getSourceSubmissionVersionNumber()).isEqualTo(20);
         assertThat(profile.getLatestPublishedVersionId()).isEqualTo(approvedProjection.getId());
+        assertThat(approvedProjection.getSnapshotJson()).contains("publishedMedia", "weeklyTimings", "timingTimezone");
         assertThat(publications.findByPublicProfileReferenceOrderByPublishedAtDesc(PUBLIC_PROFILE_REFERENCE)).hasSize((int) publicationCountBefore);
         assertThat(profiles.count()).isEqualTo(profileCountBefore);
-        assertThat(versions.findByProviderIdOrderByVersionNumberDesc(profile.getProviderId())).hasSize((int) projectionVersionCountBefore);
+        assertThat(projectionVersionCountAfterFirstPublish).isBetween(projectionVersionCountBefore, projectionVersionCountBefore + 1);
+        assertThat(versions.findByProviderIdOrderByVersionNumberDesc(profile.getProviderId()))
+                .hasSize((int) projectionVersionCountAfterFirstPublish);
     }
 
     private PublicProfileDraftWorkspaceRecord verifiedDraft() {

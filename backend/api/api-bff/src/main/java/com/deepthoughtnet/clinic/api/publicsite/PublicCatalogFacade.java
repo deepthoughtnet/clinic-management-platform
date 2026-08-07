@@ -19,9 +19,11 @@ import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileMod
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderLocationSnapshot;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderProfileDetailRecord;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderProfileSummaryRecord;
+import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderTimingSnapshot;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicSpecialitySummaryRecord;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderSearchCriteria;
 import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService;
+import com.deepthoughtnet.clinic.discover.publicprofilemoderation.ProviderPublicProfileModerationService;
 import com.deepthoughtnet.clinic.platform.providerintegration.service.ProviderLinkingService;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -43,11 +45,17 @@ import org.springframework.web.server.ResponseStatusException;
 public class PublicCatalogFacade {
     private final ProviderPublicProfileService publicProfileService;
     private final ProviderLinkingService providerLinkingService;
+    private final ProviderPublicProfileModerationService moderationService;
 
     @Autowired
-    public PublicCatalogFacade(ProviderPublicProfileService publicProfileService, ProviderLinkingService providerLinkingService) {
+    public PublicCatalogFacade(
+            ProviderPublicProfileService publicProfileService,
+            ProviderLinkingService providerLinkingService,
+            ProviderPublicProfileModerationService moderationService
+    ) {
         this.publicProfileService = Objects.requireNonNull(publicProfileService, "publicProfileService");
         this.providerLinkingService = Objects.requireNonNull(providerLinkingService, "providerLinkingService");
+        this.moderationService = Objects.requireNonNull(moderationService, "moderationService");
     }
 
     public PublicPageResponse<PublicClinicSummaryResponse> listClinics(
@@ -274,7 +282,7 @@ public class PublicCatalogFacade {
                 detail.publicPath(),
                 detail.displayName(),
                 publicDoctorPhotoPath(doctorSlug),
-                detail.bookingMode(),
+                resolvePublicBookingMode(publishedLifecycleReference(detail.canonicalSlug(), detail.providerId().toString()), null, detail.bookingMode(), detail.contactPhone()),
                 detail.qualification(),
                 detail.medicalCouncil(),
                 detail.yearsOfExperience(),
@@ -357,7 +365,7 @@ public class PublicCatalogFacade {
                 detail.displayName(),
                 detail.logoUrl() == null || detail.logoUrl().isBlank() ? null : publicClinicLogoPath(detail.canonicalSlug()),
                 detail.coverUrl() == null || detail.coverUrl().isBlank() ? null : publicClinicCoverPath(detail.canonicalSlug()),
-                detail.bookingMode(),
+                resolvePublicBookingMode(publishedLifecycleReference(detail.canonicalSlug(), detail.providerId().toString()), null, detail.bookingMode(), detail.contactPhone()),
                 firstNonBlank(detail.locations().stream().findFirst().map(PublicProviderLocationSnapshot::address).orElse(null), detail.summary()),
                 detail.area(),
                 detail.city(),
@@ -374,11 +382,7 @@ public class PublicCatalogFacade {
                 detail.contactPhone(),
                 detail.contactEmail(),
                 detail.website(),
-                detail.locations().stream()
-                        .map(PublicProviderLocationSnapshot::workingHours)
-                        .filter(value -> value != null && !value.isBlank())
-                        .distinct()
-                        .toList(),
+                publicTimings(detail),
                 false,
                 detail.reviewsComingSoon(),
                 detail.subtitle()
@@ -436,6 +440,20 @@ public class PublicCatalogFacade {
         );
     }
 
+    private List<String> publicTimings(PublicProviderProfileDetailRecord detail) {
+        if (detail.weeklyTimings() != null && !detail.weeklyTimings().isEmpty()) {
+            return detail.weeklyTimings().stream()
+                    .sorted(java.util.Comparator.comparingInt(PublicProviderTimingSnapshot::displayOrder))
+                    .map(interval -> interval.day() + " " + interval.open() + "-" + interval.close())
+                    .toList();
+        }
+        return detail.locations().stream()
+                .map(PublicProviderLocationSnapshot::workingHours)
+                .filter(value -> value != null && !value.isBlank())
+                .distinct()
+                .toList();
+    }
+
     private PublicDoctorSummaryResponse toDoctorSummary(PublicProviderProfileSummaryRecord record) {
         PublicProviderProfileDetailRecord detail = publicProfileService.findBySlug(record.canonicalSlug()).orElse(null);
         PublicProviderLocationSnapshot location = detail == null || detail.locations().isEmpty() ? null : detail.locations().get(0);
@@ -452,7 +470,7 @@ public class PublicCatalogFacade {
                 detail == null ? List.of() : detail.languages(),
                 location == null ? record.area() : location.label(),
                 location == null ? record.city() : location.city(),
-                record.bookingMode(),
+                resolvePublicBookingMode(publishedLifecycleReference(record.canonicalSlug(), record.providerId().toString()), null, record.bookingMode(), record.contactPhone()),
                 record.subtitle(),
                 record.summary(),
                 firstNonBlank(location == null ? null : location.label(), record.subtitle(), record.primarySpeciality(), record.displayName()),
@@ -475,7 +493,7 @@ public class PublicCatalogFacade {
                 record.area(),
                 record.area(),
                 record.city(),
-                record.bookingMode(),
+                resolvePublicBookingMode(publishedLifecycleReference(record.canonicalSlug(), record.providerId().toString()), null, record.bookingMode(), record.contactPhone()),
                 record.doctorCount(),
                 record.serviceCount(),
                 record.departmentCount(),
@@ -496,6 +514,29 @@ public class PublicCatalogFacade {
         return providerLinkingService.resolveBookingTarget(new com.deepthoughtnet.clinic.platform.contracts.providerintegration.PublicProviderReference(publicProviderId, publicPracticeId))
                 .map(resolution -> resolution.bookingTargetReference() == null ? null : resolution.bookingTargetReference().opaqueBookingReference())
                 .orElse(null);
+    }
+
+    private String resolvePublicBookingMode(String publicProviderId, String publicPracticeId, String projectedMode, String publicPhone) {
+        if (StringUtils.hasText(publicProviderId)) {
+            Optional<com.deepthoughtnet.clinic.platform.contracts.providerintegration.BookingTargetResolution> active =
+                    providerLinkingService.resolveBookingTarget(new com.deepthoughtnet.clinic.platform.contracts.providerintegration.PublicProviderReference(publicProviderId, publicPracticeId));
+            if (active.isPresent()) {
+                return active.get().bookingCapability().name();
+            }
+        }
+        if (StringUtils.hasText(publicPhone)) {
+            return com.deepthoughtnet.clinic.platform.contracts.providerintegration.BookingCapability.CALL_TO_BOOK.name();
+        }
+        return StringUtils.hasText(projectedMode) ? projectedMode : com.deepthoughtnet.clinic.platform.contracts.providerintegration.BookingCapability.NOT_AVAILABLE.name();
+    }
+
+    private String publishedLifecycleReference(String canonicalSlug, String fallbackReference) {
+        if (!StringUtils.hasText(canonicalSlug)) {
+            return fallbackReference;
+        }
+        return moderationService.findCurrentPublishedPublicationBySlug(canonicalSlug)
+                .map(publication -> publication.publicProfileReference())
+                .orElse(fallbackReference);
     }
 
     private PublicHospitalSummaryResponse toHospitalSummary(PublicProviderProfileSummaryRecord record) {

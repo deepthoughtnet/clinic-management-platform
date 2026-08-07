@@ -101,6 +101,39 @@ public abstract class AbstractProviderLinkEntity {
     @Column(name = "projected_at")
     private OffsetDateTime projectedAt;
 
+    @Column(name = "proposed_by", length = 160)
+    private String proposedBy;
+
+    @Column(name = "proposed_at")
+    private OffsetDateTime proposedAt;
+
+    @Column(name = "verified_by", length = 160)
+    private String verifiedBy;
+
+    @Column(name = "verified_at")
+    private OffsetDateTime verifiedAt;
+
+    @Column(name = "activated_by", length = 160)
+    private String activatedBy;
+
+    @Column(name = "activated_at")
+    private OffsetDateTime activatedAt;
+
+    @Column(name = "suspended_by", length = 160)
+    private String suspendedBy;
+
+    @Column(name = "suspended_at")
+    private OffsetDateTime suspendedAt;
+
+    @Column(name = "disconnected_by", length = 160)
+    private String disconnectedBy;
+
+    @Column(name = "disconnected_at")
+    private OffsetDateTime disconnectedAt;
+
+    @Column(name = "capability_reason", length = 512)
+    private String capabilityReason;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 
@@ -296,6 +329,29 @@ public abstract class AbstractProviderLinkEntity {
     public void setProjectedAt(OffsetDateTime projectedAt) {
         this.projectedAt = projectedAt;
     }
+
+    public String getProposedBy() { return proposedBy; }
+    public void setProposedBy(String proposedBy) { this.proposedBy = proposedBy; }
+    public OffsetDateTime getProposedAt() { return proposedAt; }
+    public void setProposedAt(OffsetDateTime proposedAt) { this.proposedAt = proposedAt; }
+    public String getVerifiedBy() { return verifiedBy; }
+    public void setVerifiedBy(String verifiedBy) { this.verifiedBy = verifiedBy; }
+    public OffsetDateTime getVerifiedAt() { return verifiedAt; }
+    public void setVerifiedAt(OffsetDateTime verifiedAt) { this.verifiedAt = verifiedAt; }
+    public String getActivatedBy() { return activatedBy; }
+    public void setActivatedBy(String activatedBy) { this.activatedBy = activatedBy; }
+    public OffsetDateTime getActivatedAt() { return activatedAt; }
+    public void setActivatedAt(OffsetDateTime activatedAt) { this.activatedAt = activatedAt; }
+    public String getSuspendedBy() { return suspendedBy; }
+    public void setSuspendedBy(String suspendedBy) { this.suspendedBy = suspendedBy; }
+    public OffsetDateTime getSuspendedAt() { return suspendedAt; }
+    public void setSuspendedAt(OffsetDateTime suspendedAt) { this.suspendedAt = suspendedAt; }
+    public String getDisconnectedBy() { return disconnectedBy; }
+    public void setDisconnectedBy(String disconnectedBy) { this.disconnectedBy = disconnectedBy; }
+    public OffsetDateTime getDisconnectedAt() { return disconnectedAt; }
+    public void setDisconnectedAt(OffsetDateTime disconnectedAt) { this.disconnectedAt = disconnectedAt; }
+    public String getCapabilityReason() { return capabilityReason; }
+    public void setCapabilityReason(String capabilityReason) { this.capabilityReason = capabilityReason; }
 
     public OffsetDateTime getCreatedAt() {
         return createdAt;

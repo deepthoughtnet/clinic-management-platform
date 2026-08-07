@@ -476,6 +476,20 @@ produced by `PROVIDER_PUBLIC_PROFILE_DRAFT`, lower-authority legacy Healthcare
 snapshots cannot repoint the aggregate or slug alias to an older projection. This
 source-precedence rule is idempotent and preserves all projection history.
 
+The published projection must be self-sufficient for anonymous media and schedule
+reads. Publication copies the immutable submission's selected logo, cover, ordered
+gallery references, immutable storage keys, content types, filenames/alt text,
+weekly timing intervals, and timezone into the versioned public snapshot. Public
+media routes resolve membership and storage only from the aggregate's current
+published projection; they never query the mutable draft or use provider/reviewer
+media endpoints. A media reference absent from that projection is not public.
+
+Existing canonical anonymous routes (`/api/public/clinics/{slug}/logo`, `/cover`,
+and `/gallery/{index}`) are the public media contract. Reconciliation may append
+one corrected projection-history row when an older Version 20 projection omitted
+published media or timing fields. Subsequent reconciliation and publication must
+reuse that semantically equivalent projection and create no additional history.
+
 Unpublishing updates the current publication and its source approved submission
 to `UNPUBLISHED` while retaining all audit rows. Current-publication selection is
 defined by `public_profile_reference`, `current_flag = true`, and optimistic
@@ -967,3 +981,88 @@ Required tests:
 - `backend/platform/platform-provider-integration/src/main/java/com/deepthoughtnet/clinic/platform/providerintegration/**`
 - `backend/platform/platform-provider-integration/src/test/java/com/deepthoughtnet/clinic/platform/providerintegration/**`
 - `backend/api/api-bff/src/main/resources/db/migration/V138__provider_platform_linking_foundation.sql`
+
+## E2C.4 Platform Entity Linking Completion
+
+Status: approved for implementation and live UAT on 2026-08-06.
+
+### Authoritative aggregate and cardinality
+
+`PublicClinicPlatformLink` and `PublicDoctorPracticePlatformLink` remain the
+Platform-owned connection aggregates. Discover publication and ownership are
+eligibility inputs only; neither is a connection state.
+
+For clinic links the current cardinality is exclusive one-to-one while a link
+is active: one public clinic may have at most one active operational clinic and
+one operational clinic may have at most one active public clinic. Historical
+rows for different pairs remain available after rejection, disconnection, or
+supersession. The database enforces both active uniqueness predicates.
+
+The canonical clinic target reference is the operational `clinic_profiles.id`.
+The tenant reference remains separate. Tenant codes, slugs, and raw UUID
+equality are not identity-match evidence.
+
+### Lifecycle and actions
+
+The canonical progression is:
+
+- `PROPOSED` + `CONNECTION_PENDING`
+- `APPROVED` + `NOT_CONNECTED`
+- `LINKED` + `CONNECTED`
+
+`APPROVED` is verified but is not active. `LINKED` is the only active business
+state. Repeated propose, verify, activate, and reconciliation requests with the
+same pair and revision return the existing aggregate without duplicate rows or
+duplicate transition audit events. A stale source or target revision fails with
+the platform business error `stale_match_revision`. Invalid or conflicting
+targets fail with a stable business error before persistence.
+
+Backend `allowedActions` is authoritative for Platform Admin rendering. The
+frontend must not independently infer proposal, verification, activation,
+rejection, suspension, or disconnection eligibility.
+
+### Immutable match evidence
+
+Proposal evidence is calculated server-side from the reviewed public projection
+and operational clinic facts. It records normalized display name, normalized
+phone, email, city, area/address, canonical slug, and registration/reference
+where each fact is actually available. Missing facts are marked missing and
+differing facts are retained; public UUID versus clinic slug is never treated as
+registration evidence. Verification and activation retain the proposal evidence
+and cannot change the selected target.
+
+### Capability derivation
+
+Connection and booking capability remain independent. The BFF evaluates the
+operational clinic through Healthcare-owned services and passes the resulting
+capability into the Platform aggregate:
+
+- inactive tenant or clinic: `NOT_AVAILABLE`
+- active clinic with a published phone but incomplete online-booking setup:
+  `CALL_TO_BOOK`
+- `ONLINE_BOOKING` only when appointments are enabled and an active, publicly
+  listed doctor has active availability
+
+Proposal and verification never expose a platform booking target. Activation
+stores the evaluated capability. Reconciliation reevaluates it idempotently.
+Public detail/listing may overlay only the current active aggregate capability;
+it must not expose link references, tenant references, reviewer identity, or
+match evidence.
+
+### Persistence and audit
+
+The forward migration following repository-wide version 145 adds active-link
+uniqueness and explicit proposal, verification, activation, suspension, and
+disconnection actor/timestamp metadata. Existing audit rows remain immutable.
+Each real state transition and capability change records previous state, new
+state, actor, note, evidence revision, result, and correlation reference where
+available. Safe retries do not create a second transition event.
+
+### Projection consistency
+
+Platform Admin Public Profiles, Suggestions, Links, counters, Clinic Admin
+Discover Presence, Provider Workspace, and anonymous public capability all
+resolve the same active Platform aggregate. Publication remains Discover-owned:
+disconnecting never unpublishes, and unpublishing never deletes link history.
+Startup reconciliation may refresh capability but must not fabricate links or
+replace reviewed evidence.

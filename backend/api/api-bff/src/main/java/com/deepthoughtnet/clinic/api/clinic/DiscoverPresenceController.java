@@ -4,8 +4,8 @@ import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
 import com.deepthoughtnet.clinic.clinic.service.DoctorProfileService;
 import com.deepthoughtnet.clinic.clinic.service.model.ClinicProfileRecord;
 import com.deepthoughtnet.clinic.clinic.service.model.DoctorProfileRecord;
-import com.deepthoughtnet.clinic.discover.publicprofile.PublicProfileLifecycleRecord;
-import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService;
+import com.deepthoughtnet.clinic.discover.publicprofilemoderation.ProviderPublicProfileModerationService;
+import com.deepthoughtnet.clinic.discover.publicprofilemoderation.PublicProfileModerationModels.PublicProfilePublicationRecord;
 import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipModels.ClaimIntentRecord;
 import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipModels.OwnershipRecord;
 import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipService;
@@ -41,7 +41,7 @@ public class DiscoverPresenceController {
     private final ClinicProfileService clinicProfileService;
     private final DoctorProfileService doctorProfileService;
     private final TenantUserManagementService tenantUserManagementService;
-    private final ProviderPublicProfileService publicProfileService;
+    private final ProviderPublicProfileModerationService moderationService;
     private final ProviderPublicProfileDraftService draftService;
     private final ProviderOwnershipService providerOwnershipService;
     private final ProviderLinkingService providerLinkingService;
@@ -50,7 +50,7 @@ public class DiscoverPresenceController {
             ClinicProfileService clinicProfileService,
             DoctorProfileService doctorProfileService,
             TenantUserManagementService tenantUserManagementService,
-            ProviderPublicProfileService publicProfileService,
+            ProviderPublicProfileModerationService moderationService,
             ProviderPublicProfileDraftService draftService,
             ProviderOwnershipService providerOwnershipService,
             ProviderLinkingService providerLinkingService
@@ -58,7 +58,7 @@ public class DiscoverPresenceController {
         this.clinicProfileService = clinicProfileService;
         this.doctorProfileService = doctorProfileService;
         this.tenantUserManagementService = tenantUserManagementService;
-        this.publicProfileService = publicProfileService;
+        this.moderationService = moderationService;
         this.draftService = draftService;
         this.providerOwnershipService = providerOwnershipService;
         this.providerLinkingService = providerLinkingService;
@@ -70,15 +70,16 @@ public class DiscoverPresenceController {
         UUID tenantId = RequestContextHolder.requireTenantId();
         ClinicProfileRecord clinic = clinicProfileService.findByTenantId(tenantId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Clinic profile not found"));
-        PublicProfileLifecycleRecord lifecycle = publicProfileService.findLifecycleByProviderId(clinic.id()).orElse(null);
         PublicProfileDraftWorkspaceRecord draft = draftService.findDraft(tenantId.toString()).orElse(null);
         OwnershipRecord ownership = providerOwnershipService.findLatestOwnership(tenantId.toString()).orElse(null);
         ClaimIntentRecord claimIntent = providerOwnershipService.findActiveClaimIntent(tenantId.toString()).orElse(null);
-        Optional<BookingTargetResolution> link = providerLinkingService.resolveBookingTarget(new PublicProviderReference(tenantId.toString(), null));
+        String publicProfileReference = ownership == null ? tenantId.toString() : ownership.publicProfileReference();
+        PublicProfilePublicationRecord publication = moderationService.findCurrentPublication(publicProfileReference).orElse(null);
+        Optional<BookingTargetResolution> link = providerLinkingService.resolveBookingTarget(new PublicProviderReference(publicProfileReference, null));
         BookingCapability bookingCapability = link.map(com.deepthoughtnet.clinic.platform.contracts.providerintegration.BookingTargetResolution::bookingCapability).orElse(BookingCapability.NOT_AVAILABLE);
         PlatformConnectionStatus connectionStatus = link.map(com.deepthoughtnet.clinic.platform.contracts.providerintegration.BookingTargetResolution::connectionStatus).orElse(PlatformConnectionStatus.NOT_CONNECTED);
         String maskedProviderMobile = ownership == null ? null : providerOwnershipService.maskedProviderMobile(ownership.providerAccountId()).orElse(null);
-        OffsetDateTime publicProfileSynchronizedAt = lifecycle == null ? null : lifecycle.projectedAt();
+        OffsetDateTime publicProfileSynchronizedAt = publication == null ? null : publication.publishedAt();
         return new ClinicDiscoverPresenceResponse(
                 tenantId,
                 clinic.displayName(),
@@ -88,16 +89,16 @@ public class DiscoverPresenceController {
                 ownership == null ? (claimIntent != null ? "CLAIM_PENDING" : "UNCLAIMED") : ownership.status().name(),
                 ownership == null ? null : ownership.id(),
                 maskedProviderMobile,
-                lifecycle == null ? "UNPUBLISHED" : lifecycle.publicationStatus(),
+                publication == null ? "UNPUBLISHED" : publication.publicationStatus(),
                 connectionStatus.name(),
                 bookingCapability.name(),
                 ownership == null ? null : ownership.updatedAt(),
-                lifecycle == null ? null : lifecycle.publishedAt(),
+                publication == null ? null : publication.publishedAt(),
                 publicProfileSynchronizedAt,
-                claimIntent == null ? null : claimIntent.connectionReference(),
-                providerOwnershipService.presenceAllowedActions(ownership, claimIntent),
+                link.map(target -> target.bookingTargetReference().opaqueBookingReference()).orElse(claimIntent == null ? null : claimIntent.connectionReference()),
+                presenceAllowedActions(ownership, claimIntent, link.isPresent()),
                 publicProfileSynchronizedAt,
-                lifecycle == null ? null : lifecycle.publicPath(),
+                publication == null ? null : publication.publicPath(),
                 draft == null ? null : draft.draftReference(),
                 draft == null ? null : draft.contentStatus(),
                 draft == null ? null : draft.readinessStatus(),
@@ -136,15 +137,16 @@ public class DiscoverPresenceController {
                 .findFirst()
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Doctor profile not found"));
         DoctorProfileRecord profile = doctorProfileService.findByDoctorUserId(tenantId, doctorUserId).orElse(null);
-        PublicProfileLifecycleRecord lifecycle = profile == null ? null : publicProfileService.findLifecycleByProviderId(doctorUserId).orElse(null);
         PublicProfileDraftWorkspaceRecord draft = draftService.findDraft(doctorUserId.toString()).orElse(null);
         OwnershipRecord ownership = providerOwnershipService.findLatestOwnership(doctorUserId.toString()).orElse(null);
         ClaimIntentRecord claimIntent = providerOwnershipService.findActiveClaimIntent(doctorUserId.toString()).orElse(null);
-        Optional<BookingTargetResolution> link = providerLinkingService.resolveBookingTarget(new PublicProviderReference(doctorUserId.toString(), profile == null ? null : profile.slug()));
+        String publicProfileReference = ownership == null ? doctorUserId.toString() : ownership.publicProfileReference();
+        PublicProfilePublicationRecord publication = moderationService.findCurrentPublication(publicProfileReference).orElse(null);
+        Optional<BookingTargetResolution> link = providerLinkingService.resolveBookingTarget(new PublicProviderReference(publicProfileReference, profile == null ? null : profile.slug()));
         BookingCapability bookingCapability = link.map(com.deepthoughtnet.clinic.platform.contracts.providerintegration.BookingTargetResolution::bookingCapability).orElse(BookingCapability.NOT_AVAILABLE);
         PlatformConnectionStatus connectionStatus = link.map(com.deepthoughtnet.clinic.platform.contracts.providerintegration.BookingTargetResolution::connectionStatus).orElse(PlatformConnectionStatus.NOT_CONNECTED);
         String maskedProviderMobile = ownership == null ? null : providerOwnershipService.maskedProviderMobile(ownership.providerAccountId()).orElse(null);
-        OffsetDateTime publicProfileSynchronizedAt = lifecycle == null ? null : lifecycle.projectedAt();
+        OffsetDateTime publicProfileSynchronizedAt = publication == null ? null : publication.publishedAt();
         return new ClinicDiscoverPresenceResponse(
                 tenantId,
                 doctor.displayName(),
@@ -154,16 +156,16 @@ public class DiscoverPresenceController {
                 ownership == null ? (claimIntent != null ? "CLAIM_PENDING" : "UNCLAIMED") : ownership.status().name(),
                 ownership == null ? null : ownership.id(),
                 maskedProviderMobile,
-                lifecycle == null ? "UNPUBLISHED" : lifecycle.publicationStatus(),
+                publication == null ? "UNPUBLISHED" : publication.publicationStatus(),
                 connectionStatus.name(),
                 bookingCapability.name(),
                 ownership == null ? null : ownership.updatedAt(),
-                lifecycle == null ? null : lifecycle.publishedAt(),
+                publication == null ? null : publication.publishedAt(),
                 publicProfileSynchronizedAt,
                 claimIntent == null ? null : claimIntent.connectionReference(),
                 providerOwnershipService.presenceAllowedActions(ownership, claimIntent),
                 publicProfileSynchronizedAt,
-                lifecycle == null ? null : lifecycle.publicPath(),
+                publication == null ? null : publication.publicPath(),
                 draft == null ? null : draft.draftReference(),
                 draft == null ? null : draft.contentStatus(),
                 draft == null ? null : draft.readinessStatus(),
@@ -229,6 +231,23 @@ public class DiscoverPresenceController {
             String city,
             String area
     ) {
+    }
+
+    private List<String> presenceAllowedActions(OwnershipRecord ownership, ClaimIntentRecord claimIntent, boolean connected) {
+        List<String> actions = new java.util.ArrayList<>(providerOwnershipService.presenceAllowedActions(ownership, claimIntent));
+        if (connected) {
+            actions.add("VIEW_CONNECTION");
+            actions.add("OPEN_PROVIDER_DASHBOARD");
+        }
+        return actions.stream().distinct().toList();
+    }
+
+    private UUID parseUuid(String value) {
+        try {
+            return UUID.fromString(value);
+        } catch (Exception ex) {
+            return null;
+        }
     }
 
 }

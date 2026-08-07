@@ -13,6 +13,8 @@ import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderServiceRepositor
 import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderSubmissionEntity;
 import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipConflictException;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderGalleryImageSnapshot;
+import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderPublishedMediaSnapshot;
+import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderTimingSnapshot;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProfileMediaContent;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderLocationSnapshot;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderProfileDetailRecord;
@@ -411,7 +413,7 @@ public class ProviderPublicProfileService {
         }
         return profiles.findByCanonicalSlug(cleanSlug)
                 .filter(profile -> "PUBLISHED".equalsIgnoreCase(profile.getPublicationStatus()))
-                .flatMap(profile -> versions.findFirstByProviderIdOrderByVersionNumberDesc(profile.getProviderId())
+                .flatMap(profile -> currentVersion(profile)
                         .map(version -> toDetail(profile, version, cleanSlug, readSnapshot(version.getSnapshotJson()))));
     }
 
@@ -422,7 +424,7 @@ public class ProviderPublicProfileService {
         }
         return profiles.findByProviderId(providerId)
                 .filter(profile -> "PUBLISHED".equalsIgnoreCase(profile.getPublicationStatus()))
-                .flatMap(profile -> versions.findFirstByProviderIdOrderByVersionNumberDesc(providerId)
+                .flatMap(profile -> currentVersion(profile)
                         .map(version -> toDetail(profile, version, profile.getCanonicalSlug(), readSnapshot(version.getSnapshotJson()))));
     }
 
@@ -597,8 +599,8 @@ public class ProviderPublicProfileService {
     public Optional<PublicProfileMediaContent> loadPublishedDoctorMedia(String slug, DoctorPublicMediaAsset asset, Integer galleryIndex) {
         return resolvePublishedProfile(slug)
                 .filter(profile -> profile.entity().getProviderType() == ProviderType.INDIVIDUAL_DOCTOR)
-                .flatMap(profile -> resolveDoctorDocumentId(profile, asset, galleryIndex))
-                .flatMap(this::loadMediaContent);
+                .flatMap(profile -> resolveDoctorDocumentId(profile, asset, galleryIndex)
+                        .flatMap(documentId -> loadMediaContent(profile, documentId)));
     }
 
     @Transactional(readOnly = true)
@@ -610,8 +612,8 @@ public class ProviderPublicProfileService {
     public Optional<PublicProfileMediaContent> loadPublishedProviderMedia(String slug, ProviderType providerType, ProviderPublicMediaAsset asset, Integer galleryIndex) {
         return resolvePublishedProfile(slug)
                 .filter(profile -> profile.entity().getProviderType() == providerType)
-                .flatMap(profile -> resolveProviderDocumentId(profile, asset, galleryIndex))
-                .flatMap(this::loadMediaContent);
+                .flatMap(profile -> resolveProviderDocumentId(profile, asset, galleryIndex)
+                        .flatMap(documentId -> loadMediaContent(profile, documentId)));
     }
 
     public enum DoctorPublicMediaAsset {
@@ -628,7 +630,7 @@ public class ProviderPublicProfileService {
 
     private Optional<PublicProviderProfileDetailRecord> detailForSlugAlias(DiscoverPublicProviderProfileSlugEntity alias) {
         DiscoverPublicProviderProfileEntity profile = profiles.findByProviderId(alias.getProviderId()).orElse(null);
-        DiscoverPublicProviderProfileVersionEntity version = versions.findByProviderIdAndVersionNumber(alias.getProviderId(), alias.getVersionNumber()).orElse(null);
+        DiscoverPublicProviderProfileVersionEntity version = profile == null ? null : currentVersion(profile).orElse(null);
         if (profile == null || version == null || !"PUBLISHED".equalsIgnoreCase(profile.getPublicationStatus())) {
             return Optional.empty();
         }
@@ -644,17 +646,17 @@ public class ProviderPublicProfileService {
         Optional<DiscoverPublicProviderProfileSlugEntity> alias = slugs.findFirstBySlug(cleanSlug);
         if (alias.isPresent()) {
             DiscoverPublicProviderProfileEntity profile = profiles.findByProviderId(alias.get().getProviderId()).orElse(null);
-            DiscoverPublicProviderProfileVersionEntity version = versions.findByProviderIdAndVersionNumber(alias.get().getProviderId(), alias.get().getVersionNumber()).orElse(null);
+            DiscoverPublicProviderProfileVersionEntity version = profile == null ? null : currentVersion(profile).orElse(null);
             if (profile == null || version == null || !"PUBLISHED".equalsIgnoreCase(profile.getPublicationStatus())) {
                 return Optional.empty();
             }
             return Optional.of(new ResolvedPublishedProfile(profile, readSnapshot(version.getSnapshotJson())));
         }
         DiscoverPublicProviderProfileEntity profile = profiles.findByCanonicalSlug(cleanSlug).orElse(null);
-        if (profile == null) {
+        if (profile == null || !"PUBLISHED".equalsIgnoreCase(profile.getPublicationStatus())) {
             return Optional.empty();
         }
-        DiscoverPublicProviderProfileVersionEntity version = versions.findFirstByProviderIdOrderByVersionNumberDesc(profile.getProviderId()).orElse(null);
+        DiscoverPublicProviderProfileVersionEntity version = currentVersion(profile).orElse(null);
         if (version == null) {
             return Optional.empty();
         }
@@ -678,10 +680,11 @@ public class ProviderPublicProfileService {
     }
 
     private Optional<UUID> resolveGalleryDocumentId(PublicProviderProfileSnapshot snapshot, Integer galleryIndex) {
-        if (galleryIndex == null || galleryIndex < 0 || galleryIndex >= snapshot.gallery().size()) {
+        List<PublicProviderGalleryImageSnapshot> gallery = gallery(snapshot);
+        if (galleryIndex == null || galleryIndex < 0 || galleryIndex >= gallery.size()) {
             return Optional.empty();
         }
-        return Optional.ofNullable(snapshot.gallery().get(galleryIndex).documentId());
+        return Optional.ofNullable(gallery.get(galleryIndex).documentId());
     }
 
     private Optional<PublicProfileMediaContent> loadMediaContent(UUID documentId) {
@@ -697,13 +700,55 @@ public class ProviderPublicProfileService {
                 ));
     }
 
+    private Optional<PublicProfileMediaContent> loadMediaContent(ResolvedPublishedProfile profile, UUID mediaReference) {
+        Optional<PublicProviderPublishedMediaSnapshot> projectedMedia = publishedMedia(profile.snapshot()).stream()
+                .filter(media -> Objects.equals(media.mediaReference(), mediaReference))
+                .filter(media -> StringUtils.hasText(media.storageKey()))
+                .findFirst();
+        if (projectedMedia.isPresent()) {
+            PublicProviderPublishedMediaSnapshot media = projectedMedia.get();
+            byte[] bytes;
+            try {
+                bytes = storageService.getObjectBytes(media.storageKey());
+            } catch (RuntimeException ex) {
+                return Optional.empty();
+            }
+            if (bytes == null || bytes.length == 0) {
+                return Optional.empty();
+            }
+            return Optional.of(new PublicProfileMediaContent(
+                    StringUtils.hasText(media.contentType()) ? media.contentType() : "application/octet-stream",
+                    StringUtils.hasText(media.originalFilename()) ? media.originalFilename() : media.mediaReference().toString(),
+                    bytes
+            ));
+        }
+        if (SOURCE_SYSTEM_MODERATED_PROFILE.equalsIgnoreCase(profile.snapshot().sourceSystem())) {
+            return Optional.empty();
+        }
+        return loadMediaContent(mediaReference);
+    }
+
+    private Optional<DiscoverPublicProviderProfileVersionEntity> currentVersion(DiscoverPublicProviderProfileEntity profile) {
+        if (profile == null || profile.getLatestPublishedVersionId() == null) {
+            return Optional.empty();
+        }
+        return versions.findById(profile.getLatestPublishedVersionId());
+    }
+
     private PublicProviderProfileSummaryRecord toSummary(
             DiscoverPublicProviderProfileEntity entity,
             Map<UUID, ProviderDocumentEntity> documentMap,
             BigDecimal distanceKm
     ) {
-        String imageUrl = resolveMediaUrl(entity.getProviderType() == ProviderType.INDIVIDUAL_DOCTOR ? entity.getDoctorPhotoDocumentId() : entity.getLogoDocumentId(), documentMap);
-        String coverUrl = resolveMediaUrl(entity.getCoverImageDocumentId(), documentMap);
+        PublicProviderProfileSnapshot currentSnapshot = currentVersion(entity)
+                .map(version -> readSnapshot(version.getSnapshotJson()))
+                .orElse(null);
+        String imageUrl = resolveProjectedMediaMarker(
+                currentSnapshot,
+                entity.getProviderType() == ProviderType.INDIVIDUAL_DOCTOR ? entity.getDoctorPhotoDocumentId() : entity.getLogoDocumentId(),
+                documentMap
+        );
+        String coverUrl = resolveProjectedMediaMarker(currentSnapshot, entity.getCoverImageDocumentId(), documentMap);
         return new PublicProviderProfileSummaryRecord(
                 entity.getProviderId(),
                 entity.getProviderType(),
@@ -736,11 +781,11 @@ public class ProviderPublicProfileService {
             PublicProviderProfileSnapshot snapshot
     ) {
         Map<UUID, ProviderDocumentEntity> documentMap = loadDocuments(snapshot);
-        String imageUrl = resolveMediaUrl(entity.getProviderType() == ProviderType.INDIVIDUAL_DOCTOR ? entity.getDoctorPhotoDocumentId() : entity.getLogoDocumentId(), documentMap);
-        String coverUrl = resolveMediaUrl(entity.getCoverImageDocumentId(), documentMap);
-        String logoUrl = resolveMediaUrl(entity.getLogoDocumentId(), documentMap);
-        List<String> galleryImageUrls = snapshot.gallery().stream()
-                .map(image -> resolveMediaUrl(image.documentId(), documentMap))
+        String imageUrl = resolveProjectedMediaMarker(snapshot, entity.getProviderType() == ProviderType.INDIVIDUAL_DOCTOR ? entity.getDoctorPhotoDocumentId() : entity.getLogoDocumentId(), documentMap);
+        String coverUrl = resolveProjectedMediaMarker(snapshot, entity.getCoverImageDocumentId(), documentMap);
+        String logoUrl = resolveProjectedMediaMarker(snapshot, entity.getLogoDocumentId(), documentMap);
+        List<String> galleryImageUrls = gallery(snapshot).stream()
+                .map(image -> resolveProjectedMediaMarker(snapshot, image.documentId(), documentMap))
                 .filter(url -> url != null && !url.isBlank())
                 .toList();
         return new PublicProviderProfileDetailRecord(
@@ -768,7 +813,7 @@ public class ProviderPublicProfileService {
                 snapshot.facilities(),
                 snapshot.consultationModes(),
                 snapshot.locations(),
-                snapshot.gallery(),
+                gallery(snapshot),
                 galleryImageUrls,
                 imageUrl,
                 coverUrl,
@@ -792,7 +837,9 @@ public class ProviderPublicProfileService {
                 version.getVersionNumber(),
                 requestedSlug,
                 entity.getCanonicalSlug().equalsIgnoreCase(requestedSlug) ? null : requestedSlug,
-                entity.getCanonicalSlug().equalsIgnoreCase(requestedSlug)
+                entity.getCanonicalSlug().equalsIgnoreCase(requestedSlug),
+                weeklyTimings(snapshot),
+                snapshot.timingTimezone()
         );
     }
 
@@ -887,7 +934,10 @@ public class ProviderPublicProfileService {
                 true,
                 publishedAt,
                 versionNumber,
-                publicPath(application.getProviderType(), canonicalSlug)
+                publicPath(application.getProviderType(), canonicalSlug),
+                List.of(),
+                List.of(),
+                null
         );
     }
 
@@ -1071,7 +1121,7 @@ public class ProviderPublicProfileService {
         if (snapshot.logoDocumentId() != null) ids.add(snapshot.logoDocumentId());
         if (snapshot.coverImageDocumentId() != null) ids.add(snapshot.coverImageDocumentId());
         if (snapshot.doctorPhotoDocumentId() != null) ids.add(snapshot.doctorPhotoDocumentId());
-        for (PublicProviderGalleryImageSnapshot image : snapshot.gallery()) {
+        for (PublicProviderGalleryImageSnapshot image : gallery(snapshot)) {
             if (image.documentId() != null) {
                 ids.add(image.documentId());
             }
@@ -1088,6 +1138,32 @@ public class ProviderPublicProfileService {
             return null;
         }
         return storageService.generatePresignedDownloadUrl(document.getStorageKey(), MEDIA_URL_TTL);
+    }
+
+    private String resolveProjectedMediaMarker(
+            PublicProviderProfileSnapshot snapshot,
+            UUID mediaReference,
+            Map<UUID, ProviderDocumentEntity> documentMap
+    ) {
+        if (mediaReference == null) {
+            return null;
+        }
+        boolean belongsToProjection = publishedMedia(snapshot).stream()
+                .anyMatch(media -> Objects.equals(media.mediaReference(), mediaReference)
+                        && StringUtils.hasText(media.storageKey()));
+        return belongsToProjection ? mediaReference.toString() : resolveMediaUrl(mediaReference, documentMap);
+    }
+
+    private List<PublicProviderPublishedMediaSnapshot> publishedMedia(PublicProviderProfileSnapshot snapshot) {
+        return snapshot == null || snapshot.publishedMedia() == null ? List.of() : snapshot.publishedMedia();
+    }
+
+    private List<PublicProviderTimingSnapshot> weeklyTimings(PublicProviderProfileSnapshot snapshot) {
+        return snapshot == null || snapshot.weeklyTimings() == null ? List.of() : snapshot.weeklyTimings();
+    }
+
+    private List<PublicProviderGalleryImageSnapshot> gallery(PublicProviderProfileSnapshot snapshot) {
+        return snapshot == null || snapshot.gallery() == null ? List.of() : snapshot.gallery();
     }
 
     private Specification<DiscoverPublicProviderProfileEntity> profileSpecification(PublicProviderSearchCriteria criteria) {

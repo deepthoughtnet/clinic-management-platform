@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.platform.providerintegration.db;
 
 import java.util.Optional;
+import java.util.List;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 
@@ -12,4 +13,11 @@ public interface PublicClinicPlatformLinkRepository extends JpaRepository<Public
     );
 
     Optional<PublicClinicPlatformLinkEntity> findByBookingReferenceAndActiveTrue(String bookingReference);
+
+    List<PublicClinicPlatformLinkEntity> findByPublicClinicReferenceAndActiveTrue(String publicClinicReference);
+
+    List<PublicClinicPlatformLinkEntity> findByTenantReferenceAndPlatformClinicReferenceAndActiveTrue(
+            String tenantReference,
+            String platformClinicReference
+    );
 }

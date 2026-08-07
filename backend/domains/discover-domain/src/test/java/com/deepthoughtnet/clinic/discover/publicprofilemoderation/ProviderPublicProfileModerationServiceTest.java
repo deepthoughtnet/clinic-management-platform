@@ -42,6 +42,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -52,6 +53,8 @@ class ProviderPublicProfileModerationServiceTest {
     private static final String PUBLIC_PROFILE_REFERENCE = "407dbc68-107d-4f64-83c8-6499e50e5c78";
     private static final String SUBMISSION_REFERENCE = "submission-1";
     private static final String DRAFT_REFERENCE = "draft-1";
+    private static final String LOGO_REFERENCE = "3d7b60eb-e869-3184-aaea-4a9719fb2cb2";
+    private static final String COVER_REFERENCE = "527da827-4f73-31db-8298-b31a2688772f";
     private static final OffsetDateTime NOW = OffsetDateTime.parse("2026-08-04T10:15:30Z");
 
     @Mock
@@ -395,9 +398,9 @@ class ProviderPublicProfileModerationServiceTest {
         when(submissions.findBySubmissionReference(SUBMISSION_REFERENCE)).thenReturn(Optional.of(entity));
         when(storageService.getObjectBytes("review-logo-key")).thenReturn(new byte[] {1, 2, 3});
 
-        var content = service.submissionMediaContent(SUBMISSION_REFERENCE, "logo-1");
+        var content = service.submissionMediaContent(SUBMISSION_REFERENCE, LOGO_REFERENCE);
 
-        assertThat(content.mediaReference()).isEqualTo("logo-1");
+        assertThat(content.mediaReference()).isEqualTo(LOGO_REFERENCE);
         assertThat(content.contentType()).isEqualTo("image/png");
         assertThat(content.originalFilename()).isEqualTo("logo.png");
         assertThat(content.bytes()).containsExactly(1, 2, 3);
@@ -411,7 +414,7 @@ class ProviderPublicProfileModerationServiceTest {
         when(submissions.findBySubmissionReference(SUBMISSION_REFERENCE)).thenReturn(Optional.of(entity));
         when(storageService.getObjectBytes("review-logo-key")).thenReturn(new byte[] {1, 2, 3});
 
-        var content = service.providerSubmissionMediaContent(PROVIDER_ACCOUNT_ID, PUBLIC_PROFILE_REFERENCE, SUBMISSION_REFERENCE, "logo-1");
+        var content = service.providerSubmissionMediaContent(PROVIDER_ACCOUNT_ID, PUBLIC_PROFILE_REFERENCE, SUBMISSION_REFERENCE, LOGO_REFERENCE);
 
         assertThat(content.contentType()).isEqualTo("image/png");
         assertThat(content.bytes()).containsExactly(1, 2, 3);
@@ -423,7 +426,7 @@ class ProviderPublicProfileModerationServiceTest {
         DiscoverPublicProfileSubmissionEntity entity = submittedEntityWithMedia("UNDER_REVIEW");
         when(ownershipService.findOwnership(PROVIDER_ACCOUNT_ID, PUBLIC_PROFILE_REFERENCE)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.providerSubmissionMediaContent(PROVIDER_ACCOUNT_ID, PUBLIC_PROFILE_REFERENCE, SUBMISSION_REFERENCE, "logo-1"))
+        assertThatThrownBy(() -> service.providerSubmissionMediaContent(PROVIDER_ACCOUNT_ID, PUBLIC_PROFILE_REFERENCE, SUBMISSION_REFERENCE, LOGO_REFERENCE))
                 .isInstanceOf(com.deepthoughtnet.clinic.platform.core.errors.ForbiddenException.class);
     }
 
@@ -433,7 +436,7 @@ class ProviderPublicProfileModerationServiceTest {
         when(submissions.findBySubmissionReference(SUBMISSION_REFERENCE)).thenReturn(Optional.of(entity));
         when(storageService.getObjectBytes("review-logo-key")).thenThrow(new IllegalStateException("missing"));
 
-        assertThatThrownBy(() -> service.submissionMediaContent(SUBMISSION_REFERENCE, "logo-1"))
+        assertThatThrownBy(() -> service.submissionMediaContent(SUBMISSION_REFERENCE, LOGO_REFERENCE))
                 .isInstanceOf(com.deepthoughtnet.clinic.platform.core.errors.NotFoundException.class);
     }
 
@@ -472,7 +475,17 @@ class ProviderPublicProfileModerationServiceTest {
         assertThat(entity.getPublicationStatusSnapshot()).isEqualTo("PUBLISHED");
         assertThat(entity.getPublishedAt()).isEqualTo(saved.get().getPublishedAt());
         assertThat(saved.get().getPublishedBy()).isEqualTo(REVIEWER_ID.toString());
-        verify(publicProfileService).upsertLifecycleProfile(any(), any(), any(), any(), any(), any(), any(), any(), any(), anyLong(), any(), anyLong());
+        ArgumentCaptor<PublicProviderProfileModels.PublicProviderProfileSnapshot> snapshotCaptor =
+                ArgumentCaptor.forClass(PublicProviderProfileModels.PublicProviderProfileSnapshot.class);
+        verify(publicProfileService).upsertLifecycleProfile(snapshotCaptor.capture(), any(), any(), any(), any(), any(), any(), any(), any(), anyLong(), any(), anyLong());
+        var snapshot = snapshotCaptor.getValue();
+        assertThat(snapshot.logoDocumentId()).hasToString(LOGO_REFERENCE);
+        assertThat(snapshot.coverImageDocumentId()).hasToString(COVER_REFERENCE);
+        assertThat(snapshot.gallery()).hasSize(3);
+        assertThat(snapshot.galleryCount()).isEqualTo(3);
+        assertThat(snapshot.publishedMedia()).hasSize(5);
+        assertThat(snapshot.weeklyTimings()).hasSize(2);
+        assertThat(snapshot.timingTimezone()).isEqualTo("Asia/Kolkata");
     }
 
     @Test
@@ -686,9 +699,9 @@ class ProviderPublicProfileModerationServiceTest {
                 "ENABLED",
                 "{}",
                 "{}",
-                "{\"about\":{\"displayName\":\"Green Valley Family Clinic\",\"shortTagline\":\"Family care\",\"description\":\"Trusted care\",\"establishedYear\":\"2022\",\"registrationNumber\":\"PMC/CLINIC/2022/10458\"},\"contact\":{\"publicPhone\":\"+91 98765 02201\",\"publicEmail\":\"contact@greenvalleyclinic.in\",\"website\":\"https://www.greenvalleyclinic.in\",\"whatsappNumber\":\"+91 98765 02201\"},\"services\":{\"items\":[\"General Consultation\"]},\"specialities\":{\"items\":[\"Family Medicine\"]},\"facilities\":{\"items\":[\"Parking\"]},\"languages\":{\"items\":[\"English\"]},\"timings\":{\"timezone\":\"Asia/Kolkata\",\"intervals\":[{\"dayOfWeek\":\"MONDAY\",\"startTime\":\"09:00\",\"endTime\":\"13:00\"}]},\"media\":{\"logoDocumentId\":\"logo-1\",\"coverDocumentId\":\"cover-1\"},\"seo\":{\"slug\":\"green-valley-family-clinic\"}}",
+                "{\"about\":{\"displayName\":\"Green Valley Family Clinic\",\"shortTagline\":\"Family care\",\"description\":\"Trusted care\",\"establishedYear\":\"2022\",\"registrationNumber\":\"PMC/CLINIC/2022/10458\"},\"contact\":{\"publicPhone\":\"+91 98765 02201\",\"publicEmail\":\"contact@greenvalleyclinic.in\",\"website\":\"https://www.greenvalleyclinic.in\",\"whatsappNumber\":\"+91 98765 02201\"},\"services\":{\"items\":[\"General Consultation\"]},\"specialities\":{\"items\":[\"Family Medicine\"]},\"facilities\":{\"items\":[\"Parking\"]},\"languages\":{\"items\":[\"English\"]},\"timings\":{\"timezone\":\"Asia/Kolkata\",\"weekly\":[{\"day\":\"MONDAY\",\"open\":\"09:00\",\"close\":\"13:00\"},{\"day\":\"TUESDAY\",\"open\":\"10:00\",\"close\":\"14:00\"}]},\"media\":{\"logoDocumentId\":\"3d7b60eb-e869-3184-aaea-4a9719fb2cb2\",\"coverDocumentId\":\"527da827-4f73-31db-8298-b31a2688772f\"},\"seo\":{\"slug\":\"green-valley-family-clinic\"}}",
                 "{}",
-                "{\"logoDocumentId\":\"logo-1\",\"coverDocumentId\":\"cover-1\",\"mediaMetadataByDocumentId\":{\"logo-1\":{\"storageKey\":\"review-logo-key\",\"contentType\":\"image/png\",\"originalFilename\":\"logo.png\"},\"cover-1\":{\"storageKey\":\"review-cover-key\",\"contentType\":\"image/jpeg\",\"originalFilename\":\"cover.jpg\"}}}",
+                "{\"logoDocumentId\":\"3d7b60eb-e869-3184-aaea-4a9719fb2cb2\",\"coverDocumentId\":\"527da827-4f73-31db-8298-b31a2688772f\",\"gallery\":[\"d746bbda-491a-32e3-b01b-9af80aec6098\",\"a43459d8-8ff8-3167-8384-3f7d4ae4e6e6\",\"b67e1952-91a4-3d33-bfb8-56b774e12d29\"],\"mediaMetadataByDocumentId\":{\"3d7b60eb-e869-3184-aaea-4a9719fb2cb2\":{\"mediaType\":\"LOGO\",\"storageKey\":\"review-logo-key\",\"contentType\":\"image/png\",\"originalFilename\":\"logo.png\"},\"527da827-4f73-31db-8298-b31a2688772f\":{\"mediaType\":\"COVER\",\"storageKey\":\"review-cover-key\",\"contentType\":\"image/jpeg\",\"originalFilename\":\"cover.jpg\"},\"d746bbda-491a-32e3-b01b-9af80aec6098\":{\"mediaType\":\"GALLERY\",\"storageKey\":\"review-gallery-1\",\"contentType\":\"image/png\",\"originalFilename\":\"gallery-1.png\"},\"a43459d8-8ff8-3167-8384-3f7d4ae4e6e6\":{\"mediaType\":\"GALLERY\",\"storageKey\":\"review-gallery-2\",\"contentType\":\"image/png\",\"originalFilename\":\"gallery-2.png\"},\"b67e1952-91a4-3d33-bfb8-56b774e12d29\":{\"mediaType\":\"GALLERY\",\"storageKey\":\"review-gallery-3\",\"contentType\":\"image/png\",\"originalFilename\":\"gallery-3.png\"}}}",
                 PROVIDER_ACCOUNT_ID,
                 NOW,
                 NOW,

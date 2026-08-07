@@ -7,7 +7,8 @@ import static org.mockito.Mockito.when;
 import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
 import com.deepthoughtnet.clinic.clinic.service.DoctorProfileService;
 import com.deepthoughtnet.clinic.clinic.service.model.ClinicProfileRecord;
-import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService;
+import com.deepthoughtnet.clinic.discover.publicprofilemoderation.ProviderPublicProfileModerationService;
+import com.deepthoughtnet.clinic.discover.publicprofilemoderation.PublicProfileModerationModels.PublicProfilePublicationRecord;
 import com.deepthoughtnet.clinic.discover.publicprofiledraft.ProviderPublicProfileDraftService;
 import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipModels.ClaimIntentRecord;
 import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipModels.OwnershipRecord;
@@ -43,7 +44,7 @@ class DiscoverPresenceControllerTest {
     @Mock
     private TenantUserManagementService tenantUserManagementService;
     @Mock
-    private ProviderPublicProfileService publicProfileService;
+    private ProviderPublicProfileModerationService moderationService;
     @Mock
     private ProviderPublicProfileDraftService draftService;
     @Mock
@@ -63,7 +64,7 @@ class DiscoverPresenceControllerTest {
         ClinicProfileRecord clinic = clinic();
         RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), UUID.fromString("99999999-9999-9999-9999-999999999999"), "sub", Set.of("CLINIC_ADMIN"), "CLINIC_ADMIN", "corr-1"));
         when(clinicProfileService.findByTenantId(tenantId)).thenReturn(Optional.of(clinic));
-        when(publicProfileService.findLifecycleByProviderId(clinic.id())).thenReturn(Optional.empty());
+        when(moderationService.findCurrentPublication(tenantId.toString())).thenReturn(Optional.empty());
         when(providerOwnershipService.findLatestOwnership(tenantId.toString())).thenReturn(Optional.of(ownership(tenantId, providerAccountId)));
         when(providerOwnershipService.findActiveClaimIntent(tenantId.toString())).thenReturn(Optional.of(claimIntent(tenantId, providerAccountId, "ebb7fb57-71a3-4dc6-bb4a-079164cafdf9")));
         when(providerOwnershipService.maskedProviderMobile(providerAccountId)).thenReturn(Optional.of("******2201"));
@@ -74,7 +75,7 @@ class DiscoverPresenceControllerTest {
                 clinicProfileService,
                 doctorProfileService,
                 tenantUserManagementService,
-                publicProfileService,
+                moderationService,
                 draftService,
                 providerOwnershipService,
                 providerLinkingService
@@ -102,23 +103,21 @@ class DiscoverPresenceControllerTest {
         ClinicProfileRecord clinic = clinic();
         RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), UUID.fromString("99999999-9999-9999-9999-999999999999"), "sub", Set.of("CLINIC_ADMIN"), "CLINIC_ADMIN", "corr-1"));
         when(clinicProfileService.findByTenantId(tenantId)).thenReturn(Optional.of(clinic));
-        when(publicProfileService.findLifecycleByProviderId(clinic.id())).thenReturn(Optional.of(new com.deepthoughtnet.clinic.discover.publicprofile.PublicProfileLifecycleRecord(
-                clinic.id(),
-                com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderType.CLINIC,
-                "DISCOVER_PROVIDER",
+        when(moderationService.findCurrentPublication(tenantId.toString())).thenReturn(Optional.of(new PublicProfilePublicationRecord(
+                UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+                "publication-1",
                 tenantId.toString(),
-                0L,
-                OffsetDateTime.parse("2026-08-03T03:00:00Z"),
+                "submission-1",
+                20,
+                "PUBLISHED",
                 "green-valley-family-clinic",
-                "Green Valley Family Clinic",
-                "Pune",
-                "Wakad",
-                "CALL_TO_BOOK",
-                "UNPUBLISHED",
+                "/discover/clinics/green-valley-family-clinic",
+                "Published",
                 OffsetDateTime.parse("2026-08-03T03:29:00Z"),
-                OffsetDateTime.parse("2026-08-03T03:29:00Z"),
-                0L,
-                "/provider/green-valley-family-clinic"
+                null,
+                true,
+                "VISIBLE",
+                "Published"
         )));
         when(providerOwnershipService.findLatestOwnership(tenantId.toString())).thenReturn(Optional.of(verifiedOwnership(tenantId, providerAccountId)));
         when(providerOwnershipService.findActiveClaimIntent(tenantId.toString())).thenReturn(Optional.of(claimIntent(tenantId, providerAccountId, "ebb7fb57-71a3-4dc6-bb4a-079164cafdf9")));
@@ -130,7 +129,7 @@ class DiscoverPresenceControllerTest {
                 clinicProfileService,
                 doctorProfileService,
                 tenantUserManagementService,
-                publicProfileService,
+                moderationService,
                 draftService,
                 providerOwnershipService,
                 providerLinkingService

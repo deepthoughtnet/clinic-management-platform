@@ -27,10 +27,11 @@ test("verifiedOwnershipHidesApproveAndReject", () => {
 
 test("verifiedOwnershipShowsOnlyAllowedPostApprovalActions", () => {
   const page = readSource("pages/platform/ProviderConnectionsPage.tsx");
-  assert.ok(page.includes("ownershipActionLabel(normalized)"));
-  assert.ok(page.includes("View ownership"));
+  assert.ok(page.includes("selectedOwnershipReference"));
+  assert.ok(page.includes("Dialog open={Boolean(selectedOwnership)}"));
   assert.ok(page.includes("Dispute"));
   assert.ok(page.includes("Revoke ownership"));
+  assert.ok(!page.includes('Button size="small" variant="outlined">View ownership'));
 });
 
 test("ownershipActionsRenderOnlyFromAllowedActions", () => {

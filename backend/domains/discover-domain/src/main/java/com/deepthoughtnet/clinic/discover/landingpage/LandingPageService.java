@@ -410,7 +410,9 @@ public class LandingPageService {
                 0,
                 canonicalSlug,
                 null,
-                false
+                false,
+                List.of(),
+                null
         );
     }
 

@@ -4,6 +4,8 @@ import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
 import com.deepthoughtnet.clinic.clinic.service.DoctorProfileService;
 import com.deepthoughtnet.clinic.clinic.service.model.ClinicProfileRecord;
 import com.deepthoughtnet.clinic.clinic.service.model.DoctorProfileRecord;
+import com.deepthoughtnet.clinic.appointment.service.DoctorAvailabilityQueryService;
+import com.deepthoughtnet.clinic.api.platform.service.TenantModuleService;
 import com.deepthoughtnet.clinic.identity.service.PlatformTenantManagementService;
 import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
 import com.deepthoughtnet.clinic.identity.service.model.PlatformTenantRecord;
@@ -33,17 +35,23 @@ public class LocalHealthcareProviderFactsAdapter implements HealthcareProviderFa
     private final DoctorProfileService doctorProfileService;
     private final PlatformTenantManagementService tenantManagementService;
     private final TenantUserManagementService tenantUserManagementService;
+    private final DoctorAvailabilityQueryService doctorAvailabilityQueryService;
+    private final TenantModuleService tenantModuleService;
 
     public LocalHealthcareProviderFactsAdapter(
             ClinicProfileService clinicProfileService,
             DoctorProfileService doctorProfileService,
             PlatformTenantManagementService tenantManagementService,
-            TenantUserManagementService tenantUserManagementService
+            TenantUserManagementService tenantUserManagementService,
+            DoctorAvailabilityQueryService doctorAvailabilityQueryService,
+            TenantModuleService tenantModuleService
     ) {
         this.clinicProfileService = clinicProfileService;
         this.doctorProfileService = doctorProfileService;
         this.tenantManagementService = tenantManagementService;
         this.tenantUserManagementService = tenantUserManagementService;
+        this.doctorAvailabilityQueryService = doctorAvailabilityQueryService;
+        this.tenantModuleService = tenantModuleService;
     }
 
     @Override
@@ -92,6 +100,7 @@ public class LocalHealthcareProviderFactsAdapter implements HealthcareProviderFa
     }
 
     private ProviderFactsSnapshot toClinicFacts(ClinicProfileRecord clinic) {
+        BookingCapability capability = clinicCapability(clinic);
         return new ProviderFactsSnapshot(
                 PublicProfileType.CLINIC,
                 new ProviderSourceReference(SourceSystem.HEALTHCARE_CLINIC, clinic.tenantId().toString(), sourceRevision(clinic.updatedAt()), clinic.updatedAt()),
@@ -108,7 +117,7 @@ public class LocalHealthcareProviderFactsAdapter implements HealthcareProviderFa
                 clinic.phone(),
                 null,
                 List.of("IN_PERSON"),
-                clinic.active() && clinic.publicListingEnabled() ? BookingCapability.CALL_TO_BOOK : BookingCapability.NOT_AVAILABLE,
+                capability,
                 AvailabilityState.UNKNOWN,
                 clinic.active() && clinic.publicListingEnabled() ? PublicationStatus.PUBLISHED : PublicationStatus.UNPUBLISHED,
                 SourceSystem.HEALTHCARE_CLINIC,
@@ -148,6 +157,7 @@ public class LocalHealthcareProviderFactsAdapter implements HealthcareProviderFa
 
     private HealthcareProviderFactsRow toClinicRow(ClinicProfileRecord clinic) {
         PlatformTenantRecord tenant = tenantManagementService.get(clinic.tenantId());
+        BookingCapability capability = clinicCapability(clinic);
         return new HealthcareProviderFactsRow(
                 "CLINIC",
                 clinic.tenantId(),
@@ -155,7 +165,7 @@ public class LocalHealthcareProviderFactsAdapter implements HealthcareProviderFa
                 tenant.name(),
                 clinic.displayName(),
                 clinic.city(),
-                clinic.state(),
+                clinic.addressLine1(),
                 clinic.phone(),
                 clinic.email(),
                 null,
@@ -170,7 +180,10 @@ public class LocalHealthcareProviderFactsAdapter implements HealthcareProviderFa
                 null,
                 null,
                 clinic.updatedAt(),
-                sourceRevision(clinic.updatedAt())
+                sourceRevision(clinic.updatedAt()),
+                clinic.id() == null ? null : clinic.id().toString(),
+                capability.name(),
+                capabilityReason(clinic, capability)
         );
     }
 
@@ -197,8 +210,41 @@ public class LocalHealthcareProviderFactsAdapter implements HealthcareProviderFa
                 doctor.doctorUserId() == null ? null : doctor.doctorUserId().toString(),
                 doctor.id() == null ? null : doctor.id().toString(),
                 doctor.updatedAt(),
-                sourceRevision(doctor.updatedAt())
+                sourceRevision(doctor.updatedAt()),
+                clinic.id() == null ? null : clinic.id().toString(),
+                doctor.active() && doctor.publicListingEnabled() && doctorAvailabilityQueryService.hasActiveAvailability(clinic.tenantId(), doctor.doctorUserId())
+                        ? BookingCapability.ONLINE_BOOKING.name() : BookingCapability.CALL_TO_BOOK.name(),
+                doctorAvailabilityQueryService.hasActiveAvailability(clinic.tenantId(), doctor.doctorUserId())
+                        ? "Active public doctor availability is configured." : "No active public doctor availability is configured."
         );
+    }
+
+    private BookingCapability clinicCapability(ClinicProfileRecord clinic) {
+        if (clinic == null || !clinic.active()) {
+            return BookingCapability.NOT_AVAILABLE;
+        }
+        PlatformTenantRecord tenant = tenantManagementService.get(clinic.tenantId());
+        if (tenant == null || !"ACTIVE".equalsIgnoreCase(tenant.status())) {
+            return BookingCapability.NOT_AVAILABLE;
+        }
+        boolean appointmentsEnabled = Boolean.TRUE.equals(tenantModuleService.findForTenant(clinic.tenantId()).get("APPOINTMENTS"));
+        if (!appointmentsEnabled) {
+            return BookingCapability.CALL_TO_BOOK;
+        }
+        boolean onlineReady = doctorProfileService.findByTenantIdAndActive(clinic.tenantId()).stream()
+                .filter(DoctorProfileRecord::publicListingEnabled)
+                .anyMatch(doctor -> doctorAvailabilityQueryService.hasActiveAvailability(clinic.tenantId(), doctor.doctorUserId()));
+        return onlineReady ? BookingCapability.ONLINE_BOOKING : BookingCapability.CALL_TO_BOOK;
+    }
+
+    private String capabilityReason(ClinicProfileRecord clinic, BookingCapability capability) {
+        return switch (capability) {
+            case ONLINE_BOOKING -> "Tenant and clinic are active, appointments are enabled, and a public doctor has active availability.";
+            case CALL_TO_BOOK -> StringUtils.hasText(clinic.phone())
+                    ? "Online booking setup is incomplete; the published clinic phone supports call-to-book."
+                    : "Online booking setup is incomplete.";
+            default -> "The tenant or clinic is inactive.";
+        };
     }
 
     private Optional<ClinicProfileRecord> findClinic(ProviderSourceReference sourceReference) {

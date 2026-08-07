@@ -93,6 +93,11 @@ public record PlatformProviderLinkChangedEvent(
 
     private static UUID deterministicTenantId(AbstractProviderLinkEntity entity) {
         String tenantReference = entity == null ? null : entity.getTenantReference();
+        try {
+            return UUID.fromString(tenantReference);
+        } catch (Exception ignored) {
+            // Legacy/non-UUID references retain deterministic behavior for compatibility.
+        }
         String seed = String.join("|",
                 "provider-link-tenant-v1",
                 entity == null || entity.getProviderType() == null ? "" : entity.getProviderType().name(),
@@ -103,6 +108,11 @@ public record PlatformProviderLinkChangedEvent(
     }
 
     private static UUID actorId(AbstractProviderLinkEntity entity, String actorReference) {
+        try {
+            return UUID.fromString(actorReference);
+        } catch (Exception ignored) {
+            // External control-plane subjects remain deterministic and auditable.
+        }
         String seed = String.join("|",
                 "provider-link-actor-v1",
                 entity == null || entity.getProviderType() == null ? "" : entity.getProviderType().name(),

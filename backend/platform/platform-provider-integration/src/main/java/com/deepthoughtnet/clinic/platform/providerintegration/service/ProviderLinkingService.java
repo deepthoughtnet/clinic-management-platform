@@ -35,6 +35,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import org.slf4j.MDC;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.transaction.annotation.Transactional;
@@ -245,26 +246,30 @@ public class ProviderLinkingService implements PlatformConnectionPort {
             PublicClinicPlatformLinkEntity existing = existingOpt.get();
             long previousRevision = existing.getSourceRevision();
             if (request.sourceReference().sourceRevision() < previousRevision) {
-                return new MutationResult<>(existing, MutationOutcome.SKIPPED);
+                throw new ProviderConnectionConflictException("stale_match_revision", "The reviewed public profile revision is stale. Reload the candidate before continuing.");
             }
 
-            boolean changed = applyClinicRequest(existing, request, now, false);
-            if (!changed && request.sourceReference().sourceRevision() == previousRevision) {
+            validateClinicTransition(existing, request);
+            validateClinicActiveConflict(existing.getId(), request);
+            if (sameClinicRequest(existing, request)) {
                 return new MutationResult<>(existing, MutationOutcome.UNCHANGED);
             }
 
+            LinkLifecycleStatus previousState = existing.getLinkStatus();
+            boolean changed = applyClinicRequest(existing, request, now, false);
             clinicRepository.save(existing);
-            recordAudit(existing, clinicAction(existing), request.actorReference(), request.reason(), clinicDetails(existing));
+            recordAudit(existing, clinicAction(existing), request.actorReference(), request.reason(), transitionDetails(existing, previousState));
             publishLinkChanged(existing, clinicAction(existing), request.actorReference());
             return new MutationResult<>(existing, changed ? MutationOutcome.UPDATED : MutationOutcome.UNCHANGED);
         }
 
+        validateClinicActiveConflict(null, request);
         PublicClinicPlatformLinkEntity created = new PublicClinicPlatformLinkEntity();
         created.setId(UUID.randomUUID());
         applyClinicRequest(created, request, now, true);
         clinicRepository.save(created);
-        recordAudit(created, "PUBLIC_CLINIC_PLATFORM_LINK_INSERTED", request.actorReference(), request.reason(), clinicDetails(created));
-        publishLinkChanged(created, "PUBLIC_CLINIC_PLATFORM_LINK_INSERTED", request.actorReference());
+        recordAudit(created, clinicAction(created), request.actorReference(), request.reason(), transitionDetails(created, null));
+        publishLinkChanged(created, clinicAction(created), request.actorReference());
         return new MutationResult<>(created, MutationOutcome.INSERTED);
     }
 
@@ -284,26 +289,30 @@ public class ProviderLinkingService implements PlatformConnectionPort {
             PublicDoctorPracticePlatformLinkEntity existing = existingOpt.get();
             long previousRevision = existing.getSourceRevision();
             if (request.sourceReference().sourceRevision() < previousRevision) {
-                return new MutationResult<>(existing, MutationOutcome.SKIPPED);
+                throw new ProviderConnectionConflictException("stale_match_revision", "The reviewed public profile revision is stale. Reload the candidate before continuing.");
             }
 
-            boolean changed = applyDoctorRequest(existing, request, now, false);
-            if (!changed && request.sourceReference().sourceRevision() == previousRevision) {
+            validateDoctorTransition(existing, request);
+            validateDoctorActiveConflict(existing.getId(), request);
+            if (sameDoctorRequest(existing, request)) {
                 return new MutationResult<>(existing, MutationOutcome.UNCHANGED);
             }
 
+            LinkLifecycleStatus previousState = existing.getLinkStatus();
+            boolean changed = applyDoctorRequest(existing, request, now, false);
             doctorRepository.save(existing);
-            recordAudit(existing, doctorAction(existing), request.actorReference(), request.reason(), doctorDetails(existing));
+            recordAudit(existing, doctorAction(existing), request.actorReference(), request.reason(), transitionDetails(existing, previousState));
             publishLinkChanged(existing, doctorAction(existing), request.actorReference());
             return new MutationResult<>(existing, changed ? MutationOutcome.UPDATED : MutationOutcome.UNCHANGED);
         }
 
+        validateDoctorActiveConflict(null, request);
         PublicDoctorPracticePlatformLinkEntity created = new PublicDoctorPracticePlatformLinkEntity();
         created.setId(UUID.randomUUID());
         applyDoctorRequest(created, request, now, true);
         doctorRepository.save(created);
-        recordAudit(created, "PUBLIC_DOCTOR_PRACTICE_PLATFORM_LINK_INSERTED", request.actorReference(), request.reason(), doctorDetails(created));
-        publishLinkChanged(created, "PUBLIC_DOCTOR_PRACTICE_PLATFORM_LINK_INSERTED", request.actorReference());
+        recordAudit(created, doctorAction(created), request.actorReference(), request.reason(), transitionDetails(created, null));
+        publishLinkChanged(created, doctorAction(created), request.actorReference());
         return new MutationResult<>(created, MutationOutcome.INSERTED);
     }
 
@@ -333,10 +342,12 @@ public class ProviderLinkingService implements PlatformConnectionPort {
         entity.setEvidenceSnapshotJson(request.evidenceSnapshotJson());
         entity.setActive(isActive(entity.getLinkStatus()));
         entity.setReason(request.reason());
+        applyLifecycleMetadata(entity, request.actorReference(), now);
+        entity.setCapabilityReason(request.capabilityReason());
         entity.setLinkedAt(isNew || (!previousActive && entity.isActive()) ? now : previousLinkedAt);
-        entity.setUnlinkedAt(entity.isActive() ? previousUnlinkedAt : (previousActive ? now : previousUnlinkedAt));
+        entity.setUnlinkedAt(isTerminalDisconnect(entity.getLinkStatus()) && previousActive ? now : previousUnlinkedAt);
         entity.setConnectionRevision(isNew ? 1 : previousConnectionRevision + 1);
-        BookingCapability derived = deriveBookingCapability(entity.isActive(), entity.getLinkStatus(), entity.getConnectionStatus());
+        BookingCapability derived = deriveBookingCapability(entity.isActive(), entity.getLinkStatus(), entity.getConnectionStatus(), request.operationalBookingCapability());
         if (isNew || derived != previousCapability) {
             entity.setCapabilityVersion(isNew ? 1 : previousCapabilityVersion + 1);
         }
@@ -382,10 +393,12 @@ public class ProviderLinkingService implements PlatformConnectionPort {
         entity.setEvidenceSnapshotJson(request.evidenceSnapshotJson());
         entity.setActive(isActive(entity.getLinkStatus()));
         entity.setReason(request.reason());
+        applyLifecycleMetadata(entity, request.actorReference(), now);
+        entity.setCapabilityReason(request.capabilityReason());
         entity.setLinkedAt(isNew || (!previousActive && entity.isActive()) ? now : previousLinkedAt);
-        entity.setUnlinkedAt(entity.isActive() ? previousUnlinkedAt : (previousActive ? now : previousUnlinkedAt));
+        entity.setUnlinkedAt(isTerminalDisconnect(entity.getLinkStatus()) && previousActive ? now : previousUnlinkedAt);
         entity.setConnectionRevision(isNew ? 1 : previousConnectionRevision + 1);
-        BookingCapability derived = deriveBookingCapability(entity.isActive(), entity.getLinkStatus(), entity.getConnectionStatus());
+        BookingCapability derived = deriveBookingCapability(entity.isActive(), entity.getLinkStatus(), entity.getConnectionStatus(), request.operationalBookingCapability());
         if (isNew || derived != previousCapability) {
             entity.setCapabilityVersion(isNew ? 1 : previousCapabilityVersion + 1);
         }
@@ -451,11 +464,11 @@ public class ProviderLinkingService implements PlatformConnectionPort {
 
     private void recordAudit(AbstractProviderLinkEntity entity, String action, String actorReference, String reason, String detailsJson) {
         auditEventPublisher.record(new AuditEventCommand(
-                namespacedUuid("tenant", entity, entity.getTenantReference()),
+                tenantUuid(entity),
                 entityType(entity),
                 entity.getId(),
                 action,
-                namespacedUuid("actor", entity, actorReference),
+                actorUuid(entity, actorReference),
                 now(),
                 reason == null || reason.isBlank() ? action : reason,
                 detailsJson
@@ -478,18 +491,23 @@ public class ProviderLinkingService implements PlatformConnectionPort {
         };
     }
 
-    private BookingCapability deriveBookingCapability(boolean active, LinkLifecycleStatus linkStatus, PlatformConnectionStatus connectionStatus) {
+    private BookingCapability deriveBookingCapability(
+            boolean active,
+            LinkLifecycleStatus linkStatus,
+            PlatformConnectionStatus connectionStatus,
+            BookingCapability operationalCapability
+    ) {
         if (!active) {
-            return BookingCapability.NOT_AVAILABLE;
+            return BookingCapability.CALL_TO_BOOK;
         }
         if (linkStatus == LinkLifecycleStatus.LINKED && connectionStatus == PlatformConnectionStatus.CONNECTED) {
-            return BookingCapability.ONLINE_BOOKING;
+            return operationalCapability == null ? BookingCapability.CALL_TO_BOOK : operationalCapability;
         }
         return BookingCapability.CALL_TO_BOOK;
     }
 
     private boolean isActive(LinkLifecycleStatus linkStatus) {
-        return linkStatus == LinkLifecycleStatus.APPROVED || linkStatus == LinkLifecycleStatus.LINKED;
+        return linkStatus == LinkLifecycleStatus.LINKED;
     }
 
     private LinkLifecycleStatus normalizeLinkStatus(LinkLifecycleStatus status) {
@@ -517,15 +535,84 @@ public class ProviderLinkingService implements PlatformConnectionPort {
     }
 
     private String clinicAction(PublicClinicPlatformLinkEntity entity) {
-        return entity.isActive() && entity.getBookingCapability() == BookingCapability.ONLINE_BOOKING
-                ? "PUBLIC_CLINIC_PLATFORM_LINK_CONNECTED"
-                : "PUBLIC_CLINIC_PLATFORM_LINK_UPDATED";
+        return "PUBLIC_CLINIC_PLATFORM_LINK_" + lifecycleAction(entity.getLinkStatus());
     }
 
     private String doctorAction(PublicDoctorPracticePlatformLinkEntity entity) {
-        return entity.isActive() && entity.getBookingCapability() == BookingCapability.ONLINE_BOOKING
-                ? "PUBLIC_DOCTOR_PRACTICE_PLATFORM_LINK_CONNECTED"
-                : "PUBLIC_DOCTOR_PRACTICE_PLATFORM_LINK_UPDATED";
+        return "PUBLIC_DOCTOR_PRACTICE_PLATFORM_LINK_" + lifecycleAction(entity.getLinkStatus());
+    }
+
+    private String lifecycleAction(LinkLifecycleStatus status) {
+        return switch (status) {
+            case PROPOSED, PENDING_VERIFICATION -> "PROPOSED";
+            case APPROVED -> "VERIFIED";
+            case LINKED -> "ACTIVATED";
+            case SUSPENDED -> "SUSPENDED";
+            case REJECTED -> "REJECTED";
+            case UNLINKED -> "DISCONNECTED";
+            case DISPUTED -> "DISPUTED";
+            case SUGGESTED -> "SUGGESTED";
+        };
+    }
+
+    private void applyLifecycleMetadata(AbstractProviderLinkEntity entity, String actorReference, OffsetDateTime now) {
+        switch (entity.getLinkStatus()) {
+            case PROPOSED, PENDING_VERIFICATION -> {
+                if (entity.getProposedAt() == null) {
+                    entity.setProposedAt(now);
+                    entity.setProposedBy(actorReference);
+                }
+            }
+            case APPROVED -> {
+                if (entity.getVerifiedAt() == null) {
+                    entity.setVerifiedAt(now);
+                    entity.setVerifiedBy(actorReference);
+                }
+            }
+            case LINKED -> {
+                if (entity.getActivatedAt() == null) {
+                    entity.setActivatedAt(now);
+                    entity.setActivatedBy(actorReference);
+                }
+            }
+            case SUSPENDED -> {
+                entity.setSuspendedAt(now);
+                entity.setSuspendedBy(actorReference);
+            }
+            case UNLINKED, REJECTED -> {
+                if (entity.getDisconnectedAt() == null) {
+                    entity.setDisconnectedAt(now);
+                    entity.setDisconnectedBy(actorReference);
+                }
+            }
+            default -> { }
+        }
+    }
+
+    private String transitionDetails(AbstractProviderLinkEntity entity, LinkLifecycleStatus previousState) {
+        return json(
+                "providerType", entity.getProviderType(),
+                "publicProfileReference", toPublicReference(entity).publicProviderId(),
+                "tenantReference", entity.getTenantReference(),
+                "platformClinicReference", entity.getPlatformClinicReference(),
+                "previousState", previousState,
+                "newState", entity.getLinkStatus(),
+                "connectionStatus", entity.getConnectionStatus(),
+                "bookingCapability", entity.getBookingCapability(),
+                "capabilityReason", entity.getCapabilityReason(),
+                "sourceRevision", entity.getSourceRevision(),
+                "result", "OK",
+                "reason", entity.getReason(),
+                "correlationId", currentCorrelationId()
+        );
+    }
+
+    private String currentCorrelationId() {
+        String correlationId = MDC.get("correlationId");
+        if (!StringUtils.hasText(correlationId)) {
+            correlationId = MDC.get("X-Correlation-ID");
+        }
+        return correlationId;
     }
 
     private String clinicDetails(PublicClinicPlatformLinkEntity entity) {
@@ -607,11 +694,27 @@ public class ProviderLinkingService implements PlatformConnectionPort {
         return UUID.nameUUIDFromBytes(seed.getBytes(StandardCharsets.UTF_8));
     }
 
+    private UUID actorUuid(AbstractProviderLinkEntity entity, String actorReference) {
+        try {
+            return UUID.fromString(actorReference);
+        } catch (Exception ignored) {
+            return namespacedUuid("actor", entity, actorReference);
+        }
+    }
+
+    private UUID tenantUuid(AbstractProviderLinkEntity entity) {
+        try {
+            return UUID.fromString(entity.getTenantReference());
+        } catch (Exception ignored) {
+            return namespacedUuid("tenant", entity, entity.getTenantReference());
+        }
+    }
+
     private void validateLifecycleCompatibility(LinkLifecycleStatus linkStatus, PlatformConnectionStatus connectionStatus) {
         if (linkStatus == null || connectionStatus == null) {
             return;
         }
-        if ((linkStatus == LinkLifecycleStatus.UNLINKED || linkStatus == LinkLifecycleStatus.REJECTED)
+        if ((linkStatus == LinkLifecycleStatus.UNLINKED || linkStatus == LinkLifecycleStatus.REJECTED || linkStatus == LinkLifecycleStatus.SUSPENDED)
                 && connectionStatus == PlatformConnectionStatus.CONNECTED) {
             throw new IllegalArgumentException("Invalid link/connection combination: " + linkStatus + " with " + connectionStatus);
         }
@@ -619,6 +722,123 @@ public class ProviderLinkingService implements PlatformConnectionPort {
                 && connectionStatus == PlatformConnectionStatus.CONNECTED) {
             throw new IllegalArgumentException("Suggested links cannot be marked as connected.");
         }
+        if (linkStatus == LinkLifecycleStatus.APPROVED && connectionStatus != PlatformConnectionStatus.NOT_CONNECTED) {
+            throw new IllegalArgumentException("Verified links must remain not connected until activation.");
+        }
+        if (linkStatus == LinkLifecycleStatus.LINKED && connectionStatus != PlatformConnectionStatus.CONNECTED) {
+            throw new IllegalArgumentException("Active links must be connected.");
+        }
+    }
+
+    private boolean isTerminalDisconnect(LinkLifecycleStatus status) {
+        return status == LinkLifecycleStatus.UNLINKED || status == LinkLifecycleStatus.REJECTED;
+    }
+
+    private void validateNewLifecycle(LinkLifecycleStatus status) {
+        if (status != LinkLifecycleStatus.PROPOSED && status != LinkLifecycleStatus.PENDING_VERIFICATION && status != LinkLifecycleStatus.SUGGESTED) {
+            throw new ProviderConnectionConflictException("link_not_verifiable", "A new connection must begin as a reviewed proposal.");
+        }
+    }
+
+    private void validateClinicTransition(PublicClinicPlatformLinkEntity entity, PublicClinicPlatformLinkUpsertRequest request) {
+        validateTransition(entity.getLinkStatus(), request.linkStatus());
+        if (!Objects.equals(entity.getPublicClinicReference(), request.publicClinicReference())
+                || !Objects.equals(entity.getTenantReference(), request.tenantReference())
+                || !Objects.equals(entity.getPlatformClinicReference(), request.platformClinicReference())) {
+            throw new ProviderConnectionConflictException("connection_target_changed", "Verification cannot change the reviewed connection target.");
+        }
+    }
+
+    private void validateDoctorTransition(PublicDoctorPracticePlatformLinkEntity entity, PublicDoctorPracticePlatformLinkUpsertRequest request) {
+        validateTransition(entity.getLinkStatus(), request.linkStatus());
+        if (!Objects.equals(entity.getPublicDoctorReference(), request.publicDoctorReference().publicProviderId())
+                || !Objects.equals(entity.getPublicPracticeReference(), request.publicPracticeReference().publicPracticeId())
+                || !Objects.equals(entity.getTenantReference(), request.tenantReference())
+                || !Objects.equals(entity.getPlatformClinicReference(), request.platformClinicReference())
+                || !Objects.equals(entity.getTenantDoctorUserReference(), request.tenantDoctorUserReference())) {
+            throw new ProviderConnectionConflictException("connection_target_changed", "Verification cannot change the reviewed connection target.");
+        }
+    }
+
+    private void validateTransition(LinkLifecycleStatus previous, LinkLifecycleStatus next) {
+        if (previous == next) {
+            return;
+        }
+        boolean allowed = switch (previous) {
+            case SUGGESTED -> next == LinkLifecycleStatus.PROPOSED || next == LinkLifecycleStatus.REJECTED;
+            case PENDING_VERIFICATION, PROPOSED -> next == LinkLifecycleStatus.APPROVED || next == LinkLifecycleStatus.REJECTED;
+            case APPROVED -> next == LinkLifecycleStatus.LINKED || next == LinkLifecycleStatus.REJECTED;
+            case LINKED -> next == LinkLifecycleStatus.UNLINKED || next == LinkLifecycleStatus.SUSPENDED || next == LinkLifecycleStatus.DISPUTED;
+            case SUSPENDED -> next == LinkLifecycleStatus.LINKED || next == LinkLifecycleStatus.UNLINKED;
+            case UNLINKED, REJECTED -> next == LinkLifecycleStatus.PROPOSED;
+            case DISPUTED -> next == LinkLifecycleStatus.LINKED || next == LinkLifecycleStatus.UNLINKED;
+        };
+        if (!allowed) {
+            throw new ProviderConnectionConflictException("link_not_verifiable", "Connection transition " + previous + " -> " + next + " is not allowed.");
+        }
+    }
+
+    private void validateClinicActiveConflict(UUID currentId, PublicClinicPlatformLinkUpsertRequest request) {
+        if (request.linkStatus() != LinkLifecycleStatus.LINKED) {
+            return;
+        }
+        boolean publicConflict = clinicRepository.findByPublicClinicReferenceAndActiveTrue(request.publicClinicReference()).stream()
+                .anyMatch(row -> !Objects.equals(row.getId(), currentId));
+        boolean targetConflict = clinicRepository.findByTenantReferenceAndPlatformClinicReferenceAndActiveTrue(request.tenantReference(), request.platformClinicReference()).stream()
+                .anyMatch(row -> !Objects.equals(row.getId(), currentId));
+        if (publicConflict || targetConflict) {
+            throw new ProviderConnectionConflictException("conflicting_active_connection", "The public profile or operational clinic already has an active connection.");
+        }
+    }
+
+    private void validateDoctorActiveConflict(UUID currentId, PublicDoctorPracticePlatformLinkUpsertRequest request) {
+        if (request.linkStatus() != LinkLifecycleStatus.LINKED) {
+            return;
+        }
+        boolean publicConflict = doctorRepository.findByPublicDoctorReferenceAndPublicPracticeReferenceAndActiveTrue(
+                        request.publicDoctorReference().publicProviderId(), request.publicPracticeReference().publicPracticeId()).stream()
+                .anyMatch(row -> !Objects.equals(row.getId(), currentId));
+        boolean targetConflict = doctorRepository.findByTenantReferenceAndPlatformClinicReferenceAndTenantDoctorUserReferenceAndActiveTrue(
+                        request.tenantReference(), request.platformClinicReference(), request.tenantDoctorUserReference()).stream()
+                .anyMatch(row -> !Objects.equals(row.getId(), currentId));
+        if (publicConflict || targetConflict) {
+            throw new ProviderConnectionConflictException("conflicting_active_connection", "The public practice or operational doctor already has an active connection.");
+        }
+    }
+
+    private boolean sameClinicRequest(PublicClinicPlatformLinkEntity entity, PublicClinicPlatformLinkUpsertRequest request) {
+        return sameCommonRequest(entity, request.sourceReference(), request.linkStatus(), request.connectionStatus(), request.matchMethod(),
+                request.matchConfidence(), request.availabilityState(), request.evidenceSnapshotJson(), request.reason(), request.operationalBookingCapability(), request.capabilityReason());
+    }
+
+    private boolean sameDoctorRequest(PublicDoctorPracticePlatformLinkEntity entity, PublicDoctorPracticePlatformLinkUpsertRequest request) {
+        return sameCommonRequest(entity, request.sourceReference(), request.linkStatus(), request.connectionStatus(), request.matchMethod(),
+                request.matchConfidence(), request.availabilityState(), request.evidenceSnapshotJson(), request.reason(), request.operationalBookingCapability(), request.capabilityReason());
+    }
+
+    private boolean sameCommonRequest(
+            AbstractProviderLinkEntity entity,
+            ProviderSourceReference sourceReference,
+            LinkLifecycleStatus linkStatus,
+            PlatformConnectionStatus connectionStatus,
+            MatchMethod matchMethod,
+            MatchConfidence matchConfidence,
+            AvailabilityState availabilityState,
+            String evidenceJson,
+            String reason,
+            BookingCapability operationalCapability,
+            String capabilityReason
+    ) {
+        BookingCapability expected = deriveBookingCapability(isActive(linkStatus), linkStatus, connectionStatus, operationalCapability);
+        return entity.getSourceRevision() == sourceReference.sourceRevision()
+                && entity.getLinkStatus() == linkStatus
+                && entity.getConnectionStatus() == connectionStatus
+                && entity.getMatchMethod() == matchMethod
+                && Objects.equals(entity.getMatchConfidence(), matchConfidence == null ? null : matchConfidence.name())
+                && entity.getAvailabilityState() == normalizeAvailability(availabilityState)
+                && Objects.equals(entity.getReason(), reason)
+                && entity.getBookingCapability() == expected
+                && Objects.equals(entity.getCapabilityReason(), capabilityReason);
     }
 
     private Comparator<AbstractProviderLinkEntity> linkComparator() {

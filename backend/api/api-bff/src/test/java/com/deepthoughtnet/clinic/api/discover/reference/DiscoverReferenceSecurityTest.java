@@ -22,7 +22,16 @@ import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingService;
 import com.deepthoughtnet.clinic.discover.reference.DiscoverReferenceCategory;
 import com.deepthoughtnet.clinic.discover.reference.DiscoverReferenceDataService;
 import com.deepthoughtnet.clinic.discover.reference.DiscoverReferenceOptionRecord;
+import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProfileMediaContent;
 import com.deepthoughtnet.clinic.discover.verification.DiscoverVerificationService;
+import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipService;
+import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService;
+import com.deepthoughtnet.clinic.discover.publicprofiledraft.ProviderPublicProfileDraftService;
+import com.deepthoughtnet.clinic.discover.publicprofilemoderation.ProviderPublicProfileModerationService;
+import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
+import com.deepthoughtnet.clinic.clinic.service.DoctorProfileService;
+import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
+import com.deepthoughtnet.clinic.platform.providerintegration.service.ProviderLinkingService;
 import com.deepthoughtnet.clinic.platform.core.security.AppUserProvisioner;
 import com.deepthoughtnet.clinic.platform.core.security.AuthContextExtractor;
 import com.deepthoughtnet.clinic.platform.core.security.TenantRoleResolver;
@@ -75,6 +84,30 @@ class DiscoverReferenceSecurityTest {
 
     @MockBean
     private ProviderOnboardingService providerOnboardingService;
+
+    @MockBean
+    private ProviderOwnershipService providerOwnershipService;
+
+    @MockBean
+    private ClinicProfileService clinicProfileService;
+
+    @MockBean
+    private DoctorProfileService doctorProfileService;
+
+    @MockBean
+    private TenantUserManagementService tenantUserManagementService;
+
+    @MockBean
+    private ProviderPublicProfileService providerPublicProfileService;
+
+    @MockBean
+    private ProviderPublicProfileDraftService providerPublicProfileDraftService;
+
+    @MockBean
+    private ProviderPublicProfileModerationService providerPublicProfileModerationService;
+
+    @MockBean
+    private ProviderLinkingService providerLinkingService;
 
     @MockBean
     private LandingPageService landingPageService;
@@ -159,6 +192,23 @@ class DiscoverReferenceSecurityTest {
 
         mockMvc.perform(get("/api/provider/me"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void anonymousPublishedClinicMediaRoutesArePublic() throws Exception {
+        when(publicCatalogFacade.clinicLogo("green-valley-family-clinic"))
+                .thenReturn(new PublicProfileMediaContent("image/png", "logo.png", new byte[]{1, 2}));
+        when(publicCatalogFacade.clinicCover("green-valley-family-clinic"))
+                .thenReturn(new PublicProfileMediaContent("image/png", "cover.png", new byte[]{3, 4}));
+        when(publicCatalogFacade.clinicGalleryImage("green-valley-family-clinic", 0))
+                .thenReturn(new PublicProfileMediaContent("image/png", "gallery.png", new byte[]{5, 6}));
+
+        mockMvc.perform(get("/api/public/clinics/green-valley-family-clinic/logo"))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/public/clinics/green-valley-family-clinic/cover"))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/public/clinics/green-valley-family-clinic/gallery/0"))
+                .andExpect(status().isOk());
     }
 
     private static List<DiscoverReferenceOptionRecord> sampleOptions() {

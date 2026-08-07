@@ -52,7 +52,8 @@ record ProviderConnectionsPublicProfileResponse(
         PlatformConnectionStatus connectionStatus,
         String platformClinicReference,
         String tenantReference,
-        List<String> tags
+        List<String> tags,
+        List<String> allowedActions
 ) {
 }
 
@@ -118,7 +119,21 @@ record ProviderConnectionsLinkResponse(
         String publicArea,
         String publicPath,
         String sourceSystem,
-        List<ProviderMatchEvidence> evidence
+        List<ProviderMatchEvidence> evidence,
+        String proposedBy,
+        OffsetDateTime proposedAt,
+        String verifiedBy,
+        OffsetDateTime verifiedAt,
+        String activatedBy,
+        OffsetDateTime activatedAt,
+        String suspendedBy,
+        OffsetDateTime suspendedAt,
+        String disconnectedBy,
+        OffsetDateTime disconnectedAt,
+        String capabilityReason,
+        long connectionRevision,
+        long rowVersion,
+        List<String> allowedActions
 ) {
 }
 
@@ -184,7 +199,8 @@ record ProviderConnectionsSuggestionResponse(
         String reason,
         String status,
         OffsetDateTime lastEvaluatedAt,
-        long sourceRevision
+        long sourceRevision,
+        List<String> allowedActions
 ) {
 }
 
@@ -330,6 +346,9 @@ record HealthcareProviderFactsRow(
         String tenantDoctorUserReference,
         String tenantDoctorProfileReference,
         OffsetDateTime updatedAt,
-        long sourceRevision
+        long sourceRevision,
+        String platformClinicReference,
+        String operationalBookingCapability,
+        String capabilityReason
 ) {
 }

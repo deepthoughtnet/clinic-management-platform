@@ -9994,7 +9994,7 @@ export async function getDiscoverProviderReviewDocumentBlob(token: string, refer
 export type ProviderConnectionsPublicProfileType = "DOCTOR" | "CLINIC" | "HOSPITAL";
 export type ProviderConnectionsBookingCapability = "ONLINE_BOOKING" | "CALL_TO_BOOK" | "NOT_AVAILABLE" | "REQUEST_APPOINTMENT" | "EXTERNAL_BOOKING";
 export type ProviderConnectionsAvailabilityState = "AVAILABLE_TODAY" | "NEXT_AVAILABLE" | "NO_SLOTS_IN_RANGE" | "TEMPORARILY_UNAVAILABLE" | "UNKNOWN";
-export type ProviderConnectionsLinkLifecycleStatus = "SUGGESTED" | "PENDING_VERIFICATION" | "PROPOSED" | "APPROVED" | "LINKED" | "REJECTED" | "UNLINKED" | "DISPUTED";
+export type ProviderConnectionsLinkLifecycleStatus = "SUGGESTED" | "PENDING_VERIFICATION" | "PROPOSED" | "APPROVED" | "LINKED" | "SUSPENDED" | "REJECTED" | "UNLINKED" | "DISPUTED";
 export type ProviderConnectionsConnectionStatus = "NOT_CONNECTED" | "CONNECTION_PENDING" | "CONNECTED" | "DISCONNECTED" | "DISPUTED";
 export type ProviderConnectionsMatchConfidence = "LOW" | "MEDIUM" | "HIGH";
 export type ProviderConnectionsEvidenceStrength = "STRONG" | "SUPPORTING" | "WEAK" | "CONFLICT";
@@ -10061,6 +10061,7 @@ export type ProviderConnectionsPublicProfileResponse = {
   platformClinicReference: string | null;
   tenantReference: string | null;
   tags: string[];
+  allowedActions: string[];
 };
 
 export type ProviderConnectionsLifecycleResponse = {
@@ -10238,6 +10239,20 @@ export type ProviderConnectionsLinkResponse = {
   publicPath: string | null;
   sourceSystem: string | null;
   evidence: ProviderConnectionsEvidence[];
+  proposedBy: string | null;
+  proposedAt: string | null;
+  verifiedBy: string | null;
+  verifiedAt: string | null;
+  activatedBy: string | null;
+  activatedAt: string | null;
+  suspendedBy: string | null;
+  suspendedAt: string | null;
+  disconnectedBy: string | null;
+  disconnectedAt: string | null;
+  capabilityReason: string | null;
+  connectionRevision: number;
+  rowVersion: number;
+  allowedActions: string[];
 };
 
 export type ProviderConnectionsComparisonRowResponse = {
@@ -10300,6 +10315,7 @@ export type ProviderConnectionsSuggestionResponse = {
   status: string | null;
   lastEvaluatedAt: string | null;
   sourceRevision: number;
+  allowedActions: string[];
 };
 
 export type ProviderConnectionsConflictResponse = {
@@ -10592,6 +10608,18 @@ export async function unlinkProviderConnectionLink(token: string, linkId: string
 
 export async function relinkProviderConnectionLink(token: string, linkId: string, reason?: string | null) {
   return httpPost<ProviderConnectionsLinkResponse>(`/api/platform/provider-connections/links/${encodeURIComponent(linkId)}/relink`, reason ? { reason } : {}, { token, platformOperation: true });
+}
+
+export async function rejectProviderConnectionLink(token: string, linkId: string, reason?: string | null) {
+  return httpPost<ProviderConnectionsLinkResponse>(`/api/platform/provider-connections/links/${encodeURIComponent(linkId)}/reject`, reason ? { reason } : {}, { token, platformOperation: true });
+}
+
+export async function suspendProviderConnectionLink(token: string, linkId: string, reason?: string | null) {
+  return httpPost<ProviderConnectionsLinkResponse>(`/api/platform/provider-connections/links/${encodeURIComponent(linkId)}/suspend`, reason ? { reason } : {}, { token, platformOperation: true });
+}
+
+export async function resumeProviderConnectionLink(token: string, linkId: string, reason?: string | null) {
+  return httpPost<ProviderConnectionsLinkResponse>(`/api/platform/provider-connections/links/${encodeURIComponent(linkId)}/resume`, reason ? { reason } : {}, { token, platformOperation: true });
 }
 
 export async function reconcileProviderConnection(token: string, body: ProviderConnectionsReconcileRequest) {

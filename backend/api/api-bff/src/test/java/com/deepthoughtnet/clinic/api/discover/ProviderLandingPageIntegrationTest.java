@@ -330,7 +330,10 @@ class ProviderLandingPageIntegrationTest extends PostgresTestContainerSupport {
                 false,
                 publishedAt,
                 1,
-                "/discover/clinics/%s".formatted(slug)
+                "/discover/clinics/%s".formatted(slug),
+                List.of(),
+                List.of(),
+                null
         );
 
         DiscoverPublicProviderProfileEntity profile = DiscoverPublicProviderProfileEntity.create(

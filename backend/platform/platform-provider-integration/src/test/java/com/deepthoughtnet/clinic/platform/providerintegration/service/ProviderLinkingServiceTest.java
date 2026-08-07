@@ -97,7 +97,7 @@ class ProviderLinkingServiceTest {
                 "tenant-b",
                 "clinic-b",
                 "doctor-a",
-                "practice-a",
+                "practice-b",
                 "tenant-doctor-user-b",
                 "tenant-doctor-profile-b",
                 4
@@ -179,14 +179,16 @@ class ProviderLinkingServiceTest {
                 AvailabilityState.AVAILABLE_TODAY
         ));
 
-        service.upsertClinicLink(clinicRequest(
+        assertThatThrownBy(() -> service.upsertClinicLink(clinicRequest(
                 "tenant-clinic-3",
                 "public-clinic-3",
                 4,
                 LinkLifecycleStatus.APPROVED,
                 PlatformConnectionStatus.NOT_CONNECTED,
                 AvailabilityState.UNKNOWN
-        ));
+        ))).isInstanceOf(ProviderConnectionConflictException.class)
+                .extracting(exception -> ((ProviderConnectionConflictException) exception).getCode())
+                .isEqualTo("stale_match_revision");
 
         PublicClinicPlatformLinkEntity reloaded = clinicRepository.findById(latest.getId()).orElseThrow();
         assertThat(reloaded.getSourceRevision()).isEqualTo(5);
@@ -205,6 +207,73 @@ class ProviderLinkingServiceTest {
         ));
 
         assertThat(entity.getBookingCapability()).isEqualTo(BookingCapability.CALL_TO_BOOK);
+    }
+
+    @Test
+    void proposalVerificationActivationAndRetryAreCanonicalAndIdempotent() {
+        PublicClinicPlatformLinkEntity proposed = service.upsertClinicLink(clinicRequest(
+                "tenant-lifecycle",
+                "public-lifecycle",
+                20,
+                LinkLifecycleStatus.PROPOSED,
+                PlatformConnectionStatus.CONNECTION_PENDING,
+                AvailabilityState.UNKNOWN
+        ));
+        PublicClinicPlatformLinkEntity verified = service.upsertClinicLink(clinicRequest(
+                "tenant-lifecycle",
+                "public-lifecycle",
+                20,
+                LinkLifecycleStatus.APPROVED,
+                PlatformConnectionStatus.NOT_CONNECTED,
+                AvailabilityState.UNKNOWN
+        ));
+        PublicClinicPlatformLinkEntity active = service.upsertClinicLink(clinicRequest(
+                "tenant-lifecycle",
+                "public-lifecycle",
+                20,
+                LinkLifecycleStatus.LINKED,
+                PlatformConnectionStatus.CONNECTED,
+                AvailabilityState.UNKNOWN
+        ));
+        long revision = active.getConnectionRevision();
+        PublicClinicPlatformLinkEntity retry = service.upsertClinicLink(clinicRequest(
+                "tenant-lifecycle",
+                "public-lifecycle",
+                20,
+                LinkLifecycleStatus.LINKED,
+                PlatformConnectionStatus.CONNECTED,
+                AvailabilityState.UNKNOWN
+        ));
+
+        assertThat(proposed.getId()).isEqualTo(verified.getId()).isEqualTo(active.getId());
+        assertThat(active.isActive()).isTrue();
+        assertThat(active.getProposedAt()).isNotNull();
+        assertThat(active.getVerifiedAt()).isNotNull();
+        assertThat(active.getActivatedAt()).isNotNull();
+        assertThat(active.getBookingCapability()).isEqualTo(BookingCapability.ONLINE_BOOKING);
+        assertThat(retry.getConnectionRevision()).isEqualTo(revision);
+        assertThat(clinicRepository.count()).isEqualTo(1);
+    }
+
+    @Test
+    void activeLinkUsesOperationalCallToBookInsteadOfInferringOnlineBooking() {
+        PublicClinicPlatformLinkUpsertRequest base = clinicRequest(
+                "tenant-call",
+                "public-call",
+                20,
+                LinkLifecycleStatus.LINKED,
+                PlatformConnectionStatus.CONNECTED,
+                AvailabilityState.UNKNOWN
+        );
+        PublicClinicPlatformLinkEntity active = service.upsertClinicLink(new PublicClinicPlatformLinkUpsertRequest(
+                base.sourceReference(), base.publicClinicReference(), base.tenantReference(), base.platformClinicReference(),
+                base.linkStatus(), base.connectionStatus(), base.matchMethod(), base.matchConfidence(), base.availabilityState(),
+                base.evidenceSnapshotJson(), base.actorType(), base.actorReference(), base.reason(), BookingCapability.CALL_TO_BOOK,
+                "No public doctor availability is configured."
+        ));
+
+        assertThat(active.getBookingCapability()).isEqualTo(BookingCapability.CALL_TO_BOOK);
+        assertThat(active.getCapabilityReason()).contains("No public doctor availability");
     }
 
     @Test
@@ -243,6 +312,32 @@ class ProviderLinkingServiceTest {
     }
 
     @Test
+    void suspendAndResumePreserveTheConnectionIdentityAndAuditMetadata() {
+        PublicClinicPlatformLinkEntity linked = service.upsertClinicLink(clinicRequest(
+                "tenant-suspend", "public-suspend", 20,
+                LinkLifecycleStatus.LINKED, PlatformConnectionStatus.CONNECTED, AvailabilityState.UNKNOWN));
+
+        PublicClinicPlatformLinkEntity suspended = service.upsertClinicLink(clinicRequest(
+                "tenant-suspend", "public-suspend", 20,
+                LinkLifecycleStatus.SUSPENDED, PlatformConnectionStatus.DISCONNECTED, AvailabilityState.UNKNOWN));
+        String bookingReference = suspended.getBookingReference();
+
+        assertThat(suspended.isActive()).isFalse();
+        assertThat(suspended.getSuspendedAt()).isNotNull();
+        assertThat(suspended.getSuspendedBy()).isEqualTo("actor-tenant-suspend");
+        assertThat(suspended.getUnlinkedAt()).isNull();
+
+        PublicClinicPlatformLinkEntity resumed = service.upsertClinicLink(clinicRequest(
+                "tenant-suspend", "public-suspend", 20,
+                LinkLifecycleStatus.LINKED, PlatformConnectionStatus.CONNECTED, AvailabilityState.UNKNOWN));
+
+        assertThat(resumed.getId()).isEqualTo(linked.getId());
+        assertThat(resumed.getBookingReference()).isEqualTo(bookingReference);
+        assertThat(resumed.isActive()).isTrue();
+        assertThat(clinicRepository.count()).isEqualTo(1);
+    }
+
+    @Test
     void invalidLinkAndConnectionCombinationIsRejected() {
         assertThatThrownBy(() -> service.upsertClinicLink(clinicRequest(
                 "tenant-clinic-invalid",
@@ -276,7 +371,9 @@ class ProviderLinkingServiceTest {
                 "[]",
                 "PLATFORM_ADMIN",
                 "actor-" + tenantReference,
-                "link request for " + tenantReference
+                "link request for " + tenantReference,
+                BookingCapability.ONLINE_BOOKING,
+                "active appointment configuration"
         );
     }
 
@@ -305,7 +402,9 @@ class ProviderLinkingServiceTest {
                 "[]",
                 "PLATFORM_ADMIN",
                 "actor-" + tenantReference,
-                "doctor practice link for " + tenantReference
+                "doctor practice link for " + tenantReference,
+                BookingCapability.ONLINE_BOOKING,
+                "active appointment configuration"
         );
     }
 }

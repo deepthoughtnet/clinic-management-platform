@@ -549,6 +549,16 @@ public class ProviderPublicProfileModerationService {
     }
 
     @Transactional(readOnly = true)
+    public Optional<PublicProfilePublicationRecord> findCurrentPublishedPublicationBySlug(String slug) {
+        if (!StringUtils.hasText(slug)) {
+            return Optional.empty();
+        }
+        return publications.findFirstBySlugIgnoreCaseAndCurrentTrueAndPublicationStatusOrderByPublishedAtDesc(
+                        slug.trim(), "PUBLISHED")
+                .map(entity -> toPublicationRecord(entity, visibilityDecision(entity.getPublicProfileReference(), null)));
+    }
+
+    @Transactional(readOnly = true)
     public Optional<PublicProfileModerationSubmissionRecord> currentSubmission(String publicProfileReference) {
         return findLatestSubmission(publicProfileReference).map(this::toSubmissionRecord);
     }
@@ -912,8 +922,9 @@ public class ProviderPublicProfileModerationService {
         Map<String, Object> facilities = asMap(content.get("facilities"));
         Map<String, Object> languages = asMap(content.get("languages"));
         Map<String, Object> timings = asMap(content.get("timings"));
-        Map<String, Object> media = asMap(content.get("media"));
+        Map<String, Object> immutableMedia = mapJson(entity.getMediaSnapshotJson());
         Map<String, Object> seo = asMap(content.get("seo"));
+        List<PublicProviderProfileModels.PublicProviderGalleryImageSnapshot> gallery = publishedGallery(immutableMedia);
         List<PublicProviderProfileModels.PublicProviderLocationSnapshot> locations = List.of(new PublicProviderProfileModels.PublicProviderLocationSnapshot(
                 text(contact, "displayName"),
                 text(contact, "addressLine1"),
@@ -921,7 +932,7 @@ public class ProviderPublicProfileModerationService {
                 text(contact, "state"),
                 text(contact, "country"),
                 text(contact, "postalCode"),
-                text(timings, "weeklySummary"),
+                formatWeeklyTimings(timings),
                 false,
                 false,
                 null,
@@ -954,10 +965,10 @@ public class ProviderPublicProfileModerationService {
                 list(facilities, "items"),
                 List.of(),
                 locations,
+                gallery,
                 List.of(),
-                List.of(),
-                parseUuid(text(media, "logoDocumentId")),
-                parseUuid(text(media, "coverDocumentId")),
+                parseUuid(text(immutableMedia, "logoDocumentId")),
+                parseUuid(text(immutableMedia, "coverDocumentId")),
                 null,
                 text(contact, "publicPhone"),
                 text(contact, "publicEmail"),
@@ -976,13 +987,103 @@ public class ProviderPublicProfileModerationService {
                 1,
                 serviceList.size(),
                 0,
-                0,
+                gallery.size(),
                 text(contact, "publicPhone") != null ? "CALL_TO_BOOK" : "NOT_AVAILABLE",
                 false,
                 OffsetDateTime.now(),
                 entity.getSubmittedDraftVersion(),
-                publicPath(entity.getPublicProfileType(), text(seo, "slug"))
+                publicPath(entity.getPublicProfileType(), text(seo, "slug")),
+                publishedMedia(immutableMedia),
+                weeklyTimings(timings),
+                text(timings, "timezone")
         );
+    }
+
+    private List<PublicProviderProfileModels.PublicProviderPublishedMediaSnapshot> publishedMedia(Map<String, Object> media) {
+        Map<String, Object> metadataByReference = asMap(media.get("mediaMetadataByDocumentId"));
+        List<String> orderedReferences = new ArrayList<>();
+        addReference(orderedReferences, text(media, "logoDocumentId"));
+        addReference(orderedReferences, text(media, "coverDocumentId"));
+        orderedReferences.addAll(list(media, "gallery"));
+        List<PublicProviderProfileModels.PublicProviderPublishedMediaSnapshot> result = new ArrayList<>();
+        for (int index = 0; index < orderedReferences.size(); index++) {
+            String reference = orderedReferences.get(index);
+            Map<String, Object> metadata = asMap(metadataByReference.get(reference));
+            UUID mediaReference = parseUuid(reference);
+            String storageKey = text(metadata, "storageKey");
+            if (mediaReference == null || !StringUtils.hasText(storageKey)) {
+                continue;
+            }
+            result.add(new PublicProviderProfileModels.PublicProviderPublishedMediaSnapshot(
+                    mediaReference,
+                    text(metadata, "mediaType"),
+                    storageKey,
+                    text(metadata, "contentType"),
+                    text(metadata, "originalFilename"),
+                    text(metadata, "altText"),
+                    index
+            ));
+        }
+        return List.copyOf(result);
+    }
+
+    private List<PublicProviderProfileModels.PublicProviderGalleryImageSnapshot> publishedGallery(Map<String, Object> media) {
+        Map<String, Object> metadataByReference = asMap(media.get("mediaMetadataByDocumentId"));
+        return list(media, "gallery").stream()
+                .map(reference -> new PublicProviderProfileModels.PublicProviderGalleryImageSnapshot(
+                        parseUuid(reference),
+                        firstNonBlank(
+                                text(asMap(metadataByReference.get(reference)), "altText"),
+                                text(asMap(metadataByReference.get(reference)), "originalFilename")
+                        )
+                ))
+                .filter(item -> item.documentId() != null)
+                .toList();
+    }
+
+    private List<PublicProviderProfileModels.PublicProviderTimingSnapshot> weeklyTimings(Map<String, Object> timings) {
+        Object value = timings.get("weekly");
+        if (!(value instanceof List<?> weekly)) {
+            return List.of();
+        }
+        List<PublicProviderProfileModels.PublicProviderTimingSnapshot> result = new ArrayList<>();
+        for (int index = 0; index < weekly.size(); index++) {
+            Map<String, Object> interval = asMap(weekly.get(index));
+            String day = text(interval, "day");
+            String open = text(interval, "open");
+            String close = text(interval, "close");
+            if (StringUtils.hasText(day) && StringUtils.hasText(open) && StringUtils.hasText(close)) {
+                result.add(new PublicProviderProfileModels.PublicProviderTimingSnapshot(day, open, close, index));
+            }
+        }
+        return List.copyOf(result);
+    }
+
+    private String formatWeeklyTimings(Map<String, Object> timings) {
+        List<PublicProviderProfileModels.PublicProviderTimingSnapshot> weekly = weeklyTimings(timings);
+        if (weekly.isEmpty()) {
+            return null;
+        }
+        String timezone = text(timings, "timezone");
+        String schedule = weekly.stream()
+                .map(item -> item.day() + " " + item.open() + "-" + item.close())
+                .collect(Collectors.joining("; "));
+        return StringUtils.hasText(timezone) ? schedule + " (" + timezone + ")" : schedule;
+    }
+
+    private void addReference(List<String> references, String reference) {
+        if (StringUtils.hasText(reference) && !references.contains(reference)) {
+            references.add(reference);
+        }
+    }
+
+    private String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (StringUtils.hasText(value)) {
+                return value;
+            }
+        }
+        return null;
     }
 
     private Map<String, Object> mapJson(String json) {
