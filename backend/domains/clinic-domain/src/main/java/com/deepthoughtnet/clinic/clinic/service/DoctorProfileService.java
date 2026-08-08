@@ -175,7 +175,7 @@ public class DoctorProfileService {
                 .map(this::toRecord);
     }
 
-    @Transactional(readOnly = true)
+    @Transactional(readOnly = true, noRollbackFor = RuntimeException.class)
     public DoctorProfilePhotoRecord downloadPhoto(UUID tenantId, UUID doctorUserId) {
         requireTenant(tenantId);
         requireDoctor(doctorUserId);

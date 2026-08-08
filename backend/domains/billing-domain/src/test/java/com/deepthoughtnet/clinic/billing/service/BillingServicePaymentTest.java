@@ -32,11 +32,14 @@ import com.deepthoughtnet.clinic.billing.service.model.PaymentCommand;
 import com.deepthoughtnet.clinic.billing.service.model.PaymentMode;
 import com.deepthoughtnet.clinic.billing.service.model.PaymentRecord;
 import com.deepthoughtnet.clinic.billing.service.model.PatientBillingContextRecord;
+import com.deepthoughtnet.clinic.billing.service.model.ReceiptPdf;
 import com.deepthoughtnet.clinic.billing.service.model.RefundCommand;
 import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
 import com.deepthoughtnet.clinic.clinic.service.DoctorProfileService;
+import com.deepthoughtnet.clinic.clinic.service.model.ClinicProfileRecord;
 import com.deepthoughtnet.clinic.clinic.service.model.DoctorProfileRecord;
 import com.deepthoughtnet.clinic.consultation.service.ConsultationService;
+import com.deepthoughtnet.clinic.identity.db.AppUserEntity;
 import com.deepthoughtnet.clinic.identity.db.AppUserRepository;
 import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
 import com.deepthoughtnet.clinic.platform.branding.BrandingProperties;
@@ -46,6 +49,7 @@ import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventCommand;
 import com.deepthoughtnet.clinic.platform.modulith.events.ModuleBusinessEventPublisher;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -57,6 +61,10 @@ import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.apache.pdfbox.Loader;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.text.PDFTextStripper;
 
 class BillingServicePaymentTest {
     private final UUID tenantId = UUID.randomUUID();
@@ -70,6 +78,7 @@ class BillingServicePaymentTest {
     private PatientRepository patientRepository;
     private AuditEventPublisher auditEventPublisher;
     private ModuleBusinessEventPublisher moduleBusinessEventPublisher;
+    private ClinicProfileService clinicProfileService;
     private DoctorProfileService doctorProfileService;
     private AppointmentService appointmentService;
     private AppUserRepository appUserRepository;
@@ -89,6 +98,7 @@ class BillingServicePaymentTest {
         patientRepository = mock(PatientRepository.class);
         auditEventPublisher = mock(AuditEventPublisher.class);
         moduleBusinessEventPublisher = mock(ModuleBusinessEventPublisher.class);
+        clinicProfileService = mock(ClinicProfileService.class);
         doctorProfileService = mock(DoctorProfileService.class);
         appointmentService = mock(AppointmentService.class);
         appUserRepository = mock(AppUserRepository.class);
@@ -99,7 +109,7 @@ class BillingServicePaymentTest {
                 billRefundRepository,
                 receiptRepository,
                 patientRepository,
-                mock(ClinicProfileService.class),
+                clinicProfileService,
                 doctorProfileService,
                 mock(ConsultationService.class),
                 appointmentService,
@@ -284,6 +294,87 @@ class BillingServicePaymentTest {
         assertThat(bill.getPaidAmount()).isEqualByComparingTo("100.00");
         assertThat(bill.getDueAmount()).isEqualByComparingTo("0.00");
         org.mockito.Mockito.verify(moduleBusinessEventPublisher).publish(any());
+    }
+
+    @Test
+    void generateReceiptPdfUsesCanonicalJeevanamReceiptLayout() throws IOException {
+        List<PaymentEntity> payments = new ArrayList<>();
+        List<ReceiptEntity> receipts = new ArrayList<>();
+        BillEntity bill = billWithTotal(new BigDecimal("150.00"), payments);
+        BillLineEntity consultation = BillLineEntity.create(tenantId, bill.getId(), BillItemType.CONSULTATION, "Consultation Fee", 1, new BigDecimal("100.00"), BigDecimal.ZERO, new BigDecimal("100.00"), null, null, null, 1);
+        BillLineEntity medication = BillLineEntity.create(tenantId, bill.getId(), BillItemType.MEDICINE, "Medicine Pack", 1, new BigDecimal("50.00"), BigDecimal.ZERO, new BigDecimal("50.00"), null, null, null, 2);
+        when(billLineRepository.findByTenantIdAndBillIdOrderBySortOrderAsc(tenantId, bill.getId())).thenReturn(List.of(consultation, medication));
+        when(paymentRepository.save(any(PaymentEntity.class))).thenAnswer(invocation -> {
+            PaymentEntity payment = invocation.getArgument(0);
+            payments.add(payment);
+            return payment;
+        });
+        when(paymentRepository.findByTenantIdAndId(any(), any())).thenAnswer(invocation -> {
+            UUID paymentId = invocation.getArgument(1);
+            return payments.stream().filter(paymentRow -> paymentRow.getId().equals(paymentId)).findFirst();
+        });
+        when(receiptRepository.save(any(ReceiptEntity.class))).thenAnswer(invocation -> {
+            ReceiptEntity receipt = invocation.getArgument(0);
+            receipts.add(receipt);
+            return receipt;
+        });
+        when(receiptRepository.findByTenantIdAndId(any(), any())).thenAnswer(invocation -> {
+            UUID receiptId = invocation.getArgument(1);
+            return receipts.stream().filter(receipt -> receipt.getId().equals(receiptId)).findFirst();
+        });
+        when(clinicProfileService.findByTenantId(tenantId)).thenReturn(Optional.of(new ClinicProfileRecord(
+                UUID.randomUUID(),
+                tenantId,
+                "Jeevanam Healthcare and Super Specialty Clinic With A Very Long Name",
+                "Jeevanam Healthcare",
+                "9876543210",
+                "billing@jeevanam.example",
+                "12 Main Road",
+                "Second Floor",
+                "Bengaluru",
+                "Karnataka",
+                "India",
+                "560001",
+                "REG-001",
+                null,
+                null,
+                true,
+                true,
+                "jeevanam-healthcare",
+                OffsetDateTime.now(),
+                OffsetDateTime.now()
+        )));
+        AppUserEntity receivedBy = mock(AppUserEntity.class);
+        when(receivedBy.getDisplayName()).thenReturn("Front Desk");
+        when(receivedBy.getUsername()).thenReturn("frontdesk");
+        when(appUserRepository.findByTenantIdAndId(tenantId, actorId)).thenReturn(Optional.of(receivedBy));
+
+        PaymentRecord payment = service.recordPayment(tenantId, bill.getId(), payment("150.00"), actorId);
+        ReceiptPdf pdf = service.generateReceiptPdf(tenantId, payment.receiptId(), actorId);
+
+        assertThat(pdf.filename()).startsWith("Receipt-");
+        assertThat(pdf.filename()).endsWith(".pdf");
+
+        try (PDDocument document = Loader.loadPDF(pdf.content())) {
+            assertThat(document.getNumberOfPages()).isEqualTo(1);
+            PDPage page = document.getPage(0);
+            assertThat(page.getMediaBox().getWidth()).isBetween(594f, 596f);
+            assertThat(page.getMediaBox().getHeight()).isBetween(841f, 843f);
+
+            String text = new PDFTextStripper().getText(document);
+            assertThat(text).contains("Jeevanam Healthcare");
+            assertThat(text).contains("RECEIPT");
+            assertThat(text).contains("Receipt No");
+            assertThat(text).contains(payment.receiptNumber());
+            assertThat(text).contains(bill.getBillNumber());
+            assertThat(text).contains("Front Desk");
+            assertThat(text).contains("Amount Paid");
+            assertThat(text).contains("Remaining Due");
+            assertThat(text).contains("Consultation Fee");
+            assertThat(text).contains("Medicine Pack");
+            assertThat(text).contains("Payment Mode");
+            assertThat(text).doesNotContain("Arogia");
+        }
     }
 
     @Test

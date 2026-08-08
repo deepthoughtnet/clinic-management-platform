@@ -21,6 +21,7 @@ import {
   ListItemText,
   MenuItem,
   Menu,
+  Snackbar,
   Paper,
   Select,
   Stack,
@@ -72,6 +73,7 @@ import {
   getClinicProfile,
   getDoctorProfile,
   getConsultation,
+  getReceiptPdf,
   getPatientBillingContext,
   getPatient,
   issueBill,
@@ -617,6 +619,7 @@ export default function BillsPage() {
   const [receiptPreviewLoading, setReceiptPreviewLoading] = React.useState(false);
   const [invoiceAutoPrint, setInvoiceAutoPrint] = React.useState(false);
   const [receiptAutoPrint, setReceiptAutoPrint] = React.useState(false);
+  const [receiptPdfToast, setReceiptPdfToast] = React.useState<string | null>(null);
   const [consultationAppointment, setConsultationAppointment] = React.useState<Appointment | null>(null);
   const [consultationDoctorProfile, setConsultationDoctorProfile] = React.useState<DoctorProfile | null>(null);
   const [consultationContextLoading, setConsultationContextLoading] = React.useState(false);
@@ -1455,8 +1458,25 @@ export default function BillsPage() {
       setError("Receipt is not available for this bill yet.");
       return;
     }
-    await openReceiptPreviewAction(resolved.receipt, resolved.payment, true);
-  }, [resolveBillReceipt]);
+    if (!auth.accessToken || !auth.tenantId) return;
+    try {
+      const pdf = await getReceiptPdf(auth.accessToken, auth.tenantId, resolved.receipt.id);
+      const filenameSeed = resolved.receipt.receiptNumber || resolved.payment?.receiptNumber || bill.billNumber || "Receipt";
+      const filename = `Receipt-${String(filenameSeed).trim().replace(/[^A-Za-z0-9._-]+/g, "-").replace(/-+/g, "-")}.pdf`;
+      const anchor = document.createElement("a");
+      const objectUrl = window.URL.createObjectURL(pdf.blob);
+      anchor.href = objectUrl;
+      anchor.download = filename;
+      anchor.rel = "noopener";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => window.URL.revokeObjectURL(objectUrl), 60_000);
+    } catch (err) {
+      setError("Unable to generate receipt PDF.");
+      setReceiptPdfToast("Unable to generate receipt PDF.");
+    }
+  }, [auth.accessToken, auth.tenantId, resolveBillReceipt]);
 
   const sendBillReceiptEmail = React.useCallback(async (bill: Bill) => {
     const resolved = await resolveBillReceipt(bill);
@@ -2949,6 +2969,16 @@ export default function BillsPage() {
       <Menu anchorEl={ledgerActionAnchorEl} open={Boolean(ledgerActionBill && ledgerActionAnchorEl)} onClose={closeLedgerActions}>
         {ledgerMenuItems}
       </Menu>
+      <Snackbar
+        open={Boolean(receiptPdfToast)}
+        autoHideDuration={3500}
+        onClose={() => setReceiptPdfToast(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      >
+        <Alert severity="error" onClose={() => setReceiptPdfToast(null)} sx={{ width: "100%" }}>
+          {receiptPdfToast || "Unable to generate receipt PDF."}
+        </Alert>
+      </Snackbar>
 
       <Dialog open={paymentOpen} onClose={() => setPaymentOpen(false)} fullWidth maxWidth="sm">
         <DialogTitle>Collect payment</DialogTitle>

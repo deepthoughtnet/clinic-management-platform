@@ -29,12 +29,17 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.interceptor.TransactionAspectSupport;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.util.StringUtils;
 
 @Service
 public class HealthcarePublicListingSyncService {
+    private static final Logger log = LoggerFactory.getLogger(HealthcarePublicListingSyncService.class);
     private static final String SOURCE_SYSTEM_CLINIC = "HEALTHCARE_CLINIC";
     private static final String SOURCE_SYSTEM_DOCTOR = "HEALTHCARE_DOCTOR";
     private static final String BOOKING_MODE_ONLINE = "ONLINE_BOOKING";
@@ -65,28 +70,50 @@ public class HealthcarePublicListingSyncService {
 
     @Transactional
     public HealthcarePublicListingSyncSummary syncTenant(UUID tenantId, UUID actorAppUserId, String reason) {
+        log.info("START tenantId={}", tenantId);
         int inserted = 0;
         int updated = 0;
         int skipped = 0;
         int failed = 0;
         List<HealthcarePublicListingSyncOutcome> outcomes = new ArrayList<>();
 
-        HealthcarePublicListingSyncOutcome clinicOutcome = syncClinic(tenantId, actorAppUserId, reason);
+        log.info("CLINIC_SYNC_START tenantId={}", tenantId);
+        HealthcarePublicListingSyncOutcome clinicOutcome;
+        try {
+            clinicOutcome = syncClinic(tenantId, actorAppUserId, reason);
+        } catch (RuntimeException ex) {
+            logSyncFailure(tenantId, null, ex);
+            throw ex;
+        }
         outcomes.add(clinicOutcome);
         inserted += clinicOutcome.inserted();
         updated += clinicOutcome.updated();
         skipped += clinicOutcome.skipped();
         failed += clinicOutcome.failed();
+        log.info("CLINIC_SYNC_DONE tenantId={}", tenantId);
+        logRollbackOnlyIfNeeded(tenantId, null, "CLINIC_SYNC_DONE");
 
         for (DoctorProfileRecord doctor : doctorProfileService.findByTenantIdAndActive(tenantId)) {
-            HealthcarePublicListingSyncOutcome outcome = syncDoctor(tenantId, doctor, actorAppUserId, reason);
+            UUID doctorUserId = doctor.doctorUserId();
+            log.info("DOCTOR_SYNC_START doctorUserId={} tenantId={}", doctorUserId, tenantId);
+            HealthcarePublicListingSyncOutcome outcome;
+            try {
+                outcome = syncDoctor(tenantId, doctor, actorAppUserId, reason);
+            } catch (RuntimeException ex) {
+                logSyncFailure(tenantId, doctorUserId, ex);
+                throw ex;
+            }
             outcomes.add(outcome);
             inserted += outcome.inserted();
             updated += outcome.updated();
             skipped += outcome.skipped();
             failed += outcome.failed();
+            log.info("DOCTOR_SYNC_DONE doctorUserId={} tenantId={}", doctorUserId, tenantId);
+            logRollbackOnlyIfNeeded(tenantId, doctorUserId, "DOCTOR_SYNC_DONE");
         }
 
+        logRollbackOnlyIfNeeded(tenantId, null, "SYNC_TENANT_COMPLETE");
+        log.info("DONE tenantId={}", tenantId);
         return new HealthcarePublicListingSyncSummary(inserted, updated, skipped, failed, outcomes);
     }
 
@@ -287,6 +314,9 @@ public class HealthcarePublicListingSyncService {
         if (doctor.doctorUserId() == null) {
             return null;
         }
+        if (!hasConfiguredDoctorPhoto(doctor)) {
+            return null;
+        }
         try {
             var photo = doctorProfileService.downloadPhoto(tenantId, doctor.doctorUserId());
             if (photo.bytes() == null || photo.bytes().length == 0) {
@@ -300,8 +330,21 @@ public class HealthcarePublicListingSyncService {
                     photo.bytes()
             );
         } catch (RuntimeException ex) {
+            Throwable root = rootCause(ex);
+            log.error(
+                    "DOCTOR_PHOTO_SYNC_FAILED tenantId={} doctorUserId={} rootExceptionClass={} rootMessage={}",
+                    tenantId,
+                    doctor.doctorUserId(),
+                    root.getClass().getName(),
+                    root.getMessage(),
+                    ex
+            );
             return null;
         }
+    }
+
+    private boolean hasConfiguredDoctorPhoto(DoctorProfileRecord doctor) {
+        return doctor != null && StringUtils.hasText(doctor.photoUrl());
     }
 
     private boolean hasAnyBookableDoctor(UUID tenantId) {
@@ -318,6 +361,38 @@ public class HealthcarePublicListingSyncService {
 
     private boolean hasActiveAvailability(UUID tenantId, UUID doctorUserId) {
         return doctorAvailabilityQueryService.hasActiveAvailability(tenantId, doctorUserId);
+    }
+
+    private void logRollbackOnlyIfNeeded(UUID tenantId, UUID doctorUserId, String phase) {
+        if (TransactionSynchronizationManager.isActualTransactionActive()
+                && TransactionAspectSupport.currentTransactionStatus().isRollbackOnly()) {
+            log.error(
+                    "SYNC_MARKED_ROLLBACK_ONLY tenantId={} doctorUserId={} phase={}",
+                    tenantId,
+                    doctorUserId,
+                    phase
+            );
+        }
+    }
+
+    private void logSyncFailure(UUID tenantId, UUID doctorUserId, RuntimeException ex) {
+        Throwable root = rootCause(ex);
+        log.error(
+                "SYNC_FAILED tenantId={} doctorUserId={} rootExceptionClass={} rootMessage={}",
+                tenantId,
+                doctorUserId,
+                root.getClass().getName(),
+                root.getMessage(),
+                ex
+        );
+    }
+
+    private Throwable rootCause(Throwable throwable) {
+        Throwable current = throwable;
+        while (current.getCause() != null && current.getCause() != current) {
+            current = current.getCause();
+        }
+        return current;
     }
 
     private String ensureClinicSlug(UUID tenantId, ClinicProfileRecord clinic, UUID actorAppUserId) {
