@@ -3127,9 +3127,11 @@ export function PatientAppointmentsPage({ session, onSignOut }: { session: Patie
 export function PatientBookAppointmentPage({
   session,
   onSignOut,
+  onSessionExpired,
 }: {
   session: PatientPortalSession | null;
   onSignOut: () => void;
+  onSessionExpired: () => void;
 }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -3592,7 +3594,11 @@ export function PatientBookAppointmentPage({
       setReason("");
       setSelectedSlot(null);
     } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : "Unable to confirm the appointment.");
+      const message = error instanceof Error ? error.message : "";
+      if (message.toLowerCase().includes("authentication is required") || message.toLowerCase().includes("unauthorized")) {
+        onSessionExpired();
+      }
+      setSubmitError(message || "Unable to confirm the appointment.");
     } finally {
       setSubmitPending(false);
     }
@@ -3913,6 +3919,7 @@ export function PatientBookAppointmentPage({
         setSlotsLoading(false);
         const message = error instanceof Error ? error.message : "";
         if (message.toLowerCase().includes("authentication is required") || message.toLowerCase().includes("unauthorized")) {
+          onSessionExpired();
           setSlotsError("Your patient session has expired. Sign in again to continue booking.");
         } else if (message.toLowerCase().includes("clinic is not available for online booking")) {
           setSlotsError("We could not load slots for this doctor. Please try another date or choose another doctor.");
@@ -3931,6 +3938,7 @@ export function PatientBookAppointmentPage({
     resolvedSelectedDoctorId,
     selectedDoctorBookingReference,
     selectedDoctor?.bookingMode,
+    onSessionExpired,
   ]);
 
   useEffect(() => {

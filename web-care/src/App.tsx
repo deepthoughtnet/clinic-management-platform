@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import {
   PatientAppointmentsPage,
@@ -202,15 +202,15 @@ function readStoredPatientSession() {
 function usePatientPortalSession() {
   const [session, setSession] = useState<PatientPortalSession | null>(() => readStoredPatientSession());
 
-  function saveSession(nextSession: PatientPortalSession) {
+  const saveSession = useCallback((nextSession: PatientPortalSession) => {
     window.localStorage.setItem(PATIENT_PORTAL_SESSION_STORAGE_KEY, JSON.stringify(nextSession));
     setSession(nextSession);
-  }
+  }, []);
 
-  function clearSession() {
+  const clearSession = useCallback(() => {
     window.localStorage.removeItem(PATIENT_PORTAL_SESSION_STORAGE_KEY);
     setSession(null);
-  }
+  }, []);
 
   return { session, saveSession, clearSession };
 }
@@ -372,7 +372,16 @@ export function App() {
             }
           />
           <Route path="/patient/dashboard" element={<PatientDashboardPage session={session} onSignOut={clearPatientSessionAndContext} />} />
-          <Route path="/patient/book-appointment" element={<PatientBookAppointmentPage session={session} onSignOut={clearPatientSessionAndContext} />} />
+          <Route
+            path="/patient/book-appointment"
+            element={
+              <PatientBookAppointmentPage
+                session={session}
+                onSignOut={clearPatientSessionAndContext}
+                onSessionExpired={clearSession}
+              />
+            }
+          />
           <Route path="/patient/appointments" element={<PatientAppointmentsPage session={session} onSignOut={clearPatientSessionAndContext} />} />
           <Route path="/patient/prescriptions" element={<PatientPrescriptionsPage session={session} onSignOut={clearPatientSessionAndContext} />} />
           <Route path="/patient/bills" element={<PatientBillsPage session={session} onSignOut={clearPatientSessionAndContext} />} />

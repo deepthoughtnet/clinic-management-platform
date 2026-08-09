@@ -3,6 +3,7 @@ import {
   type PatientPortalSession,
   isPatientPortalRegistrationSession,
 } from "../../api/patientPortal";
+import { isPatientPortalSessionTokenActive } from "./patientPortalSessionToken.js";
 import { clearPublicBookingContext } from "./patientPortalClinicContext";
 
 export const PATIENT_PORTAL_SESSION_STORAGE_KEY = "clinic-web-public-patient-session";
@@ -44,7 +45,7 @@ export function isStoredPatientSessionActive(
   if (isPatientPortalRegistrationSession(session)) {
     return isPatientRegistrationSessionActive(session, now);
   }
-  return true;
+  return isPatientPortalSessionTokenActive(session.patientSessionToken, now);
 }
 
 function clearKeys(storage: Storage, keys: readonly string[]) {

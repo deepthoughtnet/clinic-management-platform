@@ -1231,6 +1231,9 @@ function buildClinicProfile(detail: PublicClinicDetailResponse) {
     locations: detail.locations ?? [],
     trustIndicators: ["Published on Jeevanam Discover"],
     consultationModes: detail.consultationModes ?? [],
+    associatedDoctors: detail.doctors ?? [],
+    appointmentEmptyFeeText: "Fees vary by doctor",
+    appointmentEmptyModesText: "Shown when you choose a doctor",
   };
 }
 

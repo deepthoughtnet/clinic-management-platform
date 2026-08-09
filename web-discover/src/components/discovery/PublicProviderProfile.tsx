@@ -12,8 +12,10 @@ import {
 } from "@mui/icons-material";
 import { type ReactNode, useEffect, useState } from "react";
 import { PublicMediaImage } from "../landing/PublicMediaImage";
+import { DoctorCard } from "../DiscoveryComponents";
 import { LocationDisplayMap } from "../location";
 import type { LocationDisplayMapProps } from "../location/LocationDisplayMap";
+import type { PublicDoctorSummaryResponse } from "../../api/publicCatalog";
 import { parseFiniteExperienceYears } from "../../utils/publicProfileFormatting";
 import {
   BookingCapabilityBadge,
@@ -97,6 +99,7 @@ export type PublicProviderProfileProps = {
   galleryEmptyTitle?: string;
   galleryEmptyActionLabel?: string | null;
   onGalleryEmptyAction?: (() => void) | null;
+  associatedDoctors?: PublicDoctorSummaryResponse[];
   locationTitle?: string;
   locationName?: string | null;
   locationAddress?: string | null;
@@ -187,6 +190,7 @@ export function PublicProviderProfile({
   galleryEmptyTitle = "No clinic gallery images have been added yet.",
   galleryEmptyActionLabel,
   onGalleryEmptyAction,
+  associatedDoctors,
   locationTitle = "Location and access",
   locationName,
   locationAddress,
@@ -326,6 +330,28 @@ export function PublicProviderProfile({
         )}
         {afterBiographyContent ? <div className="provider-preview-after-biography">{afterBiographyContent}</div> : null}
       </section>
+
+      {providerType === "CLINIC" ? (
+        <section className="provider-preview-section provider-preview-section--doctors">
+          <div className="provider-preview-section-heading">
+            <span className="eyebrow">Doctors</span>
+            <h2>Doctors at this clinic</h2>
+            <p>These doctors are associated with this public clinic profile.</p>
+          </div>
+          {associatedDoctors && associatedDoctors.length ? (
+            <div className="public-directory-grid provider-preview-doctor-grid">
+              {associatedDoctors.map((doctor) => (
+                <DoctorCard key={doctor.publicDoctorId} doctor={doctor} />
+              ))}
+            </div>
+          ) : (
+            <div className="provider-preview-empty-state">
+              <strong>Doctors will appear here once they are published.</strong>
+              <p>Clinic booking entry follows the published doctor associations for this practice.</p>
+            </div>
+          )}
+        </section>
+      ) : null}
 
       <div className="provider-preview-grid provider-preview-grid--paired">
         <section className="provider-preview-card">
@@ -539,7 +565,7 @@ export function PublicProviderProfile({
             </div>
             <div className="provider-preview-appointment-summary">
               <div>
-                <strong>Consultation fee</strong>
+                <strong>{providerType === "CLINIC" ? "Consultation fees" : "Consultation fee"}</strong>
                 <span>{consultationFeeLabel ?? appointmentEmptyFeeText}</span>
               </div>
               <div>

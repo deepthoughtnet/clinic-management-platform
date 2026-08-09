@@ -201,6 +201,7 @@ test("authenticated find care reuses the patient session for slot loading and sh
   assert.ok(pages.includes("booking-date-strip"));
   assert.ok(pages.includes('currentIsoDateInTimeZone("Asia/Kolkata")'));
   assert.ok(pages.includes("Your patient session has expired. Sign in again to continue booking."));
+  assert.ok(pages.includes("onSessionExpired"));
   assert.ok(api.includes("export async function loadPatientPortalDoctorSlots"));
   assert.ok(api.includes("session: PatientPortalSession"));
   assert.ok(styles.includes(".booking-capability-legend"));

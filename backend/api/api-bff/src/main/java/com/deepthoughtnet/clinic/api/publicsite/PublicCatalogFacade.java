@@ -26,6 +26,7 @@ import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileMod
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderSearchCriteria;
 import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService;
 import com.deepthoughtnet.clinic.discover.publicprofilemoderation.ProviderPublicProfileModerationService;
+import com.deepthoughtnet.clinic.platform.contracts.providerintegration.BookingCapability;
 import com.deepthoughtnet.clinic.platform.providerintegration.service.ProviderLinkingService;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -386,7 +387,7 @@ public class PublicCatalogFacade {
                 detail.displayName(),
                 detail.logoUrl() == null || detail.logoUrl().isBlank() ? null : publicClinicLogoPath(detail.canonicalSlug()),
                 detail.coverUrl() == null || detail.coverUrl().isBlank() ? null : publicClinicCoverPath(detail.canonicalSlug()),
-                resolvePublicBookingMode(publishedLifecycleReference(detail.canonicalSlug(), detail.providerId().toString()), null, detail.bookingMode(), detail.contactPhone()),
+                resolveClinicBookingMode(detail),
                 firstNonBlank(detail.locations().stream().findFirst().map(PublicProviderLocationSnapshot::address).orElse(null), detail.summary()),
                 detail.area(),
                 detail.city(),
@@ -412,6 +413,35 @@ public class PublicCatalogFacade {
 
     private List<PublicDoctorSummaryResponse> publicClinicDoctors(PublicProviderProfileDetailRecord clinicDetail) {
         return publicPracticeDoctors(clinicDetail);
+    }
+
+    private String resolveClinicBookingMode(PublicProviderProfileDetailRecord clinicDetail) {
+        if (clinicDetail == null || clinicDetail.providerId() == null) {
+            return BookingCapability.NOT_AVAILABLE.name();
+        }
+
+        boolean hasOnlineBookableDoctor = publicDoctorPracticeAssociationService
+                .listPublishedDoctorReferencesByPractice(clinicDetail.providerId())
+                .stream()
+                .anyMatch(doctorReference -> providerLinkingService.resolveBookingTarget(
+                                new com.deepthoughtnet.clinic.platform.contracts.providerintegration.PublicProviderReference(
+                                        doctorReference.toString(),
+                                        clinicDetail.providerId().toString()
+                                )
+                        )
+                        .map(resolution -> resolution.bookingCapability() == BookingCapability.ONLINE_BOOKING)
+                        .orElse(false));
+
+        if (hasOnlineBookableDoctor) {
+            return BookingCapability.ONLINE_BOOKING.name();
+        }
+
+        return resolvePublicBookingMode(
+                publishedLifecycleReference(clinicDetail.canonicalSlug(), clinicDetail.providerId().toString()),
+                null,
+                clinicDetail.bookingMode(),
+                clinicDetail.contactPhone()
+        );
     }
 
     private List<PublicDoctorSummaryResponse> publicPracticeDoctors(PublicProviderProfileDetailRecord practiceDetail) {
@@ -624,7 +654,7 @@ public class PublicCatalogFacade {
                 record.area(),
                 record.area(),
                 record.city(),
-                resolvePublicBookingMode(publishedLifecycleReference(record.canonicalSlug(), record.providerId().toString()), null, record.bookingMode(), record.contactPhone()),
+                resolveClinicBookingMode(record.providerId(), record.canonicalSlug(), record.bookingMode(), record.contactPhone()),
                 record.doctorCount(),
                 record.serviceCount(),
                 record.departmentCount(),
@@ -635,6 +665,35 @@ public class PublicCatalogFacade {
                 record.summary(),
                 false,
                 record.distanceKm()
+        );
+    }
+
+    private String resolveClinicBookingMode(java.util.UUID clinicProviderId, String clinicSlug, String projectedMode, String publicPhone) {
+        if (clinicProviderId == null) {
+            return resolvePublicBookingMode(null, null, projectedMode, publicPhone);
+        }
+
+        boolean hasOnlineBookableDoctor = publicDoctorPracticeAssociationService
+                .listPublishedDoctorReferencesByPractice(clinicProviderId)
+                .stream()
+                .anyMatch(doctorReference -> providerLinkingService.resolveBookingTarget(
+                                new com.deepthoughtnet.clinic.platform.contracts.providerintegration.PublicProviderReference(
+                                        doctorReference.toString(),
+                                        clinicProviderId.toString()
+                                )
+                        )
+                        .map(resolution -> resolution.bookingCapability() == BookingCapability.ONLINE_BOOKING)
+                        .orElse(false));
+
+        if (hasOnlineBookableDoctor) {
+            return BookingCapability.ONLINE_BOOKING.name();
+        }
+
+        return resolvePublicBookingMode(
+                publishedLifecycleReference(clinicSlug, clinicProviderId.toString()),
+                null,
+                projectedMode,
+                publicPhone
         );
     }
 

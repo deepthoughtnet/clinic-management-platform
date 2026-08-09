@@ -71,4 +71,5 @@ test("patient registration session cleanup is centralized", () => {
   assert.ok(source.includes("PATIENT_PORTAL_PENDING_REGISTRATION_STORAGE_KEY"));
   assert.ok(source.includes("PATIENT_PORTAL_SESSION_STORAGE_KEY"));
   assert.ok(source.includes("clearPublicBookingContext"));
+  assert.ok(source.includes("isPatientPortalSessionTokenActive"));
 });

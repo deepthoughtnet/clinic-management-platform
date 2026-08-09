@@ -349,6 +349,174 @@ class PublicCatalogFacadeTest {
     }
 
     @Test
+    void clinicSummaryAndDetailResolveOnlineBookingWhenAnyAssociatedDoctorCanBookOnline() {
+        ProviderPublicProfileService publicProfileService = mock(ProviderPublicProfileService.class);
+        ProviderLinkingService providerLinkingService = mock(ProviderLinkingService.class);
+        PublicDoctorPracticeAssociationService associationService = mock(PublicDoctorPracticeAssociationService.class);
+        PublicCatalogFacade facade = new PublicCatalogFacade(publicProfileService, providerLinkingService, moderationService(), associationService);
+
+        PublicProviderProfileDetailRecord clinicDetail = detailRecord(
+                ProviderType.CLINIC,
+                "CL-ONLINE",
+                "green-valley-family-clinic",
+                "/discover/clinics/green-valley-family-clinic",
+                "Green Valley Family Clinic",
+                "Green Valley Family Clinic",
+                "Clinic subtitle",
+                "Clinic summary",
+                "Clinic biography",
+                null,
+                null,
+                null,
+                null,
+                null,
+                false,
+                List.of(),
+                List.of("General Medicine"),
+                List.of(),
+                List.of("Consultation"),
+                List.of("Outpatient"),
+                List.of(),
+                List.of("In-person"),
+                List.of(new PublicProviderLocationSnapshot("Primary", "Main Road", "Pune", "Maharashtra", "India", "411001", null, true, true, null, null)),
+                List.of(),
+                List.of(),
+                null,
+                null,
+                null,
+                "9876543210",
+                "clinic@example.com",
+                "https://example.com",
+                "Pune",
+                "Main Road",
+                "Maharashtra",
+                "India",
+                "General Medicine",
+                null,
+                null,
+                null,
+                null,
+                false,
+                "CALL_TO_BOOK",
+                false,
+                OffsetDateTime.parse("2026-01-01T10:00:00Z"),
+                1,
+                "green-valley-family-clinic",
+                null,
+                true
+        );
+        PublicProviderProfileSummaryRecord clinicSummary = new PublicProviderProfileSummaryRecord(
+                clinicDetail.providerId(),
+                ProviderType.CLINIC,
+                clinicDetail.canonicalSlug(),
+                clinicDetail.publicPath(),
+                clinicDetail.displayName(),
+                clinicDetail.subtitle(),
+                clinicDetail.summary(),
+                clinicDetail.primarySpeciality(),
+                clinicDetail.city(),
+                clinicDetail.area(),
+                clinicDetail.imageUrl(),
+                clinicDetail.coverUrl(),
+                1,
+                2,
+                3,
+                4,
+                clinicDetail.contactPhone(),
+                "CALL_TO_BOOK",
+                false,
+                List.of("General Medicine"),
+                null
+        );
+        PublicProviderProfileDetailRecord doctorDetail = detailRecord(
+                ProviderType.INDIVIDUAL_DOCTOR,
+                "DR-ONLINE",
+                "amit-verma-2",
+                "/discover/doctors/amit-verma-2",
+                "Amit Verma",
+                "Amit Verma",
+                "General Medicine",
+                "Doctor summary",
+                "Doctor biography",
+                "MBBS, MD",
+                "MMC",
+                12,
+                new BigDecimal("800"),
+                15,
+                true,
+                List.of("English"),
+                List.of("General Medicine"),
+                List.of(),
+                List.of("Consultation"),
+                List.of(),
+                List.of(),
+                List.of("In-person"),
+                List.of(new PublicProviderLocationSnapshot("Green Valley Family Clinic", "Main Road", "Pune", "Maharashtra", "India", "411001", null, true, true, null, null)),
+                List.of(),
+                List.of(),
+                "https://example.com/doctor.png",
+                null,
+                null,
+                "+911111111111",
+                "doctor@example.com",
+                "https://example.com",
+                "Pune",
+                "Green Valley",
+                "Maharashtra",
+                "India",
+                "General Medicine",
+                null,
+                null,
+                null,
+                null,
+                false,
+                "ONLINE_BOOKING",
+                false,
+                OffsetDateTime.parse("2026-01-01T10:00:00Z"),
+                1,
+                "amit-verma-2",
+                null,
+                true
+        );
+
+        when(publicProfileService.findBySlug("green-valley-family-clinic")).thenReturn(Optional.of(clinicDetail));
+        when(publicProfileService.listProfiles(any(), anyInt(), anyInt())).thenReturn(new PageImpl<>(List.of(clinicSummary), PageRequest.of(0, 12), 1));
+        when(associationService.listPublishedDoctorReferencesByPractice(clinicDetail.providerId())).thenReturn(List.of(doctorDetail.providerId()));
+        when(publicProfileService.findByProviderId(doctorDetail.providerId())).thenReturn(Optional.of(doctorDetail));
+        when(providerLinkingService.resolveBookingTarget(new PublicProviderReference(doctorDetail.providerId().toString(), clinicDetail.providerId().toString()))).thenReturn(Optional.of(
+                new BookingTargetResolution(
+                        new BookingTargetReference("opaque-booking-reference", 11L),
+                        new ProviderSourceReference(SourceSystem.HEALTHCARE_DOCTOR, doctorDetail.referenceNumber(), 8L, OffsetDateTime.parse("2026-01-01T10:00:00Z")),
+                        PublicProfileType.DOCTOR,
+                        new PublicProviderReference(doctorDetail.providerId().toString(), clinicDetail.providerId().toString()),
+                        "tenant-1",
+                        "platform-clinic-1",
+                        "tenant-doctor-user-1",
+                        "tenant-doctor-profile-1",
+                        BookingCapability.ONLINE_BOOKING,
+                        AvailabilityState.AVAILABLE_TODAY,
+                        PlatformConnectionStatus.CONNECTED,
+                        LinkLifecycleStatus.LINKED,
+                        11L,
+                        22L,
+                        OffsetDateTime.parse("2026-01-01T10:00:00Z")
+                )
+        ));
+
+        var clinicList = facade.listClinics(null, null, null, null, null, null, null, null, 0, 12);
+        var clinicDetailResponse = facade.clinicDetail("green-valley-family-clinic");
+
+        assertThat(clinicList.items()).singleElement().satisfies(item -> assertThat(item.bookingMode()).isEqualTo("ONLINE_BOOKING"));
+        assertThat(clinicDetailResponse.bookingMode()).isEqualTo("ONLINE_BOOKING");
+        assertThat(clinicDetailResponse.doctors()).singleElement().satisfies(doctor -> {
+            assertThat(doctor.publicDoctorId()).isEqualTo(doctorDetail.providerId().toString());
+            assertThat(doctor.clinicDisplayName()).isEqualTo("Green Valley Family Clinic");
+            assertThat(doctor.clinicSlug()).isEqualTo("green-valley-family-clinic");
+            assertThat(doctor.bookingMode()).isEqualTo("ONLINE_BOOKING");
+        });
+    }
+
+    @Test
     void doctorDetailIncludesOpaqueBookingReferenceWhenPlatformLinkExists() {
         ProviderPublicProfileService publicProfileService = mock(ProviderPublicProfileService.class);
         ProviderLinkingService providerLinkingService = mock(ProviderLinkingService.class);
