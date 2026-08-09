@@ -50,12 +50,15 @@ import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventCommand;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
 import com.deepthoughtnet.clinic.platform.branding.BrandingProperties;
+import com.deepthoughtnet.clinic.platform.branding.BrandingLogoAsset;
+import com.deepthoughtnet.clinic.platform.branding.BrandingLogoProvider;
 import com.deepthoughtnet.clinic.platform.modulith.events.ModuleBusinessEventPublisher;
 import com.deepthoughtnet.clinic.billing.events.BillGeneratedEvent;
 import com.deepthoughtnet.clinic.billing.events.PaymentReceivedEvent;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.ByteArrayOutputStream;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -73,12 +76,20 @@ import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.Locale;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.awt.image.BufferedImage;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
+import org.apache.pdfbox.pdmodel.font.PDFont;
+import org.apache.pdfbox.pdmodel.font.PDType0Font;
 import org.apache.pdfbox.pdmodel.font.PDType1Font;
 import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
+import org.apache.pdfbox.pdmodel.graphics.image.LosslessFactory;
+import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
+import javax.imageio.ImageIO;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -108,6 +119,7 @@ public class BillingService {
     private final ModuleBusinessEventPublisher moduleBusinessEventPublisher;
     private final ObjectMapper objectMapper;
     private final BrandingProperties brandingProperties;
+    private final BrandingLogoProvider brandingLogoProvider;
 
     public BillingService(
             BillRepository billRepository,
@@ -126,7 +138,8 @@ public class BillingService {
             AuditEventPublisher auditEventPublisher,
             ModuleBusinessEventPublisher moduleBusinessEventPublisher,
             ObjectMapper objectMapper,
-            BrandingProperties brandingProperties
+            BrandingProperties brandingProperties,
+            BrandingLogoProvider brandingLogoProvider
     ) {
         this.billRepository = billRepository;
         this.billLineRepository = billLineRepository;
@@ -145,6 +158,7 @@ public class BillingService {
         this.moduleBusinessEventPublisher = moduleBusinessEventPublisher;
         this.objectMapper = objectMapper;
         this.brandingProperties = brandingProperties;
+        this.brandingLogoProvider = brandingLogoProvider;
     }
 
     @Transactional(readOnly = true)
@@ -1101,19 +1115,21 @@ public class BillingService {
         try (PDDocument document = new PDDocument(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             PDPage page = new PDPage(PDRectangle.A4);
             document.addPage(page);
+            ReceiptPdfFonts fonts = loadReceiptFonts(document);
+            Optional<BrandingLogoAsset> brandingLogo = resolveReceiptLogo(bill.getTenantId());
             try (PDPageContentStream content = new PDPageContentStream(document, page)) {
                 float margin = 28f;
                 float width = page.getMediaBox().getWidth() - (margin * 2);
                 float y = page.getMediaBox().getHeight() - margin;
 
                 drawDocumentFrame(content, page, margin);
-                y = drawHeader(content, clinicTitle(clinic), "RECEIPT", clinic, page, margin, y);
-                y -= 4;
-                y = drawReceiptMeta(content, record, receipt, payment, appointment, consultation, margin, width, y);
+                y = drawReceiptHeader(document, content, clinicTitle(clinic), "RECEIPT", clinic, page, margin, y, brandingLogo, fonts);
                 y -= 8;
-                y = drawReceiptBody(content, record, receipt, payment, margin, width, y);
+                y = drawReceiptMeta(content, record, receipt, payment, appointment, consultation, margin, width, y, fonts);
                 y -= 8;
-                y = drawReceiptBottomSection(content, record, receipt, payment, margin, width, y);
+                y = drawReceiptBody(content, record, receipt, payment, margin, width, y, fonts);
+                y -= 8;
+                y = drawReceiptBottomSection(content, record, receipt, payment, margin, width, y, fonts);
                 y -= 8;
                 drawFooter(content, brandingProperties.footerLine(), margin, y);
             }
@@ -1123,6 +1139,78 @@ public class BillingService {
         } catch (IOException ex) {
             throw new IllegalStateException("Unable to generate receipt PDF", ex);
         }
+    }
+
+    private ReceiptPdfFonts loadReceiptFonts(PDDocument document) {
+        PDFont regular = new PDType1Font(Standard14Fonts.FontName.HELVETICA);
+        PDFont bold = new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD);
+        PDFont currency = regular;
+        try {
+            Path regularPath = Path.of("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf");
+            Path boldPath = Path.of("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf");
+            if (Files.isRegularFile(regularPath) && Files.isRegularFile(boldPath)) {
+                try (var regularStream = Files.newInputStream(regularPath); var boldStream = Files.newInputStream(boldPath)) {
+                    regular = PDType0Font.load(document, regularStream, true);
+                    bold = PDType0Font.load(document, boldStream, true);
+                    currency = regular;
+                }
+            }
+        } catch (IOException ex) {
+            regular = new PDType1Font(Standard14Fonts.FontName.HELVETICA);
+            bold = new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD);
+            currency = regular;
+        }
+        return new ReceiptPdfFonts(regular, bold, currency);
+    }
+
+    private Optional<BrandingLogoAsset> resolveReceiptLogo(UUID tenantId) {
+        try {
+            return brandingLogoProvider == null ? Optional.empty() : brandingLogoProvider.resolveLogo(tenantId);
+        } catch (RuntimeException ex) {
+            return Optional.empty();
+        }
+    }
+
+    private float drawReceiptHeader(
+            PDDocument document,
+            PDPageContentStream content,
+            String clinicName,
+            String title,
+            ClinicProfileRecord clinic,
+            PDPage page,
+            float margin,
+            float y,
+            Optional<BrandingLogoAsset> logoAsset,
+            ReceiptPdfFonts fonts
+    ) throws IOException {
+        float pageWidth = page.getMediaBox().getWidth();
+        float rightX = pageWidth - margin - 8;
+        float leftX = margin + 8;
+        float headerTop = y - 10f;
+        float logoSize = 34f;
+        float textX = leftX;
+        float textTop = headerTop - 1f;
+        Optional<PDImageXObject> logoImage = loadLogoImage(document, logoAsset);
+        if (logoImage.isPresent()) {
+            float[] bounds = fitWithin(logoImage.get(), logoSize, logoSize);
+            float logoY = headerTop - bounds[1] - 1f;
+            content.drawImage(logoImage.get(), leftX, logoY, bounds[0], bounds[1]);
+            textX = leftX + bounds[0] + 10f;
+        }
+
+        float availableWidth = Math.max(180f, pageWidth * 0.54f - (textX - leftX));
+        float textY = writeWrapped(content, safe(clinicName), 14f, textX, textTop - 4f, availableWidth, fonts.bold());
+        textY = writeWrapped(content, clinicAddressLine(clinic), 8.8f, textX, textY - 1f, availableWidth, fonts.regular());
+        textY = writeWrapped(content, clinicPhoneEmailLine(clinic), 8.8f, textX, textY - 1f, availableWidth, fonts.regular());
+
+        float titleWidth = textWidth(fonts.bold(), 20f, title);
+        float subtitleWidth = textWidth(fonts.regular(), 8.8f, "A4 printable document");
+        writeLine(content, title, 20f, rightX - titleWidth, headerTop - 1f, fonts.bold());
+        writeLine(content, "A4 printable document", 8.8f, rightX - subtitleWidth, headerTop - 17f, fonts.regular());
+
+        float textBottom = textY;
+        float headerBottom = Math.min(textBottom, headerTop - 34f);
+        return headerBottom - 10f;
     }
 
     private float drawHeader(PDPageContentStream content, String clinicName, String title, ClinicProfileRecord clinic, PDPage page, float margin, float y) throws IOException {
@@ -1164,41 +1252,104 @@ public class BillingService {
         return drawMetaRows(content, pairs, margin, width, y);
     }
 
-    private float drawReceiptMeta(PDPageContentStream content, BillRecord record, ReceiptEntity receipt, PaymentEntity payment, AppointmentRecord appointment, ConsultationRecord consultation, float margin, float width, float y) throws IOException {
-        List<MetaPair> pairs = List.of(
-                new MetaPair("Receipt No", safe(receipt.getReceiptNumber())),
-                new MetaPair("Payment Date", payment == null ? formatDate(receipt.getReceiptDate()) : formatPaymentTimestamp(payment)),
-                new MetaPair("Patient", safe(record.patientName())),
-                new MetaPair("Mobile", patientMobile(record.patientId(), record.patientName())),
-                new MetaPair("Bill No", record.billNumber()),
-                new MetaPair("Appointment", appointmentSummary(appointment, consultation, false)),
-                new MetaPair("Payment Mode", payment == null || payment.getPaymentMode() == null ? "—" : payment.getPaymentMode().name()),
-                new MetaPair("Amount Paid", money(receipt.getAmount())),
-                new MetaPair("Remaining Due", money(record.dueAmount()))
-        );
-        return drawMetaRows(content, pairs, margin, width, y);
-    }
-
     private float drawMetaRows(PDPageContentStream content, List<MetaPair> pairs, float margin, float width, float y) throws IOException {
-        float cellWidth = width / 2f;
-        float labelWidth = 78f;
-        float rowHeight = 15f;
-        for (int i = 0; i < pairs.size(); i += 2) {
-            MetaPair left = pairs.get(i);
-            MetaPair right = i + 1 < pairs.size() ? pairs.get(i + 1) : null;
-            float rowY = y;
-            drawKeyValue(content, left, margin + 4, rowY, cellWidth - 10, labelWidth);
-            if (right != null) {
-                drawKeyValue(content, right, margin + cellWidth + 6, rowY, cellWidth - 10, labelWidth);
+        List<MetaPair> left = new ArrayList<>();
+        List<MetaPair> right = new ArrayList<>();
+        for (int i = 0; i < pairs.size(); i++) {
+            MetaPair pair = pairs.get(i);
+            if (i % 2 == 0) {
+                left.add(pair);
+            } else {
+                right.add(pair);
             }
-            y -= rowHeight;
         }
-        return y - 4;
+        return drawReceiptMetaRows(content, left, right, margin, width, y, new ReceiptPdfFonts(
+                new PDType1Font(Standard14Fonts.FontName.HELVETICA),
+                new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD),
+                new PDType1Font(Standard14Fonts.FontName.HELVETICA)
+        ));
     }
 
-    private void drawKeyValue(PDPageContentStream content, MetaPair pair, float x, float y, float width, float labelWidth) throws IOException {
-        writeLine(content, pair.label() + ":", 9, x, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
-        writeWrapped(content, safe(pair.value()), 9, x + labelWidth, y, width - labelWidth);
+    private float drawReceiptMeta(
+            PDPageContentStream content,
+            BillRecord record,
+            ReceiptEntity receipt,
+            PaymentEntity payment,
+            AppointmentRecord appointment,
+            ConsultationRecord consultation,
+            float margin,
+            float width,
+            float y,
+            ReceiptPdfFonts fonts
+    ) throws IOException {
+        List<MetaPair> left = List.of(
+                new MetaPair("Receipt No", safe(receipt.getReceiptNumber())),
+                new MetaPair("Patient", safe(record.patientName())),
+                new MetaPair("Bill No", record.billNumber()),
+                new MetaPair("Payment Mode", payment == null || payment.getPaymentMode() == null ? "—" : payment.getPaymentMode().name()),
+                new MetaPair("Remaining Due", currency(record.dueAmount(), fonts.currency()))
+        );
+        List<MetaPair> right = List.of(
+                new MetaPair("Payment Date", payment == null ? formatDate(receipt.getReceiptDate()) : formatPaymentTimestamp(payment)),
+                new MetaPair("Mobile", patientMobile(record.patientId(), record.patientName())),
+                new MetaPair("Appointment", appointmentSummary(appointment, consultation, false)),
+                new MetaPair("Amount Paid", currency(receipt.getAmount(), fonts.currency()))
+        );
+        return drawReceiptMetaRows(content, left, right, margin, width, y, fonts);
+    }
+
+    private float drawReceiptMetaRows(
+            PDPageContentStream content,
+            List<MetaPair> leftRows,
+            List<MetaPair> rightRows,
+            float margin,
+            float width,
+            float y,
+            ReceiptPdfFonts fonts
+    ) throws IOException {
+        float cellWidth = width / 2f;
+        float cellPadding = 4f;
+        float labelWidth = 80f;
+        int rowCount = Math.max(leftRows.size(), rightRows.size());
+        for (int i = 0; i < rowCount; i++) {
+            MetaPair left = i < leftRows.size() ? leftRows.get(i) : null;
+            MetaPair right = i < rightRows.size() ? rightRows.get(i) : null;
+            float leftHeight = measureMetaCellHeight(left, cellWidth - 10f, labelWidth, fonts);
+            float rightHeight = measureMetaCellHeight(right, cellWidth - 10f, labelWidth, fonts);
+            float rowHeight = Math.max(16f, Math.max(leftHeight, rightHeight));
+            drawReceiptMetaCell(content, left, margin + cellPadding, y, cellWidth - 10f, labelWidth, rowHeight, fonts);
+            drawReceiptMetaCell(content, right, margin + cellWidth + 6f, y, cellWidth - 10f, labelWidth, rowHeight, fonts);
+            y -= rowHeight + 2f;
+        }
+        return y - 2f;
+    }
+
+    private float measureMetaCellHeight(MetaPair pair, float width, float labelWidth, ReceiptPdfFonts fonts) throws IOException {
+        if (pair == null) {
+            return 0f;
+        }
+        float labelHeight = 12f;
+        float valueHeight = measureWrappedHeight(safe(pair.value()), 8.8f, Math.max(24f, width - labelWidth), fonts.regular());
+        return Math.max(labelHeight, valueHeight);
+    }
+
+    private void drawReceiptMetaCell(
+            PDPageContentStream content,
+            MetaPair pair,
+            float x,
+            float y,
+            float width,
+            float labelWidth,
+            float rowHeight,
+            ReceiptPdfFonts fonts
+    ) throws IOException {
+        if (pair == null) {
+            return;
+        }
+        float labelY = y - 10f;
+        float valueY = y - 10f;
+        writeLine(content, pair.label() + ":", 8.8f, x, labelY, fonts.bold());
+        writeWrapped(content, safe(pair.value()), 8.8f, x + labelWidth, valueY, width - labelWidth, fonts.regular());
     }
 
     private float drawLineItemsTable(PDPageContentStream content, BillRecord record, float margin, float width, float y) throws IOException {
@@ -1281,7 +1432,16 @@ public class BillingService {
         return y - boxH - 4;
     }
 
-    private float drawReceiptBody(PDPageContentStream content, BillRecord record, ReceiptEntity receipt, PaymentEntity payment, float margin, float width, float y) throws IOException {
+    private float drawReceiptBody(
+            PDPageContentStream content,
+            BillRecord record,
+            ReceiptEntity receipt,
+            PaymentEntity payment,
+            float margin,
+            float width,
+            float y,
+            ReceiptPdfFonts fonts
+    ) throws IOException {
         float bodyX = margin + 4;
         float bodyW = width - 8;
         float detailsBoxH = 72f;
@@ -1296,25 +1456,23 @@ public class BillingService {
         float leftX = bodyX + 10;
         float rightX = bodyX + bodyW - 10;
         float lineY = y - 12;
-        writeLine(content, "Receipt Details", 9, leftX, lineY, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
-        setFillColor(content, 14, 165, 233);
-        content.addRect(rightX - 70, lineY - 2, 70, 12);
-        content.fill();
-        setFillColor(content, 255, 255, 255);
-        writeLine(content, money(receipt.getAmount()), 10f, rightX - 60, lineY + 2.5f, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+        writeLine(content, "Receipt Details", 9, leftX, lineY, fonts.bold());
+        String amountLabel = "Amount Paid: " + currency(receipt.getAmount(), fonts.currency());
+        float amountWidth = textWidth(fonts.bold(), 9.5f, amountLabel);
+        writeLine(content, amountLabel, 9.5f, rightX - amountWidth, lineY, fonts.bold());
         setFillColor(content, 18, 33, 43);
         lineY -= 13;
-        writeLine(content, "Received for bill " + safe(record.billNumber()) + " from " + safe(record.patientName()) + ".", 8.5f, leftX, lineY, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+        writeLine(content, "Received for bill " + safe(record.billNumber()) + " from " + safe(record.patientName()) + ".", 8.5f, leftX, lineY, fonts.regular());
         lineY -= 12;
         if (StringUtils.hasText(record.notes())) {
-            writeWrapped(content, "Bill notes: " + record.notes(), 8.5f, leftX, lineY, bodyW - 20);
+            writeWrapped(content, "Bill notes: " + record.notes(), 8.5f, leftX, lineY, bodyW - 20, fonts.regular());
             lineY -= 10;
         }
         if (StringUtils.hasText(payment == null ? null : payment.getNotes())) {
-            writeWrapped(content, "Payment notes: " + payment.getNotes(), 8.5f, leftX, lineY, bodyW - 20);
+            writeWrapped(content, "Payment notes: " + payment.getNotes(), 8.5f, leftX, lineY, bodyW - 20, fonts.regular());
             lineY -= 10;
         }
-        writeLine(content, "Received by: " + receivedByLabel(record.tenantId(), payment), 8.5f, leftX, Math.max(y - 52, lineY), new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+        writeLine(content, "Received by: " + receivedByLabel(record.tenantId(), payment), 8.5f, leftX, Math.max(y - 52, lineY), fonts.regular());
 
         y = y - detailsBoxH - 8;
         float[] cols = new float[] { 20f, 175f, 38f, 58f, 58f, 48f, 64f };
@@ -1331,7 +1489,7 @@ public class BillingService {
 
         float x = startX;
         for (int i = 0; i < headers.length; i++) {
-            writeLine(content, headers[i], 8.5f, x + 2, y - 8, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+            writeLine(content, headers[i], 8.5f, x + 2, y - 8, fonts.bold());
             x += cols[i];
         }
         y -= headerH;
@@ -1344,19 +1502,19 @@ public class BillingService {
             String description = safe(line.itemName());
             String itemType = safe(line.itemType() == null ? null : line.itemType().name());
             x = startX;
-            writeLine(content, String.valueOf(index), 8.5f, x + 2, y - 10, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+            writeLine(content, String.valueOf(index), 8.5f, x + 2, y - 10, fonts.regular());
             x += cols[0];
-            writeWrapped(content, itemType.isBlank() ? description : description + " (" + itemType + ")", 8.5f, x + 2, y - 10, cols[1] - 4);
+            writeWrapped(content, itemType.isBlank() ? description : description + " (" + itemType + ")", 8.5f, x + 2, y - 10, cols[1] - 4, fonts.regular());
             x += cols[1];
-            writeLine(content, String.valueOf(line.quantity()), 8.5f, x + 2, y - 10, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+            writeLine(content, String.valueOf(line.quantity()), 8.5f, x + 2, y - 10, fonts.regular());
             x += cols[2];
-            writeLine(content, money(line.unitPrice()), 8.5f, x + 2, y - 10, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+            writeLine(content, currency(line.unitPrice(), fonts.currency()), 8.5f, x + 2, y - 10, fonts.currency());
             x += cols[3];
-            writeLine(content, money(line.lineDiscountAmount()), 8.5f, x + 2, y - 10, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+            writeLine(content, currency(line.lineDiscountAmount(), fonts.currency()), 8.5f, x + 2, y - 10, fonts.currency());
             x += cols[4];
-            writeLine(content, money(lineTaxShare(record, line.totalPrice())), 8.5f, x + 2, y - 10, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+            writeLine(content, currency(lineTaxShare(record, line.totalPrice()), fonts.currency()), 8.5f, x + 2, y - 10, fonts.currency());
             x += cols[5];
-            writeLine(content, money(line.totalPrice()), 8.5f, x + 2, y - 10, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+            writeLine(content, currency(line.totalPrice(), fonts.currency()), 8.5f, x + 2, y - 10, fonts.currency());
             y -= rowH;
             index++;
         }
@@ -1364,7 +1522,16 @@ public class BillingService {
         return y - 4;
     }
 
-    private float drawReceiptBottomSection(PDPageContentStream content, BillRecord record, ReceiptEntity receipt, PaymentEntity payment, float margin, float width, float y) throws IOException {
+    private float drawReceiptBottomSection(
+            PDPageContentStream content,
+            BillRecord record,
+            ReceiptEntity receipt,
+            PaymentEntity payment,
+            float margin,
+            float width,
+            float y,
+            ReceiptPdfFonts fonts
+    ) throws IOException {
         float leftX = margin + 8;
         float summaryBoxW = 220f;
         float summaryBoxH = 84f;
@@ -1380,13 +1547,13 @@ public class BillingService {
         content.stroke();
         setFillColor(content, 18, 33, 43);
 
-        writeLine(content, "Notes / Payment Details", 9, leftX + 10, summaryBoxY - 12, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+        writeLine(content, "Notes / Payment Details", 9, leftX + 10, summaryBoxY - 12, fonts.bold());
         float lineY = summaryBoxY - 26;
-        lineY = writeSummaryRow(content, "Receipt No.", safe(receipt.getReceiptNumber()), leftX + 10, lineY, false);
-        lineY = writeSummaryRow(content, "Payment Date", payment == null ? formatDate(receipt.getReceiptDate()) : formatPaymentTimestamp(payment), leftX + 10, lineY, false);
-        lineY = writeSummaryRow(content, "Payment Mode", payment == null || payment.getPaymentMode() == null ? "—" : payment.getPaymentMode().name(), leftX + 10, lineY, false);
-        lineY = writeSummaryRow(content, "Amount Paid", money(receipt.getAmount()), leftX + 10, lineY, true);
-        writeSummaryRow(content, "Remaining Due", money(record.dueAmount()), leftX + 10, lineY, true);
+        lineY = writeSummaryRow(content, "Receipt No.", safe(receipt.getReceiptNumber()), leftX + 10, lineY, false, fonts);
+        lineY = writeSummaryRow(content, "Payment Date", payment == null ? formatDate(receipt.getReceiptDate()) : formatPaymentTimestamp(payment), leftX + 10, lineY, false, fonts);
+        lineY = writeSummaryRow(content, "Payment Mode", payment == null || payment.getPaymentMode() == null ? "—" : payment.getPaymentMode().name(), leftX + 10, lineY, false, fonts);
+        lineY = writeSummaryRow(content, "Amount Paid", currency(receipt.getAmount(), fonts.currency()), leftX + 10, lineY, true, fonts);
+        writeSummaryRow(content, "Remaining Due", currency(record.dueAmount(), fonts.currency()), leftX + 10, lineY, true, fonts);
 
         setFillColor(content, 255, 255, 255);
         content.addRect(signatureBoxX, summaryBoxY - summaryBoxH, signatureBoxW, summaryBoxH);
@@ -1398,15 +1565,21 @@ public class BillingService {
         content.moveTo(signatureBoxX + 12, summaryBoxY - 20);
         content.lineTo(signatureBoxX + signatureBoxW - 12, summaryBoxY - 20);
         content.stroke();
-        writeLine(content, "Authorized Signature", 9, signatureBoxX + 18, summaryBoxY - 52, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
-        writeLine(content, "Clinic seal / sign", 8.25f, signatureBoxX + 28, summaryBoxY - 66, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+        writeLine(content, "Authorized Signature", 9, signatureBoxX + 18, summaryBoxY - 52, fonts.bold());
+        writeLine(content, "Clinic seal / sign", 8.25f, signatureBoxX + 28, summaryBoxY - 66, fonts.regular());
 
         return y - summaryBoxH - 4;
     }
 
+    private float writeSummaryRow(PDPageContentStream content, String label, String value, float x, float y, boolean bold, ReceiptPdfFonts fonts) throws IOException {
+        writeLine(content, label + ":", 8.75f, x, y, fonts.bold());
+        writeLine(content, value, bold ? 9.5f : 8.75f, x + 76, y, bold ? fonts.bold() : fonts.regular());
+        return y - 12;
+    }
+
     private float writeSummaryRow(PDPageContentStream content, String label, String value, float x, float y, boolean bold) throws IOException {
         writeLine(content, label + ":", 8.75f, x, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
-        writeLine(content, value, bold ? 9.5f : 8.75f, x + 76, y, bold ? new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD) : new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+        writeLine(content, value, bold ? 9.5f : 8.75f, x + 76, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
         return y - 12;
     }
 
@@ -1441,32 +1614,132 @@ public class BillingService {
     }
 
     private float writeWrapped(PDPageContentStream content, String text, float fontSize, float x, float y, float maxWidth) throws IOException {
+        return writeWrapped(content, text, fontSize, x, y, maxWidth, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+    }
+
+    private float writeWrapped(PDPageContentStream content, String text, float fontSize, float x, float y, float maxWidth, PDFont font) throws IOException {
         if (!StringUtils.hasText(text)) return y;
-        for (String line : wrap(text, Math.max(24, Math.round(maxWidth / (fontSize * 0.55f))))) {
-            writeLine(content, line, fontSize, x, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+        for (String line : wrap(text, font, fontSize, maxWidth)) {
+            writeLine(content, line, fontSize, x, y, font);
             y -= fontSize + 3;
         }
         return y;
     }
 
-    private void writeLine(PDPageContentStream content, String text, float fontSize, float x, float y, PDType1Font font) throws IOException {
+    private float writeLine(PDPageContentStream content, String text, float fontSize, float x, float y, PDFont font) throws IOException {
         content.beginText();
         content.setFont(font, fontSize);
         content.newLineAtOffset(x, y);
         content.showText(text == null ? "" : text);
         content.endText();
+        return y;
     }
 
-    private List<String> wrap(String text, int maxChars) {
+    private void writeLine(PDPageContentStream content, String text, float fontSize, float x, float y, PDType1Font font) throws IOException {
+        writeLine(content, text, fontSize, x, y, (PDFont) font);
+    }
+
+    private float measureWrappedHeight(String text, float fontSize, float maxWidth, PDFont font) throws IOException {
+        if (!StringUtils.hasText(text)) return 0f;
+        return wrap(text, font, fontSize, maxWidth).size() * (fontSize + 3f);
+    }
+
+    private float textWidth(PDFont font, float fontSize, String text) throws IOException {
+        if (!StringUtils.hasText(text)) return 0f;
+        return (font.getStringWidth(text) / 1000f) * fontSize;
+    }
+
+    private Optional<PDImageXObject> loadLogoImage(PDDocument document, Optional<BrandingLogoAsset> logoAsset) {
+        if (document == null || logoAsset == null || logoAsset.isEmpty()) {
+            return Optional.empty();
+        }
+        BrandingLogoAsset asset = logoAsset.get();
+        if (asset.bytes() == null || asset.bytes().length == 0) {
+            return Optional.empty();
+        }
+        try {
+            BufferedImage image = ImageIO.read(new ByteArrayInputStream(asset.bytes()));
+            if (image == null) {
+                return Optional.empty();
+            }
+            return Optional.of(LosslessFactory.createFromImage(document, image));
+        } catch (IOException | RuntimeException ex) {
+            return Optional.empty();
+        }
+    }
+
+    private float[] fitWithin(PDImageXObject image, float maxWidth, float maxHeight) {
+        if (image == null) {
+            return new float[] { 0f, 0f };
+        }
+        float width = image.getWidth();
+        float height = image.getHeight();
+        if (width <= 0f || height <= 0f) {
+            return new float[] { 0f, 0f };
+        }
+        float scale = Math.min(maxWidth / width, maxHeight / height);
+        if (!Float.isFinite(scale) || scale <= 0f) {
+            scale = 1f;
+        }
+        return new float[] { width * scale, height * scale };
+    }
+
+    private String currency(BigDecimal value, PDFont font) {
+        return "₹" + money(value);
+    }
+
+    private List<String> wrap(String text, PDFont font, float fontSize, float maxWidth) throws IOException {
         List<String> lines = new ArrayList<>();
         StringBuilder current = new StringBuilder();
         for (String word : text.split("\\s+")) {
-            if (current.length() == 0) current.append(word);
-            else if (current.length() + 1 + word.length() <= maxChars) current.append(' ').append(word);
-            else { lines.add(current.toString()); current.setLength(0); current.append(word); }
+            if (current.length() == 0) {
+                if (textWidth(font, fontSize, word) <= maxWidth) {
+                    current.append(word);
+                } else {
+                    lines.addAll(breakLongWord(word, font, fontSize, maxWidth));
+                }
+                continue;
+            }
+            String candidate = current + " " + word;
+            if (textWidth(font, fontSize, candidate) <= maxWidth) {
+                current.append(' ').append(word);
+            } else if (textWidth(font, fontSize, word) > maxWidth) {
+                lines.add(current.toString());
+                current.setLength(0);
+                lines.addAll(breakLongWord(word, font, fontSize, maxWidth));
+            } else {
+                lines.add(current.toString());
+                current.setLength(0);
+                current.append(word);
+            }
         }
         if (current.length() > 0) lines.add(current.toString());
+        if (lines.isEmpty()) {
+            lines.add(text);
+        }
         return lines;
+    }
+
+    private List<String> breakLongWord(String word, PDFont font, float fontSize, float maxWidth) throws IOException {
+        List<String> chunks = new ArrayList<>();
+        if (!StringUtils.hasText(word)) {
+            return chunks;
+        }
+        StringBuilder current = new StringBuilder();
+        for (int i = 0; i < word.length(); i++) {
+            String candidate = current + String.valueOf(word.charAt(i));
+            if (current.length() == 0 || textWidth(font, fontSize, candidate) <= maxWidth) {
+                current.append(word.charAt(i));
+            } else {
+                chunks.add(current.toString());
+                current.setLength(0);
+                current.append(word.charAt(i));
+            }
+        }
+        if (current.length() > 0) {
+            chunks.add(current.toString());
+        }
+        return chunks;
     }
 
     private String safe(String value) { return value == null ? "" : value; }
@@ -1578,6 +1851,8 @@ public class BillingService {
         }
         return parts.isEmpty() ? "—" : String.join(" · ", parts);
     }
+
+    private record ReceiptPdfFonts(PDFont regular, PDFont bold, PDFont currency) {}
 
     private String formatDate(LocalDate date) {
         return date == null ? "—" : date.format(PDF_DATE);

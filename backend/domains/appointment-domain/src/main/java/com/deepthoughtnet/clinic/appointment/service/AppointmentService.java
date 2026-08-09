@@ -59,6 +59,7 @@ import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.time.temporal.ChronoUnit;
+import java.util.Locale;
 import jakarta.persistence.criteria.Predicate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -82,6 +83,7 @@ public class AppointmentService {
     private static final ZoneId DEFAULT_BOOKING_ZONE = ZoneId.of("Asia/Kolkata");
     private static final String PAST_SLOT_MESSAGE = "Selected time has already passed. Please choose a current or future slot.";
     private static final DateTimeFormatter APPOINTMENT_REFERENCE_DATE = DateTimeFormatter.BASIC_ISO_DATE;
+    private static final DateTimeFormatter AVAILABILITY_TIME_LABEL = DateTimeFormatter.ofPattern("h:mm a", Locale.US);
     private final AppointmentRepository appointmentRepository;
     private final DoctorAvailabilityRepository doctorAvailabilityRepository;
     private final DoctorUnavailabilityRepository doctorUnavailabilityRepository;
@@ -313,7 +315,7 @@ public class AppointmentService {
         requireDoctor(doctorUserId);
         validateAvailability(command);
         ensureDoctorInTenant(tenantId, doctorUserId);
-        if (doctorAvailabilityRepository.existsByTenantIdAndDoctorUserIdAndDayOfWeekAndStartTimeAndEndTime(
+        if (command.active() && doctorAvailabilityRepository.existsByTenantIdAndDoctorUserIdAndDayOfWeekAndStartTimeAndEndTimeAndActiveTrue(
                 tenantId,
                 doctorUserId,
                 command.dayOfWeek(),
@@ -322,6 +324,7 @@ public class AppointmentService {
         )) {
             throw new DoctorAvailabilityConflictException("Availability already exists for this doctor, day, and time range.");
         }
+        ensureNoAvailabilityOverlap(tenantId, doctorUserId, command.dayOfWeek(), command.startTime(), command.endTime(), null, command.active());
 
         DoctorAvailabilityEntity entity = DoctorAvailabilityEntity.create(tenantId, doctorUserId);
         entity.update(
@@ -363,6 +366,7 @@ public class AppointmentService {
         validateAvailability(command);
         DoctorAvailabilityEntity entity = doctorAvailabilityRepository.findByTenantIdAndId(tenantId, id)
                 .orElseThrow(() -> new IllegalArgumentException("Doctor availability not found"));
+        ensureNoAvailabilityOverlap(tenantId, entity.getDoctorUserId(), command.dayOfWeek(), command.startTime(), command.endTime(), id, command.active());
         entity.update(
                 command.dayOfWeek(),
                 command.startTime(),
@@ -1387,7 +1391,7 @@ public class AppointmentService {
         Throwable current = ex;
         while (current != null) {
             String message = current.getMessage();
-            if (message != null && message.contains("uq_doctor_availability_slot")) {
+            if (message != null && (message.contains("uq_doctor_availability_slot") || message.contains("uq_doctor_availability_slot_active"))) {
                 return true;
             }
             current = current.getCause();
@@ -1631,6 +1635,46 @@ public class AppointmentService {
         if (conflict) {
             throw new IllegalArgumentException("Unavailability block overlaps an existing block");
         }
+    }
+
+    private void ensureNoAvailabilityOverlap(
+            UUID tenantId,
+            UUID doctorUserId,
+            DayOfWeek dayOfWeek,
+            LocalTime startTime,
+            LocalTime endTime,
+            UUID skipId,
+            boolean active
+    ) {
+        if (!active) {
+            return;
+        }
+        List<DoctorAvailabilityEntity> conflicts = skipId == null
+                ? doctorAvailabilityRepository.findByTenantIdAndDoctorUserIdAndDayOfWeekAndActiveTrueAndStartTimeLessThanAndEndTimeGreaterThanOrderByStartTimeAscEndTimeAsc(
+                        tenantId,
+                        doctorUserId,
+                        dayOfWeek,
+                        endTime,
+                        startTime
+                )
+                : doctorAvailabilityRepository.findByTenantIdAndDoctorUserIdAndDayOfWeekAndActiveTrueAndIdNotAndStartTimeLessThanAndEndTimeGreaterThanOrderByStartTimeAscEndTimeAsc(
+                        tenantId,
+                        doctorUserId,
+                        dayOfWeek,
+                        skipId,
+                        endTime,
+                        startTime
+                );
+        DoctorAvailabilityEntity conflict = conflicts.stream().findFirst().orElse(null);
+        if (conflict != null) {
+            throw new DoctorAvailabilityConflictException(buildAvailabilityOverlapMessage(conflict));
+        }
+    }
+
+    private String buildAvailabilityOverlapMessage(DoctorAvailabilityEntity conflict) {
+        String start = conflict.getStartTime() == null ? "unknown" : conflict.getStartTime().format(AVAILABILITY_TIME_LABEL);
+        String end = conflict.getEndTime() == null ? "unknown" : conflict.getEndTime().format(AVAILABILITY_TIME_LABEL);
+        return "Availability overlaps an existing session from " + start + " to " + end + ". Edit the existing session or choose a non-overlapping time.";
     }
 
     private void ensureNoAppointmentConflictForUnavailability(UUID tenantId, UUID doctorUserId, OffsetDateTime startAt, OffsetDateTime endAt) {

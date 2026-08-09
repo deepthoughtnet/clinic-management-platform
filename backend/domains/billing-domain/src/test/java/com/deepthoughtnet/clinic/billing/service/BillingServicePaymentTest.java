@@ -43,6 +43,8 @@ import com.deepthoughtnet.clinic.identity.db.AppUserEntity;
 import com.deepthoughtnet.clinic.identity.db.AppUserRepository;
 import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
 import com.deepthoughtnet.clinic.platform.branding.BrandingProperties;
+import com.deepthoughtnet.clinic.platform.branding.BrandingLogoAsset;
+import com.deepthoughtnet.clinic.platform.branding.BrandingLogoProvider;
 import com.deepthoughtnet.clinic.inventory.service.InventoryService;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
@@ -53,6 +55,7 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.util.Base64;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -82,6 +85,7 @@ class BillingServicePaymentTest {
     private DoctorProfileService doctorProfileService;
     private AppointmentService appointmentService;
     private AppUserRepository appUserRepository;
+    private BrandingLogoProvider brandingLogoProvider;
     private BillingService service;
     private final UUID appointmentId = UUID.randomUUID();
     private final UUID doctorUserId = UUID.randomUUID();
@@ -102,6 +106,8 @@ class BillingServicePaymentTest {
         doctorProfileService = mock(DoctorProfileService.class);
         appointmentService = mock(AppointmentService.class);
         appUserRepository = mock(AppUserRepository.class);
+        brandingLogoProvider = mock(BrandingLogoProvider.class);
+        when(brandingLogoProvider.resolveLogo(any())).thenReturn(Optional.empty());
         service = new BillingService(
                 billRepository,
                 billLineRepository,
@@ -119,7 +125,8 @@ class BillingServicePaymentTest {
                 auditEventPublisher,
                 moduleBusinessEventPublisher,
                 new ObjectMapper(),
-                new BrandingProperties()
+                new BrandingProperties(),
+                brandingLogoProvider
         );
         when(billRepository.save(any(BillEntity.class))).thenAnswer(invocation -> {
             BillEntity entity = invocation.getArgument(0);
@@ -322,6 +329,7 @@ class BillingServicePaymentTest {
             UUID receiptId = invocation.getArgument(1);
             return receipts.stream().filter(receipt -> receipt.getId().equals(receiptId)).findFirst();
         });
+        when(brandingLogoProvider.resolveLogo(tenantId)).thenReturn(Optional.of(new BrandingLogoAsset(pngLogoBytes(), "image/png", "clinic-logo.png")));
         when(clinicProfileService.findByTenantId(tenantId)).thenReturn(Optional.of(new ClinicProfileRecord(
                 UUID.randomUUID(),
                 tenantId,
@@ -373,7 +381,112 @@ class BillingServicePaymentTest {
             assertThat(text).contains("Consultation Fee");
             assertThat(text).contains("Medicine Pack");
             assertThat(text).contains("Payment Mode");
+            assertThat(text).contains("₹150.00");
             assertThat(text).doesNotContain("Arogia");
+        }
+    }
+
+    @Test
+    void generateReceiptPdfSupportsMissingLogoAndWrappedAppointmentText() throws IOException {
+        List<PaymentEntity> payments = new ArrayList<>();
+        List<ReceiptEntity> receipts = new ArrayList<>();
+        BillEntity bill = consultationBill(appointmentId, new BigDecimal("800.00"));
+        when(billLineRepository.findByTenantIdAndBillIdOrderBySortOrderAsc(tenantId, bill.getId())).thenReturn(List.of(
+                BillLineEntity.create(tenantId, bill.getId(), BillItemType.CONSULTATION, "Consultation Fee", 1, new BigDecimal("800.00"), BigDecimal.ZERO, new BigDecimal("800.00"), null, appointmentId, null, 1)
+        ));
+        when(paymentRepository.save(any(PaymentEntity.class))).thenAnswer(invocation -> {
+            PaymentEntity payment = invocation.getArgument(0);
+            payments.add(payment);
+            return payment;
+        });
+        when(paymentRepository.findByTenantIdAndId(any(), any())).thenAnswer(invocation -> {
+            UUID paymentId = invocation.getArgument(1);
+            return payments.stream().filter(paymentRow -> paymentRow.getId().equals(paymentId)).findFirst();
+        });
+        when(receiptRepository.save(any(ReceiptEntity.class))).thenAnswer(invocation -> {
+            ReceiptEntity receipt = invocation.getArgument(0);
+            receipts.add(receipt);
+            return receipt;
+        });
+        when(receiptRepository.findByTenantIdAndId(any(), any())).thenAnswer(invocation -> {
+            UUID receiptId = invocation.getArgument(1);
+            return receipts.stream().filter(receipt -> receipt.getId().equals(receiptId)).findFirst();
+        });
+        when(brandingLogoProvider.resolveLogo(tenantId)).thenReturn(Optional.empty());
+        com.deepthoughtnet.clinic.patient.db.PatientEntity patient = mock(com.deepthoughtnet.clinic.patient.db.PatientEntity.class);
+        when(patient.getId()).thenReturn(patientId);
+        when(patient.getPatientNumber()).thenReturn("PAT-1");
+        when(patient.getFirstName()).thenReturn("Test");
+        when(patient.getLastName()).thenReturn("Patient");
+        when(patient.getMobile()).thenReturn("9876501234");
+        when(patientRepository.findByTenantIdAndId(tenantId, patientId)).thenReturn(Optional.of(patient));
+        when(patientRepository.findByTenantIdAndIdIn(tenantId, List.of(patientId))).thenReturn(List.of(patient));
+        when(appointmentService.findById(tenantId, appointmentId)).thenReturn(new AppointmentRecord(
+                appointmentId,
+                tenantId,
+                patientId,
+                "PAT-1",
+                "Test Patient",
+                "9876501234",
+                doctorUserId,
+                "Dr. Rajesh Kumar Venkatesh",
+                null,
+                LocalDate.of(2026, 7, 23),
+                java.time.LocalTime.of(9, 30),
+                null,
+                "Consultation",
+                AppointmentType.SCHEDULED,
+                AppointmentPriority.NORMAL,
+                AppointmentStatus.BOOKED,
+                OffsetDateTime.now(),
+                OffsetDateTime.now()
+        ));
+        when(clinicProfileService.findByTenantId(tenantId)).thenReturn(Optional.of(new ClinicProfileRecord(
+                UUID.randomUUID(),
+                tenantId,
+                "Jeevanam Advanced Family & Multispeciality Clinic",
+                "Jeevanam Advanced Family & Multispeciality Clinic",
+                "9600000567",
+                "admin@jfcuat.local",
+                "Survey No. 72/1, 2nd Floor, Grand Highstreet Mall",
+                "Wakad",
+                "Pune",
+                "Maharashtra",
+                "India",
+                "411057",
+                "REG-002",
+                null,
+                null,
+                true,
+                true,
+                "jeevanam-advanced-family",
+                OffsetDateTime.now(),
+                OffsetDateTime.now()
+        )));
+
+        PaymentRecord payment = service.recordPayment(tenantId, bill.getId(), payment("800.00"), actorId);
+        ReceiptPdf pdf = service.generateReceiptPdf(tenantId, payment.receiptId(), actorId);
+
+        try (PDDocument document = Loader.loadPDF(pdf.content())) {
+            String text = new PDFTextStripper().getText(document);
+            assertThat(text).contains("Test Patient");
+            assertThat(text).contains("Dr. Rajesh");
+            assertThat(text).contains("Kumar Venkatesh");
+            assertThat(text).contains("Payment Date");
+            assertThat(text).contains("Amount Paid");
+            assertThat(text).contains("₹800.00");
+            assertThat(text).doesNotContain("Arogia");
+
+            List<PdfLine> lines = extractPdfLines(document);
+            double clinicNameY = firstLineY(lines, line -> line.text().contains("Jeevanam Advanced Family") || line.text().contains("Multispeciality Clinic"));
+            assertThat(clinicNameY).isLessThan(document.getPage(0).getMediaBox().getHeight() - 40d);
+            double amountY = firstLineY(lines, line -> line.text().contains("Amount Paid"));
+            double appointmentY = lines.stream()
+                    .filter(line -> line.text().contains("Dr. Rajesh Kumar Venkatesh") || line.text().contains("09:30 AM") || line.text().contains("Jul 23, 2026"))
+                    .mapToDouble(PdfLine::y)
+                    .min()
+                    .orElseThrow();
+            assertThat(amountY).isGreaterThan(appointmentY);
         }
     }
 
@@ -924,5 +1037,42 @@ class BillingServicePaymentTest {
                 OffsetDateTime.now(),
                 OffsetDateTime.now()
         );
+    }
+
+    private byte[] pngLogoBytes() {
+        return Base64.getDecoder().decode("iVBORw0KGgoAAAANSUhEUgAAAA4AAAAPCAQAAABv4AqVAAAAGUlEQVR42mNkYGD4z0AEYBxVSFUBCjCqAABkYQMVGq1nFwAAAABJRU5ErkJggg==");
+    }
+
+    private List<PdfLine> extractPdfLines(PDDocument document) throws IOException {
+        PositionedPdfTextStripper stripper = new PositionedPdfTextStripper();
+        stripper.getText(document);
+        return stripper.lines();
+    }
+
+    private double firstLineY(List<PdfLine> lines, java.util.function.Predicate<PdfLine> predicate) {
+        return lines.stream().filter(predicate).mapToDouble(PdfLine::y).findFirst().orElseThrow();
+    }
+
+    private record PdfLine(String text, double y, double x) {}
+
+    private static final class PositionedPdfTextStripper extends PDFTextStripper {
+        private final List<PdfLine> lines = new ArrayList<>();
+
+        PositionedPdfTextStripper() throws IOException {
+            setSortByPosition(true);
+        }
+
+        @Override
+        protected void writeString(String text, List<org.apache.pdfbox.text.TextPosition> textPositions) {
+            if (text == null || text.isBlank() || textPositions == null || textPositions.isEmpty()) {
+                return;
+            }
+            org.apache.pdfbox.text.TextPosition first = textPositions.get(0);
+            lines.add(new PdfLine(text, first.getY(), first.getX()));
+        }
+
+        List<PdfLine> lines() {
+            return List.copyOf(lines);
+        }
     }
 }

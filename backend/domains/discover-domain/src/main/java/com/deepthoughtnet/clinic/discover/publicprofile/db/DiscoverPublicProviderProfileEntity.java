@@ -388,6 +388,13 @@ public class DiscoverPublicProviderProfileEntity {
         this.connectionRevision = 0L;
     }
 
+    public void updateDoctorCount(int doctorCount, OffsetDateTime observedAt) {
+        this.doctorCount = doctorCount;
+        if (observedAt != null) {
+            this.updatedAt = observedAt;
+        }
+    }
+
     public void markUnpublished(OffsetDateTime unpublishedAt) {
         this.publicationStatus = "UNPUBLISHED";
         this.projectedAt = unpublishedAt;

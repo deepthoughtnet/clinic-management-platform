@@ -209,17 +209,41 @@ function readableOwnershipStatus(status: string | null | undefined) {
 }
 
 function readableConnectionStatus(status: string | null | undefined) {
-  if (!status || status === "NOT_CONNECTED") {
-    return "Not connected";
+  switch (status) {
+    case "CONNECTED":
+      return "Connected";
+    case "CONNECTION_PENDING":
+      return "Pending";
+    case "DISCONNECTED":
+      return "Disconnected";
+    case "DISPUTED":
+      return "Disputed";
+    case "NOT_CONNECTED":
+    case null:
+    case undefined:
+      return "Not connected";
+    default:
+      return "Unknown";
   }
-  return "Unknown";
 }
 
 function readableBookingStatus(status: string | null | undefined) {
-  if (!status || status === "NOT_AVAILABLE") {
-    return "Not available";
+  switch (status) {
+    case "ONLINE_BOOKING":
+      return "Online Booking";
+    case "CALL_TO_BOOK":
+      return "Call to Book";
+    case "REQUEST_APPOINTMENT":
+      return "Request Appointment";
+    case "EXTERNAL_BOOKING":
+      return "External Booking";
+    case "NOT_AVAILABLE":
+    case null:
+    case undefined:
+      return "Not available";
+    default:
+      return "Unknown";
   }
-  return "Unknown";
 }
 
 function clinicPresenceConnectionReference(presence: ClinicDiscoverPresence | null, claimIntent: ClinicDiscoverPresenceClaimIntent | null) {

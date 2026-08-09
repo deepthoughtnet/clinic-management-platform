@@ -68,6 +68,7 @@ import {
   type PublicClinicDetailResponse,
   type PublicDoctorDetailResponse,
   type PublicDoctorSummaryResponse,
+  type PublicPracticeMiniResponse,
   fetchPublicJson,
 } from "../../api/publicCatalog";
 import { branding } from "../../branding";
@@ -80,7 +81,7 @@ import {
 } from "./patientLoginInput.js";
 import {
   clearPublicBookingContext,
-  getPublicBookingContext,
+  normalizeClinicCode,
   resolvePatientAuthContext,
   resolvePatientPortalContext,
   savePublicBookingContext,
@@ -372,6 +373,30 @@ function formatTime(value: string | null | undefined) {
   return formatDisplayTime(value);
 }
 
+function compareSlotStartTimes(left: PatientPortalDoctorSlotResponse, right: PatientPortalDoctorSlotResponse) {
+  const leftParts = (left.slotTime ?? "").split(":");
+  const rightParts = (right.slotTime ?? "").split(":");
+  const leftMinutes = (Number(leftParts[0]) || 0) * 60 + (Number(leftParts[1]) || 0);
+  const rightMinutes = (Number(rightParts[0]) || 0) * 60 + (Number(rightParts[1]) || 0);
+  return leftMinutes - rightMinutes;
+}
+
+function slotDayPart(slot: PatientPortalDoctorSlotResponse) {
+  const hours = Number(String(slot.slotTime ?? "").split(":")[0] || 0);
+  if (hours >= 5 && hours < 12) {
+    return "Morning";
+  }
+  if (hours >= 12 && hours < 17) {
+    return "Afternoon";
+  }
+  if (hours >= 17 && hours < 21) {
+    return "Evening";
+  }
+  return "Night";
+}
+
+const SLOT_DAY_PARTS = ["All", "Morning", "Afternoon", "Evening", "Night"] as const;
+
 function formatDateTime(value: string | null | undefined) {
   return formatDisplayDateTime(value);
 }
@@ -393,6 +418,8 @@ function currentIsoDateInTimeZone(timeZone: string) {
   const day = parts.find((part) => part.type === "day")?.value ?? "01";
   return `${year}-${month}-${day}`;
 }
+
+const SLOTS_PER_PAGE = 5;
 
 function formatNotificationText(value: string | null | undefined) {
   if (!value) {
@@ -716,6 +743,8 @@ type BookingDoctorChoice = {
   qualification: string | null;
   consultationRoom: string | null;
   yearsOfExperience: number | null;
+  practiceName: string | null;
+  practiceSlug: string | null;
   clinicName: string | null;
   clinicSlug: string | null;
   area: string | null;
@@ -795,6 +824,8 @@ function mapPublicDoctorSummaryToBookingChoice(doctor: PublicDoctorSummaryRespon
     qualification: null,
     consultationRoom: null,
     yearsOfExperience: doctor.yearsOfExperience,
+    practiceName: doctor.clinicDisplayName,
+    practiceSlug: doctor.clinicSlug,
     clinicName: doctor.clinicDisplayName,
     clinicSlug: doctor.clinicSlug,
     area: doctor.area,
@@ -806,8 +837,29 @@ function mapPublicDoctorSummaryToBookingChoice(doctor: PublicDoctorSummaryRespon
   };
 }
 
-function formatBookingLocationLabel(area: string | null | undefined, city: string | null | undefined) {
-  const values = [area, city]
+function mapPublicPracticeMiniToClinicMiniResponse(practice: PublicPracticeMiniResponse) {
+  return {
+    clinicSlug: practice.practiceSlug,
+    clinicDisplayName: practice.practiceDisplayName,
+    area: practice.area,
+    city: practice.city,
+    bookingReference: practice.bookingReference ?? null,
+  };
+}
+
+function resolveDoctorPracticeOptions(doctor: PublicDoctorDetailResponse) {
+  if (doctor.practices?.length) {
+    return doctor.practices.map(mapPublicPracticeMiniToClinicMiniResponse);
+  }
+  return doctor.clinics;
+}
+
+function formatBookingLocationLabel(
+  practiceName: string | null | undefined,
+  area: string | null | undefined,
+  city: string | null | undefined,
+) {
+  const values = [practiceName, area, city]
     .map((value) => value?.trim() || "")
     .filter((value) => value && value.toLowerCase() !== "primary");
   const unique = Array.from(new Set(values));
@@ -819,6 +871,7 @@ function mapPublicDoctorDetailToBookingChoice(
   clinicName: string | null,
   clinicSlug: string | null,
 ): BookingDoctorChoice {
+  const primaryPractice = resolveDoctorPracticeOptions(doctor)[0] ?? null;
   return {
     publicDoctorId: doctor.publicDoctorId,
     bookingReference: doctor.bookingReference ?? null,
@@ -828,15 +881,36 @@ function mapPublicDoctorDetailToBookingChoice(
     qualification: doctor.qualification,
     consultationRoom: null,
     yearsOfExperience: doctor.yearsOfExperience,
+    practiceName: primaryPractice?.clinicDisplayName ?? clinicName,
+    practiceSlug: primaryPractice?.clinicSlug ?? clinicSlug,
     clinicName,
     clinicSlug,
-    area: null,
-    city: null,
+    area: primaryPractice?.area ?? null,
+    city: primaryPractice?.city ?? null,
     contactPhone: null,
     bookingMode: doctor.bookingMode ?? null,
     availableToday: doctor.availableToday,
     nextAvailableSlotSummary: doctor.nextAvailableSlots[0] ?? null,
   };
+}
+
+function buildBookingChoiceSearchTerms(choice: BookingDoctorChoice) {
+  return [
+    choice.doctorName,
+    choice.specialization,
+    choice.qualification,
+    choice.practiceName,
+    choice.practiceSlug,
+    choice.clinicName,
+    choice.clinicSlug,
+    choice.area,
+    choice.city,
+    choice.consultationRoom,
+    choice.nextAvailableSlotSummary,
+    choice.bookingMode,
+  ]
+    .map((value) => value?.trim().toLowerCase() || "")
+    .filter(Boolean);
 }
 
 function buildPatientPortalOtpContext(context: {
@@ -1428,6 +1502,18 @@ export function PatientLoginPage({
   }, [patientAuthContext.mobile, session, portalClinicContext.clinicCode, portalClinicContext.clinicName]);
 
   useEffect(() => {
+    const hasExplicitPortalContext = Boolean(
+      portalClinicContext.clinicId
+        || portalClinicContext.clinicCode
+        || portalClinicContext.clinicSlug
+        || portalClinicContext.doctorId
+        || portalClinicContext.doctorSlug
+        || portalClinicContext.bookingReference,
+    );
+    if (!hasExplicitPortalContext || portalClinicContext.source === "storage" || portalClinicContext.source === "dev") {
+      clearPublicBookingContext();
+      return;
+    }
     savePublicBookingContext({
       clinicId: portalClinicContext.clinicId,
       clinicSlug: portalClinicContext.clinicSlug,
@@ -1437,13 +1523,14 @@ export function PatientLoginPage({
       nextPath: portalClinicContext.nextPath,
       mobile: patientAuthContext.mobile ?? null,
     });
-  }, [patientAuthContext.mobile, portalClinicContext.bookingReference, portalClinicContext.clinicId, portalClinicContext.clinicSlug, portalClinicContext.doctorId, portalClinicContext.nextPath, portalClinicContext.tenantId]);
+  }, [patientAuthContext.mobile, portalClinicContext.bookingReference, portalClinicContext.clinicCode, portalClinicContext.clinicId, portalClinicContext.clinicSlug, portalClinicContext.doctorId, portalClinicContext.doctorSlug, portalClinicContext.nextPath, portalClinicContext.source, portalClinicContext.tenantId]);
 
   useEffect(() => {
-    if (!doctorDetail.data || session || doctorDetail.data.clinics.length !== 1) {
+    const doctorDetailPractices = doctorDetail.data ? resolveDoctorPracticeOptions(doctorDetail.data) : [];
+    if (!doctorDetail.data || session || doctorDetailPractices.length !== 1) {
       return;
     }
-    const onlyClinic = doctorDetail.data.clinics[0];
+    const onlyClinic = doctorDetailPractices[0];
     if (tenantCode.trim() === onlyClinic.clinicSlug && clinicName === onlyClinic.clinicDisplayName) {
       return;
     }
@@ -1495,7 +1582,9 @@ export function PatientLoginPage({
   const resolvedClinicCode = tenantCode.trim();
   const resolvedClinicName = clinicName || portalClinicContext.clinicName || null;
   const hasClinicContext = Boolean(resolvedClinicCode);
-  const doctorSelectionRequired = Boolean(doctorDetail.data?.clinics.length && doctorDetail.data.clinics.length > 1) && !hasClinicContext;
+  const doctorSelectionRequired = Boolean(
+    doctorDetail.data && resolveDoctorPracticeOptions(doctorDetail.data).length > 1,
+  ) && !hasClinicContext;
   const bookingContextLine = hasClinicContext && resolvedClinicName
     ? portalClinicContext.doctorName
       ? `Booking appointment with Dr ${portalClinicContext.doctorName} at ${resolvedClinicName}`
@@ -1698,7 +1787,7 @@ export function PatientLoginPage({
           {doctorSelectionRequired && doctorDetail.data ? (
             <DoctorClinicSelector
               doctorName={portalClinicContext.doctorName || doctorDetail.data.doctorDisplayName}
-              clinics={doctorDetail.data.clinics}
+              clinics={resolveDoctorPracticeOptions(doctorDetail.data)}
               selectedClinicCode={resolvedClinicCode}
               nextAvailableSlot={doctorDetail.data.nextAvailableSlots[0] ?? null}
               onSelect={(clinic) => syncClinicContext(clinic.clinicSlug, clinic.clinicDisplayName)}
@@ -3047,10 +3136,23 @@ export function PatientBookAppointmentPage({
   const [searchParams, setSearchParams] = useSearchParams();
   const portalSession = isPatientPortalPatientSession(session) ? session : null;
   const recentAppointments = usePatientPortalResource<PatientPortalAppointmentResponse[]>(portalSession, "/api/patient-portal/appointments", []);
-  const publicBookingContext = useMemo(
-    () => getPublicBookingContext(searchParams, location.state),
+  const routeDoctorId = normalizeUuidOrNull(searchParams.get("doctorId"));
+  const routeDoctorSlug = normalizeClinicCode(searchParams.get("doctorSlug")) || null;
+  const portalBookingContext = useMemo(
+    () => resolvePatientPortalContext(searchParams, location.state),
     [location.state, searchParams],
   );
+  const hasExplicitBookingContext = Boolean(
+    portalBookingContext.clinicId
+      || portalBookingContext.clinicCode
+      || portalBookingContext.clinicSlug
+      || portalBookingContext.doctorId
+      || portalBookingContext.doctorSlug
+      || portalBookingContext.bookingReference,
+  );
+  const explicitBookingContext = hasExplicitBookingContext && portalBookingContext.source !== "storage" && portalBookingContext.source !== "dev"
+    ? portalBookingContext
+    : null;
   const [publicDoctorsState, setPublicDoctorsState] = useState<FetchState<PublicDoctorSummaryResponse[]>>({
     data: [],
     loading: false,
@@ -3060,7 +3162,7 @@ export function PatientBookAppointmentPage({
   const [selectedSpeciality, setSelectedSpeciality] = useState("All");
   const [selectedDoctorId, setSelectedDoctorId] = useState("");
   const [selectedDoctorSlug, setSelectedDoctorSlug] = useState("");
-  const [selectedBookingReference, setSelectedBookingReference] = useState<string | null>(publicBookingContext.bookingReference ?? null);
+  const [selectedBookingReference, setSelectedBookingReference] = useState<string | null>(explicitBookingContext?.bookingReference ?? null);
   const [selectedClinicId, setSelectedClinicId] = useState("");
   const [selectedClinicSlug, setSelectedClinicSlug] = useState("");
   const [selectedTenantId, setSelectedTenantId] = useState("");
@@ -3073,6 +3175,8 @@ export function PatientBookAppointmentPage({
   const [slots, setSlots] = useState<PatientPortalDoctorSlotResponse[]>([]);
   const [slotsLoading, setSlotsLoading] = useState(false);
   const [slotsError, setSlotsError] = useState<string | null>(null);
+  const [slotPageIndex, setSlotPageIndex] = useState(0);
+  const [selectedDayPart, setSelectedDayPart] = useState<(typeof SLOT_DAY_PARTS)[number]>("All");
   const [selectedSlot, setSelectedSlot] = useState<PatientPortalDoctorSlotResponse | null>(null);
   const [submitPending, setSubmitPending] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -3092,14 +3196,23 @@ export function PatientBookAppointmentPage({
   const manualDoctorSelectionRef = useRef(false);
   const currentBookingPath = `${location.pathname}${location.search}`;
   const bookingSession = session && session.patientSessionToken ? session : null;
-  const bookingClinicCode = publicBookingContext.clinicSlug || publicBookingContext.clinicCode || null;
-  const bookingClinicId = normalizeUuidOrNull(publicBookingContext.clinicId);
-  const bookingTenantId = normalizeUuidOrNull(publicBookingContext.tenantId);
-  const bookingClinicName = publicBookingContext.clinicName?.trim() || searchParams.get("clinicName")?.trim() || null;
-  const bookingDoctorName = formatDoctorDisplayName(publicBookingContext.doctorName || searchParams.get("doctorName"));
-  const bookingDoctorSlug = publicBookingContext.doctorSlug || null;
-  const bookingDoctorId = publicBookingContext.doctorId || null;
-  const hasBookingContext = Boolean(bookingClinicCode || bookingClinicId || bookingTenantId || bookingDoctorSlug || bookingDoctorId);
+  const bookingClinicCode = explicitBookingContext?.clinicSlug || explicitBookingContext?.clinicCode || null;
+  const bookingClinicId = normalizeUuidOrNull(explicitBookingContext?.clinicId);
+  const bookingTenantId = normalizeUuidOrNull(explicitBookingContext?.tenantId);
+  const bookingClinicName = explicitBookingContext?.clinicName?.trim() || searchParams.get("clinicName")?.trim() || null;
+  const bookingDoctorName = formatDoctorDisplayName(explicitBookingContext?.doctorName || searchParams.get("doctorName"));
+  const bookingDoctorSlug = routeDoctorSlug || explicitBookingContext?.doctorSlug || null;
+  const bookingDoctorId = routeDoctorId || explicitBookingContext?.doctorId || null;
+  const hasExplicitClinicQuery =
+    searchParams.has("clinicId")
+    || searchParams.has("clinicCode")
+    || searchParams.has("clinic")
+    || searchParams.has("clinicSlug")
+    || searchParams.has("tenantId")
+    || searchParams.has("tenant")
+    || searchParams.has("tenantSlug");
+  const resolvedBookingClinicCode =
+    bookingClinicCode === "demo-clinic" && !hasExplicitClinicQuery ? null : bookingClinicCode;
   const selectedLocation = locationState.location.trim() || "Pune";
   const bookingContextLine = bookingClinicName
     ? bookingDoctorName
@@ -3109,15 +3222,19 @@ export function PatientBookAppointmentPage({
       ? `Booking appointment with Dr ${bookingDoctorName}`
       : null;
   useEffect(() => {
+    if (!explicitBookingContext) {
+      clearPublicBookingContext();
+      return;
+    }
     savePublicBookingContext({
       clinicId: bookingClinicId,
-      clinicSlug: publicBookingContext.clinicSlug ?? publicBookingContext.clinicCode ?? null,
+      clinicSlug: explicitBookingContext.clinicSlug ?? explicitBookingContext.clinicCode ?? null,
       tenantId: bookingTenantId,
-      doctorId: publicBookingContext.doctorId ?? null,
-      bookingReference: publicBookingContext.bookingReference ?? null,
+      doctorId: explicitBookingContext.doctorId ?? null,
+      bookingReference: explicitBookingContext.bookingReference ?? null,
       nextPath: currentBookingPath,
     });
-  }, [bookingClinicId, bookingTenantId, currentBookingPath, publicBookingContext.bookingReference, publicBookingContext.clinicCode, publicBookingContext.clinicSlug, publicBookingContext.doctorId]);
+  }, [bookingClinicId, bookingTenantId, currentBookingPath, explicitBookingContext]);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -3150,23 +3267,7 @@ export function PatientBookAppointmentPage({
   }, []);
 
   useEffect(() => {
-    if (!bookingClinicCode) {
-      setClinicContextDetail({
-        data: null,
-        loading: false,
-        error: null,
-      });
-      return;
-    }
-    const hasExplicitClinicQuery =
-      searchParams.has("clinicId")
-      || searchParams.has("clinicCode")
-      || searchParams.has("clinic")
-      || searchParams.has("clinicSlug")
-      || searchParams.has("tenantId")
-      || searchParams.has("tenant")
-      || searchParams.has("tenantSlug");
-    if (bookingClinicCode === "demo-clinic" && !hasExplicitClinicQuery) {
+    if (!resolvedBookingClinicCode) {
       setClinicContextDetail({
         data: null,
         loading: false,
@@ -3182,7 +3283,7 @@ export function PatientBookAppointmentPage({
       error: null,
     });
 
-    fetchPublicJson<PublicClinicDetailResponse>(`/api/public/clinics/${bookingClinicCode}`, {}, abortController.signal)
+    fetchPublicJson<PublicClinicDetailResponse>(`/api/public/clinics/${resolvedBookingClinicCode}`, {}, abortController.signal)
       .then((result) => {
         setClinicContextDetail({
           data: result,
@@ -3202,11 +3303,11 @@ export function PatientBookAppointmentPage({
       });
 
     return () => abortController.abort();
-  }, [bookingClinicCode, searchParams]);
+  }, [resolvedBookingClinicCode]);
 
   function syncBookingClinicContext(clinicSlug: string) {
-    const nextClinicId = normalizeUuidOrNull(publicBookingContext.clinicId);
-    const nextTenantId = normalizeUuidOrNull(publicBookingContext.tenantId);
+    const nextClinicId = normalizeUuidOrNull(explicitBookingContext?.clinicId);
+    const nextTenantId = normalizeUuidOrNull(explicitBookingContext?.tenantId);
     const nextParams = new URLSearchParams(searchParams);
     nextParams.set("clinicSlug", clinicSlug);
     if (selectedDoctorId) {
@@ -3228,17 +3329,17 @@ export function PatientBookAppointmentPage({
   }
 
   useEffect(() => {
-    if (bookingClinicCode) {
-      setSelectedClinicFilter(bookingClinicCode);
+    if (resolvedBookingClinicCode) {
+      setSelectedClinicFilter(resolvedBookingClinicCode);
     }
-  }, [bookingClinicCode]);
+  }, [resolvedBookingClinicCode]);
 
   const allDoctorOptions = useMemo<BookingDoctorChoice[]>(() => {
     if (clinicContextDetail.data?.doctors.length) {
       return clinicContextDetail.data.doctors.map(mapPublicDoctorSummaryToBookingChoice);
     }
     if (doctorContextDetail.data) {
-      const clinic = doctorContextDetail.data.clinics[0] ?? null;
+      const clinic = resolveDoctorPracticeOptions(doctorContextDetail.data)[0] ?? null;
       return [
         mapPublicDoctorDetailToBookingChoice(
           doctorContextDetail.data,
@@ -3259,34 +3360,31 @@ export function PatientBookAppointmentPage({
         return [mapPublicDoctorSummaryToBookingChoice(matchedDoctor)];
       }
     }
-    if (bookingDoctorName) {
-      const matchedDoctor = publicDoctorsState.data.find((doctor) => formatDoctorDisplayName(doctor.doctorDisplayName) === bookingDoctorName) ?? null;
-      if (matchedDoctor) {
-        return [mapPublicDoctorSummaryToBookingChoice(matchedDoctor)];
-      }
-    }
-    if (!hasBookingContext || publicDoctorsState.data.length) {
-      return publicDoctorsState.data.map(mapPublicDoctorSummaryToBookingChoice);
-    }
-    return [];
-  }, [bookingClinicCode, bookingClinicName, bookingDoctorId, bookingDoctorName, bookingDoctorSlug, clinicContextDetail.data, doctorContextDetail.data, hasBookingContext, publicDoctorsState.data]);
+    return publicDoctorsState.data.map(mapPublicDoctorSummaryToBookingChoice);
+  }, [bookingClinicName, bookingDoctorId, bookingDoctorSlug, clinicContextDetail.data, doctorContextDetail.data, publicDoctorsState.data, resolvedBookingClinicCode]);
 
   const clinicOptions = useMemo(
     () =>
       Array.from(
         new Map(
-          publicDoctorsState.data.map((doctor) => [
-            doctor.clinicSlug,
-            { clinicSlug: doctor.clinicSlug, clinicName: doctor.clinicDisplayName },
-          ]),
+          allDoctorOptions
+            .map((doctor) => {
+              const clinicSlug = doctor.practiceSlug ?? doctor.clinicSlug ?? "";
+              const clinicName = doctor.practiceName ?? doctor.clinicName ?? "";
+              if (!clinicSlug || !clinicName) {
+                return null;
+              }
+              return [clinicSlug, { clinicSlug, clinicName }] as const;
+            })
+            .filter((entry): entry is readonly [string, { clinicSlug: string; clinicName: string }] => entry !== null),
         ).values(),
       ).sort((left, right) => left.clinicName.localeCompare(right.clinicName)),
-    [publicDoctorsState.data],
+    [allDoctorOptions],
   );
 
   const doctorOptions = useMemo(() => {
     return allDoctorOptions.filter((doctor) => {
-      if (selectedClinicFilter && doctor.clinicSlug !== selectedClinicFilter) {
+      if (!resolvedBookingClinicCode && selectedClinicFilter && doctor.clinicSlug !== selectedClinicFilter) {
         return false;
       }
       if (selectedSpeciality !== "All" && doctor.specialization !== selectedSpeciality) {
@@ -3294,7 +3392,7 @@ export function PatientBookAppointmentPage({
       }
       return true;
     });
-  }, [allDoctorOptions, selectedClinicFilter, selectedSpeciality]);
+  }, [allDoctorOptions, resolvedBookingClinicCode, selectedClinicFilter, selectedSpeciality]);
 
   const filteredDoctorOptions = useMemo(() => {
     const searchTerm = doctorSearchTerm.trim().toLowerCase();
@@ -3302,18 +3400,7 @@ export function PatientBookAppointmentPage({
       return doctorOptions;
     }
     return doctorOptions.filter((doctor) => {
-      const values = [
-        doctor.doctorName,
-        doctor.specialization,
-        doctor.qualification,
-        doctor.clinicName,
-        doctor.area,
-        doctor.city,
-        doctor.consultationRoom,
-        doctor.nextAvailableSlotSummary,
-        doctor.bookingMode,
-      ];
-      return values.some((value) => value?.toLowerCase().includes(searchTerm));
+      return buildBookingChoiceSearchTerms(doctor).some((value) => value.includes(searchTerm));
     });
   }, [doctorOptions, doctorSearchTerm]);
 
@@ -3343,43 +3430,72 @@ export function PatientBookAppointmentPage({
     });
     return ["All", ...Array.from(values).sort((left, right) => left.localeCompare(right))];
   }, [allDoctorOptions]);
+  const selectedDoctorClinics = useMemo(
+    () => (doctorContextDetail.data ? resolveDoctorPracticeOptions(doctorContextDetail.data) : []),
+    [doctorContextDetail.data],
+  );
+  const hasManualDoctorSelection = manualDoctorSelectionRef.current;
+  const hasExplicitRouteDoctor = Boolean(bookingDoctorId || bookingDoctorSlug);
 
   useEffect(() => {
-    if (selectedDoctorId) {
-      return;
-    }
-    if (manualDoctorSelectionRef.current) {
+    if (hasExplicitRouteDoctor && selectedDoctorId && doctorOptions.some((doctor) => doctor.publicDoctorId === selectedDoctorId)) {
       return;
     }
 
-    const seededDoctor =
-      (bookingDoctorId
-        ? allDoctorOptions.find((doctor) => doctor.publicDoctorId === bookingDoctorId) ?? null
-        : null)
-      || (bookingDoctorSlug
-        ? allDoctorOptions.find((doctor) => doctor.doctorSlug === bookingDoctorSlug) ?? null
-        : null)
-      || (bookingDoctorName
-        ? allDoctorOptions.find((doctor) => formatDoctorDisplayName(doctor.doctorName) === bookingDoctorName) ?? null
-        : null)
-      || allDoctorOptions[0]
-      || null;
+    if (hasManualDoctorSelection && selectedDoctorId && doctorOptions.some((doctor) => doctor.publicDoctorId === selectedDoctorId)) {
+      return;
+    }
+
+    const seededDoctor = hasExplicitRouteDoctor
+      ? (
+        (bookingDoctorId
+          ? allDoctorOptions.find((doctor) => doctor.publicDoctorId === bookingDoctorId) ?? null
+          : null)
+        || (bookingDoctorSlug
+          ? allDoctorOptions.find((doctor) => doctor.doctorSlug === bookingDoctorSlug) ?? null
+          : null)
+      )
+      : null;
 
     if (seededDoctor) {
       setSelectedDoctorId(seededDoctor.publicDoctorId);
       setSelectedDoctorSlug(seededDoctor.doctorSlug);
-      setSelectedBookingReference(seededDoctor.bookingReference ?? publicBookingContext.bookingReference ?? null);
-      if (bookingClinicCode) {
+      setSelectedBookingReference(seededDoctor.bookingReference ?? explicitBookingContext?.bookingReference ?? null);
+      if (resolvedBookingClinicCode) {
         setSelectedClinicId(bookingClinicId || "");
-        setSelectedClinicSlug(bookingClinicCode);
+        setSelectedClinicSlug(resolvedBookingClinicCode);
         setSelectedTenantId(bookingTenantId || "");
-      } else if (doctorContextDetail.data?.clinics.length === 1 && seededDoctor.clinicSlug) {
+      } else if (selectedDoctorClinics.length === 1 && seededDoctor.clinicSlug) {
         setSelectedClinicId("");
         setSelectedClinicSlug(seededDoctor.clinicSlug);
         setSelectedTenantId("");
       }
+      return;
     }
-  }, [allDoctorOptions, bookingClinicCode, bookingClinicId, bookingTenantId, bookingDoctorId, bookingDoctorName, bookingDoctorSlug, doctorContextDetail.data, selectedDoctorId]);
+
+    if (!hasExplicitRouteDoctor && !hasManualDoctorSelection && (selectedDoctorId || selectedDoctorSlug || selectedBookingReference)) {
+      setSelectedDoctorId("");
+      setSelectedDoctorSlug("");
+      setSelectedBookingReference(null);
+      setSelectedClinicId("");
+      setSelectedClinicSlug("");
+    }
+  }, [
+    allDoctorOptions,
+    bookingClinicId,
+    bookingTenantId,
+    bookingDoctorId,
+    bookingDoctorSlug,
+    explicitBookingContext?.bookingReference,
+    resolvedBookingClinicCode,
+    selectedDoctorClinics.length,
+    selectedDoctorId,
+    selectedDoctorSlug,
+    selectedBookingReference,
+    hasManualDoctorSelection,
+    hasExplicitRouteDoctor,
+    doctorOptions,
+  ]);
 
   function handleStartOver() {
     clearPublicBookingContext();
@@ -3403,15 +3519,44 @@ export function PatientBookAppointmentPage({
     manualDoctorSelectionRef.current = false;
   }
 
+  function handleChangeDoctor() {
+    clearPublicBookingContext();
+    const nextParams = new URLSearchParams();
+    nextParams.set("date", selectedDate);
+    setSearchParams(nextParams, { replace: true });
+    setSelectedClinicFilter("");
+    setSelectedSpeciality("All");
+    setDoctorSearchTerm("");
+    setSelectedDoctorId("");
+    setSelectedDoctorSlug("");
+    setSelectedBookingReference(null);
+    setSelectedClinicId("");
+    setSelectedClinicSlug("");
+    setSelectedTenantId("");
+    setSelectedSlot(null);
+    setSlots([]);
+    setSlotsLoading(false);
+    setSlotsError(null);
+    setConfirmation(null);
+    setSubmitError(null);
+    setDoctorContextDetail({
+      data: null,
+      loading: false,
+      error: null,
+    });
+    lastSlotRequestKeyRef.current = null;
+    manualDoctorSelectionRef.current = false;
+  }
+
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     const selectedSlotTime = selectedSlot?.slotTime ?? "";
-    if (!portalSession || !selectedDoctorId || !selectedDate || !selectedSlotTime) {
+    if (!portalSession || !resolvedSelectedDoctorId || !selectedDate || !selectedSlotTime) {
       setSubmitError("Choose a doctor, date, and available time slot before confirming.");
       return;
     }
     const parsed = bookAppointmentSchema.safeParse({
-      doctorId: selectedDoctorId,
+      doctorId: resolvedSelectedDoctorId,
       appointmentDate: selectedDate,
       slot: selectedSlotTime,
       reason: reason.trim() || undefined,
@@ -3429,7 +3574,7 @@ export function PatientBookAppointmentPage({
       const resolvedClinicId = normalizeUuidOrNull(selectedClinicId) || bookingClinicId;
       const resolvedTenantId = normalizeUuidOrNull(selectedTenantId) || bookingTenantId;
       const payload: PatientPortalAppointmentBookingRequest = {
-        publicDoctorId: selectedDoctorId,
+        publicDoctorId: resolvedSelectedDoctorId,
         clinicSlug: resolvedSelectedClinicSlug,
         tenantId: resolvedTenantId,
         clinicId: resolvedClinicId,
@@ -3453,28 +3598,91 @@ export function PatientBookAppointmentPage({
     }
   }
 
-  const selectedDoctor = useMemo(
-    () => allDoctorOptions.find((doctor) => doctor.publicDoctorId === selectedDoctorId) ?? null,
-    [allDoctorOptions, selectedDoctorId],
+  const resolvedDoctorFromUrl = useMemo(
+    () => {
+      if (bookingDoctorId) {
+        return allDoctorOptions.find((doctor) => doctor.publicDoctorId === bookingDoctorId) ?? null;
+      }
+      if (bookingDoctorSlug) {
+        return allDoctorOptions.find((doctor) => doctor.doctorSlug === bookingDoctorSlug) ?? null;
+      }
+      return null;
+    },
+    [allDoctorOptions, bookingDoctorId, bookingDoctorSlug],
   );
+  const resolvedSelectedDoctorId = resolvedDoctorFromUrl?.publicDoctorId ?? (hasManualDoctorSelection ? selectedDoctorId : "");
+  const resolvedSelectedDoctorSlug = resolvedDoctorFromUrl?.doctorSlug ?? (hasManualDoctorSelection ? selectedDoctorSlug : "");
+  const selectedDoctor = resolvedDoctorFromUrl
+    || (hasManualDoctorSelection ? (allDoctorOptions.find((doctor) => doctor.publicDoctorId === selectedDoctorId) ?? null) : null);
   const selectedDoctorBookingReference =
-    selectedDoctor?.bookingReference || selectedBookingReference || publicBookingContext.bookingReference || null;
+    selectedDoctor?.bookingReference || selectedBookingReference || explicitBookingContext?.bookingReference || null;
   const selectedDoctorBookingMode = normalizeCareBookingMode(selectedDoctor?.bookingMode ?? null);
-  const selectedDoctorClinics = doctorContextDetail.data?.clinics ?? [];
   const resolvedSelectedClinicSlug =
     selectedClinicSlug
-    || bookingClinicCode
+    || resolvedBookingClinicCode
     || (selectedDoctorClinics.length === 1 ? selectedDoctor?.clinicSlug : null);
   const resolvedSelectedClinicId = normalizeUuidOrNull(selectedClinicId) || bookingClinicId;
   const resolvedSelectedTenantId = normalizeUuidOrNull(selectedTenantId) || bookingTenantId;
   const selectedSlotTime = selectedSlot?.slotTime ?? "";
   const requiresClinicSelection = Boolean(
-    selectedDoctorId && !resolvedSelectedClinicSlug && selectedDoctorClinics.length > 1,
+    resolvedSelectedDoctorId && !resolvedSelectedClinicSlug && selectedDoctorClinics.length > 1,
   );
   const availableSlotGroups = useMemo(() => groupAvailableSlotsByDate(slots), [slots]);
   const availableSlots = useMemo(() => availableSlotGroups.flatMap((group) => group.slots), [availableSlotGroups]);
+  const sortedAvailableSlots = useMemo(
+    () => availableSlots.slice().sort(compareSlotStartTimes),
+    [availableSlots],
+  );
+  const filteredSlots = useMemo(
+    () =>
+      selectedDayPart === "All"
+        ? sortedAvailableSlots
+        : sortedAvailableSlots.filter((slot) => slotDayPart(slot) === selectedDayPart),
+    [selectedDayPart, sortedAvailableSlots],
+  );
+  const totalSlotPages = useMemo(
+    () => Math.ceil(filteredSlots.length / SLOTS_PER_PAGE),
+    [filteredSlots.length],
+  );
+  const slotPageStart = slotPageIndex * SLOTS_PER_PAGE;
+  const slotPageEnd = slotPageStart + SLOTS_PER_PAGE;
+  const visibleSlots = useMemo(
+    () => filteredSlots.slice(slotPageStart, slotPageEnd),
+    [filteredSlots, slotPageEnd, slotPageStart],
+  );
+  const visibleSlotGroups = useMemo(() => groupAvailableSlotsByDate(visibleSlots), [visibleSlots]);
+  const hasPreviousSlots = slotPageIndex > 0;
+  const hasNextSlots = slotPageIndex < totalSlotPages - 1;
+  const visibleSlotStart = filteredSlots.length === 0 ? 0 : slotPageStart + 1;
+  const visibleSlotEnd = Math.min(slotPageEnd, filteredSlots.length);
+  const slotPagingContextKey = useMemo(
+    () =>
+      [
+        selectedDoctorBookingReference || "",
+        resolvedSelectedDoctorId || "",
+        resolvedSelectedClinicId || "",
+        resolvedSelectedTenantId || "",
+        resolvedSelectedClinicSlug || "",
+        selectedDayPart,
+        selectedDate || "",
+      ].join("|"),
+    [
+      resolvedSelectedClinicId,
+      resolvedSelectedClinicSlug,
+      resolvedSelectedDoctorId,
+      resolvedSelectedTenantId,
+      selectedDayPart,
+      selectedDate,
+      selectedDoctorBookingReference,
+    ],
+  );
+  const hasAnySlots = availableSlots.length > 0;
+  const hasFilteredSlots = filteredSlots.length > 0;
   const bookingDoctorsLoading = clinicContextDetail.loading || doctorContextDetail.loading || publicDoctorsState.loading;
   const bookingDoctorsError = doctorContextDetail.error || clinicContextDetail.error || publicDoctorsState.error;
+  const explicitDoctorSelectionRequested = Boolean(bookingDoctorId || bookingDoctorSlug);
+  const explicitDoctorSelectionMissing =
+    explicitDoctorSelectionRequested && !bookingDoctorsLoading && !selectedDoctor;
   const recentDoctorOptions = useMemo(
     () =>
       Array.from(
@@ -3493,7 +3701,7 @@ export function PatientBookAppointmentPage({
     [recentAppointments.data],
   );
 
-  const activeDoctorSlug = selectedDoctorSlug || selectedDoctor?.doctorSlug || bookingDoctorSlug || "";
+  const activeDoctorSlug = resolvedSelectedDoctorSlug || selectedDoctor?.doctorSlug || bookingDoctorSlug || "";
   const bookingDateStartIso = currentIsoDateInTimeZone("Asia/Kolkata");
 
   useEffect(() => {
@@ -3543,7 +3751,7 @@ export function PatientBookAppointmentPage({
       const matchedDoctor = doctorOptions.find((doctor) => doctor.publicDoctorId === bookingDoctorId) ?? null;
       setSelectedDoctorId(bookingDoctorId);
       setSelectedDoctorSlug(matchedDoctor?.doctorSlug ?? bookingDoctorSlug ?? "");
-      setSelectedBookingReference(matchedDoctor?.bookingReference ?? publicBookingContext.bookingReference ?? null);
+      setSelectedBookingReference(matchedDoctor?.bookingReference ?? explicitBookingContext?.bookingReference ?? null);
       return;
     }
 
@@ -3552,7 +3760,7 @@ export function PatientBookAppointmentPage({
       if (matchedDoctor) {
         setSelectedDoctorId(matchedDoctor.publicDoctorId);
         setSelectedDoctorSlug(matchedDoctor.doctorSlug);
-        setSelectedBookingReference(matchedDoctor.bookingReference ?? publicBookingContext.bookingReference ?? null);
+        setSelectedBookingReference(matchedDoctor.bookingReference ?? explicitBookingContext?.bookingReference ?? null);
         return;
       }
     }
@@ -3561,36 +3769,33 @@ export function PatientBookAppointmentPage({
       return;
     }
 
-    const firstDoctor = doctorOptions[0] ?? null;
-    if (firstDoctor) {
-      setSelectedDoctorId(firstDoctor.publicDoctorId);
-      setSelectedDoctorSlug(firstDoctor.doctorSlug);
-      setSelectedBookingReference(firstDoctor.bookingReference ?? publicBookingContext.bookingReference ?? null);
-    } else {
+    if (bookingDoctorId || bookingDoctorSlug || selectedDoctorId || selectedDoctorSlug) {
+      if (bookingDoctorsLoading) {
+        return;
+      }
       setSelectedDoctorId("");
       setSelectedDoctorSlug("");
       setSelectedBookingReference(null);
       setSelectedClinicId("");
       setSelectedClinicSlug("");
     }
-  }, [bookingDoctorId, bookingDoctorSlug, doctorOptions, publicBookingContext.bookingReference, selectedDoctorId]);
+  }, [bookingDoctorId, bookingDoctorSlug, bookingDoctorsLoading, doctorOptions, explicitBookingContext?.bookingReference, selectedDoctorId, selectedDoctorSlug]);
 
   useEffect(() => {
-    if (!selectedDoctorId) {
+    if (resolvedBookingClinicCode) {
+      setSelectedClinicId(bookingClinicId || "");
+      setSelectedClinicSlug(resolvedBookingClinicCode);
+      setSelectedTenantId(bookingTenantId || "");
+      return;
+    }
+
+    if (!resolvedSelectedDoctorId) {
       setSelectedClinicId("");
       setSelectedClinicSlug("");
       return;
     }
 
-    if (bookingClinicCode) {
-      setSelectedClinicId(bookingClinicId || "");
-      setSelectedClinicSlug(bookingClinicCode);
-      setSelectedTenantId(bookingTenantId || "");
-      return;
-    }
-
-    const doctorDetailClinics = doctorContextDetail.data?.clinics ?? [];
-    const resolvedClinics = doctorDetailClinics;
+    const resolvedClinics = selectedDoctorClinics;
 
     if (resolvedClinics.length === 1) {
       const onlyClinic = resolvedClinics[0];
@@ -3610,10 +3815,10 @@ export function PatientBookAppointmentPage({
     if (!selectedClinicSlug && selectedClinicId) {
       setSelectedClinicId("");
     }
-  }, [bookingClinicCode, bookingClinicId, bookingTenantId, doctorContextDetail.data, doctorOptions, selectedClinicId, selectedClinicSlug, selectedDoctorId]);
+  }, [bookingClinicId, bookingTenantId, resolvedBookingClinicCode, resolvedSelectedDoctorId, selectedClinicId, selectedClinicSlug, selectedDoctorClinics]);
 
   useEffect(() => {
-    const slotRequestDoctorId = selectedDoctorId || "";
+    const slotRequestDoctorId = resolvedSelectedDoctorId || "";
     const slotRequestClinicSlug = resolvedSelectedClinicSlug || "";
     const slotRequestClinicId = resolvedSelectedClinicId || "";
     const slotRequestTenantId = resolvedSelectedTenantId || "";
@@ -3659,7 +3864,7 @@ export function PatientBookAppointmentPage({
       console.debug("[patient-portal] booking URL doctorId", bookingDoctorId);
       console.debug("[patient-portal] selectedDoctor", {
         publicDoctorId: selectedDoctor?.publicDoctorId ?? null,
-        id: selectedDoctorId || null,
+        id: resolvedSelectedDoctorId || null,
         slug: selectedDoctor?.doctorSlug || null,
         bookingReference: selectedDoctorBookingReference,
         clinicId: resolvedSelectedClinicId,
@@ -3723,10 +3928,23 @@ export function PatientBookAppointmentPage({
     resolvedSelectedClinicSlug,
     resolvedSelectedTenantId,
     selectedDate,
-    selectedDoctorId,
+    resolvedSelectedDoctorId,
     selectedDoctorBookingReference,
     selectedDoctor?.bookingMode,
   ]);
+
+  useEffect(() => {
+    setSlotPageIndex(0);
+  }, [slotPagingContextKey]);
+
+  useEffect(() => {
+    setSlotPageIndex((current) => {
+      if (totalSlotPages <= 0) {
+        return 0;
+      }
+      return Math.min(current, totalSlotPages - 1);
+    });
+  }, [totalSlotPages]);
 
   useEffect(() => {
     if (!selectedDate) {
@@ -3742,11 +3960,11 @@ export function PatientBookAppointmentPage({
 
   function renderDoctorChoiceCard(doctor: BookingDoctorChoice) {
     const mode = normalizeCareBookingMode(doctor.bookingMode);
-    const locationLabel = formatBookingLocationLabel(doctor.area, doctor.city);
+    const locationLabel = formatBookingLocationLabel(doctor.practiceName ?? doctor.clinicName, doctor.area, doctor.city);
     return (
       <button
         key={doctor.publicDoctorId}
-        className={`doctor-choice-card${selectedDoctorId === doctor.publicDoctorId ? " is-active" : ""}`}
+        className={`doctor-choice-card${resolvedSelectedDoctorId === doctor.publicDoctorId ? " is-active" : ""}`}
         type="button"
         onClick={() => {
           manualDoctorSelectionRef.current = true;
@@ -3760,11 +3978,11 @@ export function PatientBookAppointmentPage({
           setSelectedDoctorId(doctor.publicDoctorId);
           setSelectedDoctorSlug(doctor.doctorSlug);
           setSelectedBookingReference(doctor.bookingReference ?? null);
-          if (bookingClinicCode) {
+          if (resolvedBookingClinicCode) {
             setSelectedClinicId(bookingClinicId || "");
-            setSelectedClinicSlug(bookingClinicCode);
+            setSelectedClinicSlug(resolvedBookingClinicCode);
             setSelectedTenantId(bookingTenantId || "");
-          } else if (doctorContextDetail.data?.clinics.length === 1 && doctor.clinicSlug) {
+          } else if (selectedDoctorClinics.length === 1 && doctor.clinicSlug) {
             setSelectedClinicId("");
             setSelectedClinicSlug(doctor.clinicSlug);
             setSelectedTenantId("");
@@ -3778,15 +3996,15 @@ export function PatientBookAppointmentPage({
           setSubmitError(null);
           const nextParams = new URLSearchParams(searchParams);
           nextParams.set("doctorId", doctor.publicDoctorId);
-          if (bookingClinicCode || (doctorContextDetail.data?.clinics.length === 1 && doctor.clinicSlug)) {
-            const clinicSlug = bookingClinicCode || doctor.clinicSlug || "";
+          if (resolvedBookingClinicCode || (selectedDoctorClinics.length === 1 && doctor.clinicSlug)) {
+            const clinicSlug = resolvedBookingClinicCode || doctor.clinicSlug || "";
             nextParams.set("clinicSlug", clinicSlug);
           }
           nextParams.set("date", selectedDate);
           setSearchParams(nextParams, { replace: true });
           savePublicBookingContext({
             clinicId: bookingClinicId,
-            clinicSlug: bookingClinicCode || (doctorContextDetail.data?.clinics.length === 1 ? doctor.clinicSlug : null),
+            clinicSlug: resolvedBookingClinicCode || (selectedDoctorClinics.length === 1 ? doctor.clinicSlug : null),
             tenantId: bookingTenantId,
             doctorId: doctor.publicDoctorId,
             bookingReference: doctor.bookingReference ?? null,
@@ -3833,9 +4051,9 @@ export function PatientBookAppointmentPage({
       </div>
       {requiresClinicSelection && doctorContextDetail.data ? (
         <DoctorClinicSelector
-          doctorName={publicBookingContext.doctorName || doctorContextDetail.data.doctorDisplayName}
-          clinics={doctorContextDetail.data.clinics}
-          selectedClinicCode={selectedClinicSlug || bookingClinicCode || ""}
+          doctorName={explicitBookingContext?.doctorName || doctorContextDetail.data.doctorDisplayName}
+          clinics={selectedDoctorClinics}
+          selectedClinicCode={selectedClinicSlug || resolvedBookingClinicCode || ""}
           nextAvailableSlot={doctorContextDetail.data.nextAvailableSlots[0] ?? null}
           onSelect={(clinic) => {
             setSelectedClinicId("");
@@ -3848,47 +4066,75 @@ export function PatientBookAppointmentPage({
       {(!requiresClinicSelection && bookingDoctorsLoading) ? (
         <div className="patient-empty-card">Loading available doctors...</div>
       ) : null}
-      {!hasBookingContext ? (
-        <div className="patient-empty-card">
-          <strong>Choose how you want to book your visit</strong>
-          <p>Select a doctor or clinic to see available appointments.</p>
-          {recentDoctorOptions.length ? (
-            <div className="patient-action-row">
-              {recentDoctorOptions.map((doctor) => (
-                <button
-                  key={`${doctor.doctorName}-${doctor.clinicName ?? ""}`}
-                  className="ghost-button"
-                  type="button"
-                  onClick={() => {
-                    const matched = publicDoctorsState.data.find((candidate) => candidate.doctorDisplayName === doctor.doctorName);
-                    if (!matched) {
-                      return;
-                    }
-                    const nextParams = new URLSearchParams();
-                    nextParams.set("doctorId", matched.publicDoctorId);
-                    nextParams.set("clinicSlug", matched.clinicSlug);
-                    nextParams.set("date", selectedDate);
-                    setSearchParams(nextParams, { replace: true });
-                  }}
-                >
-                  {doctor.doctorName}
-                </button>
-              ))}
-            </div>
-          ) : null}
-          <div className="patient-action-row">
-            <Link className="primary-button" to="/doctors">
-              Search doctors
-            </Link>
-            <Link className="secondary-button" to="/clinics">
-              Browse clinics
-            </Link>
-            <Link className="ghost-button" to="/">
-              Go back to discovery
-            </Link>
-          </div>
+      {explicitDoctorSelectionMissing ? (
+        <div className="patient-inline-empty">
+          <strong>Doctor unavailable</strong>
+          <p>The selected doctor could not be loaded. Please choose another provider or search again.</p>
         </div>
       ) : null}
+      <div className="patient-empty-card">
+        <strong>Choose how you want to book your visit</strong>
+        <p>Select a doctor or clinic to see available appointments.</p>
+        {selectedDoctor ? (
+          <div className="patient-action-row">
+            <button className="secondary-button" type="button" onClick={handleChangeDoctor}>
+              Change doctor
+            </button>
+          </div>
+        ) : null}
+        <div className="patient-action-row">
+          <Link className="primary-button" to="/doctors">
+            Search doctors
+          </Link>
+          <Link className="secondary-button" to="/clinics">
+            Browse clinics
+          </Link>
+          <Link className="ghost-button" to="/">
+            Go back to discovery
+          </Link>
+        </div>
+      </div>
+      <section className="patient-panel patient-find-care-panel">
+        <div className="patient-panel-heading">
+          <h2>Find care</h2>
+          <span className="panel-caption">Authenticated search</span>
+        </div>
+        <div className="patient-form-grid">
+          <label className="patient-form-span-2">
+            <span>Search doctor, clinic, or area</span>
+            <input
+              value={doctorSearchTerm}
+              onChange={(event) => setDoctorSearchTerm(event.target.value)}
+              placeholder="Amit Verma, General Medicine, Pune, clinic name"
+            />
+          </label>
+          <label>
+            <span>Clinic</span>
+            <select value={selectedClinicFilter} onChange={(event) => setSelectedClinicFilter(event.target.value)}>
+              <option value="">All clinics</option>
+              {clinicOptions.map((clinic) => (
+                <option key={clinic.clinicSlug} value={clinic.clinicSlug}>
+                  {clinic.clinicName}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>Specialty</span>
+            <select value={selectedSpeciality} onChange={(event) => setSelectedSpeciality(event.target.value)}>
+              {specialities.map((speciality) => (
+                <option key={speciality} value={speciality}>
+                  {speciality}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <div className="booking-capability-legend">
+          <span className="booking-mode-chip booking-mode-chip--is-online">Book online with Jeevanam</span>
+          <span className="booking-mode-chip booking-mode-chip--is-call">Call clinic to book</span>
+        </div>
+      </section>
       {bookingDoctorsError ? (
         <div className="patient-empty-card">
           <strong>Unable to load doctors right now</strong>
@@ -3925,49 +4171,6 @@ export function PatientBookAppointmentPage({
       ) : null}
       {!bookingDoctorsError && !requiresClinicSelection && !bookingDoctorsLoading && allDoctorOptions.length > 0 ? (
         <>
-          {!hasBookingContext ? (
-            <section className="patient-panel patient-find-care-panel">
-              <div className="patient-panel-heading">
-                <h2>Find care</h2>
-                <span className="panel-caption">Authenticated search</span>
-              </div>
-              <div className="patient-form-grid">
-                <label className="patient-form-span-2">
-                  <span>Search doctor, clinic, or area</span>
-                  <input
-                    value={doctorSearchTerm}
-                    onChange={(event) => setDoctorSearchTerm(event.target.value)}
-                    placeholder="Amit Verma, General Medicine, Pune, clinic name"
-                  />
-                </label>
-                <label>
-                  <span>Clinic</span>
-                  <select value={selectedClinicFilter} onChange={(event) => setSelectedClinicFilter(event.target.value)}>
-                    <option value="">All clinics</option>
-                    {clinicOptions.map((clinic) => (
-                      <option key={clinic.clinicSlug} value={clinic.clinicSlug}>
-                        {clinic.clinicName}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  <span>Specialty</span>
-                  <select value={selectedSpeciality} onChange={(event) => setSelectedSpeciality(event.target.value)}>
-                    {specialities.map((speciality) => (
-                      <option key={speciality} value={speciality}>
-                        {speciality}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-              <div className="booking-capability-legend">
-                <span className="booking-mode-chip booking-mode-chip--is-online">Book online with Jeevanam</span>
-                <span className="booking-mode-chip booking-mode-chip--is-call">Call clinic to book</span>
-              </div>
-            </section>
-          ) : null}
           <div className="patient-booking-grid">
             <section className="patient-panel">
               <div className="patient-panel-heading">
@@ -4073,7 +4276,24 @@ export function PatientBookAppointmentPage({
                     <p>{slotsError}</p>
                   </div>
                 ) : null}
-                {!slotsLoading && !slotsError && availableSlots.length === 0 ? (
+                {!slotsLoading && !slotsError && hasAnySlots ? (
+                  <div className="booking-filter-chips booking-slot-filter-chips">
+                    {SLOT_DAY_PARTS.map((dayPart) => (
+                      <button
+                        key={dayPart}
+                        className={`booking-chip${selectedDayPart === dayPart ? " is-active" : ""}`}
+                        type="button"
+                        aria-pressed={selectedDayPart === dayPart}
+                        title={dayPart}
+                        aria-label={dayPart}
+                        onClick={() => setSelectedDayPart(dayPart)}
+                      >
+                        {dayPart}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+                {!slotsLoading && !slotsError && !hasAnySlots ? (
                   <div className="patient-inline-empty">
                     <strong>No slots available for this date.</strong>
                     <p>Try the next day or choose another doctor to continue.</p>
@@ -4085,9 +4305,52 @@ export function PatientBookAppointmentPage({
                   </div>
                 ) : null}
 
-                {availableSlotGroups.length > 0 ? (
-                  <div className="booking-slot-groups">
-                    {availableSlotGroups.map((group) => (
+                {!slotsLoading && !slotsError && hasAnySlots && !hasFilteredSlots ? (
+                  <div className="patient-inline-empty">
+                    <strong>No slots available for this time period.</strong>
+                    <p>Try a different time of day or choose another doctor to continue.</p>
+                    <div className="patient-action-row">
+                      <Link className="secondary-button" to="/patient/careai">
+                        Need help booking? Ask AIVA.
+                      </Link>
+                    </div>
+                  </div>
+                ) : null}
+
+                {!slotsLoading && !slotsError && hasFilteredSlots ? (
+                  <>
+                    {totalSlotPages > 1 ? (
+                      <div className="patient-inline-empty patient-slot-pagination">
+                        <div className="patient-action-row">
+                          <button
+                            className="secondary-button"
+                            type="button"
+                            aria-label="Previous slots"
+                            title="Previous slots"
+                            onClick={() => setSlotPageIndex((value) => Math.max(0, value - 1))}
+                            disabled={!hasPreviousSlots}
+                          >
+                            ‹
+                          </button>
+                          <span className="form-note">
+                            {visibleSlotStart}-{visibleSlotEnd} of {filteredSlots.length}
+                          </span>
+                          <button
+                            className="secondary-button"
+                            type="button"
+                            aria-label="Next slots"
+                            title="Next slots"
+                            onClick={() => setSlotPageIndex((value) => Math.min(totalSlotPages - 1, value + 1))}
+                            disabled={!hasNextSlots}
+                          >
+                            ›
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    <div className="booking-slot-groups">
+                      {visibleSlotGroups.map((group) => (
                       <section key={group.date} className="booking-slot-group">
                         <div className="patient-panel-heading booking-slot-group-heading">
                           <h3>{group.label}</h3>
@@ -4107,8 +4370,9 @@ export function PatientBookAppointmentPage({
                           ))}
                         </div>
                       </section>
-                    ))}
-                  </div>
+                      ))}
+                    </div>
+                  </>
                 ) : null}
               </>
             ) : selectedDoctor ? (
@@ -4183,7 +4447,7 @@ export function PatientBookAppointmentPage({
                   </div>
                 ) : null}
                 <div className="patient-action-row">
-                  <button className="primary-button" type="submit" disabled={submitPending || !selectedDoctorId || !selectedSlotTime}>
+                  <button className="primary-button" type="submit" disabled={submitPending || !resolvedSelectedDoctorId || !selectedSlotTime}>
                     {submitPending ? "Confirming..." : "Confirm booking"}
                   </button>
                   <Link className="ghost-button" to="/patient/appointments">

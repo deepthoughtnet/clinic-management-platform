@@ -39,7 +39,7 @@ export function formatSlotGroupLabel(dateValue, now = new Date()) {
 export function groupAvailableSlotsByDate(slots, now = new Date()) {
   const grouped = new Map();
   slots
-    .filter((slot) => isFutureSelectableSlot(slot, now))
+    .slice()
     .sort((left, right) => {
       const leftDateTime = toSlotDateTime(left)?.getTime() ?? 0;
       const rightDateTime = toSlotDateTime(right)?.getTime() ?? 0;

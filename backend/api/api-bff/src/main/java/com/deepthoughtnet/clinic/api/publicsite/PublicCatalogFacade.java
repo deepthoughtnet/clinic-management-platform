@@ -9,10 +9,12 @@ import com.deepthoughtnet.clinic.api.publicsite.dto.PublicHospitalDetailResponse
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicHospitalSummaryResponse;
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicPageResponse;
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicProviderLocationResponse;
+import com.deepthoughtnet.clinic.api.publicsite.dto.PublicPracticeMiniResponse;
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicSearchResponse;
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicSpecialityDetailResponse;
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicSpecialitySummaryResponse;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderType;
+import com.deepthoughtnet.clinic.discover.publicdoctorpracticeassociation.PublicDoctorPracticeAssociationService;
 import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService.DoctorPublicMediaAsset;
 import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService.ProviderPublicMediaAsset;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProfileMediaContent;
@@ -46,16 +48,19 @@ public class PublicCatalogFacade {
     private final ProviderPublicProfileService publicProfileService;
     private final ProviderLinkingService providerLinkingService;
     private final ProviderPublicProfileModerationService moderationService;
+    private final PublicDoctorPracticeAssociationService publicDoctorPracticeAssociationService;
 
     @Autowired
     public PublicCatalogFacade(
             ProviderPublicProfileService publicProfileService,
             ProviderLinkingService providerLinkingService,
-            ProviderPublicProfileModerationService moderationService
+            ProviderPublicProfileModerationService moderationService,
+            PublicDoctorPracticeAssociationService publicDoctorPracticeAssociationService
     ) {
         this.publicProfileService = Objects.requireNonNull(publicProfileService, "publicProfileService");
         this.providerLinkingService = Objects.requireNonNull(providerLinkingService, "providerLinkingService");
         this.moderationService = Objects.requireNonNull(moderationService, "moderationService");
+        this.publicDoctorPracticeAssociationService = Objects.requireNonNull(publicDoctorPracticeAssociationService, "publicDoctorPracticeAssociationService");
     }
 
     public PublicPageResponse<PublicClinicSummaryResponse> listClinics(
@@ -266,15 +271,30 @@ public class PublicCatalogFacade {
                 .filter(index -> detail.gallery().get(index).documentId() != null)
                 .mapToObj(index -> publicDoctorGalleryImagePath(doctorSlug, index))
                 .toList();
-        List<PublicClinicMiniResponse> clinics = detail.locations().isEmpty()
-                ? List.of()
-                : List.of(new PublicClinicMiniResponse(
-                        slugify(detail.locations().get(0).label() == null ? detail.canonicalSlug() : detail.locations().get(0).label()),
-                        firstNonBlank(detail.locations().get(0).label(), detail.displayName()),
-                        detail.locations().get(0).city(),
-                        detail.city(),
-                        resolveBookingReference(detail.providerId().toString(), practiceReference(detail.providerId(), 0, detail.locations().get(0).label(), detail.locations().get(0).address(), detail.locations().get(0).city()))
-                ));
+        List<PublicPracticeMiniResponse> practices = publicDoctorPractices(detail);
+        String resolvedPracticeReference = resolvePrimaryPracticeReference(detail.providerId())
+                .orElseGet(() -> detail.locations().isEmpty()
+                        ? null
+                        : practiceReference(detail.providerId(), 0, detail.locations().get(0).label(), detail.locations().get(0).address(), detail.locations().get(0).city()));
+        List<PublicClinicMiniResponse> clinics = practices.stream()
+                .filter(practice -> "CLINIC".equalsIgnoreCase(practice.practiceType()))
+                .map(practice -> new PublicClinicMiniResponse(
+                        practice.practiceSlug(),
+                        practice.practiceDisplayName(),
+                        practice.area(),
+                        practice.city(),
+                        practice.bookingReference()
+                ))
+                .toList();
+        if (clinics.isEmpty() && !detail.locations().isEmpty()) {
+            clinics = List.of(new PublicClinicMiniResponse(
+                    slugify(detail.locations().get(0).label() == null ? detail.canonicalSlug() : detail.locations().get(0).label()),
+                    firstNonBlank(detail.locations().get(0).label(), detail.displayName()),
+                    detail.locations().get(0).city(),
+                    detail.city(),
+                    resolveBookingReference(detail.providerId().toString(), practiceReference(detail.providerId(), 0, detail.locations().get(0).label(), detail.locations().get(0).address(), detail.locations().get(0).city()))
+            ));
+        }
         return new PublicDoctorDetailResponse(
                 detail.providerId().toString(),
                 detail.slug(),
@@ -282,7 +302,7 @@ public class PublicCatalogFacade {
                 detail.publicPath(),
                 detail.displayName(),
                 publicDoctorPhotoPath(doctorSlug),
-                resolvePublicBookingMode(publishedLifecycleReference(detail.canonicalSlug(), detail.providerId().toString()), null, detail.bookingMode(), detail.contactPhone()),
+                resolvePublicBookingMode(publishedLifecycleReference(detail.canonicalSlug(), detail.providerId().toString()), resolvedPracticeReference, detail.bookingMode(), detail.contactPhone()),
                 detail.qualification(),
                 detail.medicalCouncil(),
                 detail.yearsOfExperience(),
@@ -308,12 +328,13 @@ public class PublicCatalogFacade {
                 detail.reviewsComingSoon(),
                 detail.subtitle(),
                 detail.summary(),
+                practices,
                 clinics,
                 List.of(),
                 List.of(),
                 false
                 ,
-                resolveBookingReference(detail.providerId().toString(), detail.locations().isEmpty() ? null : practiceReference(detail.providerId(), 0, detail.locations().get(0).label(), detail.locations().get(0).address(), detail.locations().get(0).city()))
+                resolveBookingReference(detail.providerId().toString(), resolvedPracticeReference)
         );
     }
 
@@ -378,7 +399,7 @@ public class PublicCatalogFacade {
                 detail.consultationModes(),
                 detail.locations().stream().map(this::toLocationResponse).toList(),
                 gallery,
-                List.of(),
+                publicClinicDoctors(detail),
                 detail.contactPhone(),
                 detail.contactEmail(),
                 detail.website(),
@@ -386,6 +407,112 @@ public class PublicCatalogFacade {
                 false,
                 detail.reviewsComingSoon(),
                 detail.subtitle()
+        );
+    }
+
+    private List<PublicDoctorSummaryResponse> publicClinicDoctors(PublicProviderProfileDetailRecord clinicDetail) {
+        return publicPracticeDoctors(clinicDetail);
+    }
+
+    private List<PublicDoctorSummaryResponse> publicPracticeDoctors(PublicProviderProfileDetailRecord practiceDetail) {
+        if (practiceDetail == null || practiceDetail.providerId() == null) {
+            return List.of();
+        }
+        return publicDoctorPracticeAssociationService.listPublishedDoctorReferencesByPractice(practiceDetail.providerId()).stream()
+                .map(publicProfileService::findByProviderId)
+                .flatMap(Optional::stream)
+                .map(doctorDetail -> toClinicDoctorSummary(doctorDetail, practiceDetail))
+                .toList();
+    }
+
+    private List<PublicPracticeMiniResponse> publicDoctorPractices(PublicProviderProfileDetailRecord doctorDetail) {
+        if (doctorDetail == null || doctorDetail.providerId() == null) {
+            return List.of();
+        }
+        List<?> activeAssociations = publicDoctorPracticeAssociationService.findActiveAssociationsByPublicDoctorReference(doctorDetail.providerId());
+        if (activeAssociations.isEmpty()) {
+            if (doctorDetail.locations().isEmpty()) {
+                return List.of();
+            }
+            return List.of(new PublicPracticeMiniResponse(
+                    ProviderType.CLINIC.name(),
+                    slugify(firstNonBlank(doctorDetail.locations().get(0).label(), doctorDetail.canonicalSlug())),
+                    firstNonBlank(doctorDetail.locations().get(0).label(), doctorDetail.displayName()),
+                    "/discover/clinics/" + slugify(firstNonBlank(doctorDetail.locations().get(0).label(), doctorDetail.canonicalSlug())),
+                    doctorDetail.locations().get(0).city(),
+                    doctorDetail.city(),
+                    resolveBookingReference(
+                            doctorDetail.providerId().toString(),
+                            practiceReference(
+                                    doctorDetail.providerId(),
+                                    0,
+                                    doctorDetail.locations().get(0).label(),
+                                    doctorDetail.locations().get(0).address(),
+                                    doctorDetail.locations().get(0).city()
+                            )
+                    )
+            ));
+        }
+        List<PublicPracticeMiniResponse> associatedPractices = publicDoctorPracticeAssociationService
+                .listPublishedPracticeReferencesByDoctor(doctorDetail.providerId()).stream()
+                .map(publicProfileService::findByProviderId)
+                .flatMap(Optional::stream)
+                .map(practiceDetail -> toPracticeMiniResponse(doctorDetail, practiceDetail))
+                .toList();
+        if (!associatedPractices.isEmpty()) {
+            return associatedPractices;
+        }
+        return List.of();
+    }
+
+    private PublicPracticeMiniResponse toPracticeMiniResponse(PublicProviderProfileDetailRecord doctorDetail, PublicProviderProfileDetailRecord practiceDetail) {
+        String practiceType = practiceDetail.providerType() == null ? "PRACTICE" : practiceDetail.providerType().name();
+        String practiceSlug = practiceDetail.canonicalSlug();
+        String publicPath = practiceDetail.publicPath();
+        return new PublicPracticeMiniResponse(
+                practiceType,
+                practiceSlug,
+                practiceDetail.displayName(),
+                publicPath,
+                practiceDetail.area(),
+                practiceDetail.city(),
+                resolveBookingReference(doctorDetail.providerId().toString(), practiceDetail.providerId().toString())
+        );
+    }
+
+    private PublicDoctorSummaryResponse toClinicDoctorSummary(PublicProviderProfileDetailRecord doctorDetail, PublicProviderProfileDetailRecord clinicDetail) {
+        if (clinicDetail == null || clinicDetail.providerId() == null) {
+            return null;
+        }
+        PublicProviderLocationSnapshot location = doctorDetail.locations().isEmpty() ? null : doctorDetail.locations().get(0);
+        String clinicDisplayName = firstNonBlank(clinicDetail.displayName(), clinicDetail.legalName(), clinicDetail.canonicalSlug());
+        return new PublicDoctorSummaryResponse(
+                doctorDetail.providerId().toString(),
+                doctorDetail.canonicalSlug(),
+                doctorDetail.publicPath(),
+                doctorDetail.displayName(),
+                doctorDetail.imageUrl() == null || doctorDetail.imageUrl().isBlank() ? null : publicDoctorPhotoPath(doctorDetail.canonicalSlug()),
+                doctorDetail.contactPhone(),
+                doctorDetail.primarySpeciality(),
+                doctorDetail.yearsOfExperience(),
+                doctorDetail.consultationFee(),
+                doctorDetail.languages(),
+                location == null ? doctorDetail.area() : firstNonBlank(location.label(), doctorDetail.area()),
+                location == null ? doctorDetail.city() : firstNonBlank(location.city(), doctorDetail.city()),
+                resolvePublicBookingMode(
+                        doctorDetail.providerId().toString(),
+                        clinicDetail.providerId().toString(),
+                        doctorDetail.bookingMode(),
+                        doctorDetail.contactPhone()
+                ),
+                doctorDetail.subtitle(),
+                doctorDetail.summary(),
+                clinicDisplayName,
+                clinicDetail.canonicalSlug(),
+                false,
+                null,
+                null,
+                resolveBookingReference(doctorDetail.providerId().toString(), clinicDetail.providerId().toString())
         );
     }
 
@@ -414,7 +541,7 @@ public class PublicCatalogFacade {
                 detail.consultationModes(),
                 detail.locations().stream().map(this::toLocationResponse).toList(),
                 gallery,
-                List.of(),
+                publicPracticeDoctors(detail),
                 detail.contactPhone(),
                 detail.contactEmail(),
                 detail.website(),
@@ -457,6 +584,10 @@ public class PublicCatalogFacade {
     private PublicDoctorSummaryResponse toDoctorSummary(PublicProviderProfileSummaryRecord record) {
         PublicProviderProfileDetailRecord detail = publicProfileService.findBySlug(record.canonicalSlug()).orElse(null);
         PublicProviderLocationSnapshot location = detail == null || detail.locations().isEmpty() ? null : detail.locations().get(0);
+        String resolvedPracticeReference = detail == null
+                ? null
+                : resolvePrimaryPracticeReference(detail.providerId())
+                        .orElseGet(() -> location == null ? null : practiceReference(detail.providerId(), 0, location.label(), location.address(), location.city()));
         return new PublicDoctorSummaryResponse(
                 record.providerId().toString(),
                 record.canonicalSlug(),
@@ -470,7 +601,7 @@ public class PublicCatalogFacade {
                 detail == null ? List.of() : detail.languages(),
                 location == null ? record.area() : location.label(),
                 location == null ? record.city() : location.city(),
-                resolvePublicBookingMode(publishedLifecycleReference(record.canonicalSlug(), record.providerId().toString()), null, record.bookingMode(), record.contactPhone()),
+                resolvePublicBookingMode(publishedLifecycleReference(record.canonicalSlug(), record.providerId().toString()), resolvedPracticeReference, record.bookingMode(), record.contactPhone()),
                 record.subtitle(),
                 record.summary(),
                 firstNonBlank(location == null ? null : location.label(), record.subtitle(), record.primarySpeciality(), record.displayName()),
@@ -478,7 +609,7 @@ public class PublicCatalogFacade {
                 false,
                 null,
                 record.distanceKm(),
-                resolveBookingReference(record.providerId().toString(), detail == null || location == null ? null : practiceReference(detail.providerId(), 0, location.label(), location.address(), location.city()))
+                resolveBookingReference(record.providerId().toString(), resolvedPracticeReference)
         );
     }
 
@@ -528,6 +659,17 @@ public class PublicCatalogFacade {
             return com.deepthoughtnet.clinic.platform.contracts.providerintegration.BookingCapability.CALL_TO_BOOK.name();
         }
         return StringUtils.hasText(projectedMode) ? projectedMode : com.deepthoughtnet.clinic.platform.contracts.providerintegration.BookingCapability.NOT_AVAILABLE.name();
+    }
+
+    private Optional<String> resolvePrimaryPracticeReference(java.util.UUID publicDoctorReference) {
+        if (publicDoctorReference == null) {
+            return Optional.empty();
+        }
+        List<java.util.UUID> activePracticeReferences = publicDoctorPracticeAssociationService.listPublishedPracticeReferencesByDoctor(publicDoctorReference);
+        if (activePracticeReferences.size() == 1) {
+            return Optional.of(activePracticeReferences.getFirst().toString());
+        }
+        return Optional.empty();
     }
 
     private String publishedLifecycleReference(String canonicalSlug, String fallbackReference) {

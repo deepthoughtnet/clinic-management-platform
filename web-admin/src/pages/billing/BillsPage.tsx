@@ -74,6 +74,7 @@ import {
   getDoctorProfile,
   getConsultation,
   getReceiptPdf,
+  getPrescriptionTemplate,
   getPatientBillingContext,
   getPatient,
   issueBill,
@@ -613,6 +614,7 @@ export default function BillsPage() {
   const [success, setSuccess] = React.useState<string | null>(null);
   const [workingId, setWorkingId] = React.useState<string | null>(null);
   const [clinicProfile, setClinicProfile] = React.useState<ClinicProfile | null>(null);
+  const [brandingLogoUrl, setBrandingLogoUrl] = React.useState<string | null>(null);
   const [invoicePreview, setInvoicePreview] = React.useState<InvoicePreviewState>(null);
   const [invoicePreviewLoading, setInvoicePreviewLoading] = React.useState(false);
   const [receiptPreview, setReceiptPreview] = React.useState<ReceiptPreviewState>(null);
@@ -1004,15 +1006,17 @@ export default function BillsPage() {
       setLoading(true);
       setError(null);
       try {
-        const [billRows, patientRows, userRows] = await Promise.all([
+        const [billRows, patientRows, userRows, template] = await Promise.all([
           searchBills(auth.accessToken, auth.tenantId, {}),
           searchPatients(auth.accessToken, auth.tenantId, { active: true }),
           getClinicUsers(auth.accessToken, auth.tenantId).catch(() => []),
+          getPrescriptionTemplate(auth.accessToken, auth.tenantId).catch(() => null),
         ]);
         if (!cancelled) {
           setBills(billRows);
           setPatients(patientRows);
           setClinicUsers(userRows);
+          setBrandingLogoUrl(template?.logoUrl || null);
         }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load billing data");
@@ -1335,6 +1339,7 @@ export default function BillsPage() {
       ]);
       setInvoicePreview({
         clinicProfile,
+        brandingLogoUrl,
         bill: freshBill,
         patient,
         appointment,
@@ -1345,7 +1350,7 @@ export default function BillsPage() {
     } finally {
       setInvoicePreviewLoading(false);
     }
-  }, [auth.accessToken, auth.tenantId, clinicProfile]);
+  }, [auth.accessToken, auth.tenantId, brandingLogoUrl, clinicProfile]);
 
   const loadReceiptPreview = React.useCallback(async (receipt: Receipt, payment: Payment | null, autoPrint = false) => {
     if (!auth.accessToken || !auth.tenantId) return;
@@ -1366,6 +1371,7 @@ export default function BillsPage() {
       ]);
       setReceiptPreview({
         clinicProfile,
+        brandingLogoUrl,
         bill: freshBill,
         receipt,
         payment,
@@ -1378,7 +1384,7 @@ export default function BillsPage() {
     } finally {
       setReceiptPreviewLoading(false);
     }
-  }, [auth.accessToken, auth.tenantId, clinicProfile, selectedBill]);
+  }, [auth.accessToken, auth.tenantId, brandingLogoUrl, clinicProfile, selectedBill]);
 
   const refreshSelectedBill = React.useCallback(async (billId: string) => {
     if (!auth.accessToken || !auth.tenantId) return;
@@ -3069,6 +3075,7 @@ export default function BillsPage() {
         open={Boolean(invoicePreview || invoicePreviewLoading)}
         loading={invoicePreviewLoading}
         data={invoicePreview}
+        brandingLogoUrl={brandingLogoUrl}
         onClose={() => {
           setInvoicePreview(null);
           setInvoicePreviewLoading(false);
@@ -3080,6 +3087,7 @@ export default function BillsPage() {
         open={Boolean(receiptPreview || receiptPreviewLoading)}
         loading={receiptPreviewLoading}
         data={receiptPreview}
+        brandingLogoUrl={brandingLogoUrl}
         onClose={() => {
           setReceiptPreview(null);
           setReceiptPreviewLoading(false);

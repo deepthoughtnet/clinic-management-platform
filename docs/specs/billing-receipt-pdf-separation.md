@@ -55,6 +55,13 @@ Make billing receipt preview, browser print, and PDF download reuse a single can
 - Verify PDF text contains the same bill, receipt, patient, payment, and clinic data as preview.
 - Verify failure handling shows an error message when PDF generation fails.
 
+# Layout hardening
+
+- Receipt preview, print, and PDF download continue to represent one canonical receipt.
+- The receipt header uses the configured clinic branding source and omits the logo cleanly when unavailable.
+- Receipt metadata must be layout-aware so wrapped appointment text cannot overlap the amount row.
+- Decorative header patches are not part of the canonical receipt document.
+
 # File ownership map
 
 - `web-admin/src/pages/billing/BillsPage.tsx`

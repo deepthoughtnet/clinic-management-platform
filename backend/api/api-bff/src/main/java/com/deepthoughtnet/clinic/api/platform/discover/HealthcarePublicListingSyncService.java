@@ -10,13 +10,25 @@ import com.deepthoughtnet.clinic.clinic.service.model.DoctorProfileUpsertCommand
 import com.deepthoughtnet.clinic.appointment.service.DoctorAvailabilityQueryService;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderDocumentType;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderType;
+import com.deepthoughtnet.clinic.discover.publicdoctorpracticeassociation.PublicDoctorPracticeAssociationService;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderLocationSnapshot;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderProfileSnapshot;
 import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService;
 import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
+import com.deepthoughtnet.clinic.platform.contracts.providerintegration.AvailabilityState;
+import com.deepthoughtnet.clinic.platform.contracts.providerintegration.BookingCapability;
+import com.deepthoughtnet.clinic.platform.contracts.providerintegration.LinkLifecycleStatus;
+import com.deepthoughtnet.clinic.platform.contracts.providerintegration.MatchConfidence;
+import com.deepthoughtnet.clinic.platform.contracts.providerintegration.MatchMethod;
+import com.deepthoughtnet.clinic.platform.contracts.providerintegration.PlatformConnectionStatus;
+import com.deepthoughtnet.clinic.platform.contracts.providerintegration.PublicProviderReference;
+import com.deepthoughtnet.clinic.platform.contracts.providerintegration.ProviderSourceReference;
+import com.deepthoughtnet.clinic.platform.contracts.providerintegration.SourceSystem;
 import com.deepthoughtnet.clinic.platform.contracts.providerintegration.PublicationStatus;
 import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
+import com.deepthoughtnet.clinic.platform.providerintegration.model.PublicDoctorPracticePlatformLinkUpsertRequest;
+import com.deepthoughtnet.clinic.platform.providerintegration.service.ProviderLinkingService;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -31,10 +43,12 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.interceptor.TransactionAspectSupport;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.util.StringUtils;
 
 @Service
@@ -51,6 +65,8 @@ public class HealthcarePublicListingSyncService {
     private final DoctorAvailabilityQueryService doctorAvailabilityQueryService;
     private final ClinicalDocumentService clinicalDocumentService;
     private final ProviderPublicProfileService publicProfileService;
+    private final PublicDoctorPracticeAssociationService publicDoctorPracticeAssociationService;
+    private final ObjectProvider<ProviderLinkingService> providerLinkingServiceProvider;
 
     public HealthcarePublicListingSyncService(
             ClinicProfileService clinicProfileService,
@@ -58,7 +74,9 @@ public class HealthcarePublicListingSyncService {
             TenantUserManagementService tenantUserManagementService,
             DoctorAvailabilityQueryService doctorAvailabilityQueryService,
             ClinicalDocumentService clinicalDocumentService,
-            ProviderPublicProfileService publicProfileService
+            ProviderPublicProfileService publicProfileService,
+            PublicDoctorPracticeAssociationService publicDoctorPracticeAssociationService,
+            @Lazy ObjectProvider<ProviderLinkingService> providerLinkingServiceProvider
     ) {
         this.clinicProfileService = clinicProfileService;
         this.doctorProfileService = doctorProfileService;
@@ -66,6 +84,8 @@ public class HealthcarePublicListingSyncService {
         this.doctorAvailabilityQueryService = doctorAvailabilityQueryService;
         this.clinicalDocumentService = clinicalDocumentService;
         this.publicProfileService = publicProfileService;
+        this.publicDoctorPracticeAssociationService = publicDoctorPracticeAssociationService;
+        this.providerLinkingServiceProvider = providerLinkingServiceProvider;
     }
 
     @Transactional
@@ -111,6 +131,9 @@ public class HealthcarePublicListingSyncService {
             log.info("DOCTOR_SYNC_DONE doctorUserId={} tenantId={}", doctorUserId, tenantId);
             logRollbackOnlyIfNeeded(tenantId, doctorUserId, "DOCTOR_SYNC_DONE");
         }
+
+        reconcileDoctorPracticeAssociations(tenantId);
+        reconcileDoctorPracticePlatformLinks(tenantId);
 
         logRollbackOnlyIfNeeded(tenantId, null, "SYNC_TENANT_COMPLETE");
         log.info("DONE tenantId={}", tenantId);
@@ -361,6 +384,153 @@ public class HealthcarePublicListingSyncService {
 
     private boolean hasActiveAvailability(UUID tenantId, UUID doctorUserId) {
         return doctorAvailabilityQueryService.hasActiveAvailability(tenantId, doctorUserId);
+    }
+
+    private void reconcileDoctorPracticeAssociations(UUID tenantId) {
+        Optional<ClinicProfileRecord> clinicOpt = clinicProfileService.findByTenantId(tenantId);
+        if (clinicOpt.isEmpty()) {
+            return;
+        }
+        ClinicProfileRecord clinic = clinicOpt.get();
+        if (!clinic.active() || !clinic.publicListingEnabled()) {
+            publicDoctorPracticeAssociationService.deactivateAllForPractice(
+                    clinic.id(),
+                    clinic.id(),
+                    OffsetDateTime.now()
+            );
+            return;
+        }
+
+        List<DoctorProfileRecord> activeDoctors = doctorProfileService.findByTenantIdAndActive(tenantId);
+        List<UUID> eligibleDoctorIds = activeDoctors.stream()
+                .filter(doctor -> isDoctorEligibleForPublicProjection(tenantId, clinic, doctor))
+                .map(DoctorProfileRecord::doctorUserId)
+                .toList();
+        publicDoctorPracticeAssociationService.reconcileClinicDoctors(
+                clinic.id(),
+                clinic.id(),
+                eligibleDoctorIds,
+                OffsetDateTime.now()
+        );
+    }
+
+    private void reconcileDoctorPracticePlatformLinks(UUID tenantId) {
+        Optional<ClinicProfileRecord> clinicOpt = clinicProfileService.findByTenantId(tenantId);
+        if (clinicOpt.isEmpty()) {
+            return;
+        }
+        ClinicProfileRecord clinic = clinicOpt.get();
+        if (!clinic.active() || !clinic.publicListingEnabled()) {
+            for (DoctorProfileRecord doctor : doctorProfileService.findByTenantIdAndActive(tenantId)) {
+                deactivateDoctorPracticePlatformLinkIfPresent(tenantId, clinic, doctor, OffsetDateTime.now());
+            }
+            return;
+        }
+
+        List<DoctorProfileRecord> activeDoctors = doctorProfileService.findByTenantIdAndActive(tenantId);
+        OffsetDateTime now = OffsetDateTime.now();
+        for (DoctorProfileRecord doctor : activeDoctors) {
+            if (!isDoctorEligibleForPublicProjection(tenantId, clinic, doctor)) {
+                continue;
+            }
+            boolean onlineReady = hasActiveAvailability(tenantId, doctor.doctorUserId());
+            if (onlineReady) {
+                upsertDoctorPracticePlatformLink(tenantId, clinic, doctor, now);
+            } else {
+                deactivateDoctorPracticePlatformLinkIfPresent(tenantId, clinic, doctor, now);
+            }
+        }
+    }
+
+    private void upsertDoctorPracticePlatformLink(UUID tenantId, ClinicProfileRecord clinic, DoctorProfileRecord doctor, OffsetDateTime observedAt) {
+        providerLinkingService().reconcileDoctorPracticeLink(new PublicDoctorPracticePlatformLinkUpsertRequest(
+                new ProviderSourceReference(
+                        SourceSystem.HEALTHCARE_DOCTOR,
+                        doctor.doctorUserId().toString(),
+                        doctor.updatedAt() == null ? 0L : doctor.updatedAt().toInstant().toEpochMilli(),
+                        doctor.updatedAt()
+                ),
+                new PublicProviderReference(doctor.doctorUserId().toString(), null),
+                new PublicProviderReference(null, clinic.id().toString()),
+                tenantId.toString(),
+                clinic.id().toString(),
+                doctor.doctorUserId().toString(),
+                doctor.id() == null ? null : doctor.id().toString(),
+                LinkLifecycleStatus.LINKED,
+                PlatformConnectionStatus.CONNECTED,
+                MatchMethod.TENANT_CONFIRMED,
+                MatchConfidence.HIGH,
+                AvailabilityState.AVAILABLE_TODAY,
+                "{\"source\":\"healthcare-public-listing-sync\"}",
+                "SYSTEM",
+                "SYSTEM_RECONCILIATION",
+                "Healthcare public listing sync projected online booking availability.",
+                BookingCapability.ONLINE_BOOKING,
+                "Active public doctor availability is configured."
+        ));
+    }
+
+    private void deactivateDoctorPracticePlatformLinkIfPresent(UUID tenantId, ClinicProfileRecord clinic, DoctorProfileRecord doctor, OffsetDateTime observedAt) {
+        providerLinkingService().listDoctorPracticeLinks().stream()
+                .filter(link -> tenantId.toString().equals(link.getTenantReference()))
+                .filter(link -> clinic.id().toString().equals(link.getPlatformClinicReference()))
+                .filter(link -> doctor.doctorUserId().toString().equals(link.getTenantDoctorUserReference()))
+                .filter(link -> doctor.doctorUserId().toString().equals(link.getPublicDoctorReference()))
+                .filter(link -> clinic.id().toString().equals(link.getPublicPracticeReference()))
+                .filter(link -> link.isActive())
+                .findFirst()
+                .ifPresent(link -> providerLinkingService().reconcileDoctorPracticeLink(new PublicDoctorPracticePlatformLinkUpsertRequest(
+                        new ProviderSourceReference(
+                                SourceSystem.HEALTHCARE_DOCTOR,
+                                doctor.doctorUserId().toString(),
+                                doctor.updatedAt() == null ? 0L : doctor.updatedAt().toInstant().toEpochMilli(),
+                                doctor.updatedAt()
+                        ),
+                        new PublicProviderReference(doctor.doctorUserId().toString(), null),
+                        new PublicProviderReference(null, clinic.id().toString()),
+                        tenantId.toString(),
+                        clinic.id().toString(),
+                        doctor.doctorUserId().toString(),
+                        doctor.id() == null ? null : doctor.id().toString(),
+                        LinkLifecycleStatus.UNLINKED,
+                        PlatformConnectionStatus.DISCONNECTED,
+                        MatchMethod.TENANT_CONFIRMED,
+                        MatchConfidence.HIGH,
+                        AvailabilityState.UNKNOWN,
+                        "{\"source\":\"healthcare-public-listing-sync\"}",
+                        "SYSTEM",
+                        "SYSTEM_RECONCILIATION",
+                        "Healthcare public listing sync removed online booking availability.",
+                        BookingCapability.CALL_TO_BOOK,
+                        "No active public doctor availability is configured."
+                )));
+    }
+
+    private boolean isDoctorEligibleForPublicProjection(UUID tenantId, ClinicProfileRecord clinic, DoctorProfileRecord doctor) {
+        if (clinic == null || doctor == null) {
+            return false;
+        }
+        if (!clinic.active() || !clinic.publicListingEnabled()) {
+            return false;
+        }
+        if (!doctor.active() || !doctor.publicListingEnabled()) {
+            return false;
+        }
+        Optional<TenantUserRecord> doctorUserOpt = tenantUserManagementService.list(tenantId).stream()
+                .filter(user -> doctor.doctorUserId().equals(user.appUserId()))
+                .filter(user -> user.membershipRole() != null && user.membershipRole().equalsIgnoreCase("DOCTOR"))
+                .findFirst();
+        if (doctorUserOpt.isEmpty() || !StringUtils.hasText(doctorUserOpt.get().displayName())) {
+            return false;
+        }
+        if (firstDoctorSpeciality(doctor) == null) {
+            return false;
+        }
+        return StringUtils.hasText(doctor.qualification());
+    }
+
+    private ProviderLinkingService providerLinkingService() {
+        return providerLinkingServiceProvider.getObject();
     }
 
     private void logRollbackOnlyIfNeeded(UUID tenantId, UUID doctorUserId, String phase) {

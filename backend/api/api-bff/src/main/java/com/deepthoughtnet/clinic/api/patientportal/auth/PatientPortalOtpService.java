@@ -17,6 +17,7 @@ import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.Comparator;
+import java.util.ArrayList;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -157,7 +158,7 @@ public class PatientPortalOtpService {
         challengeRepository.save(challenge);
 
         Optional<PatientEntity> patient = tenantId == null
-                ? resolveUniqueActivePatientByMobile(normalizedPhone)
+                ? resolvePatientByMobileForLogin(normalizedPhone)
                 : resolvePrimaryActivePatientByTenantAndMobile(tenantId, normalizedPhone);
 
         if (patient.isEmpty()) {
@@ -298,6 +299,58 @@ public class PatientPortalOtpService {
             return Optional.empty();
         }
         return Optional.of(candidates.get(0));
+    }
+
+    private Optional<PatientEntity> resolvePatientByMobileForLogin(String normalizedPhone) {
+        List<PatientEntity> candidates = patientRepository.findByMobileIgnoreCaseAndActiveTrue(normalizedPhone);
+        if (candidates.isEmpty()) {
+            return Optional.empty();
+        }
+        if (candidates.size() == 1) {
+            return Optional.of(candidates.get(0));
+        }
+
+        List<PatientEntity> linkedCandidates = new ArrayList<>();
+        for (PatientEntity candidate : candidates) {
+            if (hasActivePortalAccount(candidate.getId())) {
+                linkedCandidates.add(candidate);
+            }
+        }
+        if (linkedCandidates.size() == 1) {
+            PatientEntity linkedPatient = linkedCandidates.get(0);
+            log.info(
+                    "patient.portal.otp.linked_mobile_resolved phone={} patientId={} tenantId={}",
+                    normalizedPhone,
+                    linkedPatient.getId(),
+                    linkedPatient.getTenantId()
+            );
+            return Optional.of(linkedPatient);
+        }
+        if (linkedCandidates.size() > 1) {
+            PatientEntity primary = linkedCandidates.stream()
+                    .min(Comparator.comparing(PatientEntity::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder()))
+                            .thenComparing(PatientEntity::getId))
+                    .orElse(linkedCandidates.get(0));
+            log.warn(
+                    "patient.portal.otp.linked_mobile_ambiguous phone={} matches={} linkedMatches={} primaryPatientId={}",
+                    normalizedPhone,
+                    candidates.size(),
+                    linkedCandidates.size(),
+                    primary.getId()
+            );
+            return Optional.of(primary);
+        }
+
+        log.warn("patient.portal.otp.ambiguous_mobile phone={} matches={}", normalizedPhone, candidates.size());
+        return Optional.empty();
+    }
+
+    private boolean hasActivePortalAccount(UUID patientId) {
+        if (patientId == null) {
+            return false;
+        }
+        return appUserRepository.findByPatientId(patientId).stream()
+                .anyMatch(appUser -> appUser != null && "ACTIVE".equalsIgnoreCase(appUser.getStatus()));
     }
 
     private Optional<PatientEntity> resolvePrimaryActivePatientByTenantAndMobile(UUID tenantId, String normalizedPhone) {

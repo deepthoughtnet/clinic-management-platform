@@ -52,6 +52,10 @@ test("publicProfileSynchronizationLabelIsPrecise", () => {
   assert.ok(page.includes("readableConnectionStatus(presence?.platformConnectionStatus)"));
   assert.ok(page.includes("Booking"));
   assert.ok(page.includes("readableBookingStatus(presence?.bookingCapability)"));
+  assert.ok(page.includes('case "CONNECTED":'));
+  assert.ok(page.includes('case "CALL_TO_BOOK":'));
+  assert.ok(page.includes("return \"Connected\";"));
+  assert.ok(page.includes("return \"Call to Book\";"));
   assert.ok(page.includes("Copy connection reference"));
   assert.ok(page.includes("Enable Discover"));
   assert.ok(page.includes("Revoke Discover Consent"));

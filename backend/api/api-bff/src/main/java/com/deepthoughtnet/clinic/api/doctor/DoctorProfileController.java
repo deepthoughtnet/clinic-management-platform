@@ -2,12 +2,14 @@ package com.deepthoughtnet.clinic.api.doctor;
 
 import com.deepthoughtnet.clinic.api.doctor.dto.DoctorProfileRequest;
 import com.deepthoughtnet.clinic.api.doctor.dto.DoctorProfileResponse;
+import com.deepthoughtnet.clinic.api.platform.discover.event.HealthcareDoctorPublicListingChangedEvent;
 import com.deepthoughtnet.clinic.clinic.service.DoctorProfileService;
 import com.deepthoughtnet.clinic.clinic.service.model.DoctorProfilePhotoRecord;
 import com.deepthoughtnet.clinic.clinic.service.model.DoctorProfileRecord;
 import com.deepthoughtnet.clinic.clinic.service.model.DoctorProfileUpsertCommand;
 import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
 import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
+import com.deepthoughtnet.clinic.platform.modulith.events.ModuleBusinessEventPublisher;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.util.ArrayList;
 import java.util.Locale;
@@ -43,13 +45,16 @@ public class DoctorProfileController {
 
     private final DoctorProfileService doctorProfileService;
     private final TenantUserManagementService tenantUserManagementService;
+    private final ModuleBusinessEventPublisher moduleBusinessEventPublisher;
 
     public DoctorProfileController(
             DoctorProfileService doctorProfileService,
-            TenantUserManagementService tenantUserManagementService
+            TenantUserManagementService tenantUserManagementService,
+            ModuleBusinessEventPublisher moduleBusinessEventPublisher
     ) {
         this.doctorProfileService = doctorProfileService;
         this.tenantUserManagementService = tenantUserManagementService;
+        this.moduleBusinessEventPublisher = moduleBusinessEventPublisher;
     }
 
     @GetMapping("/{doctorUserId}/profile")
@@ -125,6 +130,7 @@ public class DoctorProfileController {
                 file.getContentType(),
                 file.getBytes()
         );
+        publishPublicListingChangedEvent(tenantId, doctorUserId, profile, "doctor.profile.photo.updated");
         log.info("doctor.profile.photo.controller.completed tenantId={} doctorUserId={}", tenantId, doctorUserId);
         return toResponse(doctor, profile);
     }
@@ -249,6 +255,7 @@ public class DoctorProfileController {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Doctor profile photo must be JPG, PNG, or WEBP.");
         }
         DoctorProfileRecord profile = doctorProfileService.upsert(tenantId, doctorUserId, command);
+        publishPublicListingChangedEvent(tenantId, doctorUserId, profile, "doctor.profile.updated");
         if (photo != null && !photo.isEmpty()) {
             log.info(
                     "doctor.profile.photo.controller.multipart-upload.started tenantId={} doctorUserId={} fileName={} contentType={} size={}",
@@ -265,6 +272,7 @@ public class DoctorProfileController {
                     photo.getContentType(),
                     photo.getBytes()
             );
+            publishPublicListingChangedEvent(tenantId, doctorUserId, profile, "doctor.profile.photo.updated");
             log.info("doctor.profile.photo.controller.multipart-upload.completed tenantId={} doctorUserId={}", tenantId, doctorUserId);
         }
         log.info("doctor.profile.update.completed tenantId={} doctorUserId={}", tenantId, doctorUserId);
@@ -290,6 +298,26 @@ public class DoctorProfileController {
         }
         String lower = originalFilename.toLowerCase(Locale.ROOT);
         return lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png") || lower.endsWith(".webp");
+    }
+
+    private void publishPublicListingChangedEvent(UUID tenantId, UUID doctorUserId, DoctorProfileRecord profile, String reason) {
+        if (tenantId == null || doctorUserId == null) {
+            return;
+        }
+        if (profile == null) {
+            return;
+        }
+        long sourceRevision = profile.updatedAt() == null ? 0L : profile.updatedAt().toInstant().toEpochMilli();
+        moduleBusinessEventPublisher.publish(HealthcareDoctorPublicListingChangedEvent.changed(
+                tenantId,
+                doctorUserId,
+                doctorUserId.toString(),
+                profile.publicListingEnabled(),
+                profile.active() && profile.publicListingEnabled() ? "PUBLISHED" : "UNPUBLISHED",
+                reason,
+                sourceRevision,
+                RequestContextHolder.require().appUserId()
+        ));
     }
 
     private String safeFilename(String value) {

@@ -11,6 +11,8 @@ import com.deepthoughtnet.clinic.api.publicsite.dto.PublicSearchResponse;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderType;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderGalleryImageSnapshot;
 import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService;
+import com.deepthoughtnet.clinic.discover.publicdoctorpracticeassociation.PublicDoctorPracticeAssociationService;
+import com.deepthoughtnet.clinic.discover.publicdoctorpracticeassociation.db.DiscoverPublicDoctorPracticeAssociationEntity;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderLocationSnapshot;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderProfileDetailRecord;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderProfileSummaryRecord;
@@ -222,13 +224,135 @@ class PublicCatalogFacadeTest {
                 "/api/public/clinics/sunrise-clinic/gallery/1"
         );
         assertThat(detail.timings()).containsExactly("MONDAY 09:00-17:00");
+        assertThat(detail.doctors()).isEmpty();
+    }
+
+    @Test
+    void clinicDetailIncludesAssociatedDoctors() {
+        ProviderPublicProfileService publicProfileService = mock(ProviderPublicProfileService.class);
+        PublicDoctorPracticeAssociationService associationService = mock(PublicDoctorPracticeAssociationService.class);
+        PublicCatalogFacade facade = new PublicCatalogFacade(publicProfileService, mock(ProviderLinkingService.class), moderationService(), associationService);
+
+        PublicProviderProfileDetailRecord clinicDetail = detailRecord(
+                ProviderType.CLINIC,
+                "JCL-0001",
+                "sunrise-clinic",
+                "/discover/clinics/sunrise-clinic",
+                "Sunrise Clinic",
+                "Sunrise Clinic",
+                "Clinic summary",
+                "Clinic description",
+                "Clinic biography",
+                null,
+                null,
+                null,
+                null,
+                null,
+                false,
+                List.of(),
+                List.of("General Medicine"),
+                List.of(),
+                List.of("Consultation"),
+                List.of("Outpatient"),
+                List.of("Wheelchair Access"),
+                List.of("In-person"),
+                List.of(new PublicProviderLocationSnapshot("Primary", "Main Road", "Pune", "Maharashtra", "India", "411001", "Mon-Sat 9 AM-5 PM", true, true, null, null)),
+                List.of(),
+                List.of(),
+                null,
+                null,
+                null,
+                "9876543210",
+                "clinic@example.com",
+                "https://example.com",
+                "Pune",
+                "Main Road",
+                "Maharashtra",
+                "India",
+                "General Medicine",
+                "Private",
+                null,
+                null,
+                null,
+                false,
+                "CALL_TO_BOOK",
+                false,
+                OffsetDateTime.parse("2026-01-01T10:00:00Z"),
+                1,
+                "sunrise-clinic",
+                null,
+                true
+        );
+        PublicProviderProfileDetailRecord doctorDetail = detailRecord(
+                ProviderType.INDIVIDUAL_DOCTOR,
+                "JDN-0001",
+                "dr-asha-menon",
+                "/discover/doctors/dr-asha-menon",
+                "Dr. Asha Menon",
+                "Dr. Asha Menon",
+                "Experienced public doctor",
+                "Doctor summary",
+                "Professional biography",
+                "MBBS",
+                "MCI",
+                8,
+                new BigDecimal("500"),
+                15,
+                true,
+                List.of("English", "Hindi"),
+                List.of("Dermatology"),
+                List.of("Skin Care"),
+                List.of("Consultations"),
+                List.of(),
+                List.of(),
+                List.of("In-person"),
+                List.of(new PublicProviderLocationSnapshot("Sunrise Clinic", "Main Road", "Pune", "Maharashtra", "India", "411045", "Mon-Sat 9 AM-5 PM", true, true, null, null)),
+                List.of(),
+                List.of(),
+                "https://example.com/doctor.jpg",
+                null,
+                null,
+                "1234567890",
+                "doctor@example.com",
+                "https://example.com",
+                "Pune",
+                "Baner",
+                "Maharashtra",
+                "India",
+                "General Medicine",
+                null,
+                null,
+                null,
+                null,
+                false,
+                "ONLINE_BOOKING",
+                true,
+                OffsetDateTime.parse("2026-01-01T10:00:00Z"),
+                1,
+                "dr-asha-menon",
+                null,
+                true
+        );
+
+        when(publicProfileService.findBySlug("sunrise-clinic")).thenReturn(Optional.of(clinicDetail));
+        when(associationService.listPublishedDoctorReferencesByPractice(clinicDetail.providerId())).thenReturn(List.of(doctorDetail.providerId()));
+        when(publicProfileService.findByProviderId(doctorDetail.providerId())).thenReturn(Optional.of(doctorDetail));
+
+        var detail = facade.clinicDetail("sunrise-clinic");
+
+        assertThat(detail.doctors()).singleElement().satisfies(doctor -> {
+            assertThat(doctor.doctorDisplayName()).isEqualTo("Dr. Asha Menon");
+            assertThat(doctor.clinicDisplayName()).isEqualTo("Sunrise Clinic");
+            assertThat(doctor.clinicSlug()).isEqualTo("sunrise-clinic");
+            assertThat(doctor.publicPath()).isEqualTo("/discover/doctors/dr-asha-menon");
+        });
     }
 
     @Test
     void doctorDetailIncludesOpaqueBookingReferenceWhenPlatformLinkExists() {
         ProviderPublicProfileService publicProfileService = mock(ProviderPublicProfileService.class);
         ProviderLinkingService providerLinkingService = mock(ProviderLinkingService.class);
-        PublicCatalogFacade facade = new PublicCatalogFacade(publicProfileService, providerLinkingService, moderationService());
+        PublicCatalogFacade facade = new PublicCatalogFacade(publicProfileService, providerLinkingService, moderationService(), mock(PublicDoctorPracticeAssociationService.class));
 
         PublicProviderProfileDetailRecord detail = detailRecord(
                 ProviderType.INDIVIDUAL_DOCTOR,
@@ -314,6 +438,292 @@ class PublicCatalogFacadeTest {
 
         assertThat(doctor.bookingReference()).isEqualTo("opaque-booking-reference");
         assertThat(doctor.clinics()).singleElement().satisfies(clinic -> assertThat(clinic.bookingReference()).isEqualTo("opaque-booking-reference"));
+    }
+
+    @Test
+    void doctorSummaryAndDetailResolveBookingModeFromSingleAssociatedPractice() {
+        ProviderPublicProfileService publicProfileService = mock(ProviderPublicProfileService.class);
+        ProviderLinkingService providerLinkingService = mock(ProviderLinkingService.class);
+        PublicDoctorPracticeAssociationService associationService = mock(PublicDoctorPracticeAssociationService.class);
+        PublicCatalogFacade facade = new PublicCatalogFacade(publicProfileService, providerLinkingService, moderationService(), associationService);
+
+        PublicProviderProfileDetailRecord detail = detailRecord(
+                ProviderType.INDIVIDUAL_DOCTOR,
+                "DR-ONLINE",
+                "dr-asha-menon",
+                "/discover/doctors/dr-asha-menon",
+                "Dr. Asha Menon",
+                "Dr. Asha Menon",
+                "Experienced doctor",
+                "Doctor summary",
+                "Doctor biography",
+                "MBBS",
+                "MMC",
+                8,
+                new BigDecimal("800"),
+                15,
+                true,
+                List.of("English"),
+                List.of("Dermatology"),
+                List.of(),
+                List.of("Consultation"),
+                List.of(),
+                List.of(),
+                List.of("In-person"),
+                List.of(new PublicProviderLocationSnapshot("Green Valley Family Clinic", "Main Road", "Pune", "Maharashtra", "India", "411001", null, true, true, null, null)),
+                List.of(),
+                List.of(),
+                "https://example.com/doctor.png",
+                null,
+                null,
+                "+911111111111",
+                "doctor@example.com",
+                "https://example.com",
+                "Pune",
+                "Baner",
+                "Maharashtra",
+                "India",
+                "Dermatology",
+                null,
+                null,
+                null,
+                null,
+                false,
+                "CALL_TO_BOOK",
+                false,
+                OffsetDateTime.parse("2026-01-01T10:00:00Z"),
+                1,
+                "dr-asha-menon",
+                null,
+                true
+        );
+        PublicProviderProfileSummaryRecord summary = new PublicProviderProfileSummaryRecord(
+                detail.providerId(),
+                ProviderType.INDIVIDUAL_DOCTOR,
+                detail.canonicalSlug(),
+                detail.publicPath(),
+                detail.displayName(),
+                detail.subtitle(),
+                detail.summary(),
+                detail.primarySpeciality(),
+                detail.city(),
+                detail.area(),
+                detail.imageUrl(),
+                detail.coverUrl(),
+                1,
+                2,
+                3,
+                4,
+                detail.contactPhone(),
+                "CALL_TO_BOOK",
+                false,
+                List.of("Dermatology"),
+                null
+        );
+        UUID practiceId = UUID.fromString("fb6977b3-683b-40a3-95b8-05ffbad1dac0");
+
+        when(publicProfileService.findBySlug("dr-asha-menon")).thenReturn(Optional.of(detail));
+        when(publicProfileService.listProfiles(any(), anyInt(), anyInt())).thenReturn(new PageImpl<>(List.of(summary), PageRequest.of(0, 12), 1));
+        when(associationService.listPublishedPracticeReferencesByDoctor(detail.providerId())).thenReturn(List.of(practiceId));
+        when(providerLinkingService.resolveBookingTarget(new PublicProviderReference(detail.providerId().toString(), practiceId.toString()))).thenReturn(Optional.of(
+                new BookingTargetResolution(
+                        new BookingTargetReference("opaque-booking-reference", 11L),
+                        new ProviderSourceReference(SourceSystem.HEALTHCARE_DOCTOR, detail.referenceNumber(), 8L, OffsetDateTime.parse("2026-01-01T10:00:00Z")),
+                        PublicProfileType.DOCTOR,
+                        new PublicProviderReference(detail.providerId().toString(), practiceId.toString()),
+                        "tenant-1",
+                        practiceId.toString(),
+                        "tenant-doctor-user-1",
+                        "tenant-doctor-profile-1",
+                        BookingCapability.ONLINE_BOOKING,
+                        AvailabilityState.AVAILABLE_TODAY,
+                        PlatformConnectionStatus.CONNECTED,
+                        LinkLifecycleStatus.LINKED,
+                        11L,
+                        22L,
+                        OffsetDateTime.parse("2026-01-01T10:00:00Z")
+                )
+        ));
+
+        assertThat(facade.doctorDetail("dr-asha-menon").bookingMode()).isEqualTo("ONLINE_BOOKING");
+        assertThat(facade.listDoctors("Asha", "Pune", "Baner", "Dermatology", null, "demo", null, null, null, 0, 12)
+                .items())
+                .singleElement()
+                .satisfies(item -> assertThat(item.bookingMode()).isEqualTo("ONLINE_BOOKING"));
+    }
+
+    @Test
+    void doctorDetailIncludesMultiplePracticesAndKeepsClinicCompatibilityFields() {
+        ProviderPublicProfileService publicProfileService = mock(ProviderPublicProfileService.class);
+        PublicDoctorPracticeAssociationService associationService = mock(PublicDoctorPracticeAssociationService.class);
+        when(associationService.listPublishedDoctorReferencesByPractice(any())).thenReturn(List.of());
+        when(associationService.listPublishedPracticeReferencesByDoctor(any())).thenReturn(List.of());
+        when(associationService.findActiveAssociationsByPublicDoctorReference(any())).thenReturn(List.of(mock(DiscoverPublicDoctorPracticeAssociationEntity.class)));
+        when(associationService.findActiveAssociationsByPublicPracticeReference(any())).thenReturn(List.of());
+        PublicCatalogFacade facade = new PublicCatalogFacade(publicProfileService, mock(ProviderLinkingService.class), moderationService(), associationService);
+
+        PublicProviderProfileDetailRecord doctorDetail = detailRecord(
+                ProviderType.INDIVIDUAL_DOCTOR,
+                "DR-0008",
+                "dr-asha-menon",
+                "/discover/doctors/dr-asha-menon",
+                "Dr. Asha Menon",
+                "Dr. Asha Menon",
+                "Experienced doctor",
+                "Doctor summary",
+                "Doctor biography",
+                "MBBS",
+                "MMC",
+                8,
+                new BigDecimal("800"),
+                15,
+                true,
+                List.of("English"),
+                List.of("Dermatology"),
+                List.of(),
+                List.of("Consultation"),
+                List.of(),
+                List.of(),
+                List.of("In-person"),
+                List.of(new PublicProviderLocationSnapshot("Primary Clinic", "Main Road", "Pune", "Maharashtra", "India", "411001", null, true, true, null, null)),
+                List.of(),
+                List.of(),
+                "https://example.com/doctor.png",
+                null,
+                null,
+                "+911111111111",
+                "doctor@example.com",
+                "https://example.com",
+                "Pune",
+                "Baner",
+                "Maharashtra",
+                "India",
+                "Dermatology",
+                null,
+                null,
+                null,
+                null,
+                false,
+                "ONLINE_BOOKING",
+                false,
+                OffsetDateTime.parse("2026-01-01T10:00:00Z"),
+                1,
+                "dr-asha-menon",
+                null,
+                true
+        );
+        PublicProviderProfileDetailRecord clinicDetail = detailRecord(
+                ProviderType.CLINIC,
+                "CL-0001",
+                "sunrise-clinic",
+                "/discover/clinics/sunrise-clinic",
+                "Sunrise Clinic",
+                "Sunrise Clinic",
+                "Clinic subtitle",
+                "Clinic summary",
+                "Clinic biography",
+                null,
+                null,
+                null,
+                null,
+                null,
+                false,
+                List.of(),
+                List.of("General Medicine"),
+                List.of(),
+                List.of("Consultation"),
+                List.of("Outpatient"),
+                List.of(),
+                List.of("In-person"),
+                List.of(new PublicProviderLocationSnapshot("Primary", "Main Road", "Pune", "Maharashtra", "India", "411001", null, true, true, null, null)),
+                List.of(),
+                List.of(),
+                null,
+                null,
+                null,
+                "9876543210",
+                "clinic@example.com",
+                "https://example.com",
+                "Pune",
+                "Main Road",
+                "Maharashtra",
+                "India",
+                "General Medicine",
+                null,
+                null,
+                null,
+                null,
+                false,
+                "CALL_TO_BOOK",
+                false,
+                OffsetDateTime.parse("2026-01-01T10:00:00Z"),
+                1,
+                "sunrise-clinic",
+                null,
+                true
+        );
+        PublicProviderProfileDetailRecord hospitalDetail = detailRecord(
+                ProviderType.HOSPITAL,
+                "HS-0001",
+                "city-care-hospital",
+                "/discover/hospitals/city-care-hospital",
+                "City Care Hospital",
+                "City Care Hospital",
+                "Hospital subtitle",
+                "Hospital summary",
+                "Hospital biography",
+                null,
+                null,
+                null,
+                null,
+                null,
+                false,
+                List.of(),
+                List.of("Cardiology"),
+                List.of(),
+                List.of("Consultation"),
+                List.of("Inpatient"),
+                List.of(),
+                List.of("In-person"),
+                List.of(new PublicProviderLocationSnapshot("Primary", "Main Road", "Pune", "Maharashtra", "India", "411001", null, true, true, null, null)),
+                List.of(),
+                List.of(),
+                null,
+                null,
+                null,
+                "9876543210",
+                "hospital@example.com",
+                "https://example.com",
+                "Pune",
+                "Main Road",
+                "Maharashtra",
+                "India",
+                "Cardiology",
+                null,
+                null,
+                null,
+                null,
+                false,
+                "CALL_TO_BOOK",
+                false,
+                OffsetDateTime.parse("2026-01-01T10:00:00Z"),
+                1,
+                "city-care-hospital",
+                null,
+                true
+        );
+
+        when(publicProfileService.findBySlug("dr-asha-menon")).thenReturn(Optional.of(doctorDetail));
+        when(associationService.findActiveAssociationsByPublicDoctorReference(doctorDetail.providerId())).thenReturn(List.of(mock(DiscoverPublicDoctorPracticeAssociationEntity.class)));
+        when(associationService.listPublishedPracticeReferencesByDoctor(doctorDetail.providerId())).thenReturn(List.of(clinicDetail.providerId(), hospitalDetail.providerId()));
+        when(publicProfileService.findByProviderId(clinicDetail.providerId())).thenReturn(Optional.of(clinicDetail));
+        when(publicProfileService.findByProviderId(hospitalDetail.providerId())).thenReturn(Optional.of(hospitalDetail));
+
+        var detail = facade.doctorDetail("dr-asha-menon");
+
+        assertThat(detail.practices()).hasSize(2);
+        assertThat(detail.clinics()).singleElement().satisfies(clinic -> assertThat(clinic.clinicSlug()).isEqualTo("sunrise-clinic"));
+        assertThat(detail.practices()).extracting("practiceType").containsExactly("CLINIC", "HOSPITAL");
     }
 
     @Test
@@ -616,6 +1026,11 @@ class PublicCatalogFacadeTest {
     }
 
     private static PublicCatalogFacade facade(ProviderPublicProfileService publicProfileService) {
-        return new PublicCatalogFacade(publicProfileService, mock(ProviderLinkingService.class), moderationService());
+        PublicDoctorPracticeAssociationService associationService = mock(PublicDoctorPracticeAssociationService.class);
+        when(associationService.listPublishedDoctorReferencesByPractice(any())).thenReturn(List.of());
+        when(associationService.listPublishedPracticeReferencesByDoctor(any())).thenReturn(List.of());
+        when(associationService.findActiveAssociationsByPublicDoctorReference(any())).thenReturn(List.of());
+        when(associationService.findActiveAssociationsByPublicPracticeReference(any())).thenReturn(List.of());
+        return new PublicCatalogFacade(publicProfileService, mock(ProviderLinkingService.class), moderationService(), associationService);
     }
 }

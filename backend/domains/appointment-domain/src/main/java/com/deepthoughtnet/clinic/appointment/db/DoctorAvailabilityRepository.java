@@ -16,6 +16,28 @@ public interface DoctorAvailabilityRepository extends JpaRepository<DoctorAvaila
             java.time.LocalTime startTime,
             java.time.LocalTime endTime
     );
+    boolean existsByTenantIdAndDoctorUserIdAndDayOfWeekAndStartTimeAndEndTimeAndActiveTrue(
+            UUID tenantId,
+            UUID doctorUserId,
+            java.time.DayOfWeek dayOfWeek,
+            java.time.LocalTime startTime,
+            java.time.LocalTime endTime
+    );
+    List<DoctorAvailabilityEntity> findByTenantIdAndDoctorUserIdAndDayOfWeekAndActiveTrueAndStartTimeLessThanAndEndTimeGreaterThanOrderByStartTimeAscEndTimeAsc(
+            UUID tenantId,
+            UUID doctorUserId,
+            java.time.DayOfWeek dayOfWeek,
+            java.time.LocalTime endTime,
+            java.time.LocalTime startTime
+    );
+    List<DoctorAvailabilityEntity> findByTenantIdAndDoctorUserIdAndDayOfWeekAndActiveTrueAndIdNotAndStartTimeLessThanAndEndTimeGreaterThanOrderByStartTimeAscEndTimeAsc(
+            UUID tenantId,
+            UUID doctorUserId,
+            java.time.DayOfWeek dayOfWeek,
+            UUID id,
+            java.time.LocalTime endTime,
+            java.time.LocalTime startTime
+    );
 
     Optional<DoctorAvailabilityEntity> findByTenantIdAndId(UUID tenantId, UUID id);
 }

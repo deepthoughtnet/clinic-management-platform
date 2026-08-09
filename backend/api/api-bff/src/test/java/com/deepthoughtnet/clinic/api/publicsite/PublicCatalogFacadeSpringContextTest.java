@@ -3,6 +3,8 @@ package com.deepthoughtnet.clinic.api.publicsite;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService;
+import com.deepthoughtnet.clinic.discover.publicdoctorpracticeassociation.PublicDoctorPracticeAssociationService;
+import com.deepthoughtnet.clinic.discover.publicprofilemoderation.ProviderPublicProfileModerationService;
 import com.deepthoughtnet.clinic.platform.providerintegration.service.ProviderLinkingService;
 import java.time.Clock;
 import org.junit.jupiter.api.Test;
@@ -33,6 +35,12 @@ class PublicCatalogFacadeSpringContextTest {
 
     @MockBean
     private ProviderLinkingService providerLinkingService;
+
+    @MockBean
+    private ProviderPublicProfileModerationService moderationService;
+
+    @MockBean
+    private PublicDoctorPracticeAssociationService publicDoctorPracticeAssociationService;
 
     @Test
     void springCreatesPublicCatalogControllerAndFacade() {

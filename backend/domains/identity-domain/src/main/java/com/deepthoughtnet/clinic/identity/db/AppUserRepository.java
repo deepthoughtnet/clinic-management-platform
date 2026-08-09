@@ -15,6 +15,8 @@ public interface AppUserRepository extends JpaRepository<AppUserEntity, UUID> {
 
     Optional<AppUserEntity> findByTenantIdAndKeycloakSub(UUID tenantId, String keycloakSub);
 
+    List<AppUserEntity> findByPatientId(UUID patientId);
+
     // ✅ Used by driver APIs (RequestContext gives appUserId)
     Optional<AppUserEntity> findByTenantIdAndId(UUID tenantId, UUID id);
 

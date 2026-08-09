@@ -29,12 +29,20 @@ public record HealthcareDoctorPublicListingChangedEvent(
             boolean publicListingEnabled,
             String publicationStatus,
             String reason,
+            long sourceRevision,
             UUID actorId
     ) {
         OffsetDateTime now = OffsetDateTime.now();
         String correlationId = currentCorrelationId();
         return new HealthcareDoctorPublicListingChangedEvent(
-                deterministicEventId("HEALTHCARE_DOCTOR_PUBLIC_LISTING_CHANGED", tenantId, doctorUserId, publicationStatus, reason),
+                deterministicEventId(
+                        "HEALTHCARE_DOCTOR_PUBLIC_LISTING_CHANGED",
+                        tenantId,
+                        doctorUserId,
+                        publicationStatus,
+                        reason,
+                        sourceRevision
+                ),
                 "HEALTHCARE_DOCTOR_PUBLIC_LISTING_CHANGED",
                 1,
                 now,
@@ -49,7 +57,8 @@ public record HealthcareDoctorPublicListingChangedEvent(
                         new PublicProviderReference(publicDoctorReference, null),
                         publicListingEnabled,
                         publicationStatus,
-                        reason
+                        reason,
+                        sourceRevision
                 )
         );
     }
@@ -58,7 +67,8 @@ public record HealthcareDoctorPublicListingChangedEvent(
             PublicProviderReference publicReference,
             boolean publicListingEnabled,
             String publicationStatus,
-            String reason
+            String reason,
+            long sourceRevision
     ) implements ModuleBusinessEventPayload {
     }
 

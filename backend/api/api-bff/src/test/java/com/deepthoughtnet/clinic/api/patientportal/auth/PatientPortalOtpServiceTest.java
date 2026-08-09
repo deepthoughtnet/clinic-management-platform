@@ -270,6 +270,41 @@ class PatientPortalOtpServiceTest {
     }
 
     @Test
+    void verifyOtpResolvesLinkedPatientWhenDuplicateMobileExistsAcrossTenants() {
+        PatientPortalOtpChallengeEntity challenge = challenge(null, "9876501234", "123456");
+        PatientEntity unlinkedPatient = patientEntity(TENANT_A_ID, UUID.randomUUID(), "9876501234");
+        PatientEntity linkedPatient = patientEntity(TENANT_B_ID, PATIENT_ID, "9876501234");
+        AppUserEntity linkedAppUser = AppUserEntity.create(TENANT_B_ID, "patientportal:" + TENANT_B_ID + ":" + PATIENT_ID, null, "Rohan Sharma");
+        linkedAppUser.setPatientId(PATIENT_ID);
+        AppUserEntity patientAppUser = AppUserEntity.create(TENANT_B_ID, "patientportal:" + TENANT_B_ID + ":" + PATIENT_ID, null, "Rohan Sharma");
+
+        when(challengeRepository.findTopByPhoneNormalizedOrderByCreatedAtDesc("9876501234"))
+                .thenReturn(Optional.of(challenge));
+        when(patientRepository.findByMobileIgnoreCaseAndActiveTrue("9876501234")).thenReturn(List.of(unlinkedPatient, linkedPatient));
+        when(appUserRepository.findByPatientId(unlinkedPatient.getId())).thenReturn(List.of());
+        when(appUserRepository.findByPatientId(PATIENT_ID)).thenReturn(List.of(linkedAppUser));
+        when(tenantRepository.findById(TENANT_B_ID)).thenReturn(Optional.of(tenant("tenant-b", TENANT_B_ID)));
+        when(appUserProvisioner.upsertAndReturnId(
+                eq(TENANT_B_ID),
+                eq("patientportal:" + TENANT_B_ID + ":" + PATIENT_ID),
+                eq(null),
+                eq("Riya Sharma")
+        )).thenReturn(APP_USER_ID);
+        when(appUserRepository.findByTenantIdAndId(TENANT_B_ID, APP_USER_ID)).thenReturn(Optional.of(patientAppUser));
+
+        var response = service.verifyOtp("9876501234", "123456", (PatientPortalOtpContext) null);
+
+        assertThat(response.verified()).isTrue();
+        assertThat(response.patientExists()).isTrue();
+        assertThat(response.registrationRequired()).isFalse();
+        assertThat(response.tenantId()).isEqualTo(TENANT_B_ID.toString());
+        assertThat(response.tenantCode()).isEqualTo("tenant-b");
+        assertThat(response.patientDisplayName()).isEqualTo("Riya Sharma");
+        assertThat(response.patientSessionToken()).isNotBlank();
+        assertThat(response.registrationSessionToken()).isNull();
+    }
+
+    @Test
     void verifyOtpResolvesTenantFromUniquePatientWhenContextIsMissing() {
         PatientPortalOtpChallengeEntity challenge = challenge(null, "9876543210", "123456");
         PatientEntity patient = patientEntity(TENANT_A_ID, PATIENT_ID, "9876543210");

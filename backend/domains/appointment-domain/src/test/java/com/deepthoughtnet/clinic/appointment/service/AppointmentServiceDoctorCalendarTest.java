@@ -211,7 +211,7 @@ class AppointmentServiceDoctorCalendarTest {
 
     @Test
     void createAvailabilityRejectsDuplicateBeforeInsert() {
-        when(doctorAvailabilityRepository.existsByTenantIdAndDoctorUserIdAndDayOfWeekAndStartTimeAndEndTime(
+        when(doctorAvailabilityRepository.existsByTenantIdAndDoctorUserIdAndDayOfWeekAndStartTimeAndEndTimeAndActiveTrue(
                 TENANT_ID,
                 DOCTOR_ID,
                 DayOfWeek.MONDAY,
@@ -232,7 +232,7 @@ class AppointmentServiceDoctorCalendarTest {
 
     @Test
     void createAvailabilityMapsRaceConditionDuplicateToConflict() {
-        when(doctorAvailabilityRepository.existsByTenantIdAndDoctorUserIdAndDayOfWeekAndStartTimeAndEndTime(
+        when(doctorAvailabilityRepository.existsByTenantIdAndDoctorUserIdAndDayOfWeekAndStartTimeAndEndTimeAndActiveTrue(
                 TENANT_ID,
                 DOCTOR_ID,
                 DayOfWeek.MONDAY,
@@ -250,6 +250,123 @@ class AppointmentServiceDoctorCalendarTest {
                 ACTOR_ID
         )).isInstanceOf(DoctorAvailabilityConflictException.class)
                 .hasMessageContaining("Availability already exists for this doctor, day, and time range.");
+    }
+
+    @Test
+    void createAvailabilityRejectsOverlappingSessionWithFriendlyMessage() {
+        when(doctorAvailabilityRepository.existsByTenantIdAndDoctorUserIdAndDayOfWeekAndStartTimeAndEndTimeAndActiveTrue(
+                TENANT_ID,
+                DOCTOR_ID,
+                DayOfWeek.MONDAY,
+                LocalTime.of(18, 0),
+                LocalTime.of(23, 0)
+        )).thenReturn(false);
+        when(doctorAvailabilityRepository.findByTenantIdAndDoctorUserIdAndDayOfWeekAndActiveTrueAndStartTimeLessThanAndEndTimeGreaterThanOrderByStartTimeAscEndTimeAsc(
+                TENANT_ID,
+                DOCTOR_ID,
+                DayOfWeek.MONDAY,
+                LocalTime.of(23, 0),
+                LocalTime.of(18, 0)
+        )).thenReturn(List.of(activeAvailability(DayOfWeek.MONDAY, LocalTime.of(17, 0), LocalTime.of(23, 30))));
+
+        assertThatThrownBy(() -> service.createAvailability(
+                TENANT_ID,
+                DOCTOR_ID,
+                new DoctorAvailabilityUpsertCommand(DayOfWeek.MONDAY, LocalTime.of(18, 0), LocalTime.of(23, 0), null, null, 30, 1, true),
+                ACTOR_ID
+        )).isInstanceOf(DoctorAvailabilityConflictException.class)
+                .hasMessageContaining("Availability overlaps an existing session from 5:00 PM to 11:30 PM.")
+                .hasMessageContaining("Edit the existing session or choose a non-overlapping time.");
+
+        verify(doctorAvailabilityRepository, never()).save(any());
+    }
+
+    @Test
+    void createAvailabilityAllowsAdjacentSessionEndingAtExistingStart() {
+        when(doctorAvailabilityRepository.existsByTenantIdAndDoctorUserIdAndDayOfWeekAndStartTimeAndEndTimeAndActiveTrue(
+                TENANT_ID,
+                DOCTOR_ID,
+                DayOfWeek.MONDAY,
+                LocalTime.of(12, 0),
+                LocalTime.of(17, 0)
+        )).thenReturn(false);
+        when(doctorAvailabilityRepository.findByTenantIdAndDoctorUserIdAndDayOfWeekAndActiveTrueAndStartTimeLessThanAndEndTimeGreaterThanOrderByStartTimeAscEndTimeAsc(
+                TENANT_ID,
+                DOCTOR_ID,
+                DayOfWeek.MONDAY,
+                LocalTime.of(17, 0),
+                LocalTime.of(12, 0)
+        )).thenReturn(List.of());
+        when(doctorAvailabilityRepository.save(any(DoctorAvailabilityEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        service.createAvailability(
+                TENANT_ID,
+                DOCTOR_ID,
+                new DoctorAvailabilityUpsertCommand(DayOfWeek.MONDAY, LocalTime.of(12, 0), LocalTime.of(17, 0), null, null, 30, 1, true),
+                ACTOR_ID
+        );
+
+        verify(doctorAvailabilityRepository).save(any(DoctorAvailabilityEntity.class));
+    }
+
+    @Test
+    void createAvailabilityAllowsInactiveConflictingSession() {
+        when(doctorAvailabilityRepository.save(any(DoctorAvailabilityEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        service.createAvailability(
+                TENANT_ID,
+                DOCTOR_ID,
+                new DoctorAvailabilityUpsertCommand(DayOfWeek.MONDAY, LocalTime.of(18, 0), LocalTime.of(23, 0), null, null, 30, 1, false),
+                ACTOR_ID
+        );
+
+        verify(doctorAvailabilityRepository).save(any(DoctorAvailabilityEntity.class));
+    }
+
+    @Test
+    void updateAvailabilityExcludesCurrentRowFromOverlapDetection() {
+        DoctorAvailabilityEntity current = activeAvailability(DayOfWeek.MONDAY, LocalTime.of(17, 0), LocalTime.of(23, 30));
+        when(doctorAvailabilityRepository.findByTenantIdAndId(TENANT_ID, current.getId())).thenReturn(java.util.Optional.of(current));
+        when(doctorAvailabilityRepository.findByTenantIdAndDoctorUserIdAndDayOfWeekAndActiveTrueAndIdNotAndStartTimeLessThanAndEndTimeGreaterThanOrderByStartTimeAscEndTimeAsc(
+                TENANT_ID,
+                DOCTOR_ID,
+                DayOfWeek.MONDAY,
+                current.getId(),
+                LocalTime.of(23, 30),
+                LocalTime.of(17, 0)
+        )).thenReturn(List.of());
+        when(doctorAvailabilityRepository.save(any(DoctorAvailabilityEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        service.updateAvailability(
+                TENANT_ID,
+                current.getId(),
+                new DoctorAvailabilityUpsertCommand(DayOfWeek.MONDAY, LocalTime.of(17, 0), LocalTime.of(23, 30), null, null, 30, 1, true),
+                ACTOR_ID
+        );
+
+        verify(doctorAvailabilityRepository).save(any(DoctorAvailabilityEntity.class));
+    }
+
+    @Test
+    void updateAvailabilityRejectsOverlappingOtherRow() {
+        DoctorAvailabilityEntity current = activeAvailability(DayOfWeek.MONDAY, LocalTime.of(9, 0), LocalTime.of(12, 0));
+        when(doctorAvailabilityRepository.findByTenantIdAndId(TENANT_ID, current.getId())).thenReturn(java.util.Optional.of(current));
+        when(doctorAvailabilityRepository.findByTenantIdAndDoctorUserIdAndDayOfWeekAndActiveTrueAndIdNotAndStartTimeLessThanAndEndTimeGreaterThanOrderByStartTimeAscEndTimeAsc(
+                TENANT_ID,
+                DOCTOR_ID,
+                DayOfWeek.MONDAY,
+                current.getId(),
+                LocalTime.of(23, 0),
+                LocalTime.of(18, 0)
+        )).thenReturn(List.of(activeAvailability(DayOfWeek.MONDAY, LocalTime.of(17, 0), LocalTime.of(23, 30))));
+
+        assertThatThrownBy(() -> service.updateAvailability(
+                TENANT_ID,
+                current.getId(),
+                new DoctorAvailabilityUpsertCommand(DayOfWeek.MONDAY, LocalTime.of(18, 0), LocalTime.of(23, 0), null, null, 30, 1, true),
+                ACTOR_ID
+        )).isInstanceOf(DoctorAvailabilityConflictException.class)
+                .hasMessageContaining("Availability overlaps an existing session from 5:00 PM to 11:30 PM.");
     }
 
     @Test
@@ -308,5 +425,11 @@ class AppointmentServiceDoctorCalendarTest {
                 ACTOR_ID
         )).isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("consultationDurationMinutes must be greater than zero");
+    }
+
+    private DoctorAvailabilityEntity activeAvailability(DayOfWeek dayOfWeek, LocalTime startTime, LocalTime endTime) {
+        DoctorAvailabilityEntity availability = DoctorAvailabilityEntity.create(TENANT_ID, DOCTOR_ID);
+        availability.update(dayOfWeek, startTime, endTime, null, null, 30, 1, true);
+        return availability;
     }
 }

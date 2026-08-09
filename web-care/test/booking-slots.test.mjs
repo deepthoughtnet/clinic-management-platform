@@ -7,7 +7,7 @@ import {
   isFutureSelectableSlot,
 } from "../src/utils/bookingSlots.js";
 
-test("booking slots hide past selections and group by day", () => {
+test("booking slots group by day without dropping backend-returned slots", () => {
   const now = new Date("2026-06-28T09:00:00.000Z");
   const slots = [
     { appointmentDate: "2026-06-28", slotTime: "08:00", slotEndTime: "08:30", status: null, selectable: true },
@@ -22,11 +22,14 @@ test("booking slots hide past selections and group by day", () => {
   const groups = groupAvailableSlotsByDate(slots, now);
   assert.deepEqual(
     groups.map((group) => group.label),
-    ["Today", "Tomorrow"],
+    ["Today", "Tomorrow", "30/06/2026"],
   );
-  assert.equal(groups[0].slots.length, 1);
-  assert.equal(groups[0].slots[0].slotTime, "10:00");
+  assert.equal(groups[0].slots.length, 2);
+  assert.equal(groups[0].slots[0].slotTime, "08:00");
+  assert.equal(groups[0].slots[1].slotTime, "10:00");
   assert.equal(groups[1].slots.length, 1);
+  assert.equal(groups[2].slots.length, 1);
+  assert.equal(groups[2].slots[0].slotTime, "11:00");
 });
 
 test("slot group labels fall back to a formatted date", () => {

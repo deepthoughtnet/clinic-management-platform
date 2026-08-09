@@ -28,6 +28,7 @@ import type {
   Receipt,
 } from "../../api/clinicApi";
 import { footerBrandingLine } from "../../branding";
+import { useAuthenticatedImage } from "../../hooks/useAuthenticatedImage";
 import { staffDisplayName } from "../../utils/staffDisplay";
 
 type BasePrintData = {
@@ -35,6 +36,7 @@ type BasePrintData = {
   patient: Patient | null;
   appointment: Appointment | null;
   consultation: Consultation | null;
+  brandingLogoUrl?: string | null;
 };
 
 export type InvoicePrintData = BasePrintData & {
@@ -100,6 +102,22 @@ function phoneLine(profile: ClinicProfile | null) {
   if (!profile) return "—";
   const pieces = [profile.phone, profile.email].filter(Boolean);
   return pieces.length > 0 ? pieces.join("  |  ") : "—";
+}
+
+function textLabel(value: React.ReactNode) {
+  return (
+    <Typography variant="body2" sx={{ fontWeight: 800, whiteSpace: "nowrap", flexShrink: 0 }}>
+      {value}
+    </Typography>
+  );
+}
+
+function textValue(value: React.ReactNode) {
+  return (
+    <Typography variant="body2" sx={{ fontWeight: 500, minWidth: 0, wordBreak: "break-word" }}>
+      {value}
+    </Typography>
+  );
 }
 
 function clinicTitle(profile: ClinicProfile | null) {
@@ -203,6 +221,39 @@ function CompactDetails({
   );
 }
 
+function ReceiptDetailColumns({
+  leftRows,
+  rightRows,
+}: {
+  leftRows: Array<{ label: string; value: React.ReactNode }>;
+  rightRows: Array<{ label: string; value: React.ReactNode }>;
+}) {
+  const renderColumn = (rows: Array<{ label: string; value: React.ReactNode }>) => (
+    <Stack spacing={0.75} sx={{ minWidth: 0 }}>
+      {rows.map((row) => (
+        <Box key={row.label} sx={{ display: "flex", gap: 0.75, alignItems: "flex-start", minWidth: 0 }}>
+          {textLabel(`${row.label}:`)}
+          {textValue(row.value)}
+        </Box>
+      ))}
+    </Stack>
+  );
+
+  return (
+    <Box
+      sx={{
+        display: "grid",
+        gridTemplateColumns: { xs: "1fr", md: "repeat(2, minmax(0, 1fr))" },
+        columnGap: 2.5,
+        rowGap: 1,
+      }}
+    >
+      {renderColumn(leftRows)}
+      {renderColumn(rightRows)}
+    </Box>
+  );
+}
+
 function SignatureBlock({ label = "Authorized Signature" }: { label?: string }) {
   return (
     <Box
@@ -233,6 +284,7 @@ function PrintShell({
   children,
   footerNote,
   clinicProfile,
+  brandingLogoUrl,
 }: {
   title: string;
   subtitle: string;
@@ -240,7 +292,10 @@ function PrintShell({
   children: React.ReactNode;
   footerNote: string;
   clinicProfile: ClinicProfile | null;
+  brandingLogoUrl?: string | null;
 }) {
+  const { objectUrl: logoObjectUrl } = useAuthenticatedImage(brandingLogoUrl);
+
   return (
     <Box
       sx={{
@@ -294,54 +349,29 @@ function PrintShell({
         }}
       />
 
-      <Box
-        sx={{
-          position: "absolute",
-          inset: 0,
-          pointerEvents: "none",
-        }}
-      >
-        <Box
-          sx={{
-            position: "absolute",
-            top: 0,
-            right: 0,
-            width: 110,
-            height: 110,
-            bgcolor: "rgba(14, 165, 233, 0.08)",
-            borderBottomLeftRadius: 20,
-            clipPath: "polygon(100% 0, 0 0, 100% 100%)",
-          }}
-        />
-        <Box
-          sx={{
-            position: "absolute",
-            bottom: 0,
-            left: 0,
-            width: 140,
-            height: 140,
-            bgcolor: "rgba(244, 114, 182, 0.08)",
-            clipPath: "polygon(0 0, 0 100%, 100% 100%)",
-          }}
-        />
-      </Box>
-
       <Box sx={{ position: "relative", p: { xs: 2.25, md: 4 } }}>
         <Stack spacing={1.5}>
           <Box sx={{ display: "flex", justifyContent: "space-between", gap: 2, alignItems: "flex-start", flexWrap: "wrap" }}>
-            <Box sx={{ maxWidth: 420 }}>
-              <Typography variant="overline" sx={{ letterSpacing: 3, color: "secondary.main", fontWeight: 700 }}>
-                {clinicTitle(clinicProfile)}
-              </Typography>
-              <Typography variant="h5" sx={{ fontWeight: 900, lineHeight: 1.05, mt: 0.25 }}>
-                {clinicProfile?.displayName || clinicProfile?.clinicName || "Clinic Name"}
-              </Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                {compactAddress(clinicProfile).join(" • ")}
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                {phoneLine(clinicProfile)}
-              </Typography>
+            <Box sx={{ display: "flex", gap: 1.5, alignItems: "flex-start", maxWidth: 460, minWidth: 0 }}>
+              {logoObjectUrl ? (
+                <Box
+                  component="img"
+                  src={logoObjectUrl}
+                  alt={`${clinicProfile?.displayName || clinicProfile?.clinicName || "Clinic"} logo`}
+                  sx={{ width: 42, height: 42, objectFit: "contain", flexShrink: 0, mt: 0.15 }}
+                />
+              ) : null}
+              <Box sx={{ minWidth: 0 }}>
+                <Typography variant="h6" sx={{ fontWeight: 900, lineHeight: 1.05, letterSpacing: -0.3 }}>
+                  {clinicProfile?.displayName || clinicProfile?.clinicName || "Clinic Name"}
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, wordBreak: "break-word" }}>
+                  {compactAddress(clinicProfile).join(" • ")}
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ wordBreak: "break-word" }}>
+                  {phoneLine(clinicProfile)}
+                </Typography>
+              </Box>
             </Box>
 
             <Box sx={{ textAlign: "right" }}>
@@ -386,9 +416,11 @@ export function InvoicePrintDialog({
   loading,
   onClose,
   onPrint,
+  brandingLogoUrl,
   data,
 }: PrintableDialogProps & {
   data: InvoicePrintData | null;
+  brandingLogoUrl?: string | null;
 }) {
   const summaryRows = data ? invoiceSummaryRows(data.bill) : [];
   const invoiceMetaRows = data
@@ -418,6 +450,7 @@ export function InvoicePrintDialog({
             title="INVOICE"
             subtitle="Professional clinic billing statement"
             clinicProfile={data.clinicProfile}
+            brandingLogoUrl={brandingLogoUrl || data.brandingLogoUrl}
             footerNote="This invoice is system generated. Please retain it for records and verification."
             summaryBlock={
               <Stack spacing={0.75}>
@@ -521,23 +554,29 @@ export function ReceiptPrintDialog({
   loading,
   onClose,
   onPrint,
+  brandingLogoUrl,
   data,
 }: PrintableDialogProps & {
   data: ReceiptPrintData | null;
+  brandingLogoUrl?: string | null;
 }) {
   const summaryRows = data ? receiptSummaryRows(data.receipt, data.payment, data.bill) : [];
   const lineRows = data ? receiptLineSummaryRows(data.bill) : [];
-  const receiptMetaRows = data
+  const receiptMetaLeftRows = data
     ? [
         { label: "Receipt No", value: text(data.receipt?.receiptNumber || data.payment?.receiptNumber) },
-        { label: "Payment Date", value: dateTimeText(data.payment?.paymentDateTime || data.payment?.paymentDate || data.receipt?.receiptDate) },
         { label: "Patient", value: text(data.patient ? `${data.patient.firstName} ${data.patient.lastName}`.trim() : data.bill.patientName) },
-        { label: "Mobile", value: text(data.patient?.mobile) },
         { label: "Bill No", value: text(data.bill.billNumber) },
-        { label: "Appointment", value: appointmentSummary(data.appointment, data.consultation, false) },
         { label: "Payment Mode", value: text(data.payment?.paymentMode) },
-        { label: "Amount Paid", value: currency(data.receipt?.amount ?? data.payment?.amount ?? 0) },
         { label: "Remaining Due", value: currency(data.bill.dueAmount) },
+      ]
+    : [];
+  const receiptMetaRightRows = data
+    ? [
+        { label: "Payment Date", value: dateTimeText(data.payment?.paymentDateTime || data.payment?.paymentDate || data.receipt?.receiptDate) },
+        { label: "Mobile", value: text(data.patient?.mobile) },
+        { label: "Appointment", value: appointmentSummary(data.appointment, data.consultation, false) },
+        { label: "Amount Paid", value: currency(data.receipt?.amount ?? data.payment?.amount ?? 0) },
       ]
     : [];
 
@@ -556,6 +595,7 @@ export function ReceiptPrintDialog({
             title="RECEIPT"
             subtitle="Printable payment acknowledgement"
             clinicProfile={data.clinicProfile}
+            brandingLogoUrl={brandingLogoUrl || data.brandingLogoUrl}
             footerNote="This receipt acknowledges payment against the referenced bill. Please keep it for your records."
             summaryBlock={
               <Stack spacing={0.75}>
@@ -573,7 +613,7 @@ export function ReceiptPrintDialog({
             }
           >
             <Stack spacing={1.5}>
-              <CompactDetails rows={receiptMetaRows} />
+              <ReceiptDetailColumns leftRows={receiptMetaLeftRows} rightRows={receiptMetaRightRows} />
 
               <Box
                 sx={{

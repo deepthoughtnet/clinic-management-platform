@@ -55,6 +55,16 @@ export type PublicClinicMiniResponse = {
   bookingReference?: string | null;
 };
 
+export type PublicPracticeMiniResponse = {
+  practiceType: string;
+  practiceSlug: string;
+  practiceDisplayName: string;
+  publicPath: string;
+  area: string | null;
+  city: string | null;
+  bookingReference?: string | null;
+};
+
 export type PublicDoctorClinicSummaryResponse = PublicClinicMiniResponse;
 
 export type PublicDoctorDetailResponse = {
@@ -67,6 +77,7 @@ export type PublicDoctorDetailResponse = {
   yearsOfExperience: number | null;
   specialities: string[];
   languages: string[];
+  practices?: PublicPracticeMiniResponse[];
   clinics: PublicDoctorClinicSummaryResponse[];
   availableDays: string[];
   nextAvailableSlots: string[];

@@ -7,7 +7,6 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.Table;
-import jakarta.persistence.UniqueConstraint;
 import java.time.DayOfWeek;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
@@ -19,12 +18,6 @@ import java.util.UUID;
         indexes = {
                 @Index(name = "ix_doctor_availability_tenant_doctor", columnList = "tenant_id,doctor_user_id"),
                 @Index(name = "ix_doctor_availability_tenant_day", columnList = "tenant_id,day_of_week")
-        },
-        uniqueConstraints = {
-                @UniqueConstraint(
-                        name = "uq_doctor_availability_slot",
-                        columnNames = {"tenant_id", "doctor_user_id", "day_of_week", "start_time", "end_time"}
-                )
         }
 )
 public class DoctorAvailabilityEntity {

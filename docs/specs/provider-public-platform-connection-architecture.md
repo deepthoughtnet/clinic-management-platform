@@ -185,6 +185,22 @@ Platform owns the connection lifecycle:
 
 Platform approval and ownership verification are related but separate decisions.
 
+### Authoritative projection reuse
+
+Clinic-facing discovery presence views must consume the same persisted platform-link and publication projections used by Platform Admin.
+
+Clinic Admin may humanize the backend status values, but it must not independently infer connection or booking capability from clinic consent, doctor availability, or slug state.
+
+The authoritative source for:
+
+- connection status
+- link lifecycle
+- booking capability
+- ownership status
+- publication status
+
+is the synchronized provider-connection projection and its linked Discover/publication records.
+
 ## Batch E2B Additions
 
 Batch E2B uses the existing Discover landing-page/public-profile subsystem as the

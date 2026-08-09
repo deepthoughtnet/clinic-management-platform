@@ -4,6 +4,8 @@ import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionBranding
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionLogoAsset;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionLogoSource;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionTemplateConfig;
+import com.deepthoughtnet.clinic.platform.branding.BrandingLogoAsset;
+import com.deepthoughtnet.clinic.platform.branding.BrandingLogoProvider;
 import java.util.Optional;
 import java.util.UUID;
 import org.slf4j.Logger;
@@ -12,7 +14,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
-public class PrescriptionBrandingDocumentResolver {
+public class PrescriptionBrandingDocumentResolver implements BrandingLogoProvider {
     private static final Logger log = LoggerFactory.getLogger(PrescriptionBrandingDocumentResolver.class);
 
     private final PrescriptionTemplateService templateService;
@@ -53,6 +55,16 @@ public class PrescriptionBrandingDocumentResolver {
                 logo.bytes() == null ? 0 : logo.bytes().length
         );
         return document(config, logo, null);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Optional<BrandingLogoAsset> resolveLogo(UUID tenantId) {
+        PrescriptionBrandingDocument branding = resolveActive(tenantId);
+        if (branding == null || branding.logoBytes() == null || branding.logoBytes().length == 0) {
+            return Optional.empty();
+        }
+        return Optional.of(new BrandingLogoAsset(branding.logoBytes(), branding.logoContentType(), branding.logoFileName()));
     }
 
     private PrescriptionBrandingDocument document(PrescriptionTemplateConfig config, PrescriptionLogoAsset logo, String fallbackReason) {
