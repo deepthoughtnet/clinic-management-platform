@@ -19,6 +19,13 @@ export type ApiErrorResponse = {
   message?: string;
   correlationId?: string | null;
   requestId?: string | null;
+  conflicts?: ApiIdentityConflict[] | null;
+};
+
+export type ApiIdentityConflict = {
+  field: "USERNAME" | "EMAIL" | string;
+  code: string;
+  message: string;
 };
 
 export class ApiClientError extends Error {
@@ -27,8 +34,9 @@ export class ApiClientError extends Error {
   path: string | null;
   correlationId: string | null;
   requestId: string | null;
+  conflicts: ApiIdentityConflict[] | null;
 
-  constructor(message: string, details: { status: number; code?: string | null; path?: string | null; correlationId?: string | null; requestId?: string | null }) {
+  constructor(message: string, details: { status: number; code?: string | null; path?: string | null; correlationId?: string | null; requestId?: string | null; conflicts?: ApiIdentityConflict[] | null }) {
     super(message);
     this.name = "ApiClientError";
     this.status = details.status;
@@ -36,6 +44,7 @@ export class ApiClientError extends Error {
     this.path = details.path ?? null;
     this.correlationId = details.correlationId ?? null;
     this.requestId = details.requestId ?? null;
+    this.conflicts = details.conflicts ?? null;
   }
 }
 
@@ -161,6 +170,7 @@ async function parseResponse<T>(res: Response): Promise<T> {
       path: payload?.path ?? null,
       correlationId: payload?.correlationId ?? null,
       requestId: payload?.requestId ?? payload?.correlationId ?? null,
+      conflicts: payload?.conflicts ?? null,
     });
   }
 

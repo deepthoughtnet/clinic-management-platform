@@ -16,6 +16,9 @@ test("users roles page exposes edit modal for staff details", () => {
   assert.ok(source.includes("Edit User"));
   assert.ok(source.includes("Save Changes"));
   assert.ok(source.includes("updateTenantUserProfile"));
+  assert.ok(source.includes("edit-user-email"));
+  assert.ok(source.includes("edit-user-username"));
+  assert.ok(source.includes("mapIdentityConflicts"));
   assert.ok(source.includes("You can view users, but user management is restricted."));
   assert.ok(source.includes("canEditUser"));
 });

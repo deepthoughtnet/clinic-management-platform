@@ -205,6 +205,8 @@ class TenantUserManagementControllerTest {
                 IllegalArgumentException.class,
                 () -> controller.updateProfile(selfAppUserId, new UpdateTenantUserProfileRequest(
                         "Clinic Admin",
+                        "clinic.admin@example.com",
+                        "clinic.admin",
                         "EMP-001",
                         "9876543210",
                         "Administration",
@@ -232,6 +234,8 @@ class TenantUserManagementControllerTest {
 
         controller.updateProfile(appUserId, new UpdateTenantUserProfileRequest(
                 "Tenant Admin",
+                "tenant.admin@example.com",
+                "tenant.admin",
                 "EMP-002",
                 "9876543210",
                 "Administration",

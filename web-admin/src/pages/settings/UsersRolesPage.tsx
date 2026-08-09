@@ -42,6 +42,7 @@ import {
   type ClinicRole,
   type ClinicUser,
 } from "../../api/clinicApi";
+import { ApiClientError, type ApiIdentityConflict } from "../../api/restClient";
 
 const ASSIGNABLE_ROLES = [
   "CLINIC_ADMIN",
@@ -77,6 +78,8 @@ type CreateForm = {
 
 type EditForm = {
   displayName: string;
+  email: string;
+  username: string;
   employeeCode: string;
   mobile: string;
   department: string;
@@ -99,12 +102,16 @@ const EMPTY_CREATE_FORM: CreateForm = {
 
 const EMPTY_EDIT_FORM: EditForm = {
   displayName: "",
+  email: "",
+  username: "",
   employeeCode: "",
   mobile: "",
   department: "",
   role: "",
   active: true,
 };
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const DEPARTMENT_OPTIONS = [
   "Reception",
@@ -165,6 +172,35 @@ function formatLocalDateTime(value: string | null | undefined) {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(date);
+}
+
+function conflictFieldToFormField(conflict: ApiIdentityConflict): string | null {
+  if (conflict.field === "USERNAME") return "username";
+  if (conflict.field === "EMAIL") return "email";
+  return null;
+}
+
+function mapIdentityConflicts(error: unknown): Record<string, string> {
+  const fieldErrors: Record<string, string> = {};
+  const conflicts = error instanceof ApiClientError ? error.conflicts : null;
+  if (conflicts && conflicts.length > 0) {
+    for (const conflict of conflicts) {
+      const field = conflictFieldToFormField(conflict);
+      if (field) {
+        fieldErrors[field] = conflict.message || fieldErrors[field] || "This value is already in use.";
+      }
+    }
+    return fieldErrors;
+  }
+  const message = error instanceof Error ? error.message : "";
+  const normalizedMessage = message.toLowerCase();
+  if (normalizedMessage.includes("email address is already associated")) {
+    fieldErrors.email = "This email address is already associated with a Jeevanam account.";
+  }
+  if (normalizedMessage.includes("login id") || normalizedMessage.includes("username already exists") || normalizedMessage.includes("already in use")) {
+    fieldErrors.username = "Login ID already in use.";
+  }
+  return fieldErrors;
 }
 
 function groupPermissions(permissions: string[]) {
@@ -269,6 +305,8 @@ export default function UsersRolesPage() {
     setEditingUser(user);
     setEditForm({
       displayName: user.displayName || "",
+      email: user.email || "",
+      username: user.username || "",
       employeeCode: user.employeeCode || "",
       mobile: user.mobile || "",
       department: user.department || "",
@@ -290,6 +328,12 @@ export default function UsersRolesPage() {
     const fieldErrors: Record<string, string> = {};
     if (!editForm.displayName.trim()) {
       fieldErrors.displayName = "Name is required.";
+    }
+    if (editForm.email.trim() && !EMAIL_RE.test(editForm.email.trim())) {
+      fieldErrors.email = "Enter a valid email address.";
+    }
+    if (editForm.username.trim().length > 128) {
+      fieldErrors.username = "Login ID must be 128 characters or fewer.";
     }
     if (editForm.mobile.trim() && !/^[0-9]{10}$/.test(editForm.mobile.trim())) {
       fieldErrors.mobile = "Enter a valid 10-digit mobile number.";
@@ -370,20 +414,20 @@ export default function UsersRolesPage() {
     } catch (err) {
       console.error("Tenant user creation failed", err);
       const message = err instanceof Error ? err.message : "Unable to create user. Please verify role and tenant selection.";
-      const fieldErrors: Record<string, string> = {};
-      if (message.toLowerCase().includes("username already exists")) {
-        fieldErrors.username = "Username already exists for this clinic.";
-      }
-      if (message.toLowerCase().includes("employee code already exists")) {
+      const normalizedMessage = message.toLowerCase();
+      const fieldErrors = mapIdentityConflicts(err);
+      if (normalizedMessage.includes("employee code already exists")) {
         fieldErrors.employeeCode = "Employee code already exists for this clinic.";
       }
-      if (message.toLowerCase().includes("mobile")) {
+      if (normalizedMessage.includes("mobile")) {
         fieldErrors.mobile = message;
       }
       if (Object.keys(fieldErrors).length > 0) {
         setCreateFieldErrors((current) => ({ ...current, ...fieldErrors }));
+        setError("Please correct the highlighted account details.");
+      } else {
+        setError(message);
       }
-      setError(message);
     } finally {
       setCreateSubmitting(false);
     }
@@ -423,6 +467,8 @@ export default function UsersRolesPage() {
     try {
       const updated = await updateTenantUserProfile(auth.accessToken, auth.tenantId, editingUser.appUserId, {
         displayName: editForm.displayName.trim(),
+        email: editForm.email.trim() || null,
+        username: editForm.username.trim() || null,
         employeeCode: editForm.employeeCode.trim() || null,
         mobile: editForm.mobile.trim() || null,
         department: editForm.department.trim() || null,
@@ -435,25 +481,29 @@ export default function UsersRolesPage() {
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to update user details.";
       const nextFieldErrors: Record<string, string> = {};
-      if (message.toLowerCase().includes("employee code already exists")) {
+      Object.assign(nextFieldErrors, mapIdentityConflicts(err));
+      const normalizedMessage = message.toLowerCase();
+      if (normalizedMessage.includes("employee code already exists")) {
         nextFieldErrors.employeeCode = "Employee code already exists for this clinic.";
       }
-      if (message.toLowerCase().includes("mobile")) {
+      if (normalizedMessage.includes("mobile")) {
         nextFieldErrors.mobile = message;
       }
-      if (message.toLowerCase().includes("name is required")) {
+      if (normalizedMessage.includes("name is required")) {
         nextFieldErrors.displayName = "Name is required.";
       }
-      if (message.toLowerCase().includes("cannot edit your own user details")) {
+      if (normalizedMessage.includes("cannot edit your own user details")) {
         nextFieldErrors.displayName = message;
       }
-      if (message.toLowerCase().includes("role")) {
+      if (normalizedMessage.includes("role")) {
         nextFieldErrors.role = message;
       }
       if (Object.keys(nextFieldErrors).length > 0) {
-        setEditFieldErrors(nextFieldErrors);
+        setEditFieldErrors((current) => ({ ...current, ...nextFieldErrors }));
+        setError("Please correct the highlighted account details.");
+      } else {
+        setError(message);
       }
-      setError(message);
     } finally {
       setSavingUserId(null);
       setEditSubmitting(false);
@@ -718,16 +768,22 @@ export default function UsersRolesPage() {
               required
             />
             <TextField
+              id="edit-user-email"
               label="Email"
-              value={editingUser?.email || "-"}
+              value={editForm.email}
+              onChange={(e) => setEditForm((current) => ({ ...current, email: e.target.value }))}
+              error={Boolean(editFieldErrors.email)}
+              helperText={editFieldErrors.email || "Authentication email used for sign-in."}
               fullWidth
-              disabled
             />
             <TextField
+              id="edit-user-username"
               label="Login ID"
-              value={editingUser?.username || "-"}
+              value={editForm.username}
+              onChange={(e) => setEditForm((current) => ({ ...current, username: e.target.value }))}
+              error={Boolean(editFieldErrors.username)}
+              helperText={editFieldErrors.username || "Username used for sign-in."}
               fullWidth
-              disabled
             />
             <TextField
               id="edit-user-employeeCode"

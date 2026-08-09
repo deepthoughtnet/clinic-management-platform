@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityConflictException;
 import com.deepthoughtnet.clinic.discover.reference.InvalidReferenceValueException;
+import com.deepthoughtnet.clinic.identity.service.TenantIdentityConflictException;
 import com.deepthoughtnet.clinic.prescription.service.model.Timing;
 import com.deepthoughtnet.clinic.platform.core.errors.UnauthorizedException;
 import jakarta.validation.Valid;
@@ -98,6 +99,20 @@ class GlobalRestExceptionHandlerTest {
     }
 
     @Test
+    void formatsTenantIdentityConflictWithStandardEnvelope() throws Exception {
+        mockMvc.perform(get("/identity-conflict")
+                        .header("X-Correlation-Id", "corr-identity"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.status").value(409))
+                .andExpect(jsonPath("$.code").value("identity_conflict"))
+                .andExpect(jsonPath("$.message").value("One or more authentication identifiers are already in use."))
+                .andExpect(jsonPath("$.conflicts[0].field").value("USERNAME"))
+                .andExpect(jsonPath("$.conflicts[0].code").value("USERNAME_ALREADY_IN_USE"))
+                .andExpect(jsonPath("$.conflicts[0].message").value("Login ID already in use."))
+                .andExpect(jsonPath("$.correlationId").value("corr-identity"));
+    }
+
+    @Test
     void redactsUuidReferencesFromUserFacingErrors() throws Exception {
         mockMvc.perform(get("/uuid-error")
                         .header("X-Correlation-Id", "corr-uuid"))
@@ -151,6 +166,17 @@ class GlobalRestExceptionHandlerTest {
         @GetMapping("/availability-conflict")
         void availabilityConflict() {
             throw new DoctorAvailabilityConflictException("Availability already exists for this doctor, day, and time range.");
+        }
+
+        @GetMapping("/identity-conflict")
+        void identityConflict() {
+            throw TenantIdentityConflictException.of(List.of(
+                    new TenantIdentityConflictException.IdentityConflict(
+                            TenantIdentityConflictException.Field.USERNAME,
+                            "USERNAME_ALREADY_IN_USE",
+                            "Login ID already in use."
+                    )
+            ));
         }
 
         @GetMapping("/uuid-error")

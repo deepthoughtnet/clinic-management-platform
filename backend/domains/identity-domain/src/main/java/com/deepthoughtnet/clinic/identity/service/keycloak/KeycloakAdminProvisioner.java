@@ -40,6 +40,19 @@ public interface KeycloakAdminProvisioner {
     );
 
     /**
+     * Updates the login identity for an existing Keycloak user after validating
+     * that the new login ID and email are not claimed by another identity.
+     */
+    void updateTenantUserIdentity(
+            String userId,
+            String email,
+            String username,
+            String firstName,
+            String lastName,
+            boolean emailVerified
+    );
+
+    /**
      * Ensures the realm role is assigned to the user.
      */
     void ensureRealmRole(String userId, String roleName);

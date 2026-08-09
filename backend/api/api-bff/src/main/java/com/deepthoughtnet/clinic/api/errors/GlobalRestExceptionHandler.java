@@ -13,6 +13,8 @@ import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipCon
 import com.deepthoughtnet.clinic.platform.providerintegration.service.ProviderConnectionConflictException;
 import com.deepthoughtnet.clinic.discover.reference.InvalidReferenceValueException;
 import com.deepthoughtnet.clinic.identity.service.TenantProvisioningException;
+import com.deepthoughtnet.clinic.identity.service.TenantIdentityConflictException;
+import com.deepthoughtnet.clinic.api.errors.IdentityConflictErrorResponse.IdentityConflictItem;
 import com.deepthoughtnet.clinic.patient.service.model.PatientConflictException;
 import com.fasterxml.jackson.databind.JsonMappingException;
 import com.deepthoughtnet.clinic.identity.exception.TenantModuleDisabledException;
@@ -183,6 +185,22 @@ public class GlobalRestExceptionHandler {
     @ExceptionHandler(TenantModuleDisabledException.class)
     public ResponseEntity<?> handleTenantModuleDisabled(TenantModuleDisabledException ex, HttpServletRequest req) {
         return build(HttpStatus.FORBIDDEN, "module_disabled", "AI module is not enabled for this clinic.", req);
+    }
+
+    @ExceptionHandler(TenantIdentityConflictException.class)
+    public ResponseEntity<?> handleTenantIdentityConflict(TenantIdentityConflictException ex, HttpServletRequest req) {
+        List<IdentityConflictItem> conflicts = ex.conflicts().stream()
+                .map(conflict -> new IdentityConflictItem(conflict.field().name(), conflict.code(), conflict.message()))
+                .toList();
+        IdentityConflictErrorResponse body = IdentityConflictErrorResponse.of(
+                HttpStatus.CONFLICT.value(),
+                "identity_conflict",
+                userMessage(ex.getMessage(), "One or more authentication identifiers are already in use."),
+                path(req),
+                correlationId(req),
+                conflicts
+        );
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
     }
 
     @ExceptionHandler(DoctorAvailabilityConflictException.class)

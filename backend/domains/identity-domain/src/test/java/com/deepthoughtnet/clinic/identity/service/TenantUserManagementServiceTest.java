@@ -2,9 +2,11 @@ package com.deepthoughtnet.clinic.identity.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 
 import com.deepthoughtnet.clinic.identity.db.AppUserEntity;
@@ -15,10 +17,12 @@ import com.deepthoughtnet.clinic.identity.service.keycloak.KeycloakAdminProvisio
 import com.deepthoughtnet.clinic.identity.service.model.CreateTenantUserCommand;
 import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
 import com.deepthoughtnet.clinic.identity.service.model.UpdateTenantUserProfileCommand;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import static org.mockito.Mockito.verify;
 
 class TenantUserManagementServiceTest {
 
@@ -80,6 +84,81 @@ class TenantUserManagementServiceTest {
     }
 
     @Test
+    void createOrInviteNormalizesEmailBeforeProvisioning() {
+        AppUserRepository appUserRepository = mock(AppUserRepository.class);
+        TenantMembershipRepository membershipRepository = mock(TenantMembershipRepository.class);
+        KeycloakAdminProvisioner keycloakAdminProvisioner = mock(KeycloakAdminProvisioner.class);
+
+        when(keycloakAdminProvisioner.createOrGetTenantUserId(any(), any(), any(), any(), any(), any(), any(), anyBoolean()))
+                .thenReturn("kc-sub");
+        when(appUserRepository.findByTenantIdAndKeycloakSub(any(), any())).thenReturn(Optional.empty());
+        when(appUserRepository.findByTenantIdAndEmailIgnoreCase(any(), any())).thenReturn(Optional.empty());
+        when(appUserRepository.findByTenantIdAndUsernameIgnoreCase(any(), any())).thenReturn(Optional.empty());
+        when(appUserRepository.findByTenantIdAndEmployeeCodeIgnoreCase(any(), any())).thenReturn(Optional.empty());
+        when(appUserRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0, AppUserEntity.class));
+        when(membershipRepository.findByTenantIdAndAppUserId(any(), any())).thenReturn(Optional.empty());
+        when(membershipRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0, TenantMembershipEntity.class));
+
+        TenantUserManagementService service = new TenantUserManagementService(appUserRepository, membershipRepository, keycloakAdminProvisioner);
+
+        service.createOrInvite(new CreateTenantUserCommand(
+                tenantId,
+                "  PRIYA.NAIR@Example.com  ",
+                "  Priya.Nair  ",
+                "Priya",
+                "Nair",
+                "Priya Nair",
+                "DOCTOR",
+                "Temp@1234",
+                null,
+                null,
+                null
+        ));
+
+        ArgumentCaptor<String> emailCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> usernameCaptor = ArgumentCaptor.forClass(String.class);
+        verify(keycloakAdminProvisioner).createOrGetTenantUserId(
+                any(),
+                emailCaptor.capture(),
+                usernameCaptor.capture(),
+                any(),
+                any(),
+                any(),
+                any(),
+                anyBoolean()
+        );
+        assertEquals("priya.nair@example.com", emailCaptor.getValue());
+        assertEquals("Priya.Nair", usernameCaptor.getValue());
+    }
+
+    @Test
+    void createOrInvitePropagatesIdentityConflictWithoutWrapping() {
+        AppUserRepository appUserRepository = mock(AppUserRepository.class);
+        TenantMembershipRepository membershipRepository = mock(TenantMembershipRepository.class);
+        KeycloakAdminProvisioner keycloakAdminProvisioner = mock(KeycloakAdminProvisioner.class);
+
+        when(keycloakAdminProvisioner.createOrGetTenantUserId(any(), any(), any(), any(), any(), any(), any(), anyBoolean()))
+                .thenThrow(TenantIdentityConflictException.of(List.of(
+                        new TenantIdentityConflictException.IdentityConflict(
+                                TenantIdentityConflictException.Field.USERNAME,
+                                "USERNAME_ALREADY_IN_USE",
+                                "Login ID already in use."
+                        )
+                )));
+        when(appUserRepository.findByTenantIdAndEmailIgnoreCase(any(), any())).thenReturn(Optional.empty());
+        when(appUserRepository.findByTenantIdAndUsernameIgnoreCase(any(), any())).thenReturn(Optional.empty());
+        when(appUserRepository.findByTenantIdAndEmployeeCodeIgnoreCase(any(), any())).thenReturn(Optional.empty());
+
+        TenantUserManagementService service = new TenantUserManagementService(appUserRepository, membershipRepository, keycloakAdminProvisioner);
+
+        TenantIdentityConflictException ex = assertThrows(TenantIdentityConflictException.class, () -> service.createOrInvite(command("DOCTOR")));
+
+        assertEquals(1, ex.conflicts().size());
+        assertEquals(TenantIdentityConflictException.Field.USERNAME, ex.conflicts().getFirst().field());
+        verify(appUserRepository, never()).save(any());
+    }
+
+    @Test
     void unsupportedRoleIsRejected() {
         var service = createService();
         org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
@@ -108,6 +187,8 @@ class TenantUserManagementServiceTest {
                 tenantId,
                 userId,
                 "Priya Sharma",
+                "priya.sharma@example.com",
+                "priya.sharma",
                 "EMP-009",
                 "9876543210",
                 "Reception",
@@ -142,6 +223,8 @@ class TenantUserManagementServiceTest {
                         tenantId,
                         userId,
                         "Priya Sharma",
+                        "priya.sharma@example.com",
+                        "priya.sharma",
                         "EMP-009",
                         "12345",
                         "Reception",

@@ -4,6 +4,7 @@ import com.deepthoughtnet.clinic.identity.db.AppUserEntity;
 import com.deepthoughtnet.clinic.identity.db.AppUserRepository;
 import com.deepthoughtnet.clinic.identity.db.TenantMembershipEntity;
 import com.deepthoughtnet.clinic.identity.db.TenantMembershipRepository;
+import com.deepthoughtnet.clinic.identity.service.TenantIdentityConflictException;
 import com.deepthoughtnet.clinic.identity.service.keycloak.KeycloakAdminProvisioner;
 import com.deepthoughtnet.clinic.identity.service.model.CreateTenantUserCommand;
 import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
@@ -114,7 +115,7 @@ public class TenantUserManagementService {
         validate(command);
 
         String role = normalizeRole(command.role());
-        String email = normalizeNullable(command.email());
+        String email = normalizeEmail(command.email());
         String username = normalizeNullable(command.username());
         String firstName = normalizeNullable(command.firstName());
         String lastName = normalizeNullable(command.lastName());
@@ -124,19 +125,7 @@ public class TenantUserManagementService {
         String department = normalizeNullable(command.department());
         String correlationId = correlationId();
         UUID tenantId = command.tenantId();
-
-        UUID existingUserId = null;
-        if (StringUtils.hasText(email)) {
-            existingUserId = appUserRepository.findByTenantIdAndEmailIgnoreCase(tenantId, email)
-                    .map(AppUserEntity::getId)
-                    .orElse(null);
-        }
-        if (existingUserId == null && StringUtils.hasText(username)) {
-            existingUserId = appUserRepository.findByTenantIdAndUsernameIgnoreCase(tenantId, username)
-                    .map(AppUserEntity::getId)
-                    .orElse(null);
-        }
-        validateSupplementalUniqueness(tenantId, existingUserId, username, employeeCode);
+        validateSupplementalUniqueness(tenantId, null, username, employeeCode);
 
         try {
             log.info(
@@ -200,6 +189,8 @@ public class TenantUserManagementService {
             );
 
             return toRecord(user, membership, "KEYCLOAK_USER_READY");
+        } catch (TenantIdentityConflictException ex) {
+            throw ex;
         } catch (RuntimeException ex) {
             log.error(
                     "tenant.user.provision stage=failed tenantId={} email={} username={} role={} correlationId={}",
@@ -274,14 +265,30 @@ public class TenantUserManagementService {
         TenantMembershipEntity membership = findMembership(command.tenantId(), command.appUserId());
 
         String displayName = normalizeRequired(command.displayName(), "Name is required.");
+        String email = normalizeEmail(command.email());
+        String username = normalizeNullable(command.username());
         String employeeCode = normalizeNullable(command.employeeCode());
         String mobile = normalizeMobile(command.mobile());
         String department = normalizeNullable(command.department());
 
         validateSupplementalUniqueness(command.tenantId(), user.getId(), null, employeeCode);
 
-        user.updateProfile(user.getEmail(), displayName);
-        user.updateIdentity(user.getUsername(), department);
+        String updatedEmail = StringUtils.hasText(email) ? email : user.getEmail();
+        String updatedUsername = StringUtils.hasText(username) ? username : user.getUsername();
+
+        if (StringUtils.hasText(updatedEmail) || StringUtils.hasText(updatedUsername)) {
+            keycloakAdminProvisioner.updateTenantUserIdentity(
+                    user.getKeycloakSub(),
+                    updatedEmail,
+                    updatedUsername,
+                    null,
+                    null,
+                    true
+            );
+        }
+
+        user.updateProfile(updatedEmail, displayName);
+        user.updateIdentity(updatedUsername, department);
         user.updateContactDetails(employeeCode, mobile);
 
         if (command.role() != null) {
@@ -359,6 +366,10 @@ public class TenantUserManagementService {
 
     private String normalizeNullable(String value) {
         return StringUtils.hasText(value) ? value.trim() : null;
+    }
+
+    private String normalizeEmail(String value) {
+        return StringUtils.hasText(value) ? value.trim().toLowerCase(Locale.ROOT) : null;
     }
 
     private String normalizeRequired(String value, String message) {

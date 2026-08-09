@@ -9,6 +9,7 @@ import java.net.SocketTimeoutException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Locale;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 import org.keycloak.admin.client.Keycloak;
@@ -19,6 +20,7 @@ import org.keycloak.representations.idm.UserRepresentation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.util.StringUtils;
+import com.deepthoughtnet.clinic.identity.service.TenantIdentityConflictException;
 
 /**
  * Minimal Keycloak Admin API wrapper used for provisioning.
@@ -44,40 +46,15 @@ public class KeycloakAdminProvisionerImpl implements KeycloakAdminProvisioner {
     public String findUserIdByEmailOrUsername(String email, String username) {
         return executeWithRetry("find user by email or username", () -> {
             RealmResource rr = keycloakAdmin.realm(realm);
-
-            // Prefer exact email match if provided
-            if (StringUtils.hasText(email)) {
-                List<UserRepresentation> found = rr.users().search(email, true);
-                UserRepresentation existing = found == null ? null : found.stream()
-                        .filter(u -> email.equalsIgnoreCase(u.getEmail()))
-                        .findFirst()
-                        .orElse(null);
-
-                if (existing != null && StringUtils.hasText(existing.getId())) {
-                    return existing.getId();
-                }
-            }
-
-            // Fallback to exact username match if provided
-            if (StringUtils.hasText(username)) {
-                List<UserRepresentation> found = rr.users().search(username, true);
-                UserRepresentation existing = found == null ? null : found.stream()
-                        .filter(u -> username.equalsIgnoreCase(u.getUsername()))
-                        .findFirst()
-                        .orElse(null);
-
-                if (existing != null && StringUtils.hasText(existing.getId())) {
-                    return existing.getId();
-                }
-            }
-
-            return null;
+            UserRepresentation existing = resolveExistingIdentity(rr, normalizeEmail(email), normalizeUsername(username));
+            return existing == null || !StringUtils.hasText(existing.getId()) ? null : existing.getId();
         });
     }
 
     @Override
     public String createOrGetTenantAdminUserId(UUID tenantId, String email, String displayName, String tempPassword) {
-        if (!StringUtils.hasText(email)) {
+        String normalizedEmail = normalizeEmail(email);
+        if (!StringUtils.hasText(normalizedEmail)) {
             throw new IllegalArgumentException("email is required for tenant admin provisioning");
         }
 
@@ -85,9 +62,9 @@ public class KeycloakAdminProvisionerImpl implements KeycloakAdminProvisioner {
             RealmResource rr = keycloakAdmin.realm(realm);
 
             // Try find by email
-            List<UserRepresentation> found = rr.users().search(email, true);
+            List<UserRepresentation> found = rr.users().search(normalizedEmail, true);
             UserRepresentation existing = found == null ? null : found.stream()
-                    .filter(u -> email.equalsIgnoreCase(u.getEmail()))
+                    .filter(u -> sameIgnoreCase(normalizedEmail, u.getEmail()))
                     .findFirst()
                     .orElse(null);
 
@@ -114,8 +91,8 @@ public class KeycloakAdminProvisionerImpl implements KeycloakAdminProvisioner {
             // Create new user
             UserRepresentation u = new UserRepresentation();
             u.setEnabled(true);
-            u.setEmail(email);
-            u.setUsername(email);
+            u.setEmail(normalizedEmail);
+            u.setUsername(normalizedEmail);
             u.setEmailVerified(Boolean.TRUE);
             if (StringUtils.hasText(displayName)) {
                 u.setFirstName(displayName); // keep simple
@@ -150,94 +127,34 @@ public class KeycloakAdminProvisionerImpl implements KeycloakAdminProvisioner {
             String tempPassword,
             boolean emailVerified
     ) {
-        if (!StringUtils.hasText(email) && !StringUtils.hasText(username)) {
+        String normalizedEmail = normalizeEmail(email);
+        String normalizedUsername = normalizeUsername(username);
+        if (!StringUtils.hasText(normalizedEmail) && !StringUtils.hasText(normalizedUsername)) {
             throw new IllegalArgumentException("email or username is required");
         }
 
         return executeWithRetry("create or get tenant user", () -> {
             RealmResource rr = keycloakAdmin.realm(realm);
-
-            // Prefer email search if present; otherwise username search
-            UserRepresentation existing = null;
-
-            if (StringUtils.hasText(email)) {
-                List<UserRepresentation> found = rr.users().search(email, true);
-                existing = found == null ? null : found.stream()
-                        .filter(u -> email.equalsIgnoreCase(u.getEmail()))
-                        .findFirst()
-                        .orElse(null);
-            }
-
-            if (existing == null && StringUtils.hasText(username)) {
-                List<UserRepresentation> found = rr.users().search(username, true);
-                existing = found == null ? null : found.stream()
-                        .filter(u -> username.equalsIgnoreCase(u.getUsername()))
-                        .findFirst()
-                        .orElse(null);
-            }
-
-            if (existing != null && existing.getId() != null) {
-                ensureTenantAttribute(rr, existing.getId(), tenantId);
-
-                // Ensure enabled
-                if (existing.isEnabled() == null || !existing.isEnabled()) {
-                    existing.setEnabled(true);
-                    rr.users().get(existing.getId()).update(existing);
-                }
-
-                // Ensure email/username set if missing
-                boolean changed = false;
-                if (StringUtils.hasText(email) && !email.equalsIgnoreCase(existing.getEmail())) {
-                    existing.setEmail(email);
-                    changed = true;
-                }
-                if (StringUtils.hasText(username) && !username.equalsIgnoreCase(existing.getUsername())) {
-                    existing.setUsername(username);
-                    changed = true;
-                }
-                if (StringUtils.hasText(displayName) && (existing.getFirstName() == null || existing.getFirstName().isBlank())) {
-                    existing.setFirstName(displayName);
-                    changed = true;
-                }
-                if (StringUtils.hasText(firstName) && !firstName.equals(existing.getFirstName())) {
-                    existing.setFirstName(firstName);
-                    changed = true;
-                }
-                if (StringUtils.hasText(lastName) && !lastName.equals(existing.getLastName())) {
-                    existing.setLastName(lastName);
-                    changed = true;
-                }
-                if (emailVerified && (existing.isEmailVerified() == null || !existing.isEmailVerified())) {
-                    existing.setEmailVerified(Boolean.TRUE);
-                    changed = true;
-                }
-
-                if (changed) {
-                    rr.users().get(existing.getId()).update(existing);
-                }
-
-                if (StringUtils.hasText(tempPassword)) {
-                    resetTemporaryPasswordInternal(rr, existing.getId(), tempPassword);
-                }
-
-                return existing.getId();
+            List<TenantIdentityConflictException.IdentityConflict> conflicts = collectIdentityConflicts(rr, null, normalizedEmail, normalizedUsername);
+            if (!conflicts.isEmpty()) {
+                throw TenantIdentityConflictException.of(conflicts);
             }
 
             // Create new user
             UserRepresentation u = new UserRepresentation();
             u.setEnabled(true);
 
-            if (StringUtils.hasText(email)) {
-                u.setEmail(email);
+            if (StringUtils.hasText(normalizedEmail)) {
+                u.setEmail(normalizedEmail);
                 // By default, use email as username when username not provided
-                if (!StringUtils.hasText(username)) {
-                    u.setUsername(email);
+                if (!StringUtils.hasText(normalizedUsername)) {
+                    u.setUsername(normalizedEmail);
                 }
                 u.setEmailVerified(emailVerified ? Boolean.TRUE : Boolean.FALSE);
             }
 
-            if (StringUtils.hasText(username)) {
-                u.setUsername(username);
+            if (StringUtils.hasText(normalizedUsername)) {
+                u.setUsername(normalizedUsername);
             }
 
             if (StringUtils.hasText(firstName)) {
@@ -249,20 +166,93 @@ public class KeycloakAdminProvisionerImpl implements KeycloakAdminProvisioner {
                 u.setLastName(lastName);
             }
 
-            Response resp = rr.users().create(u);
-            if (resp.getStatus() != 201) {
+            try (Response resp = rr.users().create(u)) {
+                if (resp.getStatus() == 201) {
+                    String userId = extractCreatedId(resp);
+                    ensureTenantAttribute(rr, userId, tenantId);
+
+                    if (StringUtils.hasText(tempPassword)) {
+                        resetTemporaryPasswordInternal(rr, userId, tempPassword);
+                    }
+
+                    return userId;
+                }
+                if (resp.getStatus() == 409) {
+                    List<TenantIdentityConflictException.IdentityConflict> afterConflict = collectIdentityConflicts(rr, null, normalizedEmail, normalizedUsername);
+                    if (!afterConflict.isEmpty()) {
+                        throw TenantIdentityConflictException.of(afterConflict);
+                    }
+                    List<TenantIdentityConflictException.IdentityConflict> fallback = new java.util.ArrayList<>();
+                    if (StringUtils.hasText(normalizedUsername)) {
+                        fallback.add(identityConflictField(TenantIdentityConflictException.Field.USERNAME));
+                    }
+                    if (StringUtils.hasText(normalizedEmail)) {
+                        fallback.add(identityConflictField(TenantIdentityConflictException.Field.EMAIL));
+                    }
+                    throw TenantIdentityConflictException.of(fallback.isEmpty()
+                            ? List.of(identityConflictField(TenantIdentityConflictException.Field.EMAIL))
+                            : fallback);
+                }
                 String msg = resp.getStatusInfo() == null ? "" : resp.getStatusInfo().toString();
                 throw new IllegalStateException("Failed to create user in Keycloak. status=" + resp.getStatus() + " " + msg);
             }
+        });
+    }
 
-            String userId = extractCreatedId(resp);
-            ensureTenantAttribute(rr, userId, tenantId);
+    @Override
+    public void updateTenantUserIdentity(
+            String userId,
+            String email,
+            String username,
+            String firstName,
+            String lastName,
+            boolean emailVerified
+    ) {
+        String normalizedUserId = StringUtils.hasText(userId) ? userId.trim() : null;
+        String normalizedEmail = normalizeEmail(email);
+        String normalizedUsername = normalizeUsername(username);
+        if (!StringUtils.hasText(normalizedUserId)) {
+            throw new IllegalArgumentException("userId is required");
+        }
 
-            if (StringUtils.hasText(tempPassword)) {
-                resetTemporaryPasswordInternal(rr, userId, tempPassword);
+        executeWithRetry("update tenant user identity", () -> {
+            RealmResource rr = keycloakAdmin.realm(realm);
+            List<TenantIdentityConflictException.IdentityConflict> conflicts = collectIdentityConflicts(rr, normalizedUserId, normalizedEmail, normalizedUsername);
+            if (!conflicts.isEmpty()) {
+                throw TenantIdentityConflictException.of(conflicts);
             }
 
-            return userId;
+            UserRepresentation existing = rr.users().get(normalizedUserId).toRepresentation();
+            if (existing == null || existing.getId() == null) {
+                throw new IllegalArgumentException("User not found in Keycloak");
+            }
+
+            boolean changed = false;
+            if (StringUtils.hasText(normalizedEmail) && !sameIgnoreCase(normalizedEmail, existing.getEmail())) {
+                existing.setEmail(normalizedEmail);
+                changed = true;
+            }
+            if (StringUtils.hasText(normalizedUsername) && !sameIgnoreCase(normalizedUsername, existing.getUsername())) {
+                existing.setUsername(normalizedUsername);
+                changed = true;
+            }
+            if (StringUtils.hasText(firstName) && !firstName.equals(existing.getFirstName())) {
+                existing.setFirstName(firstName);
+                changed = true;
+            }
+            if (StringUtils.hasText(lastName) && !lastName.equals(existing.getLastName())) {
+                existing.setLastName(lastName);
+                changed = true;
+            }
+            if (emailVerified && (existing.isEmailVerified() == null || !existing.isEmailVerified())) {
+                existing.setEmailVerified(Boolean.TRUE);
+                changed = true;
+            }
+
+            if (changed) {
+                rr.users().get(normalizedUserId).update(existing);
+            }
+            return null;
         });
     }
 
@@ -352,6 +342,94 @@ public class KeycloakAdminProvisionerImpl implements KeycloakAdminProvisioner {
             u.setAttributes(attrs);
             rr.users().get(userId).update(u);
         }
+    }
+
+    private UserRepresentation findExactEmailMatch(RealmResource rr, String email) {
+        if (!StringUtils.hasText(email)) {
+            return null;
+        }
+        List<UserRepresentation> found = rr.users().search(email, true);
+        List<UserRepresentation> matches = found == null ? List.of() : found.stream()
+                .filter(u -> sameIgnoreCase(email, u.getEmail()))
+                .toList();
+        if (matches.size() > 1) {
+            throw TenantIdentityConflictException.of(List.of(identityConflictField(TenantIdentityConflictException.Field.EMAIL)));
+        }
+        return matches.isEmpty() ? null : matches.getFirst();
+    }
+
+    private UserRepresentation findExactUsernameMatch(RealmResource rr, String username) {
+        if (!StringUtils.hasText(username)) {
+            return null;
+        }
+        List<UserRepresentation> found = rr.users().search(username, true);
+        List<UserRepresentation> matches = found == null ? List.of() : found.stream()
+                .filter(u -> sameIgnoreCase(username, u.getUsername()))
+                .toList();
+        if (matches.size() > 1) {
+            throw TenantIdentityConflictException.of(List.of(identityConflictField(TenantIdentityConflictException.Field.USERNAME)));
+        }
+        return matches.isEmpty() ? null : matches.getFirst();
+    }
+
+    private List<TenantIdentityConflictException.IdentityConflict> collectIdentityConflicts(RealmResource rr, String currentUserId, String email, String username) {
+        List<TenantIdentityConflictException.IdentityConflict> conflicts = new java.util.ArrayList<>();
+
+        UserRepresentation byEmail = findExactEmailMatch(rr, email);
+        if (byEmail != null && !sameUser(currentUserId, byEmail.getId())) {
+            conflicts.add(identityConflictField(TenantIdentityConflictException.Field.EMAIL));
+        }
+
+        UserRepresentation byUsername = findExactUsernameMatch(rr, username);
+        if (byUsername != null && !sameUser(currentUserId, byUsername.getId())) {
+            conflicts.add(identityConflictField(TenantIdentityConflictException.Field.USERNAME));
+        }
+
+        return conflicts;
+    }
+
+    private TenantIdentityConflictException.IdentityConflict identityConflictField(TenantIdentityConflictException.Field field) {
+        if (field == TenantIdentityConflictException.Field.USERNAME) {
+            return new TenantIdentityConflictException.IdentityConflict(field, "USERNAME_ALREADY_IN_USE", "Login ID already in use.");
+        }
+        return new TenantIdentityConflictException.IdentityConflict(field, "EMAIL_ALREADY_IN_USE", "This email address is already associated with a Jeevanam account.");
+    }
+
+    private UserRepresentation resolveExistingIdentity(RealmResource rr, String email, String username) {
+        UserRepresentation byEmail = findExactEmailMatch(rr, email);
+        UserRepresentation byUsername = findExactUsernameMatch(rr, username);
+        if (byEmail != null && byUsername != null && !sameUser(byEmail.getId(), byUsername.getId())) {
+            return null;
+        }
+        if (byEmail != null) {
+            return byEmail;
+        }
+        return byUsername;
+    }
+
+    private String normalizeEmail(String email) {
+        return StringUtils.hasText(email) ? email.trim().toLowerCase(Locale.ROOT) : null;
+    }
+
+    private String normalizeUsername(String username) {
+        return StringUtils.hasText(username) ? username.trim() : null;
+    }
+
+    private boolean sameIgnoreCase(String left, String right) {
+        if (!StringUtils.hasText(left) && !StringUtils.hasText(right)) {
+            return true;
+        }
+        if (!StringUtils.hasText(left) || !StringUtils.hasText(right)) {
+            return false;
+        }
+        return left.trim().equalsIgnoreCase(right.trim());
+    }
+
+    private boolean sameUser(String currentUserId, String candidateUserId) {
+        if (!StringUtils.hasText(currentUserId) || !StringUtils.hasText(candidateUserId)) {
+            return false;
+        }
+        return currentUserId.trim().equals(candidateUserId.trim());
     }
 
     private void ensureRealmRoleInternal(RealmResource rr, String userId, String roleName) {

@@ -3779,6 +3779,8 @@ export async function updateTenantUser(token: string, tenantId: string, appUserI
 
 export async function updateTenantUserProfile(token: string, tenantId: string, appUserId: string, body: {
   displayName: string;
+  email?: string | null;
+  username?: string | null;
   employeeCode?: string | null;
   mobile?: string | null;
   department?: string | null;
@@ -3787,6 +3789,8 @@ export async function updateTenantUserProfile(token: string, tenantId: string, a
 }) {
   return httpPut<ClinicUser>(`/api/tenant/users/${appUserId}/profile`, {
     displayName: body.displayName,
+    email: body.email ?? null,
+    username: body.username ?? null,
     employeeCode: body.employeeCode ?? null,
     mobile: body.mobile ?? null,
     department: body.department ?? null,

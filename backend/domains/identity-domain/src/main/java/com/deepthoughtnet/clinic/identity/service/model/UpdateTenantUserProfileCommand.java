@@ -6,6 +6,8 @@ public record UpdateTenantUserProfileCommand(
         UUID tenantId,
         UUID appUserId,
         String displayName,
+        String email,
+        String username,
         String employeeCode,
         String mobile,
         String department,

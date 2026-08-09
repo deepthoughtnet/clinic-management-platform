@@ -4,6 +4,7 @@ import com.deepthoughtnet.clinic.identity.db.AppUserEntity;
 import com.deepthoughtnet.clinic.identity.db.AppUserRepository;
 import com.deepthoughtnet.clinic.platform.core.security.AppUserProvisioner;
 import java.time.OffsetDateTime;
+import java.util.Locale;
 import java.util.UUID;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,7 +22,7 @@ public class AppUserProvisionerImpl implements AppUserProvisioner {
     @Transactional
     public UUID upsertAndReturnId(UUID tenantId, String keycloakSub, String email, String displayName) {
         String normalizedSub = StringUtils.hasText(keycloakSub) ? keycloakSub.trim() : null;
-        String normalizedEmail = StringUtils.hasText(email) ? email.trim() : null;
+        String normalizedEmail = StringUtils.hasText(email) ? email.trim().toLowerCase(Locale.ROOT) : null;
         String safeName = (displayName == null || displayName.isBlank())
                 ? (normalizedEmail != null ? normalizedEmail : "User")
                 : displayName;

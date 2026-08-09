@@ -202,6 +202,8 @@ public class TenantUserManagementController {
                 tenantId,
                 appUserId,
                 request.displayName(),
+                request.email(),
+                request.username(),
                 request.employeeCode(),
                 request.mobile(),
                 request.department(),

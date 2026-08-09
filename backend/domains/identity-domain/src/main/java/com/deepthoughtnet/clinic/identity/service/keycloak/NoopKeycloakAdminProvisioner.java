@@ -35,6 +35,18 @@ public class NoopKeycloakAdminProvisioner implements KeycloakAdminProvisioner {
     }
 
     @Override
+    public void updateTenantUserIdentity(
+            String userId,
+            String email,
+            String username,
+            String firstName,
+            String lastName,
+            boolean emailVerified
+    ) {
+        throw new IllegalStateException(DISABLED_MESSAGE);
+    }
+
+    @Override
     public void ensureRealmRole(String userId, String roleName) {
         throw new IllegalStateException(DISABLED_MESSAGE);
     }
