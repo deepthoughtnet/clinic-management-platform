@@ -9,18 +9,28 @@ function read(relPath) {
   return fs.readFileSync(path.join(root, relPath), "utf8");
 }
 
-test("homepage prioritizes search with URL-driven query and location parameters", () => {
+test("homepage search selector submits into canonical entity-aware routes with URL-driven query and location parameters", () => {
   const page = read("src/pages/discovery/PublicDiscoveryPages.tsx");
 
   assert.ok(page.includes('id="find-care"'));
   assert.ok(page.includes('aria-label="Discover care search"'));
-  assert.ok(page.includes("Search doctors, clinics, hospitals, treatments"));
-  assert.ok(page.includes("buildDirectorySearchParams"));
-  assert.ok(page.includes("params.set(\"q\""));
-  assert.ok(page.includes("params.set(\"city\""));
+  assert.ok(page.includes("SearchIntentSelector"));
+  assert.ok(page.includes('role="radiogroup"'));
+  assert.ok(page.includes('aria-checked={selected}'));
+  assert.ok(page.includes("Search doctors, clinics, hospitals, services..."));
+  assert.ok(page.includes("Search doctor or speciality"));
+  assert.ok(page.includes("Search clinic or service"));
+  assert.ok(page.includes("Search hospital or speciality"));
+  assert.ok(page.includes("Search treatment, service or speciality"));
+  assert.ok(page.includes("buildSearchIntentTarget"));
+  assert.ok(page.includes("const query = filters.query.trim();"));
+  assert.ok(page.includes("const area = filters.area.trim();"));
+  assert.ok(page.includes("const hasExplicitLocation = searchableLocation !== PUBLIC_DEFAULT_LOCATION;"));
+  assert.ok(page.includes('navigate(".", { replace: true, state: { discoverHomeSearch: homeSearchDraft } })'));
+  assert.ok(page.includes("navigate(buildSearchIntentTarget({"));
+  assert.ok(page.includes('DISCOVER_ROUTES.search.path'));
   assert.ok(page.includes("Use my current location"));
   assert.ok(page.includes("radiusKm"));
-  assert.ok(page.includes("navigate(`/?${params.toString()}`)"));
   assert.ok(page.includes("event.preventDefault()"));
 });
 

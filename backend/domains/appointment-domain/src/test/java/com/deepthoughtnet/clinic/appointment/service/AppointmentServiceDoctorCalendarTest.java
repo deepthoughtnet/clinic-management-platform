@@ -12,6 +12,7 @@ import com.deepthoughtnet.clinic.appointment.db.AppointmentWaitlistRepository;
 import com.deepthoughtnet.clinic.appointment.db.DoctorAvailabilityEntity;
 import com.deepthoughtnet.clinic.appointment.db.DoctorAvailabilityRepository;
 import com.deepthoughtnet.clinic.appointment.db.DoctorUnavailabilityRepository;
+import com.deepthoughtnet.clinic.appointment.events.DoctorAvailabilityChangedEvent;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityConflictException;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityUpsertCommand;
 import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
@@ -34,6 +35,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import static org.mockito.Mockito.lenient;
 import static org.assertj.core.api.Assertions.assertThat;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.mockito.ArgumentCaptor;
 
 @ExtendWith(MockitoExtension.class)
 class AppointmentServiceDoctorCalendarTest {
@@ -307,6 +309,7 @@ class AppointmentServiceDoctorCalendarTest {
         );
 
         verify(doctorAvailabilityRepository).save(any(DoctorAvailabilityEntity.class));
+        verify(moduleBusinessEventPublisher).publish(any(DoctorAvailabilityChangedEvent.class));
     }
 
     @Test
@@ -321,6 +324,7 @@ class AppointmentServiceDoctorCalendarTest {
         );
 
         verify(doctorAvailabilityRepository).save(any(DoctorAvailabilityEntity.class));
+        verify(moduleBusinessEventPublisher).publish(any(DoctorAvailabilityChangedEvent.class));
     }
 
     @Test
@@ -345,6 +349,26 @@ class AppointmentServiceDoctorCalendarTest {
         );
 
         verify(doctorAvailabilityRepository).save(any(DoctorAvailabilityEntity.class));
+        verify(moduleBusinessEventPublisher).publish(any(DoctorAvailabilityChangedEvent.class));
+    }
+
+    @Test
+    void createAvailabilityPublishesAvailabilityChangeDetails() {
+        when(doctorAvailabilityRepository.save(any(DoctorAvailabilityEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        service.createAvailability(
+                TENANT_ID,
+                DOCTOR_ID,
+                new DoctorAvailabilityUpsertCommand(DayOfWeek.MONDAY, LocalTime.of(12, 0), LocalTime.of(17, 0), null, null, 30, 1, true),
+                ACTOR_ID
+        );
+
+        ArgumentCaptor<DoctorAvailabilityChangedEvent> captor = ArgumentCaptor.forClass(DoctorAvailabilityChangedEvent.class);
+        verify(moduleBusinessEventPublisher).publish(captor.capture());
+        assertThat(captor.getValue().eventType()).isEqualTo("DOCTOR_AVAILABILITY_CHANGED");
+        assertThat(captor.getValue().payload().doctorUserId()).isEqualTo(DOCTOR_ID);
+        assertThat(captor.getValue().payload().action()).isEqualTo("CREATED");
+        assertThat(captor.getValue().payload().reason()).isEqualTo("doctor.availability.created");
     }
 
     @Test

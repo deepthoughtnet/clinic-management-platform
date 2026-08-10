@@ -9,6 +9,7 @@ export type DiscoverRoute = {
 
 export const DISCOVER_ROUTES = {
   home: { path: "/", label: "Home", nav: true },
+  search: { path: "/discover/search", label: "Search" },
   doctors: { path: "/discover/doctors", label: "Doctors", nav: true, footer: true },
   clinics: { path: "/discover/clinics", label: "Clinics", nav: true, footer: true },
   hospitals: { path: "/discover/hospitals", label: "Hospitals", nav: true, footer: true },

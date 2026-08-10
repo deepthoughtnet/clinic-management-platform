@@ -1,4 +1,4 @@
-import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowForwardRounded,
   HealthAndSafetyOutlined,
@@ -19,6 +19,7 @@ import type {
   PublicHospitalSummaryResponse,
   PublicPageResponse,
   PublicProviderLocationResponse,
+  PublicSearchResponse,
   PublicSpecialityDetailResponse,
   PublicSpecialitySummaryResponse,
 } from "../../api/publicCatalog";
@@ -121,6 +122,250 @@ type FetchState<T> = {
 };
 
 type HomeDemoCard<T> = T & { demo?: boolean };
+
+type DiscoverSearchIntent = "any" | "doctors" | "clinics" | "hospitals" | "services";
+
+type HomeSearchState = {
+  query: string;
+  intent: DiscoverSearchIntent;
+  area: string;
+  radiusKm: string;
+};
+
+const DISCOVER_SEARCH_INTENTS: Array<{ value: DiscoverSearchIntent; label: string; placeholder: string; ariaLabel: string }> = [
+  {
+    value: "any",
+    label: "Any",
+    placeholder: "Search doctors, clinics, hospitals, services...",
+    ariaLabel: "Search across doctors, clinics, hospitals, and services",
+  },
+  {
+    value: "doctors",
+    label: "Doctors",
+    placeholder: "Search doctor or speciality",
+    ariaLabel: "Search doctors",
+  },
+  {
+    value: "clinics",
+    label: "Clinics",
+    placeholder: "Search clinic or service",
+    ariaLabel: "Search clinics",
+  },
+  {
+    value: "hospitals",
+    label: "Hospitals",
+    placeholder: "Search hospital or speciality",
+    ariaLabel: "Search hospitals",
+  },
+  {
+    value: "services",
+    label: "Services",
+    placeholder: "Search treatment, service or speciality",
+    ariaLabel: "Search services",
+  },
+];
+
+function getDiscoverSearchIntent(value: string | null | undefined): DiscoverSearchIntent {
+  const normalized = value?.trim().toLowerCase();
+  return DISCOVER_SEARCH_INTENTS.some((item) => item.value === normalized) ? (normalized as DiscoverSearchIntent) : "any";
+}
+
+function buildDiscoverSearchLocationParams({
+  query,
+  city,
+  area,
+  selectedCoordinates,
+  radiusKm,
+}: {
+  query: string;
+  city: string;
+  area: string;
+  selectedCoordinates: PublicLocationCoordinates | null;
+  radiusKm: string;
+}) {
+  const params = new URLSearchParams();
+  if (query.trim()) params.set("q", query.trim());
+  if (city.trim()) params.set("city", city.trim());
+  if (area.trim()) params.set("area", area.trim());
+  if (selectedCoordinates) {
+    params.set("lat", `${selectedCoordinates.latitude}`);
+    params.set("lng", `${selectedCoordinates.longitude}`);
+    params.set("radiusKm", radiusKm.trim() || "10");
+  }
+  return params;
+}
+
+function buildDirectorySearchTarget({
+  path,
+  query,
+  city,
+  area,
+  selectedCoordinates,
+  radiusKm,
+  size,
+}: {
+  path: string;
+  query: string;
+  city: string;
+  area: string;
+  selectedCoordinates: PublicLocationCoordinates | null;
+  radiusKm: string;
+  size: number;
+}) {
+  return `${path}?${buildDirectorySearchParams({
+    query,
+    city,
+    area,
+    page: 0,
+    size,
+    extra: selectedCoordinates
+      ? {
+          lat: `${selectedCoordinates.latitude}`,
+          lng: `${selectedCoordinates.longitude}`,
+          radiusKm,
+        }
+      : undefined,
+  }).toString()}`;
+}
+
+function buildSearchIntentTarget({
+  intent,
+  query,
+  city,
+  area,
+  selectedCoordinates,
+  radiusKm,
+}: {
+  intent: DiscoverSearchIntent;
+  query: string;
+  city: string;
+  area: string;
+  selectedCoordinates: PublicLocationCoordinates | null;
+  radiusKm: string;
+}) {
+  if (intent === "any") {
+    const params = buildDiscoverSearchLocationParams({
+      query,
+      city,
+      area,
+      selectedCoordinates,
+      radiusKm,
+    });
+    return `${DISCOVER_ROUTES.search.path}${params.toString() ? `?${params.toString()}` : ""}`;
+  }
+  if (intent === "clinics") {
+    return buildDirectorySearchTarget({
+      path: DISCOVER_ROUTES.clinics.path,
+      query,
+      city,
+      area,
+      selectedCoordinates,
+      radiusKm,
+      size: 12,
+    });
+  }
+  if (intent === "hospitals") {
+    return buildDirectorySearchTarget({
+      path: DISCOVER_ROUTES.hospitals.path,
+      query,
+      city,
+      area,
+      selectedCoordinates,
+      radiusKm,
+      size: 12,
+    });
+  }
+  if (intent === "services") {
+    return buildDirectorySearchTarget({
+      path: DISCOVER_ROUTES.specialities.path,
+      query,
+      city,
+      area,
+      selectedCoordinates,
+      radiusKm,
+      size: 12,
+    });
+  }
+  return buildDirectorySearchTarget({
+    path: DISCOVER_ROUTES.doctors.path,
+    query,
+    city,
+    area,
+    selectedCoordinates,
+    radiusKm,
+    size: 12,
+  });
+}
+
+function SearchIntentSelector({
+  value,
+  onChange,
+}: {
+  value: DiscoverSearchIntent;
+  onChange: (next: DiscoverSearchIntent) => void;
+}) {
+  const buttonsRef = useRef<Array<HTMLButtonElement | null>>([]);
+
+  function focusIntent(nextIndex: number) {
+    const next = DISCOVER_SEARCH_INTENTS[nextIndex];
+    if (!next) {
+      return;
+    }
+    onChange(next.value);
+    buttonsRef.current[nextIndex]?.focus();
+  }
+
+  function handleKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    const currentIndex = Math.max(
+      0,
+      DISCOVER_SEARCH_INTENTS.findIndex((item) => item.value === value),
+    );
+    if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+      event.preventDefault();
+      focusIntent((currentIndex + 1) % DISCOVER_SEARCH_INTENTS.length);
+      return;
+    }
+    if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+      event.preventDefault();
+      focusIntent((currentIndex - 1 + DISCOVER_SEARCH_INTENTS.length) % DISCOVER_SEARCH_INTENTS.length);
+      return;
+    }
+    if (event.key === "Home") {
+      event.preventDefault();
+      focusIntent(0);
+      return;
+    }
+    if (event.key === "End") {
+      event.preventDefault();
+      focusIntent(DISCOVER_SEARCH_INTENTS.length - 1);
+    }
+  }
+
+  return (
+    <div className="chip-row home-search-intent-selector" role="radiogroup" aria-orientation="horizontal" aria-label="Search type" onKeyDown={handleKeyDown}>
+      {DISCOVER_SEARCH_INTENTS.map((intent, index) => {
+        const selected = value === intent.value;
+        return (
+          <button
+            key={intent.value}
+            ref={(element) => {
+              buttonsRef.current[index] = element;
+            }}
+            className={`chip-button chip-button--search${selected ? " is-active" : ""}`}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            aria-label={intent.ariaLabel}
+            tabIndex={selected ? 0 : -1}
+            onClick={() => onChange(intent.value)}
+          >
+            {intent.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 function mergeHomeCards<T extends object>(realCards: T[], demoCards: T[], targetCount: number, enabled: boolean): HomeDemoCard<T>[] {
   const visible = realCards.slice(0, targetCount).map((card) => ({ ...card, demo: false as const }));
@@ -477,7 +722,7 @@ function buildDirectorySearchParams({
   return params;
 }
 
-function useDirectoryFilters(defaultSize = 12) {
+function useDirectoryFilters(defaultSize = 12, initialQuery = "", initialArea = "") {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { locationState } = usePublicLocation();
@@ -485,11 +730,11 @@ function useDirectoryFilters(defaultSize = 12) {
     locationState.location === PUBLIC_CURRENT_LOCATION_LABEL
       ? PUBLIC_DEFAULT_LOCATION
       : locationState.location || PUBLIC_DEFAULT_LOCATION;
-  const queryParam = searchParams.get("q") ?? "";
+  const queryParam = searchParams.get("q") ?? initialQuery;
   const cityParam = searchParams.get("city") ?? "";
   const [query, setQuery] = useState(queryParam);
   const [city, setCity] = useState(cityParam || selectedLocation);
-  const [area, setArea] = useState(searchParams.get("area") ?? "");
+  const [area, setArea] = useState(searchParams.get("area") ?? initialArea);
   const radiusKm = searchParams.get("radiusKm") ?? "";
   const latitude = searchParams.get("lat") ?? "";
   const longitude = searchParams.get("lng") ?? "";
@@ -497,10 +742,10 @@ function useDirectoryFilters(defaultSize = 12) {
   const size = Number(searchParams.get("size") ?? `${defaultSize}`) || defaultSize;
 
   useEffect(() => {
-    setQuery(searchParams.get("q") ?? "");
+    setQuery(searchParams.get("q") ?? initialQuery);
     setCity(searchParams.get("city") ?? selectedLocation);
-    setArea(searchParams.get("area") ?? "");
-  }, [searchParams, selectedLocation]);
+    setArea(searchParams.get("area") ?? initialArea);
+  }, [searchParams, selectedLocation, initialQuery, initialArea]);
 
   function submit(basePath: string, extra?: Record<string, string | undefined | null>) {
     const params = buildDirectorySearchParams({
@@ -1287,8 +1532,22 @@ function buildHospitalProfile(detail: PublicHospitalDetailResponse) {
 }
 
 export function PublicHomePage() {
-  const filters = useDirectoryFilters(6);
+  const location = useLocation();
   const navigate = useNavigate();
+  const homeSearchState = useMemo(() => {
+    const state = location.state as { discoverHomeSearch?: Partial<HomeSearchState> } | null;
+    const draft = state?.discoverHomeSearch;
+    if (!draft) {
+      return null;
+    }
+    return {
+      query: draft.query ?? "",
+      intent: getDiscoverSearchIntent(draft.intent),
+      area: draft.area ?? "",
+      radiusKm: draft.radiusKm ?? "10",
+    };
+  }, [location.state]);
+  const filters = useDirectoryFilters(6, homeSearchState?.query ?? "", homeSearchState?.area ?? "");
   const [locationPickerOpen, setLocationPickerOpen] = useState(false);
   const storedLocation = useMemo(() => readStoredPublicLocation(), []);
   const { locationState, setSelectedLocation } = usePublicLocation();
@@ -1299,8 +1558,10 @@ export function PublicHomePage() {
   const [locationDraft, setLocationDraft] = useState(() => selectedLocation);
   const [locationMessage, setLocationMessage] = useState<string | null>(null);
   const [locationBusy, setLocationBusy] = useState(false);
-  const [radiusKm, setRadiusKm] = useState(() => filters.searchParams.get("radiusKm") ?? "10");
+  const [searchIntent, setSearchIntent] = useState<DiscoverSearchIntent>(homeSearchState?.intent ?? "any");
+  const [radiusKm, setRadiusKm] = useState(() => homeSearchState?.radiusKm ?? filters.searchParams.get("radiusKm") ?? "10");
   const hasHydratedLocation = useRef(false);
+  const searchDraftRadiusKm = homeSearchState?.radiusKm ?? filters.searchParams.get("radiusKm") ?? "10";
   const displayLocation = selectedLocation;
   const searchableLocation = displayLocation === PUBLIC_CURRENT_LOCATION_LABEL ? PUBLIC_DEFAULT_LOCATION : displayLocation;
   const doctors = usePublicResource<PublicPageResponse<PublicDoctorSummaryResponse>>(
@@ -1375,6 +1636,14 @@ export function PublicHomePage() {
   }, [selectedLocation]);
 
   useEffect(() => {
+    setSearchIntent(homeSearchState?.intent ?? "any");
+  }, [homeSearchState?.intent]);
+
+  useEffect(() => {
+    setRadiusKm(searchDraftRadiusKm);
+  }, [searchDraftRadiusKm]);
+
+  useEffect(() => {
     if (hasHydratedLocation.current) {
       return;
     }
@@ -1417,31 +1686,47 @@ export function PublicHomePage() {
 
   function submitHeroSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const params = buildDirectorySearchParams({
-      query: filters.query,
+    const query = filters.query.trim();
+    const area = filters.area.trim();
+    const hasExplicitLocation = searchableLocation !== PUBLIC_DEFAULT_LOCATION;
+    const hasExplicitCoordinates = Boolean(selectedCoordinates);
+    if (!query && !area && !hasExplicitLocation && !hasExplicitCoordinates) {
+      return;
+    }
+    const homeSearchDraft: HomeSearchState = {
+      query,
+      intent: searchIntent,
+      area,
+      radiusKm,
+    };
+    navigate(".", { replace: true, state: { discoverHomeSearch: homeSearchDraft } });
+    navigate(buildSearchIntentTarget({
+      intent: searchIntent,
+      query,
       city: searchableLocation,
-      area: filters.area,
-      page: 0,
-      size: 6,
-      extra: selectedCoordinates
-        ? { lat: `${selectedCoordinates.latitude}`, lng: `${selectedCoordinates.longitude}`, radiusKm }
-        : undefined,
-    });
-    navigate(`/?${params.toString()}`);
+      area,
+      selectedCoordinates,
+      radiusKm,
+    }));
   }
 
   function applyPopularSearch(searchTerm: string) {
-    const params = buildDirectorySearchParams({
+    const area = filters.area.trim();
+    const homeSearchDraft: HomeSearchState = {
+      query: searchTerm,
+      intent: searchIntent,
+      area,
+      radiusKm,
+    };
+    navigate(".", { replace: true, state: { discoverHomeSearch: homeSearchDraft } });
+    navigate(buildSearchIntentTarget({
+      intent: searchIntent,
       query: searchTerm,
       city: searchableLocation,
-      area: filters.area,
-      page: 0,
-      size: 6,
-      extra: selectedCoordinates
-        ? { lat: `${selectedCoordinates.latitude}`, lng: `${selectedCoordinates.longitude}`, radiusKm }
-        : undefined,
-    });
-    navigate(`/?${params.toString()}`);
+      area,
+      selectedCoordinates,
+      radiusKm,
+    }));
   }
 
   function clearActiveLocation() {
@@ -1461,14 +1746,15 @@ export function PublicHomePage() {
             </h1>
             <p>Discover doctors, clinics, hospitals and health services for a healthier life.</p>
             <form id="find-care" className="hero-search-panel home-search-panel" aria-label="Discover care search" onSubmit={submitHeroSearch}>
+              <SearchIntentSelector value={searchIntent} onChange={setSearchIntent} />
               <label className="hero-search-field hero-search-query">
                 <span className="visually-hidden">Search</span>
                 <input
                   value={filters.query}
                   onChange={(event) => filters.setQuery(event.target.value)}
-                  placeholder="Search doctors, clinics, hospitals, treatments..."
+                  placeholder={DISCOVER_SEARCH_INTENTS.find((item) => item.value === searchIntent)?.placeholder ?? DISCOVER_SEARCH_INTENTS[0].placeholder}
                   autoComplete="off"
-                  aria-label="Search doctors, clinics, hospitals, treatments"
+                  aria-label={DISCOVER_SEARCH_INTENTS.find((item) => item.value === searchIntent)?.placeholder ?? DISCOVER_SEARCH_INTENTS[0].placeholder}
                 />
               </label>
               <label className="hero-search-field hero-search-location">
@@ -1729,6 +2015,196 @@ export function PublicHomePage() {
         </div>
       </section>
     </>
+  );
+}
+
+function GlobalSearchSection({
+  title,
+  viewAllTo,
+  viewAllLabel,
+  children,
+}: {
+  title: string;
+  viewAllTo?: string;
+  viewAllLabel?: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="page-section">
+      <div className="section-heading section-heading-row">
+        <div>
+          <span className="eyebrow">{title}</span>
+          <h2>{title}</h2>
+        </div>
+        {viewAllTo ? (
+          <Link className="text-button" to={viewAllTo}>
+            {viewAllLabel ?? `View all ${title.toLowerCase()}`}
+          </Link>
+        ) : null}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+export function PublicSearchPage() {
+  const { locationState } = usePublicLocation();
+  const [searchParams] = useSearchParams();
+  const displayLocation =
+    searchParams.get("city")?.trim() ||
+    (locationState.location === PUBLIC_CURRENT_LOCATION_LABEL ? PUBLIC_DEFAULT_LOCATION : locationState.location || PUBLIC_DEFAULT_LOCATION);
+  const searchableLocation = displayLocation === PUBLIC_CURRENT_LOCATION_LABEL ? PUBLIC_DEFAULT_LOCATION : displayLocation;
+  const query = searchParams.get("q")?.trim() ?? "";
+  const area = searchParams.get("area")?.trim() ?? "";
+  const latitude = searchParams.get("lat")?.trim() ?? "";
+  const longitude = searchParams.get("lng")?.trim() ?? "";
+  const radiusKm = searchParams.get("radiusKm")?.trim() ?? "10";
+  const selectedCoordinates =
+    latitude && longitude && Number.isFinite(Number(latitude)) && Number.isFinite(Number(longitude))
+      ? {
+          latitude: Number(latitude),
+          longitude: Number(longitude),
+        }
+      : locationState.coordinates;
+  const resultLabel = query ? `Search results for "${query}"` : "Search results";
+  const resultDescription = [displayLocation, area].filter(Boolean).join(" · ");
+  const search = usePublicResource<PublicSearchResponse>(
+    "/api/public/search",
+    {
+      q: query || null,
+      city: searchableLocation,
+      area: area || null,
+      lat: selectedCoordinates ? `${selectedCoordinates.latitude}` : null,
+      lng: selectedCoordinates ? `${selectedCoordinates.longitude}` : null,
+      radiusKm: selectedCoordinates ? radiusKm : null,
+      page: 0,
+      size: 4,
+    },
+    {
+      doctors: emptyDoctorsPage,
+      clinics: emptyClinicsPage,
+      hospitals: emptyHospitalsPage,
+      specialities: [],
+    },
+  );
+  const doctors = search.data.doctors.items.slice(0, 4);
+  const clinics = search.data.clinics.items.slice(0, 4);
+  const hospitals = search.data.hospitals?.items.slice(0, 4) ?? [];
+  const specialities = search.data.specialities.slice(0, 4);
+  const hasAnyResults = Boolean(doctors.length || clinics.length || hospitals.length || specialities.length);
+  const hasMoreDoctors = search.data.doctors.totalItems > doctors.length;
+  const hasMoreClinics = search.data.clinics.totalItems > clinics.length;
+  const hasMoreHospitals = (search.data.hospitals?.totalItems ?? 0) > hospitals.length;
+  const hasMoreSpecialities = search.data.specialities.length > specialities.length;
+
+  function buildCategoryViewAllLink(path: string, size = 12) {
+    return buildDirectorySearchTarget({
+      path,
+      query,
+      city: searchableLocation,
+      area,
+      selectedCoordinates,
+      radiusKm,
+      size,
+    });
+  }
+
+  return (
+    <DirectoryPageShell className="discover-search-page">
+      <DirectoryHero
+        eyebrow="Global search"
+        title={resultLabel}
+        body={resultDescription || "Search across doctors, clinics, hospitals, and services using published public catalog data."}
+        accent={pageAccentTone("doctors")}
+      />
+      <div className="directory-search-results-summary">
+        <p>Showing grouped results from the public catalog.</p>
+        <div className="cta-row">
+          <Link className="secondary-button" to={`${DISCOVER_ROUTES.home.path}#find-care`}>
+            Change search
+          </Link>
+          <Link className="text-button" to={DISCOVER_ROUTES.doctors.path}>
+            Browse doctors
+          </Link>
+          <Link className="text-button" to={DISCOVER_ROUTES.clinics.path}>
+            Browse clinics
+          </Link>
+        </div>
+      </div>
+      <DirectoryState
+        loading={search.loading}
+        error={search.error}
+        empty={!hasAnyResults}
+        emptyIcon="◎"
+        emptyTitle="No matching healthcare providers or services found."
+        emptyMessage="Try a different search, broaden the location, or browse doctors and clinics instead."
+        primaryAction="Change search"
+        primaryTo={`${DISCOVER_ROUTES.home.path}#find-care`}
+        secondaryAction="Browse doctors"
+        secondaryTo={DISCOVER_ROUTES.doctors.path}
+      >
+        {doctors.length ? (
+          <GlobalSearchSection
+            title="Doctors"
+            viewAllTo={hasMoreDoctors ? buildCategoryViewAllLink(DISCOVER_ROUTES.doctors.path) : undefined}
+            viewAllLabel="View all doctors"
+          >
+            <div className="homepage-doctor-grid">
+              {doctors.map((doctor) => (
+                <DoctorCard key={doctor.doctorSlug} doctor={doctor} />
+              ))}
+            </div>
+          </GlobalSearchSection>
+        ) : null}
+
+        {clinics.length ? (
+          <GlobalSearchSection
+            title="Clinics"
+            viewAllTo={hasMoreClinics ? buildCategoryViewAllLink(DISCOVER_ROUTES.clinics.path) : undefined}
+            viewAllLabel="View all clinics"
+          >
+            <div className="homepage-clinic-grid">
+              {clinics.map((clinic) => (
+                <ClinicCard key={clinic.clinicSlug} clinic={clinic} />
+              ))}
+            </div>
+          </GlobalSearchSection>
+        ) : null}
+
+        {hospitals.length ? (
+          <GlobalSearchSection
+            title="Hospitals"
+            viewAllTo={hasMoreHospitals ? buildCategoryViewAllLink(DISCOVER_ROUTES.hospitals.path) : undefined}
+            viewAllLabel="View all hospitals"
+          >
+            <div className="homepage-hospital-grid">
+              {hospitals.map((hospital) => (
+                <HospitalCard key={hospital.hospitalSlug} hospital={hospital} />
+              ))}
+            </div>
+          </GlobalSearchSection>
+        ) : null}
+
+        {specialities.length ? (
+          <GlobalSearchSection
+            title="Services"
+            viewAllTo={hasMoreSpecialities ? buildCategoryViewAllLink(DISCOVER_ROUTES.specialities.path, 24) : undefined}
+            viewAllLabel="View all services"
+          >
+            <div className="directory-speciality-results">
+              {specialities.map((speciality) => (
+                <SpecialityCard
+                  key={speciality.specialitySlug}
+                  speciality={speciality}
+                  onSearchDoctors={`${DISCOVER_ROUTES.doctors.path}?q=${encodeURIComponent(speciality.speciality)}&city=${encodeURIComponent(searchableLocation)}`}
+                  onSearchClinics={`${DISCOVER_ROUTES.clinics.path}?q=${encodeURIComponent(speciality.speciality)}&city=${encodeURIComponent(searchableLocation)}`}
+                />
+              ))}
+            </div>
+          </GlobalSearchSection>
+        ) : null}
+      </DirectoryState>
+    </DirectoryPageShell>
   );
 }
 

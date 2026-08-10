@@ -23,6 +23,7 @@ import {
   PublicHomePage,
   PublicHospitalDetailPage,
   PublicHospitalsPage,
+  PublicSearchPage,
   PublicSpecialitiesPage,
   PublicSpecialityDetailPage,
 } from "./pages/discovery/PublicDiscoveryPages";
@@ -59,6 +60,10 @@ const routeMeta: Record<string, { title: string; description: string }> = {
   [DISCOVER_ROUTES.doctors.path]: {
     title: "Doctors | Jeevanam Discover",
     description: "Find public doctor profiles by speciality, service, and location.",
+  },
+  [DISCOVER_ROUTES.search.path]: {
+    title: "Search | Jeevanam Discover",
+    description: "Search healthcare providers and services across doctors, clinics, hospitals, and specialities.",
   },
   [DISCOVER_ROUTES.clinics.path]: {
     title: "Clinics | Jeevanam Discover",
@@ -797,6 +802,7 @@ function App() {
           <Shell>
         <Routes>
           <Route path={DISCOVER_ROUTES.home.path} element={<PublicHomePage />} />
+          <Route path={DISCOVER_ROUTES.search.path} element={<PublicSearchPage />} />
           <Route path={DISCOVER_ROUTES.doctors.path} element={<PublicDoctorsPage />} />
           <Route path="/doctors" element={<LegacyRedirect to={DISCOVER_ROUTES.doctors.path} />} />
           <Route path="/doctors/:doctorSlug" element={<LegacyDoctorRedirect />} />

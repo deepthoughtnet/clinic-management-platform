@@ -648,6 +648,11 @@ main {
   gap: 6px;
 }
 
+.home-search-intent-selector {
+  grid-column: 1 / -1;
+  margin: 0 4px 0;
+}
+
 .hero-search-field {
   padding: 0 14px;
 }
@@ -4423,6 +4428,17 @@ main {
 .chip-button--search svg {
   width: 16px;
   height: 16px;
+}
+
+.directory-search-results-summary {
+  margin-bottom: 18px;
+  display: grid;
+  gap: 12px;
+  color: var(--discover-text-body);
+}
+
+.directory-search-results-summary p {
+  margin: 0;
 }
 
 .chip--demo {

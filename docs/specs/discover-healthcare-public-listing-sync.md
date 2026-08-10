@@ -109,6 +109,7 @@ Private fields such as internal tenant IDs, user IDs, email addresses, registrat
 - manual repair, startup reconciliation, and mutation-triggered reconciliation must all converge through the same sync service
 - public clinic doctor lists and counts must read from the Discover-owned doctor-practice association set, not a hardcoded empty projection or ad hoc Healthcare derivation
 - when a Healthcare-backed doctor-practice association is online-booking eligible, the same sync path may reconcile the corresponding operational doctor-practice platform link so public booking mode can resolve from the practice context
+- availability lifecycle mutations for a publicly listed Healthcare doctor should also trigger the same governed reconciliation path so new or removed availability converges without requiring a restart or manual Discover repair
 
 ## Repair / Backfill
 

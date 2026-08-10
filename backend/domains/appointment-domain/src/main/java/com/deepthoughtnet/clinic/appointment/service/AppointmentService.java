@@ -8,6 +8,7 @@ import com.deepthoughtnet.clinic.appointment.db.DoctorAvailabilityEntity;
 import com.deepthoughtnet.clinic.appointment.db.DoctorAvailabilityRepository;
 import com.deepthoughtnet.clinic.appointment.db.DoctorUnavailabilityEntity;
 import com.deepthoughtnet.clinic.appointment.db.DoctorUnavailabilityRepository;
+import com.deepthoughtnet.clinic.appointment.events.DoctorAvailabilityChangedEvent;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentRescheduleCommand;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentRecord;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentPriority;
@@ -356,6 +357,7 @@ public class AppointmentService {
                 "Created doctor availability",
                 detailsJson(saved)
         ));
+        publishDoctorAvailabilityChangedEvent(saved, "CREATED", "doctor.availability.created", actorAppUserId);
         return toRecord(saved);
     }
 
@@ -388,6 +390,7 @@ public class AppointmentService {
                 "Updated doctor availability",
                 detailsJson(saved)
         ));
+        publishDoctorAvailabilityChangedEvent(saved, "UPDATED", "doctor.availability.updated", actorAppUserId);
         return toRecord(saved);
     }
 
@@ -418,6 +421,7 @@ public class AppointmentService {
                 "Deactivated doctor availability",
                 detailsJson(saved)
         ));
+        publishDoctorAvailabilityChangedEvent(saved, "DEACTIVATED", "doctor.availability.deactivated", actorAppUserId);
         return toRecord(saved);
     }
 
@@ -1900,5 +1904,23 @@ public class AppointmentService {
         } catch (JsonProcessingException ex) {
             return "{}";
         }
+    }
+
+    private void publishDoctorAvailabilityChangedEvent(DoctorAvailabilityEntity entity, String action, String reason, UUID actorAppUserId) {
+        if (moduleBusinessEventPublisher == null || entity == null) {
+            return;
+        }
+        moduleBusinessEventPublisher.publish(DoctorAvailabilityChangedEvent.changed(
+                entity.getTenantId(),
+                entity.getId(),
+                entity.getDoctorUserId(),
+                entity.getDayOfWeek(),
+                entity.getStartTime(),
+                entity.getEndTime(),
+                entity.isActive(),
+                action,
+                reason,
+                actorAppUserId
+        ));
     }
 }
