@@ -66,7 +66,7 @@ test("doctor directory summary cards use published values instead of placeholder
   assert.ok(components.includes("doctor.subtitle?.trim() || doctor.speciality || null"));
   assert.ok(components.includes("doctor.yearsOfExperience != null ?"));
   assert.ok(components.includes("doctor.languages.length ?"));
-  assert.ok(components.includes("patientFacingLocationParts(doctor.clinicDisplayName, doctor.area, doctor.city).join(\" · \")"));
+  assert.ok(components.includes("dedupeDisplayParts(patientFacingLocationParts(doctor.clinicDisplayName, doctor.area, doctor.city)).join(\" · \")"));
   assert.ok(components.includes('value.toLowerCase() !== "primary"'));
   assert.ok(!components.includes("Fee available on profile"));
   assert.ok(components.includes("formatDistanceKm"));

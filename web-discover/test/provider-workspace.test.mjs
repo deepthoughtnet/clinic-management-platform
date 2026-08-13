@@ -31,11 +31,15 @@ test("provider workspace uses canonical provider routes and business-facing acco
   assert.ok(page.includes("Continue Profile"));
   assert.ok(page.includes("Submit for Platform Review"));
   assert.ok(page.includes("Review Changes"));
-  assert.ok(page.includes("View Published Profile"));
   assert.ok(page.includes("My Provider Profiles"));
   assert.ok(page.includes("Ownership: "));
   assert.ok(page.includes("Publication: "));
   assert.ok(page.includes("Connection: "));
+  assert.ok(page.includes("Manage profile"));
+  assert.ok(page.includes("View submitted preview"));
+  assert.ok(page.includes("View public profile"));
+  assert.ok(page.includes("Live profile"));
+  assert.ok(page.includes("Latest update"));
   assert.ok(page.includes("Active Profiles"));
   assert.ok(page.includes("Ready for Review"));
   assert.ok(page.includes("Under Platform Review"));
@@ -54,6 +58,9 @@ test("provider workspace uses canonical provider routes and business-facing acco
   assert.ok(page.includes("underReviewCount"));
   assert.ok(page.includes("publishedCount"));
   assert.ok(page.includes("needsAttentionCount"));
+  assert.ok(page.includes('profile.moderationStatus === "SUBMITTED" || profile.moderationStatus === "UNDER_REVIEW"'));
+  assert.ok(page.includes("return DISCOVER_ROUTES.providerPublicProfileReview.path"));
+  assert.ok(page.includes("profileLatestUpdateLabel(profile)"));
   assert.ok(!page.includes("Provider account ID:"));
   assert.ok(!page.includes("HttpOnly cookie"));
   assert.ok(!page.includes("workspace?.activeProfileCount ?? providerProfiles.length"));
@@ -65,6 +72,10 @@ test("provider workspace uses canonical provider routes and business-facing acco
   assert.ok(styles.includes(".provider-account-summary-card"));
   assert.ok(styles.includes(".provider-account-attention-copy"));
   assert.ok(styles.includes(".provider-account-attention-meta"));
+  assert.ok(page.includes('replace(":section", "overview")'));
+  assert.ok(page.includes('if (profile.publicationStatus === "PUBLISHED")'));
+  assert.ok(page.includes('return `${versionLabel} · Published`;'));
+  assert.ok(page.indexOf('if (profile.publicationStatus === "PUBLISHED")') < page.indexOf('if (profile.moderationStatus === "APPROVED")'));
 });
 
 test("provider workspace continue-registration links use exact application references", () => {

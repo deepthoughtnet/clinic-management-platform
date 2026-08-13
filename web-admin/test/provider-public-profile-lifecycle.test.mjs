@@ -21,6 +21,8 @@ test("reviewDetailIsReadOnly", () => {
   assert.ok(page.includes("You are reviewing the exact profile version submitted by the Provider."));
   assert.ok(page.includes("allowedActions"));
   assert.ok(page.includes("Action panel"));
+  assert.ok(page.includes("Review actions"));
+  assert.ok(page.includes("Publication management"));
 });
 
 test("reviewActionsRenderFromBackendAllowedActions", () => {

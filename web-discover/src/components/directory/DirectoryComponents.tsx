@@ -779,8 +779,9 @@ export function HospitalDirectoryCard({
   hospital: PublicHospitalSummaryResponse;
 } & DirectoryCardCommonProps) {
   const distance = formatDistanceKm(hospital.distanceKm ?? null);
-  const bookingMode = normalizeBookingMode(hospital.bookingMode) ?? "ONLINE_BOOKING";
   const callHref = hospital.contactPhone?.trim() ? `tel:${hospital.contactPhone.trim()}` : null;
+  const hospitalPath = hospital.publicPath ?? DISCOVER_DETAIL_PATHS.hospital(hospital.hospitalSlug);
+  const primaryActionLabel = callHref ? "Call Hospital" : "View hospital";
 
   return (
     <article className={`directory-card directory-card--hospital ${demo ? "is-demo" : ""}`}>
@@ -804,7 +805,7 @@ export function HospitalDirectoryCard({
         </div>
         {hospital.summary?.trim() ? <p className="directory-card__summary line-clamp-3">{hospital.summary.trim()}</p> : null}
         <div className="directory-card__meta">
-          <BookingCapabilityBadge mode={bookingMode} compact />
+          <span className={`chip ${callHref ? "chip--info" : "chip--muted"}`}>{primaryActionLabel}</span>
           {hospital.doctorsCount > 0 ? (
             <span>
               <CheckCircleOutlined fontSize="small" aria-hidden="true" />
@@ -827,24 +828,20 @@ export function HospitalDirectoryCard({
           {demo ? <span className="chip chip--demo">{demoLabel}</span> : null}
         </div>
         <div className="directory-card__actions">
-          <Link className="secondary-button" to={hospital.publicPath ?? DISCOVER_DETAIL_PATHS.hospital(hospital.hospitalSlug)}>
+          <Link className="secondary-button" to={hospitalPath}>
             View hospital
           </Link>
-          <Link className="secondary-button" to={hospital.publicPath ?? DISCOVER_DETAIL_PATHS.hospital(hospital.hospitalSlug)}>
+          <Link className="secondary-button" to={`${hospitalPath}#doctors`}>
             View doctors
           </Link>
-          {bookingMode === "CALL_TO_BOOK" && callHref ? (
+          {callHref ? (
             <a className="primary-button" href={callHref}>
-              {providerBookingPrimaryLabel(bookingMode)}
+              {primaryActionLabel}
             </a>
-          ) : bookingMode === "NOT_AVAILABLE" ? (
-            <Link className="primary-button" to={hospital.publicPath ?? DISCOVER_DETAIL_PATHS.hospital(hospital.hospitalSlug)}>
-              {providerBookingPrimaryLabel(bookingMode)}
-            </Link>
           ) : (
-            <a className="primary-button" href={careBookingUrl({ hospitalSlug: hospital.hospitalSlug })}>
-              {providerBookingPrimaryLabel(bookingMode)}
-            </a>
+            <Link className="primary-button" to={hospitalPath}>
+              {primaryActionLabel}
+            </Link>
           )}
         </div>
       </div>

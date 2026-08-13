@@ -41,15 +41,15 @@ function allowedActionLabel(action: string) {
     case "VIEW_REVIEW":
       return "View Under Review";
     case "VIEW_UNDER_REVIEW":
-      return "View Under Review";
+      return "View submitted preview";
     case "VIEW_REVIEW_STATUS":
-      return "View Review";
+      return "View submitted preview";
     case "AWAITING_APPROVAL":
       return "Awaiting Approval";
     case "VIEW_APPROVAL_STATUS":
       return "Awaiting Approval";
     case "VIEW_PUBLISHED_PROFILE":
-      return "View Published Profile";
+      return "View public profile";
     case "VIEW_DETAILS":
       return "View Details";
     case "OPEN_CLAIM":
@@ -67,6 +67,57 @@ function allowedActionLabel(action: string) {
     default:
       return action.replaceAll("_", " ").replace(/\b\w/g, (char) => char.toUpperCase());
   }
+}
+
+function profileManageActionLabel(profile: ProviderWorkspaceProfile) {
+  if (profile.moderationStatus === "SUBMITTED" || profile.moderationStatus === "UNDER_REVIEW") {
+    return "View submitted preview";
+  }
+  if (profile.publicationStatus === "PUBLISHED") {
+    return "Manage profile";
+  }
+  if (profile.moderationStatus === "CHANGES_REQUESTED") {
+    return "Update profile";
+  }
+  if (profile.primaryAction === "SUBMIT_FOR_REVIEW" || profile.primaryAction === "CONTINUE_PROFILE" || profile.primaryAction === "CONTINUE_EDITING" || profile.primaryAction === "OPEN_PROFILE") {
+    return "Continue profile";
+  }
+  return "Manage profile";
+}
+
+function profileManageActionHref(profile: ProviderWorkspaceProfile) {
+  const profileReference = profile.publicProfileReference?.trim();
+  if (!profileReference) {
+    return null;
+  }
+  if (profile.moderationStatus === "SUBMITTED" || profile.moderationStatus === "UNDER_REVIEW") {
+    return DISCOVER_ROUTES.providerPublicProfileReview.path
+      .replace(":profileReference", encodeURIComponent(profileReference));
+  }
+  return DISCOVER_ROUTES.providerPublicProfileDraft.path
+    .replace(":profileReference", encodeURIComponent(profileReference))
+    .replace(":section", "overview");
+}
+
+function profileLatestUpdateLabel(profile: ProviderWorkspaceProfile) {
+  const versionLabel = `Version ${profile.draftVersion}`;
+  if (profile.publicationStatus === "PUBLISHED") {
+    return `${versionLabel} · Published`;
+  }
+  if (profile.moderationStatus === "SUBMITTED" || profile.moderationStatus === "UNDER_REVIEW") {
+    return `${versionLabel} · Under Platform Review`;
+  }
+  if (profile.moderationStatus === "CHANGES_REQUESTED") {
+    return `${versionLabel} · Changes requested`;
+  }
+  if (profile.moderationStatus === "APPROVED") {
+    return `${versionLabel} · Waiting for publication`;
+  }
+  return `${versionLabel} · ${profile.lifecycleLabel}`;
+}
+
+function profilePublicActionHref(profile: ProviderWorkspaceProfile) {
+  return profile.publicProfilePath ?? null;
 }
 
 function providerTypeLabel(providerType: string) {
@@ -651,12 +702,16 @@ export function ProviderWorkspacePage() {
                     <strong>{profile.displayName}</strong>
                     <p>{providerTypeLabel(profile.profileType)}</p>
                   </div>
-                  <span className="provider-account-status-pill">{profile.lifecycleLabel}</span>
+                  <span className="provider-account-status-pill">{profile.publicationStatus === "PUBLISHED" ? "Published" : profile.lifecycleLabel}</span>
                 </div>
                 <dl className="provider-account-detail-list">
                   <div>
-                    <dt>Lifecycle</dt>
-                    <dd>{profile.lifecycleLabel}</dd>
+                    <dt>Live profile</dt>
+                    <dd>{profile.publicationStatus === "PUBLISHED" ? "Published" : profile.publicationStatus}</dd>
+                  </div>
+                  <div>
+                    <dt>Latest update</dt>
+                    <dd>{profileLatestUpdateLabel(profile)}</dd>
                   </div>
                   <div>
                     <dt>Completion</dt>
@@ -675,13 +730,18 @@ export function ProviderWorkspacePage() {
                     <dd>{profile.publicProfileReference}</dd>
                   </div>
                 </dl>
-                {profile.primaryAction && allowedActionHrefForProfile(profile, profile.primaryAction) ? (
-                  <div className="provider-account-card-actions">
-                    <Link className="primary-button" to={allowedActionHrefForProfile(profile, profile.primaryAction)!}>
-                      {profileActionLabel(profile)}
+                <div className="provider-account-card-actions">
+                  {profileManageActionHref(profile) ? (
+                    <Link className="primary-button" to={profileManageActionHref(profile)!}>
+                      {profileManageActionLabel(profile)}
                     </Link>
-                  </div>
-                ) : null}
+                  ) : null}
+                  {profilePublicActionHref(profile) ? (
+                    <Link className="secondary-button" to={profilePublicActionHref(profile)!}>
+                      View public profile
+                    </Link>
+                  ) : null}
+                </div>
               </article>
             ))}
           </div>

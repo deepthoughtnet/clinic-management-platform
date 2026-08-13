@@ -41,6 +41,16 @@ test("provider applications page separates queue errors from empty states", () =
   assert.ok(!source.includes('{error ? <Alert severity=\"error\">{error}</Alert> : null}'));
 });
 
+test("provider applications page rehydrates when auth bootstrap settles", () => {
+  const source = readSource("pages/platform/DiscoverProviderApplicationsPage.tsx");
+
+  assert.ok(source.includes("const authSignature = React.useMemo"));
+  assert.ok(source.includes("auth.initialized ? \"initialized\" : \"booting\""));
+  assert.ok(source.includes("auth.permissions.join(\",\")"));
+  assert.ok(source.includes("auth.selectedTenant?.id || \"platform\""));
+  assert.ok(source.includes("[activeTab.value, auth.accessToken, authSignature, providerType, referenceNumber, search]"));
+});
+
 test("provider applications page uses the existing authenticated review document blob path", () => {
   const source = readSource("pages/platform/DiscoverProviderApplicationsPage.tsx");
 

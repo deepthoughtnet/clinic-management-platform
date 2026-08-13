@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import {
   Alert,
   Box,
@@ -935,6 +935,26 @@ function isReviewAction(value: string): value is ReviewAction {
   ].includes(value);
 }
 
+function isReviewModerationAction(value: string): value is ReviewAction {
+  return [
+    "START_REVIEW",
+    "ADD_REVIEW_FINDING",
+    "REQUEST_CHANGES",
+    "REJECT_SUBMISSION",
+    "APPROVE_SUBMISSION",
+    "PUBLISH_PROFILE",
+    "VIEW_SUBMISSION",
+  ].includes(value);
+}
+
+function isReviewPublicationAction(value: string): value is ReviewAction {
+  return [
+    "VIEW_PUBLIC_PROFILE",
+    "UNPUBLISH_PROFILE",
+    "VIEW_REVIEW_HISTORY",
+  ].includes(value);
+}
+
 function reviewActionPermission(action: ReviewAction) {
   switch (action) {
     case "START_REVIEW":
@@ -989,10 +1009,22 @@ function reviewActionColor(action: ReviewAction) {
   }
 }
 
+export function providerConnectionsSectionFromPathname(pathname: string): ConsoleSection {
+  const normalized = pathname === "/platform/provider-connections/public-profile-lifecycle"
+    ? "/platform/provider-connections/public-profile-reviews"
+    : pathname;
+  const exact = SECTIONS.find((section) => section.path === normalized);
+  if (exact) {
+    return exact.key;
+  }
+  const prefix = [...SECTIONS]
+    .sort((left, right) => right.path.length - left.path.length)
+    .find((section) => normalized.startsWith(`${section.path}/`));
+  return prefix?.key || "overview";
+}
+
 function activeSection(pathname: string): ConsoleSection {
-  const normalized = pathname === "/platform/provider-connections/public-profile-lifecycle" ? "/platform/provider-connections/public-profile-reviews" : pathname;
-  const entry = SECTIONS.find((section) => section.path === normalized);
-  return entry?.key || "overview";
+  return providerConnectionsSectionFromPathname(pathname);
 }
 
 function actionChipColor(status: string | null | undefined) {
@@ -1005,6 +1037,11 @@ function actionChipColor(status: string | null | undefined) {
 
 function sectionPath(section: ConsoleSection) {
   return SECTIONS.find((item) => item.key === section)?.path || SECTIONS[0].path;
+}
+
+function parseReviewType(value: string | null): ProviderConnectionsPublicProfileType | "" {
+  const normalized = (value || "").trim().toUpperCase();
+  return normalized === "CLINIC" || normalized === "DOCTOR" || normalized === "HOSPITAL" ? normalized : "";
 }
 
 function parseSelection(value: string) {
@@ -1701,6 +1738,7 @@ export default function ProviderConnectionsPage() {
   const auth = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const section = activeSection(location.pathname);
   const selectedReviewRouteReference = React.useMemo(() => {
@@ -1727,9 +1765,9 @@ export default function ProviderConnectionsPage() {
   const [selectedOwnershipReference, setSelectedOwnershipReference] = React.useState<string | null>(null);
   const [selectedAuditEventReference, setSelectedAuditEventReference] = React.useState<string | null>(null);
   const [selectedConflictReference, setSelectedConflictReference] = React.useState<string | null>(null);
-  const [publicType, setPublicType] = React.useState<ProviderConnectionsPublicProfileType>("CLINIC");
-  const [publicCity, setPublicCity] = React.useState("");
-  const [publicQuery, setPublicQuery] = React.useState("");
+  const [publicProfileType, setPublicProfileType] = React.useState<ProviderConnectionsPublicProfileType>("CLINIC");
+  const [publicProfileCity, setPublicProfileCity] = React.useState("");
+  const [publicProfileQuery, setPublicProfileQuery] = React.useState("");
   const [entityType, setEntityType] = React.useState("CLINIC");
   const [entityQuery, setEntityQuery] = React.useState("");
   const [linkType, setLinkType] = React.useState("");
@@ -1767,6 +1805,16 @@ export default function ProviderConnectionsPage() {
   const [rejectTarget, setRejectTarget] = React.useState<ProviderConnectionsSuggestionResponse | null>(null);
   const [rejectReason, setRejectReason] = React.useState("");
   const [saving, setSaving] = React.useState(false);
+  const reviewPublicType = parseReviewType(searchParams.get("type"));
+  const reviewPublicQuery = searchParams.get("q") || "";
+  const reviewPublicCity = searchParams.get("city") || "";
+  const authSignature = React.useMemo(() => [
+    auth.initialized ? "initialized" : "booting",
+    auth.accessToken ? "token" : "no-token",
+    auth.rolesUpper.join(","),
+    auth.permissions.join(","),
+    auth.selectedTenant?.id || "platform",
+  ].join("|"), [auth.initialized, auth.accessToken, auth.permissions, auth.rolesUpper, auth.selectedTenant?.id]);
 
   React.useEffect(() => {
     if (section !== "public-profile-reviews") {
@@ -1843,71 +1891,134 @@ export default function ProviderConnectionsPage() {
     setLoading(true);
     setError(null);
     try {
-      const [overviewRes, publicRes, reviewRes, reviewDetailRes, clinicEntitiesRes, doctorEntitiesRes, linksRes, suggestionsRes, ownershipsRes, conflictsRes, auditRes, detailRes] = await Promise.allSettled([
-        getProviderConnectionsOverview(auth.accessToken),
-        publicType === "DOCTOR"
-          ? listProviderConnectionsPublicPractices(auth.accessToken, { q: publicQuery || null, city: publicCity || null })
-          : listProviderConnectionsPublicProfiles(auth.accessToken, { type: publicType, q: publicQuery || null, city: publicCity || null }),
-        listProviderConnectionsPublicProfileReviews(auth.accessToken, { type: publicType, q: publicQuery || null, city: publicCity || null }),
-        selectedReviewReference ? getProviderConnectionsPublicProfileReview(auth.accessToken, selectedReviewReference) : Promise.resolve(null),
-        listProviderConnectionsPlatformEntities(auth.accessToken, { type: "CLINIC", q: entityQuery || null }),
-        listProviderConnectionsPlatformEntities(auth.accessToken, { type: "DOCTOR", q: entityQuery || null }),
-        listProviderConnectionsLinks(auth.accessToken, { type: linkType || null, status: linkStatus || null, q: linkQuery || null }),
-        listProviderConnectionsSuggestions(auth.accessToken, suggestionQuery || null),
-        listProviderConnectionsOwnerships(auth.accessToken),
-        listProviderConnectionsConflicts(auth.accessToken),
-        getProviderConnectionsAuditEvents(auth.accessToken, { action: auditAction || null, tenantReference: auditTenant || null, providerType: auditProviderType || null, result: auditResult || null, q: auditQuery || null }),
-        selectedLinkReference ? getProviderConnectionsLinkDetail(auth.accessToken, selectedLinkReference) : Promise.resolve(null),
-      ]);
+      const overviewPromise = getProviderConnectionsOverview(auth.accessToken);
+      const overviewRes = await overviewPromise.catch((reason) => ({ error: reason }));
+      setOverview("error" in overviewRes ? null : overviewRes);
 
-      setOverview(overviewRes.status === "fulfilled" ? overviewRes.value : null);
-      setPublicRows(publicRes.status === "fulfilled" ? publicRes.value : []);
-      setReviewRows(reviewRes.status === "fulfilled" ? reviewRes.value : []);
-      setSelectedReview(reviewDetailRes.status === "fulfilled" ? reviewDetailRes.value : null);
-      setPlatformClinicRows(clinicEntitiesRes.status === "fulfilled" ? clinicEntitiesRes.value : []);
-      setPlatformDoctorRows(doctorEntitiesRes.status === "fulfilled" ? doctorEntitiesRes.value : []);
-      setLinkRows(linksRes.status === "fulfilled" ? linksRes.value : []);
-      setSuggestions(suggestionsRes.status === "fulfilled" ? suggestionsRes.value : []);
-      setOwnershipRows(ownershipsRes.status === "fulfilled" ? ownershipsRes.value : []);
-      setConflicts(conflictsRes.status === "fulfilled" ? conflictsRes.value : []);
-      setAuditRows(auditRes.status === "fulfilled" ? auditRes.value : []);
-      setSelectedLinkDetail(detailRes.status === "fulfilled" ? detailRes.value : null);
-      setSelectedLinkDetailError(detailRes.status === "rejected"
-        ? (detailRes.reason instanceof Error ? detailRes.reason.message : "Unable to load link details.")
-        : null);
+      if ("error" in overviewRes) {
+        throw overviewRes.error;
+      }
 
-      if (overviewRes.status === "rejected" || publicRes.status === "rejected" || reviewRes.status === "rejected" || reviewDetailRes.status === "rejected" || clinicEntitiesRes.status === "rejected" || doctorEntitiesRes.status === "rejected" || linksRes.status === "rejected" || suggestionsRes.status === "rejected" || ownershipsRes.status === "rejected" || conflictsRes.status === "rejected" || auditRes.status === "rejected") {
-        const reason = overviewRes.status === "rejected"
-          ? overviewRes.reason
-          : publicRes.status === "rejected"
-            ? publicRes.reason
-            : reviewRes.status === "rejected"
-              ? reviewRes.reason
-              : reviewDetailRes.status === "rejected"
-                ? reviewDetailRes.reason
-              : clinicEntitiesRes.status === "rejected"
+      switch (section) {
+        case "public-profile-reviews": {
+          const [reviewRes, reviewDetailRes] = await Promise.allSettled([
+            listProviderConnectionsPublicProfileReviews(auth.accessToken, {
+              type: reviewPublicType || null,
+              q: reviewPublicQuery || null,
+              city: reviewPublicCity || null,
+            }),
+            selectedReviewReference ? getProviderConnectionsPublicProfileReview(auth.accessToken, selectedReviewReference) : Promise.resolve(null),
+          ]);
+          setReviewRows(reviewRes.status === "fulfilled" ? reviewRes.value : []);
+          setSelectedReview(reviewDetailRes.status === "fulfilled" ? reviewDetailRes.value : null);
+          if (reviewDetailRes.status === "rejected") {
+            setError(reviewDetailRes.reason instanceof Error ? reviewDetailRes.reason.message : "Provider connections could not be loaded.");
+          } else if (reviewRes.status === "rejected") {
+            setError(reviewRes.reason instanceof Error ? reviewRes.reason.message : "Provider connections could not be loaded.");
+          }
+          break;
+        }
+        case "public-profiles": {
+          const publicRes = await listProviderConnectionsPublicProfiles(auth.accessToken, { type: publicProfileType, q: publicProfileQuery || null, city: publicProfileCity || null }).catch((reason) => ({ error: reason }));
+          setPublicRows("error" in publicRes ? [] : publicRes);
+          if ("error" in publicRes) {
+            throw publicRes.error;
+          }
+          break;
+        }
+        case "platform-entities": {
+          const [clinicEntitiesRes, doctorEntitiesRes] = await Promise.allSettled([
+            listProviderConnectionsPlatformEntities(auth.accessToken, { type: "CLINIC", q: entityQuery || null }),
+            listProviderConnectionsPlatformEntities(auth.accessToken, { type: "DOCTOR", q: entityQuery || null }),
+          ]);
+          setPlatformClinicRows(clinicEntitiesRes.status === "fulfilled" ? clinicEntitiesRes.value : []);
+          setPlatformDoctorRows(doctorEntitiesRes.status === "fulfilled" ? doctorEntitiesRes.value : []);
+          if (clinicEntitiesRes.status === "rejected" || doctorEntitiesRes.status === "rejected") {
+            const reason = clinicEntitiesRes.status === "rejected"
               ? clinicEntitiesRes.reason
               : doctorEntitiesRes.status === "rejected"
                 ? doctorEntitiesRes.reason
-                : linksRes.status === "rejected"
-                  ? linksRes.reason
-                  : suggestionsRes.status === "rejected"
-                    ? suggestionsRes.reason
-                    : ownershipsRes.status === "rejected"
-                      ? ownershipsRes.reason
-                    : conflictsRes.status === "rejected"
-                      ? conflictsRes.reason
-                      : auditRes.status === "rejected"
-                        ? auditRes.reason
-                      : null;
-        setError(reason instanceof Error ? reason.message : "Provider connections could not be loaded.");
+                : new Error("Provider connections could not be loaded.");
+            throw reason;
+          }
+          break;
+        }
+        case "links": {
+          const [linksRes, detailRes] = await Promise.allSettled([
+            listProviderConnectionsLinks(auth.accessToken, { type: linkType || null, status: linkStatus || null, q: linkQuery || null }),
+            selectedLinkReference ? getProviderConnectionsLinkDetail(auth.accessToken, selectedLinkReference) : Promise.resolve(null),
+          ]);
+          setLinkRows(linksRes.status === "fulfilled" ? linksRes.value : []);
+          setSelectedLinkDetail(detailRes.status === "fulfilled" ? detailRes.value : null);
+          setSelectedLinkDetailError(detailRes.status === "rejected"
+            ? (detailRes.reason instanceof Error ? detailRes.reason.message : "Unable to load link details.")
+            : null);
+          if (linksRes.status === "rejected") {
+            throw linksRes.reason;
+          }
+          break;
+        }
+        case "suggestions": {
+          const suggestionsRes = await listProviderConnectionsSuggestions(auth.accessToken, suggestionQuery || null).catch((reason) => ({ error: reason }));
+          setSuggestions("error" in suggestionsRes ? [] : suggestionsRes);
+          if ("error" in suggestionsRes) {
+            throw suggestionsRes.error;
+          }
+          break;
+        }
+        case "ownerships": {
+          const ownershipsRes = await listProviderConnectionsOwnerships(auth.accessToken).catch((reason) => ({ error: reason }));
+          setOwnershipRows("error" in ownershipsRes ? [] : ownershipsRes);
+          if ("error" in ownershipsRes) {
+            throw ownershipsRes.error;
+          }
+          break;
+        }
+        case "conflicts": {
+          const conflictsRes = await listProviderConnectionsConflicts(auth.accessToken).catch((reason) => ({ error: reason }));
+          setConflicts("error" in conflictsRes ? [] : conflictsRes);
+          if ("error" in conflictsRes) {
+            throw conflictsRes.error;
+          }
+          break;
+        }
+        case "audit": {
+          const auditRes = await getProviderConnectionsAuditEvents(auth.accessToken, { action: auditAction || null, tenantReference: auditTenant || null, providerType: auditProviderType || null, result: auditResult || null, q: auditQuery || null }).catch((reason) => ({ error: reason }));
+          setAuditRows("error" in auditRes ? [] : auditRes);
+          if ("error" in auditRes) {
+            throw auditRes.error;
+          }
+          break;
+        }
+        default:
+          break;
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Provider connections could not be loaded.");
     } finally {
       setLoading(false);
     }
-  }, [auth.accessToken, publicCity, publicQuery, publicType, entityQuery, linkQuery, linkStatus, linkType, suggestionQuery, selectedLinkReference, auditAction, auditTenant, auditProviderType, auditResult, auditQuery, selectedReviewReference]);
+  }, [auth.accessToken, authSignature, auditAction, auditProviderType, auditQuery, auditResult, auditTenant, entityQuery, linkQuery, linkStatus, linkType, publicProfileCity, publicProfileQuery, publicProfileType, reviewPublicCity, reviewPublicQuery, reviewPublicType, section, selectedLinkReference, selectedReviewReference, suggestionQuery]);
+
+  const openReviewRow = React.useCallback(async (row: ProviderPublicProfileReviewQueueResponse) => {
+    if (!row.submissionReference) {
+      return;
+    }
+    setSelectedReview(null);
+    setSelectedReviewReference(row.submissionReference);
+    const normalizedStatus = (row.moderationStatus || "").toUpperCase();
+    if (normalizedStatus === "SUBMITTED" && auth.accessToken) {
+      try {
+        await startProviderConnectionsPublicProfileReview(auth.accessToken, row.submissionReference, {
+          reason: "Open review from queue",
+        });
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Unable to open the selected review.");
+        return;
+      }
+    }
+    navigate(reviewDetailPath(row.submissionReference));
+  }, [auth.accessToken, navigate]);
 
   React.useEffect(() => {
     void refresh();
@@ -2520,13 +2631,13 @@ export default function ProviderConnectionsPage() {
                 {section === "public-profiles" ? (
                   <Stack spacing={1.5}>
                     <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
-                      <TextField select label="Type" value={publicType} onChange={(event) => setPublicType(event.target.value as ProviderConnectionsPublicProfileType)} fullWidth>
+                      <TextField select label="Type" value={publicProfileType} onChange={(event) => setPublicProfileType(event.target.value as ProviderConnectionsPublicProfileType)} fullWidth>
                         <MenuItem value="CLINIC">Clinic</MenuItem>
                         <MenuItem value="DOCTOR">Doctor</MenuItem>
                         <MenuItem value="HOSPITAL">Hospital</MenuItem>
                       </TextField>
-                      <TextField label="Search" value={publicQuery} onChange={(event) => setPublicQuery(event.target.value)} fullWidth />
-                      <TextField label="City" value={publicCity} onChange={(event) => setPublicCity(event.target.value)} fullWidth />
+                      <TextField label="Search" value={publicProfileQuery} onChange={(event) => setPublicProfileQuery(event.target.value)} fullWidth />
+                      <TextField label="City" value={publicProfileCity} onChange={(event) => setPublicProfileCity(event.target.value)} fullWidth />
                     </Stack>
                     <TableContainer component={Paper} variant="outlined">
                       <Table size="small">
@@ -2640,13 +2751,57 @@ export default function ProviderConnectionsPage() {
                     <Grid size={{ xs: 12, lg: 5 }}>
                       <Stack spacing={1.5}>
                         <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
-                          <TextField select label="Type" value={publicType} onChange={(event) => setPublicType(event.target.value as ProviderConnectionsPublicProfileType)} fullWidth>
+                          <TextField
+                            select
+                            label="Type"
+                            value={reviewPublicType}
+                            onChange={(event) => {
+                              const next = new URLSearchParams(searchParams);
+                              const value = parseReviewType(event.target.value);
+                              if (value) {
+                                next.set("type", value);
+                              } else {
+                                next.delete("type");
+                              }
+                              setSearchParams(next, { replace: true });
+                            }}
+                            fullWidth
+                          >
+                            <MenuItem value="">All</MenuItem>
                             <MenuItem value="CLINIC">Clinic</MenuItem>
                             <MenuItem value="DOCTOR">Doctor</MenuItem>
                             <MenuItem value="HOSPITAL">Hospital</MenuItem>
                           </TextField>
-                          <TextField label="Search" value={publicQuery} onChange={(event) => setPublicQuery(event.target.value)} fullWidth />
-                          <TextField label="City" value={publicCity} onChange={(event) => setPublicCity(event.target.value)} fullWidth />
+                          <TextField
+                            label="Search"
+                            value={reviewPublicQuery}
+                            onChange={(event) => {
+                              const next = new URLSearchParams(searchParams);
+                              const value = event.target.value;
+                              if (value.trim()) {
+                                next.set("q", value);
+                              } else {
+                                next.delete("q");
+                              }
+                              setSearchParams(next, { replace: true });
+                            }}
+                            fullWidth
+                          />
+                          <TextField
+                            label="City"
+                            value={reviewPublicCity}
+                            onChange={(event) => {
+                              const next = new URLSearchParams(searchParams);
+                              const value = event.target.value;
+                              if (value.trim()) {
+                                next.set("city", value);
+                              } else {
+                                next.delete("city");
+                              }
+                              setSearchParams(next, { replace: true });
+                            }}
+                            fullWidth
+                          />
                         </Stack>
                         <Paper variant="outlined" sx={{ p: 1.5 }}>
                           <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
@@ -2663,20 +2818,26 @@ export default function ProviderConnectionsPage() {
                         </Paper>
                         <Stack spacing={1.25}>
                           {reviewRows.map((row) => {
+                            const submissionReference = row.submissionReference || "";
+                            if (!submissionReference) {
+                              return null;
+                            }
                             const selected = selectedReviewReference === row.submissionReference;
                             const primaryActionLabel = (row.moderationStatus || "").toUpperCase() === "UNDER_REVIEW" ? "Continue review" : "Open review";
                             return (
                               <Paper
-                                key={row.submissionReference}
+                                key={submissionReference}
                                 variant="outlined"
                                 onClick={() => {
-                                  if (!row.submissionReference) {
-                                    return;
-                                  }
-                                  setSelectedReview(null);
-                                  setSelectedReviewReference(row.submissionReference);
-                                  navigate(reviewDetailPath(row.submissionReference));
+                                  setSelectedReviewReference(submissionReference);
+                                  navigate(reviewDetailPath(submissionReference));
                                 }}
+                                onKeyDown={(event) => activateOnKeyboard(event, () => {
+                                  setSelectedReviewReference(submissionReference);
+                                  navigate(reviewDetailPath(submissionReference));
+                                })}
+                                tabIndex={0}
+                                role="button"
                                 sx={{
                                   p: 1.5,
                                   borderColor: selected ? "primary.main" : "divider",
@@ -2707,16 +2868,12 @@ export default function ProviderConnectionsPage() {
                                       <Typography variant="body2" color="text.secondary">{row.publicUrl || "No public URL yet"}</Typography>
                                       <Typography variant="caption" color="text.secondary">{row.publicProfileReference || "No public reference"}</Typography>
                                     </Box>
-                                    <Button
-                                      size="small"
-                                      variant="outlined"
-                                      onClick={(event) => {
-                                        event.stopPropagation();
-                                        if (row.submissionReference) {
-                                          setSelectedReview(null);
-                                          setSelectedReviewReference(row.submissionReference);
-                                          navigate(reviewDetailPath(row.submissionReference));
-                                        }
+                                      <Button
+                                        size="small"
+                                        variant="outlined"
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                        void openReviewRow(row);
                                       }}
                                     >
                                       {primaryActionLabel}
@@ -2765,9 +2922,34 @@ export default function ProviderConnectionsPage() {
                                 <Stack spacing={1}>
                                   <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Action panel</Typography>
                                   <Typography variant="body2" color="text.secondary">Actions are rendered only from backend allowedActions.</Typography>
-                                  <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
-                                    {(selectedReview.allowedActions || []).map((action) => renderReviewActionButton(action, selectedReview.submissionReference, selectedReview.publicUrl))}
-                                  </Stack>
+                                  {(() => {
+                                    const moderationActions = (selectedReview.allowedActions || []).filter((action) => isReviewModerationAction(action));
+                                    const publicationActions = (selectedReview.allowedActions || []).filter((action) => isReviewPublicationAction(action));
+                                    return (
+                                      <Stack spacing={1.25}>
+                                        {moderationActions.length ? (
+                                          <Stack spacing={0.75}>
+                                            <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 800, letterSpacing: 0.3, textTransform: "uppercase" }}>
+                                              Review actions
+                                            </Typography>
+                                            <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                                              {moderationActions.map((action) => renderReviewActionButton(action, selectedReview.submissionReference, selectedReview.publicUrl))}
+                                            </Stack>
+                                          </Stack>
+                                        ) : null}
+                                        {publicationActions.length ? (
+                                          <Stack spacing={0.75}>
+                                            <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 800, letterSpacing: 0.3, textTransform: "uppercase" }}>
+                                              Publication management
+                                            </Typography>
+                                            <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                                              {publicationActions.map((action) => renderReviewActionButton(action, selectedReview.submissionReference, selectedReview.publicUrl))}
+                                            </Stack>
+                                          </Stack>
+                                        ) : null}
+                                      </Stack>
+                                    );
+                                  })()}
                                 </Stack>
                               </Paper>
                             </Stack>

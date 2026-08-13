@@ -9,5 +9,6 @@ public interface DiscoverPublicProfileSubmissionRepository extends JpaRepository
     Optional<DiscoverPublicProfileSubmissionEntity> findBySubmissionReference(String submissionReference);
     Optional<DiscoverPublicProfileSubmissionEntity> findFirstByPublicProfileReferenceAndCurrentTrueOrderBySubmittedAtDesc(String publicProfileReference);
     List<DiscoverPublicProfileSubmissionEntity> findByPublicProfileReferenceOrderBySubmittedAtDesc(String publicProfileReference);
+    List<DiscoverPublicProfileSubmissionEntity> findByCurrentTrueAndModerationStatusInOrderBySubmittedAtDescModerationRevisionDesc(List<String> moderationStatuses);
     boolean existsByPublicProfileReferenceAndCurrentTrueAndModerationStatusIn(String publicProfileReference, List<String> moderationStatuses);
 }

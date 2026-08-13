@@ -17,6 +17,7 @@ test("provider review status page uses dedicated review rendering and safe revie
   assert.ok(page.includes('renderMode="PROVIDER_REVIEW_STATUS"'));
   assert.ok(page.includes("Submitted version"));
   assert.ok(page.includes("Platform review team"));
+  assert.ok(page.includes("View submitted preview"));
   assert.ok(page.includes("Decision reason"));
   assert.ok(page.includes("No provider-facing message recorded."));
   assert.ok(api.includes("providerPublicProfileReviewMediaContentPath"));

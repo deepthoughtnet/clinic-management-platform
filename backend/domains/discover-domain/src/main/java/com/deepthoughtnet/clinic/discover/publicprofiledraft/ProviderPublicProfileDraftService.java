@@ -5,6 +5,9 @@ import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipCon
 import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipService;
 import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProfileLifecycleRecord;
+import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderGalleryImageSnapshot;
+import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderLocationSnapshot;
+import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderProfileSnapshot;
 import com.deepthoughtnet.clinic.discover.publicprofilemoderation.db.DiscoverPublicProfileSubmissionRepository;
 import com.deepthoughtnet.clinic.discover.publicprofiledraft.PublicProfileDraftModels.PublicProfileDraftFieldSourceRecord;
 import com.deepthoughtnet.clinic.discover.publicprofiledraft.PublicProfileDraftModels.PublicProfileDraftMediaContentRecord;
@@ -138,7 +141,7 @@ public class ProviderPublicProfileDraftService {
             throw new ProviderOwnershipConflictException("stale_public_profile_draft", "This profile was updated elsewhere. Reload before saving.");
         }
         Map<String, Object> content = contentMap(entity);
-        Map<String, Object> nextSection = normalizeContent(request.sectionKey(), request.content());
+        Map<String, Object> nextSection = normalizeContent(request.sectionKey(), request.content(), entity.getPublicProfileType());
         Map<String, Object> currentSection = asSection(content.get(request.sectionKey()));
         if (Objects.equals(currentSection, nextSection)) {
             return toWorkspace(entity);
@@ -332,7 +335,12 @@ public class ProviderPublicProfileDraftService {
         requireEditableAccess(providerAccountId, publicProfileReference);
         String reference = normalizeReference(publicProfileReference);
         return loadDraftEntity(reference)
-                .map(this::toWorkspace)
+                .map(entity -> {
+                    if (createIfMissing) {
+                        hydrateHistoricalDraft(entity, providerAccountId);
+                    }
+                    return toWorkspace(entity);
+                })
                 .orElseGet(() -> {
                     if (!createIfMissing) {
                         throw new ProviderOwnershipConflictException("public_profile_draft_not_found", "Public profile draft not found.");
@@ -342,13 +350,26 @@ public class ProviderPublicProfileDraftService {
     }
 
     private PublicProfileDraftWorkspaceRecord createDraft(UUID providerAccountId, String publicProfileReference) {
-        PublicProfileLifecycleRecord lifecycle = publicProfileService.findLifecycleByProviderId(parseUuid(publicProfileReference)).orElse(null);
+        UUID providerId = parseUuid(publicProfileReference);
+        PublicProfileLifecycleRecord lifecycle = publicProfileService.findLifecycleByProviderId(providerId).orElse(null);
+        PublicProviderProfileSnapshot snapshot = publicProfileService.findSnapshotByProviderId(providerId).orElse(null);
+        ProviderType publicProfileType = snapshot != null && snapshot.providerType() != null
+                ? snapshot.providerType()
+                : lifecycle == null ? ProviderType.CLINIC : lifecycle.providerType();
         String tenantConsentStatus = resolveTenantConsentStatus(publicProfileReference, "DISABLED");
-        Map<String, Object> content = initialContent(lifecycle, tenantConsentStatus);
-        Map<String, PublicProfileDraftFieldSourceRecord> sources = initialSources(lifecycle);
+        if (publicProfileType != ProviderType.CLINIC && !StringUtils.hasText(tenantConsentStatus)) {
+            tenantConsentStatus = "ENABLED";
+        }
+        if (publicProfileType != ProviderType.CLINIC && "DISABLED".equalsIgnoreCase(tenantConsentStatus)) {
+            tenantConsentStatus = "ENABLED";
+        }
+        String publicProfileStatus = lifecycle == null ? PUBLIC_PROFILE_STATUS : firstNonBlank(lifecycle.publicationStatus(), PUBLIC_PROFILE_STATUS);
+        Map<String, Object> content = initialContent(lifecycle, tenantConsentStatus, publicProfileType, providerId, snapshot);
+        content = hydrateHistoricalContent(content, publicProfileReference, lifecycle, snapshot);
+        Map<String, PublicProfileDraftFieldSourceRecord> sources = initialSources(lifecycle, providerId, snapshot);
         PublicProfileDraftReadinessRecord readiness = evaluateReadiness(content, providerAccountId, true, 1);
-        String canonicalSlug = resolveSlug(lifecycle, content);
-        String publicPath = publicPath(ProviderType.CLINIC, canonicalSlug);
+        String canonicalSlug = resolveSlug(lifecycle, providerId, snapshot);
+        String publicPath = publicPath(publicProfileType, canonicalSlug);
         String draftReference = UUID.randomUUID().toString();
         OffsetDateTime now = OffsetDateTime.now();
         String contentJson = toJson(content);
@@ -360,11 +381,11 @@ public class ProviderPublicProfileDraftService {
                     UUID.randomUUID(),
                     draftReference,
                     publicProfileReference,
-                    ProviderType.CLINIC,
+                    publicProfileType,
                     providerAccountId,
                     "VERIFIED",
                     tenantConsentStatus,
-                    PUBLIC_PROFILE_STATUS,
+                    publicProfileStatus,
                     readiness.ready() ? "READY_FOR_REVIEW" : "DRAFT_INCOMPLETE",
                     readiness.readinessStatus(),
                     readiness.completenessPercentage(),
@@ -409,7 +430,10 @@ public class ProviderPublicProfileDraftService {
             return toWorkspace(entity);
         } catch (DataIntegrityViolationException ex) {
             return drafts.findByPublicProfileReference(publicProfileReference)
-                    .map(this::toWorkspace)
+                    .map(entity -> {
+                        hydrateHistoricalDraft(entity, providerAccountId);
+                        return toWorkspace(entity);
+                    })
                     .orElseThrow(() -> ex);
         }
     }
@@ -901,13 +925,20 @@ public class ProviderPublicProfileDraftService {
         return publicProfileService.isSlugReserved(slug, null);
     }
 
-    private Map<String, Object> initialContent(PublicProfileLifecycleRecord lifecycle, String tenantConsentStatus) {
+    private Map<String, Object> initialContent(
+            PublicProfileLifecycleRecord lifecycle,
+            String tenantConsentStatus,
+            ProviderType publicProfileType,
+            UUID providerId,
+            PublicProviderProfileSnapshot snapshot
+    ) {
         Map<String, Object> content = new LinkedHashMap<>();
         String displayName = lifecycle == null ? "Provider profile" : firstNonBlank(lifecycle.displayName(), "Provider profile");
         String city = lifecycle == null ? null : lifecycle.city();
         String area = lifecycle == null ? null : lifecycle.area();
+        String slug = resolveSlug(lifecycle, providerId, snapshot);
         content.put("overview", sectionMap(
-                "profileType", "CLINIC",
+                "profileType", publicProfileType == null ? "CLINIC" : publicProfileType.name(),
                 "displayName", displayName,
                 "shortTagline", null,
                 "establishedYear", null,
@@ -924,7 +955,7 @@ public class ProviderPublicProfileDraftService {
                 "description", null,
                 "philosophy", null,
                 "establishedYear", null,
-                "registrationNumber", lifecycle == null ? null : lifecycle.sourceEntityReference(),
+                "registrationNumber", null,
                 "emergencyAvailability", null
         ));
         content.put("contact", sectionMap(
@@ -957,17 +988,20 @@ public class ProviderPublicProfileDraftService {
                 "galleryAltTextByDocumentId", Map.of(),
                 "mediaMetadataByDocumentId", Map.of()
         ));
-        String slug = resolveSlug(lifecycle, content);
         content.put("seo", sectionMap(
                 "slug", slug,
                 "metaTitle", displayName,
                 "metaDescription", null,
-                "canonicalPublicPath", publicPath(ProviderType.CLINIC, slug)
+                "canonicalPublicPath", publicProfileType == null ? publicPath(ProviderType.CLINIC, slug) : publicPath(publicProfileType, slug)
         ));
         return content;
     }
 
-    private Map<String, PublicProfileDraftFieldSourceRecord> initialSources(PublicProfileLifecycleRecord lifecycle) {
+    private Map<String, PublicProfileDraftFieldSourceRecord> initialSources(
+            PublicProfileLifecycleRecord lifecycle,
+            UUID providerId,
+            PublicProviderProfileSnapshot snapshot
+    ) {
         OffsetDateTime now = OffsetDateTime.now();
         Map<String, PublicProfileDraftFieldSourceRecord> sources = new LinkedHashMap<>();
         String displayName = lifecycle == null ? "Provider profile" : firstNonBlank(lifecycle.displayName(), "Provider profile");
@@ -975,7 +1009,7 @@ public class ProviderPublicProfileDraftService {
         putSource(sources, "about.displayName", now, displayName);
         putSource(sources, "contact.city", now, lifecycle == null ? null : lifecycle.city());
         putSource(sources, "contact.area", now, lifecycle == null ? null : lifecycle.area());
-        putSource(sources, "seo.slug", now, resolveSlug(lifecycle, initialContent(lifecycle, "DISABLED")));
+        putSource(sources, "seo.slug", now, resolveSlug(lifecycle, providerId, snapshot));
         putSource(sources, "seo.metaTitle", now, displayName);
         return sources;
     }
@@ -992,19 +1026,338 @@ public class ProviderPublicProfileDraftService {
         ));
     }
 
-    private String resolveSlug(PublicProfileLifecycleRecord lifecycle, Map<String, Object> content) {
-        String requested = lifecycle != null && StringUtils.hasText(lifecycle.canonicalSlug())
-                ? lifecycle.canonicalSlug().trim()
-                : slugify(lifecycle == null ? null : lifecycle.displayName());
+    private String resolveSlug(PublicProfileLifecycleRecord lifecycle, UUID providerId, PublicProviderProfileSnapshot snapshot) {
+        if (snapshot != null && StringUtils.hasText(snapshot.canonicalSlug())) {
+            return snapshot.canonicalSlug().trim();
+        }
+        if (lifecycle != null && StringUtils.hasText(lifecycle.canonicalSlug())) {
+            return lifecycle.canonicalSlug().trim();
+        }
+        String requested = slugify(lifecycle == null ? null : lifecycle.displayName());
         if (!StringUtils.hasText(requested)) {
             requested = "provider";
         }
         String candidate = requested;
         int suffix = 2;
-        while (publicProfileService.isSlugReserved(candidate, null)) {
+        while (publicProfileService.isSlugReserved(candidate, providerId)) {
             candidate = requested + "-" + suffix++;
         }
         return candidate;
+    }
+
+    private Map<String, Object> hydrateHistoricalContent(
+            Map<String, Object> content,
+            String publicProfileReference,
+            PublicProfileLifecycleRecord lifecycle,
+            PublicProviderProfileSnapshot snapshot
+    ) {
+        if (snapshot == null) {
+            return content;
+        }
+        Map<String, Object> overview = asSection(content.get("overview"));
+        Map<String, Object> about = asSection(content.get("about"));
+        Map<String, Object> contact = asSection(content.get("contact"));
+        Map<String, Object> services = asSection(content.get("services"));
+        Map<String, Object> specialities = asSection(content.get("specialities"));
+        Map<String, Object> facilities = asSection(content.get("facilities"));
+        Map<String, Object> timings = asSection(content.get("timings"));
+        Map<String, Object> media = asSection(content.get("media"));
+        Map<String, Object> seo = asSection(content.get("seo"));
+
+        applyIfBlank(overview, "displayName", snapshot.displayName());
+        applyIfBlank(overview, "shortTagline", firstNonBlank(snapshot.tagline(), snapshot.summary()));
+
+        applyIfBlank(about, "displayName", snapshot.displayName());
+        applyIfBlank(about, "shortTagline", firstNonBlank(snapshot.tagline(), snapshot.summary()));
+        applyIfBlank(about, "description", firstNonBlank(snapshot.biography(), snapshot.summary()));
+        applyIfBlank(about, "philosophy", firstNonBlank(snapshot.summary(), snapshot.biography()));
+        applyIfBlank(about, "emergencyAvailability", snapshot.emergencyAvailable() ? "Emergency care available" : null);
+        repairHistoricalRegistrationNumber(about, publicProfileReference, lifecycle);
+
+        PublicProviderLocationSnapshot primaryLocation = snapshot.locations() == null || snapshot.locations().isEmpty() ? null : snapshot.locations().getFirst();
+        if (primaryLocation != null) {
+            applyIfBlank(contact, "addressLine1", firstNonBlank(primaryLocation.address(), primaryLocation.label()));
+            applyIfBlank(contact, "area", snapshot.area());
+            applyIfBlank(contact, "city", primaryLocation.city());
+            applyIfBlank(contact, "state", primaryLocation.state());
+            applyIfBlank(contact, "country", primaryLocation.country());
+            applyIfBlank(contact, "postalCode", primaryLocation.pinCode());
+        }
+        applyIfBlank(contact, "publicPhone", snapshot.contactPhone());
+        applyIfBlank(contact, "publicEmail", snapshot.contactEmail());
+        applyIfBlank(contact, "website", snapshot.website());
+        applyIfBlank(contact, "whatsappNumber", snapshot.contactPhone());
+
+        applyIfBlankList(services, "items", snapshot.services());
+        applyIfBlankList(specialities, "items", snapshot.specialities());
+        if (stringList(specialities, "items").isEmpty() && StringUtils.hasText(snapshot.primarySpeciality())) {
+            specialities.put("items", List.of(snapshot.primarySpeciality().trim()));
+        }
+        applyIfBlankList(facilities, "items", snapshot.facilities());
+        PublicProviderLocationSnapshot workingHoursLocation = primaryLocation(snapshot);
+        if (requiresHistoricalTwentyFourSevenRepair(timings, workingHoursLocation)) {
+            timings.put("timezone", firstNonBlank(snapshot.timingTimezone(), "Asia/Kolkata"));
+            timings.put("intervals", canonicalTwentyFourSevenIntervals());
+            timings.remove("weekly");
+        } else if (stringList(timings, "intervals").isEmpty() && timingDays(timings).isEmpty() && snapshot.weeklyTimings() != null && !snapshot.weeklyTimings().isEmpty()) {
+            timings.put("timezone", firstNonBlank(snapshot.timingTimezone(), "Asia/Kolkata"));
+            timings.put("intervals", snapshot.weeklyTimings().stream()
+                    .map(interval -> sectionMap(
+                            "dayOfWeek", interval.day(),
+                            "startTime", interval.open(),
+                            "endTime", interval.close()
+                    ))
+                    .toList());
+        } else {
+            applyIfBlank(timings, "timezone", snapshot.timingTimezone());
+        }
+
+        applyIfBlank(media, "logoDocumentId", snapshot.logoDocumentId() == null ? null : snapshot.logoDocumentId().toString());
+        applyIfBlank(media, "coverDocumentId", snapshot.coverImageDocumentId() == null ? null : snapshot.coverImageDocumentId().toString());
+        if (stringList(media, "gallery").isEmpty() && snapshot.gallery() != null && !snapshot.gallery().isEmpty()) {
+            List<String> gallery = snapshot.gallery().stream()
+                    .map(item -> item.documentId() == null ? null : item.documentId().toString())
+                    .filter(StringUtils::hasText)
+                    .toList();
+            media.put("gallery", gallery);
+            if (!hasText(stringValue(media, "primaryGalleryDocumentId")) && !gallery.isEmpty()) {
+                media.put("primaryGalleryDocumentId", gallery.getFirst());
+            }
+            Map<String, Object> metadataByDocumentId = asSection(media.get("mediaMetadataByDocumentId"));
+            Map<String, Object> altTextByDocumentId = asSection(media.get("galleryAltTextByDocumentId"));
+            for (int index = 0; index < snapshot.gallery().size(); index++) {
+                PublicProviderGalleryImageSnapshot image = snapshot.gallery().get(index);
+                if (image.documentId() == null) {
+                    continue;
+                }
+                String documentId = image.documentId().toString();
+                if (!metadataByDocumentId.containsKey(documentId)) {
+                    metadataByDocumentId.put(documentId, sectionMap(
+                            "mediaType", "GALLERY_IMAGE",
+                            "originalFilename", firstNonBlank(image.caption(), "Gallery image " + (index + 1)),
+                            "contentType", "image/jpeg",
+                            "sizeBytes", null,
+                            "uploadedAt", snapshot.publishedAt(),
+                            "storageKey", null
+                    ));
+                }
+                if (!altTextByDocumentId.containsKey(documentId) && StringUtils.hasText(image.caption())) {
+                    altTextByDocumentId.put(documentId, image.caption().trim());
+                }
+            }
+            media.put("mediaMetadataByDocumentId", metadataByDocumentId);
+            media.put("galleryAltTextByDocumentId", altTextByDocumentId);
+        }
+
+        String canonicalSlug = resolveSlug(lifecycle, parseUuid(publicProfileReference), snapshot);
+        if (!hasText(stringValue(seo, "slug")) || shouldRestoreCanonicalSlug(content, publicProfileReference, snapshot, canonicalSlug)) {
+            seo.put("slug", canonicalSlug);
+        }
+        if (!hasText(stringValue(seo, "metaTitle")) && StringUtils.hasText(snapshot.displayName())) {
+            seo.put("metaTitle", snapshot.displayName().trim());
+        }
+        if (!hasText(stringValue(seo, "metaDescription"))) {
+            seo.put("metaDescription", firstNonBlank(snapshot.summary(), snapshot.biography()));
+        }
+        seo.put("canonicalPublicPath", snapshot.publicPath());
+
+        content.put("overview", overview);
+        content.put("about", about);
+        content.put("contact", contact);
+        content.put("services", services);
+        content.put("specialities", specialities);
+        content.put("facilities", facilities);
+        content.put("timings", timings);
+        content.put("media", media);
+        content.put("seo", seo);
+        return content;
+    }
+
+    private PublicProviderLocationSnapshot primaryLocation(PublicProviderProfileSnapshot snapshot) {
+        return snapshot == null || snapshot.locations() == null || snapshot.locations().isEmpty() ? null : snapshot.locations().getFirst();
+    }
+
+    private boolean requiresHistoricalTwentyFourSevenRepair(Map<String, Object> timings, PublicProviderLocationSnapshot primaryLocation) {
+        if (primaryLocation == null || !isTwentyFourSevenWorkingHours(primaryLocation.workingHours())) {
+            return false;
+        }
+        List<Map<String, Object>> currentDays = timingDays(timings);
+        if (currentDays.isEmpty()) {
+            return true;
+        }
+        if (currentDays.size() != 7) {
+            return true;
+        }
+        Map<String, String> canonical = canonicalTwentyFourSevenIntervals().stream()
+                .collect(Collectors.toMap(
+                        interval -> stringValue(interval, "dayOfWeek"),
+                        interval -> stringValue(interval, "startTime") + "-" + stringValue(interval, "endTime"),
+                        (left, right) -> left,
+                        LinkedHashMap::new
+                ));
+        Map<String, String> current = new LinkedHashMap<>();
+        for (Map<String, Object> day : currentDays) {
+            String dayKey = normalizeDay(firstNonBlank(stringValue(day, "dayOfWeek"), stringValue(day, "day")));
+            List<Map<String, Object>> intervals = timingIntervals(day);
+            if (dayKey == null || intervals.size() != 1) {
+                return true;
+            }
+            Map<String, Object> interval = intervals.getFirst();
+            String start = firstNonBlank(stringValue(interval, "startTime"), stringValue(interval, "start"), stringValue(interval, "open"));
+            String end = firstNonBlank(stringValue(interval, "endTime"), stringValue(interval, "end"), stringValue(interval, "close"));
+            if (!"00:00".equals(start) || !"23:59".equals(end)) {
+                return true;
+            }
+            current.put(dayKey, start + "-" + end);
+        }
+        return !current.equals(canonical);
+    }
+
+    private List<Map<String, Object>> canonicalTwentyFourSevenIntervals() {
+        return List.of(
+                sectionMap("dayOfWeek", "MONDAY", "startTime", "00:00", "endTime", "23:59"),
+                sectionMap("dayOfWeek", "TUESDAY", "startTime", "00:00", "endTime", "23:59"),
+                sectionMap("dayOfWeek", "WEDNESDAY", "startTime", "00:00", "endTime", "23:59"),
+                sectionMap("dayOfWeek", "THURSDAY", "startTime", "00:00", "endTime", "23:59"),
+                sectionMap("dayOfWeek", "FRIDAY", "startTime", "00:00", "endTime", "23:59"),
+                sectionMap("dayOfWeek", "SATURDAY", "startTime", "00:00", "endTime", "23:59"),
+                sectionMap("dayOfWeek", "SUNDAY", "startTime", "00:00", "endTime", "23:59")
+        );
+    }
+
+    private boolean isTwentyFourSevenWorkingHours(String workingHours) {
+        if (!hasText(workingHours)) {
+            return false;
+        }
+        String normalized = workingHours.toLowerCase(Locale.ROOT).replaceAll("[\\s._-]", "");
+        return normalized.contains("24x7") || normalized.contains("24/7") || normalized.contains("247");
+    }
+
+    private void applyIfBlank(Map<String, Object> section, String key, String value) {
+        if (!hasText(stringValue(section, key)) && hasText(value)) {
+            section.put(key, value.trim());
+        }
+    }
+
+    private void applyIfBlankList(Map<String, Object> section, String key, List<String> values) {
+        if (stringList(section, key).isEmpty() && values != null && !values.isEmpty()) {
+            section.put(key, values.stream().filter(StringUtils::hasText).map(String::trim).toList());
+        }
+    }
+
+    private void repairHistoricalRegistrationNumber(Map<String, Object> about, String publicProfileReference, PublicProfileLifecycleRecord lifecycle) {
+        String registration = stringValue(about, "registrationNumber");
+        if (!hasText(registration)) {
+            return;
+        }
+        String normalized = registration.trim();
+        if (Objects.equals(normalized, publicProfileReference)
+                || (lifecycle != null && Objects.equals(normalized, lifecycle.sourceEntityReference()))) {
+            about.put("registrationNumber", null);
+        }
+    }
+
+    private boolean shouldRestoreCanonicalSlug(
+            Map<String, Object> content,
+            String publicProfileReference,
+            PublicProviderProfileSnapshot snapshot,
+            String canonicalSlug
+    ) {
+        String currentSlug = stringValue(asSection(content.get("seo")), "slug");
+        if (!hasText(currentSlug) || !StringUtils.hasText(canonicalSlug)) {
+            return false;
+        }
+        String currentPath = stringValue(asSection(content.get("seo")), "canonicalPublicPath");
+        if (StringUtils.hasText(currentPath) && currentPath.endsWith("-2")) {
+            return true;
+        }
+        if (snapshot != null && Objects.equals(currentSlug.trim(), canonicalSlug.trim())) {
+            return false;
+        }
+        return Objects.equals(currentSlug.trim(), publicProfileReference.trim());
+    }
+
+    private void hydrateHistoricalDraft(DiscoverPublicProfileDraftEntity entity, UUID providerAccountId) {
+        UUID providerId = parseUuid(entity.getPublicProfileReference());
+        if (providerId == null) {
+            return;
+        }
+        PublicProfileLifecycleRecord lifecycle = publicProfileService.findLifecycleByProviderId(providerId).orElse(null);
+        PublicProviderProfileSnapshot snapshot = publicProfileService.findSnapshotByProviderId(providerId).orElse(null);
+        if (snapshot == null && lifecycle == null) {
+            return;
+        }
+        Map<String, Object> currentContent = contentMap(entity);
+        Map<String, Object> hydratedContent = hydrateHistoricalContent(readMap(toJson(currentContent)).orElseGet(LinkedHashMap::new), entity.getPublicProfileReference(), lifecycle, snapshot);
+        String hydratedContentJson = toJson(hydratedContent);
+        String canonicalSlug = resolveSlug(lifecycle, providerId, snapshot);
+        String nextPublicPath = publicPath(entity.getPublicProfileType(), canonicalSlug);
+        String nextRegistrationNumber = repairedRegistrationNumber(entity, entity.getPublicProfileReference(), lifecycle);
+        SummaryValues summary = summarize(hydratedContent, lifecycle, canonicalSlug);
+        PublicProfileDraftReadinessRecord readiness = evaluateReadiness(hydratedContent, providerAccountId, false, entity.getCurrentVersion());
+        String nextContentStatus = readiness.ready() ? "READY_FOR_REVIEW" : "DRAFT_INCOMPLETE";
+        String nextReadinessStatus = readiness.ready() ? "READY" : "INCOMPLETE";
+        boolean changed = !Objects.equals(currentContent, hydratedContent)
+                || !Objects.equals(entity.getCanonicalSlug(), canonicalSlug)
+                || !Objects.equals(entity.getPublicPath(), nextPublicPath)
+                || !Objects.equals(entity.getRegistrationNumber(), nextRegistrationNumber)
+                || !Objects.equals(entity.getDisplayName(), summary.displayName())
+                || !Objects.equals(entity.getCity(), summary.city())
+                || !Objects.equals(entity.getArea(), summary.area())
+                || !Objects.equals(entity.getState(), summary.state())
+                || !Objects.equals(entity.getCountry(), summary.country())
+                || !Objects.equals(entity.getPublicPhone(), summary.publicPhone())
+                || !Objects.equals(entity.getPublicEmail(), summary.publicEmail())
+                || !Objects.equals(entity.getWebsite(), summary.website())
+                || !Objects.equals(entity.getWhatsappNumber(), summary.whatsappNumber())
+                || !Objects.equals(entity.getEstablishedYear(), summary.establishedYear())
+                || !Objects.equals(entity.getContentStatus(), nextContentStatus)
+                || !Objects.equals(entity.getReadinessStatus(), nextReadinessStatus)
+                || entity.getCompletenessPercentage() != readiness.completenessPercentage();
+        if (!changed) {
+            return;
+        }
+        OffsetDateTime now = OffsetDateTime.now();
+        entity.update(
+                nextContentStatus,
+                nextReadinessStatus,
+                readiness.completenessPercentage(),
+                entity.getTenantConsentStatus(),
+                entity.getPublicProfileStatus(),
+                entity.getCurrentVersion(),
+                summary.displayName(),
+                canonicalSlug,
+                summary.city(),
+                summary.area(),
+                summary.state(),
+                summary.country(),
+                summary.publicPhone(),
+                summary.publicEmail(),
+                summary.website(),
+                summary.whatsappNumber(),
+                nextRegistrationNumber,
+                summary.establishedYear(),
+                now,
+                providerAccountId,
+                nextPublicPath,
+                hydratedContentJson,
+                entity.getSourceAttributionJson(),
+                toJson(readiness)
+        );
+        drafts.save(entity);
+    }
+
+    private String repairedRegistrationNumber(DiscoverPublicProfileDraftEntity entity, String publicProfileReference, PublicProfileLifecycleRecord lifecycle) {
+        String current = entity.getRegistrationNumber();
+        if (!hasText(current)) {
+            return null;
+        }
+        String normalized = current.trim();
+        if (Objects.equals(normalized, publicProfileReference)
+                || (lifecycle != null && Objects.equals(normalized, lifecycle.sourceEntityReference()))) {
+            return null;
+        }
+        return normalized;
     }
 
     private SummaryValues summarize(Map<String, Object> content, PublicProfileLifecycleRecord lifecycle, String fallbackSlug) {
@@ -1274,13 +1627,13 @@ public class ProviderPublicProfileDraftService {
         return StringUtils.hasText(value) ? value.trim() : null;
     }
 
-    private Map<String, Object> normalizeContent(String sectionKey, Map<String, Object> content) {
+    private Map<String, Object> normalizeContent(String sectionKey, Map<String, Object> content, ProviderType publicProfileType) {
         Map<String, Object> normalized = new LinkedHashMap<>();
         if (content != null) {
             content.forEach((key, value) -> normalized.put(key, normalizeValue(value)));
         }
         if ("seo".equalsIgnoreCase(sectionKey) && !normalized.containsKey("canonicalPublicPath") && hasText(stringValue(normalized, "slug"))) {
-            normalized.put("canonicalPublicPath", publicPath(ProviderType.CLINIC, stringValue(normalized, "slug")));
+            normalized.put("canonicalPublicPath", publicPath(publicProfileType == null ? ProviderType.CLINIC : publicProfileType, stringValue(normalized, "slug")));
         }
         return normalized;
     }

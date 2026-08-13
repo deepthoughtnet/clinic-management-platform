@@ -16,6 +16,8 @@ test("platform moderation review preview stays inside web-admin", () => {
   assert.ok(page.includes("PlatformPublicProfileReviewPreview"));
   assert.ok(page.includes("row.allowedActions || []"));
   assert.ok(page.includes("Actions are rendered only from backend allowedActions."));
+  assert.ok(page.includes("Review actions"));
+  assert.ok(page.includes("Publication management"));
   assert.ok(preview.includes("review.contentSnapshot"));
   assert.ok(preview.includes("review.mediaSnapshot"));
   assert.ok(preview.includes("Timings"));

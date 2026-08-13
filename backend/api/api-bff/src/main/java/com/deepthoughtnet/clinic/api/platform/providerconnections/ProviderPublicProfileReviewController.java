@@ -13,6 +13,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -29,8 +30,12 @@ public class ProviderPublicProfileReviewController {
     }
 
     @GetMapping
-    public ResponseEntity<List<?>> list() {
-        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(service.listQueue());
+    public ResponseEntity<List<?>> list(
+            @RequestParam(required = false) String type,
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) String city
+    ) {
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(service.listQueue(type, q, city));
     }
 
     @GetMapping("/{submissionReference}")

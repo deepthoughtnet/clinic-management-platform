@@ -98,6 +98,8 @@ export type ProviderPublicProfileModeration = {
   submittedAt: string | null;
   reviewedAt: string | null;
   currentDraftVersion: number;
+  editable: boolean;
+  publicUrl: string | null;
 };
 
 export type ProviderPublicProfileDraftSectionUpdate = {

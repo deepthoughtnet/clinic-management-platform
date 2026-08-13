@@ -2,9 +2,8 @@ package com.deepthoughtnet.clinic.api.discover.provider.publicprofile;
 
 import com.deepthoughtnet.clinic.api.discover.provider.auth.ProviderSessionPrincipal;
 import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipConflictException;
+import com.deepthoughtnet.clinic.discover.publicprofiledraft.ProviderPublicProfileDraftService;
 import com.deepthoughtnet.clinic.discover.publicprofilemoderation.ProviderPublicProfileModerationService;
-import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
-import com.deepthoughtnet.clinic.clinic.service.model.ClinicProfileRecord;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -26,11 +25,11 @@ import org.springframework.web.bind.annotation.RestController;
 @PreAuthorize("hasRole('PROVIDER')")
 public class ProviderPublicProfileModerationController {
     private final ProviderPublicProfileModerationService service;
-    private final ClinicProfileService clinicProfileService;
+    private final ProviderPublicProfileDraftService draftService;
 
-    public ProviderPublicProfileModerationController(ProviderPublicProfileModerationService service, ClinicProfileService clinicProfileService) {
+    public ProviderPublicProfileModerationController(ProviderPublicProfileModerationService service, ProviderPublicProfileDraftService draftService) {
         this.service = service;
-        this.clinicProfileService = clinicProfileService;
+        this.draftService = draftService;
     }
 
     @GetMapping("/{publicProfileReference}/moderation")
@@ -88,20 +87,9 @@ public class ProviderPublicProfileModerationController {
     }
 
     private boolean consentEnabled(String publicProfileReference) {
-        UUID tenantId = parseUuid(publicProfileReference);
-        if (tenantId == null) {
-            return false;
-        }
-        ClinicProfileRecord clinic = clinicProfileService.findByTenantId(tenantId).orElse(null);
-        return clinic != null && clinic.publicListingEnabled();
-    }
-
-    private UUID parseUuid(String value) {
-        try {
-            return value == null ? null : UUID.fromString(value.trim());
-        } catch (Exception ex) {
-            return null;
-        }
+        return draftService.findDraft(publicProfileReference)
+                .map(draft -> "ENABLED".equalsIgnoreCase(draft.tenantConsentStatus()))
+                .orElse(false);
     }
 
     private String string(Object value) {

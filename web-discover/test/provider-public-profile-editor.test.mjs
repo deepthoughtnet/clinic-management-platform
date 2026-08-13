@@ -39,9 +39,16 @@ test("previewShowsDraftNotPublicBanner", () => {
   const page = read("src/pages/provider/ProviderPublicProfileDraftPage.tsx");
   assert.ok(page.includes("Draft Preview – Not Public"));
   assert.ok(page.includes('renderMode="PROVIDER_DRAFT_PREVIEW"'));
+  assert.ok(page.includes("This preview shows your current unpublished changes."));
   assert.ok(page.includes("Copy Public URL"));
-  assert.ok(page.includes("Back to Editor"));
+  assert.ok(page.includes("Back to editing"));
+  assert.ok(page.includes("View live profile"));
   assert.ok(page.includes("Back to Workspace"));
+  assert.ok(page.includes("Doctors at this hospital"));
+  assert.ok(page.includes("provider-preview-section--doctors"));
+  assert.ok(page.includes("loadProviderHospitalDoctors"));
+  assert.ok(page.includes("fetchPublicJson"));
+  assert.ok(page.includes("DoctorCard"));
   assert.ok(!page.includes("Call clinic"));
   assert.ok(page.includes("ProviderEditorSectionCard"));
   assert.ok(page.includes("ProviderEditorFooter"));
@@ -97,6 +104,29 @@ test("consentEnabledReadyProfileRendersSubmitAction", () => {
   assert.ok(page.includes('Ready to submit for platform review.'));
 });
 
+test("submissionBlockersRenderSpecificCopy", () => {
+  const page = read("src/pages/provider/ProviderPublicProfileDraftPage.tsx");
+  assert.ok(page.includes("Verified ownership is required before submitting for platform review."));
+  assert.ok(page.includes("A platform review is already in progress."));
+  assert.ok(page.includes("Profile under platform review"));
+  assert.ok(page.includes("View submitted preview"));
+  assert.ok(page.includes("Your currently published profile remains visible to patients while this update is being reviewed."));
+  assert.ok(page.includes("submissionBlockerMessage(currentModeration?.submissionBlockers)"));
+});
+
+test("underReviewBootstrapReadsLifecycleBeforeEditableDraft", () => {
+  const page = read("src/pages/provider/ProviderPublicProfileDraftPage.tsx");
+  const moderationIndex = page.indexOf("loadProviderPublicProfileModeration(profileReference)");
+  const createIndex = page.indexOf("createProviderPublicProfileDraft(profileReference)");
+  assert.ok(moderationIndex >= 0);
+  assert.ok(createIndex >= 0);
+  assert.ok(moderationIndex < createIndex);
+  assert.ok(page.includes("Profile under platform review"));
+  assert.ok(page.includes("View public profile"));
+  assert.ok(page.includes("editable"));
+  assert.ok(page.includes("publicUrl"));
+});
+
 test("consentEnabledIncompleteProfileShowsContentBlockersOnly", () => {
   const presenter = read("src/utils/providerConsentPresentation.ts");
   assert.ok(presenter.includes("Complete the remaining profile requirements before submitting."));
@@ -106,8 +136,18 @@ test("consentEnabledIncompleteProfileShowsContentBlockersOnly", () => {
 test("unknownConsentDoesNotDefaultToDisabledCopy", () => {
   const presenter = read("src/utils/providerConsentPresentation.ts");
   assert.ok(presenter.includes("status unavailable"));
-  assert.ok(presenter.includes("We are checking whether the clinic has enabled Discover participation."));
+  assert.ok(presenter.includes("We are checking whether this provider profile has enabled Discover participation."));
   assert.ok(presenter.includes("isBlocked: false"));
+});
+
+test("hospitalDraftUsesHospitalTerminology", () => {
+  const page = read("src/pages/provider/ProviderPublicProfileDraftPage.tsx");
+  assert.ok(page.includes('helperText={isHospitalProfile ? "Use the hospital name patients know." : "Use the clinic name patients know."}'));
+  assert.ok(page.includes('description={isHospitalProfile ? "Describe the hospital in plain language. These fields power the public profile preview." : "Describe the clinic in plain language. These fields power the public profile preview."}'));
+  assert.ok(page.includes('label={isHospitalProfile ? "Hospital philosophy" : "Clinic philosophy"}'));
+  assert.ok(page.includes('helperText={isHospitalProfile ? "Use a short business description such as Available during hospital hours." : "Use a short business description such as Available during clinic hours."}'));
+  assert.ok(page.includes('description={isHospitalProfile ? "Select the facilities available at the hospital." : "Select the facilities available at the clinic."}'));
+  assert.ok(page.includes('description={isHospitalProfile ? "Add the languages the hospital can support." : "Add the languages the clinic can support."}'));
 });
 
 test("publicationCardAndHeaderUseSameConsentState", () => {

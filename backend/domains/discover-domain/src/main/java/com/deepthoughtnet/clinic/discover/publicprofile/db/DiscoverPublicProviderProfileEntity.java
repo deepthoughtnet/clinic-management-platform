@@ -106,7 +106,7 @@ public class DiscoverPublicProviderProfileEntity {
     @Column(length = 128)
     private String country;
 
-    @Column(length = 256)
+    @Column(columnDefinition = "text")
     private String tagline;
 
     @Column(length = 128)

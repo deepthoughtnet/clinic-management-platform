@@ -40,6 +40,7 @@ test("doctor profile page reuses shared review, rating, verification, booking, a
   assert.ok(page.includes("buildDoctorBookingGroups"));
   assert.ok(page.includes("buildDoctorWorkingSchedule"));
   assert.ok(page.includes("providerBookingPrimaryLabel(bookingMode)"));
+  assert.ok(page.includes("AvailabilityTimeline days={profile.workingHoursSchedule ?? []}"));
 
   assert.ok(profile.includes("heroSupplement"));
   assert.ok(profile.includes("verificationBadges"));
@@ -58,6 +59,11 @@ test("doctor profile page reuses shared review, rating, verification, booking, a
   assert.ok(helpers.includes("export function RelatedDoctorCard"));
   assert.ok(helpers.includes("export function SpecialtyCard"));
   assert.ok(helpers.includes("export function StickyBookingCTA"));
+  assert.ok(helpers.includes("Live slot availability is shown when you continue to booking."));
+  assert.ok(helpers.includes("Working hours not published on this profile yet."));
+  assert.ok(!page.includes("10:00 AM"));
+  assert.ok(!page.includes("11:30 AM"));
+  assert.ok(!page.includes("5:30 PM"));
 });
 
 test("doctor profile review section renders patient-facing copy instead of raw backend data", () => {

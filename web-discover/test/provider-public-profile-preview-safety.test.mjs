@@ -53,10 +53,14 @@ test("provider draft preview tolerates missing profile fields without relying on
   const page = read("src/pages/provider/ProviderPublicProfileDraftPage.tsx");
 
   assert.ok(page.includes("Draft Preview – Not Public"));
+  assert.ok(page.includes("This preview shows your current unpublished changes."));
   assert.ok(page.includes("const groupedMissingFields = (() =>"));
   assert.ok(page.includes("missingMandatoryFields ?? []"));
-  assert.ok(page.includes("Preview profile"));
+  assert.ok(page.includes("View live profile"));
+  assert.ok(page.includes("Back to editing"));
   assert.ok(page.includes("Copy Public URL"));
+  assert.ok(page.includes("loadProviderHospitalDoctors"));
+  assert.ok(page.includes("provider-preview-section--doctors"));
   assert.ok(page.includes("ProviderEditorFooter"));
   assert.ok(page.includes("currentDraft.readiness.missingMandatoryFields.length || currentDraft.readiness.invalidFields.length ? \"Required before review:\" : \"No blocking content items remain.\""));
   assert.ok(!page.includes("Call clinic"));

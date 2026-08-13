@@ -258,6 +258,24 @@ function appendBookingParams(baseUrl: string, context?: Record<string, string | 
   return url.toString();
 }
 
+function dedupeDisplayParts(values: Array<string | null | undefined>) {
+  const seen = new Set<string>();
+  const parts: string[] = [];
+  values.forEach((value) => {
+    const normalized = value?.trim();
+    if (!normalized) {
+      return;
+    }
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    parts.push(normalized);
+  });
+  return parts;
+}
+
 export function careBookingUrl(context?: Record<string, string | undefined | null>) {
   return appendBookingParams(discoverConfig.careAppUrl, context);
 }
@@ -520,11 +538,23 @@ export function PaginationBar({
   );
 }
 
-export function DoctorCard({ doctor, demo = false, demoLabel = "Demo preview" }: { doctor: PublicDoctorSummaryResponse } & DirectoryCardDemoProps) {
+export function DoctorCard({
+  doctor,
+  demo = false,
+  demoLabel = "Demo preview",
+  context = "directory",
+  hostProviderName = null,
+}: {
+  doctor: PublicDoctorSummaryResponse;
+  context?: "directory" | "hospital";
+  hostProviderName?: string | null;
+} & DirectoryCardDemoProps) {
   const consultationFee = formatConsultationFee(doctor.consultationFee ?? null);
   const distance = formatDistanceKm(doctor.distanceKm ?? null);
   const subtitle = doctor.subtitle?.trim() || doctor.speciality || null;
-  const locationSummary = patientFacingLocationParts(doctor.clinicDisplayName, doctor.area, doctor.city).join(" · ");
+  const locationSummary = context === "hospital"
+    ? (hostProviderName?.trim() ? `Associated with ${hostProviderName.trim()}` : null)
+    : dedupeDisplayParts(patientFacingLocationParts(doctor.clinicDisplayName, doctor.area, doctor.city)).join(" · ");
   const availabilityText = doctor.availableToday ? "Available today" : doctor.nextAvailableSlotSummary || "Check next slot";
   const availabilityClass = doctor.availableToday ? "chip chip--success" : "chip chip--info";
   const bookingMode = normalizeBookingMode(doctor.bookingMode) ?? "ONLINE_BOOKING";
@@ -542,6 +572,7 @@ export function DoctorCard({ doctor, demo = false, demoLabel = "Demo preview" }:
           <strong>{doctor.doctorDisplayName}</strong>
           {subtitle ? <span>{subtitle}</span> : null}
           {doctor.speciality ? <p>{doctor.speciality}</p> : null}
+          {locationSummary ? <span>{locationSummary}</span> : null}
         </div>
       </div>
       <div className="directory-meta-list">
@@ -563,7 +594,7 @@ export function DoctorCard({ doctor, demo = false, demoLabel = "Demo preview" }:
             {doctor.languages.join(", ")}
           </span>
         ) : null}
-        {locationSummary ? (
+        {context === "directory" && locationSummary ? (
           <span>
             <LocationOnOutlined fontSize="small" aria-hidden="true" />
             {locationSummary}
@@ -660,15 +691,15 @@ export function ClinicCard({ clinic, demo = false, demoLabel = "Demo preview" }:
 
 export function HospitalCard({ hospital, demo = false, demoLabel = "Demo preview" }: { hospital: PublicHospitalSummaryResponse } & DirectoryCardDemoProps) {
   const summary = hospital.summary?.trim() || "Hospital profile published for Discover";
-  const bookingMode = normalizeBookingMode(hospital.bookingMode) ?? "ONLINE_BOOKING";
   const callHref = hospital.contactPhone?.trim() ? `tel:${hospital.contactPhone.trim()}` : null;
+  const contactLabel = callHref ? "Call Hospital" : "View hospital";
   const metaChips = hospital.departments.slice(0, 3).map((item, index) => ({
     key: `department-${index}`,
     label: item,
     variant: "muted" as const,
   }));
   const statusChips = [
-    { key: "booking", label: bookingCapabilityLabel(bookingMode), variant: bookingMode === "ONLINE_BOOKING" ? "success" as const : bookingMode === "CALL_TO_BOOK" ? "info" as const : "muted" as const },
+    { key: "booking", label: contactLabel, variant: callHref ? "info" as const : "muted" as const },
     { key: "availability", label: hospital.emergencyAvailable ? "Emergency available" : "Review services", variant: hospital.emergencyAvailable ? "success" as const : "muted" as const },
     hospital.coverUrl ? { key: "cover", label: "Cover image", variant: "info" as const } : null,
   ].filter(Boolean) as HomeProviderCardChip[];
@@ -689,7 +720,7 @@ export function HospitalCard({ hospital, demo = false, demoLabel = "Demo preview
         demo ? <button className="secondary-button" type="button" disabled aria-disabled="true">Demo hospital</button> : <Link className="secondary-button" to={hospital.publicPath ?? DISCOVER_DETAIL_PATHS.hospital(hospital.hospitalSlug)}>View hospital</Link>
       }
       primaryAction={
-        demo ? <button className="primary-button" type="button" disabled aria-disabled="true">Demo booking</button> : bookingMode === "CALL_TO_BOOK" && callHref ? <a className="primary-button" href={callHref}>Call clinic</a> : bookingMode === "NOT_AVAILABLE" ? <Link className="primary-button" to={hospital.publicPath ?? DISCOVER_DETAIL_PATHS.hospital(hospital.hospitalSlug)}>View profile</Link> : <a className="primary-button" href={careBookingUrl({ hospitalSlug: hospital.hospitalSlug })}>Book appointment</a>
+        demo ? <button className="primary-button" type="button" disabled aria-disabled="true">Demo booking</button> : callHref ? <a className="primary-button" href={callHref}>Call Hospital</a> : <Link className="primary-button" to={hospital.publicPath ?? DISCOVER_DETAIL_PATHS.hospital(hospital.hospitalSlug)}>View hospital</Link>
       }
     />
   );

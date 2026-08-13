@@ -1,9 +1,13 @@
 package com.deepthoughtnet.clinic.discover.publicprofilemoderation;
 
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderType;
+import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderDocumentEntity;
+import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderDocumentRepository;
 import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipConflictException;
 import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipModels.OwnershipRecord;
 import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipService;
+import com.deepthoughtnet.clinic.discover.publichospitaldoctorassociation.PublicHospitalDoctorAssociationService;
+import com.deepthoughtnet.clinic.discover.publichospitaldoctorassociation.PublicHospitalDoctorDraftAssociationService;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProfileLifecycleRecord;
 import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService;
@@ -56,6 +60,9 @@ public class ProviderPublicProfileModerationService {
     private final ProviderPublicProfileDraftService draftService;
     private final ProviderOwnershipService ownershipService;
     private final ProviderPublicProfileService publicProfileService;
+    private final PublicHospitalDoctorDraftAssociationService hospitalDoctorDraftAssociationService;
+    private final PublicHospitalDoctorAssociationService hospitalDoctorAssociationService;
+    private final ProviderDocumentRepository documents;
     private final DiscoverPublicProfileSubmissionRepository submissions;
     private final DiscoverPublicProfileReviewFindingRepository findings;
     private final DiscoverPublicProfilePublicationRepository publications;
@@ -66,6 +73,9 @@ public class ProviderPublicProfileModerationService {
             ProviderPublicProfileDraftService draftService,
             ProviderOwnershipService ownershipService,
             ProviderPublicProfileService publicProfileService,
+            PublicHospitalDoctorDraftAssociationService hospitalDoctorDraftAssociationService,
+            PublicHospitalDoctorAssociationService hospitalDoctorAssociationService,
+            ProviderDocumentRepository documents,
             DiscoverPublicProfileSubmissionRepository submissions,
             DiscoverPublicProfileReviewFindingRepository findings,
             DiscoverPublicProfilePublicationRepository publications,
@@ -75,6 +85,9 @@ public class ProviderPublicProfileModerationService {
         this.draftService = draftService;
         this.ownershipService = ownershipService;
         this.publicProfileService = publicProfileService;
+        this.hospitalDoctorDraftAssociationService = hospitalDoctorDraftAssociationService;
+        this.hospitalDoctorAssociationService = hospitalDoctorAssociationService;
+        this.documents = documents;
         this.submissions = submissions;
         this.findings = findings;
         this.publications = publications;
@@ -84,11 +97,12 @@ public class ProviderPublicProfileModerationService {
 
     @Transactional(readOnly = true)
     public PublicProfileSubmissionEligibilityRecord submissionEligibility(UUID providerAccountId, String publicProfileReference, boolean tenantConsentEnabled) {
-        PublicProfileDraftWorkspaceRecord draft = draftService.getDraft(providerAccountId, publicProfileReference);
+        PublicProfileDraftWorkspaceRecord draft = draftService.findDraft(publicProfileReference).orElse(null);
         DiscoverPublicProfileSubmissionEntity currentSubmission = findLatestSubmission(publicProfileReference).orElse(null);
+        PublicProfilePublicationRecord currentPublication = findCurrentPublication(publicProfileReference).orElse(null);
         boolean draftDiffersFromSubmission = currentSubmission != null && draftDiffersFromSubmissionSnapshot(draft, currentSubmission);
         List<String> blockers = new ArrayList<>();
-        if (draft == null || providerAccountId == null) {
+        if (providerAccountId == null) {
             blockers.add("OWNERSHIP_NOT_VERIFIED");
         } else {
             OwnershipRecord ownership = ownershipService.findOwnership(providerAccountId, publicProfileReference).orElse(null);
@@ -102,7 +116,7 @@ public class ProviderPublicProfileModerationService {
         if (!tenantConsentEnabled) {
             blockers.add("TENANT_CONSENT_REQUIRED");
         }
-        if (currentSubmission != null && isBlockingSubmissionStatus(currentSubmission.getModerationStatus())) {
+        if (currentSubmission != null && isActiveSubmissionStatus(currentSubmission.getModerationStatus())) {
             blockers.add("ACTIVE_SUBMISSION_EXISTS");
         }
         if (currentSubmission != null && "CHANGES_REQUESTED".equals(currentSubmission.getModerationStatus()) && !draftDiffersFromSubmission) {
@@ -114,12 +128,14 @@ public class ProviderPublicProfileModerationService {
                 blockers.stream().distinct().toList(),
                 actions,
                 currentSubmission == null ? "NOT_SUBMITTED" : currentSubmission.getModerationStatus(),
-                currentSubmission == null ? "UNPUBLISHED" : publicationStatusFor(currentSubmission),
+                currentPublication == null ? "UNPUBLISHED" : currentPublication.publicationStatus(),
                 currentSubmission == null ? null : currentSubmission.getSubmissionReference(),
                 currentSubmission == null ? null : currentSubmission.getSubmittedDraftVersion(),
                 currentSubmission == null ? null : currentSubmission.getSubmittedAt(),
                 currentSubmission == null ? null : currentSubmission.getDecisionAt(),
-                draft == null ? 0 : draft.currentVersion()
+                draft == null ? 0 : draft.currentVersion(),
+                currentSubmission == null || !List.of("SUBMITTED", "UNDER_REVIEW").contains(currentSubmission.getModerationStatus()),
+                currentPublication == null ? null : currentPublication.publicPath()
         );
     }
 
@@ -141,14 +157,16 @@ public class ProviderPublicProfileModerationService {
         DiscoverPublicProfileSubmissionEntity entity = submissionEntity(submissionReference);
         Map<String, Object> media = mapJson(entity.getMediaSnapshotJson());
         Map<String, Object> metadataByReference = asMap(media.get("mediaMetadataByDocumentId"));
-        Object metadata = metadataByReference.get(mediaReference);
-        if (!(metadata instanceof Map<?, ?> metadataMap)) {
-            throw new NotFoundException("Media reference not found.");
-        }
-        Map<String, Object> normalizedMetadata = asMap(metadataMap);
+        Map<String, Object> normalizedMetadata = metadataByReference.get(mediaReference) instanceof Map<?, ?> metadataMap ? asMap(metadataMap) : Map.of();
+        UUID documentId = parseUuid(mediaReference);
+        ProviderDocumentEntity document = null;
         String storageKey = text(normalizedMetadata, "storageKey");
-        String contentType = text(normalizedMetadata, "contentType");
-        String originalFilename = text(normalizedMetadata, "originalFilename");
+        if (!StringUtils.hasText(storageKey) && documentId != null) {
+            document = documents.findById(documentId).orElse(null);
+            storageKey = document == null ? null : document.getStorageKey();
+        }
+        String contentType = firstNonBlank(text(normalizedMetadata, "contentType"), document == null ? null : document.getContentType());
+        String originalFilename = firstNonBlank(text(normalizedMetadata, "originalFilename"), document == null ? null : document.getOriginalFilename());
         if (!StringUtils.hasText(storageKey)) {
             throw new NotFoundException("Media reference not found.");
         }
@@ -195,7 +213,15 @@ public class ProviderPublicProfileModerationService {
 
     @Transactional(readOnly = true)
     public List<PublicProfileModerationQueueRecord> queue() {
-        return submissions.findAll().stream()
+        return queue(null, null, null);
+    }
+
+    @Transactional(readOnly = true)
+    public List<PublicProfileModerationQueueRecord> queue(String type, String query, String city) {
+        ProviderType filterType = parseQueueType(type);
+        String normalizedQuery = normalizeFilter(query);
+        String normalizedCity = normalizeFilter(city);
+        return submissions.findByCurrentTrueAndModerationStatusInOrderBySubmittedAtDescModerationRevisionDesc(List.of("SUBMITTED", "UNDER_REVIEW", "CHANGES_REQUESTED", "APPROVED", "PUBLISHED")).stream()
                 .sorted(Comparator.comparing(DiscoverPublicProfileSubmissionEntity::getSubmittedAt, Comparator.nullsLast(Comparator.reverseOrder()))
                         .thenComparing(DiscoverPublicProfileSubmissionEntity::getModerationRevision, Comparator.reverseOrder()))
                 .collect(Collectors.toMap(
@@ -206,6 +232,8 @@ public class ProviderPublicProfileModerationService {
                 ))
                 .values().stream()
                 .filter(entity -> isQueueVisibleStatus(entity.getModerationStatus()))
+                .filter(entity -> filterType == null || entity.getPublicProfileType() == filterType)
+                .filter(entity -> matchesQueueFilters(entity, normalizedQuery, normalizedCity))
                 .map(this::toQueueRecord)
                 .sorted((left, right) -> right.submittedAt() == null ? -1 : left.submittedAt() == null ? 1 : right.submittedAt().compareTo(left.submittedAt()))
                 .toList();
@@ -218,7 +246,7 @@ public class ProviderPublicProfileModerationService {
             throw new ProviderOwnershipConflictException(firstBlocker(eligibility.submissionBlockers()), "Public profile is not eligible for review submission.");
         }
         DiscoverPublicProfileSubmissionEntity current = findLatestSubmission(publicProfileReference).orElse(null);
-        if (current != null && isBlockingSubmissionStatus(current.getModerationStatus())) {
+        if (current != null && isActiveSubmissionStatus(current.getModerationStatus())) {
             return toSubmissionRecord(current);
         }
         PublicProfileDraftWorkspaceRecord draft = draftService.getDraft(providerAccountId, publicProfileReference);
@@ -521,7 +549,52 @@ public class ProviderPublicProfileModerationService {
 
     @Transactional(readOnly = true)
     public List<PublicProfileModerationQueueRecord> listQueue() {
-        return queue();
+        return queue(null, null, null);
+    }
+
+    @Transactional(readOnly = true)
+    public List<PublicProfileModerationQueueRecord> listQueue(String type, String query, String city) {
+        return queue(type, query, city);
+    }
+
+    private boolean matchesQueueFilters(DiscoverPublicProfileSubmissionEntity entity, String normalizedQuery, String normalizedCity) {
+        if (!StringUtils.hasText(normalizedQuery) && !StringUtils.hasText(normalizedCity)) {
+            return true;
+        }
+        Map<String, Object> content = mapJson(entity.getContentSnapshotJson());
+        String displayName = text(content, "about", "displayName");
+        String city = text(content, "contact", "city");
+        String area = text(content, "contact", "area");
+        boolean queryMatches = !StringUtils.hasText(normalizedQuery)
+                || matchesQuery(displayName, normalizedQuery)
+                || matchesQuery(entity.getSubmissionReference(), normalizedQuery)
+                || matchesQuery(entity.getPublicProfileReference(), normalizedQuery)
+                || matchesQuery(city, normalizedQuery)
+                || matchesQuery(area, normalizedQuery);
+        boolean cityMatches = !StringUtils.hasText(normalizedCity)
+                || matchesQuery(city, normalizedCity)
+                || matchesQuery(area, normalizedCity);
+        return queryMatches && cityMatches;
+    }
+
+    private ProviderType parseQueueType(String type) {
+        if (!StringUtils.hasText(type)) {
+            return null;
+        }
+        return switch (type.trim().toUpperCase(Locale.ROOT)) {
+            case "DOCTOR" -> ProviderType.INDIVIDUAL_DOCTOR;
+            case "CLINIC" -> ProviderType.CLINIC;
+            case "HOSPITAL" -> ProviderType.HOSPITAL;
+            default -> null;
+        };
+    }
+
+    private String normalizeFilter(String value) {
+        return StringUtils.hasText(value) ? value.trim().toLowerCase(Locale.ROOT) : null;
+    }
+
+    private boolean matchesQuery(String candidate, String query) {
+        return !StringUtils.hasText(query) || (candidate != null && candidate.toLowerCase(Locale.ROOT).contains(query));
     }
 
     @Transactional(readOnly = true)
@@ -603,8 +676,8 @@ public class ProviderPublicProfileModerationService {
         return List.of("SUBMITTED", "UNDER_REVIEW").contains(status);
     }
 
-    private boolean isBlockingSubmissionStatus(String status) {
-        return List.of("SUBMITTED", "UNDER_REVIEW", "APPROVED", "PUBLISHED").contains(status);
+    private boolean isActiveSubmissionStatus(String status) {
+        return List.of("SUBMITTED", "UNDER_REVIEW").contains(status);
     }
 
     private void validateRevision(DiscoverPublicProfileSubmissionEntity entity, Long expectedRevision) {
@@ -646,17 +719,20 @@ public class ProviderPublicProfileModerationService {
         if (entity == null) {
             return List.of();
         }
-        if ("PUBLISHED".equals(publicationStatus)) {
-            return List.of("VIEW_PUBLIC_PROFILE", "UNPUBLISH_PROFILE", "VIEW_REVIEW_HISTORY");
-        }
-        return switch (entity.getModerationStatus()) {
+        List<String> actions = new ArrayList<>(switch (entity.getModerationStatus()) {
             case "SUBMITTED" -> List.of("VIEW_SUBMISSION", "START_REVIEW", "REQUEST_CHANGES", "REJECT_SUBMISSION");
             case "UNDER_REVIEW" -> List.of("VIEW_SUBMISSION", "ADD_REVIEW_FINDING", "REQUEST_CHANGES", "REJECT_SUBMISSION", "APPROVE_SUBMISSION");
             case "CHANGES_REQUESTED" -> List.of("VIEW_SUBMISSION", "VIEW_REVIEW_HISTORY");
             case "APPROVED" -> List.of("VIEW_SUBMISSION", "PUBLISH_PROFILE");
             case "REJECTED", "WITHDRAWN" -> List.of("VIEW_SUBMISSION", "VIEW_REVIEW_HISTORY");
             default -> List.of("VIEW_SUBMISSION");
-        };
+        });
+        if ("PUBLISHED".equals(publicationStatus)) {
+            actions.add("VIEW_PUBLIC_PROFILE");
+            actions.add("UNPUBLISH_PROFILE");
+            actions.add("VIEW_REVIEW_HISTORY");
+        }
+        return actions.stream().distinct().toList();
     }
 
     private List<String> providerReviewAllowedActions(DiscoverPublicProfileSubmissionEntity entity, String publicationStatus) {
@@ -1278,7 +1354,24 @@ public class ProviderPublicProfileModerationService {
             submission.markPublished(publication.getPublishedAt(), reconciledAt);
             submissions.save(submission);
         }
+        syncPublishedHospitalDoctors(submission.getPublicProfileType(), submission.getPublicProfileReference(), reconciledAt);
         return toPublicationRecord(publication, visibilityDecision(submission.getPublicProfileReference(), submission));
+    }
+
+    private void syncPublishedHospitalDoctors(ProviderType providerType, String publicProfileReference, OffsetDateTime reconciledAt) {
+        if (providerType != ProviderType.HOSPITAL || !StringUtils.hasText(publicProfileReference)) {
+            return;
+        }
+        UUID profileReference = parseUuid(publicProfileReference);
+        if (profileReference == null) {
+            return;
+        }
+        hospitalDoctorAssociationService.reconcileHospitalDoctors(
+                profileReference,
+                profileReference,
+                hospitalDoctorDraftAssociationService.listDraftDoctorReferencesByHospital(profileReference),
+                reconciledAt
+        );
     }
 
     private String actorReference(UUID actorId) {

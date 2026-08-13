@@ -22,6 +22,7 @@ import TaskAltOutlinedIcon from "@mui/icons-material/TaskAltOutlined";
 import TravelExploreOutlinedIcon from "@mui/icons-material/TravelExploreOutlined";
 import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
 import WarningAmberOutlinedIcon from "@mui/icons-material/WarningAmberOutlined";
+import { DoctorCard } from "../../components/DiscoveryComponents";
 import { LandingPageRenderer } from "../../components/landing/LandingPageRenderer";
 import { PublicMediaImage } from "../../components/landing/PublicMediaImage";
 import { DiscoverEmptyState } from "../../components/DiscoveryComponents";
@@ -39,6 +40,7 @@ import {
   normalizeFeeValue,
   normalizeWeeklyScheduleContent,
 } from "../../components/provider-profile-editor/ProviderProfileEditorControls";
+import { HospitalDoctorManagementSection } from "./HospitalDoctorManagementSection";
 import {
   createProviderPublicProfileDraft,
   loadProviderPublicProfileDraft,
@@ -53,9 +55,18 @@ import {
   type ProviderPublicProfileDraftMediaUploadResponse,
   type ProviderPublicProfileDraftMediaType,
 } from "../../api/providerPublicProfileDraft";
+import {
+  fetchPublicJson,
+  type PublicDoctorDetailResponse,
+  type PublicDoctorSummaryResponse,
+} from "../../api/publicCatalog";
+import {
+  loadProviderHospitalDoctors,
+  type ProviderHospitalDoctorAssociationResponse,
+} from "../../api/providerHospitalDoctors";
 import type { LandingPageRenderable, LandingProfile, LandingSnapshot, LandingTheme } from "../../api/providerLandingPage";
 
-const SECTION_ORDER = ["overview", "about", "contact", "services", "specialities", "facilities", "timings", "fees", "languages", "media", "seo", "preview", "readiness"];
+const SECTION_ORDER = ["overview", "about", "medical_team", "contact", "services", "specialities", "facilities", "timings", "fees", "languages", "media", "seo", "preview", "readiness"];
 
 const SERVICE_SUGGESTIONS = [
   "General Consultation",
@@ -167,6 +178,8 @@ function sectionLabel(key: string) {
       return "Overview";
     case "about":
       return "About";
+    case "medical_team":
+      return "Doctors / Medical Team";
     case "contact":
       return "Contact";
     case "services":
@@ -205,6 +218,8 @@ function sectionNavigatorMeta(key: string, completenessPercentage: number, missi
         return <ArticleOutlinedIcon fontSize="small" aria-hidden="true" />;
       case "about":
         return <InfoOutlinedIcon fontSize="small" aria-hidden="true" />;
+      case "medical_team":
+        return <MedicalServicesOutlinedIcon fontSize="small" aria-hidden="true" />;
       case "contact":
         return <CallOutlinedIcon fontSize="small" aria-hidden="true" />;
       case "services":
@@ -281,6 +296,34 @@ function mediaDocumentReference(media: Record<string, unknown>, key: "logoDocume
 
 function mediaContentPath(publicProfileReference: string, mediaReference: string) {
   return providerPublicProfileDraftMediaContentPath(publicProfileReference, mediaReference);
+}
+
+function previewHospitalDoctorSummary(
+  detail: PublicDoctorDetailResponse,
+  hospitalDisplayName: string,
+): PublicDoctorSummaryResponse {
+  return {
+    publicDoctorId: detail.publicDoctorId,
+    doctorSlug: detail.doctorSlug,
+    publicPath: detail.publicPath ?? undefined,
+    doctorDisplayName: detail.doctorDisplayName,
+    photoUrl: detail.photoUrl,
+    contactPhone: detail.contactPhone ?? null,
+    speciality: detail.primarySpeciality ?? detail.specialities[0] ?? null,
+    yearsOfExperience: detail.yearsOfExperience,
+    consultationFee: null,
+    languages: detail.languages ?? [],
+    clinicDisplayName: detail.clinics[0]?.clinicDisplayName ?? hospitalDisplayName,
+    clinicSlug: detail.clinics.length === 1 ? detail.clinics[0].clinicSlug : "",
+    area: detail.area ?? null,
+    city: detail.city ?? null,
+    bookingMode: detail.bookingMode ?? null,
+    subtitle: detail.subtitle ?? null,
+    summary: detail.summary ?? detail.biography ?? null,
+    availableToday: detail.availableToday,
+    nextAvailableSlotSummary: detail.nextAvailableSlots[0] ?? null,
+    distanceKm: null,
+  };
 }
 
 function sectionMissingLabel(field: string) {
@@ -378,6 +421,24 @@ function publicationBlockSummary(readiness: ProviderPublicProfileDraft["readines
   return blockers.length ? blockers.join(" · ") : "Submission becomes available once all required items are completed.";
 }
 
+function submissionBlockerMessage(blockers: readonly string[] | null | undefined) {
+  const blocker = blockers?.[0];
+  switch (blocker) {
+    case "OWNERSHIP_NOT_VERIFIED":
+      return "Verified ownership is required before submitting for platform review.";
+    case "PROFILE_INCOMPLETE":
+      return "Complete the remaining profile requirements before submitting.";
+    case "TENANT_CONSENT_REQUIRED":
+      return "Enable Discover participation before submitting for platform review.";
+    case "ACTIVE_SUBMISSION_EXISTS":
+      return "A platform review is already in progress.";
+    case "RESUBMISSION_REQUIRED":
+      return "Make a fresh draft change before resubmitting.";
+    default:
+      return "Submission blocked";
+  }
+}
+
 function publicationCardMessage(
   readiness: ProviderPublicProfileDraft["readiness"],
   moderation: ProviderPublicProfileModeration | null,
@@ -392,6 +453,9 @@ function publicationCardMessage(
   }
   if (moderation?.allowedActions.includes("SUBMIT_FOR_REVIEW")) {
     return "Ready to submit for platform review.";
+  }
+  if (!moderation?.submissionEligible) {
+    return submissionBlockerMessage(moderation?.submissionBlockers);
   }
   return publicationBlockSummary(readiness, moderation);
 }
@@ -448,10 +512,10 @@ function missingFieldCategorySection(category: string) {
   }
 }
 
-function missingFieldChipLabel(field: string) {
+function missingFieldChipLabel(field: string, isHospitalProfile: boolean) {
   switch (field) {
     case "displayName":
-      return "Add clinic name";
+      return isHospitalProfile ? "Add hospital name" : "Add clinic name";
     case "description":
       return "Add description";
     case "addressLine1":
@@ -619,6 +683,9 @@ export function ProviderPublicProfileDraftPage() {
   const section = (params.section || "overview").toLowerCase();
   const [draft, setDraft] = useState<ProviderPublicProfileDraft | null>(null);
   const [previewDraft, setPreviewDraft] = useState<ProviderPublicProfileDraft | null>(null);
+  const [previewHospitalDoctors, setPreviewHospitalDoctors] = useState<PublicDoctorSummaryResponse[]>([]);
+  const [previewHospitalDoctorsLoading, setPreviewHospitalDoctorsLoading] = useState(false);
+  const [previewHospitalDoctorsError, setPreviewHospitalDoctorsError] = useState<string | null>(null);
   const [moderation, setModeration] = useState<ProviderPublicProfileModeration | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -633,18 +700,53 @@ export function ProviderPublicProfileDraftPage() {
     if (!profileReference) {
       return;
     }
-    setLoading(true);
-    setError(null);
-    createProviderPublicProfileDraft(profileReference)
-      .then(setDraft)
-      .catch((createError) => {
-        void loadProviderPublicProfileDraft(profileReference)
-          .then(setDraft)
-          .catch((loadError) => {
-            setError(loadError instanceof Error ? loadError.message : createError instanceof Error ? createError.message : "Could not load the draft.");
-          });
-      })
-      .finally(() => setLoading(false));
+    let active = true;
+    const bootstrap = async () => {
+      setLoading(true);
+      setError(null);
+      setDraft(null);
+      setPreviewDraft(null);
+      setModeration(null);
+      try {
+        const nextModeration = await loadProviderPublicProfileModeration(profileReference);
+        if (!active) {
+          return;
+        }
+        setModeration(nextModeration);
+        if (["SUBMITTED", "UNDER_REVIEW"].includes(nextModeration.moderationStatus)) {
+          return;
+        }
+        try {
+          const createdDraft = await createProviderPublicProfileDraft(profileReference);
+          if (active) {
+            setDraft(createdDraft);
+          }
+        } catch (createError) {
+          try {
+            const loadedDraft = await loadProviderPublicProfileDraft(profileReference);
+            if (active) {
+              setDraft(loadedDraft);
+            }
+          } catch (loadError) {
+            if (active) {
+              setError(loadError instanceof Error ? loadError.message : createError instanceof Error ? createError.message : "Could not load the draft.");
+            }
+          }
+        }
+      } catch (loadError) {
+        if (active) {
+          setError(loadError instanceof Error ? loadError.message : "Could not load the draft.");
+        }
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
+    };
+    void bootstrap();
+    return () => {
+      active = false;
+    };
   }, [profileReference]);
 
   useEffect(() => {
@@ -652,6 +754,53 @@ export function ProviderPublicProfileDraftPage() {
       loadProviderPublicProfileDraftPreview(profileReference).then(setPreviewDraft).catch(() => setPreviewDraft(null));
     }
   }, [profileReference, section]);
+
+  useEffect(() => {
+    const previewProfileType = draft?.publicProfileType ?? previewDraft?.publicProfileType;
+    if (section !== "preview" || previewProfileType !== "HOSPITAL" || !profileReference) {
+      setPreviewHospitalDoctors([]);
+      setPreviewHospitalDoctorsLoading(false);
+      setPreviewHospitalDoctorsError(null);
+      return;
+    }
+
+    let active = true;
+    setPreviewHospitalDoctors([]);
+    setPreviewHospitalDoctorsLoading(true);
+    setPreviewHospitalDoctorsError(null);
+
+    void loadProviderHospitalDoctors(profileReference)
+      .then(async (associations) => {
+        const previewDoctors = await Promise.all(associations.map(async (association: ProviderHospitalDoctorAssociationResponse) => {
+          if (!association.publicPath) {
+            return null;
+          }
+          try {
+            const detail = await fetchPublicJson<PublicDoctorDetailResponse>(association.publicPath);
+            return previewHospitalDoctorSummary(detail, draft?.displayName ?? "This hospital");
+          } catch {
+            return null;
+          }
+        }));
+        if (active) {
+          setPreviewHospitalDoctors(previewDoctors.filter((item): item is PublicDoctorSummaryResponse => Boolean(item)));
+        }
+      })
+      .catch((loadError: unknown) => {
+        if (active) {
+          setPreviewHospitalDoctorsError(loadError instanceof Error ? loadError.message : "Could not load draft doctors.");
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setPreviewHospitalDoctorsLoading(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [draft?.displayName, draft?.publicProfileType, previewDraft?.publicProfileType, profileReference, section]);
 
   useEffect(() => {
     if (!profileReference) {
@@ -865,31 +1014,48 @@ export function ProviderPublicProfileDraftPage() {
     );
   }
 
-  if (error && !activeDraft) {
-    const reviewPath = DISCOVER_ROUTES.providerPublicProfileReview.path
-      .replace(":profileReference", encodeURIComponent(profileReference));
-    const lockedForReview = Boolean(moderation && ["SUBMITTED", "UNDER_REVIEW", "CHANGES_REQUESTED", "APPROVED", "PUBLISHED"].includes(moderation.moderationStatus));
+  const lockedForReview = Boolean(moderation && !moderation.editable);
+  if (error && !activeDraft && !lockedForReview) {
     return (
       <section className="page-section">
-        {lockedForReview ? (
-          <DiscoverEmptyState
-            icon="!"
-            title="This draft is locked while review is active"
-            description="The submitted profile cannot be edited while Platform review is in progress."
-            primaryAction="View review status"
-            primaryTo={reviewPath}
-            secondaryAction="Back to workspace"
-            secondaryTo={DISCOVER_ROUTES.providerWorkspace.path}
-          />
-        ) : (
-          <DiscoverEmptyState
-            icon="!"
-            title="We could not load the draft"
-            description={error}
-            primaryAction="Back to workspace"
-            primaryTo={DISCOVER_ROUTES.providerWorkspace.path}
-          />
-        )}
+        <DiscoverEmptyState
+          icon="!"
+          title="We could not load the draft"
+          description={error}
+          primaryAction="Back to workspace"
+          primaryTo={DISCOVER_ROUTES.providerWorkspace.path}
+        />
+      </section>
+    );
+  }
+
+  if (!activeDraft && lockedForReview) {
+    const reviewPath = DISCOVER_ROUTES.providerPublicProfileReview.path
+      .replace(":profileReference", encodeURIComponent(profileReference));
+    const publicProfilePath = moderation?.publicUrl ?? DISCOVER_ROUTES.providerWorkspace.path;
+    const publicProfileActionLabel = moderation?.publicUrl ? "View public profile" : "Back to workspace";
+    const submittedVersion = moderation?.submittedDraftVersion ? `Draft Version ${moderation.submittedDraftVersion}` : "The submitted draft";
+    const livePublicationLine = moderation?.publicationStatus === "PUBLISHED"
+      ? "Your currently published profile remains visible to patients while this update is being reviewed."
+      : null;
+    return (
+      <section className="page-section">
+        <DiscoverEmptyState
+          icon="!"
+          title="Profile under platform review"
+          description={`${submittedVersion} has been submitted for platform review. Editing is temporarily locked while the submission is being reviewed.${livePublicationLine ? ` ${livePublicationLine}` : ""}`}
+          primaryAction="View submitted preview"
+          primaryTo={reviewPath}
+          secondaryAction={publicProfileActionLabel}
+          secondaryTo={publicProfilePath}
+        />
+        {moderation?.publicUrl ? (
+          <Stack direction="row" justifyContent="center" sx={{ mt: 2 }}>
+            <Button component={Link} to={DISCOVER_ROUTES.providerWorkspace.path} variant="outlined" size="small">
+              Back to workspace
+            </Button>
+          </Stack>
+        ) : null}
       </section>
     );
   }
@@ -909,6 +1075,7 @@ export function ProviderPublicProfileDraftPage() {
   const currentDraft = activeDraft;
   const { page, snapshot } = draftToLandingPage(currentDraft);
   const isPreview = currentSection === "preview";
+  const isHospitalProfile = currentDraft.publicProfileType === "HOSPITAL";
   const isCompletionReady = currentDraft.readiness.ready && !currentDraft.readiness.invalidFields.length;
   const currentModeration = moderation;
   const consentPresentation = getProviderConsentPresentation({
@@ -928,7 +1095,7 @@ export function ProviderPublicProfileDraftPage() {
     const groups = new Map<string, string[]>();
     for (const field of missingMandatoryFields) {
       const category = missingFieldCategory(field);
-      const label = missingFieldChipLabel(field);
+      const label = missingFieldChipLabel(field, isHospitalProfile);
       const items = groups.get(category) ?? [];
       if (!items.includes(label)) {
         items.push(label);
@@ -961,7 +1128,7 @@ export function ProviderPublicProfileDraftPage() {
     ? "Enable Discover participation before submitting for platform review."
     : currentModeration?.allowedActions.includes("SUBMIT_FOR_REVIEW")
       ? "Ready when all publication gates are satisfied."
-      : "Continue refining the draft.";
+      : submissionBlockerMessage(currentModeration?.submissionBlockers);
 
   function renderSectionEditor() {
     if (isPreview) {
@@ -971,11 +1138,14 @@ export function ProviderPublicProfileDraftPage() {
             <div className="provider-preview-banner-copy">
               <span className="eyebrow">Draft Preview – Not Public</span>
               <Typography variant="body2" color="text.secondary">
-                Visible only to the Provider while the clinic prepares publication.
+                This preview shows your current unpublished changes. The live public profile will not change until review and publication are complete.
               </Typography>
             </div>
             <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" className="provider-preview-banner-actions">
-              <Button component={Link} to={sectionRoute(profileReference, "overview")} variant="outlined" size="small">Back to Editor</Button>
+              <Button component={Link} to={sectionRoute(profileReference, "overview")} variant="outlined" size="small">Back to editing</Button>
+              <Button component={Link} to={currentDraft.publicProfilePath ?? page.publicPath} variant="outlined" size="small">
+                View live profile
+              </Button>
               <Button component={Link} to={DISCOVER_ROUTES.providerWorkspace.path} variant="outlined" size="small">Back to Workspace</Button>
               <Button
                 variant="outlined"
@@ -1003,6 +1173,42 @@ export function ProviderPublicProfileDraftPage() {
             </Alert>
           ) : null}
           <LandingPageRenderer page={page} snapshot={snapshot} renderMode="PROVIDER_DRAFT_PREVIEW" />
+          {currentDraft.publicProfileType === "HOSPITAL" ? (
+            <section className="provider-preview-section provider-preview-section--doctors" id="doctors">
+              <div className="provider-preview-section-heading">
+                <span className="eyebrow">Doctors</span>
+                <h2>Doctors at this hospital</h2>
+                <p>These doctors are associated with this hospital and shown on its public profile.</p>
+              </div>
+              {previewHospitalDoctorsLoading ? (
+                <div className="provider-preview-empty-state">
+                  <strong>Loading draft doctors…</strong>
+                  <p>The draft association list is loading.</p>
+                </div>
+              ) : previewHospitalDoctors.length ? (
+                <div className="public-directory-grid provider-preview-doctor-grid">
+                  {previewHospitalDoctors.map((doctor) => (
+                    <DoctorCard
+                      key={doctor.publicDoctorId}
+                      doctor={doctor}
+                      context="hospital"
+                      hostProviderName={currentDraft.displayName ?? page.displayName}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div className="provider-preview-empty-state">
+                  <strong>No doctors are associated in this draft yet.</strong>
+                  <p>Hospital doctor listings follow the explicit draft associations that will be published if this version is approved.</p>
+                </div>
+              )}
+              {previewHospitalDoctorsError ? (
+                <Alert severity="warning" variant="outlined" sx={{ mt: 1.5 }}>
+                  {previewHospitalDoctorsError}
+                </Alert>
+              ) : null}
+            </section>
+          ) : null}
         </Box>
       );
     }
@@ -1021,7 +1227,7 @@ export function ProviderPublicProfileDraftPage() {
                 label="Display name"
                 value={String(sectionData.displayName || currentDraft.displayName || "")}
                 onChange={(event) => updateSection({ ...sectionData, displayName: event.target.value })}
-                helperText="Use the clinic name patients know."
+                helperText={isHospitalProfile ? "Use the hospital name patients know." : "Use the clinic name patients know."}
                 fullWidth
               />
               <TextField
@@ -1041,7 +1247,7 @@ export function ProviderPublicProfileDraftPage() {
               <Box sx={{ p: 2, borderRadius: 3, border: 1, borderColor: "divider", backgroundColor: "background.paper" }}>
                 <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 0.5 }}>Preview snippet</Typography>
                 <Typography variant="body2" color="text.secondary">
-                  {String(sectionData.displayName || currentDraft.displayName || "Clinic profile")}
+                  {String(sectionData.displayName || currentDraft.displayName || (isHospitalProfile ? "Hospital profile" : "Clinic profile"))}
                 </Typography>
                 <Typography variant="body2">{String(sectionData.shortTagline || "No tagline provided.")}</Typography>
               </Box>
@@ -1052,20 +1258,37 @@ export function ProviderPublicProfileDraftPage() {
         return (
           <ProviderEditorSectionCard
             title="About"
-            description="Describe the clinic in plain language. These fields power the public profile preview."
+            description={isHospitalProfile ? "Describe the hospital in plain language. These fields power the public profile preview." : "Describe the clinic in plain language. These fields power the public profile preview."}
             action={<Chip size="small" label={sectionStatus("about")} color={sectionStatus("about") === "Needs attention" ? "warning" : "default"} variant="outlined" />}
           >
             <Stack spacing={2}>
-              <TextField label="Display name" value={String(sectionData.displayName || "")} onChange={(event) => updateSection({ ...sectionData, displayName: event.target.value })} helperText="Clinic name shown publicly." fullWidth />
+              <TextField label="Display name" value={String(sectionData.displayName || "")} onChange={(event) => updateSection({ ...sectionData, displayName: event.target.value })} helperText={isHospitalProfile ? "Hospital name shown publicly." : "Clinic name shown publicly."} fullWidth />
               <TextField label="Short tagline" value={String(sectionData.shortTagline || "")} onChange={(event) => updateSection({ ...sectionData, shortTagline: event.target.value })} helperText="Short, public-friendly summary." fullWidth />
-              <TextField label="Description" multiline minRows={5} value={String(sectionData.description || "")} onChange={(event) => updateSection({ ...sectionData, description: event.target.value })} helperText="Write 2-4 short paragraphs that explain the clinic’s care approach." fullWidth />
-              <TextField label="Clinic philosophy" multiline minRows={3} value={String(sectionData.philosophy || "")} onChange={(event) => updateSection({ ...sectionData, philosophy: event.target.value })} helperText="Optional guidance for the public profile." fullWidth />
+              <TextField label="Description" multiline minRows={5} value={String(sectionData.description || "")} onChange={(event) => updateSection({ ...sectionData, description: event.target.value })} helperText={isHospitalProfile ? "Write 2-4 short paragraphs that explain the hospital’s care approach." : "Write 2-4 short paragraphs that explain the clinic’s care approach."} fullWidth />
+              <TextField label={isHospitalProfile ? "Hospital philosophy" : "Clinic philosophy"} multiline minRows={3} value={String(sectionData.philosophy || "")} onChange={(event) => updateSection({ ...sectionData, philosophy: event.target.value })} helperText="Optional guidance for the public profile." fullWidth />
               <Stack spacing={1} direction={{ xs: "column", md: "row" }}>
                 <TextField label="Established year" value={String(sectionData.establishedYear || "")} onChange={(event) => updateSection({ ...sectionData, establishedYear: event.target.value })} helperText="Four-digit year only." fullWidth />
                 <TextField label="Registration number" value={String(sectionData.registrationNumber || "")} onChange={(event) => updateSection({ ...sectionData, registrationNumber: event.target.value })} helperText="Provider-facing registration reference." fullWidth />
               </Stack>
-              <TextField label="Emergency availability" value={String(sectionData.emergencyAvailability || "")} onChange={(event) => updateSection({ ...sectionData, emergencyAvailability: event.target.value })} helperText="Use a short business description such as Available during clinic hours." fullWidth />
+              <TextField label="Emergency availability" value={String(sectionData.emergencyAvailability || "")} onChange={(event) => updateSection({ ...sectionData, emergencyAvailability: event.target.value })} helperText={isHospitalProfile ? "Use a short business description such as Available during hospital hours." : "Use a short business description such as Available during clinic hours."} fullWidth />
             </Stack>
+          </ProviderEditorSectionCard>
+        );
+      case "medical_team":
+        return isHospitalProfile ? (
+          <HospitalDoctorManagementSection
+            profileReference={profileReference}
+            hospitalDisplayName={currentDraft.displayName ?? page.displayName}
+            city={currentDraft.city}
+          />
+        ) : (
+          <ProviderEditorSectionCard
+            title="Doctors / Medical Team"
+            description="This section is available for hospital profiles only."
+          >
+            <Typography variant="body2" color="text.secondary">
+              Open a hospital profile to manage associated doctors.
+            </Typography>
           </ProviderEditorSectionCard>
         );
       case "contact": {
@@ -1163,7 +1386,7 @@ export function ProviderPublicProfileDraftPage() {
         return (
           <ProviderEditorSectionCard
             title="Facilities"
-            description="Select the facilities available at the clinic."
+            description={isHospitalProfile ? "Select the facilities available at the hospital." : "Select the facilities available at the clinic."}
             action={<Chip size="small" label={sectionStatus("facilities")} color={sectionStatus("facilities") === "Needs attention" ? "warning" : "default"} variant="outlined" />}
           >
             <ProviderTagListEditor
@@ -1205,7 +1428,7 @@ export function ProviderPublicProfileDraftPage() {
         return (
           <ProviderEditorSectionCard
             title="Languages"
-            description="Add the languages the clinic can support."
+            description={isHospitalProfile ? "Add the languages the hospital can support." : "Add the languages the clinic can support."}
             action={<Chip size="small" label={sectionStatus("languages")} color={sectionStatus("languages") === "Needs attention" ? "warning" : "default"} variant="outlined" />}
           >
             <ProviderTagListEditor
@@ -1410,7 +1633,19 @@ export function ProviderPublicProfileDraftPage() {
             action={<Chip size="small" label={sectionStatus("seo")} variant="outlined" />}
           >
             <Stack spacing={1.5}>
-              <TextField label="Slug" value={String(sectionData.slug || "")} onChange={(event) => updateSection({ ...sectionData, slug: event.target.value, canonicalPublicPath: `/discover/clinics/${event.target.value}` })} helperText="The slug forms the public URL path." fullWidth />
+              <TextField
+                label="Slug"
+                value={String(sectionData.slug || "")}
+                onChange={(event) => updateSection({
+                  ...sectionData,
+                  slug: event.target.value,
+                  canonicalPublicPath: isHospitalProfile
+                    ? `/discover/hospitals/${event.target.value}`
+                    : `/discover/clinics/${event.target.value}`,
+                })}
+                helperText="The slug forms the public URL path."
+                fullWidth
+              />
               <TextField label="Meta title" value={String(sectionData.metaTitle || "")} onChange={(event) => updateSection({ ...sectionData, metaTitle: event.target.value })} helperText="Title shown in search and social previews." fullWidth />
               <TextField label="Meta description" multiline minRows={3} value={String(sectionData.metaDescription || "")} onChange={(event) => updateSection({ ...sectionData, metaDescription: event.target.value })} helperText="Short, readable description for search previews." fullWidth />
             </Stack>
@@ -1426,7 +1661,7 @@ export function ProviderPublicProfileDraftPage() {
             <Stack spacing={1.5}>
               <Typography variant="body2" color="text.secondary">Ready for review: {currentDraft.readiness.ready ? "Yes" : "No"}</Typography>
               <Typography variant="body2" color="text.secondary">Blocking reasons: {currentDraft.readiness.blockingReasons.map((item) => readableLifecycleLabel(item)).join(" · ") || "None"}</Typography>
-              <Typography variant="body2" color="text.secondary">Missing fields: {currentDraft.readiness.missingMandatoryFields.map((item) => missingFieldChipLabel(item)).join(" · ") || "None"}</Typography>
+              <Typography variant="body2" color="text.secondary">Missing fields: {currentDraft.readiness.missingMandatoryFields.map((item) => missingFieldChipLabel(item, isHospitalProfile)).join(" · ") || "None"}</Typography>
             </Stack>
           </ProviderEditorSectionCard>
         );
@@ -1500,7 +1735,7 @@ export function ProviderPublicProfileDraftPage() {
                 <span className="eyebrow">Publication</span>
                 <h2>Draft</h2>
               </div>
-              <span>Not Published</span>
+              <span>{currentDraft.publicProfileStatus === "PUBLISHED" ? "Published" : "Not Published"}</span>
             </div>
             <Stack spacing={1.25}>
               <Typography variant="body2" color="text.secondary">Public URL: {page.publicPath}</Typography>
@@ -1533,9 +1768,11 @@ export function ProviderPublicProfileDraftPage() {
               {!isPreview ? (
                 <ProviderEditorFooter>
                   <Stack direction={{ xs: "column", sm: "row" }} spacing={1} useFlexGap flexWrap="wrap" alignItems={{ xs: "stretch", sm: "center" }}>
-                    <Button variant="contained" onClick={() => void saveCurrentSection()} disabled={saving}>Save changes</Button>
-                    <Button component={Link} to={previewTarget} variant="outlined">{currentDraft.publicProfileStatus === "PUBLISHED" ? "View Public Profile" : "Preview profile"}</Button>
-                    <Button component={Link} to={sectionRoute(profileReference, nextSection)} variant="outlined">Continue</Button>
+                {currentSection !== "medical_team" ? (
+                  <Button variant="contained" onClick={() => void saveCurrentSection()} disabled={saving}>Save changes</Button>
+                ) : null}
+                <Button component={Link} to={previewTarget} variant="outlined">{currentDraft.publicProfileStatus === "PUBLISHED" ? "View Public Profile" : "Preview profile"}</Button>
+                <Button component={Link} to={sectionRoute(profileReference, nextSection)} variant="outlined">Continue</Button>
                     <Button component={Link} to={DISCOVER_ROUTES.providerWorkspace.path} variant="text">Back to workspace</Button>
                   </Stack>
                 </ProviderEditorFooter>
@@ -1568,7 +1805,7 @@ export function ProviderPublicProfileDraftPage() {
                 </div>
                 <div>
                   <dt><PublishOutlinedIcon fontSize="small" aria-hidden="true" /> Publication</dt>
-                  <dd>{consentBlocked ? "Enable Discover participation before submitting for platform review." : currentModeration?.submissionEligible ? "Ready to submit for platform review." : "Submission blocked"}</dd>
+                  <dd>{consentBlocked ? "Enable Discover participation before submitting for platform review." : currentModeration?.submissionEligible ? "Ready to submit for platform review." : submissionBlockerMessage(currentModeration?.submissionBlockers)}</dd>
                 </div>
                 <div>
                   <dt><PersonOutlineOutlinedIcon fontSize="small" aria-hidden="true" /> Owner</dt>

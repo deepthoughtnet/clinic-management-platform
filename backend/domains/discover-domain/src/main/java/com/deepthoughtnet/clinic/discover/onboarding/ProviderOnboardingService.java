@@ -45,6 +45,7 @@ import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderStatusHistoryRep
 import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderSubmissionEntity;
 import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderSubmissionRepository;
 import com.deepthoughtnet.clinic.discover.reference.DiscoverReferenceDataService;
+import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileProjectionRepairService;
 import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService;
 import com.deepthoughtnet.clinic.discover.verification.DiscoverContactNormalizer;
 import com.deepthoughtnet.clinic.discover.verification.DiscoverVerificationService;
@@ -104,6 +105,7 @@ public class ProviderOnboardingService {
     private final ObjectStorageService storageService;
     private final ObjectMapper objectMapper;
     private final ProviderPublicProfileService publicProfileService;
+    private final ProviderPublicProfileProjectionRepairService projectionRepairService;
     private final DiscoverVerificationService verificationService;
     private final DiscoverReferenceDataService referenceDataService;
 
@@ -119,6 +121,7 @@ public class ProviderOnboardingService {
             ObjectStorageService storageService,
             ObjectMapper objectMapper,
             ProviderPublicProfileService publicProfileService,
+            ProviderPublicProfileProjectionRepairService projectionRepairService,
             DiscoverVerificationService verificationService,
             DiscoverReferenceDataService referenceDataService
     ) {
@@ -133,6 +136,7 @@ public class ProviderOnboardingService {
         this.storageService = storageService;
         this.objectMapper = objectMapper;
         this.publicProfileService = publicProfileService;
+        this.projectionRepairService = projectionRepairService;
         this.verificationService = verificationService;
         this.referenceDataService = referenceDataService;
     }
@@ -555,6 +559,7 @@ public class ProviderOnboardingService {
         publicProfileService.publishApprovedApplication(entity, latestSubmission, firstText(reason, "Published after approval"));
         transition(entity, ProviderLifecycleStatus.PUBLISHED, firstText(reason, "Public profile published"));
         applications.saveAndFlush(entity);
+        projectionRepairService.repairProviderApplication(entity.getId());
         return toRecord(entity, null);
     }
 

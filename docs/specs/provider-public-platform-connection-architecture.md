@@ -99,6 +99,11 @@ consent remains disabled, the item may remain actionable with `Tenant consent
 required` as its reason; consent, publication, platform connection, and booking
 capability remain independent states.
 
+Provider workspace profile cards must expose the provider-side draft workspace and
+the public profile as separate actions when both are available. Published profiles
+should keep `Manage profile` as the editable workspace entry point while
+`View public profile` continues to open the live Discover URL.
+
 ### Batch E2A ownership-state cleanup
 
 The provider details page and Healthcare presence card must render from the latest

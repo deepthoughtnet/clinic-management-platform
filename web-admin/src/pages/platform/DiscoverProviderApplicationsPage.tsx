@@ -219,6 +219,13 @@ export default function DiscoverProviderApplicationsPage() {
   const search = searchParams.get("search") || "";
   const providerType = (searchParams.get("providerType") || "") as "" | DiscoverProviderType;
   const referenceNumber = params.referenceNumber || null;
+  const authSignature = React.useMemo(() => [
+    auth.initialized ? "initialized" : "booting",
+    auth.accessToken ? "token" : "no-token",
+    auth.rolesUpper.join(","),
+    auth.permissions.join(","),
+    auth.selectedTenant?.id || "platform",
+  ].join("|"), [auth.initialized, auth.accessToken, auth.permissions, auth.rolesUpper, auth.selectedTenant?.id]);
 
   React.useEffect(() => {
     const current = searchParams.get("status");
@@ -261,7 +268,7 @@ export default function DiscoverProviderApplicationsPage() {
     } finally {
       setLoading(false);
     }
-  }, [activeTab.value, auth.accessToken, providerType, referenceNumber, search]);
+  }, [activeTab.value, auth.accessToken, authSignature, providerType, referenceNumber, search]);
 
   React.useEffect(() => {
     void refresh();

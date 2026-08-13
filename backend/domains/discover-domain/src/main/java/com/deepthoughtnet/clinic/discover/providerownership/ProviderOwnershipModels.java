@@ -113,6 +113,18 @@ public final class ProviderOwnershipModels {
     ) {
     }
 
+    public record OwnershipRepairRecord(
+            String publicProfileReference,
+            UUID providerAccountId,
+            boolean ownershipCreated,
+            boolean ownershipUpdated,
+            boolean membershipCreated,
+            boolean membershipUpdated,
+            boolean conflict,
+            String conflictReason
+    ) {
+    }
+
     public record OwnershipReconciliationRecord(
             String publicProfileReference,
             long historicalClaimCount,

@@ -85,7 +85,7 @@ function reviewActionLabel(action: string) {
     case "BACK_TO_WORKSPACE":
       return "Back to workspace";
     case "VIEW_SUBMITTED_PROFILE":
-      return "View submitted profile";
+      return "View submitted preview";
     case "REVIEW_REQUESTED_CHANGES":
       return "Review requested changes";
     case "OPEN_EDITABLE_DRAFT":

@@ -4,6 +4,7 @@ import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipMod
 import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipModels.DisputeRecord;
 import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipModels.MembershipRecord;
 import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipModels.OwnershipRecord;
+import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipModels.OwnershipRepairRecord;
 import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipModels.OwnershipSnapshot;
 import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipConflictException;
 import com.deepthoughtnet.clinic.discover.providerownership.db.PublicProfileClaimIntentEntity;
@@ -14,7 +15,10 @@ import com.deepthoughtnet.clinic.discover.providerownership.db.PublicProfileMemb
 import com.deepthoughtnet.clinic.discover.providerownership.db.PublicProfileMembershipRepository;
 import com.deepthoughtnet.clinic.discover.providerownership.db.PublicProfileOwnershipEntity;
 import com.deepthoughtnet.clinic.discover.providerownership.db.PublicProfileOwnershipRepository;
+import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderApplicationEntity;
+import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderType;
 import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService;
+import com.deepthoughtnet.clinic.discover.publicprofile.PublicProfileLifecycleRecord;
 import com.deepthoughtnet.clinic.discover.verification.db.DiscoverProviderAccountEntity;
 import com.deepthoughtnet.clinic.discover.verification.db.DiscoverProviderAccountRepository;
 import com.deepthoughtnet.clinic.platform.contracts.providerintegration.PublicProfileClaimIntentStatus;
@@ -35,6 +39,7 @@ import org.springframework.util.StringUtils;
 @Service
 public class ProviderOwnershipService {
     private static final Duration CLAIM_INTENT_TTL = Duration.ofHours(12);
+    private static final String HISTORICAL_APPLICATION_OWNERSHIP_METHOD = "PROVIDER_APPLICATION_OWNER";
 
     private final ProviderOwnershipLifecyclePolicy lifecyclePolicy;
     private final ProviderPublicProfileService publicProfileService;
@@ -240,6 +245,148 @@ public class ProviderOwnershipService {
                     }
                 });
         return toRecord(ownership);
+    }
+
+    @Transactional
+    public OwnershipRepairRecord ensureHistoricalVerifiedOwnership(ProviderApplicationEntity application, PublicProfileLifecycleRecord lifecycle, String reason) {
+        if (application == null || lifecycle == null) {
+            return new OwnershipRepairRecord(
+                    lifecycle == null ? null : lifecycle.providerId() == null ? null : lifecycle.providerId().toString(),
+                    application == null ? null : application.getProviderAccountId(),
+                    false,
+                    false,
+                    false,
+                    false,
+                    true,
+                    "application or lifecycle is missing"
+            );
+        }
+        UUID providerAccountId = application.getProviderAccountId();
+        String publicProfileReference = lifecycle.providerId() == null ? null : lifecycle.providerId().toString();
+        if (!StringUtils.hasText(publicProfileReference) || providerAccountId == null) {
+            return new OwnershipRepairRecord(publicProfileReference, providerAccountId, false, false, false, false, true, "provider account or public profile reference is missing");
+        }
+        if (providerAccountRepository.findById(providerAccountId).isEmpty()) {
+            return new OwnershipRepairRecord(publicProfileReference, providerAccountId, false, false, false, false, true, "provider account not found");
+        }
+
+        String normalizedReference = publicProfileReference.trim();
+        String normalizedReason = StringUtils.hasText(reason) ? reason.trim() : "Historical provider profile projection repair";
+        long sourceRevision = application.getUpdatedAt() == null ? 0L : application.getUpdatedAt().toInstant().toEpochMilli();
+        PublicProfileOwnershipEntity conflictingOwnership = ownershipRepository.findTopByPublicProfileReferenceAndActiveTrueOrderByUpdatedAtDesc(normalizedReference)
+                .filter(entity -> !providerAccountId.equals(entity.getProviderAccountId()))
+                .orElse(null);
+        if (conflictingOwnership != null) {
+            return new OwnershipRepairRecord(
+                    normalizedReference,
+                    providerAccountId,
+                    false,
+                    false,
+                    false,
+                    false,
+                    true,
+                    "An active ownership row already belongs to another provider account."
+            );
+        }
+        PublicProfileMembershipEntity conflictingMembership = membershipRepository.findByPublicProfileReferenceOrderByUpdatedAtDesc(normalizedReference).stream()
+                .filter(item -> item.getRole() == PublicProfileMembershipRole.OWNER)
+                .filter(item -> "ACTIVE".equalsIgnoreCase(item.getStatus()))
+                .filter(item -> !providerAccountId.equals(item.getProviderAccountId()))
+                .findFirst()
+                .orElse(null);
+        if (conflictingMembership != null) {
+            return new OwnershipRepairRecord(
+                    normalizedReference,
+                    providerAccountId,
+                    false,
+                    false,
+                    false,
+                    false,
+                    true,
+                    "An active owner membership already belongs to another provider account."
+            );
+        }
+
+        boolean ownershipCreated = false;
+        boolean ownershipUpdated = false;
+        PublicProfileOwnershipEntity ownership = findOwnership(providerAccountId, normalizedReference).map(record ->
+                ownershipRepository.findById(record.id()).orElse(null)
+        ).orElse(null);
+        if (ownership == null) {
+            ownership = PublicProfileOwnershipEntity.create(
+                    normalizedReference,
+                    mapHistoricalPublicProfileType(application.getProviderType()),
+                    providerAccountId,
+                    HISTORICAL_APPLICATION_OWNERSHIP_METHOD,
+                    application.getId() == null ? normalizedReference : application.getId().toString(),
+                    sourceRevision,
+                    normalizedReason
+            );
+            ownership.markVerified(normalizedReason);
+            ownershipRepository.save(ownership);
+            ownershipCreated = true;
+        } else if (ownership.getStatus() == PublicProfileOwnershipStatus.CLAIM_PENDING) {
+            ownership.markVerified(normalizedReason);
+            ownershipRepository.save(ownership);
+            ownershipUpdated = true;
+        } else if (ownership.getStatus() != PublicProfileOwnershipStatus.VERIFIED) {
+            return new OwnershipRepairRecord(
+                    normalizedReference,
+                    providerAccountId,
+                    false,
+                    false,
+                    false,
+                    false,
+                    true,
+                    "Existing ownership row is not in a repairable state."
+            );
+        }
+
+        boolean membershipCreated = false;
+        boolean membershipUpdated = false;
+        PublicProfileMembershipEntity membership = membershipRepository.findByPublicProfileReferenceAndProviderAccountIdAndRole(
+                normalizedReference,
+                providerAccountId,
+                PublicProfileMembershipRole.OWNER
+        ).orElse(null);
+        if (membership == null) {
+            membership = PublicProfileMembershipEntity.create(
+                    normalizedReference,
+                    providerAccountId,
+                    PublicProfileMembershipRole.OWNER,
+                    normalizedReason,
+                    sourceRevision
+            );
+            membership.activate(normalizedReason);
+            membershipRepository.save(membership);
+            membershipCreated = true;
+        } else if (!"ACTIVE".equalsIgnoreCase(membership.getStatus())) {
+            membership.activate(normalizedReason);
+            membershipRepository.save(membership);
+            membershipUpdated = true;
+        }
+
+        return new OwnershipRepairRecord(
+                normalizedReference,
+                providerAccountId,
+                ownershipCreated,
+                ownershipUpdated,
+                membershipCreated,
+                membershipUpdated,
+                false,
+                null
+        );
+    }
+
+    PublicProfileType mapHistoricalPublicProfileType(ProviderType providerType) {
+        if (providerType == null) {
+            throw new IllegalArgumentException("provider type is required");
+        }
+        return switch (providerType) {
+            case INDIVIDUAL_DOCTOR -> PublicProfileType.DOCTOR;
+            case CLINIC -> PublicProfileType.CLINIC;
+            case HOSPITAL -> PublicProfileType.HOSPITAL;
+        };
     }
 
     @Transactional

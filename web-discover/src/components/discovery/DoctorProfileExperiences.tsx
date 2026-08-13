@@ -246,17 +246,23 @@ export function AvailabilityTimeline({ days }: { days: DoctorScheduleDay[] }) {
         <span className="eyebrow">Working Hours</span>
         <h2>Weekly schedule</h2>
       </div>
-      <div className="doctor-availability-timeline__list">
-        {days.map((day) => (
-          <div
-            key={day.day}
-            className={`doctor-availability-timeline__row${day.current ? " is-current" : ""}${day.closed ? " is-closed" : ""}`}
-          >
-            <strong>{day.day}</strong>
-            <span>{day.hours}</span>
-          </div>
-        ))}
-      </div>
+      {days.length ? (
+        <div className="doctor-availability-timeline__list">
+          {days.map((day) => (
+            <div
+              key={day.day}
+              className={`doctor-availability-timeline__row${day.current ? " is-current" : ""}${day.closed ? " is-closed" : ""}`}
+            >
+              <strong>{day.day}</strong>
+              <span>{day.hours}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="doctor-empty-state" role="status">
+          <p>Working hours not published on this profile yet.</p>
+        </div>
+      )}
     </section>
   );
 }
@@ -295,14 +301,20 @@ export function BookingPanel({
         <span>{consultationFee}</span>
       </div>
       <div className="doctor-booking-panel__slots" aria-label="Available slots">
-        {nextAvailableDays.map((day) => (
-          <div className="doctor-booking-panel__day" key={day.day}>
-            <strong>{day.day}</strong>
-            <div className="doctor-booking-panel__slot-row">
-              {day.slots.length ? day.slots.map((slot) => <span key={slot} className="chip chip--muted">{slot}</span>) : <span className="doctor-booking-panel__closed">Slots shared after review</span>}
+        {nextAvailableDays.length ? (
+          nextAvailableDays.map((day) => (
+            <div className="doctor-booking-panel__day" key={day.day}>
+              <strong>{day.day}</strong>
+              <div className="doctor-booking-panel__slot-row">
+                {day.slots.length ? day.slots.map((slot) => <span key={slot} className="chip chip--muted">{slot}</span>) : <span className="doctor-booking-panel__closed">Slots shared after review</span>}
+              </div>
             </div>
+          ))
+        ) : (
+          <div className="doctor-empty-state" role="status">
+            <p>Live slot availability is shown when you continue to booking.</p>
           </div>
-        ))}
+        )}
       </div>
       <div className="doctor-booking-panel__meta">
         <div>

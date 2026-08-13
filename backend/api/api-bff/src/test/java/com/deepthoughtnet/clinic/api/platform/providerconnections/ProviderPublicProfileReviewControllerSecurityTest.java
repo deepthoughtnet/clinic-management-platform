@@ -16,7 +16,7 @@ class ProviderPublicProfileReviewControllerSecurityTest {
         assertThat(requestMapping.value()).containsExactly("/api/platform/provider-connections/public-profile-reviews");
         assertThat(ProviderPublicProfileReviewController.class.getAnnotation(PreAuthorize.class).value()).isEqualTo("@permissionChecker.hasPermission('platform.provider_connection.view')");
 
-        Method list = ProviderPublicProfileReviewController.class.getMethod("list");
+        Method list = ProviderPublicProfileReviewController.class.getMethod("list", String.class, String.class, String.class);
         Method detail = ProviderPublicProfileReviewController.class.getMethod("detail", String.class);
         Method start = ProviderPublicProfileReviewController.class.getMethod("start", String.class, ProviderPublicProfileReviewController.ReviewCommandRequest.class);
         Method requestChanges = ProviderPublicProfileReviewController.class.getMethod("requestChanges", String.class, ProviderPublicProfileReviewController.ReviewCommandRequest.class);

@@ -23,6 +23,7 @@ import com.deepthoughtnet.clinic.discover.publicprofiledraft.PublicProfileDraftM
 import com.deepthoughtnet.clinic.discover.publicprofiledraft.PublicProfileDraftModels.PublicProfileDraftMediaUploadRecord;
 import com.deepthoughtnet.clinic.discover.publicprofilemoderation.ProviderPublicProfileModerationService;
 import com.deepthoughtnet.clinic.discover.publicprofilemoderation.PublicProfileModerationModels.PublicProfileSubmissionEligibilityRecord;
+import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderDocumentRepository;
 import com.deepthoughtnet.clinic.discover.publicprofiledraft.db.DiscoverPublicProfileDraftEntity;
 import com.deepthoughtnet.clinic.discover.publicprofiledraft.db.DiscoverPublicProfileDraftRepository;
 import com.deepthoughtnet.clinic.discover.publicprofiledraft.db.DiscoverPublicProfileDraftVersionEntity;
@@ -216,6 +217,36 @@ class ProviderPublicProfileDraftPersistenceRegressionTest extends PostgresTestCo
     }
 
     @Test
+    void createDraftUsesHospitalTypeAndPublishedPathForHistoricalHospitalProfiles() {
+        when(publicProfileService.findLifecycleByProviderId(PUBLIC_PROFILE_REFERENCE))
+                .thenReturn(Optional.of(new PublicProfileLifecycleRecord(
+                        PUBLIC_PROFILE_REFERENCE,
+                        com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderType.HOSPITAL,
+                        "DISCOVER_ONBOARDING_APPLICATION",
+                        PUBLIC_PROFILE_REFERENCE_VALUE,
+                        0L,
+                        OffsetDateTime.now().minusHours(2),
+                        "jeevanam-multispeciality-hospital",
+                        "Jeevanam Multispeciality Hospital",
+                        "Pune",
+                        "Pune",
+                        "CALL_TO_BOOK",
+                        "PUBLISHED",
+                        OffsetDateTime.now().minusHours(2),
+                        OffsetDateTime.now().minusHours(1),
+                        0L,
+                        "/discover/hospitals/jeevanam-multispeciality-hospital"
+                )));
+
+        PublicProfileDraftWorkspaceRecord workspace = service.createOrLoadDraft(PROVIDER_ACCOUNT_ID, PUBLIC_PROFILE_REFERENCE_VALUE);
+
+        assertThat(workspace.publicProfileType()).isEqualTo(ProviderType.HOSPITAL);
+        assertThat(workspace.publicProfileStatus()).isEqualTo("PUBLISHED");
+        assertThat(workspace.publicProfilePath()).isEqualTo("/discover/hospitals/jeevanam-multispeciality-hospital");
+        assertThat(workspace.tenantConsentStatus()).isEqualTo("ENABLED");
+    }
+
+    @Test
     void loadDraftReadsVersionWithoutMissingColumn() {
         PublicProfileDraftWorkspaceRecord workspace = service.createOrLoadDraft(PROVIDER_ACCOUNT_ID, PUBLIC_PROFILE_REFERENCE_VALUE);
         entityManager.clear();
@@ -391,6 +422,9 @@ class ProviderPublicProfileDraftPersistenceRegressionTest extends PostgresTestCo
                 service,
                 ownershipService,
                 publicProfileService,
+                mock(com.deepthoughtnet.clinic.discover.publichospitaldoctorassociation.PublicHospitalDoctorDraftAssociationService.class),
+                mock(com.deepthoughtnet.clinic.discover.publichospitaldoctorassociation.PublicHospitalDoctorAssociationService.class),
+                mock(ProviderDocumentRepository.class),
                 submissionRepository,
                 mock(com.deepthoughtnet.clinic.discover.publicprofilemoderation.db.DiscoverPublicProfileReviewFindingRepository.class),
                 mock(com.deepthoughtnet.clinic.discover.publicprofilemoderation.db.DiscoverPublicProfilePublicationRepository.class),
@@ -513,6 +547,9 @@ class ProviderPublicProfileDraftPersistenceRegressionTest extends PostgresTestCo
                 service,
                 ownershipService,
                 publicProfileService,
+                mock(com.deepthoughtnet.clinic.discover.publichospitaldoctorassociation.PublicHospitalDoctorDraftAssociationService.class),
+                mock(com.deepthoughtnet.clinic.discover.publichospitaldoctorassociation.PublicHospitalDoctorAssociationService.class),
+                mock(ProviderDocumentRepository.class),
                 submissionRepository,
                 mock(com.deepthoughtnet.clinic.discover.publicprofilemoderation.db.DiscoverPublicProfileReviewFindingRepository.class),
                 mock(com.deepthoughtnet.clinic.discover.publicprofilemoderation.db.DiscoverPublicProfilePublicationRepository.class),
@@ -535,6 +572,9 @@ class ProviderPublicProfileDraftPersistenceRegressionTest extends PostgresTestCo
                 service,
                 ownershipService,
                 publicProfileService,
+                mock(com.deepthoughtnet.clinic.discover.publichospitaldoctorassociation.PublicHospitalDoctorDraftAssociationService.class),
+                mock(com.deepthoughtnet.clinic.discover.publichospitaldoctorassociation.PublicHospitalDoctorAssociationService.class),
+                mock(ProviderDocumentRepository.class),
                 submissionRepository,
                 mock(com.deepthoughtnet.clinic.discover.publicprofilemoderation.db.DiscoverPublicProfileReviewFindingRepository.class),
                 mock(com.deepthoughtnet.clinic.discover.publicprofilemoderation.db.DiscoverPublicProfilePublicationRepository.class),

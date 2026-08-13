@@ -429,6 +429,17 @@ public class ProviderPublicProfileService {
     }
 
     @Transactional(readOnly = true)
+    public Optional<PublicProviderProfileSnapshot> findSnapshotByProviderId(UUID providerId) {
+        if (providerId == null) {
+            return Optional.empty();
+        }
+        return profiles.findByProviderId(providerId)
+                .filter(profile -> "PUBLISHED".equalsIgnoreCase(profile.getPublicationStatus()))
+                .flatMap(profile -> currentVersion(profile)
+                        .map(version -> readSnapshot(version.getSnapshotJson())));
+    }
+
+    @Transactional(readOnly = true)
     public Optional<PublicProfileLifecycleRecord> findLifecycleByProviderId(UUID providerId) {
         if (providerId == null) {
             return Optional.empty();
@@ -722,9 +733,6 @@ public class ProviderPublicProfileService {
                     bytes
             ));
         }
-        if (SOURCE_SYSTEM_MODERATED_PROFILE.equalsIgnoreCase(profile.snapshot().sourceSystem())) {
-            return Optional.empty();
-        }
         return loadMediaContent(mediaReference);
     }
 
@@ -883,6 +891,7 @@ public class ProviderPublicProfileService {
         String displayName = firstNonBlank(application.getDisplayName(), application.getLegalName(), application.getEmail());
         String legalName = firstNonBlank(application.getLegalName(), displayName);
         String summary = firstNonBlank(application.getBiography(), application.getTagline());
+        String bookingMode = application.getProviderType() == ProviderType.HOSPITAL ? "CALL_TO_BOOK" : BOOKING_MODE_ONLINE;
         return new PublicProviderProfileSnapshot(
                 application.getId(),
                 application.getProviderType(),
@@ -930,7 +939,7 @@ public class ProviderPublicProfileService {
                 enabledServices.size(),
                 departments.size(),
                 gallery.size(),
-                BOOKING_MODE_ONLINE,
+                bookingMode,
                 true,
                 publishedAt,
                 versionNumber,

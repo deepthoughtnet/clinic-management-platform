@@ -8,6 +8,9 @@ import com.deepthoughtnet.clinic.api.discover.provider.publicprofile.ProviderPub
 import com.deepthoughtnet.clinic.api.discover.provider.publicprofile.ProviderPublicProfileDraftModels.ProviderPublicProfileDraftSectionResponse;
 import com.deepthoughtnet.clinic.api.discover.provider.publicprofile.ProviderPublicProfileDraftModels.ProviderPublicProfileDraftSectionUpdateRequest;
 import com.deepthoughtnet.clinic.api.discover.provider.publicprofile.ProviderPublicProfileDraftModels.ProviderPublicProfileDraftVersionResponse;
+import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderType;
+import com.deepthoughtnet.clinic.discover.publichospitaldoctorassociation.PublicHospitalDoctorDraftAssociationService;
+import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderProfileDetailRecord;
 import com.deepthoughtnet.clinic.discover.publicprofiledraft.ProviderPublicProfileDraftService;
 import com.deepthoughtnet.clinic.discover.publicprofiledraft.PublicProfileDraftModels.PublicProfileDraftMediaUploadRecord;
 import com.deepthoughtnet.clinic.discover.publicprofiledraft.PublicProfileDraftModels.PublicProfileDraftFieldSourceRecord;
@@ -16,6 +19,7 @@ import com.deepthoughtnet.clinic.discover.publicprofiledraft.PublicProfileDraftM
 import com.deepthoughtnet.clinic.discover.publicprofiledraft.PublicProfileDraftModels.PublicProfileDraftWorkspaceRecord;
 import com.deepthoughtnet.clinic.discover.publicprofiledraft.PublicProfileDraftModels.PublicProfileDraftVersionRecord;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderDocumentType;
+import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -41,9 +45,17 @@ import org.springframework.web.multipart.MultipartFile;
 @PreAuthorize("hasRole('PROVIDER')")
 public class ProviderPublicProfileDraftController {
     private final ProviderPublicProfileDraftService service;
+    private final PublicHospitalDoctorDraftAssociationService hospitalDoctorAssociationService;
+    private final ProviderPublicProfileService publicProfileService;
 
-    public ProviderPublicProfileDraftController(ProviderPublicProfileDraftService service) {
+    public ProviderPublicProfileDraftController(
+            ProviderPublicProfileDraftService service,
+            PublicHospitalDoctorDraftAssociationService hospitalDoctorAssociationService,
+            ProviderPublicProfileService publicProfileService
+    ) {
         this.service = service;
+        this.hospitalDoctorAssociationService = hospitalDoctorAssociationService;
+        this.publicProfileService = publicProfileService;
     }
 
     @PostMapping("/{publicProfileReference}/draft")
@@ -164,6 +176,80 @@ public class ProviderPublicProfileDraftController {
                 .body(content.bytes());
     }
 
+    @GetMapping("/{publicProfileReference}/hospital-doctors")
+    public ResponseEntity<List<ProviderHospitalDoctorModels.ProviderHospitalDoctorResponse>> listHospitalDoctors(
+            Authentication authentication,
+            @PathVariable String publicProfileReference
+    ) {
+        ProviderSessionPrincipal principal = requirePrincipal(authentication);
+        requireHospitalProfile(principal.providerAccountId(), publicProfileReference);
+        UUID hospitalReference = UUID.fromString(publicProfileReference);
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.noStore())
+                .body(hospitalDoctorAssociationService.listDraftDoctorReferencesByHospital(hospitalReference).stream()
+                        .map(doctorReference -> toHospitalDoctorResponse(hospitalReference, doctorReference))
+                        .toList());
+    }
+
+    @PostMapping("/{publicProfileReference}/hospital-doctors")
+    public ResponseEntity<List<ProviderHospitalDoctorModels.ProviderHospitalDoctorResponse>> addHospitalDoctor(
+            Authentication authentication,
+            @PathVariable String publicProfileReference,
+            @RequestBody ProviderHospitalDoctorModels.ProviderHospitalDoctorUpsertRequest request
+    ) {
+        ProviderSessionPrincipal principal = requirePrincipal(authentication);
+        requireHospitalProfile(principal.providerAccountId(), publicProfileReference);
+        UUID hospitalReference = UUID.fromString(publicProfileReference);
+        UUID doctorReferenceUuid = parseUuid(request == null ? null : request.publicDoctorReference());
+        if (doctorReferenceUuid == null) {
+            throw new org.springframework.web.server.ResponseStatusException(HttpStatus.BAD_REQUEST, "Public doctor reference is required.");
+        }
+        assertPublishedDoctor(doctorReferenceUuid);
+        hospitalDoctorAssociationService.listDraftDoctorReferencesByHospital(hospitalReference);
+        hospitalDoctorAssociationService.upsertActiveAssociation(
+                hospitalReference,
+                doctorReferenceUuid,
+                PublicHospitalDoctorDraftAssociationService.SOURCE_SYSTEM_DISCOVER_PROVIDER,
+                hospitalReference,
+                doctorReferenceUuid,
+                java.time.OffsetDateTime.now()
+        );
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.noStore())
+                .body(hospitalDoctorAssociationService.listDraftDoctorReferencesByHospital(hospitalReference).stream()
+                        .map(doctorReference -> toHospitalDoctorResponse(hospitalReference, doctorReference))
+                        .toList());
+    }
+
+    @PostMapping("/{publicProfileReference}/hospital-doctors/{publicDoctorReference}/remove")
+    public ResponseEntity<List<ProviderHospitalDoctorModels.ProviderHospitalDoctorResponse>> removeHospitalDoctor(
+            Authentication authentication,
+            @PathVariable String publicProfileReference,
+            @PathVariable String publicDoctorReference
+    ) {
+        ProviderSessionPrincipal principal = requirePrincipal(authentication);
+        requireHospitalProfile(principal.providerAccountId(), publicProfileReference);
+        UUID hospitalReference = UUID.fromString(publicProfileReference);
+        UUID doctorReferenceUuid = parseUuid(publicDoctorReference);
+        if (doctorReferenceUuid == null) {
+            throw new org.springframework.web.server.ResponseStatusException(HttpStatus.BAD_REQUEST, "Public doctor reference is required.");
+        }
+        hospitalDoctorAssociationService.listDraftDoctorReferencesByHospital(hospitalReference);
+        hospitalDoctorAssociationService.deactivateAssociation(
+                hospitalReference,
+                doctorReferenceUuid,
+                PublicHospitalDoctorDraftAssociationService.SOURCE_SYSTEM_DISCOVER_PROVIDER,
+                hospitalReference,
+                doctorReferenceUuid,
+                java.time.OffsetDateTime.now()
+        );
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.noStore())
+                .body(hospitalDoctorAssociationService.listDraftDoctorReferencesByHospital(hospitalReference).stream()
+                        .map(doctorReference -> toHospitalDoctorResponse(hospitalReference, doctorReference))
+                        .toList());
+    }
+
     private ProviderPublicProfileDraftResponse toResponse(PublicProfileDraftWorkspaceRecord record) {
         return new ProviderPublicProfileDraftResponse(
                 record.draftId(),
@@ -256,6 +342,51 @@ public class ProviderPublicProfileDraftController {
                 (left, right) -> left,
                 java.util.LinkedHashMap::new
         ));
+    }
+
+    private void requireHospitalProfile(UUID providerAccountId, String publicProfileReference) {
+        PublicProfileDraftWorkspaceRecord workspace = service.getDraft(providerAccountId, publicProfileReference);
+        if (workspace.publicProfileType() != ProviderType.HOSPITAL) {
+            throw new org.springframework.web.server.ResponseStatusException(HttpStatus.BAD_REQUEST, "Hospital doctor associations are only available for hospital profiles.");
+        }
+    }
+
+    private void assertPublishedDoctor(UUID doctorReference) {
+        PublicProviderProfileDetailRecord detail = publicProfileService.findByProviderId(doctorReference)
+                .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(HttpStatus.NOT_FOUND, "Public doctor profile not found."));
+        if (detail.providerType() != ProviderType.INDIVIDUAL_DOCTOR) {
+            throw new org.springframework.web.server.ResponseStatusException(HttpStatus.BAD_REQUEST, "Only published doctors can be associated with a hospital.");
+        }
+    }
+
+    private ProviderHospitalDoctorModels.ProviderHospitalDoctorResponse toHospitalDoctorResponse(UUID hospitalReference, UUID doctorReference) {
+        PublicProviderProfileDetailRecord detail = publicProfileService.findByProviderId(doctorReference)
+                .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(HttpStatus.NOT_FOUND, "Public doctor profile not found."));
+        PublicProviderProfileDetailRecord hospital = publicProfileService.findByProviderId(hospitalReference).orElse(null);
+        return new ProviderHospitalDoctorModels.ProviderHospitalDoctorResponse(
+                detail.providerId().toString(),
+                detail.displayName(),
+                detail.primarySpeciality(),
+                detail.qualification(),
+                detail.referenceNumber(),
+                detail.yearsOfExperience(),
+                detail.publicPath(),
+                "ACTIVE",
+                hospital == null ? null : hospital.displayName(),
+                hospital == null ? null : hospital.canonicalSlug(),
+                detail.languages()
+        );
+    }
+
+    private UUID parseUuid(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(value.trim());
+        } catch (IllegalArgumentException ex) {
+            return null;
+        }
     }
 
     private ProviderSessionPrincipal requirePrincipal(Authentication authentication) {

@@ -12,6 +12,7 @@ import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.Pro
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderGalleryImageSnapshot;
 import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService;
 import com.deepthoughtnet.clinic.discover.publicdoctorpracticeassociation.PublicDoctorPracticeAssociationService;
+import com.deepthoughtnet.clinic.discover.publichospitaldoctorassociation.PublicHospitalDoctorAssociationService;
 import com.deepthoughtnet.clinic.discover.publicdoctorpracticeassociation.db.DiscoverPublicDoctorPracticeAssociationEntity;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderLocationSnapshot;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderProfileDetailRecord;
@@ -149,6 +150,7 @@ class PublicCatalogFacadeTest {
             assertThat(item.logoUrl()).isEqualTo("/api/public/hospitals/city-care-hospital/logo");
             assertThat(item.coverUrl()).isEqualTo("/api/public/hospitals/city-care-hospital/cover");
             assertThat(item.emergencyAvailable()).isTrue();
+            assertThat(item.bookingMode()).isEqualTo("CALL_TO_BOOK");
         });
         assertThat(search.hospitals().items()).singleElement().satisfies(item -> assertThat(item.hospitalDisplayName()).isEqualTo("City Care Hospital"));
         assertThat(facade.listSpecialities("skin", "pune", "demo")).extracting("speciality").containsExactly("Dermatology");
@@ -231,7 +233,7 @@ class PublicCatalogFacadeTest {
     void clinicDetailIncludesAssociatedDoctors() {
         ProviderPublicProfileService publicProfileService = mock(ProviderPublicProfileService.class);
         PublicDoctorPracticeAssociationService associationService = mock(PublicDoctorPracticeAssociationService.class);
-        PublicCatalogFacade facade = new PublicCatalogFacade(publicProfileService, mock(ProviderLinkingService.class), moderationService(), associationService);
+        PublicCatalogFacade facade = new PublicCatalogFacade(publicProfileService, mock(ProviderLinkingService.class), moderationService(), associationService, mock(PublicHospitalDoctorAssociationService.class));
 
         PublicProviderProfileDetailRecord clinicDetail = detailRecord(
                 ProviderType.CLINIC,
@@ -349,11 +351,134 @@ class PublicCatalogFacadeTest {
     }
 
     @Test
+    void hospitalDetailUsesContactOnlyBookingAndExplicitHospitalAssociations() {
+        ProviderPublicProfileService publicProfileService = mock(ProviderPublicProfileService.class);
+        PublicHospitalDoctorAssociationService hospitalAssociationService = mock(PublicHospitalDoctorAssociationService.class);
+        PublicCatalogFacade facade = new PublicCatalogFacade(publicProfileService, mock(ProviderLinkingService.class), moderationService(), mock(PublicDoctorPracticeAssociationService.class), hospitalAssociationService);
+
+        PublicProviderProfileDetailRecord hospitalDetail = detailRecord(
+                ProviderType.HOSPITAL,
+                "HSP-0001",
+                "jeevanam-multispeciality-hospital",
+                "/discover/hospitals/jeevanam-multispeciality-hospital",
+                "Jeevanam Multispeciality Hospital",
+                "Jeevanam Multispeciality Hospital",
+                "Hospital summary",
+                "Hospital description",
+                "Hospital biography",
+                null,
+                null,
+                null,
+                null,
+                null,
+                false,
+                List.of(),
+                List.of("General Medicine"),
+                List.of(),
+                List.of("Emergency"),
+                List.of("Inpatient"),
+                List.of("Lift access"),
+                List.of("In-person"),
+                List.of(new PublicProviderLocationSnapshot("Main", "Main Road", "Pune", "Maharashtra", "India", "411001", "Mon-Sun 9 AM-9 PM", true, true, null, null)),
+                List.of(),
+                List.of(),
+                null,
+                null,
+                null,
+                "9876543210",
+                "hospital@example.com",
+                "https://example.com",
+                "Pune",
+                "Main Road",
+                "Maharashtra",
+                "India",
+                "General Medicine",
+                "Private",
+                null,
+                null,
+                null,
+                true,
+                "CALL_TO_BOOK",
+                false,
+                OffsetDateTime.parse("2026-01-01T10:00:00Z"),
+                1,
+                "jeevanam-multispeciality-hospital",
+                null,
+                true
+        );
+        PublicProviderProfileDetailRecord doctorDetail = detailRecord(
+                ProviderType.INDIVIDUAL_DOCTOR,
+                "9c6cbf9a-9f14-4f58-8d2c-4cb7c6f3f001",
+                "dr-neha-sharma",
+                "/discover/doctors/dr-neha-sharma",
+                "Dr. Neha Sharma",
+                "Dr. Neha Sharma",
+                "General Medicine",
+                "Doctor summary",
+                "Doctor biography",
+                "MBBS, MD",
+                "MMC",
+                11,
+                new BigDecimal("700"),
+                15,
+                true,
+                List.of("English"),
+                List.of("General Medicine"),
+                List.of(),
+                List.of("Consultation"),
+                List.of(),
+                List.of(),
+                List.of("In-person"),
+                List.of(new PublicProviderLocationSnapshot("Jeevanam Multispeciality Hospital", "Main Road", "Pune", "Maharashtra", "India", "411001", null, true, true, null, null)),
+                List.of(),
+                List.of(),
+                "https://example.com/doctor.png",
+                null,
+                null,
+                "+911111111111",
+                "doctor@example.com",
+                "https://example.com",
+                "Pune",
+                "Main Road",
+                "Maharashtra",
+                "India",
+                "General Medicine",
+                null,
+                null,
+                null,
+                null,
+                false,
+                "ONLINE_BOOKING",
+                false,
+                OffsetDateTime.parse("2026-01-01T10:00:00Z"),
+                1,
+                "dr-neha-sharma",
+                null,
+                true
+        );
+
+        when(publicProfileService.findBySlug("jeevanam-multispeciality-hospital")).thenReturn(Optional.of(hospitalDetail));
+        when(hospitalAssociationService.listPublishedDoctorReferencesByHospital(hospitalDetail.providerId())).thenReturn(List.of(doctorDetail.providerId()));
+        when(publicProfileService.findByProviderId(doctorDetail.providerId())).thenReturn(Optional.of(doctorDetail));
+
+        var detail = facade.hospitalDetail("jeevanam-multispeciality-hospital");
+
+        assertThat(detail.bookingMode()).isEqualTo("CALL_TO_BOOK");
+        assertThat(detail.doctors()).singleElement().satisfies(doctor -> {
+            assertThat(doctor.publicDoctorId()).isEqualTo(doctorDetail.providerId().toString());
+            assertThat(doctor.doctorDisplayName()).isEqualTo("Dr. Neha Sharma");
+            assertThat(doctor.clinicDisplayName()).isEqualTo("Jeevanam Multispeciality Hospital");
+            assertThat(doctor.clinicSlug()).isEqualTo("jeevanam-multispeciality-hospital");
+            assertThat(doctor.bookingMode()).isEqualTo("NOT_AVAILABLE");
+        });
+    }
+
+    @Test
     void clinicSummaryAndDetailResolveOnlineBookingWhenAnyAssociatedDoctorCanBookOnline() {
         ProviderPublicProfileService publicProfileService = mock(ProviderPublicProfileService.class);
         ProviderLinkingService providerLinkingService = mock(ProviderLinkingService.class);
         PublicDoctorPracticeAssociationService associationService = mock(PublicDoctorPracticeAssociationService.class);
-        PublicCatalogFacade facade = new PublicCatalogFacade(publicProfileService, providerLinkingService, moderationService(), associationService);
+        PublicCatalogFacade facade = new PublicCatalogFacade(publicProfileService, providerLinkingService, moderationService(), associationService, mock(PublicHospitalDoctorAssociationService.class));
 
         PublicProviderProfileDetailRecord clinicDetail = detailRecord(
                 ProviderType.CLINIC,
@@ -520,7 +645,8 @@ class PublicCatalogFacadeTest {
     void doctorDetailIncludesOpaqueBookingReferenceWhenPlatformLinkExists() {
         ProviderPublicProfileService publicProfileService = mock(ProviderPublicProfileService.class);
         ProviderLinkingService providerLinkingService = mock(ProviderLinkingService.class);
-        PublicCatalogFacade facade = new PublicCatalogFacade(publicProfileService, providerLinkingService, moderationService(), mock(PublicDoctorPracticeAssociationService.class));
+        PublicDoctorPracticeAssociationService associationService = mock(PublicDoctorPracticeAssociationService.class);
+        PublicCatalogFacade facade = new PublicCatalogFacade(publicProfileService, providerLinkingService, moderationService(), associationService, mock(PublicHospitalDoctorAssociationService.class));
 
         PublicProviderProfileDetailRecord detail = detailRecord(
                 ProviderType.INDIVIDUAL_DOCTOR,
@@ -606,6 +732,7 @@ class PublicCatalogFacadeTest {
 
         assertThat(doctor.bookingReference()).isEqualTo("opaque-booking-reference");
         assertThat(doctor.clinics()).singleElement().satisfies(clinic -> assertThat(clinic.bookingReference()).isEqualTo("opaque-booking-reference"));
+        assertThat(doctor.availableToday()).isTrue();
     }
 
     @Test
@@ -613,7 +740,7 @@ class PublicCatalogFacadeTest {
         ProviderPublicProfileService publicProfileService = mock(ProviderPublicProfileService.class);
         ProviderLinkingService providerLinkingService = mock(ProviderLinkingService.class);
         PublicDoctorPracticeAssociationService associationService = mock(PublicDoctorPracticeAssociationService.class);
-        PublicCatalogFacade facade = new PublicCatalogFacade(publicProfileService, providerLinkingService, moderationService(), associationService);
+        PublicCatalogFacade facade = new PublicCatalogFacade(publicProfileService, providerLinkingService, moderationService(), associationService, mock(PublicHospitalDoctorAssociationService.class));
 
         PublicProviderProfileDetailRecord detail = detailRecord(
                 ProviderType.INDIVIDUAL_DOCTOR,
@@ -721,6 +848,228 @@ class PublicCatalogFacadeTest {
     }
 
     @Test
+    void doctorSummaryUsesAvailableTodayOnlyWhenLinkedAvailabilityStateIsAvailableToday() {
+        ProviderPublicProfileService publicProfileService = mock(ProviderPublicProfileService.class);
+        ProviderLinkingService providerLinkingService = mock(ProviderLinkingService.class);
+        PublicDoctorPracticeAssociationService associationService = mock(PublicDoctorPracticeAssociationService.class);
+        PublicCatalogFacade facade = new PublicCatalogFacade(publicProfileService, providerLinkingService, moderationService(), associationService, mock(PublicHospitalDoctorAssociationService.class));
+
+        PublicProviderProfileDetailRecord detail = detailRecord(
+                ProviderType.INDIVIDUAL_DOCTOR,
+                "DR-AVAIL-1",
+                "neeraj-kulkarni",
+                "/discover/doctors/neeraj-kulkarni",
+                "Neeraj Kulkarni",
+                "Neeraj Kulkarni",
+                "Public doctor summary",
+                "Doctor summary",
+                "Doctor biography",
+                "MBBS",
+                "MMC",
+                10,
+                new BigDecimal("700"),
+                15,
+                true,
+                List.of("English"),
+                List.of("General Medicine"),
+                List.of(),
+                List.of("Consultation"),
+                List.of(),
+                List.of(),
+                List.of("In-person"),
+                List.of(new PublicProviderLocationSnapshot("Green Valley Family Clinic", "Baner Road", "Pune", "Maharashtra", "India", "411045", "Mon-Sat 9 AM-5 PM", true, true, null, null)),
+                List.of(),
+                List.of(),
+                "https://example.com/neeraj.png",
+                null,
+                null,
+                "+911111111111",
+                "neeraj@example.com",
+                "https://example.com",
+                "Pune",
+                "Wakad",
+                "Maharashtra",
+                "India",
+                "General Medicine",
+                null,
+                null,
+                null,
+                null,
+                false,
+                "ONLINE_BOOKING",
+                false,
+                OffsetDateTime.parse("2026-01-01T10:00:00Z"),
+                1,
+                "neeraj-kulkarni",
+                null,
+                true
+        );
+        PublicProviderProfileSummaryRecord summary = new PublicProviderProfileSummaryRecord(
+                detail.providerId(),
+                ProviderType.INDIVIDUAL_DOCTOR,
+                "neeraj-kulkarni",
+                "/discover/doctors/neeraj-kulkarni",
+                "Neeraj Kulkarni",
+                "Neeraj Kulkarni subtitle",
+                "Public doctor summary",
+                "General Medicine",
+                "Pune",
+                "Wakad",
+                "https://example.com/neeraj.png",
+                null,
+                1,
+                1,
+                1,
+                0,
+                "+911111111111",
+                "ONLINE_BOOKING",
+                false,
+                List.of("General Medicine"),
+                null
+        );
+        UUID practiceId = UUID.fromString("fb6977b3-683b-40a3-95b8-05ffbad1dac0");
+
+        when(publicProfileService.findBySlug("neeraj-kulkarni")).thenReturn(Optional.of(detail));
+        when(publicProfileService.listProfiles(any(), anyInt(), anyInt())).thenReturn(new PageImpl<>(List.of(summary), PageRequest.of(0, 12), 1));
+        when(associationService.listPublishedPracticeReferencesByDoctor(detail.providerId())).thenReturn(List.of(practiceId));
+        when(providerLinkingService.resolveBookingTarget(new PublicProviderReference(detail.providerId().toString(), practiceId.toString()))).thenReturn(Optional.of(
+                new BookingTargetResolution(
+                        new BookingTargetReference("opaque-booking-reference", 11L),
+                        new ProviderSourceReference(SourceSystem.HEALTHCARE_DOCTOR, detail.referenceNumber(), 8L, OffsetDateTime.parse("2026-01-01T10:00:00Z")),
+                        PublicProfileType.DOCTOR,
+                        new PublicProviderReference(detail.providerId().toString(), practiceId.toString()),
+                        "tenant-1",
+                        practiceId.toString(),
+                        "tenant-doctor-user-1",
+                        "tenant-doctor-profile-1",
+                        BookingCapability.ONLINE_BOOKING,
+                        AvailabilityState.AVAILABLE_TODAY,
+                        PlatformConnectionStatus.CONNECTED,
+                        LinkLifecycleStatus.LINKED,
+                        11L,
+                        22L,
+                        OffsetDateTime.parse("2026-01-01T10:00:00Z")
+                )
+        ));
+
+        assertThat(facade.listDoctors("Neeraj", "Pune", "Wakad", "General Medicine", null, "demo", null, null, null, 0, 12)
+                .items())
+                .singleElement()
+                .satisfies(item -> assertThat(item.availableToday()).isTrue());
+    }
+
+    @Test
+    void doctorSummaryDoesNotInferAvailableTodayFromOnlineBookingWithoutAvailabilitySignal() {
+        ProviderPublicProfileService publicProfileService = mock(ProviderPublicProfileService.class);
+        ProviderLinkingService providerLinkingService = mock(ProviderLinkingService.class);
+        PublicDoctorPracticeAssociationService associationService = mock(PublicDoctorPracticeAssociationService.class);
+        PublicCatalogFacade facade = new PublicCatalogFacade(publicProfileService, providerLinkingService, moderationService(), associationService, mock(PublicHospitalDoctorAssociationService.class));
+
+        PublicProviderProfileDetailRecord detail = detailRecord(
+                ProviderType.INDIVIDUAL_DOCTOR,
+                "DR-AVAIL-2",
+                "neeraj-kulkarni",
+                "/discover/doctors/neeraj-kulkarni",
+                "Neeraj Kulkarni",
+                "Neeraj Kulkarni",
+                "Public doctor summary",
+                "Doctor summary",
+                "Doctor biography",
+                "MBBS",
+                "MMC",
+                10,
+                new BigDecimal("700"),
+                15,
+                true,
+                List.of("English"),
+                List.of("General Medicine"),
+                List.of(),
+                List.of("Consultation"),
+                List.of(),
+                List.of(),
+                List.of("In-person"),
+                List.of(new PublicProviderLocationSnapshot("Green Valley Family Clinic", "Baner Road", "Pune", "Maharashtra", "India", "411045", "Mon-Sat 9 AM-5 PM", true, true, null, null)),
+                List.of(),
+                List.of(),
+                "https://example.com/neeraj.png",
+                null,
+                null,
+                "+911111111111",
+                "neeraj@example.com",
+                "https://example.com",
+                "Pune",
+                "Wakad",
+                "Maharashtra",
+                "India",
+                "General Medicine",
+                null,
+                null,
+                null,
+                null,
+                false,
+                "ONLINE_BOOKING",
+                false,
+                OffsetDateTime.parse("2026-01-01T10:00:00Z"),
+                1,
+                "neeraj-kulkarni",
+                null,
+                true
+        );
+        PublicProviderProfileSummaryRecord summary = new PublicProviderProfileSummaryRecord(
+                detail.providerId(),
+                ProviderType.INDIVIDUAL_DOCTOR,
+                "neeraj-kulkarni",
+                "/discover/doctors/neeraj-kulkarni",
+                "Neeraj Kulkarni",
+                "Neeraj Kulkarni subtitle",
+                "Public doctor summary",
+                "General Medicine",
+                "Pune",
+                "Wakad",
+                "https://example.com/neeraj.png",
+                null,
+                1,
+                1,
+                1,
+                0,
+                "+911111111111",
+                "ONLINE_BOOKING",
+                false,
+                List.of("General Medicine"),
+                null
+        );
+        UUID practiceId = UUID.fromString("fb6977b3-683b-40a3-95b8-05ffbad1dac0");
+
+        when(publicProfileService.findBySlug("neeraj-kulkarni")).thenReturn(Optional.of(detail));
+        when(publicProfileService.listProfiles(any(), anyInt(), anyInt())).thenReturn(new PageImpl<>(List.of(summary), PageRequest.of(0, 12), 1));
+        when(associationService.listPublishedPracticeReferencesByDoctor(detail.providerId())).thenReturn(List.of(practiceId));
+        when(providerLinkingService.resolveBookingTarget(new PublicProviderReference(detail.providerId().toString(), practiceId.toString()))).thenReturn(Optional.of(
+                new BookingTargetResolution(
+                        new BookingTargetReference("opaque-booking-reference", 11L),
+                        new ProviderSourceReference(SourceSystem.HEALTHCARE_DOCTOR, detail.referenceNumber(), 8L, OffsetDateTime.parse("2026-01-01T10:00:00Z")),
+                        PublicProfileType.DOCTOR,
+                        new PublicProviderReference(detail.providerId().toString(), practiceId.toString()),
+                        "tenant-1",
+                        practiceId.toString(),
+                        "tenant-doctor-user-1",
+                        "tenant-doctor-profile-1",
+                        BookingCapability.ONLINE_BOOKING,
+                        AvailabilityState.UNKNOWN,
+                        PlatformConnectionStatus.CONNECTED,
+                        LinkLifecycleStatus.LINKED,
+                        11L,
+                        22L,
+                        OffsetDateTime.parse("2026-01-01T10:00:00Z")
+                )
+        ));
+
+        assertThat(facade.listDoctors("Neeraj", "Pune", "Wakad", "General Medicine", null, "demo", null, null, null, 0, 12)
+                .items())
+                .singleElement()
+                .satisfies(item -> assertThat(item.availableToday()).isFalse());
+    }
+
+    @Test
     void doctorDetailIncludesMultiplePracticesAndKeepsClinicCompatibilityFields() {
         ProviderPublicProfileService publicProfileService = mock(ProviderPublicProfileService.class);
         PublicDoctorPracticeAssociationService associationService = mock(PublicDoctorPracticeAssociationService.class);
@@ -728,7 +1077,7 @@ class PublicCatalogFacadeTest {
         when(associationService.listPublishedPracticeReferencesByDoctor(any())).thenReturn(List.of());
         when(associationService.findActiveAssociationsByPublicDoctorReference(any())).thenReturn(List.of(mock(DiscoverPublicDoctorPracticeAssociationEntity.class)));
         when(associationService.findActiveAssociationsByPublicPracticeReference(any())).thenReturn(List.of());
-        PublicCatalogFacade facade = new PublicCatalogFacade(publicProfileService, mock(ProviderLinkingService.class), moderationService(), associationService);
+        PublicCatalogFacade facade = new PublicCatalogFacade(publicProfileService, mock(ProviderLinkingService.class), moderationService(), associationService, mock(PublicHospitalDoctorAssociationService.class));
 
         PublicProviderProfileDetailRecord doctorDetail = detailRecord(
                 ProviderType.INDIVIDUAL_DOCTOR,
@@ -959,6 +1308,7 @@ class PublicCatalogFacadeTest {
 
         assertThat(detail.logoUrl()).isEqualTo("/api/public/hospitals/city-care-hospital/logo");
         assertThat(detail.coverUrl()).isEqualTo("/api/public/hospitals/city-care-hospital/cover");
+        assertThat(detail.bookingMode()).isEqualTo("CALL_TO_BOOK");
         assertThat(detail.galleryImageUrls()).containsExactly(
                 "/api/public/hospitals/city-care-hospital/gallery/0",
                 "/api/public/hospitals/city-care-hospital/gallery/1"
@@ -1199,6 +1549,6 @@ class PublicCatalogFacadeTest {
         when(associationService.listPublishedPracticeReferencesByDoctor(any())).thenReturn(List.of());
         when(associationService.findActiveAssociationsByPublicDoctorReference(any())).thenReturn(List.of());
         when(associationService.findActiveAssociationsByPublicPracticeReference(any())).thenReturn(List.of());
-        return new PublicCatalogFacade(publicProfileService, mock(ProviderLinkingService.class), moderationService(), associationService);
+        return new PublicCatalogFacade(publicProfileService, mock(ProviderLinkingService.class), moderationService(), associationService, mock(PublicHospitalDoctorAssociationService.class));
     }
 }

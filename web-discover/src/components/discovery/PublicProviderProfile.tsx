@@ -1,5 +1,6 @@
 import {
   AssignmentOutlined,
+  CallOutlined,
   ChevronLeftRounded,
   ChevronRightRounded,
   CheckCircleOutlined,
@@ -117,6 +118,7 @@ export type PublicProviderProfileProps = {
   consultationModes?: string[];
   appointmentEmptyFeeText?: string;
   appointmentEmptyModesText?: string;
+  appointmentSectionContent?: ReactNode;
   showAppointmentSection?: boolean;
   className?: string;
   dataTestId?: string;
@@ -208,6 +210,7 @@ export function PublicProviderProfile({
   consultationModes = [],
   appointmentEmptyFeeText = "Consultation fee will appear once added.",
   appointmentEmptyModesText = "Consultation modes will appear once configured.",
+  appointmentSectionContent,
   showAppointmentSection = true,
   className,
   dataTestId,
@@ -291,7 +294,14 @@ export function PublicProviderProfile({
               {consultationFeeLabel ? <span className="provider-preview-fact-chip"><SchoolOutlined fontSize="small" aria-hidden="true" />{consultationFeeLabel} Consultation</span> : null}
               {languages.length ? <span className="provider-preview-fact-chip"><LanguageOutlined fontSize="small" aria-hidden="true" />{languages.join(" • ")}</span> : null}
               {teleconsultationAvailable ? <span className="provider-preview-fact-chip"><DirectionsCarOutlined fontSize="small" aria-hidden="true" />Teleconsultation available</span> : null}
-              {bookingMode ? <BookingCapabilityBadge mode={bookingMode} compact /> : null}
+              {bookingMode && providerType === "HOSPITAL" ? (
+                <span className="provider-preview-fact-chip">
+                  <CallOutlined fontSize="small" aria-hidden="true" />
+                  Call Hospital
+                </span>
+              ) : bookingMode ? (
+                <BookingCapabilityBadge mode={bookingMode} compact />
+              ) : null}
             </div>
             {heroSupplement ? <div className="provider-preview-hero-supplement">{heroSupplement}</div> : null}
             {preview ? (
@@ -331,23 +341,36 @@ export function PublicProviderProfile({
         {afterBiographyContent ? <div className="provider-preview-after-biography">{afterBiographyContent}</div> : null}
       </section>
 
-      {providerType === "CLINIC" ? (
-        <section className="provider-preview-section provider-preview-section--doctors">
+      {(providerType === "CLINIC" || providerType === "HOSPITAL") ? (
+        <section className="provider-preview-section provider-preview-section--doctors" id="doctors">
           <div className="provider-preview-section-heading">
             <span className="eyebrow">Doctors</span>
-            <h2>Doctors at this clinic</h2>
-            <p>These doctors are associated with this public clinic profile.</p>
+            <h2>{providerType === "HOSPITAL" ? "Doctors at this hospital" : "Doctors at this clinic"}</h2>
+            <p>
+              {providerType === "HOSPITAL"
+                ? "These doctors are associated with this hospital and shown on its public profile."
+                : "These doctors are associated with this public clinic profile."}
+            </p>
           </div>
           {associatedDoctors && associatedDoctors.length ? (
             <div className="public-directory-grid provider-preview-doctor-grid">
               {associatedDoctors.map((doctor) => (
-                <DoctorCard key={doctor.publicDoctorId} doctor={doctor} />
+                <DoctorCard
+                  key={doctor.publicDoctorId}
+                  doctor={doctor}
+                  context={providerType === "HOSPITAL" ? "hospital" : "directory"}
+                  hostProviderName={providerType === "HOSPITAL" ? displayName : null}
+                />
               ))}
             </div>
           ) : (
             <div className="provider-preview-empty-state">
               <strong>Doctors will appear here once they are published.</strong>
-              <p>Clinic booking entry follows the published doctor associations for this practice.</p>
+              <p>
+                {providerType === "HOSPITAL"
+                  ? "Hospital doctor listings follow the explicit hospital associations published on Discover."
+                  : "Clinic booking entry follows the published doctor associations for this practice."}
+              </p>
             </div>
           )}
         </section>
@@ -558,32 +581,34 @@ export function PublicProviderProfile({
           )}
         </section>
         {showAppointmentSection ? (
-          <section className="provider-preview-card provider-preview-appointment-card">
-            <div className="provider-preview-section-heading">
-              <span className="eyebrow">Appointment</span>
-              <h2>{appointmentTitle}</h2>
-            </div>
-            <div className="provider-preview-appointment-summary">
-              <div>
-                <strong>{providerType === "CLINIC" ? "Consultation fees" : "Consultation fee"}</strong>
-                <span>{consultationFeeLabel ?? appointmentEmptyFeeText}</span>
+          appointmentSectionContent ?? (
+            <section className="provider-preview-card provider-preview-appointment-card">
+              <div className="provider-preview-section-heading">
+                <span className="eyebrow">Appointment</span>
+                <h2>{appointmentTitle}</h2>
               </div>
-              <div>
-                <strong>Consultation modes</strong>
-                <span>{consultationModes.length ? consultationModes.join(" · ") : appointmentEmptyModesText}</span>
+              <div className="provider-preview-appointment-summary">
+                <div>
+                  <strong>{providerType === "CLINIC" ? "Consultation fees" : "Consultation fee"}</strong>
+                  <span>{consultationFeeLabel ?? appointmentEmptyFeeText}</span>
+                </div>
+                <div>
+                  <strong>Consultation modes</strong>
+                  <span>{consultationModes.length ? consultationModes.join(" · ") : appointmentEmptyModesText}</span>
+                </div>
               </div>
-            </div>
-            <div className="provider-preview-appointment-actions">
-              <a className="primary-button" href={bookingUrl}>
-                {bookingLabel}
-              </a>
-              {callHref && callLabel ? (
-                <a className="secondary-button" href={callHref}>
-                  {callLabel}
+              <div className="provider-preview-appointment-actions">
+                <a className="primary-button" href={bookingUrl}>
+                  {bookingLabel}
                 </a>
-              ) : null}
-            </div>
-          </section>
+                {callHref && callLabel ? (
+                  <a className="secondary-button" href={callHref}>
+                    {callLabel}
+                  </a>
+                ) : null}
+              </div>
+            </section>
+          )
         ) : null}
       </div>
       {selectedGalleryItem ? (

@@ -15,6 +15,7 @@ import com.deepthoughtnet.clinic.api.publicsite.dto.PublicSpecialityDetailRespon
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicSpecialitySummaryResponse;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderType;
 import com.deepthoughtnet.clinic.discover.publicdoctorpracticeassociation.PublicDoctorPracticeAssociationService;
+import com.deepthoughtnet.clinic.discover.publichospitaldoctorassociation.PublicHospitalDoctorAssociationService;
 import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService.DoctorPublicMediaAsset;
 import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService.ProviderPublicMediaAsset;
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProfileMediaContent;
@@ -26,6 +27,7 @@ import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileMod
 import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileModels.PublicProviderSearchCriteria;
 import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService;
 import com.deepthoughtnet.clinic.discover.publicprofilemoderation.ProviderPublicProfileModerationService;
+import com.deepthoughtnet.clinic.platform.contracts.providerintegration.AvailabilityState;
 import com.deepthoughtnet.clinic.platform.contracts.providerintegration.BookingCapability;
 import com.deepthoughtnet.clinic.platform.providerintegration.service.ProviderLinkingService;
 import java.math.BigDecimal;
@@ -34,6 +36,7 @@ import java.util.Objects;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
@@ -50,18 +53,21 @@ public class PublicCatalogFacade {
     private final ProviderLinkingService providerLinkingService;
     private final ProviderPublicProfileModerationService moderationService;
     private final PublicDoctorPracticeAssociationService publicDoctorPracticeAssociationService;
+    private final PublicHospitalDoctorAssociationService publicHospitalDoctorAssociationService;
 
     @Autowired
     public PublicCatalogFacade(
             ProviderPublicProfileService publicProfileService,
             ProviderLinkingService providerLinkingService,
             ProviderPublicProfileModerationService moderationService,
-            PublicDoctorPracticeAssociationService publicDoctorPracticeAssociationService
+            PublicDoctorPracticeAssociationService publicDoctorPracticeAssociationService,
+            PublicHospitalDoctorAssociationService publicHospitalDoctorAssociationService
     ) {
         this.publicProfileService = Objects.requireNonNull(publicProfileService, "publicProfileService");
         this.providerLinkingService = Objects.requireNonNull(providerLinkingService, "providerLinkingService");
         this.moderationService = Objects.requireNonNull(moderationService, "moderationService");
         this.publicDoctorPracticeAssociationService = Objects.requireNonNull(publicDoctorPracticeAssociationService, "publicDoctorPracticeAssociationService");
+        this.publicHospitalDoctorAssociationService = Objects.requireNonNull(publicHospitalDoctorAssociationService, "publicHospitalDoctorAssociationService");
     }
 
     public PublicPageResponse<PublicClinicSummaryResponse> listClinics(
@@ -333,8 +339,7 @@ public class PublicCatalogFacade {
                 clinics,
                 List.of(),
                 List.of(),
-                false
-                ,
+                resolveAvailableToday(publishedLifecycleReference(detail.canonicalSlug(), detail.providerId().toString()), resolvedPracticeReference),
                 resolveBookingReference(detail.providerId().toString(), resolvedPracticeReference)
         );
     }
@@ -559,7 +564,7 @@ public class PublicCatalogFacade {
                 detail.displayName(),
                 detail.logoUrl() == null || detail.logoUrl().isBlank() ? null : publicHospitalLogoPath(detail.canonicalSlug()),
                 detail.coverUrl() == null || detail.coverUrl().isBlank() ? null : publicHospitalCoverPath(detail.canonicalSlug()),
-                detail.bookingMode(),
+                "CALL_TO_BOOK",
                 firstNonBlank(detail.locations().stream().findFirst().map(PublicProviderLocationSnapshot::address).orElse(null), detail.summary()),
                 detail.area(),
                 detail.city(),
@@ -571,7 +576,7 @@ public class PublicCatalogFacade {
                 detail.consultationModes(),
                 detail.locations().stream().map(this::toLocationResponse).toList(),
                 gallery,
-                publicPracticeDoctors(detail),
+                publicHospitalDoctors(detail),
                 detail.contactPhone(),
                 detail.contactEmail(),
                 detail.website(),
@@ -636,7 +641,7 @@ public class PublicCatalogFacade {
                 record.summary(),
                 firstNonBlank(location == null ? null : location.label(), record.subtitle(), record.primarySpeciality(), record.displayName()),
                 slugify(firstNonBlank(location == null ? null : location.label(), record.area(), record.city(), record.displayName())),
-                false,
+                resolveAvailableToday(publishedLifecycleReference(record.canonicalSlug(), record.providerId().toString()), resolvedPracticeReference),
                 null,
                 record.distanceKm(),
                 resolveBookingReference(record.providerId().toString(), resolvedPracticeReference)
@@ -720,6 +725,16 @@ public class PublicCatalogFacade {
         return StringUtils.hasText(projectedMode) ? projectedMode : com.deepthoughtnet.clinic.platform.contracts.providerintegration.BookingCapability.NOT_AVAILABLE.name();
     }
 
+    private boolean resolveAvailableToday(String publicProviderId, String publicPracticeId) {
+        if (!StringUtils.hasText(publicProviderId)) {
+            return false;
+        }
+        return providerLinkingService.resolveBookingTarget(
+                        new com.deepthoughtnet.clinic.platform.contracts.providerintegration.PublicProviderReference(publicProviderId, publicPracticeId))
+                .map(resolution -> resolution.availabilityState() == AvailabilityState.AVAILABLE_TODAY)
+                .orElse(false);
+    }
+
     private Optional<String> resolvePrimaryPracticeReference(java.util.UUID publicDoctorReference) {
         if (publicDoctorReference == null) {
             return Optional.empty();
@@ -750,7 +765,7 @@ public class PublicCatalogFacade {
                 record.contactPhone(),
                 record.area(),
                 record.city(),
-                record.bookingMode(),
+                "CALL_TO_BOOK",
                 record.doctorCount(),
                 record.serviceCount(),
                 record.departmentCount(),
@@ -760,6 +775,72 @@ public class PublicCatalogFacade {
                 record.subtitle(),
                 record.summary(),
                 record.distanceKm()
+        );
+    }
+
+    private List<PublicDoctorSummaryResponse> publicHospitalDoctors(PublicProviderProfileDetailRecord hospitalDetail) {
+        if (hospitalDetail == null) {
+            return List.of();
+        }
+        return publicHospitalDoctorAssociationService.listPublishedDoctorReferencesByHospital(hospitalDetail.providerId()).stream()
+                .map(publicProfileService::findByProviderId)
+                .flatMap(Optional::stream)
+                .map(doctorDetail -> toHospitalDoctorSummary(doctorDetail, hospitalDetail))
+                .sorted(java.util.Comparator.comparing(PublicDoctorSummaryResponse::doctorDisplayName, String.CASE_INSENSITIVE_ORDER))
+                .toList();
+    }
+
+    private PublicDoctorSummaryResponse toHospitalDoctorSummary(PublicProviderProfileDetailRecord detail, PublicProviderProfileDetailRecord hospitalDetail) {
+        PublicProviderLocationSnapshot location = detail.locations().isEmpty() ? null : detail.locations().getFirst();
+        String resolvedPracticeReference = resolvePrimaryPracticeReference(detail.providerId()).orElse(null);
+        String clinicDisplayName = null;
+        String clinicSlug = null;
+        if (StringUtils.hasText(resolvedPracticeReference)) {
+            UUID practiceId = UUID.fromString(resolvedPracticeReference);
+            PublicProviderProfileDetailRecord practiceDetail = publicProfileService.findByProviderId(practiceId).orElse(null);
+            if (practiceDetail != null) {
+                clinicDisplayName = practiceDetail.displayName();
+                clinicSlug = practiceDetail.canonicalSlug();
+            }
+        }
+        if (!StringUtils.hasText(clinicDisplayName)) {
+            clinicDisplayName = hospitalDetail == null ? (location == null ? detail.displayName() : firstNonBlank(location.label(), detail.displayName())) : firstNonBlank(hospitalDetail.displayName(), detail.displayName());
+        }
+        if (!StringUtils.hasText(clinicSlug)) {
+            clinicSlug = hospitalDetail == null
+                    ? slugify(firstNonBlank(location == null ? null : location.label(), detail.area(), detail.city(), clinicDisplayName))
+                    : hospitalDetail.canonicalSlug();
+        }
+        boolean hasBookablePractice = StringUtils.hasText(resolvedPracticeReference);
+        return new PublicDoctorSummaryResponse(
+                detail.providerId().toString(),
+                detail.canonicalSlug(),
+                detail.publicPath(),
+                detail.displayName(),
+                detail.imageUrl() == null || detail.imageUrl().isBlank() ? null : publicDoctorPhotoPath(detail.canonicalSlug()),
+                detail.contactPhone(),
+                detail.primarySpeciality(),
+                detail.yearsOfExperience(),
+                detail.consultationFee(),
+                detail.languages(),
+                location == null ? detail.area() : firstNonBlank(location.label(), detail.area()),
+                location == null ? detail.city() : firstNonBlank(location.city(), detail.city()),
+                hasBookablePractice
+                        ? resolvePublicBookingMode(
+                                publishedLifecycleReference(detail.canonicalSlug(), detail.providerId().toString()),
+                                resolvedPracticeReference,
+                                detail.bookingMode(),
+                                detail.contactPhone()
+                        )
+                        : BookingCapability.NOT_AVAILABLE.name(),
+                detail.subtitle(),
+                detail.summary(),
+                clinicDisplayName,
+                clinicSlug,
+                hasBookablePractice && resolveAvailableToday(publishedLifecycleReference(detail.canonicalSlug(), detail.providerId().toString()), resolvedPracticeReference),
+                null,
+                null,
+                hasBookablePractice ? resolveBookingReference(detail.providerId().toString(), resolvedPracticeReference) : null
         );
     }
 

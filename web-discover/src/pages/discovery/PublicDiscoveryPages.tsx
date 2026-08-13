@@ -1307,7 +1307,11 @@ function compactList(values: string[] | undefined, limit = 4) {
 }
 
 function buildDoctorWorkingSchedule(detail: PublicDoctorDetailResponse) {
-  const availableDays = new Set((detail.availableDays ?? []).map((day) => day.toLowerCase()));
+  const rawAvailableDays = (detail.availableDays ?? []).map((day) => day.toLowerCase()).filter(Boolean);
+  if (!rawAvailableDays.length) {
+    return null;
+  }
+  const availableDays = new Set(rawAvailableDays);
   const todayIndex = new Date().getDay();
   const weekDays = [
     "Sunday",
@@ -1412,7 +1416,7 @@ function buildDoctorProfile(detail: PublicDoctorDetailResponse, consultationFeeL
     locationName: location?.label || detail.clinics[0]?.clinicDisplayName || detail.doctorDisplayName,
     locationAddress: locationAddress(location, [detail.area, detail.city, detail.state, detail.country]),
     locationWorkingHours: location?.workingHours ?? null,
-    workingHoursSchedule: schedule,
+    workingHoursSchedule: schedule ?? undefined,
     locationFacilities: locationFacilityLabels(location),
     locations: detail.locations ?? [],
     trustIndicators: [],
@@ -1422,8 +1426,19 @@ function buildDoctorProfile(detail: PublicDoctorDetailResponse, consultationFeeL
 }
 
 function buildDoctorBookingGroups(detail: PublicDoctorDetailResponse) {
-  const slotLabels = detail.nextAvailableSlots.length ? detail.nextAvailableSlots : ["10:00 AM", "11:30 AM", "5:30 PM", "6:00 PM"];
-  const days = detail.availableDays.length ? detail.availableDays : ["Today", "Tomorrow"];
+  const slotLabels = detail.nextAvailableSlots.map((slot) => slot.trim()).filter(Boolean);
+  if (!slotLabels.length) {
+    return [];
+  }
+  const days = detail.availableDays.map((day) => day.trim()).filter(Boolean);
+  if (!days.length) {
+    return [
+      {
+        day: "Next available",
+        slots: slotLabels,
+      },
+    ];
+  }
   return days.slice(0, 2).map((day, index) => ({
     day,
     slots: slotLabels.slice(index * 2, index * 2 + 2),
@@ -1485,6 +1500,10 @@ function buildClinicProfile(detail: PublicClinicDetailResponse) {
 function buildHospitalProfile(detail: PublicHospitalDetailResponse) {
   const location = primaryLocation(detail.locations);
   const bookingMode = normalizeBookingMode(detail.bookingMode) ?? "ONLINE_BOOKING";
+  const contactPhone = detail.contactPhone?.trim() ?? "";
+  const hospitalPath = detail.publicPath ?? DISCOVER_DETAIL_PATHS.hospital(detail.hospitalSlug);
+  const bookingHref = contactPhone ? `tel:${contactPhone}` : hospitalPath;
+  const secondaryHref = contactPhone && hospitalPath ? hospitalPath : null;
   const professionalInformation = [
     normalizeDisplayList(detail.departments).length ? { label: "Departments", value: compactList(normalizeDisplayList(detail.departments), 6), wide: true } : null,
     normalizeDisplayList(detail.services).length ? { label: "Clinical Services", value: compactList(normalizeDisplayList(detail.services), 6), wide: true } : null,
@@ -1505,14 +1524,10 @@ function buildHospitalProfile(detail: PublicHospitalDetailResponse) {
     consultationFeeLabel: null,
     languages: [],
     teleconsultationAvailable: detail.consultationModes.some((item) => item.toLowerCase().includes("tele")),
-    bookingUrl: bookingMode === "CALL_TO_BOOK"
-      ? (detail.contactPhone?.trim() ? `tel:${detail.contactPhone.trim()}` : detail.publicPath ?? DISCOVER_DETAIL_PATHS.hospital(detail.hospitalSlug))
-      : bookingMode === "NOT_AVAILABLE"
-        ? (detail.publicPath ?? DISCOVER_DETAIL_PATHS.hospital(detail.hospitalSlug))
-        : careBookingUrl({ hospitalSlug: detail.hospitalSlug }),
-    bookingLabel: providerBookingPrimaryLabel(bookingMode),
-    callHref: bookingMode === "ONLINE_BOOKING" && detail.contactPhone?.trim() ? `tel:${detail.contactPhone.trim()}` : null,
-    callLabel: bookingMode === "ONLINE_BOOKING" && detail.contactPhone?.trim() ? "Call Hospital" : null,
+    bookingUrl: bookingHref,
+    bookingLabel: contactPhone ? "Call Hospital" : "View hospital",
+    callHref: secondaryHref,
+    callLabel: secondaryHref ? "View hospital" : null,
     biographyTitle: `About ${detail.hospitalDisplayName}`,
     biography: detail.description?.trim() || detail.summary?.trim() || null,
     biographyEmptyDescription: "Hospital overview will appear here when it is shared publicly.",
@@ -1521,6 +1536,8 @@ function buildHospitalProfile(detail: PublicHospitalDetailResponse) {
     facilitiesTitle: detail.facilities.length ? "Hospital facilities" : null,
     facilities: normalizeDisplayList(detail.facilities ?? []),
     galleryItems: dedupeGallery(detail.galleryImageUrls ?? [], detail.hospitalDisplayName),
+    galleryTitle: "Hospital image gallery",
+    galleryEmptyTitle: "No hospital gallery images have been added yet.",
     locationName: location?.label || detail.hospitalDisplayName,
     locationAddress: locationAddress(location, [detail.address, detail.area, detail.city]),
     locationWorkingHours: location?.workingHours ?? null,
@@ -1528,6 +1545,41 @@ function buildHospitalProfile(detail: PublicHospitalDetailResponse) {
     locations: detail.locations ?? [],
     trustIndicators: ["Published on Jeevanam Discover"],
     consultationModes: detail.consultationModes ?? [],
+    associatedDoctors: detail.doctors ?? [],
+    appointmentSectionContent: (
+      <section className="provider-preview-card provider-preview-appointment-card">
+        <div className="provider-preview-section-heading">
+          <span className="eyebrow">Contact</span>
+          <h2>Contact Hospital</h2>
+        </div>
+        <div className="provider-preview-appointment-summary">
+          <div>
+            <strong>Appointments and enquiries</strong>
+            <span>
+              {detail.contactPhone?.trim()
+                ? "Call the hospital for appointments and enquiries."
+                : "Contact details will appear here when available."}
+            </span>
+          </div>
+          <div>
+            <strong>Consultation fees</strong>
+            <span>Fees vary by doctor or service.</span>
+          </div>
+        </div>
+        <div className="provider-preview-appointment-actions">
+          {detail.contactPhone?.trim() ? (
+            <a className="primary-button" href={`tel:${detail.contactPhone.trim()}`}>
+              Call Hospital
+            </a>
+          ) : null}
+          {detail.publicPath ? (
+            <a className="secondary-button" href={detail.publicPath}>
+              View hospital
+            </a>
+          ) : null}
+        </div>
+      </section>
+    ),
   };
 }
 
@@ -2536,19 +2588,7 @@ export function PublicDoctorDetailPage() {
                   callHref={profile.callHref}
                   callLabel="Call Clinic"
                 />
-                <AvailabilityTimeline
-                  days={
-                    profile.workingHoursSchedule ?? [
-                      { day: "Mon", hours: "9:00 AM - 6:00 PM", current: true },
-                      { day: "Tue", hours: "9:00 AM - 6:00 PM" },
-                      { day: "Wed", hours: "9:00 AM - 6:00 PM" },
-                      { day: "Thu", hours: "9:00 AM - 6:00 PM" },
-                      { day: "Fri", hours: "9:00 AM - 6:00 PM" },
-                      { day: "Sat", hours: "10:00 AM - 2:00 PM" },
-                      { day: "Sun", hours: "Closed", closed: true },
-                    ]
-                  }
-                />
+                <AvailabilityTimeline days={profile.workingHoursSchedule ?? []} />
               </aside>
             </div>
             <StickyBookingCTA bookingUrl={stickyBookingUrl} />
@@ -2889,6 +2929,16 @@ export function PublicHospitalDetailPage() {
   const location = useLocation();
   const detail = usePublicResource<PublicHospitalDetailResponse | null>(`/api/public/hospitals/${hospitalSlug}`, {}, null);
   const profile = useMemo(() => (detail.data ? buildHospitalProfile(detail.data) : null), [detail.data]);
+
+  useEffect(() => {
+    if (location.hash !== "#doctors" || !detail.data) {
+      return;
+    }
+    const target = document.getElementById("doctors");
+    if (target) {
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [detail.data, location.hash]);
 
   if (detail.data?.publicPath && detail.data.publicPath !== location.pathname) {
     return <Navigate replace to={`${detail.data.publicPath}${location.search}`} />;

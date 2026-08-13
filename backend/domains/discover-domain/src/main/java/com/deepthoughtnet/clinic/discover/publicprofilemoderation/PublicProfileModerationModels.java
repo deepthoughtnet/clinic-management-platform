@@ -125,7 +125,9 @@ public final class PublicProfileModerationModels {
             Integer submittedDraftVersion,
             OffsetDateTime submittedAt,
             OffsetDateTime reviewedAt,
-            int currentDraftVersion
+            int currentDraftVersion,
+            boolean editable,
+            String publicUrl
     ) {
     }
 

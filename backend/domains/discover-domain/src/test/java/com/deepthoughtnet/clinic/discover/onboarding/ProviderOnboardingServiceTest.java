@@ -34,6 +34,7 @@ import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderStatusHistoryEnt
 import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderStatusHistoryRepository;
 import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderSubmissionEntity;
 import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderSubmissionRepository;
+import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileProjectionRepairService;
 import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService;
 import com.deepthoughtnet.clinic.discover.reference.DiscoverReferenceCategory;
 import com.deepthoughtnet.clinic.discover.reference.DiscoverReferenceDataService;
@@ -72,6 +73,8 @@ class ProviderOnboardingServiceTest {
     private DiscoverVerificationService verificationService;
     private ObjectStorageService storage;
     private DiscoverReferenceDataService referenceDataService;
+    private ProviderPublicProfileProjectionRepairService projectionRepairService;
+    private ProviderPublicProfileService publicProfileService;
 
     @BeforeEach
     void setUp() {
@@ -83,7 +86,8 @@ class ProviderOnboardingServiceTest {
         ProviderStatusHistoryRepository historyRepository = Mockito.mock(ProviderStatusHistoryRepository.class);
         ProviderChangeRequestRepository changeRequestRepository = Mockito.mock(ProviderChangeRequestRepository.class);
         ProviderContactVerificationRepository contactVerificationRepository = Mockito.mock(ProviderContactVerificationRepository.class);
-        ProviderPublicProfileService publicProfileService = Mockito.mock(ProviderPublicProfileService.class);
+        publicProfileService = Mockito.mock(ProviderPublicProfileService.class);
+        projectionRepairService = Mockito.mock(ProviderPublicProfileProjectionRepairService.class);
         verificationService = Mockito.mock(DiscoverVerificationService.class);
         referenceDataService = Mockito.mock(DiscoverReferenceDataService.class);
         storage = Mockito.mock(ObjectStorageService.class);
@@ -225,7 +229,7 @@ class ProviderOnboardingServiceTest {
             return serviceOption(serviceType, providerType);
         });
 
-        service = new ProviderOnboardingService(applicationRepository, locationRepository, serviceRepository, documentRepository, submissionRepository, historyRepository, changeRequestRepository, contactVerificationRepository, storage, objectMapper, publicProfileService, verificationService, referenceDataService);
+        service = new ProviderOnboardingService(applicationRepository, locationRepository, serviceRepository, documentRepository, submissionRepository, historyRepository, changeRequestRepository, contactVerificationRepository, storage, objectMapper, publicProfileService, projectionRepairService, verificationService, referenceDataService);
     }
 
     @Test
@@ -718,6 +722,18 @@ class ProviderOnboardingServiceTest {
         assertThatThrownBy(() -> service.approve(created.id(), "Approved"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("provider application must be under review before approval");
+    }
+
+    @Test
+    void publishTriggersHistoricalProjectionRepairAfterPublishingApprovedApplication() {
+        var created = service.create(new CreateProviderApplicationCommand(ProviderType.HOSPITAL, "hospital@example.com", "9999999999", "password-123", true, true));
+        addSubmission(created.id(), 1, hospitalSnapshotJson(), ProviderLifecycleStatus.PUBLISHED);
+        application.setStatus(ProviderLifecycleStatus.APPROVED);
+        when(publicProfileService.publishApprovedApplication(any(), any(), any())).thenReturn(null);
+
+        service.publish(created.id(), "Published after approval");
+
+        verify(projectionRepairService).repairProviderApplication(created.id());
     }
 
     @Test

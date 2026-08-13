@@ -50,7 +50,7 @@ export function getProviderConsentPresentation({
   return {
     tone: "neutral",
     title: "Discover participation status unavailable",
-    message: "We are checking whether the clinic has enabled Discover participation.",
+    message: "We are checking whether this provider profile has enabled Discover participation.",
     visible: true,
     isBlocked: false,
   };
