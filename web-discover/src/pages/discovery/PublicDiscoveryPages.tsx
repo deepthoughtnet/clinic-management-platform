@@ -1,6 +1,7 @@
 import { type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowForwardRounded,
+  HubOutlined,
   HealthAndSafetyOutlined,
   LocalHospitalOutlined,
   LocationOnOutlined,
@@ -2051,6 +2052,14 @@ export function PublicHomePage() {
             <strong>Jeevanam Discover</strong>
             <p>Find doctors, clinics, hospitals, and appointment options.</p>
             <Link className="text-button" to={`${DISCOVER_ROUTES.home.path}#find-care`}>Explore care →</Link>
+          </article>
+          <article className="ecosystem-card ecosystem-connect">
+            <span className="ecosystem-icon" aria-hidden="true">
+              <HubOutlined fontSize="inherit" />
+            </span>
+            <strong>Jeevanam Connect</strong>
+            <p>Manage your provider profile, publish your presence, and connect with patients.</p>
+            <Link className="text-button" to={DISCOVER_ROUTES.listPractice.path}>Provider workspace →</Link>
           </article>
           <article className="ecosystem-card ecosystem-care">
             <span className="ecosystem-icon" aria-hidden="true">＋</span>

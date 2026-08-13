@@ -25,6 +25,7 @@ test("discover brand, public navigation, and homepage sections are present", () 
   const app = read("src/App.tsx");
   const homepage = read("src/pages/discovery/PublicDiscoveryPages.tsx");
   const components = read("src/components/DiscoveryComponents.tsx");
+  const styles = read("src/styles.css");
   const branding = read("src/branding.ts");
 
   assert.ok(branding.includes("Jeevanam Discover"));
@@ -36,6 +37,10 @@ test("discover brand, public navigation, and homepage sections are present", () 
   assert.ok(homepage.includes("Hospitals near you"));
   assert.ok(homepage.includes("Grow your practice with Jeevanam"));
   assert.ok(homepage.includes("One connected healthcare experience"));
+  assert.ok(homepage.includes("Jeevanam Connect"));
+  assert.ok(homepage.includes("Provider workspace →"));
+  assert.ok(styles.includes(".ecosystem-grid {"));
+  assert.ok(styles.includes("repeat(4, minmax(0, 1fr))"));
   assert.ok(app.includes("Patient Login"));
   assert.ok(app.includes("Home"));
   assert.ok(app.includes("For Providers"));

@@ -1589,6 +1589,10 @@ main {
   gap: 18px;
 }
 
+.ecosystem-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .homepage-clinic-grid {
   gap: 14px;
 }
@@ -1750,6 +1754,10 @@ main {
 
 .ecosystem-healthcare {
   background: linear-gradient(180deg, #ffffff 0%, #f6faf8 100%);
+}
+
+.ecosystem-connect {
+  background: linear-gradient(180deg, #ffffff 0%, #f3f9fb 100%);
 }
 
 .provider-card,

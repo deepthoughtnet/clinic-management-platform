@@ -45,6 +45,11 @@ test("homepage includes production discovery sections without fabricated metrics
     "Hospitals near you",
     "Grow your practice with Jeevanam",
     "One connected healthcare experience",
+    "Jeevanam Discover",
+    "Jeevanam Connect",
+    "Jeevanam Care",
+    "Jeevanam Healthcare",
+    "Provider workspace →",
     "Doctors",
     "Clinics",
     "Hospitals",
@@ -54,6 +59,15 @@ test("homepage includes production discovery sections without fabricated metrics
   ]) {
     assert.ok(page.includes(text), `${text} should render on the homepage`);
   }
+
+  const discoverIndex = page.indexOf('ecosystem-card ecosystem-discover');
+  const connectIndex = page.indexOf('ecosystem-card ecosystem-connect');
+  const careIndex = page.indexOf('ecosystem-card ecosystem-care');
+  const healthcareIndex = page.indexOf('ecosystem-card ecosystem-healthcare');
+  assert.ok(discoverIndex < connectIndex);
+  assert.ok(connectIndex < careIndex);
+  assert.ok(careIndex < healthcareIndex);
+  assert.ok(page.includes('to={DISCOVER_ROUTES.listPractice.path}'));
 
   assert.ok(!page.includes("12,000"));
   assert.ok(!page.includes("1.2 million"));
