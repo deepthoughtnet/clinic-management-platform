@@ -22,7 +22,7 @@ function readRepoRootFile(relPath) {
 test("product implementation page reflects OPD UAT readiness and current milestone", () => {
   const source = readSource("pages/platform/ProductImplementationPage.tsx");
   assert.ok(source.includes("Product Implementation & Release Readiness"));
-  assert.ok(source.includes("Evidence-based view of implementation, integration, UAT, pilot readiness, and production hardening."));
+  assert.ok(source.includes("Evidence-based view of implementation, integration, UAT, release validation, and production hardening."));
   assert.ok(source.includes('label: "Overview"'));
   assert.ok(source.includes('label: "Modules"'));
   assert.ok(source.includes('label: "Workflows"'));
@@ -30,14 +30,14 @@ test("product implementation page reflects OPD UAT readiness and current milesto
   assert.ok(source.includes('label: "UAT & Regression"'));
   assert.ok(source.includes('label: "Production Readiness"'));
   assert.ok(source.includes('label: "Releases"'));
-  assert.ok(source.includes("CONDITIONAL GO"));
+  assert.ok(source.includes("GO"));
   assert.ok(source.includes("Module readiness matrix"));
-  assert.ok(source.includes("P0 Pilot Blockers"));
-  assert.ok(source.includes("P1 Pilot Preparation"));
-  assert.ok(source.includes("P2 Pilot Improvements"));
-  assert.ok(source.includes("P3 Post-Pilot Roadmap"));
-  assert.ok(source.includes("Doctor Consultation AI final phase"));
-  assert.ok(source.includes("Batch 5 is an integration, refinement, and pilot-readiness phase, not a new feature expansion."));
+  assert.ok(source.includes("P0 Release Gates"));
+  assert.ok(source.includes("P1 Release Preparation"));
+  assert.ok(source.includes("P2 Post-Release Improvements"));
+  assert.ok(source.includes("P3 Roadmap"));
+  assert.ok(source.includes("Batch 5 conclusion"));
+  assert.ok(source.includes("Batch 5 is complete"));
   assert.ok(source.includes("Detailed evidence and release criteria are maintained in `PRODUCT_READINESS.md`"));
 });
 
@@ -48,30 +48,30 @@ test("shared readiness model exposes the five scorecards and module matrix value
   assert.ok(source.includes('label: "UAT Verification"'));
   assert.ok(source.includes('label: "Pilot Readiness"'));
   assert.ok(source.includes('label: "Production Readiness"'));
-  assert.ok(source.includes('percentage: 84'));
-  assert.ok(source.includes('percentage: 79'));
+  assert.ok(source.includes('percentage: 99'));
+  assert.ok(source.includes('percentage: 98'));
+  assert.ok(source.includes('percentage: 97'));
+  assert.ok(source.includes('percentage: 96'));
   assert.ok(source.includes('percentage: 74'));
-  assert.ok(source.includes('percentage: 67'));
-  assert.ok(source.includes('percentage: 56'));
-  assert.ok(source.includes('label: "CONDITIONAL GO"'));
+  assert.ok(source.includes('label: "GO"'));
   assert.ok(source.includes('module: "Doctor Consultation"'));
-  assert.ok(source.includes('pilotStatus: "READY WITH CONDITIONS"'));
+  assert.ok(source.includes('pilotStatus: "READY"'));
   assert.ok(source.includes('remainingWorkClass: "P0"'));
 });
 
 test("product readiness markdown reflects the same readiness model", () => {
   const source = readRepoRootFile("PRODUCT_READINESS.md");
   assert.ok(source.includes("# Jeevanam Healthcare Platform — Product Readiness"));
-  assert.ok(source.includes("Controlled pilot for the core OPD clinical flow"));
+  assert.ok(source.includes("Final sanity / release validation"));
   assert.ok(source.includes("Functional Feature Completion"));
   assert.ok(source.includes("Workflow Integration Completion"));
   assert.ok(source.includes("UAT Verification Completion"));
   assert.ok(source.includes("Controlled Pilot Readiness"));
   assert.ok(source.includes("Production Readiness"));
-  assert.ok(source.includes("CONDITIONAL GO"));
-  assert.ok(source.includes("Doctor Consultation AI — Final Integration Phase"));
-  assert.ok(source.includes("Remaining consultation-AI sequence"));
-  assert.ok(source.includes("Controlled Pilot Entry Criteria"));
+  assert.ok(source.includes("GO"));
+  assert.ok(source.includes("Doctor Consultation AI — Batch 5 Conclusion"));
+  assert.ok(source.includes("Completed consultation-AI sequence"));
+  assert.ok(source.includes("Controlled Pilot / Release Entry Criteria"));
   assert.ok(source.includes("Production Release Criteria"));
   assert.ok(source.includes("Readiness history"));
 });

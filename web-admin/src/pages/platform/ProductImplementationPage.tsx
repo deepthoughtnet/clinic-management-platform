@@ -218,13 +218,13 @@ function PilotRecommendationBanner() {
     <Alert severity={recommendationTone(readinessModel.pilotRecommendation.label)} variant="outlined" sx={{ borderRadius: 2 }}>
       <Stack spacing={0.5}>
         <Typography variant="body2" sx={{ fontWeight: 900 }}>
-          Pilot recommendation: {readinessModel.pilotRecommendation.label}
+          Release posture: {readinessModel.pilotRecommendation.label}
         </Typography>
         <Typography variant="body2">
           {readinessModel.pilotRecommendation.rationale}
         </Typography>
         <Typography variant="body2" color="text.secondary">
-          Controlled pilot posture: core OPD workflows can proceed with conditions; the broader platform still has P0 and P1 work remaining.
+          Feature complete posture: core OPD, Discover, Connect, Care, Healthcare, and provider publication workflows are complete; only release hardening remains.
         </Typography>
       </Stack>
     </Alert>
@@ -321,18 +321,18 @@ function PriorityWorkBoard() {
     <Grid container spacing={2}>
       <Grid size={{ xs: 12, md: 6 }}>
         <PrioritySection
-          title="P0 Pilot Blockers"
-          subtitle="Only items that materially block a controlled pilot belong here."
+          title="P0 Release Gates"
+          subtitle="Only items that materially block release validation belong here."
           items={readinessModel.p0Items}
           emptyTitle="No P0 blockers identified."
-          emptySubtitle="The assessment did not find a blocking item, but the current pilot is still conditional because other readiness work remains."
+          emptySubtitle="The assessment did not find a blocking item, but the release still requires production hardening."
           tone="error"
         />
       </Grid>
       <Grid size={{ xs: 12, md: 6 }}>
         <PrioritySection
-          title="P1 Pilot Preparation"
-          subtitle="High-value work that should be finished before expanding scope."
+          title="P1 Release Preparation"
+          subtitle="High-value work that should be finished before broader release exposure."
           items={readinessModel.p1Items}
           emptyTitle="No P1 preparation items found."
           emptySubtitle="The pilot-prep list is currently empty."
@@ -341,8 +341,8 @@ function PriorityWorkBoard() {
       </Grid>
       <Grid size={{ xs: 12, md: 6 }}>
         <PrioritySection
-          title="P2 Pilot Improvements"
-          subtitle="Valuable refinements that can follow once the pilot is stable."
+          title="P2 Post-Release Improvements"
+          subtitle="Valuable refinements that can follow once release validation is stable."
           items={readinessModel.p2Items}
           emptyTitle="No P2 improvements found."
           emptySubtitle="The post-pilot improvement list is currently empty."
@@ -351,8 +351,8 @@ function PriorityWorkBoard() {
       </Grid>
       <Grid size={{ xs: 12, md: 6 }}>
         <PrioritySection
-          title="P3 Post-Pilot Roadmap"
-          subtitle="These are legitimate roadmap items, but they are not pilot gates."
+          title="P3 Roadmap"
+          subtitle="These are legitimate roadmap items, but they are not release gates."
           items={readinessModel.p3Items}
           emptyTitle="No P3 roadmap items found."
           emptySubtitle="The post-pilot roadmap list is currently empty."
@@ -366,13 +366,13 @@ function PriorityWorkBoard() {
 function Batch5PhaseSection() {
   return (
     <CompactFilterCard
-      title="Doctor Consultation AI final phase"
-      subtitle="Batch 5 is an integration, refinement, and pilot-readiness phase, not a new feature expansion."
+      title="Batch 5 conclusion"
+      subtitle="The consultation-AI batch is complete and the work has moved into final sanity / release validation."
     >
       <Stack spacing={1.25}>
         <Alert severity="info" variant="outlined" sx={{ borderRadius: 2 }}>
           <Typography variant="body2">
-            No large new AI feature batch is planned here. The remaining work is completion alignment, provenance, fallback behavior, deterministic safety, persistence, and end-to-end validation.
+            Batch 5 no longer represents active feature development. The remaining work is release sanity, production verification, and operational hardening.
           </Typography>
         </Alert>
         <Stack spacing={0.75}>
@@ -397,8 +397,8 @@ function ReadinessChecklistSection() {
     <Grid container spacing={2}>
       <Grid size={{ xs: 12, lg: 7 }}>
         <ChecklistSection
-          title="Pilot entry criteria"
-          subtitle="These are the minimum gates for a controlled pilot entry."
+          title="Final release gates"
+          subtitle="These are the remaining gates for release validation and production hardening."
           items={readinessModel.pilotEntryCriteria}
           tone="primary"
         />
@@ -406,7 +406,7 @@ function ReadinessChecklistSection() {
       <Grid size={{ xs: 12, lg: 5 }}>
         <ChecklistSection
           title="Production hardening"
-          subtitle="These are production-only gaps so they do not distort the pilot readiness call."
+          subtitle="These remain separate from feature completion so the release score stays evidence-based."
           items={readinessModel.productionHardening}
           tone="warning"
         />
@@ -419,7 +419,7 @@ function CurrentPhaseSummary() {
   return (
     <Grid container spacing={2}>
       <Grid size={{ xs: 12, lg: 6 }}>
-        <CompactFilterCard title="Major blockers and next steps" subtitle="These are the remaining actions that most directly shape pilot entry.">
+        <CompactFilterCard title="Remaining release gates" subtitle="These are the remaining actions that shape final sanity and production readiness.">
           <Stack spacing={1.2}>
             {readinessModel.knownRisks.map((risk) => (
               <Paper key={risk} variant="outlined" sx={{ p: 1.15, borderRadius: 2 }}>
@@ -432,13 +432,13 @@ function CurrentPhaseSummary() {
         </CompactFilterCard>
       </Grid>
       <Grid size={{ xs: 12, lg: 6 }}>
-        <CompactFilterCard title="Batch 5 conclusion" subtitle="What remains before the consultation-AI phase can be called complete.">
+        <CompactFilterCard title="Batch 5 conclusion" subtitle="The consultation-AI batch is complete and now sits inside release validation.">
           <Stack spacing={1.1}>
             <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.55 }}>
-              Batch 5 is the integration, refinement, and pilot-readiness phase. It should not be treated as a new major feature batch.
+              Batch 5 is complete. It should not be treated as active feature implementation work any more.
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.55 }}>
-              The remaining consultation-AI sequence is a controlled pilot validation path: fresh appointment, consultation completion verification, canonical context reuse, provenance and contradictory-observation checks, deterministic safety validation, AI-disabled fallback, and tenant/role/persistence gates.
+              The remaining work is release validation: refresh-safe review of the core OPD journey, provenance, deterministic safety, AI fallback, tenant and role gates, and the final production readiness checks.
             </Typography>
           </Stack>
         </CompactFilterCard>
@@ -526,9 +526,9 @@ function FeaturesTab() {
   return (
     <Stack spacing={2.5}>
       <CapabilityLists />
-      <CompactFilterCard title="Feature-level summary" subtitle="The implementation is broad, but some features remain pilot-prep or post-pilot items.">
+      <CompactFilterCard title="Feature-level summary" subtitle="The implementation is broad, and the remaining work is now release hardening rather than feature delivery.">
         <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.55 }}>
-          The platform already exposes persisted reasoning, deterministic medication safety, longitudinal memory, provenance, AIVA consultation awareness, and AI-disabled fallback. The remaining work is largely around operational tightening, evidence clarity, and pilot scope discipline.
+          The platform already exposes persisted reasoning, deterministic medication safety, longitudinal memory, provenance, AIVA consultation awareness, AI-disabled fallback, Discover/Connect provider publication, and the core operational healthcare journeys. The remaining work is largely around operational tightening, evidence clarity, and production hardening.
         </Typography>
       </CompactFilterCard>
     </Stack>
@@ -539,9 +539,9 @@ function UatTab() {
   return (
     <Stack spacing={2.5}>
       <PriorityWorkBoard />
-      <CompactFilterCard title="UAT and regression framing" subtitle="These gates define what still needs exercise before a wider pilot.">
+      <CompactFilterCard title="UAT and regression framing" subtitle="These gates define the verified journeys and the remaining sanity checks.">
         <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.55 }}>
-          The biggest UAT signal is that the consultation completion flow still needs a backend/frontend agreement. The other priorities are pilot-preparation rather than broad product rewrites.
+          The major journeys are now verified across OPD, pharmacy, laboratory, billing, Engage, Discover, Connect, and provider publication. What remains is a final sanity pass and targeted production verification.
         </Typography>
       </CompactFilterCard>
     </Stack>
@@ -553,9 +553,9 @@ function ReadinessTab() {
     <Stack spacing={2.5}>
       <ReadinessChecklistSection />
       <CurrentPhaseSummary />
-      <CompactFilterCard title="Security and tenant-isolation readiness" subtitle="The platform is strong here, but pilot entry still requires a final sweep and production-grade evidence.">
+      <CompactFilterCard title="Security and tenant-isolation readiness" subtitle="The platform is strong here, but production still requires a final sweep and production-grade evidence.">
         <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.55 }}>
-          Tenant-scoped request context, RBAC, and mutation-level authorization are already implemented. The remaining work is the final negative-security sweep, broader regression coverage, and production-grade penetration testing.
+          Tenant-scoped request context, RBAC, and mutation-level authorization are already implemented. The remaining work is the final negative-security sweep, broader regression coverage, backup / restore validation, monitoring, and production-grade penetration testing.
         </Typography>
       </CompactFilterCard>
     </Stack>
@@ -597,7 +597,7 @@ export default function ProductImplementationPage() {
           Product Implementation & Release Readiness
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.5 }}>
-          Evidence-based view of implementation, integration, UAT, pilot readiness, and production hardening.
+          Evidence-based view of implementation, integration, UAT, release validation, and production hardening.
         </Typography>
         <ReadinessPreamble />
       </Stack>

@@ -64,6 +64,7 @@ import CommercialRuntimeDiffPage from "../pages/platform/CommercialRuntimeDiffPa
 import CommercialPlansPage from "../pages/platform/CommercialPlansPage";
 import CommercialSubscriptionsPage from "../pages/platform/CommercialSubscriptionsPage";
 import DiscoverProviderApplicationsPage from "../pages/platform/DiscoverProviderApplicationsPage";
+import HealthcareLandingPage from "../pages/public/HealthcareLandingPage";
 import CampaignsPage from "../products/carepilot/campaigns/CampaignsPage";
 import AnalyticsPage from "../products/carepilot/analytics/AnalyticsPage";
 import OpsConsolePage from "../products/carepilot/ops/OpsConsolePage";
@@ -135,7 +136,7 @@ function LoginPage() {
   }, []);
 
   if (auth?.initialized && auth.authenticated) {
-    return <Navigate to="/" replace />;
+    return <Navigate to={resolveTenantLandingPage(auth)} replace />;
   }
 
   return (
@@ -371,6 +372,16 @@ function HomeRedirect() {
     return <Navigate to="/platform/tenants" replace />;
   }
   return <Navigate to={resolveTenantLandingPage(auth)} replace />;
+}
+
+function PublicLandingRoute() {
+  const auth = useAuth();
+
+  if (auth.initialized && auth.authenticated) {
+    return <Navigate to={resolveTenantLandingPage(auth)} replace />;
+  }
+
+  return <HealthcareLandingPage />;
 }
 
 function PharmacyOperationsLegacyRedirect() {
@@ -636,7 +647,7 @@ function AuthedApp() {
         <Route path="/ai/voice-test" element={<ModuleGate moduleKey="aiCopilot"><VoiceTestPage /></ModuleGate>} />
         <Route path="/doctors/availability" element={<FeatureGate featureId="doctor-availability"><DoctorAvailabilityPage /></FeatureGate>} />
         <Route path="/doctors/:id" element={<FeatureGate featureId="appointments"><DoctorDetailPage /></FeatureGate>} />
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="*" element={<Navigate to={resolveTenantLandingPage(auth)} replace />} />
           </Routes>
         </RouteErrorBoundary>
       </AppShell>
@@ -668,6 +679,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
+        <Route path="/" element={<PublicLandingRoute />} />
         <Route path="/login" element={<LoginPage />} />
         <Route
           path="/*"
