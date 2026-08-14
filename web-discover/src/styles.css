@@ -3543,6 +3543,23 @@ main {
   box-shadow: 0 0 0 4px rgba(15, 139, 141, 0.1);
 }
 
+.provider-auth-field textarea {
+  width: 100%;
+  min-height: 110px;
+  border: 1px solid var(--discover-border);
+  border-radius: 16px;
+  padding: 14px 16px;
+  color: var(--discover-text-heading);
+  background: #ffffff;
+  box-shadow: inset 0 1px 0 rgba(15, 23, 42, 0.02);
+  resize: vertical;
+}
+
+.provider-auth-field textarea:focus {
+  border-color: rgba(15, 139, 141, 0.45);
+  box-shadow: 0 0 0 4px rgba(15, 139, 141, 0.1);
+}
+
 .provider-auth-helper {
   margin: -4px 0 0;
   color: var(--discover-text-muted);
@@ -3557,6 +3574,16 @@ main {
   border: 1px solid #fecdd3;
   background: #fff1f2;
   color: #9f1239;
+  line-height: 1.55;
+}
+
+.provider-auth-success {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid #bbf7d0;
+  background: #f0fdf4;
+  color: #166534;
   line-height: 1.55;
 }
 
@@ -3662,6 +3689,131 @@ main {
   font-variant-numeric: tabular-nums;
 }
 
+.provider-auth-page--access {
+  width: min(1120px, calc(100% - 40px));
+}
+
+.provider-auth-access-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(360px, 0.9fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.provider-auth-access-panel {
+  min-width: 0;
+}
+
+.provider-auth-access-panel--intro {
+  display: grid;
+  gap: 20px;
+  padding: 4px 0;
+}
+
+.provider-auth-access-highlights {
+  display: grid;
+  gap: 12px;
+}
+
+.provider-auth-access-highlight {
+  display: grid;
+  gap: 4px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(15, 139, 141, 0.12);
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.provider-auth-access-highlight strong {
+  color: var(--discover-text-heading);
+  font-size: 0.95rem;
+}
+
+.provider-auth-access-highlight span {
+  color: var(--discover-text-body);
+  line-height: 1.55;
+}
+
+.provider-auth-access-preview {
+  overflow: hidden;
+  border-radius: 28px;
+  border: 1px solid rgba(15, 139, 141, 0.14);
+  background:
+    radial-gradient(circle at top left, rgba(15, 139, 141, 0.16), transparent 16rem),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.95));
+  box-shadow: var(--discover-shadow-card);
+}
+
+.provider-auth-access-preview-shell {
+  display: grid;
+  gap: 14px;
+  padding: 20px;
+}
+
+.provider-auth-access-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--discover-text-muted);
+  font-size: 0.9rem;
+  font-weight: 650;
+}
+
+.provider-auth-access-preview-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  color: #0f766e;
+  background: rgba(15, 139, 141, 0.12);
+}
+
+.provider-auth-access-preview-card {
+  display: grid;
+  gap: 10px;
+  padding: 20px;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid rgba(15, 139, 141, 0.12);
+}
+
+.provider-auth-access-preview-kicker {
+  color: var(--discover-text-muted);
+  font-size: 0.82rem;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.provider-auth-access-preview-card strong {
+  color: var(--discover-text-heading);
+  font-size: 1.2rem;
+  line-height: 1.35;
+}
+
+.provider-auth-access-preview-card p {
+  margin: 0;
+  color: var(--discover-text-body);
+  line-height: 1.55;
+}
+
+.provider-auth-access-preview-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: space-between;
+  color: var(--discover-text-muted);
+  font-size: 0.9rem;
+  font-weight: 650;
+}
+
+.provider-auth-access-layout--request {
+  grid-template-columns: minmax(0, 0.95fr) minmax(420px, 1.05fr);
+}
+
 @media (max-width: 720px) {
   .provider-auth-page {
     width: min(100% - 24px, 680px);
@@ -3674,6 +3826,15 @@ main {
   }
 
   .provider-auth-inline-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .provider-auth-page--access {
+    width: min(100% - 24px, 1120px);
+  }
+
+  .provider-auth-access-layout,
+  .provider-auth-access-layout--request {
     grid-template-columns: 1fr;
   }
 }

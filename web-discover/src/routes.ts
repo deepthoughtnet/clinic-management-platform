@@ -19,6 +19,7 @@ export const DISCOVER_ROUTES = {
   pricing: { path: "/pricing", label: "Pricing", nav: true, footer: true },
   listPractice: { path: "/list-your-practice", label: "For Providers", nav: true, footer: true },
   providerLogin: { path: "/provider/login", label: "Provider Login" },
+  providerRequestAccess: { path: "/provider/request-access", label: "Request Provider Access" },
   providerApplications: { path: "/provider/applications", label: "Provider Applications" },
   providerApplicationDashboard: { path: "/provider/applications/:applicationReference", label: "Provider Application" },
   providerWorkspace: { path: "/provider", label: "Provider Workspace" },

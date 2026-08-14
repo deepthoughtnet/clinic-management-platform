@@ -7,10 +7,18 @@ import org.springframework.stereotype.Component;
 @Component
 @ConfigurationProperties(prefix = "clinic.patient-portal.auth")
 public class PatientPortalAuthProperties {
+    public enum Mode {
+        DEV_OTP,
+        ACCESS_APPROVAL,
+        OTP
+    }
+
     private Duration otpTtl = Duration.ofMinutes(5);
     private Duration resendCooldown = Duration.ofSeconds(60);
     private int maxAttempts = 5;
     private boolean exposeDevOtp = false;
+    private Mode mode = Mode.OTP;
+    private Duration accessCodeTtl = Duration.ofDays(7);
     private String sessionSecret = "change-me-patient-portal-session-secret";
     private Duration sessionTtl = Duration.ofHours(12);
 
@@ -44,6 +52,22 @@ public class PatientPortalAuthProperties {
 
     public void setExposeDevOtp(boolean exposeDevOtp) {
         this.exposeDevOtp = exposeDevOtp;
+    }
+
+    public Mode getMode() {
+        return mode;
+    }
+
+    public void setMode(Mode mode) {
+        this.mode = mode == null ? Mode.OTP : mode;
+    }
+
+    public Duration getAccessCodeTtl() {
+        return accessCodeTtl;
+    }
+
+    public void setAccessCodeTtl(Duration accessCodeTtl) {
+        this.accessCodeTtl = accessCodeTtl;
     }
 
     public String getSessionSecret() {

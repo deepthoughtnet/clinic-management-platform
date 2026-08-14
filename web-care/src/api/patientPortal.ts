@@ -1,7 +1,7 @@
 import { careConfig } from "../config";
 
 type PatientPortalSessionBase = {
-  mode: "otp";
+  mode: "otp" | "access";
   tenantCode: string;
   tenantId: string;
   phone: string;
@@ -46,6 +46,67 @@ export type PatientPortalOtpVerifyResponse = {
   patientDisplayName: string | null;
   patientSessionToken: string | null;
   registrationSessionToken: string | null;
+};
+
+export type PatientPortalAccessRequestContext = {
+  clinicId?: string | null;
+  clinicCode?: string | null;
+  clinicSlug?: string | null;
+  tenantId?: string | null;
+  doctorId?: string | null;
+  bookingReference?: string | null;
+  appointmentIntent?: string | null;
+};
+
+export type PatientPortalAccessRequestSubmitRequest = {
+  fullName: string;
+  mobile: string;
+  email?: string | null;
+  note?: string | null;
+  context?: PatientPortalAccessRequestContext | null;
+};
+
+export type PatientPortalAccessRequestResponse = {
+  id: string;
+  tenantId: string;
+  tenantCode: string | null;
+  tenantName: string | null;
+  requestType: string;
+  fullName: string;
+  mobile: string;
+  email: string | null;
+  note: string | null;
+  status: string;
+  rejectionReason: string | null;
+  linkedPatientId: string | null;
+  linkedPatientDisplayName: string | null;
+  reviewedBy: string | null;
+  reviewedByDisplayName: string | null;
+  temporaryAccessCode: string | null;
+  requestedAt: string;
+  reviewedAt: string | null;
+  approvedAt: string | null;
+  activatedAt: string | null;
+  revokedAt: string | null;
+  accessCodeExpiresAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  version: number;
+};
+
+export type PatientPortalAccessLoginRequest = {
+  mobile: string;
+  accessCode: string;
+  context?: PatientPortalAccessRequestContext | null;
+};
+
+export type PatientPortalAccessLoginResponse = {
+  authenticated: boolean;
+  message: string;
+  tenantId: string;
+  tenantCode: string;
+  patientDisplayName: string;
+  patientSessionToken: string;
 };
 
 export type PatientPortalMeResponse = {
@@ -416,6 +477,20 @@ export async function postPatientPortalSessionJson<T>(
     throw new Error(await parseError(response));
   }
   return response.json() as Promise<T>;
+}
+
+export async function postPatientPortalAccessRequest<T>(
+  path: string,
+  body: PatientPortalAccessRequestSubmitRequest,
+): Promise<T> {
+  return postPatientPortalJson<T>(path, body);
+}
+
+export async function postPatientPortalAccessLogin<T>(
+  path: string,
+  body: PatientPortalAccessLoginRequest,
+): Promise<T> {
+  return postPatientPortalJson<T>(path, body);
 }
 
 export async function putPatientPortalSessionJson<T>(

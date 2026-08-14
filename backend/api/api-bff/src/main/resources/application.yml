@@ -180,12 +180,18 @@ clinic:
 
   patient-portal:
     auth:
+      mode: ${CLINIC_PATIENT_PORTAL_AUTH_MODE:OTP}
       otp-ttl: ${CLINIC_PATIENT_PORTAL_OTP_TTL:PT5M}
       resend-cooldown: ${CLINIC_PATIENT_PORTAL_RESEND_COOLDOWN:PT60S}
       max-attempts: ${CLINIC_PATIENT_PORTAL_MAX_ATTEMPTS:5}
       expose-dev-otp: ${CLINIC_PATIENT_PORTAL_EXPOSE_DEV_OTP:false}
+      access-code-ttl: ${CLINIC_PATIENT_PORTAL_ACCESS_CODE_TTL:PT168H}
       session-secret: ${CLINIC_PATIENT_PORTAL_SESSION_SECRET:local-patient-portal-session-secret}
       session-ttl: ${CLINIC_PATIENT_PORTAL_SESSION_TTL:PT12H}
+  provider-portal:
+    auth:
+      mode: ${CLINIC_PROVIDER_PORTAL_AUTH_MODE:OTP}
+      expose-dev-otp: ${CLINIC_PROVIDER_PORTAL_EXPOSE_DEV_OTP:false}
   discover:
     verification:
       challenge-ttl: ${CLINIC_DISCOVER_VERIFICATION_CHALLENGE_TTL:PT5M}

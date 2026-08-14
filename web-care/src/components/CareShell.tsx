@@ -443,12 +443,13 @@ export function CareEntrySessionNotice({
   );
 }
 
-export function CareEntrySecurityStrip() {
+export function CareEntrySecurityStrip({ mode = "otp" }: { mode?: "otp" | "access" } = {}) {
+  const primaryLabel = mode === "access" ? "Controlled access sign-in" : "Secure OTP sign-in";
   return (
     <div className="care-entry-security-strip" aria-label="Security indicators">
       <span>
         <ShieldOutlined fontSize="small" aria-hidden="true" />
-        Secure OTP sign-in
+        {primaryLabel}
       </span>
       <span>
         <CheckCircleOutlined fontSize="small" aria-hidden="true" />

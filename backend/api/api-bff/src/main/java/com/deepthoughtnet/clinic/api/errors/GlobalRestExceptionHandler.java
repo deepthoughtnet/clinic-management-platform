@@ -9,6 +9,7 @@ import com.deepthoughtnet.clinic.api.medicationsafety.MedicationSafetyGuardError
 import com.deepthoughtnet.clinic.api.medicationsafety.MedicationSafetyGuardException;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityConflictException;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingConflictException;
+import com.deepthoughtnet.clinic.discover.provideraccess.ProviderPortalAccessRequestConflictException;
 import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipConflictException;
 import com.deepthoughtnet.clinic.platform.providerintegration.service.ProviderConnectionConflictException;
 import com.deepthoughtnet.clinic.discover.reference.InvalidReferenceValueException;
@@ -16,6 +17,7 @@ import com.deepthoughtnet.clinic.identity.service.TenantProvisioningException;
 import com.deepthoughtnet.clinic.identity.service.TenantIdentityConflictException;
 import com.deepthoughtnet.clinic.api.errors.IdentityConflictErrorResponse.IdentityConflictItem;
 import com.deepthoughtnet.clinic.patient.service.model.PatientConflictException;
+import com.deepthoughtnet.clinic.patient.service.model.PatientPortalAccessRequestConflictException;
 import com.fasterxml.jackson.databind.JsonMappingException;
 import com.deepthoughtnet.clinic.identity.exception.TenantModuleDisabledException;
 import com.deepthoughtnet.clinic.platform.spring.context.CorrelationId;
@@ -213,6 +215,11 @@ public class GlobalRestExceptionHandler {
         return build(HttpStatus.CONFLICT, "conflict", userMessage(ex.getMessage(), "Provider application changed in another session."), req);
     }
 
+    @ExceptionHandler(ProviderPortalAccessRequestConflictException.class)
+    public ResponseEntity<?> handleProviderAccessRequestConflict(ProviderPortalAccessRequestConflictException ex, HttpServletRequest req) {
+        return build(HttpStatus.CONFLICT, "conflict", userMessage(ex.getMessage(), "Provider access state conflict."), req);
+    }
+
     @ExceptionHandler(ProviderOwnershipConflictException.class)
     public ResponseEntity<?> handleProviderOwnershipConflict(ProviderOwnershipConflictException ex, HttpServletRequest req) {
         return build(HttpStatus.CONFLICT, ex.getCode(), userMessage(ex.getMessage(), "Provider ownership state conflict."), req);
@@ -239,6 +246,11 @@ public class GlobalRestExceptionHandler {
     @ExceptionHandler(PatientConflictException.class)
     public ResponseEntity<?> handlePatientConflict(PatientConflictException ex, HttpServletRequest req) {
         return build(HttpStatus.CONFLICT, "conflict", userMessage(ex.getMessage(), "Patient already exists. Select existing patient."), req);
+    }
+
+    @ExceptionHandler(PatientPortalAccessRequestConflictException.class)
+    public ResponseEntity<?> handlePatientPortalAccessRequestConflict(PatientPortalAccessRequestConflictException ex, HttpServletRequest req) {
+        return build(HttpStatus.CONFLICT, "conflict", userMessage(ex.getMessage(), "Care access request conflict."), req);
     }
 
     @ExceptionHandler(MedicationSafetyGuardException.class)

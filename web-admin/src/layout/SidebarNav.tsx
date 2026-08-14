@@ -88,6 +88,8 @@ function iconFor(key: string): React.ReactNode {
     "platform-tenants": <ApartmentRoundedIcon fontSize="small" />,
     "platform-product-implementation": <RocketLaunchRoundedIcon fontSize="small" />,
     "platform-provider-connections": <LinkRoundedIcon fontSize="small" />,
+    "platform-care-access-requests": <BadgeRoundedIcon fontSize="small" />,
+    "platform-provider-access-requests": <ContactPhoneRoundedIcon fontSize="small" />,
     "platform-plans": <AutoAwesomeMotionRoundedIcon fontSize="small" />,
     "platform-users": <GroupRoundedIcon fontSize="small" />,
     "platform-help": <DescriptionRoundedIcon fontSize="small" />,

@@ -252,6 +252,14 @@ public class DiscoverVerificationService {
         });
     }
 
+    @Transactional
+    public void revokeSessionsForAccount(UUID providerAccountId) {
+        if (providerAccountId == null) {
+            return;
+        }
+        revokeActiveSessionsForAccount(providerAccountId);
+    }
+
     @Transactional(readOnly = true)
     public Optional<DiscoverProviderAccountEntity> findAccountByRecipient(VerificationChannel channel, String normalizedRecipient) {
         String normalized = normalizeRecipient(normalizedRecipient, channel);

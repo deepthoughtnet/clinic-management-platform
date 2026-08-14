@@ -77,6 +77,10 @@ clinic:
       clientSecret: ${CLINIC_KEYCLOAK_CLIENT_SECRET:}
       username: ${CLINIC_KEYCLOAK_ADMIN_USERNAME:admin}
       password: ${CLINIC_KEYCLOAK_ADMIN_PASSWORD:admin}
+  provider-portal:
+    auth:
+      mode: ${CLINIC_PROVIDER_PORTAL_AUTH_MODE:OTP}
+      expose-dev-otp: ${CLINIC_PROVIDER_PORTAL_EXPOSE_DEV_OTP:false}
 
 aiva:
   response-composer:

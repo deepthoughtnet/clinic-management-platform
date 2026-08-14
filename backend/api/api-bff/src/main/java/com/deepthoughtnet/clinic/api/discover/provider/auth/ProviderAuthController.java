@@ -19,6 +19,7 @@ import jakarta.validation.Valid;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.UUID;
+import com.deepthoughtnet.clinic.platform.core.errors.ForbiddenException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
@@ -34,18 +35,22 @@ public class ProviderAuthController {
     private static final String COOKIE_NAME = ProviderSessionAuthenticationFilter.SESSION_COOKIE;
 
     private final DiscoverVerificationService verificationService;
+    private final ProviderPortalAuthProperties properties;
 
-    public ProviderAuthController(DiscoverVerificationService verificationService) {
+    public ProviderAuthController(DiscoverVerificationService verificationService, ProviderPortalAuthProperties properties) {
         this.verificationService = verificationService;
+        this.properties = properties;
     }
 
     @PostMapping("/request")
     public LoginChallengeResponse request(@Valid @RequestBody LoginRequest request) {
+        ensureVerificationCodeMode();
         return requestChallenge(request);
     }
 
     @PostMapping("/challenges")
     public LoginChallengeResponse requestChallenge(@Valid @RequestBody LoginRequest request) {
+        ensureVerificationCodeMode();
         VerificationChannel channel = inferChannel(request.identifier());
         String normalizedRecipient = normalizeRecipient(request.identifier(), channel);
         VerificationPurpose purpose = channel == VerificationChannel.EMAIL
@@ -66,7 +71,7 @@ public class ProviderAuthController {
                 result.channel(),
                 result.maskedRecipient(),
                 result.message(),
-                result.developmentCode(),
+                properties.isExposeDevOtp() ? result.developmentCode() : null,
                 result.verificationMode(),
                 result.expiresAt(),
                 result.resendAvailableAt(),
@@ -83,6 +88,7 @@ public class ProviderAuthController {
             HttpServletResponse response,
             @Valid @RequestBody LoginVerifyRequest body
     ) {
+        ensureVerificationCodeMode();
         VerificationChannel channel = inferChannel(body.identifier());
         String normalizedRecipient = normalizeRecipient(body.identifier(), channel);
         VerificationPurpose purpose = channel == VerificationChannel.EMAIL
@@ -117,6 +123,7 @@ public class ProviderAuthController {
             @PathVariable UUID challengeId,
             @Valid @RequestBody ChallengeVerifyRequest body
     ) {
+        ensureVerificationCodeMode();
         var result = verificationService.verifyChallenge(new VerificationVerificationRequest(
                 challengeId,
                 null,
@@ -186,5 +193,11 @@ public class ProviderAuthController {
             }
         }
         return null;
+    }
+
+    private void ensureVerificationCodeMode() {
+        if (properties.getMode() == ProviderPortalAuthProperties.Mode.ACCESS_APPROVAL) {
+            throw new ForbiddenException("Verification-code login is not available in controlled access mode.");
+        }
     }
 }

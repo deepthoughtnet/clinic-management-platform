@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityConflictException;
 import com.deepthoughtnet.clinic.discover.reference.InvalidReferenceValueException;
+import com.deepthoughtnet.clinic.discover.provideraccess.ProviderPortalAccessRequestConflictException;
 import com.deepthoughtnet.clinic.identity.service.TenantIdentityConflictException;
 import com.deepthoughtnet.clinic.prescription.service.model.Timing;
 import com.deepthoughtnet.clinic.platform.core.errors.UnauthorizedException;
@@ -99,6 +100,17 @@ class GlobalRestExceptionHandlerTest {
     }
 
     @Test
+    void formatsProviderAccessConflictWithStandardEnvelope() throws Exception {
+        mockMvc.perform(get("/provider-access-conflict")
+                        .header("X-Correlation-Id", "corr-provider-access"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.status").value(409))
+                .andExpect(jsonPath("$.code").value("conflict"))
+                .andExpect(jsonPath("$.message").value("This access request is not currently active."))
+                .andExpect(jsonPath("$.correlationId").value("corr-provider-access"));
+    }
+
+    @Test
     void formatsTenantIdentityConflictWithStandardEnvelope() throws Exception {
         mockMvc.perform(get("/identity-conflict")
                         .header("X-Correlation-Id", "corr-identity"))
@@ -166,6 +178,11 @@ class GlobalRestExceptionHandlerTest {
         @GetMapping("/availability-conflict")
         void availabilityConflict() {
             throw new DoctorAvailabilityConflictException("Availability already exists for this doctor, day, and time range.");
+        }
+
+        @GetMapping("/provider-access-conflict")
+        void providerAccessConflict() {
+            throw new ProviderPortalAccessRequestConflictException("This access request is not currently active.");
         }
 
         @GetMapping("/identity-conflict")

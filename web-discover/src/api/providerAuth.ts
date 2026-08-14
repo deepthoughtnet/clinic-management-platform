@@ -23,6 +23,47 @@ export type ProviderLoginVerifyResponse = {
   message: string;
 };
 
+export type ProviderAccessRequestSubmitRequest = {
+  fullName: string;
+  email?: string | null;
+  mobile: string;
+  providerType: ProviderType;
+  providerApplicationReference?: string | null;
+  note?: string | null;
+};
+
+export type ProviderAccessRequestResponse = {
+  id: string;
+  providerType: ProviderType;
+  fullName: string;
+  email: string | null;
+  mobile: string;
+  providerApplicationReference: string | null;
+  note: string | null;
+  status: string;
+  rejectionReason: string | null;
+  linkedProviderAccountId: string | null;
+  linkedProviderAccountDisplayName: string | null;
+  linkedProviderApplicationReference: string | null;
+  reviewedBy: string | null;
+  reviewedByDisplayName: string | null;
+  temporaryAccessCode: string | null;
+  requestedAt: string;
+  reviewedAt: string | null;
+  approvedAt: string | null;
+  revokedAt: string | null;
+  accessCodeIssuedAt: string | null;
+  accessCodeExpiresAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  version: number;
+};
+
+export type ProviderAccessLoginRequest = {
+  identifier: string;
+  accessCode: string;
+};
+
 export type ProviderWorkspaceApplication = {
   id: string;
   referenceNumber: string;
@@ -220,6 +261,14 @@ export function requestProviderLoginChallenge(identifier: string) {
 
 export function verifyProviderLoginCode(challengeId: string, code: string) {
   return request<ProviderLoginVerifyResponse>(`/api/provider/auth/challenges/${challengeId}/verify`, "POST", { code });
+}
+
+export function requestProviderAccess(requestBody: ProviderAccessRequestSubmitRequest) {
+  return request<ProviderAccessRequestResponse>("/api/provider/auth/access-requests", "POST", requestBody);
+}
+
+export function loginProviderAccess(requestBody: ProviderAccessLoginRequest) {
+  return request<ProviderLoginVerifyResponse>("/api/provider/auth/access-login", "POST", requestBody);
 }
 
 export function loadProviderWorkspace() {

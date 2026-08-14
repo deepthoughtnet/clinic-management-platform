@@ -10181,6 +10181,72 @@ export type ProviderPublicProfileReviewQueueResponse = {
   allowedActions: string[];
 };
 
+export type CareAccessRequestResponse = {
+  id: string;
+  tenantId: string;
+  tenantCode: string | null;
+  tenantName: string | null;
+  requestType: string;
+  fullName: string;
+  mobile: string;
+  email: string | null;
+  note: string | null;
+  status: string;
+  rejectionReason: string | null;
+  linkedPatientId: string | null;
+  linkedPatientDisplayName: string | null;
+  reviewedBy: string | null;
+  reviewedByDisplayName: string | null;
+  temporaryAccessCode: string | null;
+  requestedAt: string;
+  reviewedAt: string | null;
+  approvedAt: string | null;
+  activatedAt: string | null;
+  revokedAt: string | null;
+  accessCodeExpiresAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  version: number;
+  allowedActions?: string[];
+};
+
+export type CareAccessRequestDecisionRequest = {
+  reason?: string | null;
+  patientId?: string | null;
+};
+
+export type ProviderAccessRequestResponse = {
+  id: string;
+  providerType: string;
+  fullName: string;
+  email: string | null;
+  mobile: string;
+  providerApplicationReference: string | null;
+  note: string | null;
+  status: string;
+  rejectionReason: string | null;
+  linkedProviderAccountId: string | null;
+  linkedProviderAccountDisplayName: string | null;
+  linkedProviderApplicationReference: string | null;
+  reviewedBy: string | null;
+  reviewedByDisplayName: string | null;
+  temporaryAccessCode: string | null;
+  requestedAt: string;
+  reviewedAt: string | null;
+  approvedAt: string | null;
+  revokedAt: string | null;
+  accessCodeIssuedAt: string | null;
+  accessCodeExpiresAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  version: number;
+};
+
+export type ProviderAccessRequestDecisionRequest = {
+  reason?: string | null;
+  providerApplicationReference?: string | null;
+};
+
 export type ProviderConnectionsPlatformEntityResponse = {
   entityType: string;
   tenantId: string | null;
@@ -10514,6 +10580,60 @@ export async function publishProviderConnectionsPublicProfileReview(token: strin
 
 export async function unpublishProviderConnectionsPublicProfileReview(token: string, publicProfileReference: string, body?: { reason?: string | null }) {
   return httpPost<ProviderPublicProfileReviewResponse>(`/api/platform/provider-connections/public-profile-reviews/${encodeURIComponent(publicProfileReference)}/unpublish`, body || {}, { token, platformOperation: true });
+}
+
+export async function listCareAccessRequests(
+  token: string,
+  filters?: { status?: string | null; q?: string | null },
+) {
+  const query = new URLSearchParams();
+  if (filters?.status?.trim()) query.set("status", filters.status.trim());
+  if (filters?.q?.trim()) query.set("q", filters.q.trim());
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return httpGet<CareAccessRequestResponse[]>(`/api/platform/care-access-requests${suffix}`, { token, platformOperation: true });
+}
+
+export async function getCareAccessRequest(token: string, id: string) {
+  return httpGet<CareAccessRequestResponse>(`/api/platform/care-access-requests/${encodeURIComponent(id)}`, { token, platformOperation: true });
+}
+
+export async function approveCareAccessRequest(token: string, id: string, body?: CareAccessRequestDecisionRequest | null) {
+  return httpPost<CareAccessRequestResponse>(`/api/platform/care-access-requests/${encodeURIComponent(id)}/approve`, body ?? {}, { token, platformOperation: true });
+}
+
+export async function rejectCareAccessRequest(token: string, id: string, body?: CareAccessRequestDecisionRequest | null) {
+  return httpPost<CareAccessRequestResponse>(`/api/platform/care-access-requests/${encodeURIComponent(id)}/reject`, body ?? {}, { token, platformOperation: true });
+}
+
+export async function revokeCareAccessRequest(token: string, id: string, body?: CareAccessRequestDecisionRequest | null) {
+  return httpPost<CareAccessRequestResponse>(`/api/platform/care-access-requests/${encodeURIComponent(id)}/revoke`, body ?? {}, { token, platformOperation: true });
+}
+
+export async function listProviderAccessRequests(
+  token: string,
+  filters?: { status?: string | null; q?: string | null },
+) {
+  const query = new URLSearchParams();
+  if (filters?.status?.trim()) query.set("status", filters.status.trim());
+  if (filters?.q?.trim()) query.set("q", filters.q.trim());
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return httpGet<ProviderAccessRequestResponse[]>(`/api/platform/provider-access-requests${suffix}`, { token, platformOperation: true });
+}
+
+export async function getProviderAccessRequest(token: string, id: string) {
+  return httpGet<ProviderAccessRequestResponse>(`/api/platform/provider-access-requests/${encodeURIComponent(id)}`, { token, platformOperation: true });
+}
+
+export async function approveProviderAccessRequest(token: string, id: string, body?: ProviderAccessRequestDecisionRequest | null) {
+  return httpPost<ProviderAccessRequestResponse>(`/api/platform/provider-access-requests/${encodeURIComponent(id)}/approve`, body ?? {}, { token, platformOperation: true });
+}
+
+export async function rejectProviderAccessRequest(token: string, id: string, body?: ProviderAccessRequestDecisionRequest | null) {
+  return httpPost<ProviderAccessRequestResponse>(`/api/platform/provider-access-requests/${encodeURIComponent(id)}/reject`, body ?? {}, { token, platformOperation: true });
+}
+
+export async function revokeProviderAccessRequest(token: string, id: string, body?: ProviderAccessRequestDecisionRequest | null) {
+  return httpPost<ProviderAccessRequestResponse>(`/api/platform/provider-access-requests/${encodeURIComponent(id)}/revoke`, body ?? {}, { token, platformOperation: true });
 }
 
 export async function listProviderConnectionsPlatformEntities(

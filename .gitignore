@@ -23,6 +23,8 @@ backups/postgres/*.dump
 .env.*
 web-admin/.env
 web-admin/.env.*
+!web-care/.env.development
+!web-care/.env.production
 web-admin/node_modules/
 !local/.env.uat-arogia.example
 

@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.api.patientportal.auth;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -26,6 +27,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import com.deepthoughtnet.clinic.platform.core.errors.ForbiddenException;
 
 class PatientPortalOtpServiceTest {
     private static final UUID TENANT_A_ID = UUID.randomUUID();
@@ -95,6 +97,26 @@ class PatientPortalOtpServiceTest {
 
         assertThat(hiddenResponse.accepted()).isTrue();
         assertThat(hiddenResponse.devOtp()).isNull();
+    }
+
+    @Test
+    void accessApprovalModeBlocksOtpLoginAndDevOtpExposure() {
+        properties.setMode(PatientPortalAuthProperties.Mode.ACCESS_APPROVAL);
+        sessionTokenService = new PatientPortalSessionTokenService(properties, new ObjectMapper());
+        service = new PatientPortalOtpService(
+                tenantRepository,
+                patientRepository,
+                appUserProvisioner,
+                appUserRepository,
+                challengeRepository,
+                sessionTokenService,
+                properties
+        );
+
+        assertThatThrownBy(() -> service.requestOtp("tenant-a", "9876543210"))
+                .isInstanceOf(ForbiddenException.class);
+        assertThatThrownBy(() -> service.verifyOtp("tenant-a", "9876543210", "123456"))
+                .isInstanceOf(ForbiddenException.class);
     }
 
     @Test

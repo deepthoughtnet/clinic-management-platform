@@ -39,6 +39,7 @@ UAT compose defaults:
 |---|---|
 | `VITE_API_BASE_URL` | Backend API base URL. |
 | `VITE_PUBLIC_API_BASE_URL` | Compatibility API base URL used by existing patient booking/public provider lookups. |
+| `VITE_PATIENT_PORTAL_AUTH_MODE` | Care authentication mode for the patient portal. |
 | `VITE_DISCOVER_APP_URL` | External Jeevanam Discover URL for legacy discovery redirects and Find Care links. |
 | `VITE_HEALTHCARE_APP_URL` | External Jeevanam Healthcare URL for clinic/hospital login links. |
 | `VITE_CLINIC_LOGIN_URL` | Backward-compatible Healthcare login URL. |

@@ -23,6 +23,11 @@ spring:
 clinic:
   patient-portal:
     auth:
+      mode: ${CLINIC_PATIENT_PORTAL_AUTH_MODE:DEV_OTP}
+      expose-dev-otp: true
+  provider-portal:
+    auth:
+      mode: ${CLINIC_PROVIDER_PORTAL_AUTH_MODE:DEV_OTP}
       expose-dev-otp: true
   keycloak:
     admin:

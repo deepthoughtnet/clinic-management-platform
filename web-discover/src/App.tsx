@@ -35,6 +35,7 @@ import { ProviderLandingPagePage } from "./pages/provider/ProviderLandingPagePag
 import { ProviderOnboardingPage } from "./pages/provider/ProviderOnboardingPage";
 import { ProviderPublicProfileDraftPage } from "./pages/provider/ProviderPublicProfileDraftPage";
 import { ProviderPublicProfileReviewPage } from "./pages/provider/ProviderPublicProfileReviewPage";
+import { ProviderRequestAccessPage } from "./pages/provider/ProviderRequestAccessPage";
 import { ProviderWorkspacePage } from "./pages/provider/ProviderWorkspacePage";
 import { DISCOVER_ROUTES, primaryNavigationRoutes } from "./routes";
 import { providerOnboardingStepRoute } from "./features/provider/providerOnboardingRoutes";
@@ -104,6 +105,10 @@ const routeMeta: Record<string, { title: string; description: string }> = {
   [DISCOVER_ROUTES.providerLogin.path]: {
     title: "Provider Login | Jeevanam Discover",
     description: "Sign in with a verification code to manage your provider workspace.",
+  },
+  [DISCOVER_ROUTES.providerRequestAccess.path]: {
+    title: "Request Provider Access | Jeevanam Discover",
+    description: "Request controlled access to your provider workspace.",
   },
   [DISCOVER_ROUTES.providerWorkspace.path]: {
     title: "Provider Workspace | Jeevanam Discover",
@@ -830,6 +835,7 @@ function App() {
           <Route path={DISCOVER_ROUTES.registerClinic.path} element={<ProviderRegistrationStartPage />} />
           <Route path={DISCOVER_ROUTES.registerHospital.path} element={<ProviderRegistrationStartPage />} />
         <Route path={DISCOVER_ROUTES.providerLogin.path} element={<ProviderLoginPage />} />
+        <Route path={DISCOVER_ROUTES.providerRequestAccess.path} element={<ProviderRequestAccessPage />} />
         <Route element={<ProviderProtectedRoute />}>
           <Route path={DISCOVER_ROUTES.providerWorkspace.path} element={<ProviderWorkspacePage />} />
           <Route path={DISCOVER_ROUTES.providerApplications.path} element={<LegacyRedirect to={DISCOVER_ROUTES.providerWorkspace.path} />} />

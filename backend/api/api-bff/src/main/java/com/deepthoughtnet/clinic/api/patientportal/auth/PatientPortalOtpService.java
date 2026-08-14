@@ -24,6 +24,7 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
+import com.deepthoughtnet.clinic.platform.core.errors.ForbiddenException;
 
 @Service
 public class PatientPortalOtpService {
@@ -66,6 +67,7 @@ public class PatientPortalOtpService {
 
     @Transactional
     public PatientPortalOtpRequestResponse requestOtp(String mobile, PatientPortalOtpContext context) {
+        ensureOtpModeEnabled();
         TenantEntity tenant = resolveTenant(context);
         UUID tenantId = tenant == null ? null : tenant.getId();
         String normalizedPhone = normalizePhone(mobile);
@@ -111,7 +113,7 @@ public class PatientPortalOtpService {
                 "OTP generated for patient portal login.",
                 properties.getOtpTtl().getSeconds(),
                 properties.getResendCooldown().getSeconds(),
-                properties.isExposeDevOtp() ? devOtp : null
+                properties.getMode() == PatientPortalAuthProperties.Mode.ACCESS_APPROVAL ? null : properties.isExposeDevOtp() ? devOtp : null
         );
     }
 
@@ -122,6 +124,7 @@ public class PatientPortalOtpService {
 
     @Transactional
     public PatientPortalOtpVerifyResponse verifyOtp(String mobile, String otp, PatientPortalOtpContext context) {
+        ensureOtpModeEnabled();
         TenantEntity tenant = resolveTenant(context);
         String normalizedPhone = normalizePhone(mobile);
         String normalizedOtp = normalizeOtp(otp);
@@ -249,6 +252,12 @@ public class PatientPortalOtpService {
             return tenantRepository.findByCode(normalized).orElse(null);
         }
         return null;
+    }
+
+    private void ensureOtpModeEnabled() {
+        if (properties.getMode() == PatientPortalAuthProperties.Mode.ACCESS_APPROVAL) {
+            throw new ForbiddenException("OTP login is not available in this Care environment.");
+        }
     }
 
     private TenantEntity resolveDirectRegistrationTenant() {

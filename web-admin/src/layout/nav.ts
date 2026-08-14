@@ -140,6 +140,8 @@ export const NAV_GROUPS: NavGroup[] = [
       { key: "platform-tenants", label: "Tenants", path: "/platform/tenants", platformOnly: true },
       { key: "platform-product-implementation", label: "Product Implementation", path: "/platform/product-implementation", platformOnly: true },
       { key: "platform-provider-connections", label: "Provider Connections", path: "/platform/provider-connections", platformOnly: true },
+      { key: "platform-care-access-requests", label: "Care Access Requests", path: "/platform/care-access-requests", platformOnly: true },
+      { key: "platform-provider-access-requests", label: "Provider Access Requests", path: "/platform/provider-access-requests", platformOnly: true },
       { key: "platform-commercial", label: "Commercial Platform", path: "/platform/commercial", platformOnly: true },
       { key: "platform-discover-provider-applications", label: "Provider Applications", path: "/platform/discover/provider-applications", platformOnly: true, permissionsAny: [DISCOVER_PROVIDER_APPLICATION_VIEW] },
       { key: "platform-commercial-catalog", label: "Catalog", path: "/platform/commercial/catalog", platformOnly: true },

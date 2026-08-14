@@ -35,12 +35,36 @@ function healthcareFallbackUrl() {
   return "https://healthcare.deepthoughtnet.com";
 }
 
+const supportedCareAuthModes = new Set(["DEV_OTP", "ACCESS_APPROVAL", "OTP"]);
+
+export function resolveCareAuthMode(explicitMode: string | undefined, hostname?: string) {
+  const normalizedExplicitMode = trimEnv(explicitMode).toUpperCase();
+  if (normalizedExplicitMode) {
+    if (!supportedCareAuthModes.has(normalizedExplicitMode)) {
+      throw new Error(`Unsupported Care auth mode: ${normalizedExplicitMode}`);
+    }
+    return normalizedExplicitMode;
+  }
+  const resolvedHostname = (hostname ?? (typeof window === "undefined" ? "" : window.location.hostname)).toLowerCase();
+  if (isLocalHost(resolvedHostname)) {
+    return "DEV_OTP";
+  }
+  return "OTP";
+}
+
+const resolvedCareAuthMode = resolveCareAuthMode(import.meta.env.VITE_PATIENT_PORTAL_AUTH_MODE);
+
+if (import.meta.env.DEV) {
+  console.info(`Care auth mode: ${resolvedCareAuthMode}`);
+}
+
 export const careConfig = {
   apiBaseUrl: trimEnv(import.meta.env.VITE_PUBLIC_API_BASE_URL) || trimEnv(import.meta.env.VITE_API_BASE_URL),
   discoverAppUrl: trimEnv(import.meta.env.VITE_DISCOVER_APP_URL) || discoverFallbackUrl(),
   healthcareAppUrl: trimEnv(import.meta.env.VITE_HEALTHCARE_APP_URL) || trimEnv(import.meta.env.VITE_CLINIC_LOGIN_URL) || healthcareFallbackUrl(),
   supportUrl: trimEnv(import.meta.env.VITE_SUPPORT_URL),
   aivaAppUrl: trimEnv(import.meta.env.VITE_AIVA_APP_URL),
+  careAuthMode: resolvedCareAuthMode,
 };
 
 export function externalAppUrl(baseUrl: string, path = "/", search = "") {

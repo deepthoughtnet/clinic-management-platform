@@ -3,6 +3,7 @@ export type DiscoverConfig = {
   careAppUrl: string;
   healthcareAppUrl: string;
   aivaAppUrl: string;
+  providerPortalAuthMode: ProviderPortalAuthMode;
   environmentName: string;
   analyticsId: string;
   analyticsEnabled: boolean;
@@ -17,6 +18,8 @@ export type DiscoverConfig = {
   geocodingSearchPath: string;
   showHomeDemoProviders: boolean;
 };
+
+export type ProviderPortalAuthMode = "DEV_OTP" | "ACCESS_APPROVAL" | "OTP";
 
 function trimEnv(value: string | undefined): string {
   return value?.trim() ?? "";
@@ -47,6 +50,25 @@ function parseBoolean(value: string | undefined): boolean | null {
     return false;
   }
   return null;
+}
+
+function normalizeProviderPortalAuthMode(value: string | undefined): ProviderPortalAuthMode | null {
+  const normalized = trimEnv(value).toUpperCase();
+  if (!normalized) {
+    return null;
+  }
+  if (normalized === "DEV_OTP" || normalized === "ACCESS_APPROVAL" || normalized === "OTP") {
+    return normalized;
+  }
+  return null;
+}
+
+function resolveProviderPortalAuthMode(): ProviderPortalAuthMode {
+  const configuredMode = normalizeProviderPortalAuthMode(import.meta.env.VITE_PROVIDER_PORTAL_AUTH_MODE);
+  if (configuredMode) {
+    return configuredMode;
+  }
+  return import.meta.env.DEV ? "DEV_OTP" : "OTP";
 }
 
 function appUrlFallback(app: "care" | "healthcare"): string {
@@ -92,6 +114,7 @@ export const discoverConfig: DiscoverConfig = {
   careAppUrl: trimEnv(import.meta.env.VITE_CARE_APP_URL) || appUrlFallback("care"),
   healthcareAppUrl: trimEnv(import.meta.env.VITE_HEALTHCARE_APP_URL) || appUrlFallback("healthcare"),
   aivaAppUrl: trimEnv(import.meta.env.VITE_AIVA_APP_URL),
+  providerPortalAuthMode: resolveProviderPortalAuthMode(),
   environmentName: trimEnv(import.meta.env.VITE_ENV_NAME),
   analyticsId: trimEnv(import.meta.env.VITE_ANALYTICS_ID),
   analyticsEnabled: trimEnv(import.meta.env.VITE_ANALYTICS_ENABLED).toLowerCase() === "true",
@@ -106,3 +129,7 @@ export const discoverConfig: DiscoverConfig = {
   geocodingSearchPath: trimEnv(import.meta.env.VITE_GEOCODING_SEARCH_PATH),
   showHomeDemoProviders: parseBoolean(import.meta.env.VITE_SHOW_HOME_DEMO_PROVIDERS) ?? defaultHomeDemoProviders(),
 };
+
+if (import.meta.env.DEV) {
+  console.info("[Jeevanam Provider] resolved provider auth mode =", discoverConfig.providerPortalAuthMode);
+}

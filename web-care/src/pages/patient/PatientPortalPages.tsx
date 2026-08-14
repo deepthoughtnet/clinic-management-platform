@@ -38,6 +38,11 @@ import {
   type PatientPortalCareAiResetResponse,
   type PatientPortalCareAiStateResponse,
   type PatientPortalBillResponse,
+  type PatientPortalAccessLoginRequest,
+  type PatientPortalAccessLoginResponse,
+  type PatientPortalAccessRequestContext,
+  type PatientPortalAccessRequestResponse,
+  type PatientPortalAccessRequestSubmitRequest,
   type PatientPortalDoctorSlotResponse,
   type PatientPortalLabOrderResponse,
   type PatientPortalMeResponse,
@@ -61,6 +66,8 @@ import {
   openPatientPortalPdf,
   patientPortalHomePath,
   postPatientPortalJson,
+  postPatientPortalAccessLogin,
+  postPatientPortalAccessRequest,
   postPatientPortalSessionJson,
   putPatientPortalSessionJson,
 } from "../../api/patientPortal";
@@ -251,6 +258,27 @@ function sanitizePatientPortalErrorMessage(value: string) {
   }
   if (lower.includes("sms") || lower.includes("provider") || lower.includes("not available") || lower.includes("disabled")) {
     return "OTP is not available in this environment. Use dev OTP mode or check mock OTP config.";
+  }
+  return normalized;
+}
+
+function sanitizePatientAccessErrorMessage(value: string) {
+  const normalized = value.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "[redacted]");
+  const lower = normalized.toLowerCase();
+  if (lower.includes("mobile") || lower.includes("phone")) {
+    return "Enter a valid 10-digit Indian mobile number.";
+  }
+  if (lower.includes("access code") || lower.includes("invalid code") || lower.includes("code is invalid")) {
+    return "Enter the valid temporary access code.";
+  }
+  if (lower.includes("approved access request") || lower.includes("not currently active")) {
+    return "This access request is not currently active.";
+  }
+  if (lower.includes("clinic context")) {
+    return "Select the correct clinic or hospital before signing in.";
+  }
+  if (lower.includes("not available") || lower.includes("disabled")) {
+    return "Controlled access sign-in is not available right now.";
   }
   return normalized;
 }
@@ -1443,6 +1471,13 @@ export function PatientLoginPage({
   const [requestAttempted, setRequestAttempted] = useState(false);
   const [verifyAttempted, setVerifyAttempted] = useState(false);
   const loginNotice = searchParams.get("message")?.trim() || null;
+  const careAuthMode = (careConfig.careAuthMode || "OTP").trim().toUpperCase();
+  const isAccessApprovalMode = careAuthMode === "ACCESS_APPROVAL";
+  const isDevOtpMode = careAuthMode === "DEV_OTP" && isPatientPortalLocalDev();
+  const [accessCode, setAccessCode] = useState("");
+  const [accessMessage, setAccessMessage] = useState<string | null>(null);
+  const [accessPending, setAccessPending] = useState(false);
+  const [accessAttempted, setAccessAttempted] = useState(false);
   const doctorSlug = portalClinicContext.doctorSlug;
   const [doctorDetail, setDoctorDetail] = useState<FetchState<PublicDoctorDetailResponse | null>>({
     data: null,
@@ -1754,7 +1789,198 @@ export function PatientLoginPage({
     }
   }
 
+  async function handleAccessLogin(event: FormEvent) {
+    event.preventDefault();
+    setAccessAttempted(true);
+    setPhoneTouched(true);
+    if (!phoneValidation.success) {
+      setAccessMessage(null);
+      return;
+    }
+    const normalizedAccessCode = accessCode.replace(/\D/g, "");
+    if (!normalizedAccessCode) {
+      setAccessMessage("Enter your temporary access code.");
+      return;
+    }
+    setAccessPending(true);
+    setAccessMessage(null);
+    try {
+      const context = buildPatientPortalOtpContext(portalClinicContext);
+      const response = await postPatientPortalAccessLogin<PatientPortalAccessLoginResponse>("/api/patient-portal/auth/access/login", {
+        mobile: normalizedPhone,
+        accessCode: normalizedAccessCode,
+        ...(context ? { context } : {}),
+      });
+      if (response.authenticated && response.patientSessionToken && response.tenantId && response.patientDisplayName && response.tenantCode) {
+        storePatientPortalPendingRegistration(null);
+        onSaveSession({
+          mode: "access",
+          sessionRole: "patient",
+          tenantCode: response.tenantCode,
+          tenantId: response.tenantId,
+          phone: normalizedPhone,
+          patientLabel: response.patientDisplayName,
+          createdAt: new Date().toISOString(),
+          patientSessionToken: response.patientSessionToken,
+        });
+        navigate(portalClinicContext.nextPath?.startsWith("/patient/") ? portalClinicContext.nextPath : "/patient/dashboard");
+        return;
+      }
+      setAccessMessage(response.message || "Unable to sign in with the temporary access code.");
+    } catch (error) {
+      setAccessMessage(
+        error instanceof Error
+          ? sanitizePatientAccessErrorMessage(error.message)
+          : "Unable to sign in right now. Please try again.",
+      );
+    } finally {
+      setAccessPending(false);
+    }
+  }
+
   const sessionActionLabel = session && isPatientPortalRegistrationSession(session) ? "Continue registration" : "Open current session";
+
+  if (isAccessApprovalMode) {
+    return (
+      <section className="page-section care-login-page">
+        <CarePublicEntryHeader />
+        <div className="care-login-layout care-login-layout--access">
+        <CareLoginHero
+          title="Friends & Family access to Jeevanam Care"
+          subtitle="Invite-controlled access for approved patients. Request access if you have not been approved yet."
+            benefits={[
+              {
+                icon: <ShieldOutlinedIcon fontSize="small" aria-hidden="true" />,
+                title: "Controlled access",
+                description: "OTP login and development tools are disabled in this environment.",
+              },
+              {
+                icon: <LockOutlinedIcon fontSize="small" aria-hidden="true" />,
+                title: "Protected patient data",
+                description: "Only approved users can open their assigned patient workspace.",
+              },
+              {
+                icon: <CheckCircleOutlineRoundedIcon fontSize="small" aria-hidden="true" />,
+                title: "Reviewed access",
+                description: "Platform Admin approves or rejects access requests before sign-in is enabled.",
+              },
+            ]}
+          />
+
+          <div className="login-placeholder portal-login-card care-login-card">
+          <div className="care-login-card__header">
+            <span className="eyebrow">Patient portal access</span>
+            <h2>Sign in to Jeevanam Care</h2>
+            <p>Approved users can sign in with their temporary access code.</p>
+          </div>
+
+          {doctorDetail.loading ? <div className="patient-inline-empty">Loading clinic options...</div> : null}
+          {doctorDetail.error ? (
+            <div className="patient-inline-empty">
+              <strong>Clinic options unavailable</strong>
+              <p>Unable to load clinic options right now. Please try again.</p>
+            </div>
+          ) : null}
+          {doctorSelectionRequired && doctorDetail.data ? (
+            <DoctorClinicSelector
+              doctorName={portalClinicContext.doctorName || doctorDetail.data.doctorDisplayName}
+              clinics={resolveDoctorPracticeOptions(doctorDetail.data)}
+              selectedClinicCode={resolvedClinicCode}
+              nextAvailableSlot={doctorDetail.data.nextAvailableSlots[0] ?? null}
+              onSelect={(clinic) => syncClinicContext(clinic.clinicSlug, clinic.clinicDisplayName)}
+            />
+          ) : null}
+          {bookingContextLine ? (
+            <div className="patient-inline-empty">
+              <strong>{bookingContextLine}</strong>
+            </div>
+          ) : null}
+
+          {session ? (
+            <CareEntrySessionNotice
+              title="Current session"
+                body={
+                  isPatientPortalRegistrationSession(session)
+                    ? "You already have a verified registration session. Continue from where you left off."
+                    : "You already have an active patient session. Open it again or sign out."
+                }
+                actionLabel={sessionActionLabel}
+                onAction={() => navigate(patientPortalHomePath(session))}
+              />
+            ) : null}
+
+            <form className="patient-login-form" onSubmit={handleAccessLogin} noValidate>
+              <label>
+                <span>Phone number</span>
+              <input
+                value={phone}
+                onChange={(event) => {
+                  setPhone(event.target.value);
+                  setAccessMessage(null);
+                }}
+                onBlur={() => setPhoneTouched(true)}
+                placeholder="Enter 10-digit mobile number"
+                autoComplete="tel"
+                inputMode="tel"
+                aria-invalid={Boolean(!phoneValidation.success)}
+              />
+            </label>
+              <label>
+                <span>Temporary access code</span>
+                <input
+                  value={accessCode}
+                  onChange={(event) => {
+                    setAccessCode(event.target.value.replace(/\D/g, ""));
+                    setAccessMessage(null);
+                  }}
+                onBlur={() => setAccessAttempted(true)}
+                placeholder="8-digit access code"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={8}
+              />
+            </label>
+            <div className="patient-login-actions">
+                <button className="primary-button wide-button" type="submit" disabled={accessPending || !phoneValidation.success || accessCode.replace(/\D/g, "").length < 8}>
+                  {accessPending ? "Signing in..." : "Sign in"}
+                </button>
+              </div>
+            </form>
+
+            {accessMessage ? (
+              <div className="patient-inline-empty">
+                <strong>Access sign-in</strong>
+                <p>{accessMessage}</p>
+              </div>
+            ) : null}
+
+            <div className="patient-inline-empty">
+              <strong>Need access?</strong>
+              <p>Submit a controlled access request and wait for Platform Admin approval.</p>
+              <div className="cta-row">
+                <Link className="secondary-button" to="/patient/request-access">
+                  Request Access
+                </Link>
+              </div>
+            </div>
+
+            <CareEntrySecurityStrip mode="access" />
+
+            {session ? (
+              <div className="cta-row care-login-session-actions">
+                <button className="secondary-button" type="button" onClick={() => navigate(patientPortalHomePath(session))}>
+                  {sessionActionLabel}
+                </button>
+                <button className="ghost-button" type="button" onClick={onClearSession}>
+                  Sign out
+                </button>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className="page-section care-login-page">
@@ -1855,7 +2081,7 @@ export function PatientLoginPage({
                   Code expires in {requestState.expiresInSeconds}s. Resend available in {requestState.resendAvailableInSeconds}s.
                 </span>
               ) : null}
-              {isPatientPortalLocalDev() && requestState?.accepted ? (
+              {isDevOtpMode && requestState?.accepted ? (
                 <span>
                   Dev OTP: <strong>{requestState.devOtp || "123456"}</strong>
                 </span>
@@ -1900,7 +2126,7 @@ export function PatientLoginPage({
 
           <CareEntrySecurityStrip />
 
-          {isPatientPortalLocalDev() ? (
+          {isDevOtpMode ? (
             <details className="care-login-dev-tools">
               <summary>Development tools</summary>
               <div className="care-login-dev-tools__body">
@@ -1927,6 +2153,249 @@ export function PatientLoginPage({
               </button>
             </div>
           ) : null}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+export function PatientAccessRequestPage({
+  session,
+  onSaveSession,
+  onClearSession,
+  clinicLoginUrl,
+}: {
+  session: PatientPortalSession | null;
+  onSaveSession: (session: PatientPortalSession) => void;
+  onClearSession: () => void;
+  clinicLoginUrl: string;
+}) {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
+  const portalClinicContext = useMemo(
+    () => resolvePatientPortalContext(searchParams, location.state),
+    [location.state, searchParams],
+  );
+  const patientAuthContext = useMemo(
+    () => resolvePatientAuthContext(searchParams, location.state),
+    [location.state, searchParams],
+  );
+  const [fullName, setFullName] = useState("");
+  const [mobile, setMobile] = useState(patientAuthContext.mobile ?? "");
+  const [email, setEmail] = useState("");
+  const [note, setNote] = useState("");
+  const [clinicSlug, setClinicSlug] = useState(portalClinicContext.clinicSlug || portalClinicContext.clinicCode || "");
+  const [requestPending, setRequestPending] = useState(false);
+  const [requestMessage, setRequestMessage] = useState<string | null>(null);
+  const [requestError, setRequestError] = useState<string | null>(null);
+  const [attempted, setAttempted] = useState(false);
+  const loginNotice = searchParams.get("message")?.trim() || null;
+  const normalizedMobile = sanitizePatientPhoneInput(mobile);
+  const mobileValidation = indianMobileNumber().safeParse(normalizedMobile);
+  const normalizedClinicSlug = clinicSlug.trim();
+  const canSubmit = Boolean(fullName.trim() && mobileValidation.success && normalizedClinicSlug) && !requestPending;
+
+  useEffect(() => {
+    setClinicSlug(portalClinicContext.clinicSlug || portalClinicContext.clinicCode || "");
+  }, [portalClinicContext.clinicCode, portalClinicContext.clinicSlug]);
+
+  useEffect(() => {
+    if (patientAuthContext.mobile) {
+      setMobile(patientAuthContext.mobile);
+    }
+  }, [patientAuthContext.mobile]);
+
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    setAttempted(true);
+    if (!fullName.trim() || !mobileValidation.success || !normalizedClinicSlug) {
+      setRequestError("Enter your full name, mobile number, and clinic or hospital slug.");
+      return;
+    }
+    setRequestPending(true);
+    setRequestError(null);
+    setRequestMessage(null);
+    try {
+      const context = buildPatientPortalOtpContext({
+        clinicId: portalClinicContext.clinicId,
+        clinicSlug: normalizedClinicSlug,
+        clinicCode: normalizedClinicSlug,
+        tenantId: portalClinicContext.tenantId,
+        doctorId: portalClinicContext.doctorId,
+        nextPath: portalClinicContext.nextPath,
+      });
+      const response = await postPatientPortalAccessRequest<PatientPortalAccessRequestResponse>("/api/patient-portal/auth/access-requests", {
+        fullName: fullName.trim(),
+        mobile: normalizedMobile,
+        email: email.trim() || null,
+        note: note.trim() || null,
+        context: context as PatientPortalAccessRequestContext | null,
+      });
+      setRequestMessage(
+        response.status === "REQUESTED"
+          ? "Your access request has been submitted for review."
+          : "Your access request has been recorded.",
+      );
+      setRequestError(null);
+    } catch (error) {
+      setRequestError(
+        error instanceof Error
+          ? sanitizePatientAccessErrorMessage(error.message)
+          : "Unable to submit your access request right now.",
+      );
+    } finally {
+      setRequestPending(false);
+    }
+  }
+
+  return (
+    <section className="page-section care-login-page">
+      <CarePublicEntryHeader />
+      <div className="care-login-layout care-login-layout--access">
+        <CareLoginHero
+          title="Request access to Jeevanam Care"
+          subtitle="Friends & Family access is invitation-controlled. Submit your request and wait for approval."
+          benefits={[
+            {
+              icon: <ShieldOutlinedIcon fontSize="small" aria-hidden="true" />,
+              title: "Reviewed by Platform Admin",
+              description: "Access requests are reviewed before sign-in is enabled.",
+            },
+            {
+              icon: <LockOutlinedIcon fontSize="small" aria-hidden="true" />,
+              title: "Private patient workspace",
+              description: "Approved users only open their assigned Care workspace.",
+            },
+            {
+              icon: <CheckCircleOutlineRoundedIcon fontSize="small" aria-hidden="true" />,
+              title: "Controlled preview",
+              description: "This release uses controlled access instead of OTP login.",
+            },
+          ]}
+        />
+
+        <div className="login-placeholder portal-login-card care-login-card">
+          <div className="care-login-card__header">
+            <span className="eyebrow">Access request</span>
+            <h2>Request access to Jeevanam Care</h2>
+            <p>Use a business-readable clinic or hospital slug. Do not enter internal IDs.</p>
+          </div>
+
+          {session ? (
+            <CareEntrySessionNotice
+              title="Current session"
+              body="You already have an active patient session. Open it again or sign out before submitting another access request."
+              actionLabel="Open current session"
+              onAction={() => navigate(patientPortalHomePath(session))}
+            />
+          ) : null}
+
+          {loginNotice ? (
+            <div className="patient-inline-empty">
+              <strong>Message</strong>
+              <p>{loginNotice}</p>
+            </div>
+          ) : null}
+
+          <form className="patient-login-form" onSubmit={handleSubmit} noValidate>
+            <label>
+              <span>Full name</span>
+              <input
+                value={fullName}
+                onChange={(event) => {
+                  setFullName(event.target.value);
+                  setRequestError(null);
+                }}
+                placeholder="Your full name"
+                autoComplete="name"
+                aria-invalid={Boolean(attempted && !fullName.trim())}
+              />
+            </label>
+            <label>
+              <span>Mobile number</span>
+              <input
+                value={mobile}
+                onChange={(event) => {
+                  setMobile(event.target.value);
+                  setRequestError(null);
+                }}
+                placeholder="Enter 10-digit mobile number"
+                autoComplete="tel"
+                inputMode="tel"
+                aria-invalid={Boolean(attempted && !mobileValidation.success)}
+              />
+            </label>
+            <label>
+              <span>Email address</span>
+              <input
+                value={email}
+                onChange={(event) => {
+                  setEmail(event.target.value);
+                  setRequestError(null);
+                }}
+                placeholder="Optional"
+                autoComplete="email"
+                inputMode="email"
+              />
+            </label>
+            <label>
+              <span>Clinic or hospital slug</span>
+              <input
+                value={clinicSlug}
+                onChange={(event) => {
+                  setClinicSlug(event.target.value);
+                  setRequestError(null);
+                }}
+                placeholder="e.g. jeevanam-multispeciality-hospital"
+                aria-invalid={Boolean(attempted && !normalizedClinicSlug)}
+              />
+            </label>
+            <label>
+              <span>Note</span>
+              <textarea
+                value={note}
+                onChange={(event) => {
+                  setNote(event.target.value);
+                  setRequestError(null);
+                }}
+                placeholder="Optional note for Platform Admin"
+                rows={4}
+              />
+            </label>
+
+            {requestError ? (
+              <div className="patient-inline-empty">
+                <strong>Request access</strong>
+                <p>{requestError}</p>
+              </div>
+            ) : null}
+
+            {requestMessage ? (
+              <div className="patient-inline-empty">
+                <strong>Request submitted</strong>
+                <p>{requestMessage}</p>
+              </div>
+            ) : null}
+
+            <div className="patient-login-actions">
+              <button className="primary-button wide-button" type="submit" disabled={!canSubmit}>
+                {requestPending ? "Submitting..." : "Submit Request"}
+              </button>
+            </div>
+          </form>
+
+          <div className="patient-inline-empty">
+            <strong>Already approved?</strong>
+            <p>Use your temporary access code to sign in once Platform Admin approves your request.</p>
+            <div className="cta-row">
+              <Link className="secondary-button" to="/patient/login">
+                Sign in
+              </Link>
+            </div>
+          </div>
+
+          <CareEntrySecurityStrip mode="access" />
         </div>
       </div>
     </section>

@@ -5,8 +5,10 @@ import {
   verifyProviderLoginCode,
   type ProviderLoginChallengeResponse,
 } from "../../api/providerAuth";
+import { discoverConfig } from "../../config";
 import { useProviderSession } from "../../context/ProviderSessionContext";
 import { DISCOVER_ROUTES } from "../../routes";
+import { ProviderAccessApprovalLoginPage } from "./ProviderAccessApprovalLoginPage";
 
 type Step = "identifier" | "code";
 type ActiveProviderLoginChallenge = {
@@ -165,6 +167,12 @@ export function ProviderLoginPage() {
   const sending = loading && step === "identifier";
   const verifying = loading && step === "code";
   const returnTo = resolveSafeReturnTo(searchParams.get("returnTo"));
+  const providerPortalAuthMode = discoverConfig.providerPortalAuthMode;
+
+  if (providerPortalAuthMode === "ACCESS_APPROVAL") {
+    return <ProviderAccessApprovalLoginPage returnTo={returnTo} />;
+  }
+
   async function sendCode(event?: FormEvent) {
     event?.preventDefault();
     if (sendLockRef.current) {

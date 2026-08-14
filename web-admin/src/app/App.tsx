@@ -56,6 +56,8 @@ import TenantsPage from "../pages/platform/TenantsPage";
 import TenantDetailPage from "../pages/platform/TenantDetailPage";
 import PlansModulesPage from "../pages/platform/PlansModulesPage";
 import ProductImplementationPage from "../pages/platform/ProductImplementationPage";
+import CareAccessRequestsPage from "../pages/platform/CareAccessRequestsPage";
+import ProviderAccessRequestsPage from "../pages/platform/ProviderAccessRequestsPage";
 import ProviderConnectionsPage from "../pages/platform/ProviderConnectionsPage";
 import CommercialCatalogPage from "../pages/platform/CommercialCatalogPage";
 import CommercialPlatformPage from "../pages/platform/CommercialPlatformPage";
@@ -483,6 +485,8 @@ function AuthedApp() {
         <Route path="/platform/help" element={<PathnameKeyedRoute><PlatformAdminGate><HelpCmsPage /></PlatformAdminGate></PathnameKeyedRoute>} />
         <Route path="/platform/tenants/:tenantId" element={<PathnameKeyedRoute><TenantDetailPage /></PathnameKeyedRoute>} />
         <Route path="/platform/plans" element={<PathnameKeyedRoute><PlansModulesPage /></PathnameKeyedRoute>} />
+        <Route path="/platform/care-access-requests" element={<PathnameKeyedRoute><PlatformAdminGate><CareAccessRequestsPage /></PlatformAdminGate></PathnameKeyedRoute>} />
+        <Route path="/platform/provider-access-requests" element={<PathnameKeyedRoute><PlatformAdminGate><ProviderAccessRequestsPage /></PlatformAdminGate></PathnameKeyedRoute>} />
         <Route path="/platform/provider-connections/*" element={<PathnameKeyedRoute><PlatformAdminGate><ProviderConnectionsPage /></PlatformAdminGate></PathnameKeyedRoute>} />
         <Route path="/platform/commercial" element={<PathnameKeyedRoute><PlatformAdminGate><CommercialPlatformPage /></PlatformAdminGate></PathnameKeyedRoute>} />
         <Route path="/platform/commercial/catalog" element={<PathnameKeyedRoute><PlatformAdminGate><CommercialCatalogPage /></PlatformAdminGate></PathnameKeyedRoute>} />

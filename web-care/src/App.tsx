@@ -7,6 +7,7 @@ import {
   PatientCareAiPage,
   PatientDashboardPage,
   PatientLoginPage,
+  PatientAccessRequestPage,
   PatientNotificationsPage,
   PatientProfilePage,
   PatientRegistrationPage,
@@ -38,6 +39,7 @@ const aivaAppUrl = careConfig.aivaAppUrl || new URL("/patient/careai", window.lo
 function pageTitleForPath(pathname: string) {
   if (pathname === "/") return productTitle();
   if (pathname === "/patient/login") return `Login | ${branding.productName}`;
+  if (pathname === "/patient/request-access") return `Request Access | ${branding.productName}`;
   if (pathname === "/patient/register") return `Register | ${branding.productName}`;
   if (pathname === "/patient/dashboard") return `Dashboard | ${branding.productName}`;
   if (pathname === "/patient/appointments") return `Appointments | ${branding.productName}`;
@@ -60,6 +62,7 @@ function pageTitleForPath(pathname: string) {
 function descriptionForPath(pathname: string) {
   if (pathname === "/") return `${branding.productName}: ${branding.tagline}`;
   if (pathname === "/careai") return `${branding.productName} routes patients to care-specific AIVA access.`;
+  if (pathname === "/patient/request-access") return `${branding.productName} controlled access request page.`;
   if (pathname.startsWith("/patient")) return `${branding.productName} for verified appointments, prescriptions, bills, lab reports, notifications, profile, and AIVA.`;
   if (pathname.startsWith("/aiva")) return `${branding.productName} AI voice and assistant platform powered by ${branding.aiPlatformName}.`;
   if (pathname === "/contact") return `${branding.productName} contact page.`;
@@ -183,7 +186,7 @@ function readStoredPatientSession() {
   try {
     const parsed = JSON.parse(raw) as PatientPortalSession;
     if (
-      parsed?.mode === "otp"
+      (parsed?.mode === "otp" || parsed?.mode === "access")
       && parsed.patientSessionToken
       && parsed.tenantId
       && parsed.tenantCode
@@ -354,6 +357,17 @@ export function App() {
             path="/patient/login"
             element={
               <PatientLoginPage
+                session={session}
+                onSaveSession={saveSession}
+                onClearSession={clearPatientSessionAndContext}
+                clinicLoginUrl={clinicLoginUrl}
+              />
+            }
+          />
+          <Route
+            path="/patient/request-access"
+            element={
+              <PatientAccessRequestPage
                 session={session}
                 onSaveSession={saveSession}
                 onClearSession={clearPatientSessionAndContext}
