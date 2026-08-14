@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily Jeevanam Production Backup
+
+[Timer]
+OnCalendar=*-*-* 02:00:00
+Persistent=true
+Unit=jeevanam-backup.service
+
+[Install]
+WantedBy=timers.target

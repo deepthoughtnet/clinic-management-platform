@@ -1,0 +1,9 @@
+[Unit]
+Description=Jeevanam Production Backup
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/jeevanam/bin/backup-jeevanam-prod.sh
+User=root
