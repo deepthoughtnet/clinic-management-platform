@@ -82,13 +82,15 @@
         "http://localhost:5173/*",
         "http://127.0.0.1:5173/*",
         "http://localhost:3000/*",
-        "http://127.0.0.1:3000/*"
+        "http://127.0.0.1:3000/*",
+        "https://health.jeevanam.deepthoughtnet.com/*"
       ],
       "webOrigins": [
         "http://localhost:5173",
         "http://127.0.0.1:5173",
         "http://localhost:3000",
-        "http://127.0.0.1:3000"
+        "http://127.0.0.1:3000",
+        "https://health.jeevanam.deepthoughtnet.com"
       ],
       "attributes": {
         "pkce.code.challenge.method": "S256"
