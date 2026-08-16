@@ -59,7 +59,7 @@ public class CorsConfig {
                 "Origin"
         ));
         cfg.setExposedHeaders(List.of("WWW-Authenticate", "X-Correlation-ID", "X-Correlation-Id"));
-        cfg.setAllowCredentials(false);
+        cfg.setAllowCredentials(true);
         cfg.setMaxAge(3600L);
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", cfg);

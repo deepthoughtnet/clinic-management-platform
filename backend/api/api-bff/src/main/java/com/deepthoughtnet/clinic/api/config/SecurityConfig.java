@@ -41,6 +41,7 @@ import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import org.springframework.web.cors.CorsConfigurationSource;
 
 @Configuration
 @EnableMethodSecurity
@@ -53,13 +54,14 @@ public class SecurityConfig {
     @Bean
     SecurityFilterChain securityFilterChain(
             HttpSecurity http,
+            CorsConfigurationSource corsConfigurationSource,
             ProviderSessionAuthenticationFilter providerSessionAuthenticationFilter,
             PatientPortalSessionAuthenticationFilter patientPortalSessionAuthenticationFilter,
             RequestContextFilter clinicRequestContextFilter,
             TenantRoleAuthorityFilter clinicTenantRoleAuthorityFilter,
             ObjectMapper objectMapper
     ) throws Exception {
-        http.cors(cors -> {});
+        http.cors(cors -> cors.configurationSource(corsConfigurationSource));
         http.csrf(csrf -> csrf.disable());
         http.exceptionHandling(ex -> ex
                 .authenticationEntryPoint(authenticationEntryPoint(objectMapper))

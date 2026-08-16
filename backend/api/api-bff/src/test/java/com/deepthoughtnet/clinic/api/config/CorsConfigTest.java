@@ -37,6 +37,7 @@ class CorsConfigTest {
                 "http://127.0.0.1:5175",
                 "http://127.0.0.1:5177"
         );
+        assertThat(configuration.getAllowedOrigins()).doesNotContain("*");
         assertThat(configuration.getAllowedHeaders()).contains(
                 "Authorization",
                 "Content-Type",
@@ -49,6 +50,7 @@ class CorsConfigTest {
                 "X-Platform-Op"
         );
         assertThat(configuration.getAllowedMethods()).contains("OPTIONS", "POST");
+        assertThat(configuration.getAllowCredentials()).isTrue();
     }
 
     @Test
@@ -71,6 +73,8 @@ class CorsConfigTest {
                 "http://127.0.0.1:5175",
                 "http://127.0.0.1:5177"
         );
+        assertThat(configuration.getAllowedOrigins()).doesNotContain("*");
+        assertThat(configuration.getAllowCredentials()).isTrue();
     }
 
     @Test
@@ -93,5 +97,7 @@ class CorsConfigTest {
                 "http://127.0.0.1:5175",
                 "http://127.0.0.1:5177"
         );
+        assertThat(configuration.getAllowedOrigins()).doesNotContain("*");
+        assertThat(configuration.getAllowCredentials()).isTrue();
     }
 }
