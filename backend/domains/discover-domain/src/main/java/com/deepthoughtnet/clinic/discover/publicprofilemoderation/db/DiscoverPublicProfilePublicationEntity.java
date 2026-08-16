@@ -33,6 +33,8 @@ public class DiscoverPublicProfilePublicationEntity {
     private OffsetDateTime publishedAt;
     @Column(name = "published_by", nullable = false, length = 160)
     private String publishedBy;
+    @Column(name = "unpublished_by", length = 160)
+    private String unpublishedBy;
     @Column(name = "unpublished_at")
     private OffsetDateTime unpublishedAt;
     @Column(name = "current_flag", nullable = false)
@@ -114,6 +116,11 @@ public class DiscoverPublicProfilePublicationEntity {
         this.current = false;
     }
 
+    public void unpublish(String reason, String unpublishedBy, OffsetDateTime unpublishedAt, OffsetDateTime updatedAt) {
+        unpublish(reason, unpublishedAt, updatedAt);
+        this.unpublishedBy = unpublishedBy;
+    }
+
     public void supersede(OffsetDateTime updatedAt) {
         this.current = false;
         this.updatedAt = updatedAt;
@@ -130,6 +137,7 @@ public class DiscoverPublicProfilePublicationEntity {
     public String getReason() { return reason; }
     public OffsetDateTime getPublishedAt() { return publishedAt; }
     public String getPublishedBy() { return publishedBy; }
+    public String getUnpublishedBy() { return unpublishedBy; }
     public OffsetDateTime getUnpublishedAt() { return unpublishedAt; }
     public boolean isCurrent() { return current; }
     public OffsetDateTime getCreatedAt() { return createdAt; }

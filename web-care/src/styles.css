@@ -2024,6 +2024,11 @@ input {
   color: var(--muted);
 }
 
+.patient-field-required {
+  color: #b42318;
+  font-weight: 800;
+}
+
 .patient-field-hint {
   margin: -0.1rem 0 0;
   color: var(--muted);

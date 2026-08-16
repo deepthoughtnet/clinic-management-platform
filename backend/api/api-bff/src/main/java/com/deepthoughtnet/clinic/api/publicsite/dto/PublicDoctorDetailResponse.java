@@ -32,6 +32,7 @@ public record PublicDoctorDetailResponse(
         String state,
         String country,
         String primarySpeciality,
+        java.math.BigDecimal consultationFee,
         boolean reviewsComingSoon,
         String subtitle,
         String bookingSummary,
@@ -40,7 +41,8 @@ public record PublicDoctorDetailResponse(
         List<String> availableDays,
         List<String> nextAvailableSlots,
         boolean availableToday,
-        String bookingReference
+        String bookingReference,
+        boolean canBookOnline
 ) {
     public PublicDoctorDetailResponse(
             String publicDoctorId,
@@ -72,6 +74,7 @@ public record PublicDoctorDetailResponse(
             String state,
             String country,
             String primarySpeciality,
+            java.math.BigDecimal consultationFee,
             boolean reviewsComingSoon,
             String subtitle,
             String bookingSummary,
@@ -111,6 +114,7 @@ public record PublicDoctorDetailResponse(
                 state,
                 country,
                 primarySpeciality,
+                consultationFee,
                 reviewsComingSoon,
                 subtitle,
                 bookingSummary,
@@ -119,7 +123,8 @@ public record PublicDoctorDetailResponse(
                 availableDays,
                 nextAvailableSlots,
                 availableToday,
-                null
+                null,
+                false
         );
     }
 }

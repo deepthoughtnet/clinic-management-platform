@@ -2,8 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  isValidPatientAccessCodeInput,
   isValidPatientOtpInput,
   isValidPatientPhoneInput,
+  sanitizePatientAccessCodeInput,
   sanitizePatientOtpInput,
   sanitizePatientPhoneInput,
 } from "../src/pages/patient/patientLoginInput.js";
@@ -12,7 +14,7 @@ test("patient phone input normalizes prefixes and preserves typed digits", () =>
   assert.equal(sanitizePatientPhoneInput("9191900"), "9191900");
   assert.equal(sanitizePatientPhoneInput("+91 98765 43210"), "9876543210");
   assert.equal(sanitizePatientPhoneInput("919678012345"), "9678012345");
-  assert.equal(sanitizePatientPhoneInput("9800000000000000000"), "9800000000000000000");
+  assert.equal(sanitizePatientPhoneInput("9800000000000000000"), "9800000000");
   assert.equal(sanitizePatientPhoneInput("9876543210"), "9876543210");
 });
 
@@ -34,4 +36,15 @@ test("patient otp validation requires exactly six digits", () => {
   assert.equal(isValidPatientOtpInput("77777"), false);
   assert.equal(isValidPatientOtpInput("777777"), true);
   assert.equal(isValidPatientOtpInput("7777777"), false);
+});
+
+test("patient access code input trims pasted overflow", () => {
+  assert.equal(sanitizePatientAccessCodeInput("1234567890"), "12345678");
+  assert.equal(sanitizePatientAccessCodeInput("12ab34cd56ef78"), "12345678");
+});
+
+test("patient access code validation requires exactly eight digits", () => {
+  assert.equal(isValidPatientAccessCodeInput("1234567"), false);
+  assert.equal(isValidPatientAccessCodeInput("12345678"), true);
+  assert.equal(isValidPatientAccessCodeInput("123456789"), true);
 });

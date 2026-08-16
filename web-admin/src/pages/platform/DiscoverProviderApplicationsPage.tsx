@@ -30,6 +30,7 @@ import {
   getDiscoverProviderApplicationReview,
   listDiscoverProviderApplications,
   publishDiscoverProviderApplication,
+  unpublishProviderConnectionsPublicProfileReview,
   requestChangesDiscoverProviderReview,
   startDiscoverProviderReview,
   getDiscoverProviderReviewDocumentBlob,
@@ -87,6 +88,28 @@ function statusChipColor(status: DiscoverProviderApplicationStatus) {
       return "success";
     default:
       return "default";
+  }
+}
+
+function publicationStatusLabel(status: string | null | undefined) {
+  switch ((status || "").trim().toUpperCase()) {
+    case "PUBLISHED":
+      return "Published";
+    case "UNPUBLISHED":
+      return "Unpublished";
+    default:
+      return status ? status.replaceAll("_", " ").toLowerCase().replace(/^\w/, (value) => value.toUpperCase()) : "—";
+  }
+}
+
+function publicationHistoryLabel(status: string | null | undefined, hasPriorUnpublish: boolean) {
+  switch ((status || "").trim().toUpperCase()) {
+    case "UNPUBLISHED":
+      return "Unpublished";
+    case "PUBLISHED":
+      return hasPriorUnpublish ? "Republished" : "Published";
+    default:
+      return publicationStatusLabel(status);
   }
 }
 
@@ -208,6 +231,9 @@ export default function DiscoverProviderApplicationsPage() {
   const [changesDialogOpen, setChangesDialogOpen] = React.useState(false);
   const [changesReason, setChangesReason] = React.useState("");
   const [changesSection, setChangesSection] = React.useState("LOCATIONS");
+  const [publicationDialogOpen, setPublicationDialogOpen] = React.useState(false);
+  const [publicationDialogAction, setPublicationDialogAction] = React.useState<"UNPUBLISH_PROFILE" | "REPUBLISH_PROFILE" | null>(null);
+  const [publicationReason, setPublicationReason] = React.useState("");
   const [documentPreview, setDocumentPreview] = React.useState<{
     document: DiscoverProviderDocument;
     objectUrl: string | null;
@@ -292,6 +318,22 @@ export default function DiscoverProviderApplicationsPage() {
   const canApprove = auth.hasPermission("discover.provider.application.approve");
   const canPublish = auth.hasPermission("discover.provider.application.publish");
   const canViewDocumentHistory = auth.hasPermission("discover.provider.application.history.view");
+  const currentPublicationStatus = (detail?.publicationStatus || (detail?.published ? "PUBLISHED" : detail?.application.status) || "").toUpperCase();
+  const canUnpublish = Boolean(detail?.canUnpublish);
+  const canRepublish = Boolean(detail?.canRepublish);
+  const hasPublicationHistory = Boolean(detail?.publicationHistory?.length);
+
+  function closePublicationDialog() {
+    setPublicationDialogOpen(false);
+    setPublicationDialogAction(null);
+    setPublicationReason("");
+  }
+
+  function openPublicationDialog(action: "UNPUBLISH_PROFILE" | "REPUBLISH_PROFILE") {
+    setPublicationDialogAction(action);
+    setPublicationReason("");
+    setPublicationDialogOpen(true);
+  }
 
   async function runAction(action: "start-review" | "approve" | "publish") {
     if (!auth.accessToken || !detail) return;
@@ -312,6 +354,34 @@ export default function DiscoverProviderApplicationsPage() {
       await refresh();
     } catch (err) {
       setDetailError(resolveLoadError(err, "Provider application action could not be completed. Please try again."));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function runPublicationAction() {
+    if (!auth.accessToken || !detail || !publicationDialogAction) return;
+    setSaving(true);
+    setQueueError(null);
+    setDetailError(null);
+    try {
+      if (publicationDialogAction === "UNPUBLISH_PROFILE") {
+        await unpublishProviderConnectionsPublicProfileReview(auth.accessToken, detail.application.id, {
+          reason: publicationReason.trim(),
+        });
+        setToast("Public profile unpublished.");
+      } else {
+        await publishDiscoverProviderApplication(auth.accessToken, detail.application.referenceNumber, publicationReason.trim() || null);
+        setToast("Public profile republished.");
+      }
+      closePublicationDialog();
+      await refresh();
+    } catch (err) {
+      if (err instanceof ApiClientError && err.code === "republish_requires_review") {
+        setDetailError("Direct republish is not available because the approved snapshot changed. Review the current draft and submit it through the normal review path.");
+      } else {
+        setDetailError(resolveLoadError(err, "Public profile publication could not be completed. Please try again."));
+      }
     } finally {
       setSaving(false);
     }
@@ -535,14 +605,21 @@ export default function DiscoverProviderApplicationsPage() {
                       {(detail.application.status === "SUBMITTED" || detail.application.status === "UNDER_REVIEW") && canRequestChanges ? <Button variant="outlined" disabled={saving} onClick={() => setChangesDialogOpen(true)}>Request changes</Button> : null}
                       {detail.application.status === "UNDER_REVIEW" && canApprove ? <Button variant="contained" color="success" disabled={saving} onClick={() => void runAction("approve")}>Approve</Button> : null}
                       {detail.application.status === "APPROVED" && canPublish ? <Button variant="contained" color="success" disabled={saving} onClick={() => void runAction("publish")}>Publish</Button> : null}
+                      {canUnpublish ? <Button variant="outlined" color="error" disabled={saving} onClick={() => openPublicationDialog("UNPUBLISH_PROFILE")}>Unpublish</Button> : null}
+                      {canRepublish ? <Button variant="contained" color="success" disabled={saving} onClick={() => openPublicationDialog("REPUBLISH_PROFILE")}>Republish</Button> : null}
                     </Stack>
                   </Box>
 
                   <Stack direction="row" spacing={1} flexWrap="wrap">
-                    <Chip size="small" label={detail.application.status.replaceAll("_", " ")} color={statusChipColor(detail.application.status)} />
+                    <Chip size="small" label={publicationStatusLabel(currentPublicationStatus || detail.application.status)} color={statusChipColor((currentPublicationStatus || detail.application.status) as DiscoverProviderApplicationStatus)} />
                     <Chip size="small" label={detail.application.contactVerification.requirementSatisfied ? "Contact verified" : "Contact verification pending"} variant="outlined" />
                     <Chip size="small" label={`${detail.completion.completionPercentage}% complete`} variant="outlined" />
                   </Stack>
+                  {currentPublicationStatus === "UNPUBLISHED" && !canRepublish ? (
+                    <Alert severity="warning" variant="outlined">
+                      This public profile has been unpublished. Review the current draft and resubmit it through the normal review path before publication can resume.
+                    </Alert>
+                  ) : null}
 
                   <Grid container spacing={2}>
                     <Grid size={{ xs: 12, md: 6 }}>
@@ -555,7 +632,7 @@ export default function DiscoverProviderApplicationsPage() {
                           <Typography variant="body2"><b>Services:</b> {detail.preview.services.join(", ") || "—"}</Typography>
                           <Typography variant="body2"><b>Specialities:</b> {detail.preview.specialities.join(", ") || "—"}</Typography>
                           <Typography variant="body2"><b>Biography:</b> {detail.preview.biography || "—"}</Typography>
-                          {detail.publicProfilePath ? <Button component={Link} to={detail.publicProfilePath} target="_blank" rel="noreferrer" size="small" sx={{ mt: 1 }}>Open public profile</Button> : null}
+                          {currentPublicationStatus === "PUBLISHED" && detail.publicProfilePath ? <Button component={Link} to={detail.publicProfilePath} target="_blank" rel="noreferrer" size="small" sx={{ mt: 1 }}>Open public profile</Button> : null}
                         </CardContent>
                       </Card>
                     </Grid>
@@ -614,6 +691,40 @@ export default function DiscoverProviderApplicationsPage() {
                     </Grid>
                   </Grid>
 
+                  {hasPublicationHistory ? (
+                    <Card variant="outlined">
+                      <CardContent>
+                        <Typography variant="subtitle1" sx={{ fontWeight: 800, mb: 1 }}>Publication History</Typography>
+                        <Stack spacing={1}>
+                          {detail.publicationHistory.map((entry, index) => {
+                            const hasPriorUnpublish = detail.publicationHistory.slice(0, index).some((item) => (item.publicationStatus || "").toUpperCase() === "UNPUBLISHED");
+                            const label = publicationHistoryLabel(entry.publicationStatus, hasPriorUnpublish);
+                            return (
+                              <Box key={entry.publicationReference} sx={{ border: 1, borderColor: "divider", borderRadius: 1.5, p: 1.5 }}>
+                                <Stack spacing={0.5}>
+                                  <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" alignItems="center">
+                                    <Chip size="small" label={label} variant="outlined" />
+                                    <Chip size="small" label={`Status: ${publicationStatusLabel(entry.publicationStatus)}`} variant="outlined" />
+                                  </Stack>
+                                  <Typography variant="body2" sx={{ fontWeight: 700 }}>{entry.reason || "No reason provided"}</Typography>
+                                  <Typography variant="body2" color="text.secondary">
+                                    Actor: {(entry.publicationStatus || "").toUpperCase() === "UNPUBLISHED"
+                                      ? entry.unpublishedBy || entry.publishedBy || "—"
+                                      : entry.publishedBy || "—"}
+                                  </Typography>
+                                  <Typography variant="body2" color="text.secondary">Published: {formatDateTime(entry.publishedAt)}</Typography>
+                                  {(entry.publicationStatus || "").toUpperCase() === "UNPUBLISHED" ? (
+                                    <Typography variant="body2" color="text.secondary">Unpublished: {formatDateTime(entry.unpublishedAt)}</Typography>
+                                  ) : null}
+                                </Stack>
+                              </Box>
+                            );
+                          })}
+                        </Stack>
+                      </CardContent>
+                    </Card>
+                  ) : null}
+
                   <Card variant="outlined">
                     <CardContent>
                       <Typography variant="subtitle1" sx={{ fontWeight: 800, mb: 1 }}>Review History</Typography>
@@ -664,6 +775,51 @@ export default function DiscoverProviderApplicationsPage() {
         <DialogActions>
           <Button onClick={() => setChangesDialogOpen(false)}>Cancel</Button>
           <Button variant="contained" disabled={saving || !changesReason.trim()} onClick={() => void submitChangesRequest()}>Request changes</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={publicationDialogOpen} onClose={closePublicationDialog} fullWidth maxWidth="sm">
+        <DialogTitle>{publicationDialogAction === "UNPUBLISH_PROFILE" ? "Unpublish profile" : "Republish profile"}</DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <Alert severity={publicationDialogAction === "UNPUBLISH_PROFILE" ? "warning" : "info"} variant="outlined">
+              {publicationDialogAction === "UNPUBLISH_PROFILE"
+                ? "This removes the public profile from Jeevanam Discover. Provider workspace access will remain unchanged."
+                : "This restores the previously approved unchanged snapshot to Discover if the backend confirms it is still eligible for republishing."}
+            </Alert>
+            <Box>
+              <Typography variant="body2"><b>Provider:</b> {detail?.application.displayName || detail?.application.legalName || "—"}</Typography>
+              <Typography variant="body2"><b>Reference:</b> {detail?.application.referenceNumber || "—"}</Typography>
+              <Typography variant="body2"><b>Current state:</b> {publicationStatusLabel(currentPublicationStatus || detail?.application.status || null)}</Typography>
+            </Box>
+            <TextField
+              label={publicationDialogAction === "UNPUBLISH_PROFILE" ? "Unpublish reason *" : "Republish reason"}
+              value={publicationReason}
+              onChange={(event) => setPublicationReason(event.target.value)}
+              helperText={publicationDialogAction === "UNPUBLISH_PROFILE"
+                ? "Tell the provider why the public profile has been removed."
+                : "Optional note recorded with the republish action."}
+              required={publicationDialogAction === "UNPUBLISH_PROFILE"}
+              multiline
+              minRows={3}
+              fullWidth
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={closePublicationDialog}>Cancel</Button>
+          <Button
+            variant="contained"
+            color={publicationDialogAction === "UNPUBLISH_PROFILE" ? "error" : "success"}
+            disabled={
+              saving
+              || !publicationDialogAction
+              || (publicationDialogAction === "UNPUBLISH_PROFILE" && !publicationReason.trim())
+            }
+            onClick={() => void runPublicationAction()}
+          >
+            {publicationDialogAction === "UNPUBLISH_PROFILE" ? "Unpublish" : "Republish"}
+          </Button>
         </DialogActions>
       </Dialog>
 

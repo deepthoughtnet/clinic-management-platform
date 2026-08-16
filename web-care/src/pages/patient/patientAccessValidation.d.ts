@@ -1,0 +1,13 @@
+export function sanitizePatientAccessCodeInput(value: string): string;
+export function isValidPatientAccessCodeInput(value: string): boolean;
+export function normalizePatientAccessRequestFullName(value: string): string;
+export function isValidPatientAccessRequestFullName(value: string): boolean;
+export function normalizePatientAccessRequestMobile(value: string): string;
+export function isValidPatientAccessRequestMobile(value: string): boolean;
+export function normalizePatientAccessRequestEmail(value: string): string;
+export function isValidPatientAccessRequestEmail(value: string): boolean;
+export function normalizePatientAccessRequestClinicSlug(value: string): string;
+export function isValidPatientAccessRequestClinicSlug(value: string): boolean;
+export function normalizePatientAccessRequestNote(value: string): string;
+export function isValidPatientAccessRequestNote(value: string): boolean;
+export function sanitizePatientAccessErrorMessage(value: string): string;

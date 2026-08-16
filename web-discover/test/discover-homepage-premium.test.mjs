@@ -122,6 +122,7 @@ test("Discover UI does not reintroduce legacy web-public wording or patient-priv
 test("visual refinement removes architecture panel and duplicate final CTA", () => {
   const page = read("src/pages/discovery/PublicDiscoveryPages.tsx");
   const components = read("src/components/DiscoveryComponents.tsx");
+  const locationSelector = read("src/components/location/PublicLocationSelectorPanel.tsx");
   const config = read("src/config.ts");
   const styles = read("src/styles.css");
 
@@ -163,7 +164,7 @@ test("visual refinement removes architecture panel and duplicate final CTA", () 
   assert.ok(styles.includes(".popular-searches .chip-row::-webkit-scrollbar"));
   assert.ok(styles.includes("text-decoration: underline"));
   assert.ok(page.includes("homepage-hospital-grid"));
-  assert.ok(page.includes("Nearby radius"));
+  assert.ok(locationSelector.includes("Nearby radius"));
   assert.ok(!page.includes("home-hero-visual-frame"));
   assert.ok(!page.includes("hero-visual-stack"));
   assert.ok(!page.includes("hero-visual-badges"));
@@ -186,7 +187,8 @@ test("visual refinement removes architecture panel and duplicate final CTA", () 
   assert.ok(styles.includes(".chip--info"));
   assert.ok(styles.includes(".chip--muted"));
   assert.ok(styles.includes(".directory-avatar-illustration"));
-  assert.ok(styles.includes(".footer-placeholder-link"));
+  assert.ok(styles.includes(".public-info-page"));
+  assert.ok(styles.includes(".public-contact-form"));
   assert.ok(config.includes("showHomeDemoProviders"));
   assert.ok(config.includes("VITE_SHOW_HOME_DEMO_PROVIDERS"));
   assert.ok(page.includes("homeDemoProviders"));

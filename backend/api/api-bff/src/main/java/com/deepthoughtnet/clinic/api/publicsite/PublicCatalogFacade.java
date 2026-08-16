@@ -302,6 +302,9 @@ public class PublicCatalogFacade {
                     resolveBookingReference(detail.providerId().toString(), practiceReference(detail.providerId(), 0, detail.locations().get(0).label(), detail.locations().get(0).address(), detail.locations().get(0).city()))
             ));
         }
+        Optional<com.deepthoughtnet.clinic.platform.contracts.providerintegration.BookingTargetResolution> bookingTarget =
+                resolveDoctorBookingTarget(publishedLifecycleReference(detail.canonicalSlug(), detail.providerId().toString()), resolvedPracticeReference);
+        boolean canBookOnline = bookingTarget.map(resolution -> resolution.bookingCapability() == BookingCapability.ONLINE_BOOKING).orElse(false);
         return new PublicDoctorDetailResponse(
                 detail.providerId().toString(),
                 detail.slug(),
@@ -309,7 +312,7 @@ public class PublicCatalogFacade {
                 detail.publicPath(),
                 detail.displayName(),
                 publicDoctorPhotoPath(doctorSlug),
-                resolvePublicBookingMode(publishedLifecycleReference(detail.canonicalSlug(), detail.providerId().toString()), resolvedPracticeReference, detail.bookingMode(), detail.contactPhone()),
+                resolveDoctorBookingMode(bookingTarget, detail.contactPhone()),
                 detail.qualification(),
                 detail.medicalCouncil(),
                 detail.yearsOfExperience(),
@@ -332,6 +335,7 @@ public class PublicCatalogFacade {
                 detail.state(),
                 detail.country(),
                 detail.primarySpeciality(),
+                detail.consultationFee(),
                 detail.reviewsComingSoon(),
                 detail.subtitle(),
                 detail.summary(),
@@ -340,7 +344,8 @@ public class PublicCatalogFacade {
                 List.of(),
                 List.of(),
                 resolveAvailableToday(publishedLifecycleReference(detail.canonicalSlug(), detail.providerId().toString()), resolvedPracticeReference),
-                resolveBookingReference(detail.providerId().toString(), resolvedPracticeReference)
+                resolveBookingReference(detail.providerId().toString(), resolvedPracticeReference),
+                canBookOnline
         );
     }
 
@@ -521,6 +526,8 @@ public class PublicCatalogFacade {
         }
         PublicProviderLocationSnapshot location = doctorDetail.locations().isEmpty() ? null : doctorDetail.locations().get(0);
         String clinicDisplayName = firstNonBlank(clinicDetail.displayName(), clinicDetail.legalName(), clinicDetail.canonicalSlug());
+        Optional<com.deepthoughtnet.clinic.platform.contracts.providerintegration.BookingTargetResolution> bookingTarget =
+                resolveDoctorBookingTarget(doctorDetail.providerId().toString(), clinicDetail.providerId().toString());
         return new PublicDoctorSummaryResponse(
                 doctorDetail.providerId().toString(),
                 doctorDetail.canonicalSlug(),
@@ -534,12 +541,7 @@ public class PublicCatalogFacade {
                 doctorDetail.languages(),
                 location == null ? doctorDetail.area() : firstNonBlank(location.label(), doctorDetail.area()),
                 location == null ? doctorDetail.city() : firstNonBlank(location.city(), doctorDetail.city()),
-                resolvePublicBookingMode(
-                        doctorDetail.providerId().toString(),
-                        clinicDetail.providerId().toString(),
-                        doctorDetail.bookingMode(),
-                        doctorDetail.contactPhone()
-                ),
+                resolveDoctorBookingMode(bookingTarget, doctorDetail.contactPhone()),
                 doctorDetail.subtitle(),
                 doctorDetail.summary(),
                 clinicDisplayName,
@@ -547,7 +549,8 @@ public class PublicCatalogFacade {
                 false,
                 null,
                 null,
-                resolveBookingReference(doctorDetail.providerId().toString(), clinicDetail.providerId().toString())
+                resolveBookingReference(doctorDetail.providerId().toString(), clinicDetail.providerId().toString()),
+                bookingTarget.map(resolution -> resolution.bookingCapability() == BookingCapability.ONLINE_BOOKING).orElse(false)
         );
     }
 
@@ -623,6 +626,8 @@ public class PublicCatalogFacade {
                 ? null
                 : resolvePrimaryPracticeReference(detail.providerId())
                         .orElseGet(() -> location == null ? null : practiceReference(detail.providerId(), 0, location.label(), location.address(), location.city()));
+        Optional<com.deepthoughtnet.clinic.platform.contracts.providerintegration.BookingTargetResolution> bookingTarget =
+                resolveDoctorBookingTarget(record.providerId().toString(), resolvedPracticeReference);
         return new PublicDoctorSummaryResponse(
                 record.providerId().toString(),
                 record.canonicalSlug(),
@@ -636,7 +641,7 @@ public class PublicCatalogFacade {
                 detail == null ? List.of() : detail.languages(),
                 location == null ? record.area() : location.label(),
                 location == null ? record.city() : location.city(),
-                resolvePublicBookingMode(publishedLifecycleReference(record.canonicalSlug(), record.providerId().toString()), resolvedPracticeReference, record.bookingMode(), record.contactPhone()),
+                resolveDoctorBookingMode(bookingTarget, record.contactPhone()),
                 record.subtitle(),
                 record.summary(),
                 firstNonBlank(location == null ? null : location.label(), record.subtitle(), record.primarySpeciality(), record.displayName()),
@@ -644,7 +649,8 @@ public class PublicCatalogFacade {
                 resolveAvailableToday(publishedLifecycleReference(record.canonicalSlug(), record.providerId().toString()), resolvedPracticeReference),
                 null,
                 record.distanceKm(),
-                resolveBookingReference(record.providerId().toString(), resolvedPracticeReference)
+                resolveBookingReference(record.providerId().toString(), resolvedPracticeReference),
+                bookingTarget.map(resolution -> resolution.bookingCapability() == BookingCapability.ONLINE_BOOKING).orElse(false)
         );
     }
 
@@ -709,6 +715,23 @@ public class PublicCatalogFacade {
         return providerLinkingService.resolveBookingTarget(new com.deepthoughtnet.clinic.platform.contracts.providerintegration.PublicProviderReference(publicProviderId, publicPracticeId))
                 .map(resolution -> resolution.bookingTargetReference() == null ? null : resolution.bookingTargetReference().opaqueBookingReference())
                 .orElse(null);
+    }
+
+    private Optional<com.deepthoughtnet.clinic.platform.contracts.providerintegration.BookingTargetResolution> resolveDoctorBookingTarget(String publicProviderId, String publicPracticeId) {
+        if (!StringUtils.hasText(publicProviderId)) {
+            return Optional.empty();
+        }
+        return providerLinkingService.resolveBookingTarget(new com.deepthoughtnet.clinic.platform.contracts.providerintegration.PublicProviderReference(publicProviderId, publicPracticeId));
+    }
+
+    private String resolveDoctorBookingMode(Optional<com.deepthoughtnet.clinic.platform.contracts.providerintegration.BookingTargetResolution> bookingTarget, String publicPhone) {
+        if (bookingTarget.isPresent()) {
+            return bookingTarget.get().bookingCapability().name();
+        }
+        if (StringUtils.hasText(publicPhone)) {
+            return BookingCapability.CALL_TO_BOOK.name();
+        }
+        return BookingCapability.NOT_AVAILABLE.name();
     }
 
     private String resolvePublicBookingMode(String publicProviderId, String publicPracticeId, String projectedMode, String publicPhone) {
@@ -812,6 +835,8 @@ public class PublicCatalogFacade {
                     : hospitalDetail.canonicalSlug();
         }
         boolean hasBookablePractice = StringUtils.hasText(resolvedPracticeReference);
+        Optional<com.deepthoughtnet.clinic.platform.contracts.providerintegration.BookingTargetResolution> bookingTarget =
+                resolveDoctorBookingTarget(detail.providerId().toString(), resolvedPracticeReference);
         return new PublicDoctorSummaryResponse(
                 detail.providerId().toString(),
                 detail.canonicalSlug(),
@@ -825,14 +850,7 @@ public class PublicCatalogFacade {
                 detail.languages(),
                 location == null ? detail.area() : firstNonBlank(location.label(), detail.area()),
                 location == null ? detail.city() : firstNonBlank(location.city(), detail.city()),
-                hasBookablePractice
-                        ? resolvePublicBookingMode(
-                                publishedLifecycleReference(detail.canonicalSlug(), detail.providerId().toString()),
-                                resolvedPracticeReference,
-                                detail.bookingMode(),
-                                detail.contactPhone()
-                        )
-                        : BookingCapability.NOT_AVAILABLE.name(),
+                hasBookablePractice ? resolveDoctorBookingMode(bookingTarget, detail.contactPhone()) : BookingCapability.NOT_AVAILABLE.name(),
                 detail.subtitle(),
                 detail.summary(),
                 clinicDisplayName,
@@ -840,7 +858,8 @@ public class PublicCatalogFacade {
                 hasBookablePractice && resolveAvailableToday(publishedLifecycleReference(detail.canonicalSlug(), detail.providerId().toString()), resolvedPracticeReference),
                 null,
                 null,
-                hasBookablePractice ? resolveBookingReference(detail.providerId().toString(), resolvedPracticeReference) : null
+                hasBookablePractice ? resolveBookingReference(detail.providerId().toString(), resolvedPracticeReference) : null,
+                bookingTarget.map(resolution -> resolution.bookingCapability() == BookingCapability.ONLINE_BOOKING).orElse(false)
         );
     }
 

@@ -86,6 +86,7 @@ public final class ProviderAuthModels {
             String platformConnectionStatus,
             String bookingCapability,
             OffsetDateTime lastUpdatedAt,
+            String publicationReason,
             List<String> blockingReasons,
             List<String> allowedActions,
             String primaryAction,

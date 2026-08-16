@@ -54,7 +54,7 @@ test("providerWorkspaceRendersOwnershipClaimAttentionCard", () => {
 test("attentionCountMatchesRenderedOwnershipClaims", () => {
   const page = read("src/pages/provider/ProviderWorkspacePage.tsx");
   assert.equal(providerMeFixture.workItems.filter((item) => item.workItemType === "OWNERSHIP_CLAIM").length, 1);
-  assert.ok(page.includes('value: workspace.needsAttentionCount'));
+  assert.ok(page.includes('value: attentionItems.length'));
   assert.ok(page.includes('kind === "PUBLIC_PROFILE"'));
   assert.ok(page.includes('kind === "OWNERSHIP_CLAIM"'));
   assert.ok(page.includes("attentionItems.map((entry)"));
@@ -98,8 +98,11 @@ test("activeApplicationsRemainSeparateFromOwnershipClaims", () => {
   const page = read("src/pages/provider/ProviderWorkspacePage.tsx");
   assert.ok(page.includes("My Provider Profiles"));
   assert.ok(page.includes("Active Profiles"));
-  assert.ok(page.includes("providerProfiles"));
-  assert.ok(page.includes("profile.lifecycleLabel"));
+  assert.ok(page.includes("workspace?.applications ?? []"));
+  assert.ok(page.includes("workspace?.publishedProfiles ?? []"));
+  assert.ok(page.includes("applicationCards"));
+  assert.ok(page.includes("applicationAttentionItems"));
+  assert.ok(page.includes("applicationLatestUpdateLabel(application)"));
   assert.ok(page.includes('entry.kind === "OWNERSHIP_CLAIM"'));
   assert.ok(page.includes("Create another profile"));
 });
@@ -115,6 +118,7 @@ test("ownershipStatusBadgesDoNotOverflow", () => {
 test("unknownWorkItemTypeUsesSafeFallbackWithoutBreakingPage", () => {
   const page = read("src/pages/provider/ProviderWorkspacePage.tsx");
   assert.ok(page.includes("kind === \"OWNERSHIP_CLAIM\""));
+  assert.ok(page.includes("kind === \"PROVIDER_APPLICATION\""));
   assert.ok(page.includes("Each card shows the exact blocker that needs your next action."));
   assert.ok(page.includes("DiscoverEmptyState"));
 });

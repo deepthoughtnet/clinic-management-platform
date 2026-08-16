@@ -114,6 +114,8 @@ class DiscoverPresenceControllerTest {
                 "/discover/clinics/green-valley-family-clinic",
                 "Published",
                 OffsetDateTime.parse("2026-08-03T03:29:00Z"),
+                "platform.admin@clinic.local",
+                null,
                 null,
                 true,
                 "VISIBLE",

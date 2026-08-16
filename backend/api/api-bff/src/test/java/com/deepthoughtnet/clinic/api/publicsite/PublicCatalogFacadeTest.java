@@ -841,10 +841,107 @@ class PublicCatalogFacadeTest {
         ));
 
         assertThat(facade.doctorDetail("dr-asha-menon").bookingMode()).isEqualTo("ONLINE_BOOKING");
+        assertThat(facade.doctorDetail("dr-asha-menon").canBookOnline()).isTrue();
         assertThat(facade.listDoctors("Asha", "Pune", "Baner", "Dermatology", null, "demo", null, null, null, 0, 12)
                 .items())
                 .singleElement()
-                .satisfies(item -> assertThat(item.bookingMode()).isEqualTo("ONLINE_BOOKING"));
+                .satisfies(item -> {
+                    assertThat(item.bookingMode()).isEqualTo("ONLINE_BOOKING");
+                    assertThat(item.canBookOnline()).isTrue();
+                });
+    }
+
+    @Test
+    void doctorSummaryAndDetailDowngradeToCallToBookWhenNoOnlineBookingTargetExists() {
+        ProviderPublicProfileService publicProfileService = mock(ProviderPublicProfileService.class);
+        PublicCatalogFacade facade = facade(publicProfileService);
+
+        PublicProviderProfileDetailRecord detail = detailRecord(
+                ProviderType.INDIVIDUAL_DOCTOR,
+                "JDN-0002",
+                "dr-booking-pending",
+                "/discover/doctors/dr-booking-pending",
+                "Dr. Booking Pending",
+                "Dr. Booking Pending",
+                "Public doctor summary",
+                "Doctor summary",
+                "Doctor biography",
+                "MBBS",
+                "MMC",
+                9,
+                new BigDecimal("800"),
+                15,
+                true,
+                List.of("English"),
+                List.of("General Medicine"),
+                List.of(),
+                List.of("Consultation"),
+                List.of(),
+                List.of(),
+                List.of("In-person"),
+                List.of(new PublicProviderLocationSnapshot("Primary", "Baner Road", "Pune", "Maharashtra", "India", "411045", "Mon-Sat 9 AM-5 PM", true, true, null, null)),
+                List.of(),
+                List.of(),
+                "https://example.com/doctor.png",
+                null,
+                null,
+                "+911234567890",
+                "doctor@example.com",
+                "https://example.com",
+                "Pune",
+                "Baner",
+                "Maharashtra",
+                "India",
+                "General Medicine",
+                null,
+                null,
+                null,
+                null,
+                false,
+                "ONLINE_BOOKING",
+                false,
+                OffsetDateTime.parse("2026-01-01T10:00:00Z"),
+                1,
+                "dr-booking-pending",
+                null,
+                true
+        );
+        PublicProviderProfileSummaryRecord summary = new PublicProviderProfileSummaryRecord(
+                detail.providerId(),
+                ProviderType.INDIVIDUAL_DOCTOR,
+                detail.canonicalSlug(),
+                detail.publicPath(),
+                detail.displayName(),
+                detail.subtitle(),
+                detail.summary(),
+                detail.primarySpeciality(),
+                detail.city(),
+                detail.area(),
+                detail.imageUrl(),
+                detail.coverUrl(),
+                1,
+                2,
+                3,
+                4,
+                detail.contactPhone(),
+                "ONLINE_BOOKING",
+                false,
+                List.of("General Medicine"),
+                null
+        );
+
+        when(publicProfileService.findBySlug("dr-booking-pending")).thenReturn(Optional.of(detail));
+        when(publicProfileService.listProfiles(any(), anyInt(), anyInt())).thenReturn(new PageImpl<>(List.of(summary), PageRequest.of(0, 12), 1));
+
+        var detailResponse = facade.doctorDetail("dr-booking-pending");
+        var listResponse = facade.listDoctors("Booking", "Pune", "Baner", "General Medicine", null, "demo", null, null, null, 0, 12);
+
+        assertThat(detailResponse.bookingMode()).isEqualTo("CALL_TO_BOOK");
+        assertThat(detailResponse.canBookOnline()).isFalse();
+        assertThat(listResponse.items()).singleElement().satisfies(item -> {
+            assertThat(item.bookingMode()).isEqualTo("CALL_TO_BOOK");
+            assertThat(item.canBookOnline()).isFalse();
+        });
     }
 
     @Test

@@ -24,7 +24,9 @@ test("application foundation uses React, TypeScript, and Vite", () => {
 test("discover brand, public navigation, and homepage sections are present", () => {
   const app = read("src/App.tsx");
   const homepage = read("src/pages/discovery/PublicDiscoveryPages.tsx");
+  const publicInfo = read("src/pages/public/PublicInfoPages.tsx");
   const components = read("src/components/DiscoveryComponents.tsx");
+  const publicDiscoveryUtils = read("src/utils/publicDiscovery.ts");
   const styles = read("src/styles.css");
   const branding = read("src/branding.ts");
 
@@ -39,6 +41,12 @@ test("discover brand, public navigation, and homepage sections are present", () 
   assert.ok(homepage.includes("One connected healthcare experience"));
   assert.ok(homepage.includes("Jeevanam Connect"));
   assert.ok(homepage.includes("Provider workspace →"));
+  assert.ok(homepage.includes('<SearchIntentSelector value={searchIntent} onChange={setSearchIntent} />'));
+  assert.ok(homepage.includes('maxLength={DISCOVERY_SEARCH_MAX_LENGTH}'));
+  assert.ok(homepage.includes('const validationError = validateDiscoverySearchQuery(query);'));
+  assert.ok(publicDiscoveryUtils.includes('DISCOVERY_SEARCH_MAX_LENGTH = 120'));
+  assert.ok(publicDiscoveryUtils.includes('buildDiscoveryNoResultsTitle'));
+  assert.ok(publicDiscoveryUtils.includes('buildDiscoveryNoResultsMessage'));
   assert.ok(styles.includes(".ecosystem-grid {"));
   assert.ok(styles.includes("repeat(4, minmax(0, 1fr))"));
   assert.ok(app.includes("Patient Login"));
@@ -53,10 +61,22 @@ test("discover brand, public navigation, and homepage sections are present", () 
   assert.ok(app.includes('aria-label="Legal"'));
   assert.ok(app.includes("Accessibility"));
   assert.ok(app.includes("Sitemap"));
-  assert.ok(app.includes("Status"));
+  assert.ok(app.includes("Help"));
   assert.ok(app.includes("Security"));
   assert.ok(app.includes("Cookies"));
-  assert.ok(app.includes("footer-placeholder-link"));
+  assert.ok(app.includes('path={DISCOVER_ROUTES.help.path}'));
+  assert.ok(app.includes('path={DISCOVER_ROUTES.accessibility.path}'));
+  assert.ok(app.includes('path={DISCOVER_ROUTES.sitemap.path}'));
+  assert.ok(app.includes('path={DISCOVER_ROUTES.security.path}'));
+  assert.ok(app.includes('path={DISCOVER_ROUTES.cookies.path}'));
+  assert.ok(publicInfo.includes("Support channel"));
+  assert.ok(publicInfo.includes("Send enquiry"));
+  assert.ok(publicInfo.includes("Help and support"));
+  assert.ok(publicInfo.includes("Accessibility at Jeevanam Discover"));
+  assert.ok(publicInfo.includes("Jeevanam Discover sitemap"));
+  assert.ok(publicInfo.includes("Privacy"));
+  assert.ok(publicInfo.includes("Security"));
+  assert.ok(publicInfo.includes("Cookies"));
   assert.ok(app.includes("Verified public information and clear discovery routes."));
 });
 
@@ -79,8 +99,13 @@ test("required public routes are defined and patient routes are absent", () => {
     'path: "/login"',
     'path: "/about"',
     'path: "/contact"',
+    'path: "/help"',
+    'path: "/accessibility"',
+    'path: "/sitemap"',
     'path: "/privacy"',
     'path: "/terms"',
+    'path: "/security"',
+    'path: "/cookies"',
   ];
 
   for (const route of requiredRoutes) {

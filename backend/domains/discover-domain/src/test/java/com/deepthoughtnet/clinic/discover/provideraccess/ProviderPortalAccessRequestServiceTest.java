@@ -87,6 +87,117 @@ class ProviderPortalAccessRequestServiceTest {
     }
 
     @Test
+    void submitValidatesRequiredProviderAccessFieldsAndNormalizesIdentifiers() {
+        when(requestRepository.findAll()).thenReturn(List.of());
+        when(requestRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(auditEventPublisher.record(any())).thenReturn(UUID.randomUUID());
+
+        ProviderPortalAccessRequestRecord submitted = service.submit(new ProviderPortalAccessRequestCommand(
+                "  Jeevanam   Multispeciality Hospital  ",
+                "Provider@Example.com",
+                "+91 98765 01200",
+                ProviderType.HOSPITAL,
+                "JEV-2026-001",
+                "  Please review access  "
+        ));
+
+        assertEquals("Jeevanam Multispeciality Hospital", submitted.fullName());
+        assertEquals("provider@example.com", submitted.email());
+        assertEquals("9876501200", submitted.mobile());
+        assertEquals("JEV-2026-001", submitted.providerApplicationReference());
+        assertEquals("Please review access", submitted.note());
+    }
+
+    @Test
+    void submitRejectsInvalidProviderAccessFields() {
+        IllegalArgumentException referenceException = assertThrows(
+                IllegalArgumentException.class,
+                () -> service.submit(new ProviderPortalAccessRequestCommand(
+                        "Jeevanam Multispeciality Hospital",
+                        "provider@example.com",
+                        "9876501111",
+                        ProviderType.HOSPITAL,
+                        "abc@@@",
+                        null
+                ))
+        );
+
+        assertEquals("Enter a valid provider application reference.", referenceException.getMessage());
+
+        IllegalArgumentException emailException = assertThrows(
+                IllegalArgumentException.class,
+                () -> service.submit(new ProviderPortalAccessRequestCommand(
+                        "Jeevanam Multispeciality Hospital",
+                        "not-an-email",
+                        "9876501111",
+                        ProviderType.HOSPITAL,
+                        null,
+                        null
+                ))
+        );
+        assertEquals("Enter a valid email address.", emailException.getMessage());
+
+        IllegalArgumentException mobileException = assertThrows(
+                IllegalArgumentException.class,
+                () -> service.submit(new ProviderPortalAccessRequestCommand(
+                        "Jeevanam Multispeciality Hospital",
+                        "provider@example.com",
+                        "98abc123",
+                        ProviderType.HOSPITAL,
+                        null,
+                        null
+                ))
+        );
+        assertEquals("Enter a valid 10-digit Indian mobile number.", mobileException.getMessage());
+    }
+
+    @Test
+    void authenticateValidatesRegisteredEmailOrMobileAndEightDigitAccessCode() {
+        DiscoverProviderAccountEntity account = DiscoverProviderAccountEntity.create("provider@example.com", "9876501111");
+        ProviderPortalAccessRequestEntity request = ProviderPortalAccessRequestEntity.create(
+                ProviderType.HOSPITAL,
+                "Jeevanam Multispeciality Hospital",
+                "provider@example.com",
+                "provider@example.com",
+                "9876501111",
+                "9876501111",
+                null,
+                null
+        );
+        request.approve(
+                UUID.randomUUID(),
+                "Platform Admin",
+                account.getId(),
+                "provider@example.com",
+                "JEV-2026-001",
+                hashAccessCode("12345678"),
+                java.time.OffsetDateTime.now(),
+                java.time.OffsetDateTime.now().plusDays(7)
+        );
+
+        when(requestRepository.findAll()).thenReturn(List.of(request));
+        when(providerAccountRepository.findById(account.getId())).thenReturn(Optional.of(account));
+
+        ProviderPortalAccessGrantRecord byEmail = service.authenticate("Provider@Example.com", "12345678");
+        assertEquals(account.getId(), byEmail.providerAccountId());
+
+        ProviderPortalAccessGrantRecord byMobile = service.authenticate("+91 98765 01111", "12345678");
+        assertEquals(account.getId(), byMobile.providerAccountId());
+
+        IllegalArgumentException identifierException = assertThrows(
+                IllegalArgumentException.class,
+                () -> service.authenticate("abc@", "12345678")
+        );
+        assertEquals("Enter a valid registered email address or mobile number.", identifierException.getMessage());
+
+        IllegalArgumentException accessCodeException = assertThrows(
+                IllegalArgumentException.class,
+                () -> service.authenticate("provider@example.com", "12ab5678")
+        );
+        assertEquals("Enter the 8-digit temporary access code.", accessCodeException.getMessage());
+    }
+
+    @Test
     void approveCreatesImmediateLoginAccessForApprovedProviders() {
         DiscoverProviderAccountEntity account = DiscoverProviderAccountEntity.create("provider@example.com", "9876501111");
         ProviderApplicationEntity application = ProviderApplicationEntity.create(
@@ -137,6 +248,97 @@ class ProviderPortalAccessRequestServiceTest {
         ProviderPortalAccessGrantRecord grant = service.authenticate("provider@example.com", approved.temporaryAccessCode());
         assertEquals(account.getId(), grant.providerAccountId());
         assertEquals("JEV-2026-001", grant.providerApplicationReference());
+    }
+
+    @Test
+    void approveRejectsRequestsThatAreNoLongerPending() {
+        DiscoverProviderAccountEntity account = DiscoverProviderAccountEntity.create("provider@example.com", "9876501111");
+        ProviderPortalAccessRequestEntity request = ProviderPortalAccessRequestEntity.create(
+                ProviderType.HOSPITAL,
+                "Jeevanam Multispeciality Hospital",
+                "provider@example.com",
+                "provider@example.com",
+                "9876501111",
+                "9876501111",
+                null,
+                null
+        );
+        request.approve(
+                UUID.randomUUID(),
+                "Platform Admin",
+                account.getId(),
+                "provider@example.com",
+                "JEV-2026-001",
+                hashAccessCode("12345678"),
+                java.time.OffsetDateTime.now(),
+                java.time.OffsetDateTime.now().plusDays(7)
+        );
+
+        when(requestRepository.findById(request.getId())).thenReturn(Optional.of(request));
+
+        ProviderPortalAccessRequestConflictException exception = assertThrows(
+                ProviderPortalAccessRequestConflictException.class,
+                () -> service.approve(request.getId(), UUID.randomUUID(), "Platform Admin", "Approved again", null)
+        );
+
+        assertEquals("This access request can only be approved while it is pending review.", exception.getMessage());
+    }
+
+    @Test
+    void rejectRejectsRequestsThatAreNoLongerPending() {
+        DiscoverProviderAccountEntity account = DiscoverProviderAccountEntity.create("provider@example.com", "9876501111");
+        ProviderPortalAccessRequestEntity request = ProviderPortalAccessRequestEntity.create(
+                ProviderType.HOSPITAL,
+                "Jeevanam Multispeciality Hospital",
+                "provider@example.com",
+                "provider@example.com",
+                "9876501111",
+                "9876501111",
+                null,
+                null
+        );
+        request.approve(
+                UUID.randomUUID(),
+                "Platform Admin",
+                account.getId(),
+                "provider@example.com",
+                "JEV-2026-001",
+                hashAccessCode("12345678"),
+                java.time.OffsetDateTime.now(),
+                java.time.OffsetDateTime.now().plusDays(7)
+        );
+
+        when(requestRepository.findById(request.getId())).thenReturn(Optional.of(request));
+
+        ProviderPortalAccessRequestConflictException exception = assertThrows(
+                ProviderPortalAccessRequestConflictException.class,
+                () -> service.reject(request.getId(), UUID.randomUUID(), "Platform Admin", "Rejected again")
+        );
+
+        assertEquals("This access request can only be rejected while it is pending review.", exception.getMessage());
+    }
+
+    @Test
+    void revokeRejectsRequestsThatAreNotApproved() {
+        ProviderPortalAccessRequestEntity request = ProviderPortalAccessRequestEntity.create(
+                ProviderType.HOSPITAL,
+                "Jeevanam Multispeciality Hospital",
+                "provider@example.com",
+                "provider@example.com",
+                "9876501111",
+                "9876501111",
+                null,
+                null
+        );
+
+        when(requestRepository.findById(request.getId())).thenReturn(Optional.of(request));
+
+        ProviderPortalAccessRequestConflictException exception = assertThrows(
+                ProviderPortalAccessRequestConflictException.class,
+                () -> service.revoke(request.getId(), UUID.randomUUID(), "Platform Admin", "Revoked too early")
+        );
+
+        assertEquals("This access request can only be revoked after approval.", exception.getMessage());
     }
 
     @Test

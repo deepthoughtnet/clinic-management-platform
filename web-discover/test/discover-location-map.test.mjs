@@ -27,6 +27,9 @@ test("reusable location map support is wired across Discover surfaces", () => {
   const dockerfile = read("Dockerfile");
   const compose = read("../local/docker-compose.yml");
   const styles = read("src/styles.css");
+  const publicLocationPages = read("src/pages/discovery/PublicDiscoveryPages.tsx");
+  const directory = read("src/components/directory/DirectoryComponents.tsx");
+  const publicLocationContext = read("src/context/PublicLocationContext.tsx");
 
   assert.ok(config.includes("VITE_MAP_TILE_URL"));
   assert.ok(config.includes("VITE_MAP_TILE_ATTRIBUTION"));
@@ -65,6 +68,20 @@ test("reusable location map support is wired across Discover surfaces", () => {
   assert.ok(locationHelpers.includes("buildDirectionsUrl"));
   assert.ok(locationHelpers.includes("{latitude}"));
   assert.ok(locationHelpers.includes("{longitude}"));
+  assert.ok(publicLocationPages.includes("Please select or enter a valid location."));
+  assert.ok(directory.includes("Please select or enter a valid location."));
+  assert.ok(publicLocationContext.includes('PUBLIC_CURRENT_LOCATION_LABEL = "Current location"'));
+  assert.ok(publicLocationContext.includes('PUBLIC_LOCATION_MODE_STORAGE_KEY'));
+  assert.ok(publicLocationContext.includes('mode: "current"'));
+  assert.ok(publicLocationContext.includes('mode: "city"'));
+  assert.ok(publicLocationContext.includes("validatePublicLocationInput"));
+  assert.ok(publicLocationContext.includes("mapPublicLocationGeolocationError"));
+  assert.ok(publicLocationContext.includes("Location access was denied. Allow location permission in your browser or select a city manually."));
+  assert.ok(publicLocationContext.includes("We could not determine your current location. Please choose a city manually."));
+  assert.ok(publicLocationContext.includes("Location lookup timed out. Please try again or choose a city manually."));
+  assert.ok(publicLocationContext.includes("getPublicLocationDisplayLabel"));
+  assert.ok(publicLocationContext.includes("getPublicLocationSearchCity"));
+  assert.ok(publicLocationContext.includes('location: ""'));
 
   assert.ok(providerApi.includes("latitude?: number | null"));
   assert.ok(providerApi.includes("longitude?: number | null"));
@@ -85,4 +102,9 @@ test("reusable location map support is wired across Discover surfaces", () => {
   assert.ok(styles.includes(".location-display-map__map"));
   assert.ok(styles.includes(".location-search-result"));
   assert.ok(styles.includes(".chip-button.is-active"));
+  assert.ok(styles.includes(".public-location-selector"));
+  assert.ok(styles.includes(".public-location-selector__field"));
+  assert.ok(styles.includes("overflow-wrap: anywhere"));
+  assert.ok(styles.includes("max-width: min(360px, calc(100vw - 32px))"));
+  assert.ok(styles.includes("min-width: 0"));
 });

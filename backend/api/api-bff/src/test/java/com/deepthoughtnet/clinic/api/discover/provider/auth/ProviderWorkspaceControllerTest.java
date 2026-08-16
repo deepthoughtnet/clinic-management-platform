@@ -439,11 +439,11 @@ class ProviderWorkspaceControllerTest {
         assertThat(response.getBody().underReviewCount()).isEqualTo(0);
         assertThat(response.getBody().publishedCount()).isEqualTo(0);
         assertThat(response.getBody().needsAttentionCount()).isEqualTo(1);
-        assertThat(response.getBody().profiles().get(0).primaryAction()).isEqualTo("SUBMIT_FOR_REVIEW");
-        assertThat(response.getBody().profiles().get(0).allowedActions()).contains("SUBMIT_FOR_REVIEW", "VIEW_PREVIEW", "VIEW_READINESS", "EDIT_PUBLIC_PROFILE");
+        assertThat(response.getBody().profiles().get(0).primaryAction()).isEqualTo("VIEW_UNPUBLISHED_PROFILE");
+        assertThat(response.getBody().profiles().get(0).allowedActions()).contains("VIEW_UNPUBLISHED_PROFILE", "VIEW_PREVIEW", "VIEW_READINESS", "EDIT_PUBLIC_PROFILE");
         assertThat(response.getBody().profiles().get(0).providerActionRequired()).isTrue();
-        assertThat(response.getBody().profiles().get(0).lifecycleLabel()).isEqualTo("Ready for Platform Review");
-        assertThat(response.getBody().profiles().get(0).nextActionLabel()).isEqualTo("Submit profile for review");
+        assertThat(response.getBody().profiles().get(0).lifecycleLabel()).isEqualTo("Unpublished");
+        assertThat(response.getBody().profiles().get(0).nextActionLabel()).isEqualTo("Review unpublish reason");
     }
 
     @Test
@@ -471,7 +471,7 @@ class ProviderWorkspaceControllerTest {
                 UUID.fromString("cccccccc-cccc-cccc-cccc-cccccccccccc"),
                 "publication-20", profileId.toString(), "a01bc24b-3c5c-4038-8feb-02dd6f8de43a", 20, "PUBLISHED",
                 "green-valley-family-clinic", "/discover/clinics/green-valley-family-clinic", "Published",
-                OffsetDateTime.parse("2026-08-06T11:57:41Z"), null, true, "VISIBLE", "Published profile is publicly visible."
+                OffsetDateTime.parse("2026-08-06T11:57:41Z"), "Platform Admin", null, null, true, "VISIBLE", "Published profile is publicly visible."
         );
         when(verificationService.findAccountById(providerAccountId)).thenReturn(java.util.Optional.of(account));
         when(verificationService.findOwnedApplicationSummaries(providerAccountId)).thenReturn(List.of());
@@ -537,8 +537,10 @@ class ProviderWorkspaceControllerTest {
         assertThat(response.getBody().readyForReviewCount()).isEqualTo(0);
         assertThat(response.getBody().underReviewCount()).isEqualTo(1);
         assertThat(response.getBody().profiles().get(0).moderationStatus()).isEqualTo("CHANGES_REQUESTED");
-        assertThat(response.getBody().profiles().get(0).primaryAction()).isEqualTo("REVIEW_CHANGES");
-        assertThat(response.getBody().profiles().get(0).allowedActions()).contains("REVIEW_CHANGES", "EDIT_PUBLIC_PROFILE", "VIEW_PREVIEW", "VIEW_READINESS");
+        assertThat(response.getBody().profiles().get(0).primaryAction()).isEqualTo("VIEW_UNPUBLISHED_PROFILE");
+        assertThat(response.getBody().profiles().get(0).allowedActions()).contains("VIEW_UNPUBLISHED_PROFILE", "VIEW_PREVIEW", "VIEW_READINESS", "EDIT_PUBLIC_PROFILE");
+        assertThat(response.getBody().profiles().get(0).lifecycleLabel()).isEqualTo("Unpublished");
+        assertThat(response.getBody().profiles().get(0).nextActionLabel()).isEqualTo("Review unpublish reason");
     }
 
     @Test
@@ -784,6 +786,7 @@ class ProviderWorkspaceControllerTest {
                 "NOT_PUBLISHED",
                 "Profile is not published.",
                 null,
+                java.util.List.of(),
                 java.util.List.of(),
                 java.util.List.of("REVIEW_REQUESTED_CHANGES", "OPEN_EDITABLE_DRAFT", "BACK_TO_WORKSPACE"),
                 java.util.List.of("VIEW_SUBMISSION", "VIEW_REVIEW_HISTORY")

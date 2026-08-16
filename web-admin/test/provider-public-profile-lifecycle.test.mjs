@@ -22,7 +22,7 @@ test("reviewDetailIsReadOnly", () => {
   assert.ok(page.includes("allowedActions"));
   assert.ok(page.includes("Action panel"));
   assert.ok(page.includes("Review actions"));
-  assert.ok(page.includes("Publication management"));
+  assert.ok(!page.includes("Publication management"));
 });
 
 test("reviewActionsRenderFromBackendAllowedActions", () => {

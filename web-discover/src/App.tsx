@@ -1,15 +1,20 @@
-import { Component, type ErrorInfo, type ReactNode, useEffect, useState } from "react";
+import { Component, type ErrorInfo, type ReactNode, useEffect, useRef, useState } from "react";
 import { CheckCircleOutlineOutlined, LocationOnOutlined } from "@mui/icons-material";
 import { Link, Navigate, NavLink, Outlet, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import { discoverBrand } from "./branding";
 import { DiscoverEmptyState } from "./components/DiscoveryComponents";
+import { PublicLocationSelectorPanel } from "./components/location/PublicLocationSelectorPanel";
 import { discoverConfig } from "./config";
 import {
   PUBLIC_CURRENT_LOCATION_LABEL,
   PUBLIC_DEFAULT_LOCATION,
   PUBLIC_LOCATION_OPTIONS,
   PublicLocationProvider,
+  getPublicLocationDisplayLabel,
   normalizePublicLocation,
+  normalizePublicLocationSelection,
+  validatePublicLocationInput,
+  mapPublicLocationGeolocationError,
   type PublicLocationCoordinates,
   usePublicLocation,
 } from "./context/PublicLocationContext";
@@ -28,6 +33,16 @@ import {
   PublicSpecialityDetailPage,
 } from "./pages/discovery/PublicDiscoveryPages";
 import { LandingPagePage } from "./pages/public/LandingPagePage";
+import {
+  AccessibilityPage,
+  ContactPage,
+  CookiesPage,
+  HelpPage,
+  PrivacyPage,
+  SecurityPage,
+  SitemapPage,
+  TermsPage,
+} from "./pages/public/PublicInfoPages";
 import type { ProviderType } from "./api/providerOnboarding";
 import { ProviderDashboardPage } from "./pages/provider/ProviderDashboardPage";
 import { ProviderLoginPage } from "./pages/provider/ProviderLoginPage";
@@ -228,19 +243,47 @@ function maskProviderIdentity(value: string | null) {
 function HeaderLocationSelector() {
   const { locationState, setSelectedLocation } = usePublicLocation();
   const [menuOpen, setMenuOpen] = useState(false);
-  const [draftLocation, setDraftLocation] = useState(locationState.location);
+  const [draftLocation, setDraftLocation] = useState(locationState.mode === "current" ? "" : locationState.location);
   const [message, setMessage] = useState<string | null>(null);
   const [detecting, setDetecting] = useState(false);
+  const shellRef = useRef<HTMLDivElement | null>(null);
+  const currentLocationActive = locationState.mode === "current" && Boolean(locationState.coordinates);
+  const currentLocationLabel = getPublicLocationDisplayLabel(locationState);
 
   useEffect(() => {
     if (menuOpen) {
-      setDraftLocation(locationState.location);
+      setDraftLocation(locationState.mode === "current" ? "" : locationState.location);
       setMessage(null);
     }
-  }, [locationState.location, menuOpen]);
+  }, [locationState.location, locationState.mode, menuOpen]);
+
+  useEffect(() => {
+    if (!menuOpen) {
+      return;
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      if (!shellRef.current?.contains(event.target as Node)) {
+        setMenuOpen(false);
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [menuOpen]);
 
   function commitSelectedLocation(nextLocation: string, nextCoordinates: PublicLocationCoordinates | null = null) {
-    const normalizedLocation = normalizePublicLocation(nextLocation) || PUBLIC_DEFAULT_LOCATION;
+    const normalizedLocation = normalizePublicLocationSelection(nextLocation) || PUBLIC_DEFAULT_LOCATION;
     setSelectedLocation(normalizedLocation, nextCoordinates);
     setDraftLocation(normalizedLocation);
     setMessage(null);
@@ -250,7 +293,7 @@ function HeaderLocationSelector() {
   function handleCurrentLocation() {
     setMessage(null);
     if (typeof navigator === "undefined" || !navigator.geolocation) {
-      setMessage("Location services are not available in this browser.");
+      setMessage("Location services are not available in this browser. Please select a city manually.");
       return;
     }
     setDetecting(true);
@@ -262,54 +305,62 @@ function HeaderLocationSelector() {
         });
         setDetecting(false);
       },
-      () => {
+      (error) => {
         setDetecting(false);
-        setMessage("Location permission was not allowed.");
+        setMessage(mapPublicLocationGeolocationError(error));
       },
       { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 },
     );
   }
 
+  function handleSaveLocation() {
+    const validationError = validatePublicLocationInput(draftLocation);
+    const normalizedDraft = normalizePublicLocation(draftLocation);
+    const preserveCoordinates = currentLocationActive && !normalizedDraft;
+    if (validationError && !preserveCoordinates) {
+      setMessage(validationError);
+      return;
+    }
+    commitSelectedLocation(
+      preserveCoordinates ? PUBLIC_CURRENT_LOCATION_LABEL : normalizePublicLocationSelection(normalizedDraft) || PUBLIC_DEFAULT_LOCATION,
+      preserveCoordinates ? locationState.coordinates : null,
+    );
+  }
+
   return (
-    <div className="header-location-selector">
+    <div className="header-location-selector discover-header-location-shell" ref={shellRef}>
       <button
         className="ghost-button header-location-selector-summary"
         type="button"
         aria-haspopup="dialog"
         aria-expanded={menuOpen}
-        aria-label={`Change location, currently ${locationState.location}`}
+        aria-label={`Change location, currently ${currentLocationLabel}`}
         onClick={() => setMenuOpen((current) => !current)}
       >
         <LocationOnOutlined fontSize="small" aria-hidden="true" />
-        <span>{locationState.location}</span>
+        <span>{currentLocationLabel}</span>
       </button>
       {menuOpen ? (
-        <div className="header-location-selector-panel" role="dialog" aria-label="Select location">
-          <label className="header-location-selector-field">
-            <span className="header-location-selector-label">City or locality</span>
-            <input value={draftLocation} onChange={(event) => setDraftLocation(normalizePublicLocation(event.target.value))} placeholder="Pune" />
-          </label>
-          <div className="chip-row" role="list" aria-label="Popular locations">
-            {PUBLIC_LOCATION_OPTIONS.map((location) => (
-              <button key={location} className="chip-button" type="button" onClick={() => commitSelectedLocation(location)}>
-                {location}
-              </button>
-            ))}
-          </div>
-          <div className="cta-row">
-            <button className="secondary-button" type="button" onClick={() => commitSelectedLocation(draftLocation)} disabled={!normalizePublicLocation(draftLocation)}>
-              Save location
-            </button>
-            <button className="text-button" type="button" onClick={handleCurrentLocation} disabled={detecting}>
-              {detecting ? "Detecting..." : "Use my current location"}
-            </button>
-            {locationState.location !== PUBLIC_DEFAULT_LOCATION ? (
-              <button className="text-button" type="button" onClick={() => commitSelectedLocation(PUBLIC_DEFAULT_LOCATION, null)}>
-                Clear
-              </button>
-            ) : null}
-          </div>
-          {message ? <p className="form-note" role="status">{message}</p> : null}
+        <div className="header-location-selector-panel discover-header-location-popover public-location-selector-panel" role="dialog" aria-label="Select location">
+          <PublicLocationSelectorPanel
+            className="header-location-selector-panel__content"
+            locationDraft={draftLocation}
+            onLocationDraftChange={(value) => setDraftLocation(normalizePublicLocation(value))}
+            selectedCoordinates={locationState.coordinates}
+            options={PUBLIC_LOCATION_OPTIONS}
+            inputLabel="City or locality"
+            inputPlaceholder="Pune"
+            showRadius={false}
+            message={message}
+            saveLabel="Save location"
+            currentLocationButtonLabel={detecting ? "Detecting..." : "Use my current location"}
+            useCurrentLocationDisabled={detecting}
+            onSaveLocation={handleSaveLocation}
+            onUseCurrentLocation={handleCurrentLocation}
+            onClearLocation={() => commitSelectedLocation(PUBLIC_DEFAULT_LOCATION, null)}
+            showClear={locationState.mode !== "city" || locationState.location !== PUBLIC_DEFAULT_LOCATION}
+            saveDisabled={Boolean(validatePublicLocationInput(draftLocation)) && !(currentLocationActive && !normalizePublicLocationSelection(draftLocation))}
+          />
         </div>
       ) : null}
     </div>
@@ -388,6 +439,46 @@ function ProviderHeaderActions() {
   );
 }
 
+function DiscoverMobileMenu({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const location = useLocation();
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div className="discover-mobile-menu-backdrop" role="presentation" onClick={onClose}>
+      <aside className="discover-mobile-menu" aria-label="Discover navigation menu" onClick={(event) => event.stopPropagation()}>
+        <div className="discover-mobile-menu__header">
+          <BrandLockup />
+          <button className="icon-button discover-mobile-menu__close" type="button" onClick={onClose} aria-label="Close Discover navigation">
+            <span aria-hidden="true">×</span>
+          </button>
+        </div>
+        <nav className="discover-mobile-menu__section" aria-label="Discover navigation">
+          {primaryNavigationRoutes.map((route) => (
+            <NavLink
+              key={route.path}
+              to={route.path}
+              end={route.path === DISCOVER_ROUTES.home.path}
+              className={({ isActive }) => `nav-link${isActive ? " is-active" : ""}`}
+              onClick={onClose}
+            >
+              {route.label}
+            </NavLink>
+          ))}
+        </nav>
+        <div className="discover-mobile-menu__section">
+          <ProviderHeaderActions />
+        </div>
+        <div className="discover-mobile-menu__section discover-mobile-menu__footer">
+          <span className="discover-mobile-menu__location-label">Current route</span>
+          <strong>{location.pathname}</strong>
+        </div>
+      </aside>
+    </div>
+  );
+}
+
 function Shell({ children }: { children: ReactNode }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const location = useLocation();
@@ -399,8 +490,8 @@ function Shell({ children }: { children: ReactNode }) {
   }, [location.pathname]);
 
   return (
-    <div className={`discover-shell${isDoctorsDirectoryRoute ? " discover-shell--doctors-directory-wide" : ""}`}>
-      <header className="site-header">
+    <div className={`discover-shell${isDoctorsDirectoryRoute ? " discover-shell--doctors-directory-wide" : ""}${menuOpen ? " is-mobile-menu-open" : ""}`}>
+      <header className={`site-header${menuOpen ? " is-menu-open" : ""}`}>
         <div className="header-inner">
           <BrandLockup />
           <button
@@ -424,6 +515,7 @@ function Shell({ children }: { children: ReactNode }) {
           <ProviderHeaderActions />
         </div>
       </header>
+      <DiscoverMobileMenu open={menuOpen} onClose={() => setMenuOpen(false)} />
 
       <main>{children}</main>
 
@@ -460,27 +552,16 @@ function Shell({ children }: { children: ReactNode }) {
             <strong>Support</strong>
             <Link to={DISCOVER_ROUTES.about.path}>About</Link>
             <Link to={DISCOVER_ROUTES.contact.path}>Contact</Link>
-            <Link to={DISCOVER_ROUTES.contact.path}>Help</Link>
-            <a className="footer-placeholder-link" href="#" onClick={(event) => event.preventDefault()}>
-              Accessibility
-            </a>
-            <a className="footer-placeholder-link" href="#" onClick={(event) => event.preventDefault()}>
-              Sitemap
-            </a>
+            <Link to={DISCOVER_ROUTES.help.path}>Help</Link>
+            <Link to={DISCOVER_ROUTES.accessibility.path}>Accessibility</Link>
+            <Link to={DISCOVER_ROUTES.sitemap.path}>Sitemap</Link>
           </nav>
           <nav className="footer-column" aria-label="Legal">
             <strong>Legal</strong>
             <Link to={DISCOVER_ROUTES.privacy.path}>Privacy</Link>
             <Link to={DISCOVER_ROUTES.terms.path}>Terms</Link>
-            <a className="footer-placeholder-link" href="#" onClick={(event) => event.preventDefault()}>
-              Status
-            </a>
-            <a className="footer-placeholder-link" href="#" onClick={(event) => event.preventDefault()}>
-              Security
-            </a>
-            <a className="footer-placeholder-link" href="#" onClick={(event) => event.preventDefault()}>
-              Cookies
-            </a>
+            <Link to={DISCOVER_ROUTES.security.path}>Security</Link>
+            <Link to={DISCOVER_ROUTES.cookies.path}>Cookies</Link>
           </nav>
           <section className="footer-bottom">
             <span>© {new Date().getFullYear()} Jeevanam Discover. Trusted public healthcare discovery for patients and providers.</span>
@@ -851,9 +932,14 @@ function App() {
           <Route path="/provider/onboarding/:applicationId/:step" element={<ProviderOnboardingPage />} />
           <Route path={DISCOVER_ROUTES.login.path} element={<LoginChooserPage />} />
           <Route path={DISCOVER_ROUTES.about.path} element={<ShellPage eyebrow="About" title="About Jeevanam." body="Jeevanam connects public discovery, patient care access, and healthcare operations through focused applications." ctaLabel="Find Care" ctaTo={`${DISCOVER_ROUTES.home.path}#find-care`} />} />
-          <Route path={DISCOVER_ROUTES.contact.path} element={<ShellPage eyebrow="Contact" title="Contact Jeevanam" body="Reach Jeevanam for provider enquiries, product demos and public support." stateIcon="@" ctaLabel="List your practice" ctaTo={DISCOVER_ROUTES.listPractice.path} />} />
-          <Route path={DISCOVER_ROUTES.privacy.path} element={<ShellPage eyebrow="Privacy" title="Privacy" body="Jeevanam is preparing privacy information for patients, providers and public discovery visitors." stateIcon="◇" ctaLabel="Return home" ctaTo={DISCOVER_ROUTES.home.path} />} />
-          <Route path={DISCOVER_ROUTES.terms.path} element={<ShellPage eyebrow="Terms" title="Terms" body="Jeevanam is preparing terms for public discovery, provider registration and appointment discovery." stateIcon="§" ctaLabel="Return home" ctaTo={DISCOVER_ROUTES.home.path} />} />
+          <Route path={DISCOVER_ROUTES.help.path} element={<HelpPage />} />
+          <Route path={DISCOVER_ROUTES.accessibility.path} element={<AccessibilityPage />} />
+          <Route path={DISCOVER_ROUTES.sitemap.path} element={<SitemapPage />} />
+          <Route path={DISCOVER_ROUTES.contact.path} element={<ContactPage />} />
+          <Route path={DISCOVER_ROUTES.privacy.path} element={<PrivacyPage />} />
+          <Route path={DISCOVER_ROUTES.terms.path} element={<TermsPage />} />
+          <Route path={DISCOVER_ROUTES.security.path} element={<SecurityPage />} />
+          <Route path={DISCOVER_ROUTES.cookies.path} element={<CookiesPage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
         </Shell>

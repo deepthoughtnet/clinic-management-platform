@@ -1,6 +1,5 @@
 package com.deepthoughtnet.clinic.discover.provideraccess;
 
-import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderLifecycleStatus;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderType;
 import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderApplicationEntity;
 import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderApplicationRepository;
@@ -29,7 +28,7 @@ import java.util.Optional;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
-import java.util.stream.Collectors;
+import java.util.regex.Pattern;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -40,6 +39,9 @@ public class ProviderPortalAccessRequestService {
     private static final String ENTITY_TYPE = "PROVIDER_PORTAL_ACCESS_REQUEST";
     private static final Duration ACCESS_CODE_TTL = Duration.ofDays(7);
     private static final UUID FALLBACK_AUDIT_TENANT_ID = UUID.nameUUIDFromBytes("discover-provider-access".getBytes(StandardCharsets.UTF_8));
+    private static final Pattern EMAIL_PATTERN = Pattern.compile("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$");
+    private static final Pattern PROVIDER_REFERENCE_PATTERN = Pattern.compile("^[A-Za-z0-9][A-Za-z0-9 _./-]{0,79}$");
+    private static final Pattern MOBILE_ALLOWED_PATTERN = Pattern.compile("^[0-9+\\s()-]+$");
 
     private final ProviderPortalAccessRequestRepository requestRepository;
     private final ProviderApplicationRepository providerApplicationRepository;
@@ -77,13 +79,13 @@ public class ProviderPortalAccessRequestService {
         if (providerType == null) {
             throw new IllegalArgumentException("Provider type is required");
         }
-        String fullName = normalizeRequired(command.fullName(), "Provider name is required", 256);
-        String email = normalizeOptional(command.email(), 256);
+        String fullName = normalizeProviderName(command.fullName());
+        String email = normalizeRequiredEmail(command.email());
         String emailNormalized = normalizeEmail(email);
         String mobile = normalizeRequiredMobile(command.mobile());
         String mobileNormalized = normalizeMobile(mobile);
-        String providerApplicationReference = normalizeOptional(command.providerApplicationReference(), 64);
-        String note = normalizeOptional(command.note(), null);
+        String providerApplicationReference = normalizeOptionalReference(command.providerApplicationReference());
+        String note = normalizeOptionalNote(command.note());
 
         ensureUnique(providerType, emailNormalized, mobileNormalized, providerApplicationReference);
 
@@ -104,7 +106,7 @@ public class ProviderPortalAccessRequestService {
     @Transactional(readOnly = true)
     public List<ProviderPortalAccessRequestRecord> list(String status, String q) {
         String normalizedStatus = normalizeStatus(status);
-        String normalizedQuery = normalizeOptional(q, 128);
+        String normalizedQuery = truncateOptional(q, 128);
         List<ProviderPortalAccessRequestEntity> all = requestRepository.findAll();
 
         return all.stream()
@@ -133,8 +135,8 @@ public class ProviderPortalAccessRequestService {
     ) {
         ProviderPortalAccessRequestEntity entity = requestRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Access request not found"));
-        if (entity.getStatus() == ProviderPortalAccessRequestStatus.REJECTED || entity.getStatus() == ProviderPortalAccessRequestStatus.REVOKED) {
-            throw new ProviderPortalAccessRequestConflictException("This access request is no longer reviewable.");
+        if (entity.getStatus() != ProviderPortalAccessRequestStatus.REQUESTED) {
+            throw new ProviderPortalAccessRequestConflictException("This access request can only be approved while it is pending review.");
         }
 
         ProviderLinkResolution link = resolveProviderLink(entity, providerApplicationReference);
@@ -159,13 +161,10 @@ public class ProviderPortalAccessRequestService {
     public ProviderPortalAccessRequestRecord reject(UUID id, UUID actorAppUserId, String reviewedByDisplayName, String reason) {
         ProviderPortalAccessRequestEntity entity = requestRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Access request not found"));
-        if (entity.getStatus() == ProviderPortalAccessRequestStatus.REJECTED) {
-            return toRecord(entity, accountFor(entity.getLinkedProviderAccountId()), entity.getLinkedProviderApplicationReference(), null);
+        if (entity.getStatus() != ProviderPortalAccessRequestStatus.REQUESTED) {
+            throw new ProviderPortalAccessRequestConflictException("This access request can only be rejected while it is pending review.");
         }
-        if (entity.getStatus() == ProviderPortalAccessRequestStatus.REVOKED) {
-            throw new ProviderPortalAccessRequestConflictException("This access request can no longer be rejected.");
-        }
-        entity.reject(actorAppUserId, reviewedByDisplayName, normalizeOptional(reason, 512));
+        entity.reject(actorAppUserId, reviewedByDisplayName, normalizeOptional(reason, 512, "Reason must be 512 characters or fewer."));
         requestRepository.save(entity);
         recordAudit(entity.getId(), "PROVIDER_ACCESS_REJECTED", actorAppUserId, "Provider access rejected", detailsJson(entity));
         return toRecord(entity, accountFor(entity.getLinkedProviderAccountId()), entity.getLinkedProviderApplicationReference(), null);
@@ -175,10 +174,10 @@ public class ProviderPortalAccessRequestService {
     public ProviderPortalAccessRequestRecord revoke(UUID id, UUID actorAppUserId, String reviewedByDisplayName, String reason) {
         ProviderPortalAccessRequestEntity entity = requestRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Access request not found"));
-        if (entity.getStatus() == ProviderPortalAccessRequestStatus.REVOKED) {
-            return toRecord(entity, accountFor(entity.getLinkedProviderAccountId()), entity.getLinkedProviderApplicationReference(), null);
+        if (entity.getStatus() != ProviderPortalAccessRequestStatus.APPROVED) {
+            throw new ProviderPortalAccessRequestConflictException("This access request can only be revoked after approval.");
         }
-        entity.revoke(actorAppUserId, reviewedByDisplayName, normalizeOptional(reason, 512));
+        entity.revoke(actorAppUserId, reviewedByDisplayName, normalizeOptional(reason, 512, "Reason must be 512 characters or fewer."));
         requestRepository.save(entity);
         if (entity.getLinkedProviderAccountId() != null) {
             verificationService.revokeSessionsForAccount(entity.getLinkedProviderAccountId());
@@ -195,7 +194,9 @@ public class ProviderPortalAccessRequestService {
         if (!StringUtils.hasText(accessCode)) {
             throw new IllegalArgumentException("Access code is required");
         }
-        VerificationLookup lookup = lookup(identifier);
+        String normalizedIdentifier = normalizeProviderLoginIdentifier(identifier);
+        String normalizedAccessCode = normalizeAccessCode(accessCode);
+        VerificationLookup lookup = lookup(normalizedIdentifier);
         ProviderPortalAccessRequestEntity entity = requestRepository.findAll().stream()
                 .filter(request -> request.getStatus() == ProviderPortalAccessRequestStatus.APPROVED)
                 .filter(request -> matchesLookup(request, lookup))
@@ -207,7 +208,7 @@ public class ProviderPortalAccessRequestService {
         if (entity.getAccessCodeHash() == null || entity.getAccessCodeExpiresAt() == null || entity.getAccessCodeExpiresAt().isBefore(OffsetDateTime.now())) {
             throw new ProviderPortalAccessRequestConflictException("This access code has expired. Please request a new approval.");
         }
-        if (!matchesAccessCode(normalizeRequired(accessCode, "Access code is required", 64), entity.getAccessCodeHash())) {
+        if (!matchesAccessCode(normalizedAccessCode, entity.getAccessCodeHash())) {
             throw new ProviderPortalAccessRequestConflictException("The access code is invalid.");
         }
         if (entity.getLinkedProviderAccountId() == null) {
@@ -229,7 +230,11 @@ public class ProviderPortalAccessRequestService {
     }
 
     private ProviderLinkResolution resolveProviderLink(ProviderPortalAccessRequestEntity request, String overrideApplicationReference) {
-        String applicationReference = normalizeOptional(overrideApplicationReference != null ? overrideApplicationReference : request.getProviderApplicationReference(), 64);
+        String applicationReference = normalizeOptional(
+                overrideApplicationReference != null ? overrideApplicationReference : request.getProviderApplicationReference(),
+                64,
+                "Provider application reference must be 64 characters or fewer."
+        );
         Optional<ProviderApplicationEntity> explicitApplication = findApplication(applicationReference);
         if (explicitApplication.isPresent()) {
             return linkApplicationToAccount(explicitApplication.get(), request);
@@ -504,20 +509,39 @@ public class ProviderPortalAccessRequestService {
         return String.valueOf(code);
     }
 
-    private String normalizeRequired(String value, String message, int maxLength) {
+    private String normalizeProviderName(String value) {
         if (!StringUtils.hasText(value)) {
-            throw new IllegalArgumentException(message);
+            throw new IllegalArgumentException("Provider name is required");
         }
-        String normalized = value.trim();
-        if (maxLength > 0 && normalized.length() > maxLength) {
-            throw new IllegalArgumentException(message);
+        String normalized = value.trim().replaceAll("\\s+", " ");
+        if (normalized.length() < 2 || normalized.length() > 120) {
+            throw new IllegalArgumentException("Enter a provider name between 2 and 120 characters.");
         }
         return normalized;
     }
 
     private String normalizeRequiredMobile(String value) {
-        String normalized = normalizeRequired(value, "Mobile number is required", 64);
-        return normalized.replaceAll("[\\s-]", "");
+        if (!StringUtils.hasText(value)) {
+            throw new IllegalArgumentException("Mobile number is required");
+        }
+        String normalized = value.trim();
+        if (normalized.length() > 20) {
+            throw new IllegalArgumentException("Enter a valid 10-digit Indian mobile number.");
+        }
+        if (!MOBILE_ALLOWED_PATTERN.matcher(normalized).matches()) {
+            throw new IllegalArgumentException("Enter a valid 10-digit Indian mobile number.");
+        }
+        String digits = normalized.replaceAll("[\\s()-]", "");
+        if (digits.startsWith("+")) {
+            digits = digits.substring(1);
+        }
+        if (digits.length() == 12 && digits.startsWith("91")) {
+            digits = digits.substring(2);
+        }
+        if (!digits.matches("[6-9]\\d{9}")) {
+            throw new IllegalArgumentException("Enter a valid 10-digit Indian mobile number.");
+        }
+        return digits;
     }
 
     private String normalizeMobile(String value) {
@@ -528,15 +552,71 @@ public class ProviderPortalAccessRequestService {
         return value == null ? null : value.trim().toLowerCase(Locale.ROOT);
     }
 
-    private String normalizeOptional(String value, Integer maxLength) {
+    private String normalizeRequiredEmail(String value) {
+        if (!StringUtils.hasText(value)) {
+            throw new IllegalArgumentException("Email address is required");
+        }
+        String normalized = value.trim().toLowerCase(Locale.ROOT);
+        if (normalized.length() > 254 || !EMAIL_PATTERN.matcher(normalized).matches()) {
+            throw new IllegalArgumentException("Enter a valid email address.");
+        }
+        return normalized;
+    }
+
+    private String normalizeOptionalReference(String value) {
+        String normalized = normalizeOptional(value, 80, "Enter a valid provider application reference.");
+        if (normalized == null) {
+            return null;
+        }
+        if (!PROVIDER_REFERENCE_PATTERN.matcher(normalized).matches()) {
+            throw new IllegalArgumentException("Enter a valid provider application reference.");
+        }
+        return normalized;
+    }
+
+    private String normalizeOptionalNote(String value) {
+        return normalizeOptional(value, 500, "Note must be 500 characters or fewer.");
+    }
+
+    private String normalizeProviderLoginIdentifier(String value) {
+        String normalized = normalizeOptional(value, 254, "Enter a valid registered email address or mobile number.");
+        if (normalized == null) {
+            throw new IllegalArgumentException("Enter a valid registered email address or mobile number.");
+        }
+        if (normalized.contains("@")) {
+            if (!EMAIL_PATTERN.matcher(normalized).matches()) {
+                throw new IllegalArgumentException("Enter a valid registered email address or mobile number.");
+            }
+            return normalized.toLowerCase(Locale.ROOT);
+        }
+        return normalizeRequiredMobile(normalized);
+    }
+
+    private String normalizeAccessCode(String value) {
+        String normalized = normalizeOptional(value, 8, "Enter the 8-digit temporary access code.");
+        if (normalized == null || !normalized.matches("\\d{8}")) {
+            throw new IllegalArgumentException("Enter the 8-digit temporary access code.");
+        }
+        return normalized;
+    }
+
+    private String normalizeOptional(String value, Integer maxLength, String invalidMessage) {
         if (!StringUtils.hasText(value)) {
             return null;
         }
         String normalized = value.trim();
         if (maxLength != null && normalized.length() > maxLength) {
-            normalized = normalized.substring(0, maxLength);
+            throw new IllegalArgumentException(invalidMessage);
         }
         return normalized;
+    }
+
+    private String truncateOptional(String value, int maxLength) {
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
+        String normalized = value.trim();
+        return normalized.length() > maxLength ? normalized.substring(0, maxLength) : normalized;
     }
 
     private String normalizeStatus(String status) {

@@ -24,9 +24,13 @@ test("platform provider access requests route and navigation are wired", () => {
   assert.ok(nav.includes("Provider Access Requests"));
   assert.ok(nav.includes('path: "/platform/provider-access-requests"'));
   assert.ok(sidebar.includes("platform-provider-access-requests"));
-  assert.ok(page.includes("Approve"));
-  assert.ok(page.includes("Reject"));
-  assert.ok(page.includes("Revoke"));
+  assert.ok(page.includes('const selectedStatus = (selectedRequest?.status || "").toUpperCase();'));
+  assert.ok(page.includes('const canApproveSelected = selectedStatus === "REQUESTED";'));
+  assert.ok(page.includes('const canRejectSelected = selectedStatus === "REQUESTED";'));
+  assert.ok(page.includes('const canRevokeSelected = selectedStatus === "APPROVED";'));
+  assert.ok(page.includes("{canRejectSelected ? ("));
+  assert.ok(page.includes("{canRevokeSelected ? ("));
+  assert.ok(page.includes("{canApproveSelected ? ("));
   assert.ok(page.includes("Requested"));
   assert.ok(page.includes("temporaryAccessCode"));
   assert.ok(page.includes("listProviderAccessRequests"));

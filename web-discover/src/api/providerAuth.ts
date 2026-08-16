@@ -132,6 +132,7 @@ export type ProviderWorkspaceProfile = {
   attentionLabel: string;
   nextActionLabel: string;
   publicProfilePath: string | null;
+  publicationReason: string | null;
   providerActionRequired: boolean;
 };
 

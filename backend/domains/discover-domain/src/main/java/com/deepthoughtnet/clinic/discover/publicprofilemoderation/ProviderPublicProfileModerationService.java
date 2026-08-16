@@ -437,6 +437,15 @@ public class ProviderPublicProfileModerationService {
         if (!"ENABLED".equalsIgnoreCase(liveDraft.tenantConsentStatus())) {
             throw new ProviderOwnershipConflictException("tenant_consent_required", "Tenant consent must be enabled before publication.");
         }
+        DiscoverPublicProfilePublicationEntity latestPublication = findLatestPublicationEntity(entity.getPublicProfileReference()).orElse(null);
+        if (latestPublication != null && "UNPUBLISHED".equals(latestPublication.getPublicationStatus())) {
+            if (!Objects.equals(latestPublication.getApprovedSubmissionReference(), entity.getSubmissionReference())) {
+                throw new ProviderOwnershipConflictException("republish_requires_review", "The unpublished profile no longer points to the approved submission.");
+            }
+            if (draftDiffersFromSubmissionSnapshot(liveDraft, entity)) {
+                throw new ProviderOwnershipConflictException("republish_requires_review", "The profile changed after unpublishing. Review and republish through the normal workflow.");
+            }
+        }
         PublicProviderProfileModels.PublicProviderProfileSnapshot snapshot = buildSnapshot(entity);
         PublicProviderProfileModels.PublicProviderPublicationRecord projectedProfile = publicProfileService.upsertLifecycleProfile(
                 snapshot,
@@ -461,7 +470,7 @@ public class ProviderPublicProfileModerationService {
             return reconcilePublishedLifecycle(entity, currentPublication, actorId, OffsetDateTime.now());
         }
         OffsetDateTime now = OffsetDateTime.now();
-        if (currentPublication != null) {
+        if (currentPublication != null && "PUBLISHED".equals(currentPublication.getPublicationStatus())) {
             currentPublication.supersede(now);
             publications.saveAndFlush(currentPublication);
         }
@@ -533,18 +542,74 @@ public class ProviderPublicProfileModerationService {
     @Transactional
     public PublicProfilePublicationRecord unpublish(String publicProfileReference, UUID actorId, String reason) {
         DiscoverPublicProfilePublicationEntity entity = publications.findFirstByPublicProfileReferenceAndCurrentTrueOrderByPublishedAtDesc(publicProfileReference).orElse(null);
-        if (entity == null) {
+        if (entity == null || !"PUBLISHED".equals(entity.getPublicationStatus())) {
             throw new ProviderOwnershipConflictException("public_profile_not_published", "Public profile is not published.");
         }
-        entity.unpublish(safeReason(reason), OffsetDateTime.now(), OffsetDateTime.now());
+        OffsetDateTime now = OffsetDateTime.now();
+        entity.unpublish(safeReason(reason), actorReference(actorId), now, now);
         publications.save(entity);
         submissions.findBySubmissionReference(entity.getApprovedSubmissionReference()).ifPresent(submission -> {
-            OffsetDateTime now = OffsetDateTime.now();
             submission.markUnpublished(now, now);
             submissions.save(submission);
         });
         publicProfileService.unpublishPublicProfile(parseUuid(entity.getPublicProfileReference()), SOURCE_SYSTEM, safeReason(reason));
         return toPublicationRecord(entity, visibilityDecision(publicProfileReference, null));
+    }
+
+    @Transactional(readOnly = true)
+    public List<PublicProfilePublicationRecord> publicationHistory(String publicProfileReference) {
+        if (!StringUtils.hasText(publicProfileReference)) {
+            return List.of();
+        }
+        return publications.findByPublicProfileReferenceOrderByPublishedAtDesc(publicProfileReference.trim()).stream()
+                .map(entity -> toPublicationRecord(entity, visibilityDecision(publicProfileReference.trim(), null)))
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<String> publicationAllowedActions(String publicProfileReference) {
+        if (!StringUtils.hasText(publicProfileReference)) {
+            return List.of();
+        }
+        String normalizedReference = publicProfileReference.trim();
+        String publicationStatus = publicationStatus(normalizedReference);
+        if ("PUBLISHED".equals(publicationStatus)) {
+            return List.of("UNPUBLISH_PROFILE", "VIEW_REVIEW_HISTORY", "VIEW_PUBLIC_PROFILE");
+        }
+        DiscoverPublicProfileSubmissionEntity entity = findLatestSubmission(normalizedReference).orElse(null);
+        if ("UNPUBLISHED".equals(publicationStatus) && canRepublish(entity)) {
+            return List.of("REPUBLISH_PROFILE", "VIEW_REVIEW_HISTORY");
+        }
+        return List.of("VIEW_REVIEW_HISTORY");
+    }
+
+    @Transactional(readOnly = true)
+    public String publicationStatus(String publicProfileReference) {
+        if (!StringUtils.hasText(publicProfileReference)) {
+            return null;
+        }
+        String normalizedReference = publicProfileReference.trim();
+        return findCurrentPublicationEntity(normalizedReference)
+                .map(DiscoverPublicProfilePublicationEntity::getPublicationStatus)
+                .orElseGet(() -> findLatestSubmission(normalizedReference)
+                        .map(this::publicationStatusFor)
+                        .orElse(null));
+    }
+
+    @Transactional(readOnly = true)
+    public boolean canUnpublish(String publicProfileReference) {
+        return "PUBLISHED".equals(publicationStatus(publicProfileReference));
+    }
+
+    @Transactional(readOnly = true)
+    public boolean canRepublish(String publicProfileReference) {
+        if (!StringUtils.hasText(publicProfileReference)) {
+            return false;
+        }
+        DiscoverPublicProfileSubmissionEntity entity = findLatestSubmission(publicProfileReference.trim()).orElse(null);
+        return entity != null
+                && "UNPUBLISHED".equals(publicationStatusFor(entity))
+                && canRepublish(entity);
     }
 
     @Transactional(readOnly = true)
@@ -731,6 +796,9 @@ public class ProviderPublicProfileModerationService {
             actions.add("VIEW_PUBLIC_PROFILE");
             actions.add("UNPUBLISH_PROFILE");
             actions.add("VIEW_REVIEW_HISTORY");
+        } else if ("UNPUBLISHED".equals(publicationStatus) && canRepublish(entity)) {
+            actions.add("REPUBLISH_PROFILE");
+            actions.add("VIEW_REVIEW_HISTORY");
         }
         return actions.stream().distinct().toList();
     }
@@ -741,6 +809,9 @@ public class ProviderPublicProfileModerationService {
         }
         if ("PUBLISHED".equals(publicationStatus)) {
             return List.of("VIEW_PUBLIC_PROFILE", "BACK_TO_WORKSPACE");
+        }
+        if ("UNPUBLISHED".equals(publicationStatus) && canRepublish(entity)) {
+            return List.of("VIEW_REVIEW_HISTORY", "BACK_TO_WORKSPACE", "REPUBLISH_PROFILE");
         }
         return switch (entity.getModerationStatus()) {
             case "SUBMITTED", "UNDER_REVIEW" -> List.of("BACK_TO_WORKSPACE", "VIEW_SUBMITTED_PROFILE");
@@ -913,6 +984,7 @@ public class ProviderPublicProfileModerationService {
                 visibility.visibilityReason(),
                 visibility.publicUrl(),
                 findingRecords,
+                publicationHistory(entity.getPublicProfileReference()),
                 providerReviewAllowedActions(entity, publicationStatus),
                 moderationAllowedActions(entity, publicationStatus)
         );
@@ -982,7 +1054,9 @@ public class ProviderPublicProfileModerationService {
                 entity.getPublicPath(),
                 entity.getReason(),
                 entity.getPublishedAt(),
+                entity.getPublishedBy(),
                 entity.getUnpublishedAt(),
+                entity.getUnpublishedBy(),
                 entity.isCurrent(),
                 visibility == null ? null : visibility.effectiveVisibility(),
                 visibility == null ? null : visibility.visibilityReason()
@@ -1324,17 +1398,30 @@ public class ProviderPublicProfileModerationService {
         return publications.findFirstByPublicProfileReferenceAndCurrentTrueOrderByPublishedAtDesc(publicProfileReference.trim());
     }
 
+    private Optional<DiscoverPublicProfilePublicationEntity> findLatestPublicationEntity(String publicProfileReference) {
+        if (!StringUtils.hasText(publicProfileReference)) {
+            return Optional.empty();
+        }
+        return publications.findByPublicProfileReferenceOrderByPublishedAtDesc(publicProfileReference.trim()).stream().findFirst();
+    }
+
     private String publicationStatusFor(DiscoverPublicProfileSubmissionEntity submission) {
         if (submission == null) {
             return "UNPUBLISHED";
         }
         return findCurrentPublicationEntity(submission.getPublicProfileReference())
-                .filter(publication -> Objects.equals(
-                        publication.getApprovedSubmissionReference(),
-                        submission.getSubmissionReference()
-                ))
                 .map(DiscoverPublicProfilePublicationEntity::getPublicationStatus)
-                .orElse(submission.getPublicationStatusSnapshot());
+                .orElseGet(() -> StringUtils.hasText(submission.getPublicationStatusSnapshot())
+                        ? submission.getPublicationStatusSnapshot()
+                        : "UNPUBLISHED");
+    }
+
+    private boolean canRepublish(DiscoverPublicProfileSubmissionEntity entity) {
+        if (entity == null || entity.getApprovedVersionNumber() == null || !"APPROVED".equals(entity.getModerationStatus())) {
+            return false;
+        }
+        PublicProfileDraftWorkspaceRecord liveDraft = draftService.findDraft(entity.getPublicProfileReference()).orElse(null);
+        return liveDraft != null && !draftDiffersFromSubmissionSnapshot(liveDraft, entity);
     }
 
     private PublicProfilePublicationRecord reconcilePublishedLifecycle(

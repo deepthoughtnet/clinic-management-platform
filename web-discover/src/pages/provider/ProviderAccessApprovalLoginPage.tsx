@@ -3,26 +3,17 @@ import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { loginProviderAccess } from "../../api/providerAuth";
 import { useProviderSession } from "../../context/ProviderSessionContext";
 import { DISCOVER_ROUTES } from "../../routes";
+import {
+  getProviderAccessCodeError,
+  getProviderLoginIdentifierError,
+  normalizeProviderLoginIdentifier,
+  providerLoginIdentifierHelpText,
+  sanitizeProviderAccessCodeInput,
+} from "./providerAccessValidation";
 
 type ProviderAccessApprovalLoginPageProps = {
   returnTo: string;
 };
-
-function isEmail(value: string) {
-  return value.includes("@");
-}
-
-function formatIdentifierHint(value: string) {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return "your registered email or mobile number";
-  }
-  return isEmail(trimmed) ? "your registered email address" : "your registered mobile number";
-}
-
-function resolveAccessCode(value: string) {
-  return value.replace(/\D/g, "").slice(0, 8);
-}
 
 export function ProviderAccessApprovalLoginPage({ returnTo }: ProviderAccessApprovalLoginPageProps) {
   const { status, refreshSession } = useProviderSession();
@@ -30,11 +21,17 @@ export function ProviderAccessApprovalLoginPage({ returnTo }: ProviderAccessAppr
   const navigate = useNavigate();
   const [identifier, setIdentifier] = useState("");
   const [accessCode, setAccessCode] = useState("");
+  const [identifierTouched, setIdentifierTouched] = useState(false);
+  const [accessCodeTouched, setAccessCodeTouched] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const trimmedIdentifier = identifier.trim();
-  const trimmedAccessCode = resolveAccessCode(accessCode);
-  const canSignIn = trimmedIdentifier.length > 0 && trimmedAccessCode.length === 8;
+  const trimmedIdentifier = normalizeProviderLoginIdentifier(identifier);
+  const trimmedAccessCode = sanitizeProviderAccessCodeInput(accessCode);
+  const identifierError = getProviderLoginIdentifierError(identifier);
+  const accessCodeError = getProviderAccessCodeError(accessCode);
+  const showIdentifierError = identifierTouched && Boolean(identifierError);
+  const showAccessCodeError = accessCodeTouched && Boolean(accessCodeError);
+  const canSignIn = !identifierError && !accessCodeError;
   const requestAccessPath = useMemo(() => {
     const next = new URLSearchParams();
     const currentReturnTo = searchParams.get("returnTo") || returnTo;
@@ -47,12 +44,10 @@ export function ProviderAccessApprovalLoginPage({ returnTo }: ProviderAccessAppr
 
   async function signIn(event: FormEvent) {
     event.preventDefault();
-    if (!trimmedIdentifier) {
-      setError("Enter your registered email address or mobile number.");
-      return;
-    }
-    if (trimmedAccessCode.length !== 8) {
-      setError("Enter the 8-digit access code shared by Platform Admin.");
+    setIdentifierTouched(true);
+    setAccessCodeTouched(true);
+    if (identifierError || accessCodeError) {
+      setError(null);
       return;
     }
     setLoading(true);
@@ -80,7 +75,7 @@ export function ProviderAccessApprovalLoginPage({ returnTo }: ProviderAccessAppr
             <span className="eyebrow">Provider Login</span>
             <h1>Friends &amp; Family access to Jeevanam Provider</h1>
             <p>
-              Approved providers can sign in with their registered email or mobile number and a temporary access code.
+              Approved providers can sign in with their registered email address or mobile number and a temporary access code.
             </p>
             <p className="provider-auth-note">
               Controlled preview access is enabled for this environment. Request access if you are not yet approved.
@@ -129,34 +124,46 @@ export function ProviderAccessApprovalLoginPage({ returnTo }: ProviderAccessAppr
             </div>
 
             <label className="provider-auth-field">
-              <span>Email address or mobile number</span>
+              <span>Email address or mobile number <span className="provider-field-required" aria-hidden="true">*</span></span>
               <input
                 type="text"
                 value={identifier}
                 onChange={(event) => {
                   setIdentifier(event.target.value);
                   setError(null);
+                  setIdentifierTouched(true);
                 }}
+                onBlur={() => setIdentifierTouched(true)}
                 autoComplete="username"
                 inputMode="text"
                 placeholder="name@clinic.com or +91 98765 01200"
                 spellCheck={false}
+                maxLength={254}
                 aria-describedby="provider-access-identifier-help"
+                aria-invalid={showIdentifierError || Boolean(error) ? true : undefined}
               />
             </label>
             <p id="provider-access-identifier-help" className="provider-auth-helper">
-              Use the registered {formatIdentifierHint(identifier)} linked to your approved provider account.
+              {providerLoginIdentifierHelpText(identifier)}
             </p>
+            {showIdentifierError ? (
+              <p className="provider-auth-field-error" role="alert">
+                {identifierError}
+              </p>
+            ) : null}
 
             <label className="provider-auth-field">
-              <span>Temporary access code</span>
+              <span>Temporary access code <span className="provider-field-required" aria-hidden="true">*</span></span>
               <input
+                aria-invalid={showAccessCodeError || Boolean(error) ? true : undefined}
                 type="text"
                 value={accessCode}
                 onChange={(event) => {
-                  setAccessCode(resolveAccessCode(event.target.value));
+                  setAccessCode(sanitizeProviderAccessCodeInput(event.target.value));
+                  setAccessCodeTouched(true);
                   setError(null);
                 }}
+                onBlur={() => setAccessCodeTouched(true)}
                 inputMode="numeric"
                 pattern="[0-9]*"
                 maxLength={8}
@@ -168,6 +175,11 @@ export function ProviderAccessApprovalLoginPage({ returnTo }: ProviderAccessAppr
             <p id="provider-access-code-help" className="provider-auth-helper">
               Enter the 8-digit access code shared by Platform Admin after approval.
             </p>
+            {showAccessCodeError ? (
+              <p className="provider-auth-field-error" role="alert">
+                {accessCodeError}
+              </p>
+            ) : null}
 
             {error ? (
               <p className="provider-auth-error" role="alert">

@@ -15,6 +15,24 @@ export function normalizeBookingMode(mode: string | null | undefined): BookingMo
   }
 }
 
+export function resolveDoctorBookingMode(
+  mode: string | null | undefined,
+  canBookOnline: boolean | null | undefined,
+  fallbackPhone?: string | null,
+): BookingMode {
+  const normalized = normalizeBookingMode(mode);
+  if (canBookOnline) {
+    return normalized ?? "ONLINE_BOOKING";
+  }
+  if (normalized === "CALL_TO_BOOK" || normalized === "REQUEST_APPOINTMENT" || normalized === "NOT_AVAILABLE") {
+    return normalized;
+  }
+  if (fallbackPhone?.trim()) {
+    return "CALL_TO_BOOK";
+  }
+  return "NOT_AVAILABLE";
+}
+
 export function bookingCapabilityLabel(mode: BookingMode) {
   switch (mode) {
     case "ONLINE_BOOKING":

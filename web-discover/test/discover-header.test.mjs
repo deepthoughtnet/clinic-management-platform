@@ -19,8 +19,14 @@ test("discover header switches between anonymous and authenticated provider acti
   assert.ok(app.includes("Provider Account"));
   assert.ok(app.includes("Switch account"));
   assert.ok(app.includes("Logout"));
+  assert.ok(app.includes("DiscoverMobileMenu"));
+  assert.ok(app.includes("discover-mobile-menu-backdrop"));
+  assert.ok(app.includes("discover-mobile-menu__section"));
   assert.ok(app.includes("HeaderLocationSelector"));
+  assert.ok(app.includes("discover-header-location-shell"));
+  assert.ok(app.includes("discover-header-location-popover"));
   assert.ok(app.includes("header-location-selector-summary"));
+  assert.ok(!app.includes("header-location-selector-backdrop"));
   assert.ok(app.includes('to={DISCOVER_ROUTES.providerLogin.path}'));
   assert.ok(app.includes('Patient Login'));
   assert.ok(app.includes('For Providers'));
@@ -31,6 +37,9 @@ test("discover header switches between anonymous and authenticated provider acti
   assert.ok(styles.includes(".provider-account-menu-panel"));
   assert.ok(styles.includes(".nav-link.is-active"));
   assert.ok(styles.includes(".header-location-selector-summary"));
+  assert.ok(styles.includes(".discover-mobile-menu-backdrop"));
+  assert.ok(styles.includes(".discover-mobile-menu"));
+  assert.ok(styles.includes(".discover-header-location-shell"));
 });
 
 test("patient login opens a new tab from the discover shell and login chooser", () => {

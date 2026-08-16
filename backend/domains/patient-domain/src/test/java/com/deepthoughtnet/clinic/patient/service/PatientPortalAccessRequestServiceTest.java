@@ -113,6 +113,60 @@ class PatientPortalAccessRequestServiceTest {
     }
 
     @Test
+    void submitRejectsAlreadyApprovedRequest() {
+        PatientPortalAccessRequestEntity existing = PatientPortalAccessRequestEntity.create(TENANT_ID, "Amit Verma", "9876543210", "9876543210", null, null);
+        existing.approve(UUID.randomUUID(), "Platform Admin", PATIENT_ID, "Amit Verma");
+        when(requestRepository.findTopByTenantIdAndMobileNormalizedOrderByCreatedAtDesc(TENANT_ID, "9876543210"))
+                .thenReturn(Optional.of(existing));
+
+        assertThatThrownBy(() -> service.submit(new PatientPortalAccessRequestCommand(
+                "Amit Verma",
+                "9876543210",
+                null,
+                null,
+                new PatientPortalAccessContext(null, null, TENANT_ID.toString(), null, null)
+        ))).isInstanceOf(PatientPortalAccessRequestConflictException.class)
+                .hasMessageContaining("approved");
+    }
+
+    @Test
+    void submitRejectsAlreadyActiveRequest() {
+        PatientPortalAccessRequestEntity existing = PatientPortalAccessRequestEntity.create(TENANT_ID, "Amit Verma", "9876543210", "9876543210", null, null);
+        existing.approve(UUID.randomUUID(), "Platform Admin", PATIENT_ID, "Amit Verma");
+        existing.activate();
+        when(requestRepository.findTopByTenantIdAndMobileNormalizedOrderByCreatedAtDesc(TENANT_ID, "9876543210"))
+                .thenReturn(Optional.of(existing));
+
+        assertThatThrownBy(() -> service.submit(new PatientPortalAccessRequestCommand(
+                "Amit Verma",
+                "9876543210",
+                null,
+                null,
+                new PatientPortalAccessContext(null, null, TENANT_ID.toString(), null, null)
+        ))).isInstanceOf(PatientPortalAccessRequestConflictException.class)
+                .hasMessageContaining("approved");
+    }
+
+    @Test
+    void submitAllowsNewRequestAfterRevocation() {
+        PatientPortalAccessRequestEntity revoked = PatientPortalAccessRequestEntity.create(TENANT_ID, "Amit Verma", "9876543210", "9876543210", null, null);
+        revoked.revoke(UUID.randomUUID(), "Platform Admin", "Revoked for test");
+        when(requestRepository.findTopByTenantIdAndMobileNormalizedOrderByCreatedAtDesc(TENANT_ID, "9876543210"))
+                .thenReturn(Optional.of(revoked));
+        when(requestRepository.save(any(PatientPortalAccessRequestEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        var record = service.submit(new PatientPortalAccessRequestCommand(
+                "Amit Verma",
+                "9876543210",
+                null,
+                null,
+                new PatientPortalAccessContext(null, null, TENANT_ID.toString(), null, null)
+        ));
+
+        assertThat(record.status()).isEqualTo(PatientPortalAccessRequestStatus.REQUESTED);
+    }
+
+    @Test
     void approveCreatesTemporaryAccessCodeAndLinksPatient() {
         PatientPortalAccessRequestEntity request = PatientPortalAccessRequestEntity.create(TENANT_ID, "Amit Verma", "9876543210", "9876543210", null, null);
         when(requestRepository.findById(request.getId())).thenReturn(Optional.of(request));
@@ -171,6 +225,20 @@ class PatientPortalAccessRequestServiceTest {
         assertThatThrownBy(() -> service.authenticate(null, "9876543210", "12345678", null))
                 .isInstanceOf(PatientPortalAccessRequestConflictException.class)
                 .hasMessageContaining("not currently active");
+    }
+
+    @Test
+    void authenticateRejectsExpiredAccessCodes() {
+        PatientPortalAccessRequestEntity request = PatientPortalAccessRequestEntity.create(TENANT_ID, "Amit Verma", "9876543210", "9876543210", null, null);
+        request.approve(UUID.randomUUID(), "Platform Admin", PATIENT_ID, "Amit Verma");
+        request.attachAccessCode(new BCryptPasswordEncoder().encode("12345678"), request.getCreatedAt(), request.getCreatedAt().minusDays(1));
+        when(requestRepository.findAll()).thenReturn(List.of(request));
+        when(requestRepository.findTopByTenantIdAndMobileNormalizedOrderByCreatedAtDesc(TENANT_ID, "9876543210"))
+                .thenReturn(Optional.of(request));
+
+        assertThatThrownBy(() -> service.authenticate(null, "9876543210", "12345678", null))
+                .isInstanceOf(PatientPortalAccessRequestConflictException.class)
+                .hasMessageContaining("expired");
     }
 
     private TenantEntity tenant(String code, UUID id) {

@@ -34,8 +34,13 @@ export const DISCOVER_ROUTES = {
   login: { path: "/login", label: "Login", nav: true },
   about: { path: "/about", label: "About", footer: true },
   contact: { path: "/contact", label: "Contact", footer: true },
+  help: { path: "/help", label: "Help", footer: true },
+  accessibility: { path: "/accessibility", label: "Accessibility", footer: true },
+  sitemap: { path: "/sitemap", label: "Sitemap", footer: true },
   privacy: { path: "/privacy", label: "Privacy", footer: true },
   terms: { path: "/terms", label: "Terms", footer: true },
+  security: { path: "/security", label: "Security", footer: true },
+  cookies: { path: "/cookies", label: "Cookies", footer: true },
 } satisfies Record<string, DiscoverRoute>;
 
 export const primaryNavigationRoutes = [
@@ -56,8 +61,13 @@ export const footerRoutes = [
   DISCOVER_ROUTES.pricing,
   DISCOVER_ROUTES.about,
   DISCOVER_ROUTES.contact,
+  DISCOVER_ROUTES.help,
+  DISCOVER_ROUTES.accessibility,
+  DISCOVER_ROUTES.sitemap,
   DISCOVER_ROUTES.privacy,
   DISCOVER_ROUTES.terms,
+  DISCOVER_ROUTES.security,
+  DISCOVER_ROUTES.cookies,
 ];
 
 export const DISCOVER_DETAIL_PATHS = {

@@ -20,10 +20,13 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
 @RestController
 @RequestMapping("/api/public")
 public class PublicCatalogController {
+    private static final int MAX_SEARCH_QUERY_LENGTH = 120;
+    private static final List<String> SUPPORTED_CITIES = List.of("Pune", "Mumbai", "Bangalore", "Delhi", "Hyderabad", "Chennai", "Bhopal");
     private final PublicCatalogFacade publicCatalogFacade;
 
     public PublicCatalogController(PublicCatalogFacade publicCatalogFacade) {
@@ -43,6 +46,8 @@ public class PublicCatalogController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "12") int size
     ) {
+        validateSearchQuery(q);
+        validateCity(city);
         return publicCatalogFacade.listClinics(q, city, area, speciality, tenantCode, lat, lng, radiusKm, page, size);
     }
 
@@ -80,6 +85,8 @@ public class PublicCatalogController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "12") int size
     ) {
+        validateSearchQuery(q);
+        validateCity(city);
         return publicCatalogFacade.listDoctors(q, city, area, speciality, clinic, tenantCode, lat, lng, radiusKm, page, size);
     }
 
@@ -116,6 +123,8 @@ public class PublicCatalogController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "12") int size
     ) {
+        validateSearchQuery(q);
+        validateCity(city);
         return publicCatalogFacade.listHospitals(q, city, area, speciality, tenantCode, lat, lng, radiusKm, page, size);
     }
 
@@ -145,6 +154,8 @@ public class PublicCatalogController {
             @RequestParam(required = false) String city,
             @RequestParam(required = false) String tenantCode
     ) {
+        validateSearchQuery(q);
+        validateCity(city);
         return publicCatalogFacade.listSpecialities(q, city, tenantCode);
     }
 
@@ -162,6 +173,8 @@ public class PublicCatalogController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "12") int size
     ) {
+        validateSearchQuery(q);
+        validateCity(city);
         return publicCatalogFacade.specialityDetail(specialitySlug, q, city, area, clinic, tenantCode, lat, lng, radiusKm, page, size);
     }
 
@@ -177,7 +190,36 @@ public class PublicCatalogController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "6") int size
     ) {
+        validateSearchQuery(q);
+        validateCity(city);
         return publicCatalogFacade.search(q, city, area, tenantCode, lat, lng, radiusKm, page, size);
+    }
+
+    private void validateSearchQuery(String query) {
+        if (query == null) {
+            return;
+        }
+        String trimmed = query.trim();
+        if (!trimmed.isEmpty() && trimmed.length() > MAX_SEARCH_QUERY_LENGTH) {
+            throw new ResponseStatusException(
+                    org.springframework.http.HttpStatus.BAD_REQUEST,
+                    "Searches are limited to " + MAX_SEARCH_QUERY_LENGTH + " characters. Please shorten your query."
+            );
+        }
+    }
+
+    private void validateCity(String city) {
+        if (city == null || city.isBlank()) {
+            return;
+        }
+        String trimmed = city.trim();
+        boolean supported = SUPPORTED_CITIES.stream().anyMatch(option -> option.equalsIgnoreCase(trimmed));
+        if (!supported) {
+            throw new ResponseStatusException(
+                    org.springframework.http.HttpStatus.BAD_REQUEST,
+                    "Please select or enter a valid location."
+            );
+        }
     }
 
     private ResponseEntity<byte[]> inline(PublicProfileMediaContent media) {

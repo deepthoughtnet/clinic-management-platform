@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.api.publicsite;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -14,6 +15,7 @@ import com.deepthoughtnet.clinic.discover.publicprofile.PublicProviderProfileMod
 import java.util.List;
 import org.springframework.http.MediaType;
 import org.junit.jupiter.api.Test;
+import org.springframework.web.server.ResponseStatusException;
 
 class PublicCatalogControllerTest {
 
@@ -121,5 +123,22 @@ class PublicCatalogControllerTest {
         assertThat(controller.hospitalLogo("city-care-hospital").getBody()).containsExactly((byte) 5);
         assertThat(controller.hospitalCover("city-care-hospital").getBody()).containsExactly((byte) 8);
         assertThat(controller.hospitalGalleryImage("city-care-hospital", 0).getBody()).containsExactly((byte) 9);
+    }
+
+    @Test
+    void rejects_excessive_search_queries_and_invalid_cities() {
+        PublicCatalogController controller = new PublicCatalogController(mock(PublicCatalogFacade.class));
+
+        assertThatThrownBy(() -> controller.doctors("x".repeat(121), "Pune", null, null, null, null, null, null, null, 0, 12))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("Searches are limited to 120 characters");
+
+        assertThatThrownBy(() -> controller.clinics("skin", "123@@@", null, null, null, null, null, null, 0, 12))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("Please select or enter a valid location.");
+
+        assertThatThrownBy(() -> controller.search("skin", "invalid-city", null, null, null, null, null, 0, 6))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("Please select or enter a valid location.");
     }
 }

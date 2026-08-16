@@ -5,6 +5,7 @@ import {
   getProviderClaimReview,
   submitProviderClaim,
   type ProviderClaimReviewResponse,
+  type ProviderWorkspaceApplication,
   type ProviderWorkspaceProfile,
   type ProviderWorkspaceWorkItem,
 } from "../../api/providerAuth";
@@ -69,12 +70,176 @@ function allowedActionLabel(action: string) {
   }
 }
 
+function applicationStatusLabel(status: string) {
+  return status.replaceAll("_", " ").toLowerCase().replace(/^\w/, (char) => char.toUpperCase());
+}
+
+function applicationStageLabel(step: string) {
+  return step.replaceAll("_", " ").toLowerCase().replace(/^\w/, (char) => char.toUpperCase());
+}
+
+function applicationLatestUpdateLabel(application: ProviderWorkspaceApplication) {
+  switch (application.status) {
+    case "DRAFT":
+      return `${applicationStageLabel(application.currentStep)} · Draft in progress`;
+    case "CONTACT_VERIFIED":
+      return `${applicationStageLabel(application.currentStep)} · Contact verified`;
+    case "PROFILE_INCOMPLETE":
+      return `${applicationStageLabel(application.currentStep)} · Profile incomplete`;
+    case "READY_FOR_REVIEW":
+      return `${applicationStageLabel(application.currentStep)} · Ready for review`;
+    case "SUBMITTED":
+      return `${applicationStageLabel(application.currentStep)} · Under Platform Review`;
+    case "UNDER_REVIEW":
+      return `${applicationStageLabel(application.currentStep)} · Under Platform Review`;
+    case "CHANGES_REQUESTED":
+      return `${applicationStageLabel(application.currentStep)} · Changes requested`;
+    case "APPROVED":
+      return `${applicationStageLabel(application.currentStep)} · Approved`;
+    case "PUBLISHED":
+      return `${applicationStageLabel(application.currentStep)} · Published`;
+    default:
+      return `${applicationStageLabel(application.currentStep)} · ${applicationStatusLabel(application.status)}`;
+  }
+}
+
+function applicationAttentionReason(application: ProviderWorkspaceApplication) {
+  switch (application.status) {
+    case "DRAFT":
+      return "Continue setup to complete the application.";
+    case "CONTACT_VERIFIED":
+      return "Complete the remaining provider details.";
+    case "PROFILE_INCOMPLETE":
+      return "Complete the missing profile information.";
+    case "READY_FOR_REVIEW":
+      return "Submit the completed application for review.";
+    case "CHANGES_REQUESTED":
+      return "Review the requested changes and resubmit.";
+    default:
+      return null;
+  }
+}
+
+function applicationPrimaryActionLabel(application: ProviderWorkspaceApplication) {
+  const action = application.allowedActions[0];
+  switch (action) {
+    case "OPEN_PROFILE":
+      return "Resume draft";
+    case "CONTINUE_PROFILE":
+      return "Continue setup";
+    case "ENABLE_DISCOVER":
+      return "Enable Discover";
+    case "SUBMIT_FOR_REVIEW":
+      return "Submit for review";
+    case "VIEW_UNDER_REVIEW":
+      return "View status";
+    case "AWAITING_APPROVAL":
+      return "Awaiting publication";
+    case "REVIEW_CHANGES":
+      return "Review changes";
+    case "VIEW_REVIEW":
+      return "View review";
+    case "VIEW_PUBLISHED_PROFILE":
+      return "View profile";
+    case "VIEW_DETAILS":
+      return "View details";
+    default:
+      return action ? allowedActionLabel(action) : null;
+  }
+}
+
+function applicationSecondaryActionLabel(application: ProviderWorkspaceApplication) {
+  const action = application.allowedActions[1];
+  switch (action) {
+    case "OPEN_PROFILE":
+      return "Resume draft";
+    case "CONTINUE_PROFILE":
+      return "Continue setup";
+    case "ENABLE_DISCOVER":
+      return "Enable Discover";
+    case "SUBMIT_FOR_REVIEW":
+      return "Submit for review";
+    case "VIEW_UNDER_REVIEW":
+      return "View status";
+    case "AWAITING_APPROVAL":
+      return "Awaiting publication";
+    case "REVIEW_CHANGES":
+      return "Review changes";
+    case "VIEW_REVIEW":
+      return "View review";
+    case "VIEW_PUBLISHED_PROFILE":
+      return "View profile";
+    case "VIEW_DETAILS":
+      return "View details";
+    default:
+      return action ? allowedActionLabel(action) : null;
+  }
+}
+
+function applicationActionHref(application: ProviderWorkspaceApplication, action: string | null) {
+  if (!action) {
+    return null;
+  }
+  if (action === "VIEW_PUBLISHED_PROFILE") {
+    return application.publicProfilePath ?? null;
+  }
+  return DISCOVER_ROUTES.providerApplicationDashboard.path
+    .replace(":applicationReference", encodeURIComponent(application.referenceNumber));
+}
+
+function applicationStatusPill(application: ProviderWorkspaceApplication) {
+  switch (application.status) {
+    case "PUBLISHED":
+      return "Published";
+    case "SUBMITTED":
+    case "UNDER_REVIEW":
+      return "Under Platform Review";
+    case "READY_FOR_REVIEW":
+      return "Ready for Review";
+    case "CHANGES_REQUESTED":
+      return "Changes requested";
+    case "APPROVED":
+      return "Approved";
+    case "PROFILE_INCOMPLETE":
+      return "Profile incomplete";
+    case "CONTACT_VERIFIED":
+      return "Contact verified";
+    default:
+      return applicationStatusLabel(application.status);
+  }
+}
+
+function applicationPrimaryActionHref(application: ProviderWorkspaceApplication) {
+  return applicationActionHref(application, application.allowedActions[0] ?? null);
+}
+
+function applicationSecondaryActionHref(application: ProviderWorkspaceApplication) {
+  return applicationActionHref(application, application.allowedActions[1] ?? null);
+}
+
+function isApplicationActive(application: ProviderWorkspaceApplication) {
+  return !["DISCARDED", "ARCHIVED", "SUSPENDED"].includes(application.status);
+}
+
+function isApplicationAttentionRequired(application: ProviderWorkspaceApplication) {
+  return [
+    "DRAFT",
+    "CONTACT_VERIFIED",
+    "PROFILE_INCOMPLETE",
+    "READY_FOR_REVIEW",
+    "CHANGES_REQUESTED",
+  ].includes(application.status);
+}
+
 function profileManageActionLabel(profile: ProviderWorkspaceProfile) {
   if (profile.moderationStatus === "SUBMITTED" || profile.moderationStatus === "UNDER_REVIEW") {
     return "View submitted preview";
   }
   if (profile.publicationStatus === "PUBLISHED") {
     return "Manage profile";
+  }
+  if (profile.publicationStatus === "UNPUBLISHED") {
+    return "Review unpublished profile";
   }
   if (profile.moderationStatus === "CHANGES_REQUESTED") {
     return "Update profile";
@@ -103,6 +268,9 @@ function profileLatestUpdateLabel(profile: ProviderWorkspaceProfile) {
   const versionLabel = `Version ${profile.draftVersion}`;
   if (profile.publicationStatus === "PUBLISHED") {
     return `${versionLabel} · Published`;
+  }
+  if (profile.publicationStatus === "UNPUBLISHED") {
+    return `${versionLabel} · Unpublished`;
   }
   if (profile.moderationStatus === "SUBMITTED" || profile.moderationStatus === "UNDER_REVIEW") {
     return `${versionLabel} · Under Platform Review`;
@@ -172,6 +340,11 @@ function allowedActionHrefForProfile(profile: ProviderWorkspaceProfile, action: 
   if (action === "VIEW_PUBLIC_PROFILE") {
     return profile.publicProfilePath ?? DISCOVER_ROUTES.providerWorkspace.path;
   }
+  if (action === "VIEW_UNPUBLISHED_PROFILE") {
+    return DISCOVER_ROUTES.providerPublicProfileDraft.path
+      .replace(":profileReference", encodeURIComponent(profile.publicProfileReference))
+      .replace(":section", "overview");
+  }
   if (action === "VIEW_REVIEW_STATUS" || action === "VIEW_APPROVAL_STATUS") {
     return DISCOVER_ROUTES.providerPublicProfileReview.path
       .replace(":profileReference", encodeURIComponent(profile.publicProfileReference));
@@ -187,6 +360,9 @@ function allowedActionHrefForProfile(profile: ProviderWorkspaceProfile, action: 
 }
 
 function profileActionLabel(profile: ProviderWorkspaceProfile) {
+  if (profile.publicationStatus === "UNPUBLISHED") {
+    return "Review unpublished profile";
+  }
   return profile.primaryAction ? allowedActionLabel(profile.primaryAction) : null;
 }
 
@@ -285,7 +461,7 @@ function claimAttentionReason(item: ProviderWorkspaceWorkItem) {
 }
 
 function profileAttentionReason(profile: ProviderWorkspaceProfile) {
-  return profile.attentionLabel || profile.nextActionLabel || null;
+  return profile.publicationReason || profile.attentionLabel || profile.nextActionLabel || null;
 }
 
 function profileLocationLabel(profile: ProviderWorkspaceProfile) {
@@ -364,12 +540,29 @@ export function ProviderWorkspacePage() {
   const [claimSubmitting, setClaimSubmitting] = useState(false);
   const [claimNote, setClaimNote] = useState("");
 
-  const providerProfiles = workspace?.profiles ?? [];
+  const providerApplications = workspace?.applications ?? [];
+  const publishedApplications = workspace?.publishedProfiles ?? [];
+  const publicProfiles = workspace?.profiles ?? [];
   const workItems = workspace?.workItems ?? [];
   const supportedProviderTypes = workspace?.supportedProviderTypes ?? [];
+  const applicationCards = useMemo(
+    () => [...providerApplications, ...publishedApplications].sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()),
+    [providerApplications, publishedApplications],
+  );
+  const applicationAttentionItems = useMemo(
+    () => applicationCards
+      .filter(isApplicationAttentionRequired)
+      .map((application) => ({
+        kind: "PROVIDER_APPLICATION" as const,
+        updatedAt: application.updatedAt ?? null,
+        application,
+      })),
+    [applicationCards],
+  );
   const attentionItems = useMemo(
     () => [
-      ...providerProfiles
+      ...applicationAttentionItems,
+      ...publicProfiles
         .filter((profile) => profile.providerActionRequired)
         .map((profile) => ({
           kind: "PUBLIC_PROFILE" as const,
@@ -386,16 +579,16 @@ export function ProviderWorkspacePage() {
           item,
         })),
     ].sort((left, right) => new Date(right.updatedAt ?? 0).getTime() - new Date(left.updatedAt ?? 0).getTime()),
-    [providerProfiles, workItems],
+    [applicationAttentionItems, publicProfiles, workItems],
   );
-  const recentActivity = useMemo(() => providerProfiles.slice(0, 5), [providerProfiles]);
+  const recentActivity = useMemo(() => applicationCards.slice(0, 5), [applicationCards]);
 
   const summaryCards = workspace ? [
-    { label: "Active Profiles", value: workspace.activeProfileCount },
-    { label: "Ready for Review", value: workspace.readyForReviewCount },
-    { label: "Under Platform Review", value: workspace.underReviewCount },
-    { label: "Published", value: workspace.publishedCount },
-    { label: "Needs Attention", value: workspace.needsAttentionCount },
+    { label: "Active Profiles", value: applicationCards.filter(isApplicationActive).length },
+    { label: "Ready for Review", value: applicationCards.filter((application) => application.status === "READY_FOR_REVIEW").length },
+    { label: "Under Platform Review", value: applicationCards.filter((application) => application.status === "SUBMITTED" || application.status === "UNDER_REVIEW").length },
+    { label: "Published", value: applicationCards.filter((application) => application.status === "PUBLISHED").length },
+    { label: "Needs Attention", value: attentionItems.length },
   ] : [];
 
   const emailSummary = maskContact(workspace?.contactEmail ?? null, "email");
@@ -466,7 +659,7 @@ export function ProviderWorkspacePage() {
   if (!workspace) {
     return null;
   }
-  const profileCards = providerProfiles;
+  const profileCards = applicationCards;
 
   return (
     <section className="page-section provider-account-page">
@@ -474,7 +667,7 @@ export function ProviderWorkspacePage() {
         <div className="provider-account-heading">
           <span className="eyebrow">Provider account</span>
           <h1>Manage your provider profiles.</h1>
-          <p>Review what still needs attention, continue the right profile workflow, and keep published profiles separate from work in progress.</p>
+          <p>Review what still needs attention, continue the right application workflow, and keep published profiles separate from work in progress.</p>
         </div>
         <aside className="provider-account-session-card">
           <div className="provider-account-session-row">
@@ -624,6 +817,34 @@ export function ProviderWorkspacePage() {
         {attentionItems.length ? (
           <div className="provider-account-attention-list">
             {attentionItems.map((entry) =>
+              entry.kind === "PROVIDER_APPLICATION" ? (
+                <article className="provider-account-attention-item" key={`${entry.application.referenceNumber}-attention`}>
+                  <div className="provider-account-attention-copy">
+                    <strong>{entry.application.displayName || providerTypeLabel(entry.application.providerType)}</strong>
+                    <p>{providerTypeLabel(entry.application.providerType)} · {entry.application.referenceNumber}</p>
+                    <span>{applicationAttentionReason(entry.application) ?? applicationLatestUpdateLabel(entry.application)}</span>
+                    <small>Current stage: {applicationStageLabel(entry.application.currentStep)}</small>
+                  </div>
+                  <div className="provider-account-attention-meta">
+                    <span>{applicationStatusPill(entry.application)}</span>
+                    <small>Completion: {entry.application.completionPercent}% complete</small>
+                    <small>Last updated: {formatDateTime(entry.application.updatedAt)}</small>
+                    <small>Reference: {entry.application.referenceNumber}</small>
+                    {applicationPrimaryActionHref(entry.application) ? (
+                      <div className="cta-row">
+                        <Link className="primary-button" to={applicationPrimaryActionHref(entry.application)!}>
+                          {applicationPrimaryActionLabel(entry.application) ?? "View status"}
+                        </Link>
+                        {applicationSecondaryActionHref(entry.application) && applicationSecondaryActionLabel(entry.application) ? (
+                          <Link className="secondary-button" to={applicationSecondaryActionHref(entry.application)!}>
+                            {applicationSecondaryActionLabel(entry.application)}
+                          </Link>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                </article>
+              ) :
               entry.kind === "PUBLIC_PROFILE" ? (
                 <article className="provider-account-attention-item" key={`${entry.profile.draftReference}-attention`}>
                   <div className="provider-account-attention-copy">
@@ -675,7 +896,7 @@ export function ProviderWorkspacePage() {
           <DiscoverEmptyState
             icon="◌"
             title="No actions currently require your attention."
-            description="Provider profiles that are complete or published will remain visible below."
+            description="Provider applications that are complete or published will remain visible below."
             variant="compact"
           />
         )}
@@ -685,7 +906,7 @@ export function ProviderWorkspacePage() {
         <div className="provider-account-section-heading">
           <div>
             <h2>My Provider Profiles</h2>
-            <p>Profile lifecycle, review, publication, and visibility are shown here.</p>
+            <p>Application lifecycle, review, publication, and visibility are shown here.</p>
           </div>
           {supportedProviderTypes.length ? (
             <Link className="secondary-button" to={`${DISCOVER_ROUTES.listPractice.path}?mode=add`}>
@@ -695,50 +916,50 @@ export function ProviderWorkspacePage() {
         </div>
         {profileCards.length ? (
           <div className="provider-account-application-grid">
-            {profileCards.map((profile) => (
-              <article className="provider-account-application-card" key={profile.draftReference}>
+            {profileCards.map((application) => (
+              <article className="provider-account-application-card" key={application.referenceNumber}>
                 <div className="provider-account-card-header">
                   <div>
-                    <strong>{profile.displayName}</strong>
-                    <p>{providerTypeLabel(profile.profileType)}</p>
+                    <strong>{application.displayName}</strong>
+                    <p>{providerTypeLabel(application.providerType)} · {application.referenceNumber}</p>
                   </div>
-                  <span className="provider-account-status-pill">{profile.publicationStatus === "PUBLISHED" ? "Published" : profile.lifecycleLabel}</span>
+                  <span className="provider-account-status-pill">{applicationStatusPill(application)}</span>
                 </div>
                 <dl className="provider-account-detail-list">
                   <div>
-                    <dt>Live profile</dt>
-                    <dd>{profile.publicationStatus === "PUBLISHED" ? "Published" : profile.publicationStatus}</dd>
+                    <dt>Status</dt>
+                    <dd>{applicationStatusLabel(application.status)}</dd>
                   </div>
                   <div>
-                    <dt>Latest update</dt>
-                    <dd>{profileLatestUpdateLabel(profile)}</dd>
+                    <dt>Current stage</dt>
+                    <dd>{applicationStageLabel(application.currentStep)}</dd>
                   </div>
                   <div>
                     <dt>Completion</dt>
-                    <dd>{profile.completenessPercentage}% complete</dd>
+                    <dd>{application.completionPercent}% complete</dd>
                   </div>
                   <div>
-                    <dt>Visibility</dt>
-                    <dd>{profile.publicationStatus === "PUBLISHED" ? "Published" : "Private"}</dd>
+                    <dt>Live profile</dt>
+                    <dd>{application.status === "PUBLISHED" ? "Published" : "Private"}</dd>
                   </div>
                   <div>
                     <dt>Last updated</dt>
-                    <dd>{formatDateTime(profile.lastUpdatedAt)}</dd>
+                    <dd>{formatDateTime(application.updatedAt)}</dd>
                   </div>
                   <div>
                     <dt>Reference</dt>
-                    <dd>{profile.publicProfileReference}</dd>
+                    <dd>{application.referenceNumber}</dd>
                   </div>
                 </dl>
                 <div className="provider-account-card-actions">
-                  {profileManageActionHref(profile) ? (
-                    <Link className="primary-button" to={profileManageActionHref(profile)!}>
-                      {profileManageActionLabel(profile)}
+                  {applicationPrimaryActionHref(application) ? (
+                    <Link className="primary-button" to={applicationPrimaryActionHref(application)!}>
+                      {applicationPrimaryActionLabel(application) ?? "View status"}
                     </Link>
                   ) : null}
-                  {profilePublicActionHref(profile) ? (
-                    <Link className="secondary-button" to={profilePublicActionHref(profile)!}>
-                      View public profile
+                  {applicationSecondaryActionHref(application) && applicationSecondaryActionLabel(application) ? (
+                    <Link className="secondary-button" to={applicationSecondaryActionHref(application)!}>
+                      {applicationSecondaryActionLabel(application)}
                     </Link>
                   ) : null}
                 </div>
@@ -760,17 +981,17 @@ export function ProviderWorkspacePage() {
         <div className="provider-account-section-heading">
           <div>
             <h2>Recent activity</h2>
-            <p>Recent provider profile updates ordered by the latest change.</p>
+            <p>Recent provider application updates ordered by the latest change.</p>
           </div>
         </div>
         {recentActivity.length ? (
           <div className="provider-account-activity-list">
-            {recentActivity.map((profile) => (
-              <article className="provider-account-activity-item" key={`${profile.draftReference}-activity`}>
-                <strong>{profile.displayName || providerTypeLabel(profile.profileType)}</strong>
-                <p>{profile.publicProfileReference}</p>
-                <span>{profile.lifecycleLabel} · {profile.completenessPercentage}% complete</span>
-                <small>{formatDateTime(profile.lastUpdatedAt)}</small>
+            {recentActivity.map((application) => (
+              <article className="provider-account-activity-item" key={`${application.referenceNumber}-activity`}>
+                <strong>{application.displayName || providerTypeLabel(application.providerType)}</strong>
+                <p>{application.referenceNumber}</p>
+                <span>{applicationLatestUpdateLabel(application)} · {application.completionPercent}% complete</span>
+                <small>{formatDateTime(application.updatedAt)}</small>
               </article>
             ))}
           </div>

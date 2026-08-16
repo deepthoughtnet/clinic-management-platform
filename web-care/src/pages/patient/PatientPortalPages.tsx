@@ -87,6 +87,20 @@ import {
   sanitizePatientPhoneInput,
 } from "./patientLoginInput.js";
 import {
+  isValidPatientAccessCodeInput,
+  isValidPatientAccessRequestClinicSlug,
+  isValidPatientAccessRequestEmail,
+  isValidPatientAccessRequestFullName,
+  isValidPatientAccessRequestMobile,
+  isValidPatientAccessRequestNote,
+  normalizePatientAccessRequestClinicSlug,
+  normalizePatientAccessRequestEmail,
+  normalizePatientAccessRequestFullName,
+  normalizePatientAccessRequestNote,
+  sanitizePatientAccessCodeInput,
+  sanitizePatientAccessErrorMessage,
+} from "./patientAccessValidation.js";
+import {
   clearPublicBookingContext,
   normalizeClinicCode,
   resolvePatientAuthContext,
@@ -258,27 +272,6 @@ function sanitizePatientPortalErrorMessage(value: string) {
   }
   if (lower.includes("sms") || lower.includes("provider") || lower.includes("not available") || lower.includes("disabled")) {
     return "OTP is not available in this environment. Use dev OTP mode or check mock OTP config.";
-  }
-  return normalized;
-}
-
-function sanitizePatientAccessErrorMessage(value: string) {
-  const normalized = value.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "[redacted]");
-  const lower = normalized.toLowerCase();
-  if (lower.includes("mobile") || lower.includes("phone")) {
-    return "Enter a valid 10-digit Indian mobile number.";
-  }
-  if (lower.includes("access code") || lower.includes("invalid code") || lower.includes("code is invalid")) {
-    return "Enter the valid temporary access code.";
-  }
-  if (lower.includes("approved access request") || lower.includes("not currently active")) {
-    return "This access request is not currently active.";
-  }
-  if (lower.includes("clinic context")) {
-    return "Select the correct clinic or hospital before signing in.";
-  }
-  if (lower.includes("not available") || lower.includes("disabled")) {
-    return "Controlled access sign-in is not available right now.";
   }
   return normalized;
 }
@@ -1478,6 +1471,7 @@ export function PatientLoginPage({
   const [accessMessage, setAccessMessage] = useState<string | null>(null);
   const [accessPending, setAccessPending] = useState(false);
   const [accessAttempted, setAccessAttempted] = useState(false);
+  const [accessCodeTouched, setAccessCodeTouched] = useState(false);
   const doctorSlug = portalClinicContext.doctorSlug;
   const [doctorDetail, setDoctorDetail] = useState<FetchState<PublicDoctorDetailResponse | null>>({
     data: null,
@@ -1630,6 +1624,16 @@ export function PatientLoginPage({
   const otpValidation = otpVerifySchema.shape.otp.safeParse(otp);
   const canRequestOtp = Boolean(phoneValidation.success) && !requestPending;
   const canVerifyOtp = Boolean(phoneValidation.success && otpValidation.success && requestState?.accepted) && !verifyPending;
+  const accessPhoneError =
+    (phoneTouched || accessAttempted) && !phoneValidation.success
+      ? "Enter a valid 10-digit Indian mobile number."
+      : null;
+  const normalizedAccessCode = sanitizePatientAccessCodeInput(accessCode);
+  const accessCodeError =
+    (accessCodeTouched || accessAttempted) && !isValidPatientAccessCodeInput(accessCode)
+      ? "Enter the valid 8-digit temporary access code."
+      : null;
+  const canAccessSignIn = Boolean(phoneValidation.success && isValidPatientAccessCodeInput(accessCode)) && !accessPending;
   const phoneError =
     (phoneTouched || requestAttempted || verifyAttempted) && !phoneValidation.success
       ? "Enter a valid 10-digit Indian mobile number."
@@ -1793,13 +1797,13 @@ export function PatientLoginPage({
     event.preventDefault();
     setAccessAttempted(true);
     setPhoneTouched(true);
+    setAccessCodeTouched(true);
     if (!phoneValidation.success) {
       setAccessMessage(null);
       return;
     }
-    const normalizedAccessCode = accessCode.replace(/\D/g, "");
-    if (!normalizedAccessCode) {
-      setAccessMessage("Enter your temporary access code.");
+    if (!isValidPatientAccessCodeInput(accessCode)) {
+      setAccessMessage(null);
       return;
     }
     setAccessPending(true);
@@ -1911,37 +1915,59 @@ export function PatientLoginPage({
 
             <form className="patient-login-form" onSubmit={handleAccessLogin} noValidate>
               <label>
-                <span>Phone number</span>
+                <span>
+                  Phone number <span className="patient-field-required" aria-hidden="true">*</span>
+                </span>
               <input
                 value={phone}
                 onChange={(event) => {
-                  setPhone(event.target.value);
+                  setPhone(sanitizePatientPhoneInput(event.target.value));
                   setAccessMessage(null);
                 }}
                 onBlur={() => setPhoneTouched(true)}
                 placeholder="Enter 10-digit mobile number"
                 autoComplete="tel"
-                inputMode="tel"
-                aria-invalid={Boolean(!phoneValidation.success)}
+                inputMode="numeric"
+                maxLength={10}
+                required
+                aria-invalid={Boolean(accessPhoneError)}
+                aria-describedby={accessPhoneError ? "patient-access-phone-error" : undefined}
               />
+              {accessPhoneError ? (
+                <p id="patient-access-phone-error" className="patient-field-error">
+                  {accessPhoneError}
+                </p>
+              ) : null}
             </label>
               <label>
-                <span>Temporary access code</span>
+                <span>
+                  Temporary access code <span className="patient-field-required" aria-hidden="true">*</span>
+                </span>
                 <input
                   value={accessCode}
                   onChange={(event) => {
-                    setAccessCode(event.target.value.replace(/\D/g, ""));
+                    setAccessCode(sanitizePatientAccessCodeInput(event.target.value));
                     setAccessMessage(null);
                   }}
-                onBlur={() => setAccessAttempted(true)}
+                onBlur={() => {
+                  setAccessCodeTouched(true);
+                }}
                 placeholder="8-digit access code"
                 inputMode="numeric"
                 autoComplete="one-time-code"
                 maxLength={8}
+                required
+                aria-invalid={Boolean(accessCodeError)}
+                aria-describedby={accessCodeError ? "patient-access-code-error" : undefined}
               />
+              {accessCodeError ? (
+                <p id="patient-access-code-error" className="patient-field-error">
+                  {accessCodeError}
+                </p>
+              ) : null}
             </label>
             <div className="patient-login-actions">
-                <button className="primary-button wide-button" type="submit" disabled={accessPending || !phoneValidation.success || accessCode.replace(/\D/g, "").length < 8}>
+                <button className="primary-button wide-button" type="submit" disabled={!canAccessSignIn}>
                   {accessPending ? "Signing in..." : "Sign in"}
                 </button>
               </div>
@@ -2045,17 +2071,21 @@ export function PatientLoginPage({
               </div>
             ) : null}
             <label>
-              <span>Phone number</span>
+              <span>
+                Phone number <span className="patient-field-required" aria-hidden="true">*</span>
+              </span>
               <input
                 value={phone}
                 onChange={(event) => {
-                  setPhone(event.target.value);
+                  setPhone(sanitizePatientPhoneInput(event.target.value));
                   clearOtpFlowMessages();
                 }}
                 onBlur={() => setPhoneTouched(true)}
                 placeholder="Enter 10-digit mobile number"
                 autoComplete="tel"
-                inputMode="tel"
+                inputMode="numeric"
+                maxLength={10}
+                required
                 aria-invalid={Boolean(phoneError)}
                 aria-describedby={phoneError ? "patient-login-phone-error" : undefined}
               />
@@ -2091,7 +2121,9 @@ export function PatientLoginPage({
 
           <form className="patient-login-form" onSubmit={handleVerifyOtp} noValidate>
             <label>
-              <span>OTP code</span>
+              <span>
+                OTP code <span className="patient-field-required" aria-hidden="true">*</span>
+              </span>
               <input
                 value={otp}
                 onChange={(event) => {
@@ -2190,11 +2222,47 @@ export function PatientAccessRequestPage({
   const [requestMessage, setRequestMessage] = useState<string | null>(null);
   const [requestError, setRequestError] = useState<string | null>(null);
   const [attempted, setAttempted] = useState(false);
+  const [fullNameTouched, setFullNameTouched] = useState(false);
+  const [mobileTouched, setMobileTouched] = useState(false);
+  const [emailTouched, setEmailTouched] = useState(false);
+  const [clinicSlugTouched, setClinicSlugTouched] = useState(false);
+  const [noteTouched, setNoteTouched] = useState(false);
   const loginNotice = searchParams.get("message")?.trim() || null;
   const normalizedMobile = sanitizePatientPhoneInput(mobile);
-  const mobileValidation = indianMobileNumber().safeParse(normalizedMobile);
-  const normalizedClinicSlug = clinicSlug.trim();
-  const canSubmit = Boolean(fullName.trim() && mobileValidation.success && normalizedClinicSlug) && !requestPending;
+  const normalizedFullName = normalizePatientAccessRequestFullName(fullName);
+  const normalizedEmail = normalizePatientAccessRequestEmail(email);
+  const normalizedClinicSlug = normalizePatientAccessRequestClinicSlug(clinicSlug);
+  const normalizedNote = normalizePatientAccessRequestNote(note);
+  const fullNameError =
+    (fullNameTouched || attempted) && !isValidPatientAccessRequestFullName(fullName)
+      ? normalizedFullName.length < 2
+        ? "Enter a full name between 2 and 120 characters."
+        : "Full name must be 120 characters or fewer."
+      : null;
+  const mobileError =
+    (mobileTouched || attempted) && !isValidPatientAccessRequestMobile(mobile)
+      ? "Enter a valid 10-digit Indian mobile number."
+      : null;
+  const emailError =
+    (emailTouched || attempted) && !isValidPatientAccessRequestEmail(email)
+      ? "Enter a valid email address."
+      : null;
+  const clinicSlugError =
+    (clinicSlugTouched || attempted) && !isValidPatientAccessRequestClinicSlug(clinicSlug)
+      ? "Please select or enter a valid clinic or hospital slug."
+      : null;
+  const noteError =
+    (noteTouched || attempted) && !isValidPatientAccessRequestNote(note)
+      ? "Note must be 500 characters or fewer."
+      : null;
+  const canSubmit =
+    Boolean(
+      isValidPatientAccessRequestFullName(fullName)
+        && isValidPatientAccessRequestMobile(mobile)
+        && isValidPatientAccessRequestEmail(email)
+        && isValidPatientAccessRequestClinicSlug(clinicSlug)
+        && isValidPatientAccessRequestNote(note),
+    ) && !requestPending;
 
   useEffect(() => {
     setClinicSlug(portalClinicContext.clinicSlug || portalClinicContext.clinicCode || "");
@@ -2209,8 +2277,13 @@ export function PatientAccessRequestPage({
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setAttempted(true);
-    if (!fullName.trim() || !mobileValidation.success || !normalizedClinicSlug) {
-      setRequestError("Enter your full name, mobile number, and clinic or hospital slug.");
+    setFullNameTouched(true);
+    setMobileTouched(true);
+    setEmailTouched(true);
+    setClinicSlugTouched(true);
+    setNoteTouched(true);
+    if (!canSubmit) {
+      setRequestError(null);
       return;
     }
     setRequestPending(true);
@@ -2226,10 +2299,10 @@ export function PatientAccessRequestPage({
         nextPath: portalClinicContext.nextPath,
       });
       const response = await postPatientPortalAccessRequest<PatientPortalAccessRequestResponse>("/api/patient-portal/auth/access-requests", {
-        fullName: fullName.trim(),
+        fullName: normalizedFullName,
         mobile: normalizedMobile,
-        email: email.trim() || null,
-        note: note.trim() || null,
+        email: normalizedEmail || null,
+        note: normalizedNote || null,
         context: context as PatientPortalAccessRequestContext | null,
       });
       setRequestMessage(
@@ -2300,31 +2373,55 @@ export function PatientAccessRequestPage({
 
           <form className="patient-login-form" onSubmit={handleSubmit} noValidate>
             <label>
-              <span>Full name</span>
+              <span>
+                Full name <span className="patient-field-required" aria-hidden="true">*</span>
+              </span>
               <input
                 value={fullName}
                 onChange={(event) => {
                   setFullName(event.target.value);
                   setRequestError(null);
+                  setRequestMessage(null);
                 }}
+                onBlur={() => setFullNameTouched(true)}
                 placeholder="Your full name"
                 autoComplete="name"
-                aria-invalid={Boolean(attempted && !fullName.trim())}
+                maxLength={120}
+                required
+                aria-invalid={Boolean(fullNameError)}
+                aria-describedby={fullNameError ? "patient-access-full-name-error" : undefined}
               />
+              {fullNameError ? (
+                <p id="patient-access-full-name-error" className="patient-field-error">
+                  {fullNameError}
+                </p>
+              ) : null}
             </label>
             <label>
-              <span>Mobile number</span>
+              <span>
+                Mobile number <span className="patient-field-required" aria-hidden="true">*</span>
+              </span>
               <input
                 value={mobile}
                 onChange={(event) => {
-                  setMobile(event.target.value);
+                  setMobile(sanitizePatientPhoneInput(event.target.value));
                   setRequestError(null);
+                  setRequestMessage(null);
                 }}
+                onBlur={() => setMobileTouched(true)}
                 placeholder="Enter 10-digit mobile number"
                 autoComplete="tel"
-                inputMode="tel"
-                aria-invalid={Boolean(attempted && !mobileValidation.success)}
+                inputMode="numeric"
+                maxLength={10}
+                required
+                aria-invalid={Boolean(mobileError)}
+                aria-describedby={mobileError ? "patient-access-mobile-error" : undefined}
               />
+              {mobileError ? (
+                <p id="patient-access-mobile-error" className="patient-field-error">
+                  {mobileError}
+                </p>
+              ) : null}
             </label>
             <label>
               <span>Email address</span>
@@ -2333,23 +2430,47 @@ export function PatientAccessRequestPage({
                 onChange={(event) => {
                   setEmail(event.target.value);
                   setRequestError(null);
+                  setRequestMessage(null);
                 }}
+                onBlur={() => setEmailTouched(true)}
                 placeholder="Optional"
+                type="email"
                 autoComplete="email"
                 inputMode="email"
+                maxLength={254}
+                aria-invalid={Boolean(emailError)}
+                aria-describedby={emailError ? "patient-access-email-error" : undefined}
               />
+              {emailError ? (
+                <p id="patient-access-email-error" className="patient-field-error">
+                  {emailError}
+                </p>
+              ) : null}
             </label>
             <label>
-              <span>Clinic or hospital slug</span>
+              <span>
+                Clinic or hospital slug <span className="patient-field-required" aria-hidden="true">*</span>
+              </span>
               <input
                 value={clinicSlug}
                 onChange={(event) => {
                   setClinicSlug(event.target.value);
                   setRequestError(null);
+                  setRequestMessage(null);
                 }}
+                onBlur={() => setClinicSlugTouched(true)}
                 placeholder="e.g. jeevanam-multispeciality-hospital"
-                aria-invalid={Boolean(attempted && !normalizedClinicSlug)}
+                autoComplete="off"
+                maxLength={60}
+                required
+                aria-invalid={Boolean(clinicSlugError)}
+                aria-describedby={clinicSlugError ? "patient-access-clinic-slug-error" : undefined}
               />
+              {clinicSlugError ? (
+                <p id="patient-access-clinic-slug-error" className="patient-field-error">
+                  {clinicSlugError}
+                </p>
+              ) : null}
             </label>
             <label>
               <span>Note</span>
@@ -2358,10 +2479,20 @@ export function PatientAccessRequestPage({
                 onChange={(event) => {
                   setNote(event.target.value);
                   setRequestError(null);
+                  setRequestMessage(null);
                 }}
+                onBlur={() => setNoteTouched(true)}
                 placeholder="Optional note for Platform Admin"
                 rows={4}
+                maxLength={500}
+                aria-invalid={Boolean(noteError)}
+                aria-describedby={noteError ? "patient-access-note-error" : undefined}
               />
+              {noteError ? (
+                <p id="patient-access-note-error" className="patient-field-error">
+                  {noteError}
+                </p>
+              ) : null}
             </label>
 
             {requestError ? (

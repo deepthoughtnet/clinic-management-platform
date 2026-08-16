@@ -145,6 +145,34 @@ function nextStepsMessage(status: ProviderStatus, providerType: ProviderType) {
   }
 }
 
+function currentStateMessage(status: ProviderStatus) {
+  switch (status) {
+    case "SUBMITTED":
+      return "No action is required from you at this time.";
+    case "UNDER_REVIEW":
+      return "The Jeevanam verification team is reviewing your submission.";
+    case "CHANGES_REQUESTED":
+      return "Review the requested changes and update the relevant sections.";
+    case "APPROVED":
+      return "Your application has been approved and is waiting for publication.";
+    case "PUBLISHED":
+      return "Your published profile is live on Jeevanam Discover.";
+    case "DRAFT":
+    case "CONTACT_VERIFIED":
+    case "PROFILE_INCOMPLETE":
+    case "READY_FOR_REVIEW":
+      return "Continue the draft and submit when it is ready.";
+    case "DISCARDED":
+      return "This onboarding was discarded and removed from active onboarding.";
+    case "SUSPENDED":
+      return "This application is suspended.";
+    case "ARCHIVED":
+      return "This application has been archived.";
+    default:
+      return "Continue editing the draft until it is ready for submission.";
+  }
+}
+
 function notificationMessage(workspaceEmail: string | null, workspacePhone: string | null) {
   const email = workspaceEmail?.trim() || null;
   const phone = workspacePhone?.trim() || null;
@@ -471,6 +499,7 @@ function ProviderApplicationSummary({ dashboard }: { dashboard: ProviderDashboar
 
 function ProviderApplicationNextSteps({ dashboard }: { dashboard: ProviderDashboard }) {
   const { application } = dashboard;
+  const hasResolvedChangeRequests = application.status === "APPROVED" || application.status === "PUBLISHED";
   return (
     <article className="provider-status-panel">
       <div className="provider-status-panel-heading">
@@ -480,7 +509,7 @@ function ProviderApplicationNextSteps({ dashboard }: { dashboard: ProviderDashbo
         </div>
       </div>
       <p className="provider-status-next-steps">{nextStepsMessage(application.status, application.providerType)}</p>
-      {dashboard.changeRequests.length ? (
+      {!hasResolvedChangeRequests && dashboard.changeRequests.length ? (
         <div className="provider-status-notes">
           {dashboard.changeRequests.map((request) => (
             <div className="provider-status-note" key={request.id}>
@@ -490,6 +519,8 @@ function ProviderApplicationNextSteps({ dashboard }: { dashboard: ProviderDashbo
             </div>
           ))}
         </div>
+      ) : hasResolvedChangeRequests ? (
+        <p className="provider-dashboard-helper">Resolved reviewer comments are recorded in the lifecycle history below.</p>
       ) : null}
     </article>
   );
@@ -542,6 +573,23 @@ function ProviderApplicationTimeline({ dashboard }: { dashboard: ProviderDashboa
             </article>
           )) : <p>No lifecycle history is available yet.</p>}
         </div>
+        {dashboard.changeRequests.length ? (
+          <div className="provider-status-history-resolved">
+            <strong>Review history</strong>
+            <div className="provider-status-notes">
+              {dashboard.changeRequests.map((request) => (
+                <article key={`resolved-${request.id}`} className="provider-status-note is-resolved">
+                  <div>
+                    <strong>Resolved reviewer comment</strong>
+                    <p>{request.reviewerMessage ?? "Review team feedback"}</p>
+                    {request.requestedSections.length ? <small>{request.requestedSections.join(", ")}</small> : null}
+                  </div>
+                  <small>{request.requestedAt ? formatDateTime(request.requestedAt) : "Resolved"}</small>
+                </article>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </details>
     </article>
   );
@@ -909,15 +957,7 @@ export function ProviderDashboardPage() {
                 <h2>Current state</h2>
               </div>
             </div>
-            <p className="provider-status-next-steps">
-              {dashboard.application.status === "SUBMITTED" || dashboard.application.status === "UNDER_REVIEW"
-                ? "No action is required from you at this time."
-                : dashboard.application.status === "CHANGES_REQUESTED"
-                  ? "Review the requested changes and update the relevant sections."
-                  : dashboard.application.status === "PUBLISHED"
-                    ? "Your published profile is live on Jeevanam Discover."
-                    : "Continue the draft and submit when it is ready."}
-            </p>
+            <p className="provider-status-next-steps">{currentStateMessage(dashboard.application.status)}</p>
           </article>
         </aside>
       </div>

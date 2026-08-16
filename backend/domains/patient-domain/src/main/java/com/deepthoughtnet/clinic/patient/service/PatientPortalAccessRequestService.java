@@ -83,10 +83,10 @@ public class PatientPortalAccessRequestService {
         if (command == null) {
             throw new IllegalArgumentException("Access request is required");
         }
-        String fullName = normalizeRequired(command.fullName(), "Full name is required", 256);
+        String fullName = normalizeRequired(command.fullName(), "Full name is required", 120);
         String mobile = normalizeRequiredPhone(command.mobile());
-        String email = normalizeOptional(command.email(), 256);
-        String note = normalizeOptional(command.note(), null);
+        String email = normalizeOptional(command.email(), 254);
+        String note = normalizeOptional(command.note(), 500);
 
         TenantEntity tenant = resolveTenant(command.context());
         if (tenant == null) {

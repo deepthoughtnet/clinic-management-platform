@@ -12,7 +12,7 @@ public final class ProviderAccessModels {
 
     public record ProviderAccessRequestSubmitRequest(
             @NotBlank String fullName,
-            String email,
+            @NotBlank String email,
             @NotBlank String mobile,
             @NotNull ProviderType providerType,
             String providerApplicationReference,

@@ -44,6 +44,7 @@ export type PublicDoctorSummaryResponse = {
   availableToday: boolean;
   nextAvailableSlotSummary: string | null;
   distanceKm?: number | string | null;
+  canBookOnline?: boolean;
 };
 
 export type PublicClinicSummaryResponse = {
@@ -108,6 +109,7 @@ export type PublicDoctorDetailResponse = {
   state?: string | null;
   country?: string | null;
   primarySpeciality?: string | null;
+  consultationFee?: number | string | null;
   reviewsComingSoon?: boolean;
   subtitle?: string | null;
   bookingSummary?: string | null;
@@ -115,6 +117,7 @@ export type PublicDoctorDetailResponse = {
   availableDays: string[];
   nextAvailableSlots: string[];
   availableToday: boolean;
+  canBookOnline?: boolean;
 };
 
 export type PublicClinicDetailResponse = {

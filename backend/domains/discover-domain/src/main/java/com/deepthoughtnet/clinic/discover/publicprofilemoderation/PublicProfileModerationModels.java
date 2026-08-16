@@ -40,7 +40,9 @@ public final class PublicProfileModerationModels {
             String publicPath,
             String reason,
             OffsetDateTime publishedAt,
+            String publishedBy,
             OffsetDateTime unpublishedAt,
+            String unpublishedBy,
             boolean current,
             String effectiveVisibility,
             String visibilityReason
@@ -83,6 +85,7 @@ public final class PublicProfileModerationModels {
             String visibilityReason,
             String publicUrl,
             List<PublicProfileReviewFindingRecord> findings,
+            List<PublicProfilePublicationRecord> publicationHistory,
             List<String> providerAllowedActions,
             List<String> allowedActions
     ) {

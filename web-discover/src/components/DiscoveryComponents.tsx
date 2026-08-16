@@ -23,6 +23,7 @@ import {
   providerBookingPrimaryLabel,
   providerBookingSecondaryLabel,
   normalizeBookingMode,
+  resolveDoctorBookingMode,
 } from "./discovery/BookingCapability";
 
 export type FetchState<T> = {
@@ -557,7 +558,7 @@ export function DoctorCard({
     : dedupeDisplayParts(patientFacingLocationParts(doctor.clinicDisplayName, doctor.area, doctor.city)).join(" · ");
   const availabilityText = doctor.availableToday ? "Available today" : doctor.nextAvailableSlotSummary || "Check next slot";
   const availabilityClass = doctor.availableToday ? "chip chip--success" : "chip chip--info";
-  const bookingMode = normalizeBookingMode(doctor.bookingMode) ?? "ONLINE_BOOKING";
+  const bookingMode = resolveDoctorBookingMode(doctor.bookingMode, doctor.canBookOnline, doctor.contactPhone);
   const bookingHref = doctor.contactPhone?.trim() ? `tel:${doctor.contactPhone.trim()}` : null;
   const primaryActionLabel = providerBookingPrimaryLabel(bookingMode);
   const secondaryActionLabel = providerBookingSecondaryLabel(bookingMode) ?? "View profile";

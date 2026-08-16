@@ -91,6 +91,10 @@ export default function ProviderAccessRequestsPage() {
 
   const status = (searchParams.get("status") || "REQUESTED").toUpperCase();
   const q = searchParams.get("q") || "";
+  const selectedStatus = (selectedRequest?.status || "").toUpperCase();
+  const canApproveSelected = selectedStatus === "REQUESTED";
+  const canRejectSelected = selectedStatus === "REQUESTED";
+  const canRevokeSelected = selectedStatus === "APPROVED";
 
   React.useEffect(() => {
     const next = new URLSearchParams(searchParams);
@@ -367,32 +371,38 @@ export default function ProviderAccessRequestsPage() {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setSelectedRequest(null)}>Close</Button>
-          <Button
-            variant="outlined"
-            color="error"
-            startIcon={<BlockRoundedIcon />}
-            onClick={() => void runDecision("reject")}
-            disabled={!selectedRequest || decisionPending}
-          >
-            Reject
-          </Button>
-          <Button
-            variant="outlined"
-            startIcon={<PauseCircleRoundedIcon />}
-            onClick={() => void runDecision("revoke")}
-            disabled={!selectedRequest || decisionPending}
-          >
-            Revoke
-          </Button>
-          <Button
-            variant="contained"
-            color="success"
-            startIcon={<CheckCircleRoundedIcon />}
-            onClick={() => void runDecision("approve")}
-            disabled={!selectedRequest || decisionPending}
-          >
-            Approve
-          </Button>
+          {canRejectSelected ? (
+            <Button
+              variant="outlined"
+              color="error"
+              startIcon={<BlockRoundedIcon />}
+              onClick={() => void runDecision("reject")}
+              disabled={!selectedRequest || decisionPending}
+            >
+              Reject
+            </Button>
+          ) : null}
+          {canRevokeSelected ? (
+            <Button
+              variant="outlined"
+              startIcon={<PauseCircleRoundedIcon />}
+              onClick={() => void runDecision("revoke")}
+              disabled={!selectedRequest || decisionPending}
+            >
+              Revoke
+            </Button>
+          ) : null}
+          {canApproveSelected ? (
+            <Button
+              variant="contained"
+              color="success"
+              startIcon={<CheckCircleRoundedIcon />}
+              onClick={() => void runDecision("approve")}
+              disabled={!selectedRequest || decisionPending}
+            >
+              Approve
+            </Button>
+          ) : null}
         </DialogActions>
       </Dialog>
     </Box>

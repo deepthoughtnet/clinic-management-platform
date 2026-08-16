@@ -73,7 +73,6 @@ import {
   unlinkProviderConnectionLink,
   suspendProviderConnectionLink,
   startProviderConnectionsPublicProfileReview,
-  unpublishProviderConnectionsPublicProfileReview,
   type ProviderConnectionsConflictResponse,
   type ProviderConnectionsLinkDetailResponse,
   type ProviderConnectionsLinkProposalRequest,
@@ -143,7 +142,6 @@ type ReviewAction =
   | "REJECT_SUBMISSION"
   | "APPROVE_SUBMISSION"
   | "PUBLISH_PROFILE"
-  | "UNPUBLISH_PROFILE"
   | "VIEW_SUBMISSION"
   | "VIEW_PUBLIC_PROFILE"
   | "VIEW_REVIEW_HISTORY";
@@ -909,8 +907,6 @@ function formatReviewAction(action: ReviewAction) {
       return "Approve submission";
     case "PUBLISH_PROFILE":
       return "Publish profile";
-    case "UNPUBLISH_PROFILE":
-      return "Unpublish profile";
     case "VIEW_SUBMISSION":
       return "View submission";
     case "VIEW_PUBLIC_PROFILE":
@@ -928,7 +924,6 @@ function isReviewAction(value: string): value is ReviewAction {
     "REJECT_SUBMISSION",
     "APPROVE_SUBMISSION",
     "PUBLISH_PROFILE",
-    "UNPUBLISH_PROFILE",
     "VIEW_SUBMISSION",
     "VIEW_PUBLIC_PROFILE",
     "VIEW_REVIEW_HISTORY",
@@ -947,14 +942,6 @@ function isReviewModerationAction(value: string): value is ReviewAction {
   ].includes(value);
 }
 
-function isReviewPublicationAction(value: string): value is ReviewAction {
-  return [
-    "VIEW_PUBLIC_PROFILE",
-    "UNPUBLISH_PROFILE",
-    "VIEW_REVIEW_HISTORY",
-  ].includes(value);
-}
-
 function reviewActionPermission(action: ReviewAction) {
   switch (action) {
     case "START_REVIEW":
@@ -964,7 +951,6 @@ function reviewActionPermission(action: ReviewAction) {
     case "PUBLISH_PROFILE":
       return "platform.provider_connection.approve";
     case "REJECT_SUBMISSION":
-    case "UNPUBLISH_PROFILE":
       return "platform.provider_connection.reject";
     case "VIEW_SUBMISSION":
     case "VIEW_PUBLIC_PROFILE":
@@ -979,7 +965,6 @@ function reviewActionVariant(action: ReviewAction) {
     case "PUBLISH_PROFILE":
       return "contained" as const;
     case "REJECT_SUBMISSION":
-    case "UNPUBLISH_PROFILE":
       return "outlined" as const;
     case "REQUEST_CHANGES":
       return "outlined" as const;
@@ -997,7 +982,6 @@ function reviewActionColor(action: ReviewAction) {
     case "PUBLISH_PROFILE":
       return "success" as const;
     case "REJECT_SUBMISSION":
-    case "UNPUBLISH_PROFILE":
       return "error" as const;
     case "REQUEST_CHANGES":
       return "warning" as const;
@@ -1620,19 +1604,17 @@ function ReviewCommandDialog({
                 ? "Add finding records a non-decision review observation while the review remains in progress."
               : action === "REQUEST_CHANGES"
                 ? "Request changes captures structured findings grouped by editor section."
-                : action === "REJECT_SUBMISSION"
+              : action === "REJECT_SUBMISSION"
                   ? "Reject submission keeps ownership and consent unchanged."
                   : action === "APPROVE_SUBMISSION"
                     ? "Approval marks the submission approved but does not publish it."
                     : action === "PUBLISH_PROFILE"
                       ? "Publish creates or updates the public projection."
-                      : action === "UNPUBLISH_PROFILE"
-                        ? "Unpublish hides the public projection and preserves history."
-                        : "Use the backend-authoritative moderation action."}
+                      : "Use the backend-authoritative moderation action."}
           </Alert>
           {!isFindingAction ? (
             <TextField
-              label={action === "START_REVIEW" ? "Review note" : action === "REQUEST_CHANGES" ? "Provider-facing message" : action === "APPROVE_SUBMISSION" ? "Approval note" : action === "UNPUBLISH_PROFILE" ? "Unpublish reason" : "Reason"}
+              label={action === "START_REVIEW" ? "Review note" : action === "REQUEST_CHANGES" ? "Provider-facing message" : action === "APPROVE_SUBMISSION" ? "Approval note" : "Reason"}
               value={reason}
               onChange={(event) => onReasonChange(event.target.value)}
               fullWidth
@@ -2338,9 +2320,6 @@ export default function ProviderConnectionsPage() {
         case "PUBLISH_PROFILE":
           await publishProviderConnectionsPublicProfileReview(auth.accessToken, selectedReviewReference, { reason });
           break;
-        case "UNPUBLISH_PROFILE":
-          await unpublishProviderConnectionsPublicProfileReview(auth.accessToken, selectedReview?.publicProfileReference || "", { reason });
-          break;
         default:
           break;
       }
@@ -2918,13 +2897,49 @@ export default function ProviderConnectionsPage() {
                                 <Chip size="small" label={`Blocking findings: ${blockingCount}`} color={blockingCount ? "error" : "default"} variant="outlined" />
                               </Stack>
                               <PlatformPublicProfileReviewPreview review={selectedReview} />
+                              {selectedReview.publicationHistory?.length ? (
+                                <Paper variant="outlined" sx={{ p: 1.5 }}>
+                                  <Stack spacing={1}>
+                                    <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Publication history</Typography>
+                                    <Stack spacing={1}>
+                                      {selectedReview.publicationHistory.map((entry, index) => {
+                                        const hasPriorUnpublish = selectedReview.publicationHistory.slice(0, index).some((item) => (item.publicationStatus || "").toUpperCase() === "UNPUBLISHED");
+                                        const label = (entry.publicationStatus || "").toUpperCase() === "UNPUBLISHED"
+                                          ? "Unpublished"
+                                          : hasPriorUnpublish
+                                            ? "Republished"
+                                            : "Published";
+                                        return (
+                                          <Paper key={entry.publicationReference} variant="outlined" sx={{ p: 1.25 }}>
+                                            <Stack spacing={0.5}>
+                                              <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" alignItems="center">
+                                                <Chip size="small" label={label} variant="outlined" />
+                                                <Chip size="small" label={`Status: ${formatModerationStatus(entry.publicationStatus)}`} variant="outlined" />
+                                              </Stack>
+                                              <Typography variant="body2" sx={{ fontWeight: 700 }}>{entry.reason || "No reason provided"}</Typography>
+                                              <Typography variant="body2" color="text.secondary">
+                                                Actor: {(entry.publicationStatus || "").toUpperCase() === "UNPUBLISHED"
+                                                  ? entry.unpublishedBy || entry.publishedBy || "—"
+                                                  : entry.publishedBy || "—"}
+                                              </Typography>
+                                              <Typography variant="body2" color="text.secondary">Published: {formatDateTime(entry.publishedAt)}</Typography>
+                                              {(entry.publicationStatus || "").toUpperCase() === "UNPUBLISHED" ? (
+                                                <Typography variant="body2" color="text.secondary">Unpublished: {formatDateTime(entry.unpublishedAt)}</Typography>
+                                              ) : null}
+                                            </Stack>
+                                          </Paper>
+                                        );
+                                      })}
+                                    </Stack>
+                                  </Stack>
+                                </Paper>
+                              ) : null}
                               <Paper variant="outlined" sx={{ p: 1.5 }}>
                                 <Stack spacing={1}>
                                   <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Action panel</Typography>
                                   <Typography variant="body2" color="text.secondary">Actions are rendered only from backend allowedActions.</Typography>
                                   {(() => {
                                     const moderationActions = (selectedReview.allowedActions || []).filter((action) => isReviewModerationAction(action));
-                                    const publicationActions = (selectedReview.allowedActions || []).filter((action) => isReviewPublicationAction(action));
                                     return (
                                       <Stack spacing={1.25}>
                                         {moderationActions.length ? (
@@ -2934,16 +2949,6 @@ export default function ProviderConnectionsPage() {
                                             </Typography>
                                             <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
                                               {moderationActions.map((action) => renderReviewActionButton(action, selectedReview.submissionReference, selectedReview.publicUrl))}
-                                            </Stack>
-                                          </Stack>
-                                        ) : null}
-                                        {publicationActions.length ? (
-                                          <Stack spacing={0.75}>
-                                            <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 800, letterSpacing: 0.3, textTransform: "uppercase" }}>
-                                              Publication management
-                                            </Typography>
-                                            <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
-                                              {publicationActions.map((action) => renderReviewActionButton(action, selectedReview.submissionReference, selectedReview.publicUrl))}
                                             </Stack>
                                           </Stack>
                                         ) : null}

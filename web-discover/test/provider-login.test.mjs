@@ -13,6 +13,7 @@ test("provider login uses explicit challenge ids and preserves otp strings", () 
   const page = read("src/pages/provider/ProviderLoginPage.tsx");
   const api = read("src/api/providerAuth.ts");
   const styles = read("src/styles.css");
+  const validation = read("src/pages/provider/providerAccessValidation.ts");
 
   assert.ok(page.includes("type ActiveProviderLoginChallenge = {"));
   assert.ok(page.includes("function toActiveChallenge(response: ProviderLoginChallengeResponse): ActiveProviderLoginChallenge"));
@@ -42,10 +43,16 @@ test("provider login uses explicit challenge ids and preserves otp strings", () 
   assert.ok(api.includes("/api/provider/auth/challenges/${challengeId}/verify"));
   assert.ok(api.includes("challengeId: string"));
   assert.ok(api.includes("maskedRecipient: string | null"));
+  assert.ok(validation.includes("PROVIDER_LOGIN_IDENTIFIER_MAX_LENGTH"));
+  assert.ok(validation.includes("PROVIDER_LOGIN_ACCESS_CODE_LENGTH"));
+  assert.ok(validation.includes("getProviderLoginIdentifierError"));
+  assert.ok(validation.includes("getProviderAccessCodeError"));
   assert.ok(styles.includes(".provider-auth-page"));
   assert.ok(styles.includes(".provider-auth-card"));
   assert.ok(styles.includes(".provider-auth-field"));
   assert.ok(styles.includes(".provider-auth-code-input"));
+  assert.ok(styles.includes(".provider-auth-field-error"));
+  assert.ok(styles.includes(".provider-field-required"));
   assert.ok(styles.includes(".provider-auth-contact-card"));
   assert.ok(styles.includes(".provider-auth-dev-panel"));
   assert.ok(styles.includes("width: min(680px"));

@@ -18,7 +18,7 @@ import {
 import type { PublicDoctorSummaryResponse } from "../../api/publicCatalog";
 import { DISCOVER_DETAIL_PATHS } from "../../routes";
 import { careBookingUrl, formatConsultationFee, initials } from "../DiscoveryComponents";
-import { BookingCapabilityBadge, providerBookingPrimaryLabel, providerBookingSecondaryLabel, normalizeBookingMode } from "./BookingCapability";
+import { BookingCapabilityBadge, providerBookingPrimaryLabel, providerBookingSecondaryLabel, resolveDoctorBookingMode, type BookingMode } from "./BookingCapability";
 import { PublicMediaImage } from "../landing/PublicMediaImage";
 
 export type DoctorBreadcrumbItem = {
@@ -79,6 +79,7 @@ export type DoctorRelatedDoctorCard = {
   contactPhone: string | null;
   bookingMode: string | null;
   availableToday: boolean;
+  canBookOnline?: boolean;
 };
 
 export const doctorSampleReviews: DoctorReview[] = [
@@ -239,7 +240,7 @@ export function ReviewCard({ review }: { review: DoctorReview }) {
   );
 }
 
-export function AvailabilityTimeline({ days }: { days: DoctorScheduleDay[] }) {
+export function AvailabilityTimeline({ days, fallbackWorkingHours }: { days: DoctorScheduleDay[]; fallbackWorkingHours?: string | null }) {
   return (
     <section className="doctor-availability-timeline" aria-label="Working hours">
       <div className="doctor-section-heading">
@@ -260,7 +261,7 @@ export function AvailabilityTimeline({ days }: { days: DoctorScheduleDay[] }) {
         </div>
       ) : (
         <div className="doctor-empty-state" role="status">
-          <p>Working hours not published on this profile yet.</p>
+          <p>{fallbackWorkingHours?.trim() ? `Working hours: ${fallbackWorkingHours.trim()}` : "Working hours are shared in the public profile information."}</p>
         </div>
       )}
     </section>
@@ -275,6 +276,8 @@ export function BookingPanel({
   averageWaitTime,
   appointmentDuration,
   bookingUrl,
+  bookingMode,
+  canBookOnline,
   callHref,
   callLabel = "Call Clinic",
   feeLabel = "Consultation Fee",
@@ -283,9 +286,11 @@ export function BookingPanel({
   nextAvailableDays: Array<{ day: string; slots: string[] }>;
   consultationModes: string[];
   clinicName: string;
-  averageWaitTime: string;
-  appointmentDuration: string;
+  averageWaitTime?: string | null;
+  appointmentDuration?: string | null;
   bookingUrl: string;
+  bookingMode: BookingMode;
+  canBookOnline: boolean;
   callHref?: string | null;
   callLabel?: string;
   feeLabel?: string;
@@ -301,18 +306,24 @@ export function BookingPanel({
         <span>{consultationFee}</span>
       </div>
       <div className="doctor-booking-panel__slots" aria-label="Available slots">
-        {nextAvailableDays.length ? (
-          nextAvailableDays.map((day) => (
-            <div className="doctor-booking-panel__day" key={day.day}>
-              <strong>{day.day}</strong>
-              <div className="doctor-booking-panel__slot-row">
-                {day.slots.length ? day.slots.map((slot) => <span key={slot} className="chip chip--muted">{slot}</span>) : <span className="doctor-booking-panel__closed">Slots shared after review</span>}
+        {canBookOnline ? (
+          nextAvailableDays.length ? (
+            nextAvailableDays.map((day) => (
+              <div className="doctor-booking-panel__day" key={day.day}>
+                <strong>{day.day}</strong>
+                <div className="doctor-booking-panel__slot-row">
+                  {day.slots.length ? day.slots.map((slot) => <span key={slot} className="chip chip--muted">{slot}</span>) : <span className="doctor-booking-panel__closed">Slots shared after review</span>}
+                </div>
               </div>
+            ))
+          ) : (
+            <div className="doctor-empty-state" role="status">
+              <p>Live slot availability is shown when you continue to booking.</p>
             </div>
-          ))
+          )
         ) : (
           <div className="doctor-empty-state" role="status">
-            <p>Live slot availability is shown when you continue to booking.</p>
+            <p>{bookingMode === "CALL_TO_BOOK" ? "Call the clinic to book this visit." : "Online booking is not available yet."}</p>
           </div>
         )}
       </div>
@@ -325,18 +336,22 @@ export function BookingPanel({
           <strong>Clinic</strong>
           <span>{clinicName}</span>
         </div>
-        <div>
-          <strong>Average Wait Time</strong>
-          <span>{averageWaitTime}</span>
-        </div>
-        <div>
-          <strong>Appointment Duration</strong>
-          <span>{appointmentDuration}</span>
-        </div>
+        {canBookOnline && averageWaitTime ? (
+          <div>
+            <strong>Average Wait Time</strong>
+            <span>{averageWaitTime}</span>
+          </div>
+        ) : null}
+        {canBookOnline && appointmentDuration ? (
+          <div>
+            <strong>Appointment Duration</strong>
+            <span>{appointmentDuration}</span>
+          </div>
+        ) : null}
       </div>
       <div className="doctor-booking-panel__actions">
         <a className="primary-button" href={bookingUrl}>
-          Book Appointment
+          {providerBookingPrimaryLabel(bookingMode)}
         </a>
         {callHref ? (
           <a className="secondary-button" href={callHref}>
@@ -351,7 +366,7 @@ export function BookingPanel({
 export function RelatedDoctorCard({ doctor }: { doctor: DoctorRelatedDoctorCard }) {
   const consultationFee = formatConsultationFee(doctor.consultationFee ?? null);
   const initialsText = initials(doctor.doctorDisplayName);
-  const bookingMode = normalizeBookingMode(doctor.bookingMode) ?? "ONLINE_BOOKING";
+  const bookingMode = resolveDoctorBookingMode(doctor.bookingMode, doctor.canBookOnline, doctor.contactPhone);
   const bookingHref = bookingMode === "CALL_TO_BOOK"
     ? (doctor.contactPhone?.trim() ? `tel:${doctor.contactPhone.trim()}` : undefined)
     : careBookingUrl({ doctorId: doctor.publicDoctorId, clinicSlug: doctor.clinicSlug });
@@ -383,7 +398,6 @@ export function RelatedDoctorCard({ doctor }: { doctor: DoctorRelatedDoctorCard 
           <span>{doctor.clinicDisplayName}</span>
           <BookingCapabilityBadge mode={bookingMode} compact />
         </div>
-        <RatingSummary rating={4.8} reviewCount={245} compact />
         <div className="doctor-related-card__action-row">
           <Link className="secondary-button" to={DISCOVER_DETAIL_PATHS.doctor(doctor.doctorSlug)}>
             {secondaryLabel}

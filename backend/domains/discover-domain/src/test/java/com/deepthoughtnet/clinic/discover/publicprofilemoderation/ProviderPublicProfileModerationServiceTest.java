@@ -36,6 +36,7 @@ import com.deepthoughtnet.clinic.discover.publicprofilemoderation.db.DiscoverPub
 import com.deepthoughtnet.clinic.discover.publicprofilemoderation.db.DiscoverPublicProfileSubmissionEntity;
 import com.deepthoughtnet.clinic.discover.publicprofilemoderation.db.DiscoverPublicProfileSubmissionRepository;
 import com.deepthoughtnet.clinic.discover.publicprofilemoderation.PublicProfileModerationModels.PublicProfileSubmissionEligibilityRecord;
+import com.deepthoughtnet.clinic.discover.providerownership.ProviderOwnershipConflictException;
 import com.deepthoughtnet.clinic.platform.contracts.providerintegration.PublicProfileOwnershipStatus;
 import com.deepthoughtnet.clinic.platform.storage.ObjectStorageService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -215,6 +216,49 @@ class ProviderPublicProfileModerationServiceTest {
         assertThat(record.allowedActions()).contains("APPROVE_SUBMISSION", "REQUEST_CHANGES", "REJECT_SUBMISSION");
         assertThat(record.allowedActions()).contains("VIEW_PUBLIC_PROFILE", "UNPUBLISH_PROFILE", "VIEW_REVIEW_HISTORY");
         assertThat(record.allowedActions()).doesNotContain("PUBLISH_PROFILE");
+    }
+
+    @Test
+    void publishedSnapshotsExposeCanonicalUnpublishCapabilityAcrossProviderTypes() {
+        for (ProviderType providerType : List.of(ProviderType.INDIVIDUAL_DOCTOR, ProviderType.CLINIC, ProviderType.HOSPITAL)) {
+            DiscoverPublicProfileSubmissionEntity entity = submittedEntity("UNDER_REVIEW", providerType);
+            entity.approve(REVIEWER_ID, NOW, "Looks good", 3, NOW);
+            entity.markPublished(NOW, NOW);
+            when(submissions.findByPublicProfileReferenceOrderBySubmittedAtDesc(PUBLIC_PROFILE_REFERENCE)).thenReturn(List.of(entity));
+            when(publications.findFirstByPublicProfileReferenceAndCurrentTrueOrderByPublishedAtDesc(PUBLIC_PROFILE_REFERENCE)).thenReturn(Optional.empty());
+
+            assertThat(service.publicationStatus(PUBLIC_PROFILE_REFERENCE)).isEqualTo("PUBLISHED");
+            assertThat(service.canUnpublish(PUBLIC_PROFILE_REFERENCE)).isTrue();
+            assertThat(service.publicationAllowedActions(PUBLIC_PROFILE_REFERENCE))
+                    .contains("UNPUBLISH_PROFILE", "VIEW_PUBLIC_PROFILE", "VIEW_REVIEW_HISTORY");
+        }
+    }
+
+    @Test
+    void currentPublicationExposesCanonicalUnpublishCapabilityEvenWhenLatestSubmissionIsMissingAcrossProviderTypes() {
+        for (ProviderType providerType : List.of(ProviderType.INDIVIDUAL_DOCTOR, ProviderType.CLINIC, ProviderType.HOSPITAL)) {
+            DiscoverPublicProfilePublicationEntity publication = DiscoverPublicProfilePublicationEntity.create(
+                    UUID.fromString("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+                    "publication-" + providerType.name(),
+                    PUBLIC_PROFILE_REFERENCE,
+                    "submission-" + providerType.name(),
+                    3,
+                    "PUBLISHED",
+                    "green-valley-family-clinic",
+                    "/discover/clinics/green-valley-family-clinic",
+                    "Publish the profile",
+                    NOW,
+                    REVIEWER_ID.toString(),
+                    NOW,
+                    NOW
+            );
+            when(publications.findFirstByPublicProfileReferenceAndCurrentTrueOrderByPublishedAtDesc(PUBLIC_PROFILE_REFERENCE)).thenReturn(Optional.of(publication));
+
+            assertThat(service.publicationStatus(PUBLIC_PROFILE_REFERENCE)).isEqualTo("PUBLISHED");
+            assertThat(service.canUnpublish(PUBLIC_PROFILE_REFERENCE)).isTrue();
+            assertThat(service.publicationAllowedActions(PUBLIC_PROFILE_REFERENCE))
+                    .contains("UNPUBLISH_PROFILE", "VIEW_PUBLIC_PROFILE", "VIEW_REVIEW_HISTORY");
+        }
     }
 
     @Test
@@ -1080,6 +1124,82 @@ class ProviderPublicProfileModerationServiceTest {
         assertThat(unpublished.effectiveVisibility()).isEqualTo("NOT_PUBLISHED");
     }
 
+    @Test
+    void republishAfterUnpublishReusesApprovedSnapshotWhenDraftIsUnchanged() {
+        DiscoverPublicProfileSubmissionEntity entity = submittedEntityForRepublish("UNDER_REVIEW");
+        entity.startReview(REVIEWER_ID, NOW, NOW);
+        entity.approve(REVIEWER_ID, NOW, "Looks good", 3, NOW);
+        DiscoverPublicProfilePublicationEntity unpublished = DiscoverPublicProfilePublicationEntity.create(
+                UUID.fromString("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+                "publication-1",
+                PUBLIC_PROFILE_REFERENCE,
+                SUBMISSION_REFERENCE,
+                3,
+                "PUBLISHED",
+                "green-valley-family-clinic",
+                "/discover/clinics/green-valley-family-clinic",
+                "Publish the profile",
+                NOW.minusHours(1),
+                REVIEWER_ID.toString(),
+                NOW.minusHours(1),
+                NOW.minusHours(1)
+        );
+        unpublished.unpublish("Unpublished for review", REVIEWER_ID.toString(), NOW, NOW);
+        when(submissions.findBySubmissionReference(SUBMISSION_REFERENCE)).thenReturn(Optional.of(entity));
+        when(draftService.findDraft(PUBLIC_PROFILE_REFERENCE)).thenReturn(Optional.of(verifiedDraft()));
+        when(publications.findByPublicProfileReferenceOrderByPublishedAtDesc(PUBLIC_PROFILE_REFERENCE))
+                .thenReturn(List.of(unpublished));
+        when(publications.findFirstByPublicProfileReferenceAndCurrentTrueOrderByPublishedAtDesc(PUBLIC_PROFILE_REFERENCE))
+                .thenReturn(Optional.empty());
+        when(publications.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        doReturn(new PublicProviderProfileModels.PublicProviderPublicationRecord(
+                UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+                ProviderType.CLINIC,
+                "green-valley-family-clinic",
+                3,
+                NOW,
+                "/discover/clinics/green-valley-family-clinic"
+        )).when(publicProfileService).upsertLifecycleProfile(any(), any(), any(), any(), any(), any(), any(), any(), any(), anyLong(), any(), anyLong());
+        var republished = service.publish(SUBMISSION_REFERENCE, REVIEWER_ID, "Republish approved snapshot");
+
+        assertThat(republished.publicationStatus()).isEqualTo("PUBLISHED");
+        assertThat(republished.current()).isTrue();
+        verify(publicProfileService).upsertLifecycleProfile(any(), eq(3), eq("APPROVED"), eq("PUBLISHED"),
+                eq("Republish approved snapshot"), any(), eq("PUBLISHED"), eq("PROVIDER_PUBLIC_PROFILE_DRAFT"),
+                eq(PUBLIC_PROFILE_REFERENCE), eq(3L), eq(NOW), eq(0L));
+    }
+
+    @Test
+    void republishAfterUnpublishRequiresReviewWhenDraftChanged() {
+        DiscoverPublicProfileSubmissionEntity entity = submittedEntityForRepublish("UNDER_REVIEW");
+        entity.startReview(REVIEWER_ID, NOW, NOW);
+        entity.approve(REVIEWER_ID, NOW, "Looks good", 3, NOW);
+        DiscoverPublicProfilePublicationEntity unpublished = DiscoverPublicProfilePublicationEntity.create(
+                UUID.fromString("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+                "publication-1",
+                PUBLIC_PROFILE_REFERENCE,
+                SUBMISSION_REFERENCE,
+                3,
+                "PUBLISHED",
+                "green-valley-family-clinic",
+                "/discover/clinics/green-valley-family-clinic",
+                "Publish the profile",
+                NOW.minusHours(1),
+                REVIEWER_ID.toString(),
+                NOW.minusHours(1),
+                NOW.minusHours(1)
+        );
+        unpublished.unpublish("Unpublished for review", REVIEWER_ID.toString(), NOW, NOW);
+        when(submissions.findBySubmissionReference(SUBMISSION_REFERENCE)).thenReturn(Optional.of(entity));
+        when(draftService.findDraft(PUBLIC_PROFILE_REFERENCE)).thenReturn(Optional.of(republishReadyDraft("Green Valley Family Clinic Updated")));
+        when(publications.findByPublicProfileReferenceOrderByPublishedAtDesc(PUBLIC_PROFILE_REFERENCE))
+                .thenReturn(List.of(unpublished));
+
+        assertThatThrownBy(() -> service.publish(SUBMISSION_REFERENCE, REVIEWER_ID, "Republish changed snapshot"))
+                .isInstanceOf(ProviderOwnershipConflictException.class)
+                .satisfies(throwable -> assertThat(((ProviderOwnershipConflictException) throwable).getCode()).isEqualTo("republish_requires_review"));
+    }
+
     private DiscoverPublicProfileSubmissionEntity submittedEntity(String status) {
         return submittedEntity(status, ProviderType.CLINIC);
     }
@@ -1118,6 +1238,38 @@ class ProviderPublicProfileModerationServiceTest {
 
     private DiscoverPublicProfileSubmissionEntity submittedEntityWithMedia(String status) {
         return submittedEntity(status);
+    }
+
+    private DiscoverPublicProfileSubmissionEntity submittedEntityForRepublish(String status) {
+        DiscoverPublicProfileSubmissionEntity entity = DiscoverPublicProfileSubmissionEntity.create(
+                UUID.fromString("dddddddd-dddd-dddd-dddd-dddddddddddd"),
+                SUBMISSION_REFERENCE,
+                PUBLIC_PROFILE_REFERENCE,
+                ProviderType.CLINIC,
+                DRAFT_REFERENCE,
+                3,
+                status,
+                "UNPUBLISHED",
+                "ENABLED",
+                "{}",
+                "{}",
+                "{}",
+                "{}",
+                "{}",
+                PROVIDER_ACCOUNT_ID,
+                NOW,
+                NOW,
+                NOW
+        );
+        entity.markSubmitted(PROVIDER_ACCOUNT_ID, NOW, NOW);
+        return switch (status) {
+            case "SUBMITTED" -> entity;
+            case "UNDER_REVIEW" -> {
+                entity.startReview(REVIEWER_ID, NOW, NOW);
+                yield entity;
+            }
+            default -> entity;
+        };
     }
 
     private DiscoverPublicProfileSubmissionEntity submittedHospitalEntity(String status, String shortTagline) {
@@ -1237,6 +1389,10 @@ class ProviderPublicProfileModerationServiceTest {
     }
 
     private PublicProfileDraftWorkspaceRecord verifiedDraft() {
+        return verifiedDraftWithDisplayName("Green Valley Family Clinic");
+    }
+
+    private PublicProfileDraftWorkspaceRecord verifiedDraftWithDisplayName(String displayName) {
         return new PublicProfileDraftWorkspaceRecord(
                 UUID.fromString("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"),
                 DRAFT_REFERENCE,
@@ -1254,7 +1410,7 @@ class ProviderPublicProfileModerationServiceTest {
                 NOW,
                 NOW,
                 NOW,
-                "Green Valley Family Clinic",
+                displayName,
                 "green-valley-family-clinic",
                 "Pune",
                 "Wakad",
@@ -1273,6 +1429,70 @@ class ProviderPublicProfileModerationServiceTest {
                 "/discover/clinics/green-valley-family-clinic",
                 List.of("EDIT_PUBLIC_PROFILE", "VIEW_PREVIEW", "SUBMIT_FOR_REVIEW"),
                 List.<PublicProfileDraftSectionRecord>of(),
+                new PublicProfileDraftReadinessRecord(
+                        "READY",
+                        true,
+                        100,
+                        List.of(),
+                        List.of(),
+                        List.of(),
+                        List.of(),
+                        List.of(),
+                        NOW,
+                        4
+                ),
+                List.of(),
+                Map.<String, PublicProfileDraftFieldSourceRecord>of()
+        );
+    }
+
+    private PublicProfileDraftWorkspaceRecord republishReadyDraft(String displayName) {
+        return new PublicProfileDraftWorkspaceRecord(
+                UUID.fromString("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"),
+                DRAFT_REFERENCE,
+                PUBLIC_PROFILE_REFERENCE,
+                ProviderType.CLINIC,
+                PROVIDER_ACCOUNT_ID,
+                "VERIFIED",
+                "ENABLED",
+                "UNPUBLISHED",
+                "READY_FOR_REVIEW",
+                "READY",
+                100,
+                4,
+                NOW,
+                NOW,
+                NOW,
+                NOW,
+                displayName,
+                "green-valley-family-clinic",
+                "Pune",
+                "Wakad",
+                "Maharashtra",
+                "India",
+                "+91 98765 02201",
+                "contact@greenvalleyclinic.in",
+                "https://www.greenvalleyclinic.in",
+                "+91 98765 02201",
+                "PMC/CLINIC/2022/10458",
+                2022,
+                "HEALTHCARE_CLINIC_PROFILE",
+                PUBLIC_PROFILE_REFERENCE,
+                1L,
+                NOW,
+                "/discover/clinics/green-valley-family-clinic",
+                List.of("EDIT_PUBLIC_PROFILE", "VIEW_PREVIEW", "SUBMIT_FOR_REVIEW"),
+                List.of(
+                        new PublicProfileDraftSectionRecord(
+                                "about",
+                                "About",
+                                Map.of(
+                                        "displayName", displayName,
+                                        "shortTagline", "Family care"
+                                ),
+                                Map.<String, PublicProfileDraftFieldSourceRecord>of()
+                        )
+                ),
                 new PublicProfileDraftReadinessRecord(
                         "READY",
                         true,

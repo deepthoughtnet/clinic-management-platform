@@ -36,6 +36,7 @@ import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderSubmissionEntity
 import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderSubmissionRepository;
 import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileProjectionRepairService;
 import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService;
+import com.deepthoughtnet.clinic.discover.publicprofilemoderation.ProviderPublicProfileModerationService;
 import com.deepthoughtnet.clinic.discover.reference.DiscoverReferenceCategory;
 import com.deepthoughtnet.clinic.discover.reference.DiscoverReferenceDataService;
 import com.deepthoughtnet.clinic.discover.reference.DiscoverReferenceOptionRecord;
@@ -75,6 +76,7 @@ class ProviderOnboardingServiceTest {
     private DiscoverReferenceDataService referenceDataService;
     private ProviderPublicProfileProjectionRepairService projectionRepairService;
     private ProviderPublicProfileService publicProfileService;
+    private ProviderPublicProfileModerationService publicProfileModerationService;
 
     @BeforeEach
     void setUp() {
@@ -87,6 +89,7 @@ class ProviderOnboardingServiceTest {
         ProviderChangeRequestRepository changeRequestRepository = Mockito.mock(ProviderChangeRequestRepository.class);
         ProviderContactVerificationRepository contactVerificationRepository = Mockito.mock(ProviderContactVerificationRepository.class);
         publicProfileService = Mockito.mock(ProviderPublicProfileService.class);
+        publicProfileModerationService = Mockito.mock(ProviderPublicProfileModerationService.class);
         projectionRepairService = Mockito.mock(ProviderPublicProfileProjectionRepairService.class);
         verificationService = Mockito.mock(DiscoverVerificationService.class);
         referenceDataService = Mockito.mock(DiscoverReferenceDataService.class);
@@ -229,7 +232,10 @@ class ProviderOnboardingServiceTest {
             return serviceOption(serviceType, providerType);
         });
 
-        service = new ProviderOnboardingService(applicationRepository, locationRepository, serviceRepository, documentRepository, submissionRepository, historyRepository, changeRequestRepository, contactVerificationRepository, storage, objectMapper, publicProfileService, projectionRepairService, verificationService, referenceDataService);
+        when(publicProfileModerationService.publicationHistory(any())).thenReturn(List.of());
+        when(publicProfileModerationService.findCurrentPublication(any())).thenReturn(Optional.empty());
+        when(publicProfileModerationService.publicationAllowedActions(any())).thenReturn(List.of());
+        service = new ProviderOnboardingService(applicationRepository, locationRepository, serviceRepository, documentRepository, submissionRepository, historyRepository, changeRequestRepository, contactVerificationRepository, storage, objectMapper, publicProfileService, publicProfileModerationService, projectionRepairService, verificationService, referenceDataService);
     }
 
     @Test

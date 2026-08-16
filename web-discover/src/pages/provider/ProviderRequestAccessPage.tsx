@@ -3,6 +3,20 @@ import { Link, useSearchParams } from "react-router-dom";
 import { requestProviderAccess } from "../../api/providerAuth";
 import { DISCOVER_ROUTES } from "../../routes";
 import type { ProviderType } from "../../api/providerOnboarding";
+import {
+  getProviderAccessRequestEmailError,
+  getProviderAccessRequestFullNameError,
+  getProviderAccessRequestMobileError,
+  getProviderAccessRequestNoteError,
+  getProviderAccessRequestProviderTypeError,
+  getProviderAccessRequestReferenceError,
+  normalizeProviderAccessRequestEmail,
+  normalizeProviderAccessRequestFullName,
+  normalizeProviderAccessRequestMobile,
+  normalizeProviderAccessRequestNote,
+  normalizeProviderAccessRequestProviderType,
+  normalizeProviderAccessRequestReference,
+} from "./providerAccessValidation";
 
 const PROVIDER_TYPE_OPTIONS: Array<{ value: ProviderType; label: string; description: string }> = [
   { value: "INDIVIDUAL_DOCTOR", label: "Doctor", description: "Independent doctors and consultants" },
@@ -24,22 +38,45 @@ export function ProviderRequestAccessPage() {
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [mobile, setMobile] = useState("");
-  const [providerType, setProviderType] = useState<ProviderType>("CLINIC");
+  const [providerType, setProviderType] = useState<ProviderType | "">("");
   const [providerApplicationReference, setProviderApplicationReference] = useState("");
   const [note, setNote] = useState("");
+  const [touched, setTouched] = useState({
+    fullName: false,
+    email: false,
+    mobile: false,
+    providerType: false,
+    providerApplicationReference: false,
+    note: false,
+  });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const [submittedReference, setSubmittedReference] = useState<string | null>(null);
+  const fullNameError = getProviderAccessRequestFullNameError(fullName);
+  const emailError = getProviderAccessRequestEmailError(email);
+  const mobileError = getProviderAccessRequestMobileError(mobile);
+  const providerTypeError = getProviderAccessRequestProviderTypeError(providerType);
+  const providerApplicationReferenceError = getProviderAccessRequestReferenceError(providerApplicationReference);
+  const noteError = getProviderAccessRequestNoteError(note);
+  const canSubmit = !fullNameError && !emailError && !mobileError && !providerTypeError && !providerApplicationReferenceError && !noteError;
+  const showError = (field: keyof typeof touched, errorMessage: string | null) => touched[field] && Boolean(errorMessage);
+
+  function touchAllFields() {
+    setTouched({
+      fullName: true,
+      email: true,
+      mobile: true,
+      providerType: true,
+      providerApplicationReference: true,
+      note: true,
+    });
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!fullName.trim()) {
-      setError("Enter your name.");
-      return;
-    }
-    if (!mobile.trim()) {
-      setError("Enter a mobile number.");
+    touchAllFields();
+    if (!canSubmit) {
+      setError(null);
       return;
     }
     setSubmitting(true);
@@ -47,14 +84,13 @@ export function ProviderRequestAccessPage() {
     setSuccess(null);
     try {
       const response = await requestProviderAccess({
-        fullName: fullName.trim(),
-        email: email.trim() || null,
-        mobile: mobile.trim(),
-        providerType,
-        providerApplicationReference: providerApplicationReference.trim() || null,
-        note: note.trim() || null,
+        fullName: normalizeProviderAccessRequestFullName(fullName),
+        email: normalizeProviderAccessRequestEmail(email) || null,
+        mobile: normalizeProviderAccessRequestMobile(mobile),
+        providerType: normalizeProviderAccessRequestProviderType(providerType),
+        providerApplicationReference: normalizeProviderAccessRequestReference(providerApplicationReference) || null,
+        note: normalizeProviderAccessRequestNote(note) || null,
       });
-      setSubmittedReference(response.id);
       setSuccess("Your access request has been submitted. Platform Admin will review it shortly.");
     } catch (ex) {
       setError(ex instanceof Error ? ex.message : "We could not submit the access request right now.");
@@ -95,15 +131,17 @@ export function ProviderRequestAccessPage() {
         </article>
 
         <article className="provider-auth-card provider-auth-card--access">
-          <form className="provider-auth-form" onSubmit={submit}>
+          <form className="provider-auth-form provider-auth-form--request" onSubmit={submit}>
             <div className="provider-auth-state-heading">
               <span className="eyebrow">Request access</span>
               <p>Platform Admin reviews every request before sign-in is enabled.</p>
             </div>
 
-            <label className="provider-auth-field">
-              <span>Provider name</span>
+            <div className="provider-auth-form-grid">
+            <label className="provider-auth-field provider-auth-field--full">
+              <span>Provider name <span className="provider-field-required" aria-hidden="true">*</span></span>
               <input
+                aria-invalid={showError("fullName", fullNameError) ? true : undefined}
                 type="text"
                 value={fullName}
                 onChange={(event) => {
@@ -111,14 +149,20 @@ export function ProviderRequestAccessPage() {
                   setError(null);
                   setSuccess(null);
                 }}
+                onBlur={() => setTouched((current) => ({ ...current, fullName: true }))}
                 autoComplete="name"
                 placeholder="Jeevanam Multispeciality Hospital"
+                maxLength={120}
               />
+              {showError("fullName", fullNameError) ? (
+                <p className="provider-auth-field-error" role="alert">{fullNameError}</p>
+              ) : null}
             </label>
 
             <label className="provider-auth-field">
-              <span>Email address</span>
+              <span>Email address <span className="provider-field-required" aria-hidden="true">*</span></span>
               <input
+                aria-invalid={showError("email", emailError) ? true : undefined}
                 type="email"
                 value={email}
                 onChange={(event) => {
@@ -126,14 +170,20 @@ export function ProviderRequestAccessPage() {
                   setError(null);
                   setSuccess(null);
                 }}
+                onBlur={() => setTouched((current) => ({ ...current, email: true }))}
                 autoComplete="email"
                 placeholder="provider@example.com"
+                maxLength={254}
               />
+              {showError("email", emailError) ? (
+                <p className="provider-auth-field-error" role="alert">{emailError}</p>
+              ) : null}
             </label>
 
             <label className="provider-auth-field">
-              <span>Mobile number</span>
+              <span>Mobile number <span className="provider-field-required" aria-hidden="true">*</span></span>
               <input
+                aria-invalid={showError("mobile", mobileError) ? true : undefined}
                 type="tel"
                 value={mobile}
                 onChange={(event) => {
@@ -141,32 +191,47 @@ export function ProviderRequestAccessPage() {
                   setError(null);
                   setSuccess(null);
                 }}
+                onBlur={() => setTouched((current) => ({ ...current, mobile: true }))}
                 autoComplete="tel"
                 placeholder="+91 98765 01200"
+                maxLength={20}
               />
+              {showError("mobile", mobileError) ? (
+                <p className="provider-auth-field-error" role="alert">{mobileError}</p>
+              ) : null}
             </label>
 
             <label className="provider-auth-field">
-              <span>Provider type</span>
+              <span>Provider type <span className="provider-field-required" aria-hidden="true">*</span></span>
               <select
+                aria-invalid={showError("providerType", providerTypeError) ? true : undefined}
                 value={providerType}
+                onFocus={() => setTouched((current) => ({ ...current, providerType: true }))}
                 onChange={(event) => {
-                  setProviderType(event.target.value as ProviderType);
+                  setProviderType(event.target.value as ProviderType | "");
                   setError(null);
                   setSuccess(null);
                 }}
+                onBlur={() => setTouched((current) => ({ ...current, providerType: true }))}
               >
+                <option value="" disabled>
+                  Select provider type
+                </option>
                 {PROVIDER_TYPE_OPTIONS.map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label} - {option.description}
                   </option>
                 ))}
               </select>
+              {showError("providerType", providerTypeError) ? (
+                <p className="provider-auth-field-error" role="alert">{providerTypeError}</p>
+              ) : null}
             </label>
 
             <label className="provider-auth-field">
-              <span>Provider application reference</span>
+              <span>Provider application reference <span className="provider-field-optional" aria-hidden="true">(optional)</span></span>
               <input
+                aria-invalid={showError("providerApplicationReference", providerApplicationReferenceError) ? true : undefined}
                 type="text"
                 value={providerApplicationReference}
                 onChange={(event) => {
@@ -174,13 +239,20 @@ export function ProviderRequestAccessPage() {
                   setError(null);
                   setSuccess(null);
                 }}
-                placeholder="Optional if you already have a reference"
+                onBlur={() => setTouched((current) => ({ ...current, providerApplicationReference: true }))}
+                placeholder="Business reference or application number"
+                maxLength={80}
               />
+              <p className="provider-auth-helper">Optional. Use a business-readable application or workspace reference if you have one.</p>
+              {showError("providerApplicationReference", providerApplicationReferenceError) ? (
+                <p className="provider-auth-field-error" role="alert">{providerApplicationReferenceError}</p>
+              ) : null}
             </label>
 
-            <label className="provider-auth-field">
-              <span>Note</span>
+            <label className="provider-auth-field provider-auth-field--full">
+              <span>Note <span className="provider-field-optional" aria-hidden="true">(optional)</span></span>
               <textarea
+                aria-invalid={showError("note", noteError) ? true : undefined}
                 rows={4}
                 value={note}
                 onChange={(event) => {
@@ -188,9 +260,15 @@ export function ProviderRequestAccessPage() {
                   setError(null);
                   setSuccess(null);
                 }}
+                onBlur={() => setTouched((current) => ({ ...current, note: true }))}
                 placeholder="Tell Platform Admin anything that helps identify your workspace."
+                maxLength={500}
               />
+              {showError("note", noteError) ? (
+                <p className="provider-auth-field-error" role="alert">{noteError}</p>
+              ) : null}
             </label>
+            </div>
 
             {error ? (
               <p className="provider-auth-error" role="alert">
@@ -204,14 +282,8 @@ export function ProviderRequestAccessPage() {
               </p>
             ) : null}
 
-            {submittedReference ? (
-              <p className="provider-auth-helper">
-                Request reference: <strong>{submittedReference}</strong>
-              </p>
-            ) : null}
-
             <div className="provider-auth-actions">
-              <button className="primary-button" type="submit" disabled={submitting}>
+              <button className="primary-button" type="submit" disabled={submitting || !canSubmit}>
                 {submitting ? "Submitting..." : "Submit access request"}
               </button>
               <div className="provider-auth-secondary">

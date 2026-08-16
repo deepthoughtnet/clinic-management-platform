@@ -23,7 +23,8 @@ public record PublicDoctorSummaryResponse(
         boolean availableToday,
         String nextAvailableSlotSummary,
         java.math.BigDecimal distanceKm,
-        String bookingReference
+        String bookingReference,
+        boolean canBookOnline
 ) {
     public PublicDoctorSummaryResponse(
             String publicDoctorId,
@@ -68,7 +69,8 @@ public record PublicDoctorSummaryResponse(
                 availableToday,
                 nextAvailableSlotSummary,
                 distanceKm,
-                null
+                null,
+                false
         );
     }
 }

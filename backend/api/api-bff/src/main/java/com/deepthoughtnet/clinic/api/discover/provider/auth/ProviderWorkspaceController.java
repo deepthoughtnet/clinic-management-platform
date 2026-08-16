@@ -335,6 +335,9 @@ public class ProviderWorkspaceController {
     private WorkspaceProfileResponse toWorkspaceProfile(UUID providerAccountId, PublicProfileDraftWorkspaceRecord draft) {
         PublicProfileModerationSubmissionRecord submission = moderationService.findSubmission(draft.publicProfileReference()).orElse(null);
         PublicProfilePublicationRecord publication = moderationService.findCurrentPublication(draft.publicProfileReference()).orElse(null);
+        PublicProfilePublicationRecord latestPublication = publication != null
+                ? publication
+                : moderationService.publicationHistory(draft.publicProfileReference()).stream().findFirst().orElse(null);
         Optional<BookingTargetResolution> bookingTarget = providerLinkingService.resolveBookingTarget(new PublicProviderReference(draft.publicProfileReference(), null));
         String moderationStatus = submission == null ? "NOT_SUBMITTED" : submission.moderationStatus();
         String publicationStatus = publication == null ? draft.publicProfileStatus() : publication.publicationStatus();
@@ -349,7 +352,7 @@ public class ProviderWorkspaceController {
         String attentionLabel = attentionLabel(draft, moderationStatus, publicationStatus);
         String nextActionLabel = nextActionLabel(draft, moderationStatus, publicationStatus, primaryAction);
         boolean providerActionRequired = switch (primaryAction) {
-            case "SUBMIT_FOR_REVIEW", "REVIEW_CHANGES", "CONTINUE_PROFILE", "OPEN_PROFILE" -> true;
+            case "SUBMIT_FOR_REVIEW", "REVIEW_CHANGES", "CONTINUE_PROFILE", "OPEN_PROFILE", "VIEW_UNPUBLISHED_PROFILE" -> true;
             default -> !blockingReasons.isEmpty() && !"PUBLISHED".equals(publicationStatus);
         };
         OffsetDateTime lastUpdatedAt = draft.updatedAt();
@@ -374,6 +377,7 @@ public class ProviderWorkspaceController {
                 platformConnectionStatus,
                 bookingCapability,
                 lastUpdatedAt,
+                latestPublication == null ? null : latestPublication.reason(),
                 blockingReasons,
                 allowedActions,
                 primaryAction,
@@ -389,6 +393,9 @@ public class ProviderWorkspaceController {
     private String primaryProfileAction(PublicProfileDraftWorkspaceRecord draft, String moderationStatus, String publicationStatus) {
         if ("PUBLISHED".equals(publicationStatus)) {
             return "VIEW_PUBLIC_PROFILE";
+        }
+        if ("UNPUBLISHED".equals(publicationStatus)) {
+            return "VIEW_UNPUBLISHED_PROFILE";
         }
         if ("SUBMITTED".equals(moderationStatus) || "UNDER_REVIEW".equals(moderationStatus)) {
             return "VIEW_REVIEW_STATUS";
@@ -412,6 +419,9 @@ public class ProviderWorkspaceController {
         if ("PUBLISHED".equals(publicationStatus)) {
             return List.of("VIEW_PUBLIC_PROFILE", "VIEW_PREVIEW", "VIEW_READINESS");
         }
+        if ("UNPUBLISHED".equals(publicationStatus)) {
+            return List.of("VIEW_UNPUBLISHED_PROFILE", "VIEW_PREVIEW", "VIEW_READINESS", "EDIT_PUBLIC_PROFILE");
+        }
         if ("SUBMITTED".equals(moderationStatus) || "UNDER_REVIEW".equals(moderationStatus)) {
             return List.of("VIEW_REVIEW_STATUS", "VIEW_PREVIEW", "VIEW_READINESS");
         }
@@ -430,6 +440,9 @@ public class ProviderWorkspaceController {
     private String lifecycleLabel(PublicProfileDraftWorkspaceRecord draft, String moderationStatus, String publicationStatus) {
         if ("PUBLISHED".equals(publicationStatus)) {
             return "Published";
+        }
+        if ("UNPUBLISHED".equals(publicationStatus)) {
+            return "Unpublished";
         }
         if ("APPROVED".equals(moderationStatus)) {
             return "Approved by Platform";
@@ -455,6 +468,9 @@ public class ProviderWorkspaceController {
     private String attentionLabel(PublicProfileDraftWorkspaceRecord draft, String moderationStatus, String publicationStatus) {
         if ("PUBLISHED".equals(publicationStatus)) {
             return "Published profile";
+        }
+        if ("UNPUBLISHED".equals(publicationStatus)) {
+            return "Public profile unpublished by Platform";
         }
         if ("APPROVED".equals(moderationStatus)) {
             return "Waiting for publication";
@@ -484,6 +500,7 @@ public class ProviderWorkspaceController {
             case "REVIEW_CHANGES" -> "Resolve platform review findings";
             case "VIEW_APPROVAL_STATUS" -> "Waiting for publication";
             case "VIEW_PUBLIC_PROFILE" -> "View public profile";
+            case "VIEW_UNPUBLISHED_PROFILE" -> "Review unpublish reason";
             default -> {
                 if ("READY".equals(draft.readinessStatus()) && "READY_FOR_REVIEW".equals(draft.contentStatus()) && !"ENABLED".equalsIgnoreCase(draft.tenantConsentStatus())) {
                     yield "Enable Discover participation in Healthcare Admin";

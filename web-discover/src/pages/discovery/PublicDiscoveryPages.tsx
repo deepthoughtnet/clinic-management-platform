@@ -45,13 +45,10 @@ import {
   AvailabilityTimeline,
   BookingPanel,
   DoctorBreadcrumb,
-  RatingSummary,
   RelatedDoctorCard,
-  ReviewCard,
   VerificationBadge,
   SpecialtyCard,
   StickyBookingCTA,
-  doctorSampleReviews,
   doctorSampleServiceCards,
   doctorSampleSpecialties,
   doctorSampleVerificationBadges,
@@ -84,7 +81,8 @@ import {
   joinFilterValues,
   toggleFilterValue,
 } from "../../components/directory/DirectoryComponents";
-import { providerBookingPrimaryLabel, normalizeBookingMode } from "../../components/discovery/BookingCapability";
+import { PublicLocationSelectorPanel } from "../../components/location/PublicLocationSelectorPanel";
+import { providerBookingPrimaryLabel, normalizeBookingMode, resolveDoctorBookingMode } from "../../components/discovery/BookingCapability";
 import {
   PublicProviderProfile,
   type PublicProviderProfileDefinitionItem,
@@ -95,8 +93,13 @@ import {
   PUBLIC_CURRENT_LOCATION_LABEL,
   PUBLIC_DEFAULT_LOCATION,
   PUBLIC_LOCATION_OPTIONS,
+  getPublicLocationDisplayLabel,
+  isCurrentLocationMode,
   normalizePublicLocation,
+  normalizePublicLocationSelection,
+  mapPublicLocationGeolocationError,
   readStoredPublicLocation,
+  validatePublicLocationInput,
   type PublicLocationCoordinates,
   usePublicLocation,
 } from "../../context/PublicLocationContext";
@@ -107,10 +110,14 @@ import {
   parseFiniteExperienceYears,
 } from "../../utils/publicProfileFormatting";
 import {
+  buildDiscoveryNoResultsMessage,
+  buildDiscoveryNoResultsTitle,
+  DISCOVERY_SEARCH_MAX_LENGTH,
   discoveryEmptyMessage,
   matchesDiscoveryQuery,
   normalizeDiscoveryText,
   scoreDiscoveryLocation,
+  validateDiscoverySearchQuery,
   slugify,
 } from "../../utils/publicDiscovery";
 
@@ -186,7 +193,7 @@ function buildDiscoverSearchLocationParams({
 }) {
   const params = new URLSearchParams();
   if (query.trim()) params.set("q", query.trim());
-  if (city.trim()) params.set("city", city.trim());
+  if (!selectedCoordinates && city.trim()) params.set("city", city.trim());
   if (area.trim()) params.set("area", area.trim());
   if (selectedCoordinates) {
     params.set("lat", `${selectedCoordinates.latitude}`);
@@ -727,12 +734,14 @@ function useDirectoryFilters(defaultSize = 12, initialQuery = "", initialArea = 
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { locationState } = usePublicLocation();
-  const selectedLocation =
-    locationState.location === PUBLIC_CURRENT_LOCATION_LABEL
-      ? PUBLIC_DEFAULT_LOCATION
-      : locationState.location || PUBLIC_DEFAULT_LOCATION;
+  const queryLocation = normalizePublicLocationSelection(searchParams.get("city") ?? "");
+  const storedLocation = getPublicLocationDisplayLabel(locationState);
+  const queryLocationValue = queryLocation === PUBLIC_CURRENT_LOCATION_LABEL ? "" : queryLocation;
+  const selectedLocation = isCurrentLocationMode(locationState)
+    ? PUBLIC_CURRENT_LOCATION_LABEL
+    : queryLocationValue || storedLocation || PUBLIC_DEFAULT_LOCATION;
   const queryParam = searchParams.get("q") ?? initialQuery;
-  const cityParam = searchParams.get("city") ?? "";
+  const cityParam = queryLocation || selectedLocation;
   const [query, setQuery] = useState(queryParam);
   const [city, setCity] = useState(cityParam || selectedLocation);
   const [area, setArea] = useState(searchParams.get("area") ?? initialArea);
@@ -744,14 +753,14 @@ function useDirectoryFilters(defaultSize = 12, initialQuery = "", initialArea = 
 
   useEffect(() => {
     setQuery(searchParams.get("q") ?? initialQuery);
-    setCity(searchParams.get("city") ?? selectedLocation);
+    setCity((normalizePublicLocationSelection(searchParams.get("city") ?? "") === PUBLIC_CURRENT_LOCATION_LABEL ? "" : normalizePublicLocationSelection(searchParams.get("city") ?? "")) || selectedLocation);
     setArea(searchParams.get("area") ?? initialArea);
   }, [searchParams, selectedLocation, initialQuery, initialArea]);
 
   function submit(basePath: string, extra?: Record<string, string | undefined | null>) {
     const params = buildDirectorySearchParams({
       query,
-      city: city || selectedLocation,
+      city: isCurrentLocationMode(locationState) ? null : (city || selectedLocation),
       area,
       page: 0,
       size: defaultSize,
@@ -763,7 +772,7 @@ function useDirectoryFilters(defaultSize = 12, initialQuery = "", initialArea = 
   function changePage(basePath: string, nextPage: number, extra?: Record<string, string | undefined | null>) {
     const params = buildDirectorySearchParams({
       query: searchParams.get("q"),
-      city: searchParams.get("city") || selectedLocation,
+      city: isCurrentLocationMode(locationState) ? null : (searchParams.get("city") || selectedLocation),
       area: searchParams.get("area"),
       page: nextPage,
       size,
@@ -817,9 +826,12 @@ function useDirectoryPageState(defaultSize = 12): DirectoryPageState {
   const [queryDraft, setQueryDraft] = useState(searchParams.get("q") ?? "");
   const [sort, setSort] = useState(searchParams.get("sort") ?? "relevance");
   const [radiusKm, setRadiusKm] = useState(searchParams.get("radiusKm") ?? "10");
-  const selectedLocation =
-    searchParams.get("city")?.trim() ||
-    (locationState.location === PUBLIC_CURRENT_LOCATION_LABEL ? PUBLIC_DEFAULT_LOCATION : locationState.location || PUBLIC_DEFAULT_LOCATION);
+  const queryLocation = normalizePublicLocationSelection(searchParams.get("city") ?? "");
+  const storedLocation = getPublicLocationDisplayLabel(locationState);
+  const queryLocationValue = queryLocation === PUBLIC_CURRENT_LOCATION_LABEL ? "" : queryLocation;
+  const selectedLocation = isCurrentLocationMode(locationState)
+    ? PUBLIC_CURRENT_LOCATION_LABEL
+    : queryLocationValue || storedLocation || PUBLIC_DEFAULT_LOCATION;
   const selectedCoordinates = locationState.coordinates;
   const page = Number(searchParams.get("page") ?? "0") || 0;
   const size = Number(searchParams.get("size") ?? `${defaultSize}`) || defaultSize;
@@ -857,7 +869,11 @@ function useDirectoryPageState(defaultSize = 12): DirectoryPageState {
     } else {
       params.delete("q");
     }
-    params.set("city", selectedLocation);
+    if (isCurrentLocationMode(locationState)) {
+      params.delete("city");
+    } else {
+      params.set("city", selectedLocation);
+    }
     if (selectedCoordinates) {
       params.set("lat", `${selectedCoordinates.latitude}`);
       params.set("lng", `${selectedCoordinates.longitude}`);
@@ -888,21 +904,23 @@ function useDirectoryPageState(defaultSize = 12): DirectoryPageState {
   }
 
   function commitLocation(basePath: string, nextLocation: string, nextCoordinates: PublicLocationCoordinates | null = null) {
-    const normalized = normalizePublicLocation(nextLocation) || PUBLIC_DEFAULT_LOCATION;
+    const normalized = normalizePublicLocationSelection(nextLocation) || PUBLIC_DEFAULT_LOCATION;
     setSelectedLocation(normalized, nextCoordinates);
     const params = new URLSearchParams(searchParams);
-    params.set("city", normalized);
     if (nextCoordinates) {
+      params.delete("city");
       params.set("lat", `${nextCoordinates.latitude}`);
       params.set("lng", `${nextCoordinates.longitude}`);
+      params.set("radiusKm", radiusKm.trim() || "10");
     } else {
+      params.set("city", normalized);
       params.delete("lat");
       params.delete("lng");
-    }
-    if (radiusKm.trim()) {
-      params.set("radiusKm", radiusKm);
-    } else {
-      params.delete("radiusKm");
+      if (radiusKm.trim()) {
+        params.set("radiusKm", radiusKm);
+      } else {
+        params.delete("radiusKm");
+      }
     }
     params.set("page", "0");
     params.set("size", `${size}`);
@@ -918,7 +936,11 @@ function useDirectoryPageState(defaultSize = 12): DirectoryPageState {
         params.set("q", currentQuery.trim());
       }
     }
-    params.set("city", selectedLocation);
+    if (isCurrentLocationMode(selectedLocation, selectedCoordinates)) {
+      params.delete("city");
+    } else {
+      params.set("city", selectedLocation);
+    }
     if (selectedCoordinates) {
       params.set("lat", `${selectedCoordinates.latitude}`);
       params.set("lng", `${selectedCoordinates.longitude}`);
@@ -959,24 +981,6 @@ function useDirectoryPageState(defaultSize = 12): DirectoryPageState {
     commitLocation,
     updateParams,
     clearParams,
-  };
-}
-
-function createCurrentLocationHandler(onSuccess: (coordinates: PublicLocationCoordinates) => void) {
-  return () => {
-    if (typeof navigator === "undefined" || !navigator.geolocation) {
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        onSuccess({
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-        });
-      },
-      () => undefined,
-      { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 },
-    );
   };
 }
 
@@ -1337,7 +1341,8 @@ function buildDoctorProfile(detail: PublicDoctorDetailResponse, consultationFeeL
   const location = primaryLocation(detail.locations);
   const languages = normalizeDisplayList(detail.languages ?? []);
   const consultationModes = normalizeDisplayList(detail.consultationModes ?? []);
-  const bookingMode = normalizeBookingMode(detail.bookingMode) ?? "ONLINE_BOOKING";
+  const canBookOnline = Boolean(detail.canBookOnline);
+  const bookingMode = resolveDoctorBookingMode(detail.bookingMode, canBookOnline, detail.contactPhone);
   const expertise = normalizeDisplayList(detail.subSpecialities?.length ? detail.subSpecialities : detail.specialities).slice(0, 8);
   const schedule = buildDoctorWorkingSchedule(detail);
   const professionalInformation = [
@@ -1364,15 +1369,15 @@ function buildDoctorProfile(detail: PublicDoctorDetailResponse, consultationFeeL
     consultationFeeLabel,
     languages,
     teleconsultationAvailable: consultationModes.some((item) => item.toLowerCase().includes("tele")),
+    canBookOnline,
     heroSupplement: (
       <div className="doctor-hero-supplement">
-        <RatingSummary rating={4.8} reviewCount={245} recommendationPercent={98} />
         <div className="doctor-hero-stat-row" aria-label="Doctor trust highlights">
-          <span className="chip chip--info">Patients Treated: 12,400+</span>
           {detail.yearsOfExperience != null ? <span className="chip chip--muted">{detail.yearsOfExperience}+ years experience</span> : null}
           {languages.length ? <span className="chip chip--muted">{languages.join(" · ")}</span> : null}
           {detail.clinics[0]?.clinicDisplayName ? <span className="chip chip--success">{detail.clinics[0].clinicDisplayName}</span> : null}
-          {detail.nextAvailableSlots[0] ? <span className="chip chip--info">Next available: {detail.nextAvailableSlots[0]}</span> : null}
+          {canBookOnline && detail.nextAvailableSlots[0] ? <span className="chip chip--info">Next available: {detail.nextAvailableSlots[0]}</span> : null}
+          {detail.reviewsComingSoon ? <span className="chip chip--muted">No patient reviews yet</span> : null}
         </div>
         <div className="doctor-hero-badge-row" aria-label="Verification badges">
           {doctorSampleVerificationBadges.map((badge) => (
@@ -1391,8 +1396,8 @@ function buildDoctorProfile(detail: PublicDoctorDetailResponse, consultationFeeL
             ...(detail.clinics.length === 1 ? { clinicSlug: detail.clinics[0].clinicSlug } : {}),
           }),
     bookingLabel: providerBookingPrimaryLabel(bookingMode),
-    callHref: bookingMode === "ONLINE_BOOKING" && detail.contactPhone?.trim() ? `tel:${detail.contactPhone.trim()}` : null,
-    callLabel: bookingMode === "ONLINE_BOOKING" && detail.contactPhone?.trim() ? "Call Clinic" : null,
+    callHref: canBookOnline && detail.contactPhone?.trim() ? `tel:${detail.contactPhone.trim()}` : null,
+    callLabel: canBookOnline && detail.contactPhone?.trim() ? "Call Clinic" : null,
     biographyTitle: `About ${detail.doctorDisplayName}`,
     biography: detail.biography?.trim() || detail.summary?.trim() || null,
     biographyEmptyDescription: "Doctor biography will appear here when it is shared publicly.",
@@ -1426,7 +1431,10 @@ function buildDoctorProfile(detail: PublicDoctorDetailResponse, consultationFeeL
   };
 }
 
-function buildDoctorBookingGroups(detail: PublicDoctorDetailResponse) {
+function buildDoctorBookingGroups(detail: PublicDoctorDetailResponse, canBookOnline: boolean) {
+  if (!canBookOnline) {
+    return [];
+  }
   const slotLabels = detail.nextAvailableSlots.map((slot) => slot.trim()).filter(Boolean);
   if (!slotLabels.length) {
     return [];
@@ -1602,21 +1610,23 @@ export function PublicHomePage() {
   }, [location.state]);
   const filters = useDirectoryFilters(6, homeSearchState?.query ?? "", homeSearchState?.area ?? "");
   const [locationPickerOpen, setLocationPickerOpen] = useState(false);
+  const homeLocationShellRef = useRef<HTMLDivElement | null>(null);
   const storedLocation = useMemo(() => readStoredPublicLocation(), []);
   const { locationState, setSelectedLocation } = usePublicLocation();
   const hasSavedPublicLocation = locationState.source !== "default";
   const queryLocation = normalizePublicLocation(filters.searchParams.get("city")?.trim() || "");
-  const selectedLocation = hasSavedPublicLocation ? locationState.location : queryLocation || storedLocation.location;
+  const selectedLocation = hasSavedPublicLocation ? getPublicLocationDisplayLabel(locationState) : queryLocation || storedLocation.location;
   const selectedCoordinates = hasSavedPublicLocation ? locationState.coordinates : null;
-  const [locationDraft, setLocationDraft] = useState(() => selectedLocation);
+  const [locationDraft, setLocationDraft] = useState(() => (locationState.mode === "current" ? "" : selectedLocation));
   const [locationMessage, setLocationMessage] = useState<string | null>(null);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [locationBusy, setLocationBusy] = useState(false);
   const [searchIntent, setSearchIntent] = useState<DiscoverSearchIntent>(homeSearchState?.intent ?? "any");
   const [radiusKm, setRadiusKm] = useState(() => homeSearchState?.radiusKm ?? filters.searchParams.get("radiusKm") ?? "10");
   const hasHydratedLocation = useRef(false);
   const searchDraftRadiusKm = homeSearchState?.radiusKm ?? filters.searchParams.get("radiusKm") ?? "10";
-  const displayLocation = selectedLocation;
-  const searchableLocation = displayLocation === PUBLIC_CURRENT_LOCATION_LABEL ? PUBLIC_DEFAULT_LOCATION : displayLocation;
+  const displayLocation = getPublicLocationDisplayLabel(locationState);
+  const searchableLocation = isCurrentLocationMode(locationState) ? PUBLIC_DEFAULT_LOCATION : displayLocation;
   const doctors = usePublicResource<PublicPageResponse<PublicDoctorSummaryResponse>>(
     "/api/public/doctors",
     {
@@ -1685,8 +1695,8 @@ export function PublicHomePage() {
   );
 
   useEffect(() => {
-    setLocationDraft(selectedLocation);
-  }, [selectedLocation]);
+    setLocationDraft(locationState.mode === "current" ? "" : selectedLocation);
+  }, [locationState.mode, selectedLocation]);
 
   useEffect(() => {
     setSearchIntent(homeSearchState?.intent ?? "any");
@@ -1695,6 +1705,35 @@ export function PublicHomePage() {
   useEffect(() => {
     setRadiusKm(searchDraftRadiusKm);
   }, [searchDraftRadiusKm]);
+
+  useEffect(() => {
+    setSearchError(null);
+  }, [filters.query]);
+
+  useEffect(() => {
+    if (!locationPickerOpen) {
+      return;
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      if (!homeLocationShellRef.current?.contains(event.target as Node)) {
+        setLocationPickerOpen(false);
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setLocationPickerOpen(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [locationPickerOpen]);
 
   useEffect(() => {
     if (hasHydratedLocation.current) {
@@ -1707,7 +1746,11 @@ export function PublicHomePage() {
   }, [hasSavedPublicLocation, queryLocation, setSelectedLocation]);
 
   function commitSelectedLocation(nextLocation: string, nextCoordinates: PublicLocationCoordinates | null = null) {
-    const normalizedLocation = normalizePublicLocation(nextLocation) || PUBLIC_DEFAULT_LOCATION;
+    const normalizedLocation = normalizePublicLocationSelection(nextLocation);
+    if (!normalizedLocation) {
+      setLocationMessage("Please select or enter a valid location.");
+      return;
+    }
     setSelectedLocation(normalizedLocation, nextCoordinates);
     setLocationDraft(normalizedLocation);
     setLocationMessage(null);
@@ -1729,11 +1772,25 @@ export function PublicHomePage() {
         });
         setLocationBusy(false);
       },
-      () => {
+      (error) => {
         setLocationBusy(false);
-        setLocationMessage("Location permission was not allowed. Please select your city manually.");
+        setLocationMessage(mapPublicLocationGeolocationError(error));
       },
       { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 },
+    );
+  }
+
+  function saveSelectedLocation() {
+    const validationError = validatePublicLocationInput(locationDraft);
+    const normalizedDraft = normalizePublicLocation(locationDraft);
+    const preserveCoordinates = locationState.mode === "current" && Boolean(locationState.coordinates) && !normalizedDraft;
+    if (validationError && !preserveCoordinates) {
+      setLocationMessage(validationError);
+      return;
+    }
+    commitSelectedLocation(
+      preserveCoordinates ? PUBLIC_CURRENT_LOCATION_LABEL : normalizePublicLocationSelection(normalizedDraft) || PUBLIC_DEFAULT_LOCATION,
+      preserveCoordinates ? locationState.coordinates : null,
     );
   }
 
@@ -1743,6 +1800,12 @@ export function PublicHomePage() {
     const area = filters.area.trim();
     const hasExplicitLocation = searchableLocation !== PUBLIC_DEFAULT_LOCATION;
     const hasExplicitCoordinates = Boolean(selectedCoordinates);
+    const validationError = validateDiscoverySearchQuery(query);
+    if (validationError) {
+      setSearchError(validationError);
+      return;
+    }
+    setSearchError(null);
     if (!query && !area && !hasExplicitLocation && !hasExplicitCoordinates) {
       return;
     }
@@ -1756,7 +1819,7 @@ export function PublicHomePage() {
     navigate(buildSearchIntentTarget({
       intent: searchIntent,
       query,
-      city: searchableLocation,
+      city: selectedCoordinates ? PUBLIC_DEFAULT_LOCATION : searchableLocation,
       area,
       selectedCoordinates,
       radiusKm,
@@ -1775,7 +1838,7 @@ export function PublicHomePage() {
     navigate(buildSearchIntentTarget({
       intent: searchIntent,
       query: searchTerm,
-      city: searchableLocation,
+      city: selectedCoordinates ? PUBLIC_DEFAULT_LOCATION : searchableLocation,
       area,
       selectedCoordinates,
       radiusKm,
@@ -1808,61 +1871,48 @@ export function PublicHomePage() {
                   placeholder={DISCOVER_SEARCH_INTENTS.find((item) => item.value === searchIntent)?.placeholder ?? DISCOVER_SEARCH_INTENTS[0].placeholder}
                   autoComplete="off"
                   aria-label={DISCOVER_SEARCH_INTENTS.find((item) => item.value === searchIntent)?.placeholder ?? DISCOVER_SEARCH_INTENTS[0].placeholder}
+                  maxLength={DISCOVERY_SEARCH_MAX_LENGTH}
                 />
               </label>
-              <label className="hero-search-field hero-search-location">
-                <span className="visually-hidden">Location</span>
-                <button className="location-select-button home-location-button" type="button" onClick={() => setLocationPickerOpen((current) => !current)} aria-label={`Change location, currently ${displayLocation}`}>
-                  <LocationOnOutlined fontSize="small" aria-hidden="true" />
-                  {displayLocation}
-                </button>
-              </label>
+              {searchError ? <p className="form-note" role="status">{searchError}</p> : null}
+              <div className="discover-home-location-shell" ref={homeLocationShellRef}>
+                <label className="hero-search-field hero-search-location">
+                  <span className="visually-hidden">Location</span>
+                  <button className="location-select-button home-location-button" type="button" onClick={() => setLocationPickerOpen((current) => !current)} aria-label={`Change location, currently ${displayLocation}`}>
+                    <LocationOnOutlined fontSize="small" aria-hidden="true" />
+                    {displayLocation}
+                  </button>
+                </label>
+                {locationPickerOpen ? (
+                  <div className="discover-home-location-popover hero-location-selector public-location-selector-panel" role="dialog" aria-label="Select location">
+                    <PublicLocationSelectorPanel
+                      className="hero-location-selector__content"
+                      locationDraft={locationDraft}
+                      onLocationDraftChange={(value) => setLocationDraft(normalizePublicLocation(value))}
+                      selectedCoordinates={selectedCoordinates}
+                      options={PUBLIC_LOCATION_OPTIONS}
+                      radiusKm={radiusKm}
+                      onRadiusChange={setRadiusKm}
+                      note={selectedCoordinates ? `Searching within ${radiusKm} km of your selected location.` : "Radius applies after using your current location."}
+                      message={locationMessage}
+                      inputLabel="City or locality"
+                      inputPlaceholder="Pune"
+                      saveLabel="Save location"
+                      currentLocationButtonLabel={locationBusy ? "Detecting..." : "Use my current location"}
+                      useCurrentLocationDisabled={locationBusy}
+                      onSaveLocation={saveSelectedLocation}
+                      onUseCurrentLocation={handleCurrentLocation}
+                      onClearLocation={clearActiveLocation}
+                      showClear={locationState.mode === "current" || locationState.location !== PUBLIC_DEFAULT_LOCATION}
+                      saveDisabled={Boolean(validatePublicLocationInput(locationDraft)) && !(locationState.mode === "current" && Boolean(locationState.coordinates) && !normalizePublicLocationSelection(locationDraft))}
+                    />
+                  </div>
+                ) : null}
+              </div>
               <button className="primary-button hero-search-button" type="submit" aria-label="Search healthcare providers">
                 <SearchOutlined fontSize="small" aria-hidden="true" />
                 Search
               </button>
-              {locationPickerOpen ? (
-                <div className="location-selector hero-location-selector" role="dialog" aria-label="Select location">
-                  <label>
-                    <span>City or locality</span>
-                    <input value={locationDraft} onChange={(event) => setLocationDraft(normalizePublicLocation(event.target.value))} placeholder="Pune" />
-                  </label>
-                  <div className="chip-row" role="list" aria-label="Popular locations">
-                    {PUBLIC_LOCATION_OPTIONS.map((location) => (
-                      <button key={location} className="chip-button" type="button" onClick={() => commitSelectedLocation(location)}>
-                        {location}
-                      </button>
-                    ))}
-                  </div>
-                  <label>
-                    <span>Nearby radius</span>
-                    <select value={radiusKm} onChange={(event) => setRadiusKm(event.target.value)} disabled={!selectedCoordinates}>
-                      <option value="2">2 km</option>
-                      <option value="5">5 km</option>
-                      <option value="10">10 km</option>
-                      <option value="25">25 km</option>
-                      <option value="50">50 km</option>
-                    </select>
-                  </label>
-                  <p className="form-note">
-                    {selectedCoordinates ? `Searching within ${radiusKm} km of your selected location.` : "Radius applies after using your current location."}
-                  </p>
-                  <div className="cta-row">
-                    <button className="secondary-button" type="button" onClick={() => commitSelectedLocation(locationDraft)} disabled={!normalizePublicLocation(locationDraft)}>
-                      Save location
-                    </button>
-                    <button className="text-button" type="button" onClick={handleCurrentLocation} disabled={locationBusy}>
-                      {locationBusy ? "Detecting..." : "Use my current location"}
-                    </button>
-                    {selectedCoordinates ? (
-                      <button className="text-button" type="button" onClick={clearActiveLocation}>
-                        Clear
-                      </button>
-                    ) : null}
-                  </div>
-                  {locationMessage ? <p className="form-note" role="status">{locationMessage}</p> : null}
-                </div>
-              ) : null}
             </form>
             <div className="popular-searches" aria-label="Popular searches">
               <div className="section-heading-row">
@@ -2113,7 +2163,7 @@ export function PublicSearchPage() {
   const [searchParams] = useSearchParams();
   const displayLocation =
     searchParams.get("city")?.trim() ||
-    (locationState.location === PUBLIC_CURRENT_LOCATION_LABEL ? PUBLIC_DEFAULT_LOCATION : locationState.location || PUBLIC_DEFAULT_LOCATION);
+    getPublicLocationDisplayLabel(locationState);
   const searchableLocation = displayLocation === PUBLIC_CURRENT_LOCATION_LABEL ? PUBLIC_DEFAULT_LOCATION : displayLocation;
   const query = searchParams.get("q")?.trim() ?? "";
   const area = searchParams.get("area")?.trim() ?? "";
@@ -2290,6 +2340,7 @@ export function PublicDoctorsPage() {
     () => filterDoctorsDirectory(doctors.data.items, state.searchParams.get("q") ?? "", state.searchParams, state.selectedLocation),
     [doctors.data.items, state.searchParams, state.selectedLocation],
   );
+  const doctorQuery = state.searchParams.get("q")?.trim() ?? "";
   const popularSpecialities = useMemo(
     () =>
       [...specialities.data]
@@ -2370,9 +2421,6 @@ export function PublicDoctorsPage() {
         }}
         locationLabel={state.selectedLocation}
         onLocationCommit={(nextLocation, nextCoordinates) => state.commitLocation(DISCOVER_ROUTES.doctors.path, nextLocation, nextCoordinates)}
-        onUseCurrentLocation={createCurrentLocationHandler((coordinates) =>
-          state.commitLocation(DISCOVER_ROUTES.doctors.path, PUBLIC_CURRENT_LOCATION_LABEL, coordinates)
-        )}
         selectedCoordinates={state.selectedCoordinates}
         radiusKm={state.radiusKm}
         onRadiusChange={state.setRadiusKm}
@@ -2413,8 +2461,8 @@ export function PublicDoctorsPage() {
             error={doctors.error || specialities.error}
             empty={visibleDoctors.length === 0}
             emptyIcon="DR"
-            emptyTitle={`No doctors found for ${state.selectedLocation}`}
-            emptyMessage="Try another location, clear filters, or broaden the speciality search."
+            emptyTitle={doctorQuery ? buildDiscoveryNoResultsTitle("doctors", doctorQuery, state.selectedLocation) : `No doctors found for ${state.selectedLocation}`}
+            emptyMessage={doctorQuery ? buildDiscoveryNoResultsMessage() : "Try another location, clear filters, or broaden the speciality search."}
             primaryAction="Change search"
             primaryTo={`${DISCOVER_ROUTES.home.path}#find-care`}
             secondaryAction="Browse specialities"
@@ -2470,9 +2518,8 @@ export function PublicDoctorDetailPage() {
       null
     );
   }, [detail.data?.doctorDisplayName, doctorSlug, doctorSummarySearch.data.items]);
-  const consultationFeeLabel = useMemo(() => formatConsultationFee(matchedDoctor?.consultationFee ?? null), [matchedDoctor?.consultationFee]);
+  const consultationFeeLabel = useMemo(() => formatConsultationFee(detail.data?.consultationFee ?? matchedDoctor?.consultationFee ?? null), [detail.data?.consultationFee, matchedDoctor?.consultationFee]);
   const profile = useMemo(() => (detail.data ? buildDoctorProfile(detail.data, consultationFeeLabel) : null), [detail.data, consultationFeeLabel]);
-  const [visibleReviews, setVisibleReviews] = useState(3);
 
   if (detail.data?.publicPath && detail.data.publicPath !== location.pathname) {
     return <Navigate replace to={`${detail.data.publicPath}${location.search}`} />;
@@ -2490,7 +2537,7 @@ export function PublicDoctorDetailPage() {
       return primarySpeciality ? doctor.speciality?.toLowerCase() === primarySpeciality.toLowerCase() : true;
     })
     .slice(0, 6);
-  const bookingGroups = detail.data ? buildDoctorBookingGroups(detail.data) : [];
+  const bookingGroups = detail.data && profile ? buildDoctorBookingGroups(detail.data, profile.canBookOnline) : [];
   const stickyBookingUrl = profile?.bookingUrl ?? careBookingUrl({ doctorId: doctorSlug });
   const breadcrumbItems = [
     { label: "Home", to: DISCOVER_ROUTES.home.path },
@@ -2527,17 +2574,12 @@ export function PublicDoctorDetailPage() {
                     <span className="eyebrow">Patient Reviews</span>
                     <h2>Patient Reviews</h2>
                   </div>
-                  <RatingSummary rating={4.8} reviewCount={245} recommendationPercent={98} />
-                  <div className="doctor-review-grid">
-                    {doctorSampleReviews.slice(0, visibleReviews).map((review) => (
-                      <ReviewCard key={review.id} review={review} />
-                    ))}
+                  <div className="doctor-empty-state" role="status">
+                    <strong>No patient reviews yet</strong>
+                    <p>
+                      Public review summaries will appear here once verified patient feedback has been published for this doctor.
+                    </p>
                   </div>
-                  {visibleReviews < doctorSampleReviews.length ? (
-                    <button className="secondary-button" type="button" onClick={() => setVisibleReviews((current) => Math.min(current + 3, doctorSampleReviews.length))}>
-                      Load More
-                    </button>
-                  ) : null}
                 </section>
 
                 <section className="doctor-profile-section doctor-profile-section--related">
@@ -2561,6 +2603,7 @@ export function PublicDoctorDetailPage() {
                           contactPhone: doctor.contactPhone ?? null,
                           bookingMode: doctor.bookingMode ?? null,
                           availableToday: doctor.availableToday,
+                          canBookOnline: doctor.canBookOnline ?? false,
                           publicDoctorId: doctor.publicDoctorId,
                         }}
                       />
@@ -2591,16 +2634,18 @@ export function PublicDoctorDetailPage() {
                   nextAvailableDays={bookingGroups}
                   consultationModes={profile.consultationModes ?? []}
                   clinicName={detail.data?.clinics[0]?.clinicDisplayName ?? detail.data?.doctorDisplayName ?? "Clinic"}
-                  averageWaitTime="15 min"
-                  appointmentDuration="20 min"
+                  averageWaitTime={null}
+                  appointmentDuration={null}
                   bookingUrl={profile.bookingUrl}
+                  bookingMode={profile.bookingMode}
+                  canBookOnline={profile.canBookOnline}
                   callHref={profile.callHref}
                   callLabel="Call Clinic"
                 />
-                <AvailabilityTimeline days={profile.workingHoursSchedule ?? []} />
+                <AvailabilityTimeline days={profile.workingHoursSchedule ?? []} fallbackWorkingHours={profile.locationWorkingHours} />
               </aside>
             </div>
-            <StickyBookingCTA bookingUrl={stickyBookingUrl} />
+            <StickyBookingCTA bookingUrl={stickyBookingUrl} label={profile.bookingLabel} />
           </>
         ) : null}
       </DirectoryState>
@@ -2628,6 +2673,7 @@ export function PublicClinicsPage() {
     () => filterClinicsDirectory(clinicDirectory.items, state.searchParams.get("q") ?? "", state.searchParams, state.selectedLocation),
     [clinicDirectory.items, state.searchParams, state.selectedLocation],
   );
+  const clinicQuery = state.searchParams.get("q")?.trim() ?? "";
   const popularAreas = useMemo(() => {
     const values = clinicDirectory.items.map((clinic) => clinic.area ?? clinic.city ?? "").filter(Boolean);
     return Array.from(new Set(values)).slice(0, 8);
@@ -2683,9 +2729,6 @@ export function PublicClinicsPage() {
         }}
         locationLabel={state.selectedLocation}
         onLocationCommit={(nextLocation, nextCoordinates) => state.commitLocation(DISCOVER_ROUTES.clinics.path, nextLocation, nextCoordinates)}
-        onUseCurrentLocation={createCurrentLocationHandler((coordinates) =>
-          state.commitLocation(DISCOVER_ROUTES.clinics.path, PUBLIC_CURRENT_LOCATION_LABEL, coordinates)
-        )}
         selectedCoordinates={state.selectedCoordinates}
         radiusKm={state.radiusKm}
         onRadiusChange={state.setRadiusKm}
@@ -2723,8 +2766,8 @@ export function PublicClinicsPage() {
             error={clinicDirectory.initialError}
             empty={!clinicDirectory.loadingInitial && !clinicDirectory.initialError && visibleClinics.length === 0}
             emptyIcon="CL"
-            emptyTitle={`No clinics found for ${state.selectedLocation}`}
-            emptyMessage="Try a different location, clear filters, or browse doctors and specialities."
+            emptyTitle={clinicQuery ? buildDiscoveryNoResultsTitle("clinics", clinicQuery, state.selectedLocation) : `No clinics found for ${state.selectedLocation}`}
+            emptyMessage={clinicQuery ? buildDiscoveryNoResultsMessage() : "Try a different location, clear filters, or browse doctors and specialities."}
             primaryAction="Change search"
             primaryTo={`${DISCOVER_ROUTES.home.path}#find-care`}
             secondaryAction="Browse doctors"
@@ -2815,6 +2858,7 @@ export function PublicHospitalsPage() {
     () => filterHospitalsDirectory(hospitalDirectory.items, state.searchParams.get("q") ?? "", state.searchParams, state.selectedLocation),
     [hospitalDirectory.items, state.searchParams, state.selectedLocation],
   );
+  const hospitalQuery = state.searchParams.get("q")?.trim() ?? "";
   const popularDepartments = useMemo(() => {
     const values = hospitalDirectory.items.flatMap((hospital) => hospital.departments).filter(Boolean);
     return Array.from(new Set(values)).slice(0, 8);
@@ -2854,9 +2898,6 @@ export function PublicHospitalsPage() {
         }}
         locationLabel={state.selectedLocation}
         onLocationCommit={(nextLocation, nextCoordinates) => state.commitLocation(DISCOVER_ROUTES.hospitals.path, nextLocation, nextCoordinates)}
-        onUseCurrentLocation={createCurrentLocationHandler((coordinates) =>
-          state.commitLocation(DISCOVER_ROUTES.hospitals.path, PUBLIC_CURRENT_LOCATION_LABEL, coordinates)
-        )}
         selectedCoordinates={state.selectedCoordinates}
         radiusKm={state.radiusKm}
         onRadiusChange={state.setRadiusKm}
@@ -2894,8 +2935,8 @@ export function PublicHospitalsPage() {
             error={hospitalDirectory.initialError}
             empty={!hospitalDirectory.loadingInitial && !hospitalDirectory.initialError && visibleHospitals.length === 0}
             emptyIcon="H"
-            emptyTitle={`No hospitals found for ${state.selectedLocation}`}
-            emptyMessage="Try changing the location, clearing filters, or browsing clinics and specialities."
+            emptyTitle={hospitalQuery ? buildDiscoveryNoResultsTitle("hospitals", hospitalQuery, state.selectedLocation) : `No hospitals found for ${state.selectedLocation}`}
+            emptyMessage={hospitalQuery ? buildDiscoveryNoResultsMessage() : "Try changing the location, clearing filters, or browsing clinics and specialities."}
             primaryAction="Change search"
             primaryTo={`${DISCOVER_ROUTES.home.path}#find-care`}
             secondaryAction="Browse clinics"
@@ -2989,6 +3030,7 @@ export function PublicSpecialitiesPage() {
     () => filterSpecialitiesDirectory(specialities.data, state.searchParams.get("q") ?? "", state.searchParams),
     [specialities.data, state.searchParams],
   );
+  const specialityQuery = state.searchParams.get("q")?.trim() ?? "";
   const popularSpecialities = useMemo(
     () =>
       [...specialities.data]
@@ -3022,9 +3064,6 @@ export function PublicSpecialitiesPage() {
         }}
         locationLabel={state.selectedLocation}
         onLocationCommit={(nextLocation, nextCoordinates) => state.commitLocation(DISCOVER_ROUTES.specialities.path, nextLocation, nextCoordinates)}
-        onUseCurrentLocation={createCurrentLocationHandler((coordinates) =>
-          state.commitLocation(DISCOVER_ROUTES.specialities.path, PUBLIC_CURRENT_LOCATION_LABEL, coordinates)
-        )}
         selectedCoordinates={state.selectedCoordinates}
         radiusKm={state.radiusKm}
         onRadiusChange={state.setRadiusKm}
@@ -3062,8 +3101,8 @@ export function PublicSpecialitiesPage() {
             error={specialities.error}
             empty={visibleSpecialities.length === 0}
             emptyIcon="＋"
-            emptyTitle="Specialities are being prepared"
-            emptyMessage="Published provider specialities will appear here as the directory grows."
+            emptyTitle={specialityQuery ? buildDiscoveryNoResultsTitle("specialities", specialityQuery, state.selectedLocation) : "Specialities are being prepared"}
+            emptyMessage={specialityQuery ? buildDiscoveryNoResultsMessage() : "Published provider specialities will appear here as the directory grows."}
             primaryAction="Browse doctors"
             primaryTo={DISCOVER_ROUTES.doctors.path}
             secondaryAction="Browse clinics"

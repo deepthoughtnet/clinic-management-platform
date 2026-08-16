@@ -26,6 +26,12 @@ import { CareFooter } from "./components/CareShell";
 import { careConfig, externalAppUrl } from "./config";
 import { PublicLocationProvider } from "./context/publicLocation";
 import {
+  ContactPage,
+  HelpCentrePage,
+  PrivacyPolicyPage,
+  TermsPage,
+} from "./pages/public/CareSupportPages";
+import {
   PATIENT_PORTAL_SESSION_STORAGE_KEY,
   clearPatientAuthSession,
   clearPatientRegistrationSession,
@@ -140,36 +146,6 @@ function CareHomePage({ session }: { session: PatientPortalSession | null }) {
             <li>Use AIVA with your patient context after login</li>
           </ul>
         </article>
-      </div>
-    </section>
-  );
-}
-
-function StaticSupportPage({
-  title,
-  eyebrow,
-  subtitle,
-  body,
-}: {
-  title: string;
-  eyebrow: string;
-  subtitle: string;
-  body: string;
-}) {
-  return (
-    <section className="page-section narrow-page">
-      <div className="section-heading">
-        <span className="eyebrow">{eyebrow}</span>
-        <h1>{title}</h1>
-        <p>{subtitle}</p>
-      </div>
-      <div className="login-placeholder">
-        <p>{body}</p>
-        <div className="cta-row">
-          <Link className="primary-button" to="/">
-            Back to home
-          </Link>
-        </div>
       </div>
     </section>
   );
@@ -403,50 +379,10 @@ export function App() {
           <Route path="/patient/lab" element={<PatientLabPage session={session} onSignOut={clearPatientSessionAndContext} />} />
           <Route path="/patient/careai" element={<PatientCareAiPage session={session} onSignOut={clearPatientSessionAndContext} />} />
           <Route path="/patient/profile" element={<PatientProfilePage session={session} onSignOut={clearPatientSessionAndContext} />} />
-          <Route
-            path="/contact"
-            element={
-              <StaticSupportPage
-                eyebrow="Support"
-                title="Contact"
-                subtitle="Reach the platform team for deployment-specific support."
-                body="Use the clinic or platform support channel configured for your deployment. No patient data is shared on this page."
-              />
-            }
-          />
-          <Route
-            path="/help-centre"
-            element={
-              <StaticSupportPage
-                eyebrow="Support"
-                title="Help Centre"
-                subtitle="Find quick answers for Jeevanam Care usage."
-                body="This page can be replaced with your deployment-specific help content when ready."
-              />
-            }
-          />
-          <Route
-            path="/privacy-policy"
-            element={
-              <StaticSupportPage
-                eyebrow="Support"
-                title="Privacy Policy"
-                subtitle="Review the current privacy placeholder for this deployment."
-                body="Replace this page with the approved privacy policy text for your environment."
-              />
-            }
-          />
-          <Route
-            path="/terms"
-            element={
-              <StaticSupportPage
-                eyebrow="Support"
-                title="Terms"
-                subtitle="Review the current terms placeholder for this deployment."
-                body="Replace this page with the approved terms and conditions text for your environment."
-              />
-            }
-          />
+          <Route path="/contact" element={<ContactPage />} />
+          <Route path="/help-centre" element={<HelpCentrePage />} />
+          <Route path="/privacy-policy" element={<PrivacyPolicyPage />} />
+          <Route path="/terms" element={<TermsPage />} />
         </Routes>
       </AppShell>
     </PublicLocationProvider>

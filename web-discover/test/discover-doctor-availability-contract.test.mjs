@@ -23,6 +23,10 @@ test("doctor profile no longer fabricates slot or schedule fallbacks", () => {
   assert.ok(!page.includes('["Today", "Tomorrow"]'));
   assert.ok(!page.includes('["10:00 AM", "11:30 AM", "5:30 PM", "6:00 PM"]'));
   assert.ok(!page.includes("Mon\", hours: \"9:00 AM - 6:00 PM\""));
-  assert.ok(helpers.includes("Live slot availability is shown when you continue to booking."));
-  assert.ok(helpers.includes("Working hours not published on this profile yet."));
+  assert.ok(page.includes("fallbackWorkingHours={profile.locationWorkingHours}"));
+  assert.ok(helpers.includes("canBookOnline: boolean"));
+  assert.ok(helpers.includes("Online booking is not available yet."));
+  assert.ok(helpers.includes("Call the clinic to book this visit."));
+  assert.ok(helpers.includes("Working hours are shared in the public profile information."));
+  assert.ok(helpers.includes("Working hours:"));
 });

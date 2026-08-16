@@ -4,6 +4,7 @@ import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.Pro
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderLifecycleStatus;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderServiceType;
 import com.deepthoughtnet.clinic.discover.onboarding.ProviderOnboardingEnums.ProviderType;
+import com.deepthoughtnet.clinic.discover.publicprofilemoderation.PublicProfileModerationModels.PublicProfilePublicationRecord;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -314,6 +315,12 @@ public final class ProviderOnboardingModels {
             List<ProviderTimelineEventRecord> timeline,
             List<ProviderChangeRequestRecord> changeRequests,
             String publicProfilePath,
+            String publicationStatus,
+            String publicationReason,
+            List<PublicProfilePublicationRecord> publicationHistory,
+            List<String> publicationAllowedActions,
+            boolean canUnpublish,
+            boolean canRepublish,
             boolean published
     ) {
     }

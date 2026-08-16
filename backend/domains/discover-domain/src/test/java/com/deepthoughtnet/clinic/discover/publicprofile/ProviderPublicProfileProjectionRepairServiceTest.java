@@ -278,6 +278,7 @@ class ProviderPublicProfileProjectionRepairServiceTest {
                 "Published profile is publicly visible.",
                 "/discover/hospitals/jeevanam-multispeciality-hospital",
                 List.of(),
+                List.of(),
                 List.of("BACK_TO_WORKSPACE", "VIEW_SUBMITTED_PROFILE"),
                 List.of("BACK_TO_WORKSPACE", "VIEW_SUBMITTED_PROFILE")
         );

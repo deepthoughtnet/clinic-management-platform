@@ -69,6 +69,31 @@ export function discoveryEmptyMessage({
   return defaultMessage;
 }
 
+export const DISCOVERY_SEARCH_MAX_LENGTH = 120;
+
+export function validateDiscoverySearchQuery(query: string) {
+  const trimmed = query.trim();
+  if (!trimmed) {
+    return null;
+  }
+  if (trimmed.length > DISCOVERY_SEARCH_MAX_LENGTH) {
+    return `Searches are limited to ${DISCOVERY_SEARCH_MAX_LENGTH} characters. Please shorten your query.`;
+  }
+  return null;
+}
+
+export function buildDiscoveryNoResultsTitle(entityLabel: string, query?: string | null, locationLabel?: string | null) {
+  const trimmedQuery = query?.trim() ?? "";
+  const trimmedLocation = locationLabel?.trim() ?? "";
+  const queryPart = trimmedQuery ? ` matching “${trimmedQuery}”` : "";
+  const locationPart = trimmedLocation ? ` in ${trimmedLocation}` : "";
+  return `No ${entityLabel} found${queryPart}${locationPart}.`;
+}
+
+export function buildDiscoveryNoResultsMessage() {
+  return "Try clearing the search, changing location, or browsing specialities.";
+}
+
 export function slugify(value: string) {
   return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
 }

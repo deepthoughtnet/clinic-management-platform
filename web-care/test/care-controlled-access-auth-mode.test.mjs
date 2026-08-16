@@ -2,6 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
+const WEB_CARE_ROOT = path.resolve(TEST_DIR, "..");
+const REPO_ROOT = path.resolve(WEB_CARE_ROOT, "..");
 
 function resolveCareAuthMode(explicitMode, hostname) {
   const normalized = (explicitMode ?? "").trim();
@@ -19,7 +24,7 @@ function resolveCareAuthMode(explicitMode, hostname) {
 }
 
 function read(relPath) {
-  return fs.readFileSync(path.join(process.cwd(), relPath), "utf8");
+  return fs.readFileSync(path.join(WEB_CARE_ROOT, relPath), "utf8");
 }
 
 test("care auth mode precedence prefers explicit config over localhost fallback", () => {
@@ -35,6 +40,7 @@ test("care auth mode precedence prefers explicit config over localhost fallback"
 test("care controlled-access mode wires request access and access login paths", () => {
   const app = read("src/App.tsx");
   const pages = read("src/pages/patient/PatientPortalPages.tsx");
+  const accessValidation = read("src/pages/patient/patientAccessValidation.js");
   const config = read("src/config.ts");
   const shell = read("src/components/CareShell.tsx");
   const api = read("src/api/patientPortal.ts");
@@ -42,14 +48,14 @@ test("care controlled-access mode wires request access and access login paths", 
   const styles = read("src/styles.css");
   const devEnv = read(".env.development");
   const prodEnv = read(".env.production");
-  const localCompose = fs.readFileSync(path.join(process.cwd(), "..", "local", "docker-compose.yml"), "utf8");
-  const dockerComposeUat = fs.readFileSync(path.join(process.cwd(), "..", "local", "docker-compose.uat.yml"), "utf8");
+  const localCompose = fs.readFileSync(path.join(REPO_ROOT, "local", "docker-compose.yml"), "utf8");
+  const dockerComposeUat = fs.readFileSync(path.join(REPO_ROOT, "local", "docker-compose.uat.yml"), "utf8");
   const backendDocker = fs.readFileSync(
-    path.join(process.cwd(), "..", "backend", "api", "api-bff", "src", "main", "resources", "application-docker.yml"),
+    path.join(REPO_ROOT, "backend", "api", "api-bff", "src", "main", "resources", "application-docker.yml"),
     "utf8",
   );
   const backendDev = fs.readFileSync(
-    path.join(process.cwd(), "..", "backend", "api", "api-bff", "src", "main", "resources", "application-dev.yml"),
+    path.join(REPO_ROOT, "backend", "api", "api-bff", "src", "main", "resources", "application-dev.yml"),
     "utf8",
   );
 
@@ -73,6 +79,7 @@ test("care controlled-access mode wires request access and access login paths", 
   assert.ok(pages.includes('Request Access'));
   assert.ok(pages.includes('Temporary access code'));
   assert.ok(pages.includes('Invite-controlled access for approved patients. Request access if you have not been approved yet.'));
+  assert.ok(accessValidation.includes('sanitizePatientAccessCodeInput'));
   assert.ok(pages.includes('postPatientPortalAccessLogin'));
   assert.ok(pages.includes('postPatientPortalAccessRequest'));
   assert.ok(pages.includes('mode: "access"'));
@@ -95,8 +102,9 @@ test("care controlled-access mode wires request access and access login paths", 
 
 test("access approval mode keeps OTP controls behind configuration", () => {
   const pages = read("src/pages/patient/PatientPortalPages.tsx");
+  const accessValidation = read("src/pages/patient/patientAccessValidation.js");
   assert.ok(pages.includes('setAccessAttempted(true)'));
-  assert.ok(pages.includes('This access request is not currently active.'));
-  assert.ok(pages.includes('Select the correct clinic or hospital before signing in.'));
+  assert.ok(accessValidation.includes('already pending'));
+  assert.ok(accessValidation.includes('Select the correct clinic or hospital before signing in.'));
   assert.ok(pages.includes('Invite-controlled access'));
 });

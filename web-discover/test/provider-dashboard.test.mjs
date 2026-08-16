@@ -30,6 +30,7 @@ test("provider dashboard renders a shared post-submission status experience", ()
   assert.ok(page.includes("provider-status-card"));
   assert.ok(page.includes("provider-status-timeline"));
   assert.ok(page.includes("provider-status-preview"));
+  assert.ok(page.includes("provider-status-history-resolved"));
   assert.ok(page.includes("provider-dashboard-modal"));
   assert.ok(page.includes("Current stage"));
   assert.ok(page.includes("Next steps"));
@@ -38,6 +39,10 @@ test("provider dashboard renders a shared post-submission status experience", ()
   assert.ok(page.includes("copyToClipboard"));
   assert.ok(page.includes("providerDocumentContentPath"));
   assert.ok(page.includes("publicProfilePath"));
+  assert.ok(page.includes("Your application has been approved and is waiting for publication."));
+  assert.ok(page.includes("Your published profile is live on Jeevanam Discover."));
+  assert.ok(page.includes("Resolved reviewer comments"));
+  assert.ok(page.includes("currentStateMessage"));
   assert.ok(!page.includes("No actions currently require your attention."));
 });
 
@@ -53,6 +58,8 @@ test("provider dashboard uses readable lifecycle labels and immutable snapshot d
   assert.ok(page.includes("snapshot.versionNumber"));
   assert.ok(page.includes("snapshot.displayName"));
   assert.ok(page.includes("snapshot.galleryDocumentIds"));
+  assert.ok(page.includes("provider-status-history-item"));
+  assert.ok(page.includes("Resolved reviewer comment"));
   assert.ok(backend.includes('case DRAFT -> "Registration started";'));
   assert.ok(backend.includes('case CONTACT_VERIFIED -> "Contact verified";'));
   assert.ok(backend.includes('case SUBMITTED -> "Submitted for verification";'));

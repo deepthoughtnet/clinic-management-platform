@@ -23,18 +23,21 @@ import type {
 } from "../../api/publicCatalog";
 import { PublicMediaImage } from "../landing/PublicMediaImage";
 import { ProviderCardMedia } from "../discovery/ProviderCardMedia";
+import { PublicLocationSelectorPanel } from "../location/PublicLocationSelectorPanel";
 import {
   BookingCapabilityBadge,
   bookingCapabilityLabel,
   providerBookingPrimaryLabel,
   providerBookingSecondaryLabel,
   normalizeBookingMode,
+  resolveDoctorBookingMode,
 } from "../discovery/BookingCapability";
 import { DISCOVER_DETAIL_PATHS } from "../../routes";
 import { careBookingUrl, formatConsultationFee, formatDistanceKm, initials } from "../DiscoveryComponents";
-import { PUBLIC_DEFAULT_LOCATION, PUBLIC_LOCATION_OPTIONS, normalizePublicLocation, type PublicLocationCoordinates, usePublicLocation } from "../../context/PublicLocationContext";
+import { PUBLIC_CURRENT_LOCATION_LABEL, PUBLIC_DEFAULT_LOCATION, PUBLIC_LOCATION_OPTIONS, normalizePublicLocation, normalizePublicLocationSelection, type PublicLocationCoordinates, usePublicLocation, validatePublicLocationInput, mapPublicLocationGeolocationError } from "../../context/PublicLocationContext";
 import { DISCOVER_DIRECTORY_TOKENS } from "../../theme/discoverTheme";
 import type { FormEvent, KeyboardEvent } from "react";
+import { DISCOVERY_SEARCH_MAX_LENGTH, validateDiscoverySearchQuery } from "../../utils/publicDiscovery";
 
 type DirectoryCardCommonProps = {
   demo?: boolean;
@@ -266,7 +269,6 @@ export function DirectorySearchPanel({
   onSubmit,
   locationLabel,
   onLocationCommit,
-  onUseCurrentLocation,
   selectedCoordinates,
   radiusKm,
   onRadiusChange,
@@ -279,7 +281,6 @@ export function DirectorySearchPanel({
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   locationLabel: string;
   onLocationCommit: (nextLocation: string, nextCoordinates?: PublicLocationCoordinates | null) => void;
-  onUseCurrentLocation: () => void;
   selectedCoordinates: PublicLocationCoordinates | null;
   radiusKm: string;
   onRadiusChange: (value: string) => void;
@@ -289,19 +290,28 @@ export function DirectorySearchPanel({
   const [menuOpen, setMenuOpen] = useState(false);
   const [draftLocation, setDraftLocation] = useState(locationLabel);
   const [message, setMessage] = useState<string | null>(null);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const shellRef = useRef<HTMLDivElement | null>(null);
+  const currentLocationActive = locationState.mode === "current" && Boolean(selectedCoordinates);
 
   useEffect(() => {
     if (menuOpen) {
-      setDraftLocation(locationLabel);
+      setDraftLocation(currentLocationActive ? "" : locationLabel);
       setMessage(null);
+      setSearchError(null);
     }
-  }, [locationLabel, menuOpen]);
+  }, [currentLocationActive, locationLabel, menuOpen]);
 
   function commit(nextLocation: string, nextCoordinates: PublicLocationCoordinates | null = null) {
-    const normalized = normalizePublicLocation(nextLocation) || PUBLIC_DEFAULT_LOCATION;
+    const normalized = normalizePublicLocationSelection(nextLocation);
+    if (!normalized) {
+      setMessage("Please select or enter a valid location.");
+      return;
+    }
     onLocationCommit(normalized, nextCoordinates);
     setMenuOpen(false);
     setMessage(null);
+    setSearchError(null);
     setDraftLocation(normalized);
   }
 
@@ -311,8 +321,78 @@ export function DirectorySearchPanel({
     }
   }
 
+  useEffect(() => {
+    if (!menuOpen) {
+      return;
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      if (!shellRef.current?.contains(event.target as Node)) {
+        setMenuOpen(false);
+      }
+    }
+
+    function handleEscape(event: globalThis.KeyboardEvent) {
+      if (event.key === "Escape") {
+        setMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [menuOpen]);
+
+  function handleCurrentLocation() {
+    setMessage(null);
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      setMessage("Location services are not available in this browser. Please select a city manually.");
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        commit(PUBLIC_CURRENT_LOCATION_LABEL, {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        });
+      },
+      (error) => {
+        setMessage(mapPublicLocationGeolocationError(error));
+      },
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 },
+    );
+  }
+
+  function handleSaveLocation() {
+    const validationError = validatePublicLocationInput(draftLocation);
+    const normalizedDraft = normalizePublicLocation(draftLocation);
+    const preserveCoordinates = currentLocationActive && !normalizedDraft;
+    if (validationError && !preserveCoordinates) {
+      setMessage(validationError);
+      return;
+    }
+    commit(
+      preserveCoordinates ? PUBLIC_CURRENT_LOCATION_LABEL : normalizePublicLocationSelection(normalizedDraft) || PUBLIC_DEFAULT_LOCATION,
+      preserveCoordinates ? selectedCoordinates : null,
+    );
+  }
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const validationError = validateDiscoverySearchQuery(query);
+    if (validationError) {
+      setSearchError(validationError);
+      return;
+    }
+    setSearchError(null);
+    onSubmit(event);
+  }
+
   return (
-    <form className="directory-search-panel" aria-label="Smart search" onSubmit={onSubmit}>
+    <form className="directory-search-panel" aria-label="Smart search" onSubmit={handleSubmit}>
       <label className="directory-search-field directory-search-field--query">
         <span className="visually-hidden">What are you looking for?</span>
         <SearchOutlined fontSize="small" aria-hidden="true" />
@@ -322,9 +402,11 @@ export function DirectorySearchPanel({
           placeholder={placeholder}
           aria-label="What are you looking for?"
           autoComplete="off"
+          maxLength={DISCOVERY_SEARCH_MAX_LENGTH}
         />
       </label>
-      <div className="directory-search-location-shell" onKeyDown={handleKeyDown}>
+      {searchError ? <p className="form-note" role="status">{searchError}</p> : null}
+      <div className="directory-search-location-shell discover-directory-location-shell" ref={shellRef} onKeyDown={handleKeyDown}>
         <button
           className="location-select-button directory-search-location-button"
           type="button"
@@ -337,40 +419,26 @@ export function DirectorySearchPanel({
           <span>{locationLabel}</span>
         </button>
         {menuOpen ? (
-          <div className="directory-location-popover" role="dialog" aria-label="Select location">
-            <label className="directory-search-field">
-              <span className="directory-field-label">Active location</span>
-              <input value={draftLocation} onChange={(event) => setDraftLocation(normalizePublicLocation(event.target.value))} placeholder="Pune" />
-            </label>
-            <div className="chip-row" role="list" aria-label="Popular locations">
-              {PUBLIC_LOCATION_OPTIONS.map((location) => (
-                <button key={location} className="chip-button" type="button" onClick={() => commit(location)}>
-                  {location}
-                </button>
-              ))}
-            </div>
-            <label className="directory-search-field">
-              <span className="directory-field-label">Nearby radius</span>
-              <select value={radiusKm} onChange={(event) => onRadiusChange(event.target.value)} disabled={!selectedCoordinates}>
-                <option value="2">2 km</option>
-                <option value="5">5 km</option>
-                <option value="10">10 km</option>
-                <option value="25">25 km</option>
-                <option value="50">50 km</option>
-              </select>
-            </label>
-            <div className="cta-row">
-              <button className="secondary-button" type="button" onClick={() => commit(draftLocation)} disabled={!normalizePublicLocation(draftLocation)}>
-                Save location
-              </button>
-              <button className="text-button" type="button" onClick={onUseCurrentLocation}>
-                Use my location
-              </button>
-            </div>
-            <p className="form-note">
-              {selectedCoordinates ? `Radius applies within ${radiusKm} km of your selected location.` : "Radius becomes active after using your current location."}
-            </p>
-            {message ? <p className="form-note" role="status">{message}</p> : null}
+          <div className="directory-location-popover discover-directory-location-popover public-location-selector-panel" role="dialog" aria-label="Select location">
+            <PublicLocationSelectorPanel
+              className="directory-location-popover__content"
+              locationDraft={draftLocation}
+              onLocationDraftChange={(value) => setDraftLocation(normalizePublicLocation(value))}
+              selectedCoordinates={selectedCoordinates}
+              options={PUBLIC_LOCATION_OPTIONS}
+              radiusKm={radiusKm}
+              onRadiusChange={onRadiusChange}
+              note={selectedCoordinates ? `Radius applies within ${radiusKm} km of your selected location.` : "Radius becomes active after using your current location."}
+              message={message}
+              inputLabel="Active location"
+              inputPlaceholder="Pune"
+              saveLabel="Save location"
+              currentLocationButtonLabel="Use my location"
+              onSaveLocation={handleSaveLocation}
+              onUseCurrentLocation={handleCurrentLocation}
+              showClear={false}
+              saveDisabled={Boolean(validatePublicLocationInput(draftLocation)) && !(currentLocationActive && !normalizePublicLocationSelection(draftLocation))}
+            />
           </div>
         ) : null}
       </div>
@@ -592,7 +660,7 @@ export function DoctorDirectoryCard({
   const location = [doctor.area, doctor.city].filter(Boolean).join(" · ") || doctor.clinicDisplayName;
   const photoUrl = safeDoctorImage(doctor);
   const consultationModeText = doctor.nextAvailableSlotSummary || (doctor.availableToday ? "Available today" : "Next slot on request");
-  const bookingMode = normalizeBookingMode(doctor.bookingMode) ?? "ONLINE_BOOKING";
+  const bookingMode = resolveDoctorBookingMode(doctor.bookingMode, doctor.canBookOnline, doctor.contactPhone);
   const bookingHref = doctor.contactPhone?.trim() ? `tel:${doctor.contactPhone.trim()}` : null;
   const primaryActionLabel = providerBookingPrimaryLabel(bookingMode);
   const secondaryActionLabel = providerBookingSecondaryLabel(bookingMode) ?? "View profile";

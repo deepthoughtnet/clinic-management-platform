@@ -47,6 +47,8 @@ import com.deepthoughtnet.clinic.discover.onboarding.db.ProviderSubmissionReposi
 import com.deepthoughtnet.clinic.discover.reference.DiscoverReferenceDataService;
 import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileProjectionRepairService;
 import com.deepthoughtnet.clinic.discover.publicprofile.ProviderPublicProfileService;
+import com.deepthoughtnet.clinic.discover.publicprofilemoderation.ProviderPublicProfileModerationService;
+import com.deepthoughtnet.clinic.discover.publicprofilemoderation.PublicProfileModerationModels.PublicProfilePublicationRecord;
 import com.deepthoughtnet.clinic.discover.verification.DiscoverContactNormalizer;
 import com.deepthoughtnet.clinic.discover.verification.DiscoverVerificationService;
 import com.deepthoughtnet.clinic.discover.verification.VerificationChannel;
@@ -105,6 +107,7 @@ public class ProviderOnboardingService {
     private final ObjectStorageService storageService;
     private final ObjectMapper objectMapper;
     private final ProviderPublicProfileService publicProfileService;
+    private final ProviderPublicProfileModerationService publicProfileModerationService;
     private final ProviderPublicProfileProjectionRepairService projectionRepairService;
     private final DiscoverVerificationService verificationService;
     private final DiscoverReferenceDataService referenceDataService;
@@ -121,6 +124,7 @@ public class ProviderOnboardingService {
             ObjectStorageService storageService,
             ObjectMapper objectMapper,
             ProviderPublicProfileService publicProfileService,
+            ProviderPublicProfileModerationService publicProfileModerationService,
             ProviderPublicProfileProjectionRepairService projectionRepairService,
             DiscoverVerificationService verificationService,
             DiscoverReferenceDataService referenceDataService
@@ -136,6 +140,7 @@ public class ProviderOnboardingService {
         this.storageService = storageService;
         this.objectMapper = objectMapper;
         this.publicProfileService = publicProfileService;
+        this.publicProfileModerationService = publicProfileModerationService;
         this.projectionRepairService = projectionRepairService;
         this.verificationService = verificationService;
         this.referenceDataService = referenceDataService;
@@ -895,6 +900,14 @@ public class ProviderOnboardingService {
         String publicProfilePath = publicProfileService.findByProviderId(entity.getId())
                 .map(record -> record.publicPath())
                 .orElse(null);
+        String publicProfileReference = entity.getId().toString();
+        List<PublicProfilePublicationRecord> publicationHistory = publicProfileModerationService.publicationHistory(publicProfileReference);
+        PublicProfilePublicationRecord currentPublication = publicProfileModerationService.findCurrentPublication(publicProfileReference).orElse(null);
+        String publicationStatus = publicProfileModerationService.publicationStatus(publicProfileReference);
+        String publicationReason = currentPublication == null ? null : currentPublication.reason();
+        List<String> publicationAllowedActions = publicProfileModerationService.publicationAllowedActions(publicProfileReference);
+        boolean canUnpublish = publicProfileModerationService.canUnpublish(publicProfileReference);
+        boolean canRepublish = publicProfileModerationService.canRepublish(publicProfileReference);
         return new ProviderReviewDetailRecord(
                 dashboard.application(),
                 dashboard.completion(),
@@ -902,7 +915,13 @@ public class ProviderOnboardingService {
                 dashboard.timeline(),
                 dashboard.changeRequests(),
                 publicProfilePath,
-                entity.getStatus() == ProviderLifecycleStatus.PUBLISHED
+                publicationStatus,
+                publicationReason,
+                publicationHistory,
+                publicationAllowedActions,
+                canUnpublish,
+                canRepublish,
+                entity.getStatus() == ProviderLifecycleStatus.PUBLISHED || "PUBLISHED".equalsIgnoreCase(publicationStatus)
         );
     }
 

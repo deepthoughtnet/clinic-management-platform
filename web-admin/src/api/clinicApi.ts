@@ -9948,6 +9948,12 @@ export type DiscoverProviderReviewDetail = {
   timeline: DiscoverProviderTimelineEvent[];
   changeRequests: DiscoverProviderChangeRequest[];
   publicProfilePath: string | null;
+  publicationStatus: string | null;
+  publicationReason: string | null;
+  publicationHistory: ProviderPublicProfilePublicationHistoryResponse[];
+  publicationAllowedActions: string[];
+  canUnpublish: boolean;
+  canRepublish: boolean;
   published: boolean;
 };
 
@@ -10115,6 +10121,25 @@ export type ProviderPublicProfileReviewFindingResponse = {
   resolvedAt: string | null;
 };
 
+export type ProviderPublicProfilePublicationHistoryResponse = {
+  id: string;
+  publicationReference: string;
+  publicProfileReference: string;
+  approvedSubmissionReference: string;
+  publishedVersion: number;
+  publicationStatus: string;
+  slug: string;
+  publicPath: string;
+  reason: string | null;
+  publishedAt: string | null;
+  publishedBy: string | null;
+  unpublishedAt: string | null;
+  unpublishedBy: string | null;
+  current: boolean;
+  effectiveVisibility: string | null;
+  visibilityReason: string | null;
+};
+
 export type ProviderPublicProfileReviewResponse = {
   id: string;
   submissionReference: string;
@@ -10151,6 +10176,7 @@ export type ProviderPublicProfileReviewResponse = {
   visibilityReason: string | null;
   publicUrl: string | null;
   findings: ProviderPublicProfileReviewFindingResponse[];
+  publicationHistory: ProviderPublicProfilePublicationHistoryResponse[];
   providerAllowedActions: string[];
   allowedActions: string[];
 };
