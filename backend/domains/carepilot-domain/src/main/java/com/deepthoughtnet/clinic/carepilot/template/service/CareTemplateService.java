@@ -10,6 +10,9 @@ import com.deepthoughtnet.clinic.carepilot.template.service.model.CareTemplateRe
 import com.deepthoughtnet.clinic.carepilot.template.service.model.CareTemplateSearchCriteria;
 import com.deepthoughtnet.clinic.carepilot.template.service.model.CareTemplateUpsertCommand;
 import com.deepthoughtnet.clinic.carepilot.template.service.model.TemplatePreviewResult;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -25,10 +28,18 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class CareTemplateService {
     private static final Pattern TOKEN_PATTERN = Pattern.compile("\\{\\{\\s*([A-Za-z0-9_]+)\\s*}}");
+    private static final Pattern CONTROL_CHAR_PATTERN = Pattern.compile("[\\u0000-\\u001F\\u007F]");
+    private static final int MAX_NAME_LENGTH = 140;
+    private static final int MAX_DESCRIPTION_LENGTH = 512;
+    private static final int MAX_SUBJECT_LENGTH = 300;
+    private static final int MAX_BODY_LENGTH = 10000;
+    private static final int MAX_VARIABLES_JSON_LENGTH = 10000;
     private final CareTemplateRepository repository;
+    private final ObjectMapper objectMapper;
 
-    public CareTemplateService(CareTemplateRepository repository) {
+    public CareTemplateService(CareTemplateRepository repository, ObjectMapper objectMapper) {
         this.repository = repository;
+        this.objectMapper = objectMapper;
     }
 
     @Transactional(readOnly = true)
@@ -67,16 +78,21 @@ public class CareTemplateService {
         CarePilotValidators.requireTenant(tenantId);
         validateRequired(command);
         validateUniqueName(tenantId, command.templateType(), command.name(), null);
+        String normalizedName = command.name().trim();
+        String normalizedDescription = normalizeNullable(command.description());
+        String normalizedSubject = normalizeNullable(command.subject());
+        String normalizedBody = command.body().trim();
+        String normalizedVariablesJson = normalizeNullable(command.variablesJson());
         CareTemplateEntity entity = CareTemplateEntity.create(
                 tenantId,
-                command.name().trim(),
-                normalizeNullable(command.description()),
+                normalizedName,
+                normalizedDescription,
                 command.templateType(),
                 command.channel(),
                 command.category(),
-                normalizeNullable(command.subject()),
-                command.body().trim(),
-                normalizeNullable(command.variablesJson()),
+                normalizedSubject,
+                normalizedBody,
+                normalizedVariablesJson,
                 command.active() == null || command.active(),
                 false,
                 actorAppUserId
@@ -92,15 +108,20 @@ public class CareTemplateService {
         CareTemplateEntity entity = repository.findByTenantIdAndId(tenantId, templateId)
                 .orElseThrow(() -> new IllegalArgumentException("Template not found"));
         validateUniqueName(tenantId, command.templateType(), command.name(), templateId);
+        String normalizedName = command.name().trim();
+        String normalizedDescription = normalizeNullable(command.description());
+        String normalizedSubject = normalizeNullable(command.subject());
+        String normalizedBody = command.body().trim();
+        String normalizedVariablesJson = normalizeNullable(command.variablesJson());
         entity.update(
-                command.name().trim(),
-                normalizeNullable(command.description()),
+                normalizedName,
+                normalizedDescription,
                 command.templateType(),
                 command.channel(),
                 command.category(),
-                normalizeNullable(command.subject()),
-                command.body().trim(),
-                normalizeNullable(command.variablesJson()),
+                normalizedSubject,
+                normalizedBody,
+                normalizedVariablesJson,
                 command.active(),
                 actorAppUserId
         );
@@ -217,32 +238,136 @@ public class CareTemplateService {
         if (command == null) {
             throw new IllegalArgumentException("Template payload is required");
         }
-        CarePilotValidators.requireText(command.name(), "name");
-        CarePilotValidators.requireText(command.body(), "body");
-        if (command.templateType() == null) throw new IllegalArgumentException("templateType is required");
-        if (command.channel() == null) throw new IllegalArgumentException("channel is required");
-        if (command.category() == null) throw new IllegalArgumentException("category is required");
+        requireText(command.name(), "Template name", MAX_NAME_LENGTH);
+        requireEnum(command.templateType(), "Template type");
+        TemplateChannel channel = requireEnum(command.channel(), "Channel");
+        requireEnum(command.category(), "Category");
+        String subject = normalizeNullable(command.subject());
+        String body = requireMultilineText(command.body(), "Template body", MAX_BODY_LENGTH);
+        validateSubject(channel, subject);
+        validatePlaceholderSyntax(subject, "Subject");
+        validatePlaceholderSyntax(body, "Body");
+        validateDescription(command.description());
+        validateVariablesJson(command.variablesJson());
     }
 
     private void validateUniqueName(UUID tenantId, TemplateType templateType, String name, UUID ignoreTemplateId) {
-        List<CareTemplateEntity> matches = repository.searchWithText(
-                tenantId,
-                templateType,
-                null,
-                null,
-                null,
-                "%" + name.trim().toLowerCase() + "%"
-        );
-        boolean duplicate = matches.stream().anyMatch(e ->
-                e.getName().equalsIgnoreCase(name.trim()) && (ignoreTemplateId == null || !e.getId().equals(ignoreTemplateId)));
+        String normalized = name == null ? null : name.trim();
+        if (normalized == null || normalized.isBlank()) {
+            return;
+        }
+        boolean duplicate = ignoreTemplateId == null
+                ? repository.existsByTenantIdAndTemplateTypeAndNameIgnoreCase(tenantId, templateType, normalized)
+                : repository.existsByTenantIdAndTemplateTypeAndNameIgnoreCaseAndIdNot(tenantId, templateType, normalized, ignoreTemplateId);
         if (duplicate) {
-            throw new IllegalArgumentException("Template name already exists for this type");
+            throw new IllegalArgumentException("A template with this name already exists.");
         }
     }
 
     private String normalizeNullable(String value) {
         if (value == null || value.isBlank()) return null;
         return value.trim();
+    }
+
+    private String requireText(String value, String label, int maxLength) {
+        String normalized = normalizeNullable(value);
+        if (normalized == null) {
+            throw new IllegalArgumentException(label + " is required.");
+        }
+        if (normalized.length() > maxLength) {
+            throw new IllegalArgumentException(label + " must be " + maxLength + " characters or fewer.");
+        }
+        if (CONTROL_CHAR_PATTERN.matcher(normalized).find()) {
+            throw new IllegalArgumentException(label + " must not contain control characters.");
+        }
+        return normalized;
+    }
+
+    private String requireMultilineText(String value, String label, int maxLength) {
+        String normalized = normalizeNullable(value);
+        if (normalized == null) {
+            throw new IllegalArgumentException(label + " is required.");
+        }
+        if (normalized.length() > maxLength) {
+            throw new IllegalArgumentException(label + " must be " + maxLength + " characters or fewer.");
+        }
+        return normalized;
+    }
+
+    private <T> T requireEnum(T value, String label) {
+        if (value == null) {
+            throw new IllegalArgumentException(label + " is required.");
+        }
+        return value;
+    }
+
+    private void validateDescription(String description) {
+        String normalized = normalizeNullable(description);
+        if (normalized == null) {
+            return;
+        }
+        if (normalized.length() > MAX_DESCRIPTION_LENGTH) {
+            throw new IllegalArgumentException("Description must be " + MAX_DESCRIPTION_LENGTH + " characters or fewer.");
+        }
+        if (CONTROL_CHAR_PATTERN.matcher(normalized).find()) {
+            throw new IllegalArgumentException("Description must not contain control characters.");
+        }
+    }
+
+    private void validateSubject(TemplateChannel channel, String subject) {
+        if (channel == TemplateChannel.EMAIL && subject == null) {
+            throw new IllegalArgumentException("Subject is required for email templates.");
+        }
+        if (subject != null && subject.length() > MAX_SUBJECT_LENGTH) {
+            throw new IllegalArgumentException("Subject must be " + MAX_SUBJECT_LENGTH + " characters or fewer.");
+        }
+        if (subject != null && CONTROL_CHAR_PATTERN.matcher(subject).find()) {
+            throw new IllegalArgumentException("Subject must not contain control characters.");
+        }
+    }
+
+    private void validateVariablesJson(String variablesJson) {
+        String normalized = normalizeNullable(variablesJson);
+        if (normalized == null) {
+            return;
+        }
+        if (normalized.length() > MAX_VARIABLES_JSON_LENGTH) {
+            throw new IllegalArgumentException("Variables JSON must be " + MAX_VARIABLES_JSON_LENGTH + " characters or fewer.");
+        }
+        try {
+            JsonNode node = objectMapper.readTree(normalized);
+            if (node == null || !node.isObject()) {
+                throw new IllegalArgumentException("Variables JSON must be a JSON object.");
+            }
+        } catch (JsonProcessingException ex) {
+            throw new IllegalArgumentException("Enter valid JSON.");
+        }
+    }
+
+    private void validatePlaceholderSyntax(String value, String label) {
+        if (value == null) {
+            return;
+        }
+        int index = 0;
+        while (index < value.length()) {
+            int open = value.indexOf("{{", index);
+            int close = value.indexOf("}}", index);
+            if (close >= 0 && (open < 0 || close < open)) {
+                throw new IllegalArgumentException(label + " contains an invalid placeholder.");
+            }
+            if (open < 0) {
+                return;
+            }
+            int end = value.indexOf("}}", open + 2);
+            if (end < 0) {
+                throw new IllegalArgumentException(label + " contains an invalid placeholder.");
+            }
+            String token = value.substring(open + 2, end).trim();
+            if (token.isBlank() || !token.matches("[A-Za-z0-9_]+")) {
+                throw new IllegalArgumentException(label + " contains an invalid placeholder.");
+            }
+            index = end + 2;
+        }
     }
 
     private CareTemplateRecord toRecord(CareTemplateEntity entity) {

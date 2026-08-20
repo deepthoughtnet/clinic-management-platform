@@ -25,6 +25,13 @@ const toOptionalNumber = (value: unknown) => {
   return value;
 };
 
+const toOptionalTrimmedString = (value: unknown) => {
+  if (value == null) return undefined;
+  if (typeof value !== "string") return value;
+  const trimmed = value.trim();
+  return trimmed === "" ? undefined : trimmed;
+};
+
 export function requiredString(message: string = en.required) {
   return z.preprocess(toRequiredString, z.string().min(1, message));
 }
@@ -43,6 +50,20 @@ export function email(message: string = en.invalidEmail) {
 
 export function optionalEmail(message: string = en.invalidEmail) {
   return z.preprocess(toOptionalString, z.string().email(message).optional());
+}
+
+export function optionalLoginId(message: string = "Enter a valid login ID.") {
+  return z.preprocess(
+    toOptionalTrimmedString,
+    z.string().regex(/^[^\s\u0000-\u001F\u007F]{3,128}$/u, message).optional(),
+  );
+}
+
+export function optionalEmployeeCode(message: string = "Enter a valid employee code.") {
+  return z.preprocess(
+    toOptionalTrimmedString,
+    z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._/-]{0,63}$/, message).optional(),
+  );
 }
 
 export function password(message: string = en.invalidPassword) {

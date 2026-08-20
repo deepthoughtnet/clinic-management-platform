@@ -8,6 +8,7 @@ import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import jakarta.persistence.Version;
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -69,6 +70,9 @@ public class DoctorProfileEntity {
     @Column(name = "age")
     private Integer age;
 
+    @Column(name = "date_of_birth")
+    private LocalDate dateOfBirth;
+
     @Column(name = "active", nullable = false)
     private boolean active = true;
 
@@ -126,6 +130,7 @@ public class DoctorProfileEntity {
             BigDecimal emergencyFee,
             Integer yearsOfExperience,
             Integer age,
+            LocalDate dateOfBirth,
             Boolean active,
             Boolean publicListingEnabled,
             String slug
@@ -142,6 +147,7 @@ public class DoctorProfileEntity {
         this.emergencyFee = emergencyFee;
         this.yearsOfExperience = yearsOfExperience;
         this.age = age;
+        this.dateOfBirth = dateOfBirth;
         if (active != null) {
             this.active = active;
         }
@@ -150,6 +156,43 @@ public class DoctorProfileEntity {
         }
         this.slug = slug;
         this.updatedAt = OffsetDateTime.now();
+    }
+
+    public void update(
+            String mobile,
+            String specialization,
+            List<String> specializations,
+            String qualification,
+            String registrationNumber,
+            String consultationRoom,
+            BigDecimal consultationFee,
+            BigDecimal opdFee,
+            BigDecimal followUpFee,
+            BigDecimal emergencyFee,
+            Integer yearsOfExperience,
+            Integer age,
+            Boolean active,
+            Boolean publicListingEnabled,
+            String slug
+    ) {
+        update(
+                mobile,
+                specialization,
+                specializations,
+                qualification,
+                registrationNumber,
+                consultationRoom,
+                consultationFee,
+                opdFee,
+                followUpFee,
+                emergencyFee,
+                yearsOfExperience,
+                age,
+                null,
+                active,
+                publicListingEnabled,
+                slug
+        );
     }
 
     public void updatePhoto(String storageKey, String contentType, Long sizeBytes, String originalFilename) {
@@ -175,6 +218,7 @@ public class DoctorProfileEntity {
     public BigDecimal getEmergencyFee() { return emergencyFee; }
     public Integer getYearsOfExperience() { return yearsOfExperience; }
     public Integer getAge() { return age; }
+    public LocalDate getDateOfBirth() { return dateOfBirth; }
     public boolean isActive() { return active; }
     public boolean isPublicListingEnabled() { return publicListingEnabled; }
     public String getSlug() { return slug; }

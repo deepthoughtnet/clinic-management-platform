@@ -2,26 +2,47 @@ package com.deepthoughtnet.clinic.clinic.service;
 
 import com.deepthoughtnet.clinic.clinic.db.DoctorProfileEntity;
 import com.deepthoughtnet.clinic.clinic.db.DoctorProfileRepository;
-import com.deepthoughtnet.clinic.clinic.service.model.DoctorProfileRecord;
 import com.deepthoughtnet.clinic.clinic.service.model.DoctorProfilePhotoRecord;
+import com.deepthoughtnet.clinic.clinic.service.model.DoctorProfileRecord;
 import com.deepthoughtnet.clinic.clinic.service.model.DoctorProfileUpsertCommand;
 import com.deepthoughtnet.clinic.platform.storage.ObjectStorageService;
 import java.math.BigDecimal;
 import java.time.Duration;
+import java.time.LocalDate;
+import java.time.Period;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.Locale;
+import java.util.regex.Pattern;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 @Service
 public class DoctorProfileService {
     private static final Logger log = LoggerFactory.getLogger(DoctorProfileService.class);
+
+    private static final int MAX_SPECIALIZATION_LENGTH = 128;
+    private static final int MAX_QUALIFICATION_LENGTH = 256;
+    private static final int MAX_REGISTRATION_NUMBER_LENGTH = 128;
+    private static final int MAX_CONSULTATION_ROOM_LENGTH = 128;
+    private static final int MAX_SLUG_LENGTH = 192;
+    private static final int MAX_MOBILE_LENGTH = 32;
+    private static final int MAX_FEE_SCALE = 2;
+    private static final BigDecimal MAX_FEE = new BigDecimal("9999999.99");
+    private static final int MAX_EXPERIENCE_YEARS = 80;
+    private static final int MIN_DOCTOR_AGE = 18;
+    private static final int MAX_DOCTOR_AGE = 100;
+    private static final Pattern CONTROL_CHARACTERS = Pattern.compile("[\\u0000-\\u001F\\u007F]");
+    private static final Pattern PUBLIC_SLUG_PATTERN = Pattern.compile("^[a-z0-9]+(?:-[a-z0-9]+)*$");
+    private static final Pattern REGISTRATION_PATTERN = Pattern.compile("^[A-Z0-9][A-Z0-9/._-]{2,127}$");
+    private static final Pattern INDIAN_MOBILE_PATTERN = Pattern.compile("^[6-9]\\d{9}$");
 
     private final DoctorProfileRepository doctorProfileRepository;
     private final ObjectStorageService storageService;
@@ -67,37 +88,71 @@ public class DoctorProfileService {
         if (command == null) {
             throw new IllegalArgumentException("command is required");
         }
+
         DoctorProfileEntity entity = doctorProfileRepository.findByTenantIdAndDoctorUserId(tenantId, doctorUserId)
                 .orElseGet(() -> DoctorProfileEntity.create(tenantId, doctorUserId));
-        String registrationNumber = normalizeNullable(command.registrationNumber());
-        if (StringUtils.hasText(registrationNumber)) {
-            doctorProfileRepository.findFirstByTenantIdAndActiveTrueAndRegistrationNumberIgnoreCase(tenantId, registrationNumber)
+
+        String mobile = normalizeMobile(command.mobile());
+        List<String> specializations = normalizeSpecializations(command.specializations(), command.specialization());
+        if (specializations.isEmpty()) {
+            throw new IllegalArgumentException("Select at least one specialization.");
+        }
+        String specialization = specializations.getFirst();
+        String qualification = normalizeRequiredText(command.qualification(), "Qualification", MAX_QUALIFICATION_LENGTH);
+        String registrationNumber = normalizeRegistrationNumber(command.registrationNumber());
+        String consultationRoom = normalizeOptionalText(command.consultationRoom(), "Consultation room", MAX_CONSULTATION_ROOM_LENGTH);
+        BigDecimal consultationFee = normalizeOptionalMoney(command.consultationFee(), "Enter a valid consultation fee.");
+        BigDecimal opdFee = normalizeRequiredMoney(command.opdFee(), "OPD fee is required.", "Enter a valid OPD fee.");
+        BigDecimal followUpFee = normalizeRequiredMoney(command.followUpFee(), "Follow-up fee is required.", "Enter a valid follow-up fee.");
+        BigDecimal emergencyFee = normalizeRequiredMoney(command.emergencyFee(), "Emergency fee is required.", "Enter a valid emergency fee.");
+        Integer yearsOfExperience = normalizeRequiredWholeNumber(command.yearsOfExperience(), "Years of experience is required.", "Enter a valid number of years of experience.");
+        LocalDate dateOfBirth = normalizeDateOfBirth(command.dateOfBirth(), command.age(), entity.getDateOfBirth());
+        Integer derivedAge = dateOfBirth != null
+                ? calculateAge(dateOfBirth)
+                : (entity.getDateOfBirth() != null ? calculateAge(entity.getDateOfBirth()) : (command.age() != null ? command.age() : entity.getAge()));
+        if (dateOfBirth != null) {
+            validateDateOfBirth(dateOfBirth, yearsOfExperience);
+        }
+        if (dateOfBirth == null && entity.getDateOfBirth() == null) {
+            throw new IllegalArgumentException("Date of birth is required.");
+        }
+        String slug = resolveSlug(command.slug(), command.doctorName(), specialization, entity.getId(), entity.getSlug());
+
+        String normalizedRegistrationNumber = registrationNumber;
+        if (StringUtils.hasText(normalizedRegistrationNumber)) {
+            doctorProfileRepository.findFirstByTenantIdAndActiveTrueAndRegistrationNumberIgnoreCase(tenantId, normalizedRegistrationNumber)
                     .filter(existing -> !doctorUserId.equals(existing.getDoctorUserId()))
                     .ifPresent(existing -> {
                         throw new IllegalArgumentException("Doctor registration number already exists for this clinic.");
                     });
         }
-        List<String> specializations = normalizeSpecializations(command.specializations(), command.specialization());
-        BigDecimal opdFee = command.opdFee() != null ? command.opdFee() : command.consultationFee();
-        BigDecimal legacyConsultationFee = command.consultationFee() != null ? command.consultationFee() : opdFee;
-        entity.update(
-                normalizeNullable(command.mobile()),
-                specializations.isEmpty() ? normalizeNullable(command.specialization()) : specializations.get(0),
-                specializations,
-                normalizeNullable(command.qualification()),
-                registrationNumber,
-                normalizeNullable(command.consultationRoom()),
-                legacyConsultationFee,
-                opdFee,
-                command.followUpFee(),
-                command.emergencyFee(),
-                command.yearsOfExperience(),
-                command.age(),
-                command.active(),
-                command.publicListingEnabled(),
-                normalizeNullable(command.slug())
-        );
-        return toRecord(doctorProfileRepository.save(entity));
+
+        try {
+            entity.update(
+                    mobile,
+                    specialization,
+                    specializations,
+                    qualification,
+                    normalizedRegistrationNumber,
+                    consultationRoom,
+                    consultationFee,
+                    opdFee,
+                    followUpFee,
+                    emergencyFee,
+                    yearsOfExperience,
+                    derivedAge,
+                    dateOfBirth,
+                    command.active(),
+                    command.publicListingEnabled(),
+                    slug
+            );
+            return toRecord(doctorProfileRepository.save(entity));
+        } catch (DataIntegrityViolationException ex) {
+            if (isSlugConstraintViolation(ex)) {
+                throw new IllegalArgumentException("This public slug is already in use. Choose another one.", ex);
+            }
+            throw ex;
+        }
     }
 
     @Transactional
@@ -119,7 +174,7 @@ public class DoctorProfileService {
 
         DoctorProfileEntity entity = doctorProfileRepository.findByTenantIdAndDoctorUserId(tenantId, doctorUserId)
                 .orElseGet(() -> DoctorProfileEntity.create(tenantId, doctorUserId));
-        String fileName = normalizeNullable(originalFilename);
+        String fileName = normalizeText(originalFilename);
         if (!StringUtils.hasText(fileName)) {
             fileName = "doctor-photo";
         }
@@ -200,6 +255,7 @@ public class DoctorProfileService {
     private DoctorProfileRecord toRecord(DoctorProfileEntity entity) {
         List<String> specializations = parseSpecializations(entity.getSpecializationsJson(), entity.getSpecialization());
         String photoUrl = buildPhotoUrl(entity);
+        Integer age = entity.getDateOfBirth() != null ? calculateAge(entity.getDateOfBirth()) : entity.getAge();
         return new DoctorProfileRecord(
                 entity.getId(),
                 entity.getTenantId(),
@@ -215,7 +271,8 @@ public class DoctorProfileService {
                 entity.getFollowUpFee(),
                 entity.getEmergencyFee(),
                 entity.getYearsOfExperience(),
-                entity.getAge(),
+                age,
+                entity.getDateOfBirth(),
                 entity.isActive(),
                 entity.isPublicListingEnabled(),
                 entity.getSlug(),
@@ -226,6 +283,280 @@ public class DoctorProfileService {
                 entity.getCreatedAt(),
                 entity.getUpdatedAt()
         );
+    }
+
+    private void validateDateOfBirth(LocalDate dateOfBirth, Integer yearsOfExperience) {
+        if (dateOfBirth == null) {
+            return;
+        }
+        LocalDate today = LocalDate.now();
+        if (dateOfBirth.isAfter(today)) {
+            throw new IllegalArgumentException("Date of birth cannot be in the future.");
+        }
+        int age = calculateAge(dateOfBirth);
+        if (age < MIN_DOCTOR_AGE || age > MAX_DOCTOR_AGE) {
+            throw new IllegalArgumentException("Enter a valid date of birth.");
+        }
+        if (yearsOfExperience != null && yearsOfExperience > Math.max(0, age - MIN_DOCTOR_AGE)) {
+            throw new IllegalArgumentException("Years of experience cannot exceed the doctor's possible professional experience based on date of birth.");
+        }
+    }
+
+    private String resolveSlug(String slug, String doctorName, String specialization, UUID currentDoctorProfileId, String currentSlug) {
+        String provided = normalizeText(slug);
+        if (!StringUtils.hasText(provided)) {
+            String existing = normalizeText(currentSlug);
+            if (StringUtils.hasText(existing)) {
+                return existing.toLowerCase(Locale.ROOT);
+            }
+            String base = slugify(firstNonBlank(doctorName, specialization, "doctor"));
+            return ensureUniqueGeneratedSlug(base, currentDoctorProfileId);
+        }
+        String normalized = provided.toLowerCase(Locale.ROOT);
+        if (normalized.length() > MAX_SLUG_LENGTH) {
+            throw new IllegalArgumentException("Public slug must be " + MAX_SLUG_LENGTH + " characters or fewer.");
+        }
+        if (!PUBLIC_SLUG_PATTERN.matcher(normalized).matches()) {
+            throw new IllegalArgumentException("Enter a valid public slug.");
+        }
+        if (isSlugTaken(normalized, currentDoctorProfileId)) {
+            throw new IllegalArgumentException("This public slug is already in use. Choose another one.");
+        }
+        return normalized;
+    }
+
+    private String ensureUniqueGeneratedSlug(String requestedSlug, UUID currentDoctorProfileId) {
+        String base = StringUtils.hasText(requestedSlug) ? requestedSlug : "doctor";
+        int suffix = 1;
+        String candidate = buildSlugCandidate(base, suffix);
+        while (isSlugTaken(candidate, currentDoctorProfileId)) {
+            suffix++;
+            candidate = buildSlugCandidate(base, suffix);
+        }
+        return candidate;
+    }
+
+    private String buildSlugCandidate(String base, int suffix) {
+        String candidateBase = slugify(base);
+        if (!StringUtils.hasText(candidateBase)) {
+            candidateBase = "doctor";
+        }
+        String suffixText = suffix <= 1 ? "" : "-" + suffix;
+        int maxBaseLength = MAX_SLUG_LENGTH - suffixText.length();
+        if (candidateBase.length() > maxBaseLength) {
+            candidateBase = candidateBase.substring(0, maxBaseLength).replaceAll("(^-|-$)", "");
+        }
+        if (!StringUtils.hasText(candidateBase)) {
+            candidateBase = "doctor";
+        }
+        String candidate = candidateBase + suffixText;
+        if (candidate.length() > MAX_SLUG_LENGTH) {
+            candidate = candidate.substring(0, MAX_SLUG_LENGTH).replaceAll("(^-|-$)", "");
+        }
+        return candidate;
+    }
+
+    private boolean isSlugTaken(String slug, UUID currentDoctorProfileId) {
+        return doctorProfileRepository.findBySlugIgnoreCase(slug)
+                .filter(existing -> currentDoctorProfileId == null || !currentDoctorProfileId.equals(existing.getId()))
+                .isPresent();
+    }
+
+    private String normalizeRequiredText(String value, String fieldLabel, int maxLength) {
+        String normalized = normalizeText(value);
+        if (!StringUtils.hasText(normalized)) {
+            throw new IllegalArgumentException(fieldLabel + " is required.");
+        }
+        if (containsControlCharacters(normalized)) {
+            throw new IllegalArgumentException(fieldLabel + " must not contain control characters.");
+        }
+        if (normalized.length() > maxLength) {
+            throw new IllegalArgumentException(fieldLabel + " must be " + maxLength + " characters or fewer.");
+        }
+        return normalized;
+    }
+
+    private String normalizeOptionalText(String value, String fieldLabel, int maxLength) {
+        String normalized = normalizeText(value);
+        if (!StringUtils.hasText(normalized)) {
+            return null;
+        }
+        if (containsControlCharacters(normalized)) {
+            throw new IllegalArgumentException(fieldLabel + " must not contain control characters.");
+        }
+        if (normalized.length() > maxLength) {
+            throw new IllegalArgumentException(fieldLabel + " must be " + maxLength + " characters or fewer.");
+        }
+        return normalized;
+    }
+
+    private String normalizeMobile(String value) {
+        String normalized = normalizeRequiredText(value, "Mobile number", MAX_MOBILE_LENGTH);
+        String digits = normalized.replaceAll("[^0-9]", "");
+        if (!INDIAN_MOBILE_PATTERN.matcher(digits).matches()) {
+            throw new IllegalArgumentException("Enter a valid 10-digit mobile number.");
+        }
+        return digits;
+    }
+
+    private String normalizeRegistrationNumber(String value) {
+        String normalized = normalizeRequiredText(value, "Registration number", MAX_REGISTRATION_NUMBER_LENGTH).toUpperCase(Locale.ROOT);
+        if (!REGISTRATION_PATTERN.matcher(normalized).matches()) {
+            throw new IllegalArgumentException("Enter a valid doctor registration number.");
+        }
+        return normalized;
+    }
+
+    private BigDecimal normalizeRequiredMoney(BigDecimal value, String requiredMessage, String invalidMessage) {
+        if (value == null) {
+            throw new IllegalArgumentException(requiredMessage);
+        }
+        validateMoney(value, invalidMessage);
+        return value;
+    }
+
+    private BigDecimal normalizeOptionalMoney(BigDecimal value, String invalidMessage) {
+        if (value == null) {
+            return null;
+        }
+        validateMoney(value, invalidMessage);
+        return value;
+    }
+
+    private void validateMoney(BigDecimal value, String invalidMessage) {
+        if (value.scale() > MAX_FEE_SCALE || value.stripTrailingZeros().scale() > MAX_FEE_SCALE || value.compareTo(BigDecimal.ZERO) < 0 || value.compareTo(MAX_FEE) > 0) {
+            throw new IllegalArgumentException(invalidMessage);
+        }
+    }
+
+    private Integer normalizeRequiredWholeNumber(Integer value, String requiredMessage, String invalidMessage) {
+        if (value == null) {
+            throw new IllegalArgumentException(requiredMessage);
+        }
+        if (value < 0 || value > MAX_EXPERIENCE_YEARS) {
+            throw new IllegalArgumentException(invalidMessage);
+        }
+        return value;
+    }
+
+    private LocalDate normalizeDateOfBirth(LocalDate dateOfBirth, Integer age, LocalDate existingDateOfBirth) {
+        if (dateOfBirth == null) {
+            if (existingDateOfBirth != null) {
+                return existingDateOfBirth;
+            }
+            if (age == null) {
+                return null;
+            }
+            return null;
+        }
+        return dateOfBirth;
+    }
+
+    private Integer calculateAge(LocalDate dateOfBirth) {
+        if (dateOfBirth == null) {
+            return null;
+        }
+        return Period.between(dateOfBirth, LocalDate.now()).getYears();
+    }
+
+    private List<String> normalizeSpecializations(List<String> specializations, String fallback) {
+        List<String> values = new ArrayList<>();
+        if (specializations != null) {
+            for (String value : specializations) {
+                String normalized = normalizeText(value);
+                if (StringUtils.hasText(normalized)) {
+                    if (normalized.length() > MAX_SPECIALIZATION_LENGTH) {
+                        throw new IllegalArgumentException("Specialization must be " + MAX_SPECIALIZATION_LENGTH + " characters or fewer.");
+                    }
+                    if (!values.contains(normalized)) {
+                        values.add(normalized);
+                    }
+                }
+            }
+        }
+        if (values.isEmpty() && StringUtils.hasText(fallback)) {
+            for (String token : fallback.split(",")) {
+                String normalized = normalizeText(token);
+                if (StringUtils.hasText(normalized)) {
+                    if (normalized.length() > MAX_SPECIALIZATION_LENGTH) {
+                        throw new IllegalArgumentException("Specialization must be " + MAX_SPECIALIZATION_LENGTH + " characters or fewer.");
+                    }
+                    if (!values.contains(normalized)) {
+                        values.add(normalized);
+                    }
+                }
+            }
+        }
+        return values;
+    }
+
+    private List<String> parseSpecializations(String raw, String fallback) {
+        if (StringUtils.hasText(raw)) {
+            String[] tokens = raw.split("\\|");
+            List<String> values = new ArrayList<>();
+            for (String token : tokens) {
+                String normalized = normalizeText(token);
+                if (StringUtils.hasText(normalized) && !values.contains(normalized)) {
+                    values.add(normalized);
+                }
+            }
+            if (!values.isEmpty()) {
+                return values;
+            }
+        }
+        if (StringUtils.hasText(fallback)) {
+            List<String> values = new ArrayList<>();
+            for (String token : fallback.split(",")) {
+                String normalized = normalizeText(token);
+                if (StringUtils.hasText(normalized) && !values.contains(normalized)) {
+                    values.add(normalized);
+                }
+            }
+            return values;
+        }
+        return List.of();
+    }
+
+    private boolean isValidStorageKey(String value) {
+        return StringUtils.hasText(value) && !"undefined".equalsIgnoreCase(value.trim());
+    }
+
+    private boolean isSupportedPhoto(String contentType, String fileName) {
+        String normalized = normalizePhotoContentType(contentType, fileName);
+        if (normalized == null) {
+            return false;
+        }
+        String lowerFileName = fileName == null ? "" : fileName.toLowerCase(Locale.ROOT);
+        return "image/jpeg".equals(normalized)
+                || "image/png".equals(normalized)
+                || "image/webp".equals(normalized)
+                || lowerFileName.endsWith(".jpg")
+                || lowerFileName.endsWith(".jpeg")
+                || lowerFileName.endsWith(".png")
+                || lowerFileName.endsWith(".webp");
+    }
+
+    private String normalizePhotoContentType(String contentType, String fileName) {
+        String normalized = normalizeText(contentType);
+        if ("image/jpg".equals(normalized)) {
+            normalized = "image/jpeg";
+        }
+        if ("image/jpeg".equals(normalized) || "image/png".equals(normalized) || "image/webp".equals(normalized)) {
+            return normalized;
+        }
+        if (StringUtils.hasText(fileName)) {
+            String lower = fileName.toLowerCase(Locale.ROOT);
+            if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) {
+                return "image/jpeg";
+            }
+            if (lower.endsWith(".png")) {
+                return "image/png";
+            }
+            if (lower.endsWith(".webp")) {
+                return "image/webp";
+            }
+        }
+        return normalized;
     }
 
     private DoctorProfileEntity repairPhotoMetadataIfNeeded(DoctorProfileEntity entity) {
@@ -267,6 +598,21 @@ public class DoctorProfileService {
         return "/api/doctors/%s/photo?v=%d".formatted(entity.getDoctorUserId(), version);
     }
 
+    private boolean isSlugConstraintViolation(Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null) {
+            String message = current.getMessage();
+            if (message != null) {
+                String normalized = message.toLowerCase(Locale.ROOT);
+                if (normalized.contains("slug") || normalized.contains("uq_doctor_profiles_slug")) {
+                    return true;
+                }
+            }
+            current = current.getCause();
+        }
+        return false;
+    }
+
     private void requireTenant(UUID tenantId) {
         if (tenantId == null) {
             throw new IllegalArgumentException("tenantId is required");
@@ -279,97 +625,31 @@ public class DoctorProfileService {
         }
     }
 
-    private String normalizeNullable(String value) {
-        return StringUtils.hasText(value) ? value.trim() : null;
+    private String normalizeText(String value) {
+        return value == null ? null : value.trim();
     }
 
-    private List<String> normalizeSpecializations(List<String> specializations, String fallback) {
-        List<String> values = new ArrayList<>();
-        if (specializations != null) {
-            for (String value : specializations) {
-                String normalized = normalizeNullable(value);
-                if (normalized != null && !values.contains(normalized)) {
-                    values.add(normalized);
-                }
-            }
-        }
-        if (values.isEmpty() && StringUtils.hasText(fallback)) {
-            for (String token : fallback.split(",")) {
-                String normalized = normalizeNullable(token);
-                if (normalized != null && !values.contains(normalized)) {
-                    values.add(normalized);
-                }
-            }
-        }
-        return values;
+    private boolean containsControlCharacters(String value) {
+        return value != null && CONTROL_CHARACTERS.matcher(value).find();
     }
 
-    private List<String> parseSpecializations(String raw, String fallback) {
-        if (StringUtils.hasText(raw)) {
-            String[] tokens = raw.split("\\|");
-            List<String> values = new ArrayList<>();
-            for (String token : tokens) {
-                String normalized = normalizeNullable(token);
-                if (normalized != null && !values.contains(normalized)) {
-                    values.add(normalized);
-                }
-            }
-            if (!values.isEmpty()) {
-                return values;
-            }
+    private String slugify(String value) {
+        String normalized = normalizeText(value);
+        if (!StringUtils.hasText(normalized)) {
+            return "";
         }
-        if (StringUtils.hasText(fallback)) {
-            List<String> values = new ArrayList<>();
-            for (String token : fallback.split(",")) {
-                String normalized = normalizeNullable(token);
-                if (normalized != null && !values.contains(normalized)) {
-                    values.add(normalized);
-                }
-            }
-            return values;
-        }
-        return List.of();
+        return normalized.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", "-").replaceAll("(^-|-$)", "");
     }
 
-    private boolean isValidStorageKey(String value) {
-        return StringUtils.hasText(value) && !"undefined".equalsIgnoreCase(value.trim());
-    }
-
-    private boolean isSupportedPhoto(String contentType, String fileName) {
-        String normalized = normalizePhotoContentType(contentType, fileName);
-        if (normalized == null) {
-            return false;
+    private String firstNonBlank(String... values) {
+        if (values == null) {
+            return null;
         }
-        String lowerFileName = fileName == null ? "" : fileName.toLowerCase(Locale.ROOT);
-        return "image/jpeg".equals(normalized)
-                || "image/png".equals(normalized)
-                || "image/webp".equals(normalized)
-                || lowerFileName.endsWith(".jpg")
-                || lowerFileName.endsWith(".jpeg")
-                || lowerFileName.endsWith(".png")
-                || lowerFileName.endsWith(".webp");
-    }
-
-    private String normalizePhotoContentType(String contentType, String fileName) {
-        String normalized = normalizeNullable(contentType);
-        if ("image/jpg".equals(normalized)) {
-            normalized = "image/jpeg";
-        }
-        if ("image/jpeg".equals(normalized) || "image/png".equals(normalized) || "image/webp".equals(normalized)) {
-            return normalized;
-        }
-        if (StringUtils.hasText(fileName)) {
-            String lower = fileName.toLowerCase(Locale.ROOT);
-            if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) {
-                return "image/jpeg";
-            }
-            if (lower.endsWith(".png")) {
-                return "image/png";
-            }
-            if (lower.endsWith(".webp")) {
-                return "image/webp";
+        for (String value : values) {
+            if (StringUtils.hasText(value)) {
+                return value.trim();
             }
         }
-        return normalized;
+        return null;
     }
 }

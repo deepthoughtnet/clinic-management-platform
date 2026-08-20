@@ -10,6 +10,7 @@ import com.deepthoughtnet.clinic.clinic.db.DoctorProfileEntity;
 import com.deepthoughtnet.clinic.clinic.db.DoctorProfileRepository;
 import com.deepthoughtnet.clinic.clinic.service.model.DoctorProfileUpsertCommand;
 import com.deepthoughtnet.clinic.platform.storage.ObjectStorageService;
+import java.time.LocalDate;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -37,7 +38,7 @@ class DoctorProfileServiceTest {
     void createsProfileWhenMissing() {
         when(repository.findByTenantIdAndDoctorUserId(tenantId, doctorUserId)).thenReturn(Optional.empty());
         var result = service.upsert(tenantId, doctorUserId, new DoctorProfileUpsertCommand(
-                "9999",
+                "9999999999",
                 "Dermatology",
                 java.util.List.of("Dermatology", "Skin"),
                 "MBBS",
@@ -45,13 +46,15 @@ class DoctorProfileServiceTest {
                 "Room 2",
                 null,
                 new java.math.BigDecimal("500.00"),
+                new java.math.BigDecimal("300.00"),
+                new java.math.BigDecimal("800.00"),
+                12,
                 null,
-                null,
-                null,
-                null,
+                LocalDate.of(1985, 3, 15),
                 true,
                 true,
-                "dr-demo"
+                "dr-demo",
+                null
         ));
         assertThat(result.specialization()).isEqualTo("Dermatology");
         assertThat(result.specializations()).containsExactly("Dermatology", "Skin");
@@ -64,10 +67,10 @@ class DoctorProfileServiceTest {
     @Test
     void updatesExistingProfile() {
         DoctorProfileEntity existing = DoctorProfileEntity.create(tenantId, doctorUserId);
-        existing.update("1111", "ENT", java.util.List.of("ENT"), "MD", "REG-2", "Room 1", null, null, null, null, null, null, true, false, null);
+        existing.update("1111", "ENT", java.util.List.of("ENT"), "MD", "REG-2", "Room 1", null, null, null, null, null, null, LocalDate.of(1984, 2, 1), true, false, null);
         when(repository.findByTenantIdAndDoctorUserId(tenantId, doctorUserId)).thenReturn(Optional.of(existing));
         var result = service.upsert(tenantId, doctorUserId, new DoctorProfileUpsertCommand(
-                "2222",
+                "8888888888",
                 "Cardiology",
                 java.util.List.of("Cardiology", "Heart"),
                 "DM",
@@ -77,13 +80,15 @@ class DoctorProfileServiceTest {
                 new java.math.BigDecimal("750.00"),
                 new java.math.BigDecimal("650.00"),
                 new java.math.BigDecimal("1000.00"),
+                12,
                 null,
-                null,
+                LocalDate.of(1984, 2, 1),
                 false,
                 true,
-                "dr-cardio"
+                "dr-cardio",
+                null
         ));
-        assertThat(result.mobile()).isEqualTo("2222");
+        assertThat(result.mobile()).isEqualTo("8888888888");
         assertThat(result.specialization()).isEqualTo("Cardiology");
         assertThat(result.specializations()).containsExactly("Cardiology", "Heart");
         assertThat(result.opdFee()).isEqualByComparingTo("750.00");
@@ -97,12 +102,12 @@ class DoctorProfileServiceTest {
     @Test
     void existingDoctorCanKeepSameRegistrationNumber() {
         DoctorProfileEntity existing = DoctorProfileEntity.create(tenantId, doctorUserId);
-        existing.update("1111", "ENT", java.util.List.of("ENT"), "MD", "REG-2", "Room 1", null, null, null, null, null, null, true, false, null);
+        existing.update("1111", "ENT", java.util.List.of("ENT"), "MD", "REG-2", "Room 1", null, null, null, null, null, null, LocalDate.of(1984, 2, 1), true, false, null);
         when(repository.findByTenantIdAndDoctorUserId(tenantId, doctorUserId)).thenReturn(Optional.of(existing));
         when(repository.findFirstByTenantIdAndActiveTrueAndRegistrationNumberIgnoreCase(tenantId, "REG-2")).thenReturn(Optional.of(existing));
 
         var result = service.upsert(tenantId, doctorUserId, new DoctorProfileUpsertCommand(
-                "2222",
+                "8888888888",
                 "Cardiology",
                 java.util.List.of("Cardiology"),
                 "DM",
@@ -110,13 +115,15 @@ class DoctorProfileServiceTest {
                 "Room 3",
                 null,
                 new java.math.BigDecimal("750.00"),
+                new java.math.BigDecimal("650.00"),
+                new java.math.BigDecimal("1000.00"),
+                12,
                 null,
-                null,
-                null,
-                null,
+                LocalDate.of(1984, 2, 1),
                 true,
                 true,
-                "dr-cardio"
+                "dr-cardio",
+                null
         ));
 
         assertThat(result.registrationNumber()).isEqualTo("REG-2");
@@ -126,7 +133,7 @@ class DoctorProfileServiceTest {
     void duplicateRegistrationNumberInSameTenantIsRejected() {
         UUID otherDoctorId = UUID.randomUUID();
         DoctorProfileEntity duplicate = DoctorProfileEntity.create(tenantId, otherDoctorId);
-        duplicate.update(null, "ENT", java.util.List.of("ENT"), null, "REG-1", null, null, null, null, null, null, null, true, false, null);
+        duplicate.update(null, "ENT", java.util.List.of("ENT"), null, "REG-1", null, null, null, null, null, null, null, LocalDate.of(1980, 1, 1), true, false, null);
         when(repository.findByTenantIdAndDoctorUserId(tenantId, doctorUserId)).thenReturn(Optional.empty());
         when(repository.findFirstByTenantIdAndActiveTrueAndRegistrationNumberIgnoreCase(tenantId, "REG-1")).thenReturn(Optional.of(duplicate));
 
@@ -134,18 +141,19 @@ class DoctorProfileServiceTest {
                 tenantId,
                 doctorUserId,
                 new DoctorProfileUpsertCommand(
-                        null,
+                        "7777777777",
                         "Dermatology",
                         java.util.List.of("Dermatology"),
-                        null,
+                        "MBBS",
                         "REG-1",
+                        "Room 1",
                         null,
+                        new java.math.BigDecimal("500.00"),
+                        new java.math.BigDecimal("300.00"),
+                        new java.math.BigDecimal("800.00"),
+                        12,
                         null,
-                        null,
-                        null,
-                        null,
-                        null,
-                        null,
+                        LocalDate.of(1985, 3, 15),
                         true,
                         true,
                         null
@@ -153,6 +161,37 @@ class DoctorProfileServiceTest {
         ));
 
         assertThat(ex).hasMessage("Doctor registration number already exists for this clinic.");
+    }
+
+    @Test
+    void missingDateOfBirthIsRejectedForNewProfiles() {
+        when(repository.findByTenantIdAndDoctorUserId(tenantId, doctorUserId)).thenReturn(Optional.empty());
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () -> service.upsert(
+                        tenantId,
+                        doctorUserId,
+                        new DoctorProfileUpsertCommand(
+                        "9999999999",
+                        "Dermatology",
+                        java.util.List.of("Dermatology"),
+                        "MBBS",
+                        "REG-1",
+                        "Room 2",
+                        null,
+                        new java.math.BigDecimal("500.00"),
+                        new java.math.BigDecimal("300.00"),
+                        new java.math.BigDecimal("800.00"),
+                        12,
+                        null,
+                        null,
+                        true,
+                        true,
+                        "dr-demo",
+                        null
+                )
+        ));
+
+        assertThat(ex).hasMessage("Date of birth is required.");
     }
 
     @Test

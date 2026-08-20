@@ -32,6 +32,11 @@ export type NotificationPolicySectionSpec = {
 export type NotificationPolicyConfig = {
   sections: Record<string, Record<string, NotificationPolicyChannelMap>>;
   quietHoursAppliesTo: string[];
+  quietHoursSchedule: {
+    weekdays: QuietHoursWeekday[];
+    effectiveFrom: string | null;
+    effectiveUntil: string | null;
+  };
   compliance: {
     transactionalMessagesEnabled: boolean;
     clinicalNotificationsEnabled: boolean;
@@ -49,6 +54,17 @@ export type NotificationPolicyConfig = {
     perPatientPerDay: number;
   };
 };
+
+export type QuietHoursWeekday =
+  | "MONDAY"
+  | "TUESDAY"
+  | "WEDNESDAY"
+  | "THURSDAY"
+  | "FRIDAY"
+  | "SATURDAY"
+  | "SUNDAY";
+
+export type RateLimitField = keyof NotificationPolicyConfig["rateLimits"];
 
 type RowSeed = Omit<NotificationPolicyRowSpec, "defaultChannels"> & { defaultChannels: Partial<NotificationPolicyChannelMap> };
 
@@ -154,6 +170,16 @@ export const QUIET_HOUR_SCOPE_OPTIONS = [
   { value: "vaccination", label: "Vaccination" },
 ];
 
+export const QUIET_HOUR_WEEKDAY_OPTIONS: Array<{ value: QuietHoursWeekday; label: string }> = [
+  { value: "MONDAY", label: "Monday" },
+  { value: "TUESDAY", label: "Tuesday" },
+  { value: "WEDNESDAY", label: "Wednesday" },
+  { value: "THURSDAY", label: "Thursday" },
+  { value: "FRIDAY", label: "Friday" },
+  { value: "SATURDAY", label: "Saturday" },
+  { value: "SUNDAY", label: "Sunday" },
+];
+
 export const DEFAULT_RATE_LIMITS = {
   overallMessagesPerDay: 100,
   marketingPerDay: 20,
@@ -161,6 +187,78 @@ export const DEFAULT_RATE_LIMITS = {
   maximumPerHour: 12,
   perPatientPerDay: 5,
 };
+
+export const RATE_LIMIT_FIELD_SPECS: Array<{ key: RateLimitField; label: string }> = [
+  { key: "overallMessagesPerDay", label: "Overall messages/day" },
+  { key: "marketingPerDay", label: "Marketing/day" },
+  { key: "reminderPerDay", label: "Reminder/day" },
+  { key: "maximumPerHour", label: "Maximum/hour" },
+  { key: "perPatientPerDay", label: "Per patient/day" },
+];
+
+const RATE_LIMIT_MAX_VALUE = 2_147_483_647;
+const RATE_LIMIT_REQUIRED_MESSAGE = "Enter a whole number greater than zero.";
+const RATE_LIMIT_WHOLE_NUMBER_MESSAGE = "Enter a whole number.";
+const RATE_LIMIT_NEGATIVE_MESSAGE = "Value cannot be negative.";
+const RATE_LIMIT_TOO_LARGE_MESSAGE = "Value is too large.";
+
+export function rateLimitDraftsFromRateLimits(rateLimits: NotificationPolicyConfig["rateLimits"]): Record<RateLimitField, string> {
+  return {
+    overallMessagesPerDay: String(rateLimits.overallMessagesPerDay),
+    marketingPerDay: String(rateLimits.marketingPerDay),
+    reminderPerDay: String(rateLimits.reminderPerDay),
+    maximumPerHour: String(rateLimits.maximumPerHour),
+    perPatientPerDay: String(rateLimits.perPatientPerDay),
+  };
+}
+
+export function rateLimitDraftsFromPolicy(policy: NotificationPolicyConfig): Record<RateLimitField, string> {
+  return rateLimitDraftsFromRateLimits(policy.rateLimits);
+}
+
+export function rateLimitDraftsFromRawJson(rawJson: string | null | undefined): Record<RateLimitField, string> {
+  const fallback = rateLimitDraftsFromRateLimits(DEFAULT_RATE_LIMITS);
+  if (!rawJson || !rawJson.trim()) return fallback;
+  try {
+    const parsed = JSON.parse(rawJson) as unknown;
+    if (!isObject(parsed) || !isObject(parsed.rateLimits)) return fallback;
+    const rateLimits = parsed.rateLimits as Record<string, unknown>;
+    return {
+      overallMessagesPerDay: rateLimitDraftFromValue(rateLimits.overallMessagesPerDay, fallback.overallMessagesPerDay),
+      marketingPerDay: rateLimitDraftFromValue(rateLimits.marketingPerDay, fallback.marketingPerDay),
+      reminderPerDay: rateLimitDraftFromValue(rateLimits.reminderPerDay, fallback.reminderPerDay),
+      maximumPerHour: rateLimitDraftFromValue(rateLimits.maximumPerHour, fallback.maximumPerHour),
+      perPatientPerDay: rateLimitDraftFromValue(rateLimits.perPatientPerDay, fallback.perPatientPerDay),
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+export function validateRateLimitDrafts(drafts: Record<RateLimitField, string>): Record<RateLimitField, string | null> {
+  return {
+    overallMessagesPerDay: validateRateLimitDraft(drafts.overallMessagesPerDay),
+    marketingPerDay: validateRateLimitDraft(drafts.marketingPerDay),
+    reminderPerDay: validateRateLimitDraft(drafts.reminderPerDay),
+    maximumPerHour: validateRateLimitDraft(drafts.maximumPerHour),
+    perPatientPerDay: validateRateLimitDraft(drafts.perPatientPerDay),
+  };
+}
+
+export function rateLimitValuesFromDrafts(drafts: Record<RateLimitField, string>): NotificationPolicyConfig["rateLimits"] {
+  const validated = validateRateLimitDrafts(drafts);
+  const firstError = RATE_LIMIT_FIELD_SPECS.find((spec) => validated[spec.key]);
+  if (firstError) {
+    throw new Error(validated[firstError.key] || RATE_LIMIT_REQUIRED_MESSAGE);
+  }
+  return {
+    overallMessagesPerDay: parseRateLimitDraft(drafts.overallMessagesPerDay).value!,
+    marketingPerDay: parseRateLimitDraft(drafts.marketingPerDay).value!,
+    reminderPerDay: parseRateLimitDraft(drafts.reminderPerDay).value!,
+    maximumPerHour: parseRateLimitDraft(drafts.maximumPerHour).value!,
+    perPatientPerDay: parseRateLimitDraft(drafts.perPatientPerDay).value!,
+  };
+}
 
 export const DEFAULT_COMPLIANCE = {
   transactionalMessagesEnabled: true,
@@ -184,6 +282,11 @@ export function createDefaultNotificationPolicy(): NotificationPolicyConfig {
   return {
     sections,
     quietHoursAppliesTo: QUIET_HOUR_SCOPE_OPTIONS.map((option) => option.value),
+    quietHoursSchedule: {
+      weekdays: QUIET_HOUR_WEEKDAY_OPTIONS.map((option) => option.value),
+      effectiveFrom: null,
+      effectiveUntil: null,
+    },
     compliance: { ...DEFAULT_COMPLIANCE },
     rateLimits: { ...DEFAULT_RATE_LIMITS },
   };
@@ -201,6 +304,49 @@ function normalizeChannelMap(value: unknown, fallback: NotificationPolicyChannel
     SMS: Boolean(value.SMS ?? fallback.SMS),
     WHATSAPP: Boolean(value.WHATSAPP ?? fallback.WHATSAPP),
   };
+}
+
+function rateLimitDraftFromValue(value: unknown, fallback: string): string {
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (typeof value === "bigint") return value.toString();
+  if (value == null) return fallback;
+  return String(value);
+}
+
+function rateLimitValueFromPolicyValue(value: unknown, fallback: number): number {
+  const draft = rateLimitDraftFromValue(value, String(fallback));
+  const parsed = parseRateLimitDraft(draft);
+  return parsed.value ?? fallback;
+}
+
+function parseRateLimitDraft(rawValue: string): { value: number | null; error: string | null } {
+  const trimmed = rawValue.trim();
+  if (!trimmed) {
+    return { value: null, error: RATE_LIMIT_REQUIRED_MESSAGE };
+  }
+  if (!/^[+-]?\d+$/.test(trimmed)) {
+    return { value: null, error: RATE_LIMIT_WHOLE_NUMBER_MESSAGE };
+  }
+  try {
+    const parsed = BigInt(trimmed);
+    if (parsed < 0n) {
+      return { value: null, error: RATE_LIMIT_NEGATIVE_MESSAGE };
+    }
+    if (parsed === 0n) {
+      return { value: null, error: RATE_LIMIT_REQUIRED_MESSAGE };
+    }
+    if (parsed > BigInt(RATE_LIMIT_MAX_VALUE)) {
+      return { value: null, error: RATE_LIMIT_TOO_LARGE_MESSAGE };
+    }
+    return { value: Number(parsed), error: null };
+  } catch {
+    return { value: null, error: RATE_LIMIT_WHOLE_NUMBER_MESSAGE };
+  }
+}
+
+function validateRateLimitDraft(rawValue: string): string | null {
+  return parseRateLimitDraft(rawValue).error;
 }
 
 export function parseNotificationPolicy(rawJson: string | null | undefined): NotificationPolicyConfig {
@@ -223,6 +369,22 @@ export function parseNotificationPolicy(rawJson: string | null | undefined): Not
     if (Array.isArray(parsed.quietHoursAppliesTo)) {
       next.quietHoursAppliesTo = parsed.quietHoursAppliesTo.filter((item): item is string => typeof item === "string");
     }
+    if (isObject(parsed.quietHoursSchedule)) {
+      if (Array.isArray(parsed.quietHoursSchedule.weekdays)) {
+        const weekdays = parsed.quietHoursSchedule.weekdays.filter((item): item is QuietHoursWeekday =>
+          typeof item === "string" && QUIET_HOUR_WEEKDAY_OPTIONS.some((option) => option.value === item)
+        );
+        if (weekdays.length) {
+          next.quietHoursSchedule.weekdays = weekdays;
+        }
+      }
+      if (typeof parsed.quietHoursSchedule.effectiveFrom === "string" || parsed.quietHoursSchedule.effectiveFrom === null) {
+        next.quietHoursSchedule.effectiveFrom = parsed.quietHoursSchedule.effectiveFrom ? String(parsed.quietHoursSchedule.effectiveFrom) : null;
+      }
+      if (typeof parsed.quietHoursSchedule.effectiveUntil === "string" || parsed.quietHoursSchedule.effectiveUntil === null) {
+        next.quietHoursSchedule.effectiveUntil = parsed.quietHoursSchedule.effectiveUntil ? String(parsed.quietHoursSchedule.effectiveUntil) : null;
+      }
+    }
     if (isObject(parsed.compliance)) {
       next.compliance = {
         transactionalMessagesEnabled: Boolean(parsed.compliance.transactionalMessagesEnabled ?? next.compliance.transactionalMessagesEnabled),
@@ -236,11 +398,11 @@ export function parseNotificationPolicy(rawJson: string | null | undefined): Not
     }
     if (isObject(parsed.rateLimits)) {
       next.rateLimits = {
-        overallMessagesPerDay: Number(parsed.rateLimits.overallMessagesPerDay ?? next.rateLimits.overallMessagesPerDay),
-        marketingPerDay: Number(parsed.rateLimits.marketingPerDay ?? next.rateLimits.marketingPerDay),
-        reminderPerDay: Number(parsed.rateLimits.reminderPerDay ?? next.rateLimits.reminderPerDay),
-        maximumPerHour: Number(parsed.rateLimits.maximumPerHour ?? next.rateLimits.maximumPerHour),
-        perPatientPerDay: Number(parsed.rateLimits.perPatientPerDay ?? next.rateLimits.perPatientPerDay),
+        overallMessagesPerDay: rateLimitValueFromPolicyValue(parsed.rateLimits.overallMessagesPerDay, next.rateLimits.overallMessagesPerDay),
+        marketingPerDay: rateLimitValueFromPolicyValue(parsed.rateLimits.marketingPerDay, next.rateLimits.marketingPerDay),
+        reminderPerDay: rateLimitValueFromPolicyValue(parsed.rateLimits.reminderPerDay, next.rateLimits.reminderPerDay),
+        maximumPerHour: rateLimitValueFromPolicyValue(parsed.rateLimits.maximumPerHour, next.rateLimits.maximumPerHour),
+        perPatientPerDay: rateLimitValueFromPolicyValue(parsed.rateLimits.perPatientPerDay, next.rateLimits.perPatientPerDay),
       };
     }
     return next;

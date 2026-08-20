@@ -1401,6 +1401,7 @@ export type DoctorProfile = {
   followUpFee: number | null;
   emergencyFee: number | null;
   yearsOfExperience: number | null;
+  dateOfBirth: string | null;
   age: number | null;
   active: boolean;
   publicListingEnabled: boolean;
@@ -1424,7 +1425,7 @@ export type DoctorProfileInput = {
   followUpFee?: number | null;
   emergencyFee?: number | null;
   yearsOfExperience: number | null;
-  age: number | null;
+  dateOfBirth: string | null;
   active: boolean | null;
   publicListingEnabled?: boolean | null;
   slug?: string | null;

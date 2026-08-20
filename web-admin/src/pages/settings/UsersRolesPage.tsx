@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useNavigate } from "react-router-dom";
-import { firstZodError, mapZodErrors, userCreateSchema } from "@deepthoughtnet/form-validation-kit";
+import { firstZodError, mapZodErrors, userCreateSchema, userUpdateSchema } from "@deepthoughtnet/form-validation-kit";
 import {
   Alert,
   Box,
@@ -32,7 +32,9 @@ import {
 } from "@mui/material";
 
 import { useAuth } from "../../auth/useAuth";
+import AutocompleteTextInput from "../../components/forms/AutocompleteTextInput";
 import RequiredLabel from "../../components/forms/RequiredLabel";
+import RolesPermissionsPanel from "./RolesPermissionsPanel";
 import {
   createTenantUser,
   getClinicRoles,
@@ -52,7 +54,6 @@ const ASSIGNABLE_ROLES = [
   "RECEPTIONIST",
   "BILLING_USER",
   "AUDITOR",
-  "SERVICE_AGENT",
   "LAB_TECHNICIAN",
   "LAB_ASSISTANT",
   "LAB_APPROVER",
@@ -111,9 +112,7 @@ const EMPTY_EDIT_FORM: EditForm = {
   active: true,
 };
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-const DEPARTMENT_OPTIONS = [
+const DEPARTMENT_SUGGESTIONS = [
   "Reception",
   "Doctor",
   "Billing",
@@ -122,6 +121,8 @@ const DEPARTMENT_OPTIONS = [
   "Administration",
   "Inventory",
   "Management",
+  "Engage",
+  "CARE",
   "Other",
 ] as const;
 
@@ -131,37 +132,6 @@ function roleLabel(role: string) {
     .toLowerCase()
     .replace(/_/g, " ")
     .replace(/\b\w/g, (match) => match.toUpperCase());
-}
-
-function permissionLabel(permission: string) {
-  return permission
-    .replace(/\./g, " ")
-    .replace(/_/g, " ")
-    .split(" ")
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-}
-
-function permissionModule(permission: string) {
-  const normalized = permission.toLowerCase();
-  if (normalized.startsWith("appointment.")) return "Appointments";
-  if (normalized.startsWith("queue.")) return "Queue";
-  if (normalized.startsWith("patient.")) return "Patients";
-  if (normalized.startsWith("consultation.")) return "Consultations";
-  if (normalized.startsWith("prescription.")) return "Prescriptions";
-  if (normalized.startsWith("billing.") || normalized.startsWith("payment.")) return "Billing";
-  if (normalized.startsWith("inventory.") || normalized.startsWith("medicine.")) return "Pharmacy";
-  if (normalized.startsWith("lab.")) return "Laboratory";
-  if (normalized.startsWith("notification.")) return "Notifications";
-  if (normalized.startsWith("carepilot.")) return "CarePilot";
-  if (normalized.startsWith("engage.")) return "Engage";
-  if (normalized.startsWith("ai_") || normalized.startsWith("ai.")) return "AI";
-  if (normalized.startsWith("tenant.users.") || normalized.startsWith("user.")) return "Users";
-  if (normalized.startsWith("clinic.")) return "Clinic";
-  if (normalized.startsWith("report.")) return "Reports";
-  if (normalized.startsWith("audit.")) return "Audit";
-  return "Other";
 }
 
 function formatLocalDateTime(value: string | null | undefined) {
@@ -198,25 +168,32 @@ function mapIdentityConflicts(error: unknown): Record<string, string> {
     fieldErrors.email = "This email address is already associated with a Jeevanam account.";
   }
   if (normalizedMessage.includes("login id") || normalizedMessage.includes("username already exists") || normalizedMessage.includes("already in use")) {
-    fieldErrors.username = "Login ID already in use.";
+    fieldErrors.username = "This login ID is already in use.";
   }
   return fieldErrors;
 }
 
-function groupPermissions(permissions: string[]) {
-  const groups = new Map<string, string[]>();
-  for (const permission of permissions) {
-    const module = permissionModule(permission);
-    const bucket = groups.get(module) || [];
-    if (!bucket.includes(permission)) {
-      bucket.push(permission);
-    }
-    groups.set(module, bucket);
-  }
-  return Array.from(groups.entries()).map(([module, values]) => ({
-    module,
-    permissions: values.sort((left, right) => permissionLabel(left).localeCompare(permissionLabel(right))),
-  })).sort((left, right) => left.module.localeCompare(right.module));
+function mapUserValidationErrors(message: string): Record<string, string> {
+  const fieldErrors: Record<string, string> = {};
+  const normalizedMessage = message.toLowerCase();
+
+  if (normalizedMessage.includes("first name is required")) fieldErrors.firstName = "First name is required.";
+  else if (normalizedMessage.includes("name is required")) fieldErrors.displayName = "Name is required.";
+  if (normalizedMessage.includes("email is required")) fieldErrors.email = "Email is required.";
+  if (normalizedMessage.includes("enter a valid email address")) fieldErrors.email = "Enter a valid email address.";
+  if (normalizedMessage.includes("role is required")) fieldErrors.role = "Role is required.";
+  if (normalizedMessage.includes("department is required")) fieldErrors.department = "Department is required.";
+  if (normalizedMessage.includes("choose a matching department")) fieldErrors.department = "Choose a matching department for this role.";
+  if (normalizedMessage.includes("enter a valid 10-digit mobile number")) fieldErrors.mobile = "Enter a valid 10-digit mobile number.";
+  if (normalizedMessage.includes("first name must")) fieldErrors.firstName = message;
+  else if (normalizedMessage.includes("name must")) fieldErrors.displayName = message;
+  if (normalizedMessage.includes("email must")) fieldErrors.email = message;
+  if (normalizedMessage.includes("login id")) fieldErrors.username = message;
+  if (normalizedMessage.includes("employee code")) fieldErrors.employeeCode = message;
+  if (normalizedMessage.includes("department must")) fieldErrors.department = message;
+  if (normalizedMessage.includes("role must")) fieldErrors.role = message;
+
+  return fieldErrors;
 }
 
 function isInvalidSelectedClinic(tenant: { id: string; code: string; name: string } | null): boolean {
@@ -325,29 +302,9 @@ export default function UsersRolesPage() {
   };
 
   const validateEditForm = () => {
-    const fieldErrors: Record<string, string> = {};
-    if (!editForm.displayName.trim()) {
-      fieldErrors.displayName = "Name is required.";
-    }
-    if (editForm.email.trim() && !EMAIL_RE.test(editForm.email.trim())) {
-      fieldErrors.email = "Enter a valid email address.";
-    }
-    if (editForm.username.trim().length > 128) {
-      fieldErrors.username = "Login ID must be 128 characters or fewer.";
-    }
-    if (editForm.mobile.trim() && !/^[0-9]{10}$/.test(editForm.mobile.trim())) {
-      fieldErrors.mobile = "Enter a valid 10-digit mobile number.";
-    }
-    if (editForm.employeeCode.trim().length > 64) {
-      fieldErrors.employeeCode = "Employee code must be 64 characters or fewer.";
-    }
-    if (editForm.department.trim().length > 128) {
-      fieldErrors.department = "Department must be 128 characters or fewer.";
-    }
-    if (canEditRoleForUser(editingUser) && !editForm.role.trim()) {
-      fieldErrors.role = "Role is required.";
-    }
-    return fieldErrors;
+    const parsed = userUpdateSchema.safeParse(editForm);
+    if (parsed.success) return {};
+    return mapZodErrors(parsed.error);
   };
 
   if (!auth.tenantId || invalidSelectedClinic) {
@@ -414,13 +371,9 @@ export default function UsersRolesPage() {
     } catch (err) {
       console.error("Tenant user creation failed", err);
       const message = err instanceof Error ? err.message : "Unable to create user. Please verify role and tenant selection.";
-      const normalizedMessage = message.toLowerCase();
-      const fieldErrors = mapIdentityConflicts(err);
-      if (normalizedMessage.includes("employee code already exists")) {
+      const fieldErrors = { ...mapIdentityConflicts(err), ...mapUserValidationErrors(message) };
+      if (message.toLowerCase().includes("employee code already exists")) {
         fieldErrors.employeeCode = "Employee code already exists for this clinic.";
-      }
-      if (normalizedMessage.includes("mobile")) {
-        fieldErrors.mobile = message;
       }
       if (Object.keys(fieldErrors).length > 0) {
         setCreateFieldErrors((current) => ({ ...current, ...fieldErrors }));
@@ -465,6 +418,7 @@ export default function UsersRolesPage() {
     setSavingUserId(editingUser.appUserId);
     setError(null);
     try {
+      const role = canEditRoleForUser(editingUser) ? editForm.role.trim() : (editingUser?.membershipRole || editForm.role.trim());
       const updated = await updateTenantUserProfile(auth.accessToken, auth.tenantId, editingUser.appUserId, {
         displayName: editForm.displayName.trim(),
         email: editForm.email.trim() || null,
@@ -472,7 +426,7 @@ export default function UsersRolesPage() {
         employeeCode: editForm.employeeCode.trim() || null,
         mobile: editForm.mobile.trim() || null,
         department: editForm.department.trim() || null,
-        role: canEditRoleForUser(editingUser) ? editForm.role.trim() : null,
+        role,
         active: editForm.active,
       });
       setUsers((current) => current.map((user) => (user.appUserId === updated.appUserId ? updated : user)));
@@ -480,23 +434,14 @@ export default function UsersRolesPage() {
       closeEditDialog();
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to update user details.";
-      const nextFieldErrors: Record<string, string> = {};
-      Object.assign(nextFieldErrors, mapIdentityConflicts(err));
       const normalizedMessage = message.toLowerCase();
-      if (normalizedMessage.includes("employee code already exists")) {
+      const nextFieldErrors: Record<string, string> = {};
+      Object.assign(nextFieldErrors, mapIdentityConflicts(err), mapUserValidationErrors(message));
+      if (message.toLowerCase().includes("employee code already exists")) {
         nextFieldErrors.employeeCode = "Employee code already exists for this clinic.";
-      }
-      if (normalizedMessage.includes("mobile")) {
-        nextFieldErrors.mobile = message;
-      }
-      if (normalizedMessage.includes("name is required")) {
-        nextFieldErrors.displayName = "Name is required.";
       }
       if (normalizedMessage.includes("cannot edit your own user details")) {
         nextFieldErrors.displayName = message;
-      }
-      if (normalizedMessage.includes("role")) {
-        nextFieldErrors.role = message;
       }
       if (Object.keys(nextFieldErrors).length > 0) {
         setEditFieldErrors((current) => ({ ...current, ...nextFieldErrors }));
@@ -602,33 +547,7 @@ export default function UsersRolesPage() {
                 </Table>
               )
             ) : (
-              <Stack spacing={1.5}>
-                {roles.map((role) => (
-                  <Card key={role.role} variant="outlined">
-                    <CardContent>
-                      <Stack spacing={1.25}>
-                        <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1.5 }}>
-                          <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>{role.displayName}</Typography>
-                          <Chip size="small" label={role.role} />
-                        </Box>
-                        {groupPermissions(role.permissions).map((group) => (
-                          <Stack key={group.module} spacing={0.75}>
-                            <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8 }}>
-                              {group.module}
-                            </Typography>
-                            <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
-                              {group.permissions.map((permission) => (
-                                <Chip key={permission} size="small" variant="outlined" label={permissionLabel(permission)} />
-                              ))}
-                            </Box>
-                          </Stack>
-                        ))}
-                      </Stack>
-                    </CardContent>
-                  </Card>
-                ))}
-                {roles.length === 0 ? <Alert severity="info">No role definitions were returned.</Alert> : null}
-              </Stack>
+              <RolesPermissionsPanel roles={roles} />
             )}
           </Stack>
         </CardContent>
@@ -713,22 +632,17 @@ export default function UsersRolesPage() {
               error={Boolean(createFieldErrors.mobile)}
               helperText={createFieldErrors.mobile || "Optional staff mobile number."}
             />
-            <FormControl fullWidth>
-              <InputLabel id="create-department-label">Department</InputLabel>
-              <Select
-                labelId="create-department-label"
-                label="Department"
-                value={createForm.department}
-                onChange={(e) => setCreateForm((s) => ({ ...s, department: String(e.target.value) }))}
-                error={Boolean(createFieldErrors.department)}
-              >
-                <MenuItem value="">Select department</MenuItem>
-                {DEPARTMENT_OPTIONS.map((department) => (
-                  <MenuItem key={department} value={department}>{department}</MenuItem>
-                ))}
-              </Select>
-              {createFieldErrors.department ? <Typography variant="caption" color="error">{createFieldErrors.department}</Typography> : null}
-            </FormControl>
+            <AutocompleteTextInput
+              id="create-user-department"
+              label={<RequiredLabel text="Department" required />}
+              value={createForm.department}
+              onChange={(value) => setCreateForm((s) => ({ ...s, department: value }))}
+              suggestions={[...DEPARTMENT_SUGGESTIONS]}
+              placeholder="Reception, Cardiology, Engage, etc."
+              required
+              error={Boolean(createFieldErrors.department)}
+              helperText={createFieldErrors.department || "Required. Choose a common department or enter a specialty."}
+            />
             <TextField
               label="Temporary Password (optional)"
               value={createForm.tempPassword}
@@ -747,7 +661,7 @@ export default function UsersRolesPage() {
             setOpenCreate(false);
             setCreateFieldErrors({});
           }}>Cancel</Button>
-          <Button variant="contained" onClick={() => void createUser()} disabled={createSubmitting || !createForm.email.trim() || !createForm.firstName.trim() || !createForm.role.trim()}>
+          <Button variant="contained" onClick={() => void createUser()} disabled={createSubmitting || !createForm.email.trim() || !createForm.firstName.trim() || !createForm.role.trim() || !createForm.department.trim()}>
             {createSubmitting ? "Creating..." : "Create User"}
           </Button>
         </DialogActions>
@@ -769,9 +683,10 @@ export default function UsersRolesPage() {
             />
             <TextField
               id="edit-user-email"
-              label="Email"
+              label={<RequiredLabel text="Email" required />}
               value={editForm.email}
               onChange={(e) => setEditForm((current) => ({ ...current, email: e.target.value }))}
+              required
               error={Boolean(editFieldErrors.email)}
               helperText={editFieldErrors.email || "Authentication email used for sign-in."}
               fullWidth
@@ -803,23 +718,17 @@ export default function UsersRolesPage() {
               helperText={editFieldErrors.mobile || "Enter a valid 10-digit mobile number."}
               fullWidth
             />
-            <FormControl fullWidth>
-              <InputLabel id="edit-department-label">Department</InputLabel>
-              <Select
-                id="edit-user-department"
-                labelId="edit-department-label"
-                label="Department"
-                value={editForm.department}
-                onChange={(e) => setEditForm((current) => ({ ...current, department: String(e.target.value) }))}
-                error={Boolean(editFieldErrors.department)}
-              >
-                <MenuItem value="">Select department</MenuItem>
-                {DEPARTMENT_OPTIONS.map((department) => (
-                  <MenuItem key={department} value={department}>{department}</MenuItem>
-                ))}
-              </Select>
-              {editFieldErrors.department ? <Typography variant="caption" color="error">{editFieldErrors.department}</Typography> : null}
-            </FormControl>
+            <AutocompleteTextInput
+              id="edit-user-department"
+              label={<RequiredLabel text="Department" required />}
+              value={editForm.department}
+              onChange={(value) => setEditForm((current) => ({ ...current, department: value }))}
+              suggestions={[...DEPARTMENT_SUGGESTIONS]}
+              placeholder="Reception, Cardiology, Engage, etc."
+              required
+              error={Boolean(editFieldErrors.department)}
+              helperText={editFieldErrors.department || "Required. Choose a common department or enter a specialty."}
+            />
             {canEditRoleForUser(editingUser) ? (
               <FormControl fullWidth>
                 <InputLabel id="edit-role-label"><RequiredLabel text="Role" required /></InputLabel>
@@ -839,8 +748,8 @@ export default function UsersRolesPage() {
               </FormControl>
             ) : (
               <TextField
-                label="Role"
-                value={roleLabel(editingUser?.membershipRole || "-")}
+                label={<RequiredLabel text="Role" required />}
+                value={roleLabel(editingUser?.membershipRole || editForm.role || "-")}
                 fullWidth
                 disabled
                 helperText="Role changes for this user are restricted."
@@ -865,7 +774,7 @@ export default function UsersRolesPage() {
         </DialogContent>
         <DialogActions>
           <Button onClick={closeEditDialog}>Cancel</Button>
-          <Button variant="contained" onClick={() => void saveUserEdits()} disabled={editSubmitting || !editingUser}>
+          <Button variant="contained" onClick={() => void saveUserEdits()} disabled={editSubmitting || !editingUser || !editForm.displayName.trim() || !editForm.email.trim() || !editForm.role.trim() || !editForm.department.trim()}>
             {editSubmitting ? "Saving..." : "Save Changes"}
           </Button>
         </DialogActions>

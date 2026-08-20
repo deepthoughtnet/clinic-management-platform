@@ -24,6 +24,7 @@ import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
 import com.deepthoughtnet.clinic.platform.core.context.TenantId;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Set;
@@ -125,7 +126,7 @@ class DoctorProfileControllerTest {
                                   "consultationFee":600,
                                   "opdFee":600,
                                   "yearsOfExperience":12,
-                                  "age":45,
+                                  "dateOfBirth":"1985-03-15",
                                   "active":true,
                                   "publicListingEnabled":true,
                                   "slug":"dr-amit-verma"
@@ -153,7 +154,7 @@ class DoctorProfileControllerTest {
                   "consultationFee":800,
                   "opdFee":800,
                   "yearsOfExperience":12,
-                  "age":45,
+                  "dateOfBirth":"1985-03-15",
                   "active":true,
                   "publicListingEnabled":true,
                   "slug":"dr-amit-verma"
@@ -209,6 +210,7 @@ class DoctorProfileControllerTest {
                 null,
                 12,
                 45,
+                LocalDate.of(1985, 3, 15),
                 true,
                 true,
                 "dr-amit-verma",

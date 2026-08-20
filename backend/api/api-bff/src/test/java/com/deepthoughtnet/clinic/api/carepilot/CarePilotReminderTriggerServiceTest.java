@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.api.carepilot;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -8,6 +9,8 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.deepthoughtnet.clinic.api.carepilot.dto.MessagingDtos.ProviderReadinessStatus;
+import com.deepthoughtnet.clinic.api.carepilot.dto.MessagingDtos.ProviderStatusResponse;
 import com.deepthoughtnet.clinic.appointment.service.AppointmentService;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentPriority;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentRecord;
@@ -30,12 +33,14 @@ import com.deepthoughtnet.clinic.carepilot.featureflag.service.model.FeatureFlag
 import com.deepthoughtnet.clinic.carepilot.lead.activity.service.LeadActivityService;
 import com.deepthoughtnet.clinic.carepilot.lead.db.LeadRepository;
 import com.deepthoughtnet.clinic.carepilot.messaging.model.ChannelType;
+import com.deepthoughtnet.clinic.api.carepilot.CarePilotMessagingStatusService;
 import com.deepthoughtnet.clinic.carepilot.notificationsettings.service.TenantNotificationSettingsService;
 import com.deepthoughtnet.clinic.carepilot.template.db.CampaignTemplateEntity;
 import com.deepthoughtnet.clinic.carepilot.template.db.CampaignTemplateRepository;
 import com.deepthoughtnet.clinic.carepilot.webinar.db.WebinarRegistrationRepository;
 import com.deepthoughtnet.clinic.carepilot.webinar.db.WebinarRepository;
 import com.deepthoughtnet.clinic.carepilot.webinar.model.WebinarStatus;
+import com.deepthoughtnet.clinic.messaging.spi.MessageChannel;
 import com.deepthoughtnet.clinic.identity.service.PlatformTenantManagementService;
 import com.deepthoughtnet.clinic.identity.service.model.PlatformTenantRecord;
 import com.deepthoughtnet.clinic.patient.db.PatientEntity;
@@ -73,6 +78,7 @@ class CarePilotReminderTriggerServiceTest {
     private LeadRepository leadRepository;
     private LeadActivityService leadActivityService;
     private TenantNotificationSettingsService notificationSettingsService;
+    private CarePilotMessagingStatusService messagingStatusService;
     private NotificationActionService notificationActionService;
     private WebinarRepository webinarRepository;
     private WebinarRegistrationRepository webinarRegistrationRepository;
@@ -95,6 +101,7 @@ class CarePilotReminderTriggerServiceTest {
         leadRepository = mock(LeadRepository.class);
         leadActivityService = mock(LeadActivityService.class);
         notificationSettingsService = mock(TenantNotificationSettingsService.class);
+        messagingStatusService = mock(CarePilotMessagingStatusService.class);
         notificationActionService = mock(NotificationActionService.class);
         webinarRepository = mock(WebinarRepository.class);
         webinarRegistrationRepository = mock(WebinarRegistrationRepository.class);
@@ -115,6 +122,7 @@ class CarePilotReminderTriggerServiceTest {
                 leadRepository,
                 leadActivityService,
                 notificationSettingsService,
+                messagingStatusService,
                 notificationActionService,
                 webinarRepository,
                 webinarRegistrationRepository,
@@ -136,6 +144,11 @@ class CarePilotReminderTriggerServiceTest {
                 OffsetDateTime.now()
         )));
         when(featureFlagService.carePilotForTenant(tenantId)).thenReturn(new FeatureFlagRecord(tenantId, true, "test"));
+        when(messagingStatusService.providerStatuses()).thenReturn(List.of(
+                new ProviderStatusResponse(MessageChannel.EMAIL, "email", true, true, true, ProviderReadinessStatus.READY, List.of(), "ready", true, OffsetDateTime.now(), true, true, false, false),
+                new ProviderStatusResponse(MessageChannel.SMS, "sms", true, true, true, ProviderReadinessStatus.READY, List.of(), "ready", true, OffsetDateTime.now(), true, true, true, false),
+                new ProviderStatusResponse(MessageChannel.WHATSAPP, "whatsapp", true, true, true, ProviderReadinessStatus.READY, List.of(), "ready", true, OffsetDateTime.now(), true, true, true, false)
+        ));
         when(notificationSettingsService.getOrCreate(tenantId)).thenReturn(
                 new com.deepthoughtnet.clinic.carepilot.notificationsettings.service.model.NotificationSettingsRecord(
                         UUID.randomUUID(), tenantId,
@@ -149,7 +162,7 @@ class CarePilotReminderTriggerServiceTest {
                         OffsetDateTime.now(), OffsetDateTime.now(), null, null
                 )
         );
-        when(notificationSettingsService.resolveEffectiveChannel(any(), eq(ChannelType.EMAIL))).thenReturn(ChannelType.EMAIL);
+        when(notificationSettingsService.resolveEffectiveChannel(any(), eq(ChannelType.EMAIL), anyBoolean(), anyBoolean(), anyBoolean())).thenReturn(ChannelType.EMAIL);
         when(notificationSettingsService.applyQuietHours(any(), any())).thenAnswer(invocation -> invocation.getArgument(1));
 
         PatientEntity patient = PatientEntity.create(tenantId, "PAT-1");

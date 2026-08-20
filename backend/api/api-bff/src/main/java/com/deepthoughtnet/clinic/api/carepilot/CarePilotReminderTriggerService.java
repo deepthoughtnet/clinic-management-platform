@@ -20,6 +20,8 @@ import com.deepthoughtnet.clinic.carepilot.lead.activity.model.LeadActivityType;
 import com.deepthoughtnet.clinic.carepilot.lead.activity.service.LeadActivityService;
 import com.deepthoughtnet.clinic.carepilot.lead.db.LeadRepository;
 import com.deepthoughtnet.clinic.carepilot.lead.model.LeadStatus;
+import com.deepthoughtnet.clinic.api.carepilot.dto.MessagingDtos.ProviderReadinessStatus;
+import com.deepthoughtnet.clinic.api.carepilot.CarePilotMessagingStatusService;
 import com.deepthoughtnet.clinic.carepilot.notificationsettings.service.TenantNotificationSettingsService;
 import com.deepthoughtnet.clinic.carepilot.notificationsettings.service.model.NotificationSettingsRecord;
 import com.deepthoughtnet.clinic.carepilot.messaging.model.ChannelType;
@@ -99,6 +101,7 @@ public class CarePilotReminderTriggerService {
     private final LeadRepository leadRepository;
     private final LeadActivityService leadActivityService;
     private final TenantNotificationSettingsService notificationSettingsService;
+    private final CarePilotMessagingStatusService messagingStatusService;
     private final NotificationActionService notificationActionService;
     private final WebinarRepository webinarRepository;
     private final WebinarRegistrationRepository webinarRegistrationRepository;
@@ -123,6 +126,7 @@ public class CarePilotReminderTriggerService {
             LeadRepository leadRepository,
             LeadActivityService leadActivityService,
             TenantNotificationSettingsService notificationSettingsService,
+            CarePilotMessagingStatusService messagingStatusService,
             NotificationActionService notificationActionService,
             WebinarRepository webinarRepository,
             WebinarRegistrationRepository webinarRegistrationRepository,
@@ -146,6 +150,7 @@ public class CarePilotReminderTriggerService {
         this.leadRepository = leadRepository;
         this.leadActivityService = leadActivityService;
         this.notificationSettingsService = notificationSettingsService;
+        this.messagingStatusService = messagingStatusService;
         this.notificationActionService = notificationActionService;
         this.webinarRepository = webinarRepository;
         this.webinarRegistrationRepository = webinarRegistrationRepository;
@@ -1006,7 +1011,14 @@ public class CarePilotReminderTriggerService {
     private boolean createExecutionSafely(UUID tenantId, CampaignExecutionCreateCommand command) {
         try {
             NotificationSettingsRecord settings = notificationSettingsService.getOrCreate(tenantId);
-            ChannelType effectiveChannel = notificationSettingsService.resolveEffectiveChannel(settings, command.channelType());
+            Readiness readiness = providerReadiness();
+            ChannelType effectiveChannel = notificationSettingsService.resolveEffectiveChannel(
+                    settings,
+                    command.channelType(),
+                    readiness.emailReady(),
+                    readiness.smsReady(),
+                    readiness.whatsappReady()
+            );
             if (effectiveChannel == null) {
                 log.info(
                         "CarePilot reminder skipped because no channels are enabled. tenantId={}, campaignId={}, sourceType={}, sourceReferenceId={}",
@@ -1045,6 +1057,17 @@ public class CarePilotReminderTriggerService {
             );
             return false;
         }
+    }
+
+    private Readiness providerReadiness() {
+        var statuses = messagingStatusService.providerStatuses();
+        boolean emailReady = statuses.stream().anyMatch(s -> s.channel().name().equals("EMAIL") && s.status() == ProviderReadinessStatus.READY);
+        boolean smsReady = statuses.stream().anyMatch(s -> s.channel().name().equals("SMS") && s.status() == ProviderReadinessStatus.READY);
+        boolean whatsappReady = statuses.stream().anyMatch(s -> s.channel().name().equals("WHATSAPP") && s.status() == ProviderReadinessStatus.READY);
+        return new Readiness(emailReady, smsReady, whatsappReady);
+    }
+
+    private record Readiness(boolean emailReady, boolean smsReady, boolean whatsappReady) {
     }
 
     private Map<String, Object> parseTriggerConfig(CampaignEntity campaign) {

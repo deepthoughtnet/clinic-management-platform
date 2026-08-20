@@ -11,6 +11,8 @@ import jakarta.persistence.Table;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.util.UUID;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 /**
  * Tenant-scoped communication defaults used by Clinic + CarePilot notification orchestration.
@@ -101,6 +103,7 @@ public class TenantNotificationSettingsEntity {
     @Column(name = "max_messages_per_patient_per_day", nullable = false)
     private int maxMessagesPerPatientPerDay;
 
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "notification_policy_json", nullable = false, columnDefinition = "jsonb")
     private String notificationPolicyJson;
 
@@ -207,7 +210,7 @@ public class TenantNotificationSettingsEntity {
         this.requirePatientConsent = requirePatientConsent;
         this.unsubscribeFooterEnabled = unsubscribeFooterEnabled;
         this.maxMessagesPerPatientPerDay = maxMessagesPerPatientPerDay;
-        this.notificationPolicyJson = notificationPolicyJson;
+        this.notificationPolicyJson = notificationPolicyJson == null ? "{}" : notificationPolicyJson;
         this.updatedAt = OffsetDateTime.now();
         this.updatedBy = actorId;
     }

@@ -456,6 +456,15 @@ export default function ClinicProfilePage() {
     (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
       const value = event.target.value;
       setForm((current) => ({ ...current, [field]: value } as ClinicProfileFormState));
+      setFieldErrors((current) => {
+        if (!current[field]) {
+          return current;
+        }
+        const next = { ...current };
+        delete next[field];
+        return next;
+      });
+      setError(null);
     };
 
   const updateActive = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -706,59 +715,183 @@ export default function ClinicProfilePage() {
                     disabled={!canEdit || saving}
                     required
                     error={Boolean(fieldErrors.clinicName)}
-                    helperText={fieldErrors.clinicName || "Required."}
+                    helperText={fieldErrors.clinicName}
                   />
                 </Grid>
                 <Grid size={{ xs: 12, md: 6 }}>
-                  <TextField fullWidth label="Display name" value={form.displayName} onChange={updateTextField("displayName")} disabled={!canEdit || saving} />
+                  <TextField
+                    id="clinic-profile-displayName"
+                    fullWidth
+                    label={<RequiredLabel text="Display name" required />}
+                    value={form.displayName}
+                    onChange={updateTextField("displayName")}
+                    disabled={!canEdit || saving}
+                    required
+                    error={Boolean(fieldErrors.displayName)}
+                    helperText={fieldErrors.displayName}
+                  />
                 </Grid>
                 <Grid size={{ xs: 12, md: 6 }}>
-                  <TextField fullWidth label="Phone" value={form.phone} onChange={updateTextField("phone")} disabled={!canEdit || saving} inputProps={{ inputMode: "tel" }} />
+                  <TextField
+                    id="clinic-profile-phone"
+                    fullWidth
+                    label={<RequiredLabel text="Phone" required />}
+                    value={form.phone}
+                    onChange={updateTextField("phone")}
+                    disabled={!canEdit || saving}
+                    inputProps={{ inputMode: "tel" }}
+                    required
+                    error={Boolean(fieldErrors.phone)}
+                    helperText={fieldErrors.phone}
+                  />
                 </Grid>
                 <Grid size={{ xs: 12, md: 6 }}>
-                  <TextField fullWidth label="Email" value={form.email} onChange={updateTextField("email")} disabled={!canEdit || saving} />
+                  <TextField
+                    id="clinic-profile-email"
+                    fullWidth
+                    label={<RequiredLabel text="Email" required />}
+                    value={form.email}
+                    onChange={updateTextField("email")}
+                    disabled={!canEdit || saving}
+                    required
+                    error={Boolean(fieldErrors.email)}
+                    helperText={fieldErrors.email}
+                  />
                 </Grid>
                 <Grid size={12}>
-                  <TextField fullWidth label="Address line 1" value={form.addressLine1} onChange={updateTextField("addressLine1")} disabled={!canEdit || saving} />
+                  <TextField
+                    id="clinic-profile-addressLine1"
+                    fullWidth
+                    label={<RequiredLabel text="Address line 1" required />}
+                    value={form.addressLine1}
+                    onChange={updateTextField("addressLine1")}
+                    disabled={!canEdit || saving}
+                    required
+                    error={Boolean(fieldErrors.addressLine1)}
+                    helperText={fieldErrors.addressLine1}
+                  />
                 </Grid>
                 <Grid size={12}>
-                  <TextField fullWidth label="Address line 2" value={form.addressLine2} onChange={updateTextField("addressLine2")} disabled={!canEdit || saving} />
+                  <TextField
+                    id="clinic-profile-addressLine2"
+                    fullWidth
+                    label="Address line 2"
+                    value={form.addressLine2}
+                    onChange={updateTextField("addressLine2")}
+                    disabled={!canEdit || saving}
+                    error={Boolean(fieldErrors.addressLine2)}
+                    helperText={fieldErrors.addressLine2}
+                  />
                 </Grid>
                 <Grid size={{ xs: 12, md: 4 }}>
                   <AutocompleteTextInput
-                    label="City"
+                    id="clinic-profile-city"
+                    label={<RequiredLabel text="City" required />}
                     value={form.city}
-                    onChange={(value) => setForm((current) => ({ ...current, city: value }))}
+                    onChange={(value) => {
+                      setForm((current) => ({ ...current, city: value }));
+                      setFieldErrors((current) => {
+                        if (!current.city) {
+                          return current;
+                        }
+                        const next = { ...current };
+                        delete next.city;
+                        return next;
+                      });
+                      setError(null);
+                    }}
                     suggestions={citySuggestions}
                     disabled={!canEdit || saving}
+                    required
+                    error={Boolean(fieldErrors.city)}
+                    helperText={fieldErrors.city}
                   />
                 </Grid>
                 <Grid size={{ xs: 12, md: 4 }}>
                   <AutocompleteTextInput
-                    label="State"
+                    id="clinic-profile-state"
+                    label={<RequiredLabel text="State" required />}
                     value={form.state}
-                    onChange={(value) => setForm((current) => ({ ...current, state: value }))}
+                    onChange={(value) => {
+                      setForm((current) => ({ ...current, state: value }));
+                      setFieldErrors((current) => {
+                        if (!current.state) {
+                          return current;
+                        }
+                        const next = { ...current };
+                        delete next.state;
+                        return next;
+                      });
+                      setError(null);
+                    }}
                     suggestions={stateSuggestions}
                     disabled={!canEdit || saving}
+                    required
+                    error={Boolean(fieldErrors.state)}
+                    helperText={fieldErrors.state}
                   />
                 </Grid>
                 <Grid size={{ xs: 12, md: 4 }}>
                   <AutocompleteTextInput
-                    label="Country"
+                    id="clinic-profile-country"
+                    label={<RequiredLabel text="Country" required />}
                     value={form.country}
-                    onChange={(value) => setForm((current) => ({ ...current, country: value }))}
+                    onChange={(value) => {
+                      setForm((current) => ({ ...current, country: value }));
+                      setFieldErrors((current) => {
+                        if (!current.country) {
+                          return current;
+                        }
+                        const next = { ...current };
+                        delete next.country;
+                        return next;
+                      });
+                      setError(null);
+                    }}
                     suggestions={countrySuggestions}
                     disabled={!canEdit || saving}
+                    required
+                    error={Boolean(fieldErrors.country)}
+                    helperText={fieldErrors.country}
                   />
                 </Grid>
                 <Grid size={{ xs: 12, md: 4 }}>
-                  <TextField fullWidth label="Postal code" value={form.postalCode} onChange={updateTextField("postalCode")} disabled={!canEdit || saving} />
+                  <TextField
+                    id="clinic-profile-postalCode"
+                    fullWidth
+                    label={<RequiredLabel text="Postal code" required />}
+                    value={form.postalCode}
+                    onChange={updateTextField("postalCode")}
+                    disabled={!canEdit || saving}
+                    required
+                    error={Boolean(fieldErrors.postalCode)}
+                    helperText={fieldErrors.postalCode}
+                  />
                 </Grid>
                 <Grid size={{ xs: 12, md: 4 }}>
-                  <TextField fullWidth label="Registration number" value={form.registrationNumber} onChange={updateTextField("registrationNumber")} disabled={!canEdit || saving} />
+                  <TextField
+                    id="clinic-profile-registrationNumber"
+                    fullWidth
+                    label={<RequiredLabel text="Registration number" required />}
+                    value={form.registrationNumber}
+                    onChange={updateTextField("registrationNumber")}
+                    disabled={!canEdit || saving}
+                    required
+                    error={Boolean(fieldErrors.registrationNumber)}
+                    helperText={fieldErrors.registrationNumber}
+                  />
                 </Grid>
                 <Grid size={{ xs: 12, md: 4 }}>
-                  <TextField fullWidth label="GST number" value={form.gstNumber} onChange={updateTextField("gstNumber")} disabled={!canEdit || saving} />
+                  <TextField
+                    id="clinic-profile-gstNumber"
+                    fullWidth
+                    label="GST number"
+                    value={form.gstNumber}
+                    onChange={updateTextField("gstNumber")}
+                    disabled={!canEdit || saving}
+                    error={Boolean(fieldErrors.gstNumber)}
+                    helperText={fieldErrors.gstNumber}
+                  />
                 </Grid>
                 <Grid size={{ xs: 12, md: 6 }}>
                   <FormControlLabel
@@ -788,12 +921,14 @@ export default function ClinicProfilePage() {
                 </Grid>
                 <Grid size={{ xs: 12, md: 6 }}>
                   <TextField
+                    id="clinic-profile-slug"
                     fullWidth
                     label="Public slug"
                     value={form.slug}
                     onChange={updateTextField("slug")}
                     disabled={!canEdit || saving}
-                    helperText="Optional. Leave blank to auto-generate from clinic display name."
+                    error={Boolean(fieldErrors.slug)}
+                    helperText={fieldErrors.slug || "Optional. Leave blank to auto-generate from clinic display name."}
                   />
                 </Grid>
                 <Grid size={12}>

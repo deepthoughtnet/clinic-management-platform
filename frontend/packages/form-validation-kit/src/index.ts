@@ -35,4 +35,5 @@ export * from "./schemas/engage.js";
 export * from "./schemas/reports.js";
 export * from "./schemas/auth.js";
 export * from "./schemas/careai.js";
+export * from "./schemas/templates.js";
 export * from "./adapters/reactHookForm.js";

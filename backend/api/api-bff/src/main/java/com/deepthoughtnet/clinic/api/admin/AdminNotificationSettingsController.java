@@ -17,6 +17,7 @@ import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -60,8 +61,12 @@ public class AdminNotificationSettingsController {
     public NotificationSettingsResponse update(@RequestBody UpdateNotificationSettingsRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorId = RequestContextHolder.require().appUserId();
+        if (request.quietHoursEnabled() && !StringUtils.hasText(request.timezone())) {
+            throw new IllegalArgumentException("Timezone is required when quiet hours are enabled.");
+        }
         String normalizedTimezone = clinicTimeZoneResolver.normalizeForPersistence(tenantId, request.timezone());
-        NotificationSettingsRecord updated = settingsService.update(tenantId, new NotificationSettingsUpdateCommand(
+        var readiness = providerReadiness();
+        NotificationSettingsUpdateCommand command = new NotificationSettingsUpdateCommand(
                 request.emailEnabled(),
                 request.smsEnabled(),
                 request.whatsappEnabled(),
@@ -87,7 +92,15 @@ public class AdminNotificationSettingsController {
                 request.unsubscribeFooterEnabled(),
                 request.maxMessagesPerPatientPerDay(),
                 request.notificationPolicyJson()
-        ), actorId);
+        );
+        NotificationSettingsRecord updated = settingsService.update(
+                tenantId,
+                command,
+                actorId,
+                readiness.emailReady(),
+                readiness.smsReady(),
+                readiness.whatsappReady()
+        );
         if (log.isDebugEnabled()) {
             log.debug("admin.notification-settings update tenantId={} requestedTimezone={} persistedTimezone={}",
                     tenantId, request.timezone(), normalizedTimezone);
@@ -96,10 +109,10 @@ public class AdminNotificationSettingsController {
     }
 
     private NotificationSettingsResponse toResponse(NotificationSettingsRecord record) {
-        var statuses = messagingStatusService.providerStatuses();
-        boolean emailReady = statuses.stream().anyMatch(s -> s.channel().name().equals("EMAIL") && s.status() == ProviderReadinessStatus.READY);
-        boolean smsReady = statuses.stream().anyMatch(s -> s.channel().name().equals("SMS") && s.status() == ProviderReadinessStatus.READY);
-        boolean whatsappReady = statuses.stream().anyMatch(s -> s.channel().name().equals("WHATSAPP") && s.status() == ProviderReadinessStatus.READY);
+        Readiness readiness = providerReadiness();
+        boolean emailReady = readiness.emailReady();
+        boolean smsReady = readiness.smsReady();
+        boolean whatsappReady = readiness.whatsappReady();
         var warnings = settingsService.computeWarnings(record, emailReady, smsReady, whatsappReady);
         ZoneId effectiveZone = clinicTimeZoneResolver.resolve(record.tenantId(), record.timezone());
         String effectiveTimezone = effectiveZone.getId();
@@ -150,5 +163,16 @@ public class AdminNotificationSettingsController {
                 whatsappReady,
                 warnings
         );
+    }
+
+    private Readiness providerReadiness() {
+        var statuses = messagingStatusService.providerStatuses();
+        boolean emailReady = statuses.stream().anyMatch(s -> s.channel().name().equals("EMAIL") && s.status() == ProviderReadinessStatus.READY);
+        boolean smsReady = statuses.stream().anyMatch(s -> s.channel().name().equals("SMS") && s.status() == ProviderReadinessStatus.READY);
+        boolean whatsappReady = statuses.stream().anyMatch(s -> s.channel().name().equals("WHATSAPP") && s.status() == ProviderReadinessStatus.READY);
+        return new Readiness(emailReady, smsReady, whatsappReady);
+    }
+
+    private record Readiness(boolean emailReady, boolean smsReady, boolean whatsappReady) {
     }
 }

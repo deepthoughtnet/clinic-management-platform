@@ -112,7 +112,7 @@ class TenantUserManagementServiceTest {
                 "Temp@1234",
                 null,
                 null,
-                null
+                "General Medicine"
         ));
 
         ArgumentCaptor<String> emailCaptor = ArgumentCaptor.forClass(String.class);
@@ -129,6 +129,141 @@ class TenantUserManagementServiceTest {
         );
         assertEquals("priya.nair@example.com", emailCaptor.getValue());
         assertEquals("Priya.Nair", usernameCaptor.getValue());
+    }
+
+    @Test
+    void createOrInviteRejectsMissingFirstName() {
+        var service = createService();
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () ->
+                service.createOrInvite(new CreateTenantUserCommand(
+                        tenantId,
+                        "user@example.com",
+                        "user",
+                        null,
+                        null,
+                        "User",
+                        "RECEPTIONIST",
+                        null,
+                        null,
+                        null,
+                        "Reception"
+                )));
+
+        assertEquals("First name is required.", ex.getMessage());
+    }
+
+    @Test
+    void createOrInviteRejectsInvalidEmailSyntax() {
+        var service = createService();
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () ->
+                service.createOrInvite(new CreateTenantUserCommand(
+                        tenantId,
+                        "abc@@clinic.com",
+                        "user",
+                        "User",
+                        null,
+                        "User",
+                        "RECEPTIONIST",
+                        null,
+                        null,
+                        null,
+                        "Reception"
+                )));
+
+        assertEquals("Enter a valid email address.", ex.getMessage());
+    }
+
+    @Test
+    void createOrInviteRejectsDuplicateLoginIdWithinTenant() {
+        AppUserRepository appUserRepository = mock(AppUserRepository.class);
+        TenantMembershipRepository membershipRepository = mock(TenantMembershipRepository.class);
+        KeycloakAdminProvisioner keycloakAdminProvisioner = mock(KeycloakAdminProvisioner.class);
+        AppUserEntity existing = AppUserEntity.create(tenantId, "existing-sub", "existing@example.com", "Existing");
+        forceUserId(existing, UUID.randomUUID());
+
+        when(keycloakAdminProvisioner.createOrGetTenantUserId(any(), any(), any(), any(), any(), any(), any(), anyBoolean()))
+                .thenReturn("kc-sub");
+        when(appUserRepository.findByTenantIdAndKeycloakSub(any(), any())).thenReturn(Optional.empty());
+        when(appUserRepository.findByTenantIdAndEmailIgnoreCase(any(), any())).thenReturn(Optional.empty());
+        when(appUserRepository.findByTenantIdAndUsernameIgnoreCase(tenantId, "reception01")).thenReturn(Optional.of(existing));
+
+        TenantUserManagementService service = new TenantUserManagementService(appUserRepository, membershipRepository, keycloakAdminProvisioner);
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () ->
+                service.createOrInvite(new CreateTenantUserCommand(
+                        tenantId,
+                        "user@example.com",
+                        "reception01",
+                        "User",
+                        null,
+                        "User",
+                        "RECEPTIONIST",
+                        null,
+                        null,
+                        null,
+                        "Reception"
+                )));
+
+        assertEquals("This login ID is already in use.", ex.getMessage());
+    }
+
+    @Test
+    void createOrInviteRejectsEmployeeCodeDuplicateWithinTenant() {
+        AppUserRepository appUserRepository = mock(AppUserRepository.class);
+        TenantMembershipRepository membershipRepository = mock(TenantMembershipRepository.class);
+        KeycloakAdminProvisioner keycloakAdminProvisioner = mock(KeycloakAdminProvisioner.class);
+        AppUserEntity existing = AppUserEntity.create(tenantId, "existing-sub", "existing@example.com", "Existing");
+        forceUserId(existing, UUID.randomUUID());
+
+        when(keycloakAdminProvisioner.createOrGetTenantUserId(any(), any(), any(), any(), any(), any(), any(), anyBoolean()))
+                .thenReturn("kc-sub");
+        when(appUserRepository.findByTenantIdAndKeycloakSub(any(), any())).thenReturn(Optional.empty());
+        when(appUserRepository.findByTenantIdAndEmailIgnoreCase(any(), any())).thenReturn(Optional.empty());
+        when(appUserRepository.findByTenantIdAndUsernameIgnoreCase(any(), any())).thenReturn(Optional.empty());
+        when(appUserRepository.findByTenantIdAndEmployeeCodeIgnoreCase(tenantId, "EMP-001")).thenReturn(Optional.of(existing));
+
+        TenantUserManagementService service = new TenantUserManagementService(appUserRepository, membershipRepository, keycloakAdminProvisioner);
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () ->
+                service.createOrInvite(new CreateTenantUserCommand(
+                        tenantId,
+                        "user@example.com",
+                        "reception01",
+                        "User",
+                        null,
+                        "User",
+                        "RECEPTIONIST",
+                        null,
+                        "EMP-001",
+                        null,
+                        "Reception"
+                )));
+
+        assertEquals("Employee code already exists for this clinic.", ex.getMessage());
+    }
+
+    @Test
+    void createOrInviteRejectsSuspiciousDepartmentForDoctor() {
+        var service = createService();
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () ->
+                service.createOrInvite(new CreateTenantUserCommand(
+                        tenantId,
+                        "doctor@example.com",
+                        "doctor01",
+                        "Doctor",
+                        null,
+                        "Doctor",
+                        "DOCTOR",
+                        null,
+                        null,
+                        null,
+                        "Reception"
+                )));
+
+        assertEquals("Choose a matching department for this role.", ex.getMessage());
     }
 
     @Test
@@ -205,6 +340,70 @@ class TenantUserManagementServiceTest {
     }
 
     @Test
+    void updateUserProfileRejectsMissingRole() {
+        UUID userId = UUID.randomUUID();
+        AppUserRepository appUserRepository = mock(AppUserRepository.class);
+        TenantMembershipRepository membershipRepository = mock(TenantMembershipRepository.class);
+        KeycloakAdminProvisioner keycloakAdminProvisioner = mock(KeycloakAdminProvisioner.class);
+        AppUserEntity user = AppUserEntity.create(tenantId, "kc-sub", "user@example.com", "Old Name");
+        forceUserId(user, userId);
+
+        when(appUserRepository.findByTenantIdAndId(tenantId, userId)).thenReturn(Optional.of(user));
+        when(appUserRepository.findByTenantIdAndEmployeeCodeIgnoreCase(tenantId, "EMP-009")).thenReturn(Optional.empty());
+        when(membershipRepository.findByTenantIdAndAppUserId(tenantId, userId)).thenReturn(Optional.of(TenantMembershipEntity.create(tenantId, userId, "RECEPTIONIST")));
+
+        TenantUserManagementService service = new TenantUserManagementService(appUserRepository, membershipRepository, keycloakAdminProvisioner);
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () ->
+                service.updateUserProfile(new UpdateTenantUserProfileCommand(
+                        tenantId,
+                        userId,
+                        "Priya Sharma",
+                        "priya.sharma@example.com",
+                        "priya.sharma",
+                        "EMP-009",
+                        "9876543210",
+                        "Reception",
+                        " ",
+                        true
+                )));
+
+        assertEquals("Role is required.", ex.getMessage());
+    }
+
+    @Test
+    void updateUserProfileRejectsSuspiciousDepartmentForDoctor() {
+        UUID userId = UUID.randomUUID();
+        AppUserRepository appUserRepository = mock(AppUserRepository.class);
+        TenantMembershipRepository membershipRepository = mock(TenantMembershipRepository.class);
+        KeycloakAdminProvisioner keycloakAdminProvisioner = mock(KeycloakAdminProvisioner.class);
+        AppUserEntity user = AppUserEntity.create(tenantId, "kc-sub", "user@example.com", "Old Name");
+        forceUserId(user, userId);
+
+        when(appUserRepository.findByTenantIdAndId(tenantId, userId)).thenReturn(Optional.of(user));
+        when(appUserRepository.findByTenantIdAndEmployeeCodeIgnoreCase(tenantId, "EMP-009")).thenReturn(Optional.empty());
+        when(membershipRepository.findByTenantIdAndAppUserId(tenantId, userId)).thenReturn(Optional.of(TenantMembershipEntity.create(tenantId, userId, "RECEPTIONIST")));
+
+        TenantUserManagementService service = new TenantUserManagementService(appUserRepository, membershipRepository, keycloakAdminProvisioner);
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () ->
+                service.updateUserProfile(new UpdateTenantUserProfileCommand(
+                        tenantId,
+                        userId,
+                        "Priya Sharma",
+                        "priya.sharma@example.com",
+                        "priya.sharma",
+                        "EMP-009",
+                        "9876543210",
+                        "Reception",
+                        "DOCTOR",
+                        true
+                )));
+
+        assertEquals("Choose a matching department for this role.", ex.getMessage());
+    }
+
+    @Test
     void updateUserProfileRejectsInvalidMobile() {
         UUID userId = UUID.randomUUID();
         AppUserRepository appUserRepository = mock(AppUserRepository.class);
@@ -257,6 +456,16 @@ class TenantUserManagementServiceTest {
     }
 
     private CreateTenantUserCommand command(String role) {
+        String department = switch (role) {
+            case "DOCTOR" -> "General Medicine";
+            case "RECEPTIONIST" -> "Reception";
+            case "BILLING_USER" -> "Billing";
+            case "PHARMA", "PHARMACY", "PHARMACIST", "PHARMACY_INVENTORY_MANAGER", "PHARMACY_POS_USER" -> "Pharmacy";
+            case "LAB_TECHNICIAN", "LAB_ASSISTANT", "LAB_APPROVER", "LAB_FRONT_DESK" -> "Laboratory";
+            case "ENGAGE_MANAGER", "ENGAGE_EXECUTIVE" -> "Engage";
+            case "CLINIC_ADMIN", "ADMIN", "TENANT_ADMIN" -> "Administration";
+            default -> "Administration";
+        };
         return new CreateTenantUserCommand(
                 tenantId,
                 "user@example.com",
@@ -265,7 +474,10 @@ class TenantUserManagementServiceTest {
                 null,
                 "User",
                 role,
-                null
+                null,
+                null,
+                null,
+                department
         );
     }
 

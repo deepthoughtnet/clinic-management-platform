@@ -14,6 +14,13 @@ public interface CareTemplateRepository extends JpaRepository<CareTemplateEntity
 
     boolean existsByTenantIdAndTemplateTypeAndNameIgnoreCase(UUID tenantId, TemplateType templateType, String name);
 
+    boolean existsByTenantIdAndTemplateTypeAndNameIgnoreCaseAndIdNot(
+            UUID tenantId,
+            TemplateType templateType,
+            String name,
+            UUID id
+    );
+
     @Query("""
             select t
             from CareTemplateEntity t

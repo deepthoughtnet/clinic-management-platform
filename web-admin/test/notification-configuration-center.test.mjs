@@ -19,19 +19,31 @@ test("notification configuration center groups settings by business domain and p
   assert.ok(page.includes("Quiet Hours"));
   assert.ok(page.includes("Compliance / Consent"));
   assert.ok(page.includes("Rate Limits"));
+  assert.ok(page.includes("Weekdays"));
   assert.ok(page.includes("Configuration Ready"));
   assert.ok(page.includes("Not configured"));
   assert.ok(page.includes("Patient-level preferences override tenant defaults."));
   assert.ok(page.includes("Critical alerts bypass quiet hours."));
+  assert.ok(page.includes("Current fallback channel is unavailable. Select a configured and enabled channel, or None."));
   assert.ok(page.includes("Template changes affect future notifications only."));
   assert.ok(page.includes("Rate limits define policy."));
   assert.ok(page.includes("Apply Quiet Hours To"));
+  assert.ok(page.includes("Effective From"));
+  assert.ok(page.includes("Effective Until"));
+  assert.ok(page.includes("Enter a whole number greater than zero."));
+  assert.ok(page.includes('inputProps={{ min: 1, step: 1 }}'));
   assert.ok(page.includes("Open Template"));
   assert.ok(page.includes("notificationPolicyJson"));
+  assert.ok(page.includes("rateLimitDraftsFromRawJson"));
+  assert.ok(page.includes("validateRateLimitDrafts"));
+  assert.ok(page.includes("rateLimitValuesFromDrafts"));
   assert.ok(page.includes('setSearchParams({ section: next }, { replace: true })'));
+  assert.ok(page.includes("function channelOptionLabel(row: AdminNotificationSettings, channel: AdminNotificationChannel): string"));
+  assert.ok(page.includes("if (!channelReady(row, channel))"));
   assert.ok(page.includes('disabled={!canMutate || (!row.emailReady && !row.emailEnabled)}'));
   assert.ok(page.includes('disabled={!canMutate || (!row.smsReady && !row.smsEnabled)}'));
   assert.ok(page.includes('disabled={!canMutate || (!row.whatsappReady && !row.whatsappEnabled)}'));
+  assert.ok(page.includes("channelSelectable(row, channel)"));
 
   for (const title of [
     "Appointments",
@@ -48,9 +60,15 @@ test("notification configuration center groups settings by business domain and p
   assert.ok(model.includes("createDefaultNotificationPolicy"));
   assert.ok(model.includes("parseNotificationPolicy"));
   assert.ok(model.includes("serializeNotificationPolicy"));
+  assert.ok(model.includes("rateLimitDraftsFromRawJson"));
+  assert.ok(model.includes("rateLimitValuesFromDrafts"));
+  assert.ok(model.includes("validateRateLimitDrafts"));
   assert.ok(model.includes("QUIET_HOUR_SCOPE_OPTIONS"));
+  assert.ok(model.includes("QUIET_HOUR_WEEKDAY_OPTIONS"));
   assert.ok(model.includes("DEFAULT_RATE_LIMITS"));
+  assert.ok(model.includes("RATE_LIMIT_FIELD_SPECS"));
   assert.ok(model.includes("DEFAULT_COMPLIANCE"));
+  assert.ok(model.includes("quietHoursSchedule"));
   assert.ok(model.includes('key: "appointments"'));
   assert.ok(model.includes('key: "billing"'));
   assert.ok(model.includes('key: "clinical"'));

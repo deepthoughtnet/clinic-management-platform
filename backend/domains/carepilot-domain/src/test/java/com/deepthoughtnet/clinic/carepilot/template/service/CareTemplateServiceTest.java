@@ -16,6 +16,7 @@ import com.deepthoughtnet.clinic.carepilot.template.model.TemplateChannel;
 import com.deepthoughtnet.clinic.carepilot.template.model.TemplateType;
 import com.deepthoughtnet.clinic.carepilot.template.service.model.CareTemplateSearchCriteria;
 import com.deepthoughtnet.clinic.carepilot.template.service.model.CareTemplateUpsertCommand;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -31,12 +32,14 @@ class CareTemplateServiceTest {
     @BeforeEach
     void setUp() {
         repository = mock(CareTemplateRepository.class);
-        service = new CareTemplateService(repository);
+        service = new CareTemplateService(repository, new ObjectMapper());
         tenantId = UUID.randomUUID();
     }
 
     @Test
     void createAndUpdateTemplate() {
+        when(repository.existsByTenantIdAndTemplateTypeAndNameIgnoreCase(any(), any(), any())).thenReturn(false);
+        when(repository.existsByTenantIdAndTemplateTypeAndNameIgnoreCaseAndIdNot(any(), any(), any(), any())).thenReturn(false);
         when(repository.searchWithText(any(), any(), any(), any(), any(), any())).thenReturn(List.of());
         when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -52,6 +55,76 @@ class CareTemplateServiceTest {
 
         var updated = service.update(tenantId, created.id(), command("B"), UUID.randomUUID());
         assertThat(updated.name()).isEqualTo("B");
+    }
+
+    @Test
+    void emailTemplatesRequireSubjectAndVariablesJsonMustBeValidObject() {
+        when(repository.existsByTenantIdAndTemplateTypeAndNameIgnoreCase(any(), any(), any())).thenReturn(false);
+
+        assertThatThrownBy(() -> service.create(tenantId, command(
+                "Email",
+                TemplateChannel.EMAIL,
+                "   ",
+                "Body {{clinicName}}",
+                null
+        ), UUID.randomUUID()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Subject is required for email templates.");
+
+        assertThatThrownBy(() -> service.create(tenantId, command(
+                "Email",
+                TemplateChannel.EMAIL,
+                "Subject",
+                "Body {{clinicName}}",
+                "{invalid-json"
+        ), UUID.randomUUID()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Enter valid JSON.");
+
+        assertThatThrownBy(() -> service.create(tenantId, command(
+                "Email",
+                TemplateChannel.EMAIL,
+                "Subject",
+                "Body {{clinicName}}",
+                "[\"a\"]"
+        ), UUID.randomUUID()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Variables JSON must be a JSON object.");
+    }
+
+    @Test
+    void nonEmailTemplatesAllowBlankSubjectButRejectMalformedPlaceholders() {
+        when(repository.existsByTenantIdAndTemplateTypeAndNameIgnoreCase(any(), any(), any())).thenReturn(false);
+        when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        var created = service.create(tenantId, command(
+                "SMS template",
+                TemplateChannel.SMS,
+                "   ",
+                "Body {{clinicName}}",
+                null
+        ), UUID.randomUUID());
+
+        assertThat(created.subject()).isNull();
+
+        assertThatThrownBy(() -> service.create(tenantId, command(
+                "Bad template",
+                TemplateChannel.SMS,
+                "Subject {{patientName",
+                "Body {{clinicName}}",
+                null
+        ), UUID.randomUUID()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Subject contains an invalid placeholder.");
+    }
+
+    @Test
+    void duplicateNamesAreRejectedWithinTenantAndType() {
+        when(repository.existsByTenantIdAndTemplateTypeAndNameIgnoreCase(any(), any(), any())).thenReturn(true);
+
+        assertThatThrownBy(() -> service.create(tenantId, command("Reminder"), UUID.randomUUID()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("already exists");
     }
 
     @Test
@@ -124,15 +197,25 @@ class CareTemplateServiceTest {
     }
 
     private CareTemplateUpsertCommand command(String name) {
+        return command(name, TemplateChannel.EMAIL, "Subject {{patientName}}", "Body {{clinicName}}", null);
+    }
+
+    private CareTemplateUpsertCommand command(
+            String name,
+            TemplateChannel channel,
+            String subject,
+            String body,
+            String variablesJson
+    ) {
         return new CareTemplateUpsertCommand(
                 name,
                 null,
                 TemplateType.GENERAL,
-                TemplateChannel.EMAIL,
+                channel,
                 TemplateCategory.GENERAL,
-                "Subject {{patientName}}",
-                "Body {{clinicName}}",
-                null,
+                subject,
+                body,
+                variablesJson,
                 true
         );
     }

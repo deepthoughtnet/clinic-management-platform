@@ -32,6 +32,7 @@ import com.deepthoughtnet.clinic.platform.contracts.providerintegration.PublicPr
 import com.deepthoughtnet.clinic.platform.contracts.providerintegration.ProviderSourceReference;
 import com.deepthoughtnet.clinic.platform.contracts.providerintegration.SourceSystem;
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -54,6 +55,7 @@ class HealthcarePublicListingSyncServiceTest {
     private static final UUID CLINIC_ID = UUID.fromString("fb6977b3-683b-40a3-95b8-05ffbad1dac0");
     private static final UUID DOCTOR_USER_ID = UUID.fromString("ff4d7d2a-401a-4993-9814-afe2863275b6");
     private static final OffsetDateTime NOW = OffsetDateTime.parse("2026-08-08T04:10:51.000Z");
+    private static final LocalDate DOCTOR_DOB = LocalDate.of(1985, 3, 15);
 
     @Mock
     private ClinicProfileService clinicProfileService;
@@ -373,10 +375,11 @@ class HealthcarePublicListingSyncServiceTest {
                 "Room 1",
                 new BigDecimal("500.00"),
                 new BigDecimal("500.00"),
-                null,
-                null,
+                new BigDecimal("450.00"),
+                new BigDecimal("750.00"),
                 12,
                 null,
+                DOCTOR_DOB,
                 true,
                 publicListingEnabled,
                 "amit-verma",

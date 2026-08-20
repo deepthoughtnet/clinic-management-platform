@@ -23,11 +23,23 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
+import java.util.regex.Pattern;
 
 @Service
 public class TenantUserManagementService {
     private static final Logger log = LoggerFactory.getLogger(TenantUserManagementService.class);
     private static final String INDIAN_MOBILE_PATTERN = "^[0-9]{10}$";
+    private static final Pattern EMAIL_PATTERN = Pattern.compile("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$");
+    private static final Pattern LOGIN_ID_PATTERN = Pattern.compile("^[^\\s\\x00-\\x1F\\x7F]{3,128}$");
+    private static final Pattern EMPLOYEE_CODE_PATTERN = Pattern.compile("^[A-Za-z0-9][A-Za-z0-9._/-]{0,63}$");
+    private static final Pattern CONTROL_CHAR_PATTERN = Pattern.compile("[\\x00-\\x1F\\x7F]");
+    private static final int MAX_FIRST_NAME_LENGTH = 128;
+    private static final int MAX_DISPLAY_NAME_LENGTH = 256;
+    private static final int MAX_EMAIL_LENGTH = 255;
+    private static final int MAX_LOGIN_ID_LENGTH = 128;
+    private static final int MAX_EMPLOYEE_CODE_LENGTH = 64;
+    private static final int MAX_DEPARTMENT_LENGTH = 128;
+    private static final int MAX_ROLE_LENGTH = 64;
 
     private static final Set<String> ALLOWED_ROLES = Set.of(
             "TENANT_ADMIN",
@@ -112,19 +124,23 @@ public class TenantUserManagementService {
 
     @Transactional
     public TenantUserRecord createOrInvite(CreateTenantUserCommand command) {
-        validate(command);
+        if (command == null) {
+            throw new IllegalArgumentException("command is required");
+        }
+        requireTenant(command.tenantId());
 
         String role = normalizeRole(command.role());
-        String email = normalizeEmail(command.email());
-        String username = normalizeNullable(command.username());
-        String firstName = normalizeNullable(command.firstName());
-        String lastName = normalizeNullable(command.lastName());
-        String displayName = normalizeNullable(command.displayName());
-        String employeeCode = normalizeNullable(command.employeeCode());
+        String firstName = normalizeRequiredText(command.firstName(), "First name", MAX_FIRST_NAME_LENGTH);
+        String lastName = normalizeOptionalText(command.lastName(), "Last name", MAX_FIRST_NAME_LENGTH);
+        String displayName = normalizeRequiredText(command.displayName(), "Name", MAX_DISPLAY_NAME_LENGTH);
+        String email = normalizeRequiredEmail(command.email());
+        String username = normalizeOptionalLoginId(command.username());
+        String employeeCode = normalizeOptionalEmployeeCode(command.employeeCode());
         String mobile = normalizeMobile(command.mobile());
-        String department = normalizeNullable(command.department());
+        String department = normalizeRequiredText(command.department(), "Department", MAX_DEPARTMENT_LENGTH);
         String correlationId = correlationId();
         UUID tenantId = command.tenantId();
+        validateDepartmentCompatibility(role, department);
         validateSupplementalUniqueness(tenantId, null, username, employeeCode);
 
         try {
@@ -264,36 +280,31 @@ public class TenantUserManagementService {
         AppUserEntity user = findTenantUser(command.tenantId(), command.appUserId());
         TenantMembershipEntity membership = findMembership(command.tenantId(), command.appUserId());
 
-        String displayName = normalizeRequired(command.displayName(), "Name is required.");
-        String email = normalizeEmail(command.email());
-        String username = normalizeNullable(command.username());
-        String employeeCode = normalizeNullable(command.employeeCode());
+        String displayName = normalizeRequiredText(command.displayName(), "Name", MAX_DISPLAY_NAME_LENGTH);
+        String email = normalizeRequiredEmail(command.email());
+        String username = normalizeOptionalLoginId(command.username());
+        String employeeCode = normalizeOptionalEmployeeCode(command.employeeCode());
         String mobile = normalizeMobile(command.mobile());
-        String department = normalizeNullable(command.department());
+        String department = normalizeRequiredText(command.department(), "Department", MAX_DEPARTMENT_LENGTH);
+        String role = normalizeRequiredRole(command.role());
 
         validateSupplementalUniqueness(command.tenantId(), user.getId(), null, employeeCode);
+        validateDepartmentCompatibility(role, department);
 
-        String updatedEmail = StringUtils.hasText(email) ? email : user.getEmail();
-        String updatedUsername = StringUtils.hasText(username) ? username : user.getUsername();
+        keycloakAdminProvisioner.updateTenantUserIdentity(
+                user.getKeycloakSub(),
+                email,
+                username,
+                null,
+                null,
+                true
+        );
 
-        if (StringUtils.hasText(updatedEmail) || StringUtils.hasText(updatedUsername)) {
-            keycloakAdminProvisioner.updateTenantUserIdentity(
-                    user.getKeycloakSub(),
-                    updatedEmail,
-                    updatedUsername,
-                    null,
-                    null,
-                    true
-            );
-        }
-
-        user.updateProfile(updatedEmail, displayName);
-        user.updateIdentity(updatedUsername, department);
+        user.updateProfile(email, displayName);
+        user.updateIdentity(username, department);
         user.updateContactDetails(employeeCode, mobile);
 
-        if (command.role() != null) {
-            membership.setRole(normalizeRole(command.role()));
-        }
+        membership.setRole(role);
         if (command.active() != null) {
             membership.setStatus(Boolean.TRUE.equals(command.active()) ? "ACTIVE" : "DISABLED");
         }
@@ -336,17 +347,6 @@ public class TenantUserManagementService {
         );
     }
 
-    private void validate(CreateTenantUserCommand command) {
-        if (command == null) {
-            throw new IllegalArgumentException("command is required");
-        }
-        requireTenant(command.tenantId());
-        if (!StringUtils.hasText(command.email()) && !StringUtils.hasText(command.username())) {
-            throw new IllegalArgumentException("email or username is required");
-        }
-        normalizeRole(command.role());
-    }
-
     private void requireTenant(UUID tenantId) {
         if (tenantId == null) {
             throw new IllegalArgumentException("tenantId is required");
@@ -355,27 +355,86 @@ public class TenantUserManagementService {
 
     private String normalizeRole(String role) {
         if (!StringUtils.hasText(role)) {
-            throw new IllegalArgumentException("role is required");
+            throw new IllegalArgumentException("Role is required.");
         }
         String normalized = role.trim().replace('-', '_').replace(' ', '_').toUpperCase(Locale.ROOT);
+        if (normalized.length() > MAX_ROLE_LENGTH) {
+            throw new IllegalArgumentException("Role must be " + MAX_ROLE_LENGTH + " characters or fewer.");
+        }
         if (!ALLOWED_ROLES.contains(normalized)) {
             throw new IllegalArgumentException("Unsupported tenant role: " + role);
         }
         return normalized;
     }
 
+    private String normalizeRequiredRole(String value) {
+        return normalizeRole(value);
+    }
+
     private String normalizeNullable(String value) {
         return StringUtils.hasText(value) ? value.trim() : null;
     }
 
-    private String normalizeEmail(String value) {
-        return StringUtils.hasText(value) ? value.trim().toLowerCase(Locale.ROOT) : null;
-    }
-
-    private String normalizeRequired(String value, String message) {
+    private String normalizeRequiredText(String value, String label, int maxLength) {
         String normalized = normalizeNullable(value);
         if (!StringUtils.hasText(normalized)) {
-            throw new IllegalArgumentException(message);
+            throw new IllegalArgumentException(label + " is required.");
+        }
+        if (normalized.length() > maxLength) {
+            throw new IllegalArgumentException(label + " must be " + maxLength + " characters or fewer.");
+        }
+        if (CONTROL_CHAR_PATTERN.matcher(normalized).find()) {
+            throw new IllegalArgumentException(label + " contains invalid characters.");
+        }
+        return normalized;
+    }
+
+    private String normalizeOptionalText(String value, String label, int maxLength) {
+        String normalized = normalizeNullable(value);
+        if (!StringUtils.hasText(normalized)) {
+            return null;
+        }
+        if (normalized.length() > maxLength) {
+            throw new IllegalArgumentException(label + " must be " + maxLength + " characters or fewer.");
+        }
+        if (CONTROL_CHAR_PATTERN.matcher(normalized).find()) {
+            throw new IllegalArgumentException(label + " contains invalid characters.");
+        }
+        return normalized;
+    }
+
+    private String normalizeRequiredEmail(String value) {
+        String normalized = normalizeNullable(value);
+        if (!StringUtils.hasText(normalized)) {
+            throw new IllegalArgumentException("Email is required.");
+        }
+        if (normalized.length() > MAX_EMAIL_LENGTH) {
+            throw new IllegalArgumentException("Email must be " + MAX_EMAIL_LENGTH + " characters or fewer.");
+        }
+        if (!EMAIL_PATTERN.matcher(normalized).matches()) {
+            throw new IllegalArgumentException("Enter a valid email address.");
+        }
+        return normalized.toLowerCase(Locale.ROOT);
+    }
+
+    private String normalizeOptionalLoginId(String value) {
+        String normalized = normalizeOptionalText(value, "Login ID", MAX_LOGIN_ID_LENGTH);
+        if (normalized == null) {
+            return null;
+        }
+        if (!LOGIN_ID_PATTERN.matcher(normalized).matches()) {
+            throw new IllegalArgumentException("Enter a valid login ID.");
+        }
+        return normalized;
+    }
+
+    private String normalizeOptionalEmployeeCode(String value) {
+        String normalized = normalizeOptionalText(value, "Employee code", MAX_EMPLOYEE_CODE_LENGTH);
+        if (normalized == null) {
+            return null;
+        }
+        if (!EMPLOYEE_CODE_PATTERN.matcher(normalized).matches()) {
+            throw new IllegalArgumentException("Enter a valid employee code.");
         }
         return normalized;
     }
@@ -389,6 +448,36 @@ public class TenantUserManagementService {
             throw new IllegalArgumentException("Enter a valid 10-digit mobile number.");
         }
         return normalized;
+    }
+
+    private void validateDepartmentCompatibility(String role, String department) {
+        if (!StringUtils.hasText(role) || !StringUtils.hasText(department)) {
+            return;
+        }
+        if (isSuspiciousDepartmentForRole(role, department)) {
+            throw new IllegalArgumentException("Choose a matching department for this role.");
+        }
+    }
+
+    private boolean isSuspiciousDepartmentForRole(String role, String department) {
+        String normalizedRole = normalizeRole(role);
+        String normalizedDepartment = department.trim().toLowerCase(Locale.ROOT);
+        return switch (normalizedRole) {
+            case "DOCTOR" -> containsAny(normalizedDepartment, "reception", "billing", "pharmacy", "lab", "laboratory", "inventory", "admin", "administration", "engage", "care");
+            case "LAB_TECHNICIAN", "LAB_ASSISTANT", "LAB_APPROVER", "LAB_FRONT_DESK" -> !containsAny(normalizedDepartment, "lab", "laboratory", "pathology", "diagnostic");
+            case "PHARMA", "PHARMACIST", "PHARMACY", "PHARMACY_INVENTORY_MANAGER", "PHARMACY_POS_USER" -> !containsAny(normalizedDepartment, "pharmacy", "inventory", "dispens");
+            case "ENGAGE_MANAGER", "ENGAGE_EXECUTIVE" -> !containsAny(normalizedDepartment, "engage", "care", "carepilot");
+            default -> false;
+        };
+    }
+
+    private boolean containsAny(String value, String... terms) {
+        for (String term : terms) {
+            if (value.contains(term)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private String displayNameFor(String email, String username, String displayName) {
@@ -475,7 +564,7 @@ public class TenantUserManagementService {
             appUserRepository.findByTenantIdAndUsernameIgnoreCase(tenantId, username)
                     .filter(existing -> currentUserId == null || !currentUserId.equals(existing.getId()))
                     .ifPresent(existing -> {
-                        throw new IllegalArgumentException("Username already exists for this clinic.");
+                        throw new IllegalArgumentException("This login ID is already in use.");
                     });
         }
         if (StringUtils.hasText(employeeCode)) {
@@ -483,7 +572,7 @@ public class TenantUserManagementService {
                     .filter(existing -> currentUserId == null || !currentUserId.equals(existing.getId()))
                     .ifPresent(existing -> {
                         throw new IllegalArgumentException("Employee code already exists for this clinic.");
-            });
+                    });
         }
     }
 

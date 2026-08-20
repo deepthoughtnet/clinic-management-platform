@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -62,7 +63,7 @@ class TenantUserManagementControllerTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST", "BILLING_USER", "AUDITOR", "SERVICE_AGENT", "LAB_TECHNICIAN", "LAB_ASSISTANT", "LAB_APPROVER", "LAB_FRONT_DESK", "PHARMACIST", "PHARMACY_INVENTORY_MANAGER", "PHARMACY_POS_USER", "ENGAGE_MANAGER", "ENGAGE_EXECUTIVE"})
+    @ValueSource(strings = {"CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST", "BILLING_USER", "AUDITOR", "LAB_TECHNICIAN", "LAB_ASSISTANT", "LAB_APPROVER", "LAB_FRONT_DESK", "PHARMACIST", "PHARMACY_INVENTORY_MANAGER", "PHARMACY_POS_USER", "ENGAGE_MANAGER", "ENGAGE_EXECUTIVE"})
     void clinicAdminCanCreateSupportedTenantRoles(String role) {
         when(tenantUserManagementService.createOrInvite(any())).thenReturn(record(role));
 
@@ -73,6 +74,17 @@ class TenantUserManagementControllerTest {
         verify(auditEventPublisher).record(any());
         assertEquals(role, captor.getValue().role());
         assertEquals("Temp@1234", captor.getValue().tempPassword());
+    }
+
+    @Test
+    void clinicAdminCannotCreateServiceAgent() {
+        IllegalArgumentException ex = assertThrows(
+                IllegalArgumentException.class,
+                () -> controller.create(request("SERVICE_AGENT", "Temp@1234"))
+        );
+
+        assertEquals("Role not allowed for clinic admin: SERVICE_AGENT", ex.getMessage());
+        verify(tenantUserManagementService, never()).createOrInvite(any());
     }
 
     @Test
@@ -155,6 +167,20 @@ class TenantUserManagementControllerTest {
     }
 
     @Test
+    void clinicAdminCannotUpdateOwnStatusOrRole() {
+        UUID selfAppUserId = RequestContextHolder.require().appUserId();
+
+        IllegalArgumentException ex = assertThrows(
+                IllegalArgumentException.class,
+                () -> controller.update(selfAppUserId, new TenantUserManagementController.UpdateTenantUserRequest(false, "BILLING_USER"))
+        );
+
+        assertEquals("You cannot edit your own user details on Users & Roles.", ex.getMessage());
+        verify(tenantUserManagementService, never()).updateStatus(any(), any(), anyBoolean());
+        verify(tenantUserManagementService, never()).updateRole(any(), any(), any());
+    }
+
+    @Test
     void assignRoleAuditsAssignment() {
         UUID appUserId = UUID.randomUUID();
         when(tenantUserManagementService.updateRole(tenantId, appUserId, "DOCTOR")).thenReturn(record("DOCTOR"));
@@ -185,6 +211,19 @@ class TenantUserManagementControllerTest {
 
         verify(tenantUserManagementService).updateRole(tenantId, appUserId, "LAB_FRONT_DESK");
         verify(auditEventPublisher).record(any());
+    }
+
+    @Test
+    void clinicAdminCannotAssignOwnRole() {
+        UUID selfAppUserId = RequestContextHolder.require().appUserId();
+
+        IllegalArgumentException ex = assertThrows(
+                IllegalArgumentException.class,
+                () -> controller.assignRole(selfAppUserId, new TenantUserManagementController.AssignRoleRequest("DOCTOR"))
+        );
+
+        assertEquals("You cannot edit your own user details on Users & Roles.", ex.getMessage());
+        verify(tenantUserManagementService, never()).updateRole(any(), any(), any());
     }
 
     @Test

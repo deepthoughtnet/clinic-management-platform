@@ -28,6 +28,19 @@ export function indianMobileNumber(message: string = en.invalidIndianMobile) {
   );
 }
 
+export function requiredIndianMobileNumber(message: string = "Mobile number is required.") {
+  return z.preprocess(
+    (value) => {
+      if (value == null) return "";
+      if (typeof value !== "string") return value;
+      const trimmed = value.trim();
+      if (!trimmed) return "";
+      return normalizeIndianMobileInput(trimmed);
+    },
+    z.string().min(1, message).regex(/^[6-9]\d{9}$/, "Enter a valid 10-digit mobile number."),
+  );
+}
+
 export function optionalIndianMobileNumber(message: string = en.invalidIndianMobile) {
   return z.preprocess(
     (value) => {
@@ -65,6 +78,7 @@ export function optionalPan(message: string = en.invalidPan) {
 export const indiaValidators = {
   normalizeIndianMobileInput,
   indianMobileNumber,
+  requiredIndianMobileNumber,
   optionalIndianMobileNumber,
   indianPincode,
   optionalGstin,

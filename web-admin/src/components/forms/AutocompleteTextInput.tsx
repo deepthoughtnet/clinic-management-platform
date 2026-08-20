@@ -2,23 +2,27 @@ import * as React from "react";
 import { TextField } from "@mui/material";
 
 type AutocompleteTextInputProps = {
+  id?: string;
   value: string;
   onChange: (value: string) => void;
   suggestions: string[];
-  label?: string;
+  label?: React.ReactNode;
   placeholder?: string;
   disabled?: boolean;
+  required?: boolean;
   error?: boolean;
   helperText?: React.ReactNode;
 };
 
 export default function AutocompleteTextInput({
+  id,
   value,
   onChange,
   suggestions,
   label,
   placeholder,
   disabled,
+  required,
   error,
   helperText,
 }: AutocompleteTextInputProps) {
@@ -38,11 +42,13 @@ export default function AutocompleteTextInput({
   return (
     <>
       <TextField
+        id={id}
         fullWidth
         label={label}
         placeholder={placeholder}
         value={value}
         disabled={disabled}
+        required={required}
         error={error}
         helperText={helperText}
         onChange={(event) => onChange(event.target.value)}

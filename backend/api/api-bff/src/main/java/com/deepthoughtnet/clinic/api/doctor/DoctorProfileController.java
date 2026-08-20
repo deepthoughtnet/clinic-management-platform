@@ -11,34 +11,32 @@ import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
 import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
 import com.deepthoughtnet.clinic.platform.modulith.events.ModuleBusinessEventPublisher;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
-import java.util.ArrayList;
-import java.util.Locale;
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.CacheControl;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.server.ResponseStatusException;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
-import org.springframework.http.CacheControl;
-import org.springframework.http.ResponseEntity;
 import org.springframework.web.multipart.MultipartFile;
-import jakarta.validation.Valid;
+import org.springframework.web.server.ResponseStatusException;
 
 @RestController
-@Validated
 @RequestMapping("/api/doctors")
 public class DoctorProfileController {
     private static final Logger log = LoggerFactory.getLogger(DoctorProfileController.class);
@@ -84,7 +82,7 @@ public class DoctorProfileController {
 
     @PutMapping(value = "/{doctorUserId}/profile", consumes = MediaType.APPLICATION_JSON_VALUE)
     @PreAuthorize("@permissionChecker.hasPermission('appointment.manage')")
-    public DoctorProfileResponse update(@PathVariable UUID doctorUserId, @Valid @RequestBody DoctorProfileRequest request) throws Exception {
+    public DoctorProfileResponse update(@PathVariable UUID doctorUserId, @RequestBody DoctorProfileRequest request) throws Exception {
         return updateInternal(doctorUserId, request, null);
     }
 
@@ -92,7 +90,7 @@ public class DoctorProfileController {
     @PreAuthorize("@permissionChecker.hasPermission('appointment.manage')")
     public DoctorProfileResponse updateMultipart(
             @PathVariable UUID doctorUserId,
-            @Valid @RequestPart("doctor") DoctorProfileRequest request,
+            @RequestPart("doctor") DoctorProfileRequest request,
             @RequestPart(value = "photo", required = false) MultipartFile photo
     ) throws Exception {
         return updateInternal(doctorUserId, request, photo);
@@ -168,6 +166,7 @@ public class DoctorProfileController {
                 profile == null ? null : profile.followUpFee(),
                 profile == null ? null : profile.emergencyFee(),
                 profile == null ? null : profile.yearsOfExperience(),
+                profile == null ? null : profile.dateOfBirth(),
                 profile == null ? null : profile.age(),
                 profile == null || profile.active(),
                 profile != null && profile.publicListingEnabled(),
@@ -192,65 +191,28 @@ public class DoctorProfileController {
                 actorRole,
                 photo != null && !photo.isEmpty()
         );
-        DoctorProfileUpsertCommand command = switch (actorRole) {
-            case "CLINIC_ADMIN" -> new DoctorProfileUpsertCommand(
-                    request.mobile(),
-                    request.specialization(),
-                    request.specializations(),
-                    request.qualification(),
-                    request.registrationNumber(),
-                    request.consultationRoom(),
-                    request.consultationFee(),
-                    request.opdFee(),
-                    request.followUpFee(),
-                    request.emergencyFee(),
-                    request.yearsOfExperience(),
-                    request.age(),
-                    request.active(),
-                    request.publicListingEnabled(),
-                    request.slug()
-            );
-            case "RECEPTIONIST" -> new DoctorProfileUpsertCommand(
-                    request.mobile(),
-                    request.specialization(),
-                    request.specializations(),
-                    null,
-                    null,
-                    request.consultationRoom(),
-                    request.consultationFee(),
-                    request.opdFee(),
-                    null,
-                    null,
-                    request.yearsOfExperience(),
-                    request.age(),
-                    request.active(),
-                    null,
-                    null
-            );
-            case "DOCTOR" -> {
-                if (!doctorUserId.equals(actorId)) {
-                    throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Doctors can edit only their own profile");
-                }
-                yield new DoctorProfileUpsertCommand(
-                        request.mobile(),
-                        request.specialization(),
-                        request.specializations(),
-                        request.qualification(),
-                        request.registrationNumber(),
-                        request.consultationRoom(),
-                        request.consultationFee(),
-                        request.opdFee(),
-                        request.followUpFee(),
-                        request.emergencyFee(),
-                        request.yearsOfExperience(),
-                        request.age(),
-                        null,
-                        request.publicListingEnabled(),
-                        request.slug()
-                );
-            }
-            default -> throw new ResponseStatusException(HttpStatus.FORBIDDEN, "You are not allowed to update doctor profile");
-        };
+        if ("DOCTOR".equals(actorRole) && !doctorUserId.equals(actorId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Doctors can edit only their own profile");
+        }
+        DoctorProfileUpsertCommand command = new DoctorProfileUpsertCommand(
+                request.mobile(),
+                request.specialization(),
+                request.specializations(),
+                request.qualification(),
+                request.registrationNumber(),
+                request.consultationRoom(),
+                request.consultationFee(),
+                request.opdFee(),
+                request.followUpFee(),
+                request.emergencyFee(),
+                request.yearsOfExperience(),
+                null,
+                parseDateOfBirth(request.dateOfBirth()),
+                request.active(),
+                request.publicListingEnabled(),
+                request.slug(),
+                doctor.displayName()
+        );
         if (photo != null && !photo.isEmpty() && !isPhotoContentType(photo.getContentType(), photo.getOriginalFilename())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Doctor profile photo must be JPG, PNG, or WEBP.");
         }
@@ -277,6 +239,17 @@ public class DoctorProfileController {
         }
         log.info("doctor.profile.update.completed tenantId={} doctorUserId={}", tenantId, doctorUserId);
         return toResponse(doctor, profile);
+    }
+
+    private LocalDate parseDateOfBirth(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return LocalDate.parse(value.trim());
+        } catch (DateTimeParseException ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Enter a valid date of birth.");
+        }
     }
 
     private String normalizedRole(String role) {

@@ -2,10 +2,11 @@ import * as React from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Alert, Autocomplete, Box, Button, Card, CardContent, Chip, CircularProgress, FormControlLabel, Grid, Stack, Switch, TextField, Typography } from "@mui/material";
 
-import { doctorUpdateSchema } from "@deepthoughtnet/form-validation-kit";
+import { doctorUpdateSchema, firstZodError, mapZodErrors } from "@deepthoughtnet/form-validation-kit";
 import { useAuth } from "../../auth/useAuth";
 import { getDoctorProfile, updateDoctorProfile, updateDoctorProfileWithPhoto, type DoctorProfile, type DoctorProfileInput } from "../../api/clinicApi";
 import DoctorAvatar from "../../components/doctor/DoctorAvatar";
+import RequiredLabel from "../../components/forms/RequiredLabel";
 import { formatFileSize, ImageUploadError, optimizeAvatarUpload } from "../../utils/imageUpload";
 
 type FormState = {
@@ -20,7 +21,7 @@ type FormState = {
   followUpFee: string;
   emergencyFee: string;
   yearsOfExperience: string;
-  age: string;
+  dateOfBirth: string;
   active: boolean;
   publicListingEnabled: boolean;
   slug: string;
@@ -49,6 +50,24 @@ function normalizeSpecializations(values: string[], draft: string): string[] {
   return trimmedDraft ? [trimmedDraft] : [];
 }
 
+function calculateAge(dateOfBirth: string): number | null {
+  const trimmed = dateOfBirth.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const parsed = new Date(`${trimmed}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+  const now = new Date();
+  let age = now.getUTCFullYear() - parsed.getUTCFullYear();
+  const monthDiff = now.getUTCMonth() - parsed.getUTCMonth();
+  if (monthDiff < 0 || (monthDiff === 0 && now.getUTCDate() < parsed.getUTCDate())) {
+    age -= 1;
+  }
+  return age >= 0 ? age : null;
+}
+
 function toForm(profile: DoctorProfile): FormState {
   const specializations = profile.specializations?.length
     ? profile.specializations
@@ -66,7 +85,7 @@ function toForm(profile: DoctorProfile): FormState {
     followUpFee: profile.followUpFee == null ? "" : String(profile.followUpFee),
     emergencyFee: profile.emergencyFee == null ? "" : String(profile.emergencyFee),
     yearsOfExperience: profile.yearsOfExperience == null ? "" : String(profile.yearsOfExperience),
-    age: profile.age == null ? "" : String(profile.age),
+    dateOfBirth: profile.dateOfBirth || "",
     active: profile.active,
     publicListingEnabled: profile.publicListingEnabled,
     slug: profile.slug || "",
@@ -81,6 +100,7 @@ export default function DoctorDetailPage() {
   const [saving, setSaving] = React.useState(false);
   const [profile, setProfile] = React.useState<DoctorProfile | null>(null);
   const [form, setForm] = React.useState<FormState | null>(null);
+  const [fieldErrors, setFieldErrors] = React.useState<Record<string, string>>({});
   const [photoFile, setPhotoFile] = React.useState<File | null>(null);
   const [photoPreviewUrl, setPhotoPreviewUrl] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -101,6 +121,17 @@ export default function DoctorDetailPage() {
   const isAdmin = role === "CLINIC_ADMIN";
   const canEdit = auth.hasPermission("appointment.manage") && (isDoctor || isReceptionist || isAdmin);
 
+  const clearFieldError = React.useCallback((field: string) => {
+    setFieldErrors((current) => {
+      if (!current[field]) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
+  }, []);
+
   React.useEffect(() => {
     let cancelled = false;
     async function load() {
@@ -115,6 +146,7 @@ export default function DoctorDetailPage() {
         if (!cancelled) {
           setProfile(loaded);
           setForm(toForm(loaded));
+          setFieldErrors({});
           setPhotoFile(null);
           replacePhotoPreview(loaded.photoUrl || null);
         }
@@ -164,7 +196,7 @@ export default function DoctorDetailPage() {
     const specializations = normalizeSpecializations(form.specializations, form.specializationsInput);
     const payload: DoctorProfileInput = {
       mobile: normalizeText(form.mobile),
-      specialization: specializations[0] || normalizeText(profile.specialization || ""),
+      specialization: specializations[0] || null,
       specializations,
       qualification: normalizeText(form.qualification),
       registrationNumber: normalizeText(form.registrationNumber),
@@ -174,7 +206,7 @@ export default function DoctorDetailPage() {
       followUpFee: normalizeNumber(form.followUpFee),
       emergencyFee: normalizeNumber(form.emergencyFee),
       yearsOfExperience: normalizeNumber(form.yearsOfExperience),
-      age: normalizeNumber(form.age),
+      dateOfBirth: normalizeText(form.dateOfBirth),
       active: form.active,
       publicListingEnabled: form.publicListingEnabled,
       slug: normalizeText(form.slug),
@@ -183,15 +215,13 @@ export default function DoctorDetailPage() {
       ...payload,
     });
     if (!parsed.success) {
-      const fieldMessages = parsed.error.issues.map((issue) => {
-        const field = issue.path.length > 0 ? `${issue.path.join(".")}: ` : "";
-        return `${field}${issue.message}`;
-      });
-      setError(fieldMessages.join(", ") || "Failed to save doctor profile");
+      setFieldErrors(mapZodErrors(parsed.error));
+      setError(firstZodError(parsed.error));
       return;
     }
     setSaving(true);
     setError(null);
+    setFieldErrors({});
     try {
       const nextProfile = photoFile
         ? await updateDoctorProfileWithPhoto(auth.accessToken, auth.tenantId, profile.doctorUserId, payload, photoFile)
@@ -282,7 +312,22 @@ export default function DoctorDetailPage() {
             </Grid>
             <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Name" value={profile.doctorName || ""} disabled /></Grid>
             <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Email" value={profile.email || ""} disabled /></Grid>
-            <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Mobile" value={form.mobile} disabled={formReadOnly} onChange={(e) => setForm((c) => c ? { ...c, mobile: e.target.value } : c)} inputProps={{ inputMode: "tel" }} /></Grid>
+            <Grid size={{ xs: 12, md: 6 }}>
+              <TextField
+                fullWidth
+                label={<RequiredLabel text="Mobile" required />}
+                value={form.mobile}
+                disabled={formReadOnly}
+                onChange={(e) => {
+                  clearFieldError("mobile");
+                  setForm((c) => c ? { ...c, mobile: e.target.value } : c);
+                }}
+                error={Boolean(fieldErrors.mobile)}
+                helperText={fieldErrors.mobile || "Enter a valid 10-digit mobile number."}
+                required
+                inputProps={{ inputMode: "tel", "aria-required": true }}
+              />
+            </Grid>
             <Grid size={{ xs: 12, md: 6 }}>
               <Autocomplete
                 multiple
@@ -290,30 +335,169 @@ export default function DoctorDetailPage() {
                 options={[] as string[]}
                 value={form.specializations}
                 inputValue={form.specializationsInput}
-                onInputChange={(_, value) => setForm((c) => c ? { ...c, specializationsInput: value } : c)}
-                onChange={(_, value) => setForm((c) => c ? {
-                  ...c,
-                  specializations: value.map((item) => String(item).trim()).filter(Boolean),
-                  specializationsInput: "",
-                } : c)}
+                onInputChange={(_, value) => {
+                  clearFieldError("specializations");
+                  setForm((c) => c ? { ...c, specializationsInput: value } : c);
+                }}
+                onChange={(_, value) => {
+                  clearFieldError("specializations");
+                  setForm((c) => c ? {
+                    ...c,
+                    specializations: value.map((item) => String(item).trim()).filter(Boolean),
+                    specializationsInput: "",
+                  } : c);
+                }}
                 renderInput={(params) => (
                   <TextField
                     {...params}
-                    label="Specializations"
-                    helperText="Enter one or more specializations."
+                    label={<RequiredLabel text="Specialization" required />}
+                    helperText={fieldErrors.specializations || "Select at least one specialization."}
+                    error={Boolean(fieldErrors.specializations)}
                     disabled={formReadOnly}
+                    required
                   />
                 )}
               />
             </Grid>
-            <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Qualification" value={form.qualification} disabled={formReadOnly || receptionistReadOnlyFields} onChange={(e) => setForm((c) => c ? { ...c, qualification: e.target.value } : c)} /></Grid>
-            <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Registration Number" value={form.registrationNumber} disabled={formReadOnly || receptionistReadOnlyFields} onChange={(e) => setForm((c) => c ? { ...c, registrationNumber: e.target.value } : c)} /></Grid>
-            <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Consultation Room/Location" value={form.consultationRoom} disabled={formReadOnly} onChange={(e) => setForm((c) => c ? { ...c, consultationRoom: e.target.value } : c)} /></Grid>
-            <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth type="number" label="OPD Fee" value={form.opdFee} disabled={formReadOnly} onChange={(e) => setForm((c) => c ? { ...c, opdFee: e.target.value, consultationFee: e.target.value } : c)} inputProps={{ min: 0, step: "0.01" }} /></Grid>
-            <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth type="number" label="Follow-up Fee" value={form.followUpFee} disabled={formReadOnly} onChange={(e) => setForm((c) => c ? { ...c, followUpFee: e.target.value } : c)} inputProps={{ min: 0, step: "0.01" }} /></Grid>
-            <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth type="number" label="Emergency Fee" value={form.emergencyFee} disabled={formReadOnly} onChange={(e) => setForm((c) => c ? { ...c, emergencyFee: e.target.value } : c)} inputProps={{ min: 0, step: "0.01" }} /></Grid>
-            <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth type="number" label="Years of Experience" value={form.yearsOfExperience} disabled={formReadOnly} onChange={(e) => setForm((c) => c ? { ...c, yearsOfExperience: e.target.value } : c)} inputProps={{ min: 0, step: 1 }} /></Grid>
-            <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth type="number" label="Age" value={form.age} disabled={formReadOnly} onChange={(e) => setForm((c) => c ? { ...c, age: e.target.value } : c)} inputProps={{ min: 0, max: 120, step: 1 }} /></Grid>
+            <Grid size={{ xs: 12, md: 6 }}>
+              <TextField
+                fullWidth
+                label={<RequiredLabel text="Qualification" required />}
+                value={form.qualification}
+                disabled={formReadOnly || receptionistReadOnlyFields}
+                onChange={(e) => {
+                  clearFieldError("qualification");
+                  setForm((c) => c ? { ...c, qualification: e.target.value } : c);
+                }}
+                error={Boolean(fieldErrors.qualification)}
+                helperText={fieldErrors.qualification || "Required."}
+                required
+              />
+            </Grid>
+            <Grid size={{ xs: 12, md: 6 }}>
+              <TextField
+                fullWidth
+                label={<RequiredLabel text="Registration Number" required />}
+                value={form.registrationNumber}
+                disabled={formReadOnly || receptionistReadOnlyFields}
+                onChange={(e) => {
+                  clearFieldError("registrationNumber");
+                  setForm((c) => c ? { ...c, registrationNumber: e.target.value } : c);
+                }}
+                error={Boolean(fieldErrors.registrationNumber)}
+                helperText={fieldErrors.registrationNumber || "Required."}
+                required
+              />
+            </Grid>
+            <Grid size={{ xs: 12, md: 6 }}>
+              <TextField
+                fullWidth
+                label="Consultation Room/Location"
+                value={form.consultationRoom}
+                disabled={formReadOnly}
+                onChange={(e) => {
+                  clearFieldError("consultationRoom");
+                  setForm((c) => c ? { ...c, consultationRoom: e.target.value } : c);
+                }}
+                error={Boolean(fieldErrors.consultationRoom)}
+                helperText={fieldErrors.consultationRoom || "Optional."}
+              />
+            </Grid>
+            <Grid size={{ xs: 12, md: 4 }}>
+              <TextField
+                fullWidth
+                type="number"
+                label={<RequiredLabel text="OPD Fee" required />}
+                value={form.opdFee}
+                disabled={formReadOnly}
+                onChange={(e) => {
+                  clearFieldError("opdFee");
+                  setForm((c) => c ? { ...c, opdFee: e.target.value, consultationFee: e.target.value } : c);
+                }}
+                inputProps={{ min: 0, step: "0.01", "aria-required": true }}
+                error={Boolean(fieldErrors.opdFee)}
+                helperText={fieldErrors.opdFee || "Required."}
+                required
+              />
+            </Grid>
+            <Grid size={{ xs: 12, md: 4 }}>
+              <TextField
+                fullWidth
+                type="number"
+                label={<RequiredLabel text="Follow-up Fee" required />}
+                value={form.followUpFee}
+                disabled={formReadOnly}
+                onChange={(e) => {
+                  clearFieldError("followUpFee");
+                  setForm((c) => c ? { ...c, followUpFee: e.target.value } : c);
+                }}
+                inputProps={{ min: 0, step: "0.01", "aria-required": true }}
+                error={Boolean(fieldErrors.followUpFee)}
+                helperText={fieldErrors.followUpFee || "Required."}
+                required
+              />
+            </Grid>
+            <Grid size={{ xs: 12, md: 4 }}>
+              <TextField
+                fullWidth
+                type="number"
+                label={<RequiredLabel text="Emergency Fee" required />}
+                value={form.emergencyFee}
+                disabled={formReadOnly}
+                onChange={(e) => {
+                  clearFieldError("emergencyFee");
+                  setForm((c) => c ? { ...c, emergencyFee: e.target.value } : c);
+                }}
+                inputProps={{ min: 0, step: "0.01", "aria-required": true }}
+                error={Boolean(fieldErrors.emergencyFee)}
+                helperText={fieldErrors.emergencyFee || "Required."}
+                required
+              />
+            </Grid>
+            <Grid size={{ xs: 12, md: 4 }}>
+              <TextField
+                fullWidth
+                type="number"
+                label={<RequiredLabel text="Years of Experience" required />}
+                value={form.yearsOfExperience}
+                disabled={formReadOnly}
+                onChange={(e) => {
+                  clearFieldError("yearsOfExperience");
+                  setForm((c) => c ? { ...c, yearsOfExperience: e.target.value } : c);
+                }}
+                inputProps={{ min: 0, step: 1, "aria-required": true }}
+                error={Boolean(fieldErrors.yearsOfExperience)}
+                helperText={fieldErrors.yearsOfExperience || "Required whole number."}
+                required
+              />
+            </Grid>
+            <Grid size={{ xs: 12, md: 4 }}>
+              <TextField
+                fullWidth
+                type="date"
+                label={<RequiredLabel text="Date of Birth" required />}
+                value={form.dateOfBirth}
+                disabled={formReadOnly}
+                onChange={(e) => {
+                  clearFieldError("dateOfBirth");
+                  setForm((c) => c ? { ...c, dateOfBirth: e.target.value } : c);
+                }}
+                inputProps={{ "aria-required": true, max: new Date().toISOString().slice(0, 10) }}
+                InputLabelProps={{ shrink: true }}
+                error={Boolean(fieldErrors.dateOfBirth)}
+                helperText={fieldErrors.dateOfBirth || "Required. Use a past date."}
+                required
+              />
+            </Grid>
+            <Grid size={{ xs: 12, md: 4 }}>
+              <TextField
+                fullWidth
+                label="Age (derived)"
+                value={calculateAge(form.dateOfBirth) == null ? "" : `${calculateAge(form.dateOfBirth)} years`}
+                disabled
+                helperText="Calculated from date of birth."
+              />
+            </Grid>
             <Grid size={{ xs: 12, md: 6 }}>
               <Stack direction="row" spacing={1} alignItems="center">
                 <TextField fullWidth label="Availability/Calendar" value="Open in Appointments" disabled />
@@ -335,11 +519,15 @@ export default function DoctorDetailPage() {
             <Grid size={{ xs: 12, md: 6 }}>
               <TextField
                 fullWidth
-                label="Public slug"
+                label={<RequiredLabel text="Public slug" required={false} />}
                 value={form.slug}
                 disabled={formReadOnly || receptionistReadOnlyFields}
-                onChange={(e) => setForm((c) => c ? { ...c, slug: e.target.value } : c)}
-                helperText="Optional. Leave blank to auto-generate from doctor name."
+                onChange={(e) => {
+                  clearFieldError("slug");
+                  setForm((c) => c ? { ...c, slug: e.target.value } : c);
+                }}
+                error={Boolean(fieldErrors.slug)}
+                helperText={fieldErrors.slug || "Optional. Leave blank to auto-generate from doctor name."}
               />
             </Grid>
             <Grid size={{ xs: 12 }}>

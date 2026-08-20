@@ -55,12 +55,18 @@ import {
   DEFAULT_COMPLIANCE,
   NOTIFICATION_POLICY_SECTIONS,
   QUIET_HOUR_SCOPE_OPTIONS,
+  QUIET_HOUR_WEEKDAY_OPTIONS,
   createDefaultNotificationPolicy,
   notificationTypeFilterParams,
   parseNotificationPolicy,
+  rateLimitDraftsFromRawJson,
+  rateLimitValuesFromDrafts,
+  validateRateLimitDrafts,
   selectCurrentTemplate,
   serializeNotificationPolicy,
   type NotificationPolicyConfig,
+  type RateLimitField,
+  type QuietHoursWeekday,
 } from "./notificationSettingsModel";
 
 const CHANNEL_LABELS: Record<AdminNotificationChannel, string> = {
@@ -84,7 +90,11 @@ function clonePolicy(policy: NotificationPolicyConfig): NotificationPolicyConfig
   return JSON.parse(JSON.stringify(policy)) as NotificationPolicyConfig;
 }
 
-function buildSnapshot(row: AdminNotificationSettings, policy: NotificationPolicyConfig): string {
+function buildSnapshot(
+  row: AdminNotificationSettings,
+  policy: NotificationPolicyConfig,
+  rateLimitDrafts: Record<RateLimitField, string>,
+): string {
   return JSON.stringify({
     emailEnabled: row.emailEnabled,
     smsEnabled: row.smsEnabled,
@@ -101,6 +111,7 @@ function buildSnapshot(row: AdminNotificationSettings, policy: NotificationPolic
     unsubscribeFooterEnabled: row.unsubscribeFooterEnabled,
     maxMessagesPerPatientPerDay: row.maxMessagesPerPatientPerDay,
     notificationPolicyJson: serializeNotificationPolicy(policy),
+    rateLimits: rateLimitDrafts,
   });
 }
 
@@ -108,6 +119,58 @@ function templatePreview(template: AdminTemplate | null): string {
   if (!template) return "No template linked";
   const body = template.body || template.subject || "";
   return body.length > 96 ? `${body.slice(0, 96).trimEnd()}…` : body || "Template ready";
+}
+
+function channelEnabled(row: AdminNotificationSettings, channel: AdminNotificationChannel): boolean {
+  switch (channel) {
+    case "IN_APP":
+      return row.inAppEnabled;
+    case "EMAIL":
+      return row.emailEnabled;
+    case "SMS":
+      return row.smsEnabled;
+    case "WHATSAPP":
+      return row.whatsappEnabled;
+  }
+}
+
+function channelReady(row: AdminNotificationSettings, channel: AdminNotificationChannel): boolean {
+  switch (channel) {
+    case "IN_APP":
+      return true;
+    case "EMAIL":
+      return row.emailReady;
+    case "SMS":
+      return row.smsReady;
+    case "WHATSAPP":
+      return row.whatsappReady;
+  }
+}
+
+function channelSelectable(row: AdminNotificationSettings, channel: AdminNotificationChannel): boolean {
+  return channelEnabled(row, channel) && channelReady(row, channel);
+}
+
+function channelOptionLabel(row: AdminNotificationSettings, channel: AdminNotificationChannel): string {
+  const base = CHANNEL_LABELS[channel];
+  if (channelSelectable(row, channel)) return base;
+  if (!channelReady(row, channel)) {
+    return `${base} — Not configured`;
+  }
+  if (!channelEnabled(row, channel)) {
+    return `${base} — Disabled`;
+  }
+  return `${base} — Unavailable`;
+}
+
+function currentRoutingWarning(row: AdminNotificationSettings): string | null {
+  if (!channelSelectable(row, row.defaultChannel)) {
+    return "Current default channel is unavailable. Select a ready and enabled channel.";
+  }
+  if (row.fallbackChannel && !channelSelectable(row, row.fallbackChannel)) {
+    return "Current fallback channel is unavailable. Select a configured and enabled channel, or None.";
+  }
+  return null;
 }
 
 export default function NotificationSettingsPage() {
@@ -127,6 +190,7 @@ export default function NotificationSettingsPage() {
   const [success, setSuccess] = React.useState<string | null>(null);
   const [row, setRow] = React.useState<AdminNotificationSettings | null>(null);
   const [policy, setPolicy] = React.useState<NotificationPolicyConfig>(createDefaultNotificationPolicy());
+  const [rateLimitDrafts, setRateLimitDrafts] = React.useState<Record<RateLimitField, string>>(rateLimitDraftsFromRawJson(null));
   const [templates, setTemplates] = React.useState<AdminTemplate[]>([]);
   const [expandedSection, setExpandedSection] = React.useState<string>(searchParams.get("section") || NOTIFICATION_POLICY_SECTIONS[0].key);
   const initialSnapshotRef = React.useRef<string>("");
@@ -141,10 +205,12 @@ export default function NotificationSettingsPage() {
         listAdminTemplates(auth.accessToken, auth.tenantId, { templateType: "NOTIFICATION", active: true }),
       ]);
       const parsedPolicy = parseNotificationPolicy(settings.notificationPolicyJson);
+      const parsedRateLimitDrafts = rateLimitDraftsFromRawJson(settings.notificationPolicyJson);
       setRow(settings);
       setPolicy(parsedPolicy);
+      setRateLimitDrafts(parsedRateLimitDrafts);
       setTemplates(templateRows);
-      initialSnapshotRef.current = buildSnapshot(settings, parsedPolicy);
+      initialSnapshotRef.current = buildSnapshot(settings, parsedPolicy, parsedRateLimitDrafts);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load settings");
     } finally {
@@ -165,8 +231,11 @@ export default function NotificationSettingsPage() {
 
   const dirty = React.useMemo(() => {
     if (!row) return false;
-    return buildSnapshot(row, policy) !== initialSnapshotRef.current;
-  }, [policy, row]);
+    return buildSnapshot(row, policy, rateLimitDrafts) !== initialSnapshotRef.current;
+  }, [policy, rateLimitDrafts, row]);
+
+  const rateLimitErrors = React.useMemo(() => validateRateLimitDrafts(rateLimitDrafts), [rateLimitDrafts]);
+  const rateLimitHasErrors = Object.values(rateLimitErrors).some(Boolean);
 
   React.useEffect(() => {
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
@@ -205,6 +274,24 @@ export default function NotificationSettingsPage() {
     });
   };
 
+  const setQuietHoursWeekday = (weekday: QuietHoursWeekday, enabled: boolean) => {
+    setPolicy((current) => {
+      const next = clonePolicy(current);
+      next.quietHoursSchedule.weekdays = enabled
+        ? Array.from(new Set([...next.quietHoursSchedule.weekdays, weekday]))
+        : next.quietHoursSchedule.weekdays.filter((item) => item !== weekday);
+      return next;
+    });
+  };
+
+  const setQuietHoursScheduleValue = (key: "effectiveFrom" | "effectiveUntil", value: string | null) => {
+    setPolicy((current) => {
+      const next = clonePolicy(current);
+      next.quietHoursSchedule[key] = value;
+      return next;
+    });
+  };
+
   const setPolicyCompliance = (key: keyof NotificationPolicyConfig["compliance"], value: boolean | number | string) => {
     setPolicy((current) => {
       const next = clonePolicy(current);
@@ -213,12 +300,8 @@ export default function NotificationSettingsPage() {
     });
   };
 
-  const setRateLimit = (key: keyof NotificationPolicyConfig["rateLimits"], value: number) => {
-    setPolicy((current) => {
-      const next = clonePolicy(current);
-      next.rateLimits[key] = value;
-      return next;
-    });
+  const setRateLimit = (key: RateLimitField, value: string) => {
+    setRateLimitDrafts((current) => ({ ...current, [key]: value }));
   };
 
   async function save() {
@@ -227,7 +310,12 @@ export default function NotificationSettingsPage() {
     setError(null);
     setSuccess(null);
     try {
-      const serializedPolicy = serializeNotificationPolicy(policy);
+      if (rateLimitHasErrors) {
+        setError("Correct the highlighted rate limits before saving.");
+        return;
+      }
+      const validatedRateLimits = rateLimitValuesFromDrafts(rateLimitDrafts);
+      const serializedPolicy = serializeNotificationPolicy({ ...policy, rateLimits: validatedRateLimits });
       const payload: AdminNotificationSettingsUpdateInput = {
         emailEnabled: row.emailEnabled,
         smsEnabled: row.smsEnabled,
@@ -252,14 +340,16 @@ export default function NotificationSettingsPage() {
         allowMarketingMessages: row.allowMarketingMessages,
         requirePatientConsent: row.requirePatientConsent,
         unsubscribeFooterEnabled: row.unsubscribeFooterEnabled,
-        maxMessagesPerPatientPerDay: row.maxMessagesPerPatientPerDay,
+        maxMessagesPerPatientPerDay: validatedRateLimits.perPatientPerDay,
         notificationPolicyJson: serializedPolicy,
       };
       const updated = await updateAdminNotificationSettings(auth.accessToken, auth.tenantId, payload);
       const updatedPolicy = parseNotificationPolicy(updated.notificationPolicyJson);
+      const updatedRateLimits = rateLimitDraftsFromRawJson(updated.notificationPolicyJson);
       setRow(updated);
       setPolicy(updatedPolicy);
-      initialSnapshotRef.current = buildSnapshot(updated, updatedPolicy);
+      setRateLimitDrafts(updatedRateLimits);
+      initialSnapshotRef.current = buildSnapshot(updated, updatedPolicy, updatedRateLimits);
       setSuccess("Notification settings saved");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to save settings");
@@ -302,6 +392,8 @@ export default function NotificationSettingsPage() {
     { label: "SMS", ready: row.smsReady, description: row.smsReady ? "SMS provider is ready." : "SMS notifications are not ready." },
     { label: "WhatsApp", ready: row.whatsappReady, description: row.whatsappReady ? "WhatsApp provider is ready." : "WhatsApp notifications are not ready." },
   ];
+  const routingWarning = currentRoutingWarning(row);
+  const combinedWarnings = Array.from(new Set([...row.warnings, ...(routingWarning ? [routingWarning] : [])]));
 
   return (
     <Stack spacing={2}>
@@ -315,13 +407,13 @@ export default function NotificationSettingsPage() {
         <Stack direction="row" gap={1} flexWrap="wrap" justifyContent="flex-end">
           {carePilotEnabled ? <Button variant="outlined" onClick={() => navigate("/carepilot/messaging")}>Open Messaging</Button> : null}
           <Button variant="outlined" onClick={() => void load()}>Refresh</Button>
-          {canMutate ? <Button variant="contained" onClick={() => void save()} disabled={saving || !dirty}>{saving ? "Saving..." : "Save changes"}</Button> : null}
+          {canMutate ? <Button variant="contained" onClick={() => void save()} disabled={saving || !dirty || rateLimitHasErrors}>{saving ? "Saving..." : "Save changes"}</Button> : null}
         </Stack>
       </Stack>
 
       {dirty ? <Alert severity="warning">Unsaved changes detected.</Alert> : null}
       {error ? <Alert severity="error" onClose={() => setError(null)}>{error}</Alert> : null}
-      {row.warnings.length ? <Alert severity="warning">{row.warnings.join(" | ")}</Alert> : null}
+      {combinedWarnings.length ? <Alert severity="warning">{combinedWarnings.join(" | ")}</Alert> : null}
 
       <Grid container spacing={2}>
         <Grid size={{ xs: 12, md: 6 }}>
@@ -373,7 +465,11 @@ export default function NotificationSettingsPage() {
                   <FormControl fullWidth>
                     <InputLabel>Default channel</InputLabel>
                     <Select value={row.defaultChannel} label="Default channel" onChange={(e) => setValue("defaultChannel", e.target.value)} disabled={!canMutate}>
-                      {CHANNEL_ORDER.map((channel) => <MenuItem key={channel} value={channel}>{CHANNEL_LABELS[channel]}</MenuItem>)}
+                      {CHANNEL_ORDER.map((channel) => (
+                        <MenuItem key={channel} value={channel} disabled={!channelSelectable(row, channel) && row.defaultChannel !== channel}>
+                          {channelOptionLabel(row, channel)}
+                        </MenuItem>
+                      ))}
                     </Select>
                   </FormControl>
                 </Grid>
@@ -382,10 +478,19 @@ export default function NotificationSettingsPage() {
                     <InputLabel>Fallback channel</InputLabel>
                     <Select value={row.fallbackChannel || ""} label="Fallback channel" onChange={(e) => setValue("fallbackChannel", e.target.value || null)} disabled={!canMutate}>
                       <MenuItem value="">None</MenuItem>
-                      {CHANNEL_ORDER.map((channel) => <MenuItem key={channel} value={channel}>{CHANNEL_LABELS[channel]}</MenuItem>)}
+                      {CHANNEL_ORDER.map((channel) => (
+                        <MenuItem key={channel} value={channel} disabled={!channelSelectable(row, channel) && row.fallbackChannel !== channel}>
+                          {channelOptionLabel(row, channel)}
+                        </MenuItem>
+                      ))}
                     </Select>
                   </FormControl>
                 </Grid>
+                {routingWarning ? (
+                  <Grid size={{ xs: 12 }}>
+                    <Alert severity="warning">{routingWarning}</Alert>
+                  </Grid>
+                ) : null}
               </Grid>
             </CardContent>
           </Card>
@@ -580,7 +685,14 @@ export default function NotificationSettingsPage() {
                   />
                 </Grid>
                 <Grid size={{ xs: 12, md: 3 }}>
-                  <TextField fullWidth label="Timezone" value={row.timezone || ""} onChange={(e) => setValue("timezone", e.target.value)} disabled={!canMutate} />
+                  <TextField
+                    fullWidth
+                    label="Timezone"
+                    value={row.timezone || ""}
+                    onChange={(e) => setValue("timezone", e.target.value)}
+                    disabled={!canMutate}
+                    helperText="Use a valid IANA timezone, such as Asia/Kolkata or America/New_York."
+                  />
                 </Grid>
                 <Grid size={{ xs: 12, md: 3 }}>
                   <TextField fullWidth type="time" label="Start" value={row.quietHoursStart || ""} onChange={(e) => setValue("quietHoursStart", e.target.value)} disabled={!canMutate} InputLabelProps={{ shrink: true }} />
@@ -600,6 +712,43 @@ export default function NotificationSettingsPage() {
                     ))}
                   </Stack>
                   <Typography variant="caption" color="text.secondary">Critical alerts ignore quiet hours.</Typography>
+                </Grid>
+                <Grid size={{ xs: 12 }}>
+                  <Typography variant="body2" sx={{ fontWeight: 700, mb: 0.5 }}>Weekdays</Typography>
+                  <Stack direction="row" flexWrap="wrap" gap={1}>
+                    {QUIET_HOUR_WEEKDAY_OPTIONS.map((option) => (
+                      <FormControlLabel
+                        key={option.value}
+                        control={<Checkbox checked={policy.quietHoursSchedule.weekdays.includes(option.value)} onChange={(event) => setQuietHoursWeekday(option.value, event.target.checked)} disabled={!canMutate} />}
+                        label={option.label}
+                      />
+                    ))}
+                  </Stack>
+                  <Typography variant="caption" color="text.secondary">Select at least one weekday when quiet hours are enabled.</Typography>
+                </Grid>
+                <Grid size={{ xs: 12, md: 6 }}>
+                  <TextField
+                    fullWidth
+                    type="date"
+                    label="Effective From"
+                    value={policy.quietHoursSchedule.effectiveFrom || ""}
+                    onChange={(e) => setQuietHoursScheduleValue("effectiveFrom", e.target.value || null)}
+                    disabled={!canMutate}
+                    InputLabelProps={{ shrink: true }}
+                    helperText="Optional. If set with Effective Until, the from date must be on or before the until date."
+                  />
+                </Grid>
+                <Grid size={{ xs: 12, md: 6 }}>
+                  <TextField
+                    fullWidth
+                    type="date"
+                    label="Effective Until"
+                    value={policy.quietHoursSchedule.effectiveUntil || ""}
+                    onChange={(e) => setQuietHoursScheduleValue("effectiveUntil", e.target.value || null)}
+                    disabled={!canMutate}
+                    InputLabelProps={{ shrink: true }}
+                    helperText="Optional. Leave blank to recur indefinitely."
+                  />
                 </Grid>
               </Grid>
             </CardContent>
@@ -652,19 +801,69 @@ export default function NotificationSettingsPage() {
           </Typography>
           <Grid container spacing={2}>
             <Grid size={{ xs: 12, sm: 4 }}>
-              <TextField fullWidth type="number" label="Overall messages/day" value={policy.rateLimits.overallMessagesPerDay} onChange={(e) => setRateLimit("overallMessagesPerDay", Number(e.target.value || 0))} disabled={!canMutate} />
+              <TextField
+                fullWidth
+                type="number"
+                label="Overall messages/day"
+                value={rateLimitDrafts.overallMessagesPerDay}
+                onChange={(e) => setRateLimit("overallMessagesPerDay", e.target.value)}
+                disabled={!canMutate}
+                error={Boolean(rateLimitErrors.overallMessagesPerDay)}
+                helperText={rateLimitErrors.overallMessagesPerDay || "Enter a whole number greater than zero."}
+                inputProps={{ min: 1, step: 1 }}
+              />
             </Grid>
             <Grid size={{ xs: 12, sm: 4 }}>
-              <TextField fullWidth type="number" label="Marketing/day" value={policy.rateLimits.marketingPerDay} onChange={(e) => setRateLimit("marketingPerDay", Number(e.target.value || 0))} disabled={!canMutate} />
+              <TextField
+                fullWidth
+                type="number"
+                label="Marketing/day"
+                value={rateLimitDrafts.marketingPerDay}
+                onChange={(e) => setRateLimit("marketingPerDay", e.target.value)}
+                disabled={!canMutate}
+                error={Boolean(rateLimitErrors.marketingPerDay)}
+                helperText={rateLimitErrors.marketingPerDay || "Enter a whole number greater than zero."}
+                inputProps={{ min: 1, step: 1 }}
+              />
             </Grid>
             <Grid size={{ xs: 12, sm: 4 }}>
-              <TextField fullWidth type="number" label="Reminder/day" value={policy.rateLimits.reminderPerDay} onChange={(e) => setRateLimit("reminderPerDay", Number(e.target.value || 0))} disabled={!canMutate} />
+              <TextField
+                fullWidth
+                type="number"
+                label="Reminder/day"
+                value={rateLimitDrafts.reminderPerDay}
+                onChange={(e) => setRateLimit("reminderPerDay", e.target.value)}
+                disabled={!canMutate}
+                error={Boolean(rateLimitErrors.reminderPerDay)}
+                helperText={rateLimitErrors.reminderPerDay || "Enter a whole number greater than zero."}
+                inputProps={{ min: 1, step: 1 }}
+              />
             </Grid>
             <Grid size={{ xs: 12, sm: 4 }}>
-              <TextField fullWidth type="number" label="Maximum/hour" value={policy.rateLimits.maximumPerHour} onChange={(e) => setRateLimit("maximumPerHour", Number(e.target.value || 0))} disabled={!canMutate} />
+              <TextField
+                fullWidth
+                type="number"
+                label="Maximum/hour"
+                value={rateLimitDrafts.maximumPerHour}
+                onChange={(e) => setRateLimit("maximumPerHour", e.target.value)}
+                disabled={!canMutate}
+                error={Boolean(rateLimitErrors.maximumPerHour)}
+                helperText={rateLimitErrors.maximumPerHour || "Enter a whole number greater than zero."}
+                inputProps={{ min: 1, step: 1 }}
+              />
             </Grid>
             <Grid size={{ xs: 12, sm: 4 }}>
-              <TextField fullWidth type="number" label="Per patient/day" value={policy.rateLimits.perPatientPerDay} onChange={(e) => { setRateLimit("perPatientPerDay", Number(e.target.value || 0)); setValue("maxMessagesPerPatientPerDay", Number(e.target.value || 0)); }} disabled={!canMutate} />
+              <TextField
+                fullWidth
+                type="number"
+                label="Per patient/day"
+                value={rateLimitDrafts.perPatientPerDay}
+                onChange={(e) => setRateLimit("perPatientPerDay", e.target.value)}
+                disabled={!canMutate}
+                error={Boolean(rateLimitErrors.perPatientPerDay)}
+                helperText={rateLimitErrors.perPatientPerDay || "Enter a whole number greater than zero."}
+                inputProps={{ min: 1, step: 1 }}
+              />
             </Grid>
           </Grid>
         </CardContent>

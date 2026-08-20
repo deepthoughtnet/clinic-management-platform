@@ -11,6 +11,7 @@ import {
   DialogContent,
   DialogTitle,
   FormControl,
+  FormHelperText,
   Grid,
   InputLabel,
   MenuItem,
@@ -28,6 +29,13 @@ import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth";
 import { ConfirmationDialog } from "../../components/clinical/ConfirmationDialog";
 import {
+  adminTemplateCategories,
+  adminTemplateChannels,
+  adminTemplateSchema,
+  adminTemplateTypes,
+  mapZodErrors,
+} from "@deepthoughtnet/form-validation-kit";
+import {
   activateAdminTemplate,
   createAdminTemplate,
   deactivateAdminTemplate,
@@ -41,9 +49,9 @@ import {
   type AdminTemplateType,
 } from "../../api/clinicApi";
 
-const TEMPLATE_TYPES: AdminTemplateType[] = ["CAMPAIGN", "REMINDER", "WEBINAR", "BILLING", "LEAD", "NOTIFICATION", "AI_PROMPT", "GENERAL"];
-const CHANNELS: AdminTemplateChannel[] = ["EMAIL", "SMS", "WHATSAPP", "INTERNAL", "VOICE"];
-const CATEGORIES: AdminTemplateCategory[] = ["APPOINTMENT_REMINDER", "REFILL_REMINDER", "BILLING", "WEBINAR", "FOLLOW_UP", "LEAD", "VACCINATION", "WELLNESS", "GENERAL"];
+const TEMPLATE_TYPES = adminTemplateTypes;
+const CHANNELS = adminTemplateChannels;
+const CATEGORIES = adminTemplateCategories;
 
 type EditorForm = {
   name: string;
@@ -71,6 +79,12 @@ const emptyForm = (): EditorForm => ({
 
 const variableChips = ["{{patientName}}", "{{doctorName}}", "{{appointmentDate}}", "{{clinicName}}", "{{billAmount}}", "{{webinarLink}}", "{{leadName}}"];
 
+const REQUIRED_INDICATOR = " *";
+
+function withRequired(label: string, required: boolean) {
+  return required ? `${label}${REQUIRED_INDICATOR}` : label;
+}
+
 export default function TemplatesPage() {
   const auth = useAuth();
   const [searchParams] = useSearchParams();
@@ -91,6 +105,7 @@ export default function TemplatesPage() {
   const [previewVarsText, setPreviewVarsText] = React.useState('{"patientName":"John Doe","appointmentDate":"2026-05-30","clinicName":"Sunrise Clinic"}');
   const [previewSubject, setPreviewSubject] = React.useState("");
   const [previewBody, setPreviewBody] = React.useState("");
+  const [previewError, setPreviewError] = React.useState<string | null>(null);
   const [previewTemplateId, setPreviewTemplateId] = React.useState<string | null>(null);
   const [pendingAction, setPendingAction] = React.useState<{ kind: "delete" | "toggle"; row: AdminTemplate } | null>(null);
 
@@ -135,9 +150,22 @@ export default function TemplatesPage() {
   const whatsappCount = rows.filter((r) => r.channel === "WHATSAPP").length;
   const systemCount = rows.filter((r) => r.systemTemplate).length;
 
+  const formValidation = React.useMemo(() => adminTemplateSchema.safeParse(form), [form]);
+  const formErrors = React.useMemo<Record<string, string>>(
+    () => (formValidation.success ? {} : mapZodErrors(formValidation.error)),
+    [formValidation],
+  );
+  const formValid = formValidation.success;
+  const subjectRequired = form.channel === "EMAIL";
+  const subjectLabel = withRequired("Subject", subjectRequired);
+  const subjectHelper = subjectRequired ? "Required for email templates." : "Optional for non-email templates.";
+
   function openCreate() {
     setEditing(null);
     setForm(emptyForm());
+    setError(null);
+    setSuccess(null);
+    setPreviewError(null);
     setEditorOpen(true);
   }
 
@@ -154,6 +182,9 @@ export default function TemplatesPage() {
       variablesJson: row.variablesJson || "",
       active: row.active,
     });
+    setError(null);
+    setSuccess(null);
+    setPreviewError(null);
     setEditorOpen(true);
   }
 
@@ -170,11 +201,17 @@ export default function TemplatesPage() {
       variablesJson: row.variablesJson || "",
       active: false,
     });
+    setError(null);
+    setSuccess(null);
+    setPreviewError(null);
     setEditorOpen(true);
   }
 
   async function save() {
     if (!auth.accessToken || !auth.tenantId) return;
+    if (!formValid) {
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -251,18 +288,25 @@ export default function TemplatesPage() {
     setPreviewTemplateId(row.id);
     setPreviewSubject(row.subject || "");
     setPreviewBody(row.body || "");
+    setPreviewError(null);
     setPreviewOpen(true);
   }
 
   async function runPreview() {
     if (!auth.accessToken || !auth.tenantId || !previewTemplateId) return;
     try {
-      const parsed = JSON.parse(previewVarsText || "{}") as Record<string, string>;
+      setPreviewError(null);
+      const raw = previewVarsText.trim();
+      const parsed = raw ? JSON.parse(raw) : {};
+      if (parsed === null || Array.isArray(parsed) || typeof parsed !== "object") {
+        setPreviewError("Sample variables must be a JSON object.");
+        return;
+      }
       const result = await previewAdminTemplate(auth.accessToken, auth.tenantId, previewTemplateId, parsed);
       setPreviewSubject(result.renderedSubject || "");
       setPreviewBody(result.renderedBody || "");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to preview template");
+      setPreviewError(e instanceof Error && e.message.includes("JSON") ? "Enter valid JSON." : "Failed to preview template");
     }
   }
 
@@ -345,29 +389,117 @@ export default function TemplatesPage() {
       <Dialog open={editorOpen} onClose={() => !saving && setEditorOpen(false)} fullWidth maxWidth="md">
         <DialogTitle>{editing ? "Edit Template" : "Create Template"}</DialogTitle>
         <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Fields marked with * are required.
+          </Typography>
           <Grid container spacing={2} sx={{ mt: 0.5 }}>
-            <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Name" value={form.name} onChange={(e) => setForm((v) => ({ ...v, name: e.target.value }))} /></Grid>
-            <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Description" value={form.description} onChange={(e) => setForm((v) => ({ ...v, description: e.target.value }))} /></Grid>
-            <Grid size={{ xs: 12, md: 4 }}><FormControl fullWidth><InputLabel>Type</InputLabel><Select value={form.templateType} label="Type" onChange={(e) => setForm((v) => ({ ...v, templateType: e.target.value as AdminTemplateType }))}>{TEMPLATE_TYPES.map((v) => <MenuItem key={v} value={v}>{v}</MenuItem>)}</Select></FormControl></Grid>
-            <Grid size={{ xs: 12, md: 4 }}><FormControl fullWidth><InputLabel>Channel</InputLabel><Select value={form.channel} label="Channel" onChange={(e) => setForm((v) => ({ ...v, channel: e.target.value as AdminTemplateChannel }))}>{CHANNELS.map((v) => <MenuItem key={v} value={v}>{v}</MenuItem>)}</Select></FormControl></Grid>
-            <Grid size={{ xs: 12, md: 4 }}><FormControl fullWidth><InputLabel>Category</InputLabel><Select value={form.category} label="Category" onChange={(e) => setForm((v) => ({ ...v, category: e.target.value as AdminTemplateCategory }))}>{CATEGORIES.map((v) => <MenuItem key={v} value={v}>{v}</MenuItem>)}</Select></FormControl></Grid>
-            <Grid size={{ xs: 12 }}><TextField fullWidth label="Subject" value={form.subject} onChange={(e) => setForm((v) => ({ ...v, subject: e.target.value }))} /></Grid>
-            <Grid size={{ xs: 12 }}><TextField fullWidth multiline minRows={6} label="Body" value={form.body} onChange={(e) => setForm((v) => ({ ...v, body: e.target.value }))} /></Grid>
-            <Grid size={{ xs: 12 }}><TextField fullWidth multiline minRows={3} label="Variables JSON (optional)" value={form.variablesJson} onChange={(e) => setForm((v) => ({ ...v, variablesJson: e.target.value }))} /></Grid>
+            <Grid size={{ xs: 12, md: 6 }}>
+              <TextField
+                fullWidth
+                label={withRequired("Name", true)}
+                value={form.name}
+                error={Boolean(formErrors.name)}
+                helperText={formErrors.name || " "}
+                onChange={(e) => setForm((v) => ({ ...v, name: e.target.value }))}
+              />
+            </Grid>
+            <Grid size={{ xs: 12, md: 6 }}>
+              <TextField
+                fullWidth
+                label="Description"
+                value={form.description}
+                error={Boolean(formErrors.description)}
+                helperText={formErrors.description || "Optional."}
+                onChange={(e) => setForm((v) => ({ ...v, description: e.target.value }))}
+              />
+            </Grid>
+            <Grid size={{ xs: 12, md: 4 }}>
+              <FormControl fullWidth error={Boolean(formErrors.templateType)}>
+                <InputLabel>Type *</InputLabel>
+                <Select value={form.templateType} label="Type *" onChange={(e) => setForm((v) => ({ ...v, templateType: e.target.value as AdminTemplateType }))}>
+                  {TEMPLATE_TYPES.map((v) => <MenuItem key={v} value={v}>{v}</MenuItem>)}
+                </Select>
+                <FormHelperText>{formErrors.templateType || " "}</FormHelperText>
+              </FormControl>
+            </Grid>
+            <Grid size={{ xs: 12, md: 4 }}>
+              <FormControl fullWidth error={Boolean(formErrors.channel)}>
+                <InputLabel>Channel *</InputLabel>
+                <Select value={form.channel} label="Channel *" onChange={(e) => setForm((v) => ({ ...v, channel: e.target.value as AdminTemplateChannel }))}>
+                  {CHANNELS.map((v) => <MenuItem key={v} value={v}>{v}</MenuItem>)}
+                </Select>
+                <FormHelperText>{formErrors.channel || " "}</FormHelperText>
+              </FormControl>
+            </Grid>
+            <Grid size={{ xs: 12, md: 4 }}>
+              <FormControl fullWidth error={Boolean(formErrors.category)}>
+                <InputLabel>Category *</InputLabel>
+                <Select value={form.category} label="Category *" onChange={(e) => setForm((v) => ({ ...v, category: e.target.value as AdminTemplateCategory }))}>
+                  {CATEGORIES.map((v) => <MenuItem key={v} value={v}>{v}</MenuItem>)}
+                </Select>
+                <FormHelperText>{formErrors.category || " "}</FormHelperText>
+              </FormControl>
+            </Grid>
+            <Grid size={{ xs: 12 }}>
+              <TextField
+                fullWidth
+                label={subjectLabel}
+                value={form.subject}
+                error={Boolean(formErrors.subject)}
+                helperText={formErrors.subject || subjectHelper}
+                onChange={(e) => setForm((v) => ({ ...v, subject: e.target.value }))}
+              />
+            </Grid>
+            <Grid size={{ xs: 12 }}>
+              <TextField
+                fullWidth
+                multiline
+                minRows={6}
+                label={withRequired("Body", true)}
+                value={form.body}
+                error={Boolean(formErrors.body)}
+                helperText={formErrors.body || " "}
+                onChange={(e) => setForm((v) => ({ ...v, body: e.target.value }))}
+              />
+            </Grid>
+            <Grid size={{ xs: 12 }}>
+              <TextField
+                fullWidth
+                multiline
+                minRows={3}
+                label="Variables JSON (optional)"
+                value={form.variablesJson}
+                error={Boolean(formErrors.variablesJson)}
+                helperText={formErrors.variablesJson || "Optional. Must be valid JSON object when provided."}
+                onChange={(e) => setForm((v) => ({ ...v, variablesJson: e.target.value }))}
+              />
+            </Grid>
             <Grid size={{ xs: 12 }}><Stack direction="row" spacing={1} flexWrap="wrap">{variableChips.map((token) => <Chip key={token} label={token} onClick={() => setForm((v) => ({ ...v, body: `${v.body}${v.body ? " " : ""}${token}` }))} />)}</Stack></Grid>
           </Grid>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setEditorOpen(false)} disabled={saving}>Cancel</Button>
-          <Button variant="contained" onClick={() => void save()} disabled={saving || !form.name.trim() || !form.body.trim()}>Save</Button>
+          <Button variant="contained" onClick={() => void save()} disabled={saving || !formValid}>Save</Button>
         </DialogActions>
       </Dialog>
 
-      <Dialog open={previewOpen} onClose={() => setPreviewOpen(false)} fullWidth maxWidth="md">
+      <Dialog open={previewOpen} onClose={() => { setPreviewOpen(false); setPreviewError(null); }} fullWidth maxWidth="md">
         <DialogTitle>Template Preview</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 0.5 }}>
-            <TextField label="Sample Variables JSON" multiline minRows={4} fullWidth value={previewVarsText} onChange={(e) => setPreviewVarsText(e.target.value)} />
+            <TextField
+              label="Sample Variables JSON"
+              multiline
+              minRows={4}
+              fullWidth
+              value={previewVarsText}
+              error={Boolean(previewError)}
+              helperText={previewError || "Provide a JSON object for preview variables."}
+              onChange={(e) => {
+                setPreviewVarsText(e.target.value);
+                setPreviewError(null);
+              }}
+            />
             <Button variant="outlined" onClick={() => void runPreview()} disabled={!previewTemplateId}>Render Preview</Button>
             <TextField label="Rendered Subject" value={previewSubject} fullWidth InputProps={{ readOnly: true }} />
             <TextField label="Rendered Body" value={previewBody} multiline minRows={6} fullWidth InputProps={{ readOnly: true }} />

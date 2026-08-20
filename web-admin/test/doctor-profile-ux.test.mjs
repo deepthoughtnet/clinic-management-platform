@@ -12,22 +12,19 @@ function readWebAdminSource(relPath) {
   return fs.readFileSync(path.join(repoRoot(), "web-admin", "src", ...relPath.split("/")), "utf8");
 }
 
-test("doctor update schema accepts future-ready specialization and fee fields", () => {
+test("doctor update schema accepts required details including dob", () => {
   const parsed = doctorUpdateSchema.safeParse({
-    doctorName: "Dr. Asha",
-    specialization: "Dermatology",
-    specializations: ["Dermatology", "Skin Care"],
     mobile: "9876543210",
-    email: "doctor@example.com",
-    registrationNumber: "REG-123",
+    specializations: ["Dermatology", "Skin Care"],
+    qualification: "MBBS, MD",
+    registrationNumber: "MCI/12345",
     consultationRoom: "Room 1",
-    qualification: "MBBS",
     consultationFee: 500,
     opdFee: 500,
     followUpFee: 300,
     emergencyFee: 800,
     yearsOfExperience: 12,
-    age: 40,
+    dateOfBirth: "1985-03-15",
     active: true,
     publicListingEnabled: false,
     slug: "dr-asha",
@@ -62,12 +59,12 @@ test("doctor avatar rendering uses authenticated image loading", () => {
   assert.ok(dayBoardSource.includes("photoUrl: selectedDoctorProfile?.photoUrl || undefined"));
 });
 
-test("doctor profile edit payload keeps live form values and specialization draft", () => {
+test("doctor profile edit payload and labels keep dob-based validation", () => {
   const detailSource = readWebAdminSource("pages/doctors/DoctorDetailPage.tsx");
 
   assert.ok(detailSource.includes("specializationsInput: \"\""));
   assert.ok(detailSource.includes("inputValue={form.specializationsInput}"));
-  assert.ok(detailSource.includes("onInputChange={(_, value) => setForm"));
+  assert.ok(detailSource.includes("onInputChange={(_, value) =>"));
   assert.ok(detailSource.includes("normalizeSpecializations(form.specializations, form.specializationsInput)"));
   assert.ok(detailSource.includes("normalizeText(form.mobile)"));
   assert.ok(detailSource.includes("normalizeText(form.qualification)"));
@@ -77,10 +74,21 @@ test("doctor profile edit payload keeps live form values and specialization draf
   assert.ok(detailSource.includes("normalizeNumber(form.followUpFee)"));
   assert.ok(detailSource.includes("normalizeNumber(form.emergencyFee)"));
   assert.ok(detailSource.includes("normalizeNumber(form.yearsOfExperience)"));
-  assert.ok(detailSource.includes("normalizeNumber(form.age)"));
-  assert.ok(detailSource.includes("specialization: specializations[0] || normalizeText(profile.specialization || \"\")"));
-  assert.ok(detailSource.includes("publicListingEnabled: form.publicListingEnabled"));
-  assert.ok(detailSource.includes("slug: normalizeText(form.slug)"));
+  assert.ok(detailSource.includes("normalizeText(form.dateOfBirth)"));
+  assert.ok(detailSource.includes("Age (derived)"));
+  assert.ok(detailSource.includes("Date of Birth"));
+  assert.ok(detailSource.includes("RequiredLabel text=\"Mobile\" required"));
+  assert.ok(detailSource.includes("RequiredLabel text=\"Specialization\" required"));
+  assert.ok(detailSource.includes("RequiredLabel text=\"Qualification\" required"));
+  assert.ok(detailSource.includes("RequiredLabel text=\"Registration Number\" required"));
+  assert.ok(detailSource.includes("RequiredLabel text=\"OPD Fee\" required"));
+  assert.ok(detailSource.includes("RequiredLabel text=\"Follow-up Fee\" required"));
+  assert.ok(detailSource.includes("RequiredLabel text=\"Emergency Fee\" required"));
+  assert.ok(detailSource.includes("RequiredLabel text=\"Years of Experience\" required"));
+  assert.ok(detailSource.includes("RequiredLabel text=\"Date of Birth\" required"));
+  assert.ok(detailSource.includes("label={<RequiredLabel text=\"Public slug\" required={false} />}"));
+  assert.ok(detailSource.includes("setFieldErrors(mapZodErrors(parsed.error))"));
+  assert.ok(detailSource.includes("setError(firstZodError(parsed.error))"));
   assert.ok(detailSource.includes("updateDoctorProfileWithPhoto"));
   assert.ok(detailSource.includes("updateDoctorProfile("));
 });

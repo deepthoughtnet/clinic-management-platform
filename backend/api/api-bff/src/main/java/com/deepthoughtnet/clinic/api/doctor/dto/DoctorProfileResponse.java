@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.api.doctor.dto;
 
 import java.time.OffsetDateTime;
+import java.time.LocalDate;
 import java.math.BigDecimal;
 import java.util.List;
 
@@ -20,6 +21,7 @@ public record DoctorProfileResponse(
         BigDecimal followUpFee,
         BigDecimal emergencyFee,
         Integer yearsOfExperience,
+        LocalDate dateOfBirth,
         Integer age,
         boolean active,
         boolean publicListingEnabled,

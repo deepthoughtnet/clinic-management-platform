@@ -28,10 +28,6 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
-import jakarta.validation.Valid;
-import jakarta.validation.constraints.Email;
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.Size;
 
 @RestController
 @Validated
@@ -45,7 +41,6 @@ public class TenantUserManagementController {
             "RECEPTIONIST",
             "BILLING_USER",
             "AUDITOR",
-            "SERVICE_AGENT",
             "LAB_TECHNICIAN",
             "LAB_ASSISTANT",
             "LAB_FRONT_DESK",
@@ -64,7 +59,6 @@ public class TenantUserManagementController {
             "RECEPTIONIST",
             "BILLING_USER",
             "AUDITOR",
-            "SERVICE_AGENT",
             "LAB_TECHNICIAN",
             "LAB_ASSISTANT",
             "LAB_FRONT_DESK",
@@ -94,7 +88,7 @@ public class TenantUserManagementController {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     @PreAuthorize("@permissionChecker.hasAnyPermission('tenant.users.manage','user.manage')")
-    public ClinicUserResponse create(@Valid @RequestBody CreateTenantUserRequest request) {
+    public ClinicUserResponse create(@RequestBody CreateTenantUserRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         String role = normalizeRole(request.role());
         enforceRoleAssignmentBoundary(role);
@@ -128,8 +122,9 @@ public class TenantUserManagementController {
 
     @PutMapping("/{appUserId}")
     @PreAuthorize("@permissionChecker.hasAnyPermission('tenant.users.manage','user.manage')")
-    public ClinicUserResponse update(@PathVariable UUID appUserId, @Valid @RequestBody UpdateTenantUserRequest request) {
+    public ClinicUserResponse update(@PathVariable UUID appUserId, @RequestBody UpdateTenantUserRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
+        enforceUserEditBoundary(appUserId);
         TenantUserRecord record = tenantUserManagementService.updateStatus(tenantId, appUserId, request.active());
         if (StringUtils.hasText(request.role())) {
             String role = normalizeRole(request.role());
@@ -154,8 +149,9 @@ public class TenantUserManagementController {
 
     @PostMapping("/{appUserId}/roles")
     @PreAuthorize("@permissionChecker.hasAnyPermission('tenant.users.role.assign','tenant.users.manage','user.manage')")
-    public ClinicUserResponse assignRole(@PathVariable UUID appUserId, @Valid @RequestBody AssignRoleRequest request) {
+    public ClinicUserResponse assignRole(@PathVariable UUID appUserId, @RequestBody AssignRoleRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
+        enforceUserEditBoundary(appUserId);
         String role = normalizeRole(request.role());
         enforceRoleAssignmentBoundary(role);
         TenantUserRecord record = tenantUserManagementService.updateRole(tenantId, appUserId, role);
@@ -172,7 +168,7 @@ public class TenantUserManagementController {
 
     @PostMapping("/{appUserId}/reset-password")
     @PreAuthorize("@permissionChecker.hasAnyPermission('tenant.users.reset.password','tenant.users.manage','user.manage')")
-    public ClinicUserResponse resetPassword(@PathVariable UUID appUserId, @Valid @RequestBody ResetPasswordRequest request) {
+    public ClinicUserResponse resetPassword(@PathVariable UUID appUserId, @RequestBody ResetPasswordRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         TenantUserRecord record = tenantUserManagementService.resetPassword(
                 tenantId,
@@ -190,14 +186,11 @@ public class TenantUserManagementController {
 
     @PutMapping("/{appUserId}/profile")
     @PreAuthorize("@permissionChecker.hasAnyPermission('tenant.users.manage','user.manage')")
-    public ClinicUserResponse updateProfile(@PathVariable UUID appUserId, @Valid @RequestBody UpdateTenantUserProfileRequest request) {
+    public ClinicUserResponse updateProfile(@PathVariable UUID appUserId, @RequestBody UpdateTenantUserProfileRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         enforceUserEditBoundary(appUserId);
-        String normalizedRole = null;
-        if (StringUtils.hasText(request.role())) {
-            normalizedRole = normalizeRole(request.role());
-            enforceRoleAssignmentBoundary(normalizedRole);
-        }
+        String normalizedRole = normalizeRole(request.role());
+        enforceRoleAssignmentBoundary(normalizedRole);
         TenantUserRecord record = tenantUserManagementService.updateUserProfile(new UpdateTenantUserProfileCommand(
                 tenantId,
                 appUserId,
@@ -303,25 +296,15 @@ public class TenantUserManagementController {
     }
 
     public record CreateTenantUserRequest(
-            @Email @Size(max = 255)
             String email,
-            @Size(max = 255)
             String username,
-            @Size(max = 128)
             String firstName,
-            @Size(max = 128)
             String lastName,
-            @NotBlank
             String role,
-            @Size(max = 128)
             String tempPassword,
-            @Size(max = 128)
             String temporaryPassword,
-            @Size(max = 64)
             String employeeCode,
-            @Size(max = 32)
             String mobile,
-            @Size(max = 128)
             String department,
             boolean active
     ) {
@@ -343,11 +326,11 @@ public class TenantUserManagementController {
         }
     }
 
-    public record UpdateTenantUserRequest(boolean active, @Size(max = 64) String role) {}
+    public record UpdateTenantUserRequest(boolean active, String role) {}
 
-    public record AssignRoleRequest(@NotBlank String role) {}
+    public record AssignRoleRequest(String role) {}
 
-    public record ResetPasswordRequest(@NotBlank @Size(max = 128) String tempPassword, boolean temporary) {}
+    public record ResetPasswordRequest(String tempPassword, boolean temporary) {}
 
     private void ensureDoctorCalendarForCurrentRole(UUID tenantId, UUID appUserId, String role, boolean active, String action) {
         UUID actorAppUserId = RequestContextHolder.require().appUserId();

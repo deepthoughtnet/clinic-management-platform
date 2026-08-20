@@ -239,8 +239,18 @@ public class HealthcarePublicListingSyncService {
             publicProfileService.unpublishPublicProfile(doctor.doctorUserId(), SOURCE_SYSTEM_DOCTOR, reason);
             return HealthcarePublicListingSyncOutcome.unpublished(SOURCE_SYSTEM_DOCTOR, doctor.doctorUserId(), doctor.slug(), "Parent clinic is not publicly listed");
         }
-        if (!doctor.active() || !doctor.publicListingEnabled() || !StringUtils.hasText(doctorUser.displayName())
-                || firstDoctorSpeciality(doctor) == null || doctor.qualification() == null || doctor.qualification().isBlank()) {
+        if (!doctor.active()
+                || !doctor.publicListingEnabled()
+                || !StringUtils.hasText(doctorUser.displayName())
+                || !StringUtils.hasText(doctor.mobile())
+                || firstDoctorSpeciality(doctor) == null
+                || !StringUtils.hasText(doctor.qualification())
+                || !StringUtils.hasText(doctor.registrationNumber())
+                || doctor.opdFee() == null
+                || doctor.followUpFee() == null
+                || doctor.emergencyFee() == null
+                || doctor.yearsOfExperience() == null
+                || doctor.dateOfBirth() == null) {
             publicProfileService.unpublishPublicProfile(doctor.doctorUserId(), SOURCE_SYSTEM_DOCTOR, reason);
             return HealthcarePublicListingSyncOutcome.unpublished(SOURCE_SYSTEM_DOCTOR, doctor.doctorUserId(), doctor.slug(), "Doctor listing is inactive or incomplete");
         }
@@ -620,6 +630,7 @@ public class HealthcarePublicListingSyncService {
                         doctor.emergencyFee(),
                         doctor.yearsOfExperience(),
                         doctor.age(),
+                        doctor.dateOfBirth(),
                         doctor.active(),
                         doctor.publicListingEnabled(),
                         candidate
