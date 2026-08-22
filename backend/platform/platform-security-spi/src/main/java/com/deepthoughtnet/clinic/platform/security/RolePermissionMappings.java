@@ -81,7 +81,8 @@ public final class RolePermissionMappings {
             Permissions.NOTIFICATION_MANAGE,
             Permissions.NOTIFICATION_SEND,
             Permissions.NOTIFICATION_RETRY,
-            Permissions.NOTIFICATION_CENTER_READ
+            Permissions.NOTIFICATION_CENTER_READ,
+            Permissions.AI_VOICE_TEST
     );
 
     private static final Set<String> CLINIC_GENERATION_MANAGER_PERMISSIONS = Set.of(
@@ -240,7 +241,6 @@ public final class RolePermissionMappings {
             Permissions.AUDIT_READ,
             Permissions.APPOINTMENT_CHECKIN_PAYMENT_BYPASS,
             Permissions.INVENTORY_MANAGE,
-                    Permissions.AI_VOICE_TEST,
                     Permissions.ENGAGE_VIEW,
                     Permissions.ENGAGE_MESSAGE_SEND,
                     Permissions.ENGAGE_REMINDER_VIEW,
@@ -457,7 +457,6 @@ public final class RolePermissionMappings {
             Permissions.PATIENT_DOCUMENT_UPLOAD,
             Permissions.CLINICAL_INTAKE_READ,
             Permissions.CLINICAL_INTAKE_WRITE,
-            Permissions.AI_VOICE_TEST,
             Permissions.ENGAGE_VIEW,
             Permissions.ENGAGE_MESSAGE_SEND,
             Permissions.ENGAGE_REMINDER_VIEW,

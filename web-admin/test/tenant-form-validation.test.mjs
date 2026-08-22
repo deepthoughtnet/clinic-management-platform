@@ -14,6 +14,8 @@ test("tenant form wires shared validation and disables submit until valid", () =
   assert.ok(source.includes('mode: "onChange"'));
   assert.ok(source.includes("const canCreateTenant = isValid && !isSubmitting;"));
   assert.ok(source.includes('label="Tenant Name"'));
+  assert.ok(source.includes('label="Registration Number"'));
+  assert.ok(source.includes("registrationNumber: values.registrationNumber.trim()"));
   assert.ok(source.includes("disabled={!canCreateTenant}"));
   assert.ok(source.includes("await load();"));
   assert.ok(source.includes('navigate("/")'));

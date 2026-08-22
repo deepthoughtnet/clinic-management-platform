@@ -151,7 +151,7 @@ public class PlatformTenantService {
                         defaultIfBlank(command.state(), "Maharashtra"),
                         command.country().trim(),
                         defaultIfBlank(command.postalCode(), "411001"),
-                        null,
+                        normalizeNullable(command.registrationNumber()),
                         null,
                         null,
                         true,
@@ -292,6 +292,9 @@ public class PlatformTenantService {
         if (!StringUtils.hasText(command.country())) {
             throw new IllegalArgumentException("country is required");
         }
+        if (!StringUtils.hasText(command.registrationNumber())) {
+            throw new IllegalArgumentException("Registration number is required.");
+        }
         if (!StringUtils.hasText(command.adminEmail())) {
             throw new IllegalArgumentException("Admin email is required to provision clinic admin.");
         }
@@ -396,6 +399,7 @@ public class PlatformTenantService {
             String clinicEmail,
             String addressLine1,
             String addressLine2,
+            String registrationNumber,
             String planId,
             Map<String, Boolean> modules,
             String adminEmail,

@@ -643,12 +643,19 @@ function AuthedApp() {
         <Route path="/admin/templates" element={<TemplatesPage />} />
         <Route path="/admin/notification-settings" element={<NotificationSettingsPage />} />
         <Route path="/notification-center" element={<PathnameKeyedRoute><NotificationCenterPage /></PathnameKeyedRoute>} />
-        <Route path="/admin/integrations" element={<IntegrationsPage />} />
-        <Route path="/admin/ai-ops" element={<ModuleGate moduleKey="aiCopilot"><AiOpsPage /></ModuleGate>} />
-        <Route path="/admin/ai-reasoning-console" element={<ReasoningTestConsolePage />} />
-        <Route path="/admin/platform-ops" element={<PlatformOpsPage />} />
-        <Route path="/admin/realtime-ai" element={<ModuleGate moduleKey="aiCopilot"><RealtimeAiPage /></ModuleGate>} />
-        <Route path="/ai/voice-test" element={<ModuleGate moduleKey="aiCopilot"><VoiceTestPage /></ModuleGate>} />
+        <Route path="/platform/integrations" element={<PathnameKeyedRoute><PlatformAdminGate><IntegrationsPage /></PlatformAdminGate></PathnameKeyedRoute>} />
+        <Route path="/platform/ai-ops" element={<PathnameKeyedRoute><PlatformAdminGate><AiOpsPage /></PlatformAdminGate></PathnameKeyedRoute>} />
+        <Route path="/platform/ai-reasoning-console" element={<PathnameKeyedRoute><PlatformAdminGate><ReasoningTestConsolePage /></PlatformAdminGate></PathnameKeyedRoute>} />
+        <Route path="/platform/operations" element={<PathnameKeyedRoute><PlatformAdminGate><PlatformOpsPage /></PlatformAdminGate></PathnameKeyedRoute>} />
+        <Route path="/platform/realtime-ai" element={<PathnameKeyedRoute><PlatformAdminGate><RealtimeAiPage /></PlatformAdminGate></PathnameKeyedRoute>} />
+        <Route path="/platform/voice-test" element={<PathnameKeyedRoute><PlatformAdminGate><VoiceTestPage /></PlatformAdminGate></PathnameKeyedRoute>} />
+        <Route path="/platform/platform-ops" element={<Navigate to="/platform/operations" replace />} />
+        <Route path="/admin/integrations" element={<PathnameKeyedRoute><PlatformAdminGate><Navigate to="/platform/integrations" replace /></PlatformAdminGate></PathnameKeyedRoute>} />
+        <Route path="/admin/ai-ops" element={<PathnameKeyedRoute><PlatformAdminGate><Navigate to="/platform/ai-ops" replace /></PlatformAdminGate></PathnameKeyedRoute>} />
+        <Route path="/admin/ai-reasoning-console" element={<PathnameKeyedRoute><PlatformAdminGate><Navigate to="/platform/ai-reasoning-console" replace /></PlatformAdminGate></PathnameKeyedRoute>} />
+        <Route path="/admin/platform-ops" element={<PathnameKeyedRoute><PlatformAdminGate><Navigate to="/platform/operations" replace /></PlatformAdminGate></PathnameKeyedRoute>} />
+        <Route path="/admin/realtime-ai" element={<PathnameKeyedRoute><PlatformAdminGate><Navigate to="/platform/realtime-ai" replace /></PlatformAdminGate></PathnameKeyedRoute>} />
+        <Route path="/ai/voice-test" element={<PathnameKeyedRoute><PlatformAdminGate><Navigate to="/platform/voice-test" replace /></PlatformAdminGate></PathnameKeyedRoute>} />
         <Route path="/doctors/availability" element={<FeatureGate featureId="doctor-availability"><DoctorAvailabilityPage /></FeatureGate>} />
         <Route path="/doctors/:id" element={<FeatureGate featureId="appointments"><DoctorDetailPage /></FeatureGate>} />
         <Route path="*" element={<Navigate to={resolveTenantLandingPage(auth)} replace />} />
@@ -672,6 +679,12 @@ function formatPageTitle(pathname: string): string {
   if (pathname === "/pharmacy/pos") return "POS Sale";
   if (pathname === "/pharmacy/operations") return "Procurement";
   if (pathname === "/admin/notification-operations") return "Notification Operations";
+  if (pathname === "/platform/integrations") return "Integrations";
+  if (pathname === "/platform/ai-ops") return "AI Ops";
+  if (pathname === "/platform/ai-reasoning-console") return "AI Reasoning Console";
+  if (pathname === "/platform/operations" || pathname === "/platform/platform-ops") return "Platform Ops";
+  if (pathname === "/platform/realtime-ai") return "Realtime AI";
+  if (pathname === "/platform/voice-test") return "Voice Test";
   if (pathname === "/notification-center") return "My Notifications";
   if (pathname === "/carepilot/ai-operations") return "AI Operations";
   if (pathname.startsWith("/platform/product-implementation")) return "Product Implementation";

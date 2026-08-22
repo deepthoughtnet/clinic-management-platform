@@ -33,6 +33,7 @@ export const NOTIFICATION_OPERATION_PERIODS: Array<{ key: NotificationOperations
 export const CHANNEL_ORDER = ["IN_APP", "EMAIL", "SMS", "WHATSAPP"] as const;
 
 export type ChannelTone = "success" | "warning" | "error" | "neutral";
+export type SuccessTone = "success" | "warning" | "error" | "neutral";
 
 const SMS_NOTIFICATIONS_DISABLED = "SMS notifications disabled";
 const WHATSAPP_NOTIFICATIONS_DISABLED = "WhatsApp notifications disabled";
@@ -297,6 +298,46 @@ export function formatRatio(positive: number, total: number) {
     return "0.0%";
   }
   return `${((positive / total) * 100).toFixed(1)}%`;
+}
+
+export function formatSuccessRate(value: number | null | undefined) {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return "N/A";
+  }
+  return `${Math.round(value)}%`;
+}
+
+export function successRateTone(value: number | null | undefined): SuccessTone {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return "neutral";
+  }
+  if (value >= 95) return "success";
+  if (value >= 80) return "warning";
+  return "error";
+}
+
+export function successRateStatusLabel(value: number | null | undefined) {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return "No data";
+  }
+  if (value >= 95) return "Healthy";
+  if (value >= 80) return "Watch";
+  return "At risk";
+}
+
+export function successRateDetailLabel(value: number | null | undefined) {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return "No delivery activity in the selected period.";
+  }
+  return value >= 95 ? "Healthy notification deliveries" : "Notification delivery success";
+}
+
+export function providerOperationalSuccessRate(successCount: number, failureCount: number) {
+  const total = successCount + failureCount;
+  if (total === 0) {
+    return null;
+  }
+  return (successCount * 100) / total;
 }
 
 export function compactMetricTone(value: number | null | undefined, kind: "success-rate" | "healthy-providers" | "failures" | "pending") {

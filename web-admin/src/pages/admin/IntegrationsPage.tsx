@@ -46,13 +46,9 @@ export default function IntegrationsPage() {
   const auth = useAuth();
   const navigate = useNavigate();
 
-  const canView = auth.rolesUpper.includes("CLINIC_ADMIN")
-    || auth.rolesUpper.includes("AUDITOR")
-    || auth.rolesUpper.includes("PLATFORM_ADMIN")
-    || auth.rolesUpper.includes("PLATFORM_TENANT_SUPPORT");
-  const canTest = auth.rolesUpper.includes("CLINIC_ADMIN")
-    || auth.rolesUpper.includes("PLATFORM_ADMIN")
-    || auth.rolesUpper.includes("PLATFORM_TENANT_SUPPORT");
+  const canView = auth.rolesUpper.includes("PLATFORM_ADMIN");
+  const canTest = auth.rolesUpper.includes("PLATFORM_ADMIN");
+  const canSeeTechnicalDetails = auth.rolesUpper.includes("PLATFORM_ADMIN");
   const carePilotEnabled = hasTenantModule(auth, "carePilot");
 
   const [loading, setLoading] = React.useState(true);
@@ -130,12 +126,24 @@ export default function IntegrationsPage() {
             <Typography variant="body2"><b>Provider:</b> {row.providerName || "-"}</Typography>
             <Typography variant="body2"><b>Enabled:</b> {row.enabled ? "Yes" : "No"} • <b>Configured:</b> {row.configured ? "Yes" : "No"}</Typography>
             <Typography variant="body2"><b>Message:</b> {row.message}</Typography>
-            {row.missingConfigurationKeys.length > 0 ? <Typography variant="body2"><b>Missing:</b> {row.missingConfigurationKeys.join(", ")}</Typography> : null}
             {row.safeConfigurationHints.length > 0 ? (
               <Box>
-                <Typography variant="body2" sx={{ fontWeight: 600 }}>Guidance</Typography>
+                <Typography variant="body2" sx={{ fontWeight: 600 }}>Guidance for Clinic Admin</Typography>
                 <Stack component="ul" sx={{ m: 0, pl: 2.5 }} spacing={0.25}>
-                  {row.safeConfigurationHints.map((hint) => <Typography key={hint} component="li" variant="caption" sx={{ fontFamily: "monospace" }}>{hint}</Typography>)}
+                  {row.safeConfigurationHints.map((hint) => <Typography key={hint} component="li" variant="caption">{hint}</Typography>)}
+                </Stack>
+              </Box>
+            ) : null}
+            {canSeeTechnicalDetails && row.missingConfigurationKeys.length > 0 ? (
+              <Box component="details" sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1.5, px: 1.5, py: 1 }}>
+                <Box component="summary" sx={{ cursor: "pointer", fontWeight: 700, color: "text.secondary" }}>
+                  Technical details
+                </Box>
+                <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.75, mb: 0.5 }}>
+                  Platform Admin only
+                </Typography>
+                <Stack component="ul" sx={{ m: 0, pl: 2.5 }} spacing={0.25}>
+                  {row.missingConfigurationKeys.map((hint) => <Typography key={hint} component="li" variant="caption" sx={{ fontFamily: "monospace" }}>{hint}</Typography>)}
                 </Stack>
               </Box>
             ) : null}

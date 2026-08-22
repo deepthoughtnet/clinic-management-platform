@@ -4,6 +4,19 @@ import { en } from "../messages/en.js";
 import { email, optionalEmail, optionalString, requiredString } from "../validators/common.js";
 import { optionalIndianMobileNumber } from "../validators/india.js";
 
+const MAX_REGISTRATION_NUMBER_LENGTH = 128;
+
+function requiredBusinessString(label: string, maxLength: number) {
+  return z.preprocess(
+    (value) => (typeof value === "string" ? value.trim() : ""),
+    z
+      .string()
+      .min(1, `${label} is required.`)
+      .max(maxLength, `${label} must be ${maxLength} characters or fewer.`)
+      .refine((value) => !/[\u0000-\u001F\u007F]/.test(value), `${label} must not contain control characters.`),
+  );
+}
+
 export const createTenantSchema = z.object({
   clinicName: requiredString(en.requiredTenantName),
   tenantCode: z.preprocess(
@@ -22,6 +35,7 @@ export const createTenantSchema = z.object({
   clinicEmail: optionalEmail(),
   addressLine1: optionalString(),
   addressLine2: optionalString(),
+  registrationNumber: requiredBusinessString("Registration number", MAX_REGISTRATION_NUMBER_LENGTH),
   planId: requiredString("Plan is required."),
   adminEmail: email(),
   adminFirstName: requiredString("Admin first name is required."),

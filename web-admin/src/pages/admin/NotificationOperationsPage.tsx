@@ -102,10 +102,15 @@ import {
   humanizeAuditActor,
   formatDateOnly,
   formatRatio,
+  formatSuccessRate,
   formatTimestamp,
   normalizeChannel,
+  providerOperationalSuccessRate,
   providerConfigurationLabel,
   providerStatusLabel,
+  successRateDetailLabel,
+  successRateStatusLabel,
+  successRateTone,
   overallStatusColor,
   overallStatusLabel,
   type ChannelTone,
@@ -408,12 +413,14 @@ export default function NotificationOperationsPage() {
   const topKpis = [
     {
       label: "Notification Success",
-      value: summary ? `${summary.successRate.toFixed(0)}%` : "0%",
-      helper: "Healthy notification deliveries",
-      detail: summary ? `${summary.sentCount} delivered from ${summary.channelDeliveriesAttempted} channel rows` : "No delivery data yet",
-      tone: summary ? (summary.successRate >= 95 ? "success" : summary.successRate >= 80 ? "warning" : "error") : "neutral",
+      value: formatSuccessRate(summary?.successRate),
+      helper: summary?.successRate === null || summary?.successRate === undefined ? "No delivery data" : "Healthy notification deliveries",
+      detail: summary?.successRate === null || summary?.successRate === undefined
+        ? successRateDetailLabel(summary?.successRate)
+        : `${summary.sentCount} delivered from ${summary.channelDeliveriesAttempted} channel rows`,
+      tone: successRateTone(summary?.successRate),
       icon: <HealthAndSafetyRoundedIcon fontSize="small" />,
-      trend: summary ? (summary.successRate >= 95 ? "Healthy" : summary.successRate >= 80 ? "Watch" : "At risk") : "No data",
+      trend: successRateStatusLabel(summary?.successRate),
     },
     {
       label: "Healthy Providers",
@@ -1100,7 +1107,7 @@ function OperationalKpiCard({
                 <Typography variant="h5" sx={{ fontWeight: 900, lineHeight: 1.05 }}>{value}</Typography>
               </Box>
             </Stack>
-            <Chip size="small" icon={trendIcon(tone)} label={trendLabel(tone)} color={trendTone(tone) as "success" | "warning" | "error" | "default"} variant="outlined" />
+            <Chip size="small" icon={trendIcon(tone)} label={trend} color={trendTone(tone) as "success" | "warning" | "error" | "default"} variant="outlined" />
           </Stack>
           <Typography variant="caption" color="text.secondary">{helper}</Typography>
           <Typography variant="body2" sx={{ fontWeight: 700 }}>{detail}</Typography>
@@ -1202,7 +1209,9 @@ function ProviderHealthCard({ provider }: { provider: NotificationOperationsProv
   const configuration = providerConfigurationLabel(provider);
   const statusTone = readiness === "Healthy" ? "success" : readiness === "Degraded" ? "warning" : readiness === "Disabled" ? "default" : readiness === "Not Configured" ? "default" : "warning";
   const configTone = configuration === "Configuration Ready" ? "success" : "default";
-  const successRate = provider.successCount + provider.failureCount === 0 ? 0 : Math.round((provider.successCount / (provider.successCount + provider.failureCount)) * 100);
+  const successRate = providerOperationalSuccessRate(provider.successCount, provider.failureCount);
+  const successRateLabel = formatSuccessRate(successRate);
+  const successRateState = successRate === null ? "No delivery data" : successRate >= 95 ? "Healthy" : successRate >= 80 ? "Watch" : "At risk";
 
   return (
     <Card variant="outlined" sx={{ height: "100%", borderRadius: 3 }}>
@@ -1243,9 +1252,17 @@ function ProviderHealthCard({ provider }: { provider: NotificationOperationsProv
           <Box sx={{ pt: 0.5 }}>
             <Stack direction="row" justifyContent="space-between" spacing={1} sx={{ mb: 0.5 }}>
               <Typography variant="caption" color="text.secondary">Operational success</Typography>
-              <Typography variant="caption" sx={{ fontWeight: 800 }}>{successRate}%</Typography>
+              <Typography variant="caption" sx={{ fontWeight: 800 }}>{successRateLabel}</Typography>
             </Stack>
-            <LinearProgress variant="determinate" value={successRate} color={provider.failureCount > 0 ? "warning" : "success"} sx={{ height: 8, borderRadius: 999, bgcolor: "action.hover" }} />
+            <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 0.75 }}>
+              {successRate === null ? "No delivery data" : successRateState}
+            </Typography>
+            <LinearProgress
+              variant="determinate"
+              value={successRate ?? 0}
+              color={successRate === null ? "inherit" : provider.failureCount > 0 ? "warning" : "success"}
+              sx={{ height: 8, borderRadius: 999, bgcolor: "action.hover" }}
+            />
           </Box>
         </Stack>
       </CardContent>

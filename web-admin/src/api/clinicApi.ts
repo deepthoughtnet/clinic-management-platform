@@ -1024,7 +1024,7 @@ export type NotificationOperationsSummaryResponse = {
   failedCount: number;
   skippedCount: number;
   partialCount: number;
-  successRate: number;
+  successRate: number | null;
   averageDeliveryLatencyMs: number;
   retryCount: number;
   staleDeliveriesSuppressed: number;
@@ -5821,6 +5821,7 @@ export async function createPlatformTenant(token: string, body: {
   clinicEmail?: string | null;
   addressLine1?: string | null;
   addressLine2?: string | null;
+  registrationNumber: string;
   planId?: string | null;
   modules?: Record<string, boolean> | null;
   adminEmail?: string | null;
@@ -9480,7 +9481,9 @@ export type AiOpsUsageSummary = {
   failedCalls: number;
   inputTokens: number;
   outputTokens: number;
+  outputTokenTelemetryAvailable: boolean;
   estimatedCost: number;
+  estimatedCostTelemetryAvailable: boolean;
   avgLatencyMs: number;
   callsByProvider: Record<string, number>;
   callsByUseCase: Record<string, number>;

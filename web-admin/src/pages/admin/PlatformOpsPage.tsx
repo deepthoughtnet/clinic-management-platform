@@ -54,7 +54,7 @@ export default function PlatformOpsPage() {
   const [resolveTarget, setResolveTarget] = useState<string | null>(null);
   const [resolveNotes, setResolveNotes] = useState("");
 
-  const canAct = rolesUpper.includes("PLATFORM_ADMIN") || rolesUpper.includes("CLINIC_ADMIN");
+  const canAct = rolesUpper.includes("PLATFORM_ADMIN");
 
   async function loadAll() {
     if (!accessToken || !tenantId) return;

@@ -162,7 +162,7 @@ public class NotificationOperationsService {
         long stale = groups.stream().flatMap(group -> group.group().deliveries().stream())
                 .filter(record -> isStaleReason(record.failureReason()))
                 .count();
-        double successRate = attemptedDeliveries == 0 ? 0.0 : (sent * 100.0 / attemptedDeliveries);
+        Double successRate = attemptedDeliveries == 0 ? null : (sent * 100.0 / attemptedDeliveries);
         double averageLatencyMs = averageLatencyForGroups(groups);
         NotificationSummary outbox = notificationCenterService.summarize(tenantId);
         PlatformTenantRecord tenant = tenantManagementService.get(tenantId);
@@ -175,7 +175,7 @@ public class NotificationOperationsService {
                 kpi("Failed", String.valueOf(failed), "Failed deliveries requiring investigation"),
                 kpi("Skipped", String.valueOf(skipped), "Disabled, ineligible, or intentionally skipped deliveries"),
                 kpi("Partial", String.valueOf(partial), "Logical notifications with mixed outcomes"),
-                kpi("Success rate", formatPercentage(successRate), "Sent deliveries divided by all channel deliveries"),
+                kpi("Success rate", successRate == null ? "N/A" : formatPercentage(successRate), successRate == null ? "No delivery activity in the selected period." : "Sent deliveries divided by all channel deliveries"),
                 kpi("Average latency", formatDuration(averageLatencyMs), "Queued to sent latency for successful deliveries"),
                 kpi("Retries", String.valueOf(retries), "Persisted retry attempts across the selected rows"),
                 kpi("Stale suppressed", String.valueOf(stale), "Deliveries marked stale or no longer applicable")
@@ -429,6 +429,10 @@ public class NotificationOperationsService {
 
     private String formatPercentage(double value) {
         return String.format(Locale.ENGLISH, "%.1f%%", value);
+    }
+
+    private String formatPercentage(Double value) {
+        return value == null ? "N/A" : formatPercentage(value.doubleValue());
     }
 
     private String formatDuration(double value) {

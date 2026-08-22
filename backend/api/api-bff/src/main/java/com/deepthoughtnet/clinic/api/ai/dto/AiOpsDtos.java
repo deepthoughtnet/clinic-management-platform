@@ -42,7 +42,9 @@ public final class AiOpsDtos {
                                         OffsetDateTime createdAt) {}
 
     public record UsageSummaryResponse(long totalCalls, long successfulCalls, long failedCalls,
-                                       long inputTokens, long outputTokens, BigDecimal estimatedCost,
+                                       long inputTokens, long outputTokens,
+                                       boolean outputTokenTelemetryAvailable,
+                                       BigDecimal estimatedCost, boolean estimatedCostTelemetryAvailable,
                                        long avgLatencyMs, Map<String, Long> callsByProvider,
                                        Map<String, Long> callsByUseCase,
                                        Map<String, Long> callsByStatus) {}

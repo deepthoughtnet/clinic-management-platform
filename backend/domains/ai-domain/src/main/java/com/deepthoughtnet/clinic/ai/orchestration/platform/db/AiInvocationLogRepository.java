@@ -30,8 +30,12 @@ public interface AiInvocationLogRepository extends JpaRepository<AiInvocationLog
     long countFailed(@Param("tenantId") UUID tenantId, @Param("from") OffsetDateTime from, @Param("to") OffsetDateTime to);
 
     @Query("""
-            select coalesce(sum(l.inputTokenCount),0), coalesce(sum(l.outputTokenCount),0),
-                   coalesce(sum(l.estimatedCost),0), coalesce(avg(l.latencyMs),0)
+            select coalesce(sum(l.inputTokenCount),0),
+                   sum(l.outputTokenCount),
+                   sum(l.estimatedCost),
+                   coalesce(avg(l.latencyMs),0),
+                   count(l.outputTokenCount),
+                   count(l.estimatedCost)
             from AiInvocationLogEntity l
             where l.tenantId = :tenantId and l.createdAt between :from and :to
             """)

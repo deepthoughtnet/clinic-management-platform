@@ -60,14 +60,14 @@ public class AiOpsController {
     }
 
     @GetMapping("/prompts")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN')")
     public List<PromptDefinitionResponse> prompts() {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return promptRegistryService.list(tenantId).stream().map(this::toPromptDefinition).toList();
     }
 
     @GetMapping("/prompts/{id}")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN')")
     public PromptDefinitionDetailResponse prompt(@PathVariable UUID id) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return toPromptDetail(promptRegistryService.get(tenantId, id));
@@ -75,7 +75,7 @@ public class AiOpsController {
 
     @PostMapping("/prompts")
     @ResponseStatus(HttpStatus.CREATED)
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN')")
     public PromptDefinitionResponse createPrompt(@RequestBody CreatePromptRequest request) {
         var ctx = RequestContextHolder.require();
         UUID tenantId = RequestContextHolder.requireTenantId();
@@ -95,7 +95,7 @@ public class AiOpsController {
 
     @PostMapping("/prompts/{id}/versions")
     @ResponseStatus(HttpStatus.CREATED)
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN')")
     public PromptVersionResponse createVersion(@PathVariable UUID id, @RequestBody CreatePromptVersionRequest request) {
         var ctx = RequestContextHolder.require();
         UUID tenantId = RequestContextHolder.requireTenantId();
@@ -116,7 +116,7 @@ public class AiOpsController {
     }
 
     @PostMapping("/prompts/{id}/versions/{versionId}/activate")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN')")
     public PromptDefinitionDetailResponse activateVersion(@PathVariable UUID id, @PathVariable UUID versionId) {
         var ctx = RequestContextHolder.require();
         UUID tenantId = RequestContextHolder.requireTenantId();
@@ -124,7 +124,7 @@ public class AiOpsController {
     }
 
     @PostMapping("/prompts/{id}/versions/{versionId}/archive")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN')")
     public PromptDefinitionDetailResponse archiveVersion(@PathVariable UUID id, @PathVariable UUID versionId) {
         var ctx = RequestContextHolder.require();
         UUID tenantId = RequestContextHolder.requireTenantId();
@@ -132,14 +132,14 @@ public class AiOpsController {
     }
 
     @GetMapping("/invocations")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN')")
     public List<InvocationLogResponse> invocations() {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return invocationLogService.recent(tenantId).stream().map(this::toInvocation).toList();
     }
 
     @GetMapping("/usage/summary")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN')")
     public UsageSummaryResponse usage(
             @RequestParam(required = false) String fromDate,
             @RequestParam(required = false) String toDate,
@@ -154,7 +154,9 @@ public class AiOpsController {
                 summary.failedCalls(),
                 summary.inputTokens(),
                 summary.outputTokens(),
+                summary.outputTokenTelemetryAvailable(),
                 summary.estimatedCost(),
+                summary.estimatedCostTelemetryAvailable(),
                 summary.avgLatencyMs(),
                 summary.callsByProvider(),
                 summary.callsByUseCase(),
@@ -163,7 +165,7 @@ public class AiOpsController {
     }
 
     @GetMapping("/tools")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN')")
     public List<ToolResponse> tools() {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return toolRegistryService.list(tenantId).stream().map(row -> new ToolResponse(
@@ -174,7 +176,7 @@ public class AiOpsController {
     }
 
     @GetMapping("/guardrails")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN')")
     public List<GuardrailProfileResponse> guardrails() {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return guardrailProfileQueryService.list(tenantId).stream().map(row -> new GuardrailProfileResponse(
@@ -185,7 +187,7 @@ public class AiOpsController {
     }
 
     @GetMapping("/workflows/runs")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN')")
     public List<WorkflowRunResponse> workflowRuns() {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return workflowLogService.listRuns(tenantId).stream().map(row -> new WorkflowRunResponse(
@@ -195,7 +197,7 @@ public class AiOpsController {
     }
 
     @GetMapping("/workflows/runs/{runId}/steps")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN')")
     public List<WorkflowStepResponse> workflowSteps(@PathVariable UUID runId) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return workflowLogService.listSteps(tenantId, runId).stream().map(row -> new WorkflowStepResponse(

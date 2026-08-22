@@ -169,6 +169,9 @@ export default function AiOpsPage() {
         <div>
           <h2 style={{ margin: 0 }}>AI Ops</h2>
           <p style={{ margin: "6px 0 0", color: "#666" }}>Prompt registry, usage, invocation logs, tools, guardrails, and workflow telemetry.</p>
+          <p style={{ margin: "4px 0 0", color: "#777", fontSize: 13 }}>
+            Usage summary reflects the last 30 days. Invocation logs show the latest 20 tenant-scoped records.
+          </p>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <button onClick={() => void onCreatePrompt()}>New Prompt</button>
@@ -184,8 +187,8 @@ export default function AiOpsPage() {
         <Metric label="Successful" value={usage?.successfulCalls ?? 0} />
         <Metric label="Failed" value={usage?.failedCalls ?? 0} />
         <Metric label="Input Tokens" value={usage?.inputTokens ?? 0} />
-        <Metric label="Output Tokens" value={usage?.outputTokens ?? 0} />
-        <Metric label="Est. Cost" value={usage ? usage.estimatedCost.toFixed(4) : "0.0000"} />
+        <Metric label="Output Tokens" value={usage?.outputTokenTelemetryAvailable ? usage.outputTokens : "N/A"} />
+        <Metric label="Est. Cost" value={usage?.estimatedCostTelemetryAvailable ? usage.estimatedCost.toFixed(4) : "N/A"} />
       </div>
 
       <section>
@@ -235,7 +238,8 @@ export default function AiOpsPage() {
       </section>
 
       <section>
-        <h3>Invocation Logs (Recent)</h3>
+        <h3>Invocation Logs (Recent 20)</h3>
+        <div style={{ margin: "0 0 8px", color: "#777", fontSize: 13 }}>Showing the latest 20 records from the tenant-wide invocation feed.</div>
         <table style={{ width: "100%", borderCollapse: "collapse", border: "1px solid #ddd" }}>
           <thead><tr><th style={{ padding: 6, textAlign: "left" }}>Time</th><th style={{ padding: 6, textAlign: "left" }}>Use Case</th><th style={{ padding: 6, textAlign: "left" }}>Provider</th><th style={{ padding: 6, textAlign: "left" }}>Status</th><th style={{ padding: 6, textAlign: "left" }}>Latency</th></tr></thead>
           <tbody>

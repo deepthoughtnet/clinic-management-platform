@@ -18,19 +18,19 @@ public class VoiceTestController {
     }
 
     @GetMapping("/status")
-    @PreAuthorize("@permissionChecker.hasPermission('ai.voice.test')")
+    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN')")
     public VoiceStatusResponse status(@RequestParam(value = "warmup", defaultValue = "false") boolean warmup) {
         return voiceOrchestratorService.status(warmup);
     }
 
     @GetMapping("/live-status")
-    @PreAuthorize("@permissionChecker.hasPermission('ai.voice.test')")
+    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN')")
     public VoiceLiveStatusResponse liveStatus() {
         return voiceOrchestratorService.liveStatus();
     }
 
     @PostMapping("/test")
-    @PreAuthorize("@permissionChecker.hasPermission('ai.voice.test')")
+    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN')")
     public VoiceTestResponse test(
             @RequestParam("audio") MultipartFile audio,
             @RequestParam(value = "context", required = false) String context,
@@ -41,7 +41,7 @@ public class VoiceTestController {
     }
 
     @PostMapping("/debug/stt")
-    @PreAuthorize("@permissionChecker.hasPermission('ai.voice.test')")
+    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN')")
     public VoiceSttDebugResponse debugStt(
             @RequestParam("audio") MultipartFile audio,
             @RequestParam(value = "language", required = false) String language

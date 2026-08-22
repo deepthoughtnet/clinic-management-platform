@@ -25,7 +25,7 @@ class AiUsageSummaryServiceImplTest {
         when(repository.countCalls(tenantId, from, to)).thenReturn(12L);
         when(repository.countSuccessful(tenantId, from, to)).thenReturn(10L);
         when(repository.countFailed(tenantId, from, to)).thenReturn(2L);
-        when(repository.summarizeTotals(tenantId, from, to)).thenReturn(new Object[]{100L, 80L, BigDecimal.valueOf(4.5), 320L});
+        when(repository.summarizeTotals(tenantId, from, to)).thenReturn(new Object[]{100L, 80L, BigDecimal.valueOf(4.5), 320L, 8L, 8L});
         when(repository.groupByProvider(tenantId, from, to, null, null)).thenReturn(List.<Object[]>of(new Object[]{"GROQ", 7L}));
         when(repository.groupByUseCase(tenantId, from, to, null, null)).thenReturn(List.<Object[]>of(new Object[]{"SUMMARY", 6L}));
         when(repository.groupByStatus(tenantId, from, to, null, null)).thenReturn(List.<Object[]>of(new Object[]{"SUCCESS", 10L}));
@@ -36,7 +36,9 @@ class AiUsageSummaryServiceImplTest {
         assertEquals(12L, summary.totalCalls());
         assertEquals(100L, summary.inputTokens());
         assertEquals(80L, summary.outputTokens());
+        assertTrue(summary.outputTokenTelemetryAvailable());
         assertEquals(BigDecimal.valueOf(4.5), summary.estimatedCost());
+        assertTrue(summary.estimatedCostTelemetryAvailable());
         assertEquals(320L, summary.avgLatencyMs());
         assertEquals(7L, summary.callsByProvider().get("GROQ"));
     }
@@ -52,7 +54,7 @@ class AiUsageSummaryServiceImplTest {
         when(repository.countSuccessful(tenantId, from, to)).thenReturn(1L);
         when(repository.countFailed(tenantId, from, to)).thenReturn(0L);
         when(repository.summarizeTotals(tenantId, from, to))
-                .thenReturn(new Object[]{new Object[]{50L}, new Object[]{25L}, BigDecimal.ONE, new Object[]{120L}});
+                .thenReturn(new Object[]{new Object[]{50L}, new Object[]{25L}, BigDecimal.ONE, new Object[]{120L}, new Object[]{5L}, new Object[]{5L}});
         when(repository.groupByProvider(tenantId, from, to, null, null)).thenReturn(List.of());
         when(repository.groupByUseCase(tenantId, from, to, null, null)).thenReturn(List.of());
         when(repository.groupByStatus(tenantId, from, to, null, null)).thenReturn(List.of());
@@ -62,6 +64,7 @@ class AiUsageSummaryServiceImplTest {
 
         assertEquals(50L, summary.inputTokens());
         assertEquals(25L, summary.outputTokens());
+        assertTrue(summary.outputTokenTelemetryAvailable());
         assertEquals(120L, summary.avgLatencyMs());
     }
 
@@ -75,7 +78,7 @@ class AiUsageSummaryServiceImplTest {
         when(repository.countCalls(tenantId, from, to)).thenReturn(0L);
         when(repository.countSuccessful(tenantId, from, to)).thenReturn(0L);
         when(repository.countFailed(tenantId, from, to)).thenReturn(0L);
-        when(repository.summarizeTotals(tenantId, from, to)).thenReturn(new Object[]{null, null, null, null});
+        when(repository.summarizeTotals(tenantId, from, to)).thenReturn(new Object[]{null, null, null, null, 0L, 0L});
         when(repository.groupByProvider(tenantId, from, to, null, null)).thenReturn(List.of());
         when(repository.groupByUseCase(tenantId, from, to, null, null)).thenReturn(List.of());
         when(repository.groupByStatus(tenantId, from, to, null, null)).thenReturn(List.of());
@@ -85,7 +88,9 @@ class AiUsageSummaryServiceImplTest {
 
         assertEquals(0L, summary.inputTokens());
         assertEquals(0L, summary.outputTokens());
+        assertTrue(!summary.outputTokenTelemetryAvailable());
         assertEquals(BigDecimal.ZERO, summary.estimatedCost());
+        assertTrue(!summary.estimatedCostTelemetryAvailable());
         assertEquals(0L, summary.avgLatencyMs());
     }
 

@@ -66,6 +66,7 @@ const EMPTY_FORM: CreateTenantFormValues = {
   clinicEmail: "",
   addressLine1: "",
   addressLine2: "",
+  registrationNumber: "",
   planId: "FREE",
   adminEmail: "",
   adminFirstName: "",
@@ -185,6 +186,7 @@ export default function TenantsPage() {
         clinicEmail: values.clinicEmail || null,
         addressLine1: values.addressLine1?.trim() || null,
         addressLine2: values.addressLine2?.trim() || null,
+        registrationNumber: values.registrationNumber.trim(),
         planId: values.planId?.trim() || null,
         modules: values.modules,
         adminEmail: values.adminEmail.trim(),
@@ -475,6 +477,14 @@ export default function TenantsPage() {
                 <TextField label="Address Line 1" fullWidth {...register("addressLine1")} />
                 <TextField label="Address Line 2" fullWidth {...register("addressLine2")} />
               </Stack>
+              <TextField
+                label="Registration Number"
+                fullWidth
+                required
+                error={Boolean(errors.registrationNumber)}
+                helperText={errors.registrationNumber?.message || " "}
+                {...register("registrationNumber")}
+              />
 
               <Stack direction="row" spacing={1} alignItems="center">
                 <StoreRoundedIcon fontSize="small" />

@@ -32,7 +32,7 @@ import {
   type Consultation,
 } from "../../api/clinicApi";
 
-const ADMIN_ROLES = new Set(["PLATFORM_ADMIN", "CLINIC_ADMIN", "TENANT_ADMIN", "ADMIN"]);
+const ADMIN_ROLES = new Set(["PLATFORM_ADMIN"]);
 
 function confidenceTone(confidence: string | null | undefined) {
   const normalized = (confidence || "").toUpperCase();

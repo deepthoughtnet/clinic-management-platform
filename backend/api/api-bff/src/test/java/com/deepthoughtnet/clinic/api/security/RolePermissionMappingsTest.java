@@ -569,11 +569,13 @@ class RolePermissionMappingsTest {
         Set<String> clinicAdmin = RolePermissionMappings.permissionsForRole(Roles.CLINIC_ADMIN);
         Set<String> tenantAdmin = RolePermissionMappings.permissionsForRole(Roles.TENANT_ADMIN);
         Set<String> receptionist = RolePermissionMappings.permissionsForRole(Roles.RECEPTIONIST);
+        Set<String> platformAdmin = RolePermissionMappings.permissionsForRole(Roles.PLATFORM_ADMIN);
         Set<String> doctor = RolePermissionMappings.permissionsForRole(Roles.DOCTOR);
 
-        assertThat(clinicAdmin).contains(Permissions.AI_VOICE_TEST);
-        assertThat(tenantAdmin).contains(Permissions.AI_VOICE_TEST);
-        assertThat(receptionist).contains(Permissions.AI_VOICE_TEST);
+        assertThat(clinicAdmin).doesNotContain(Permissions.AI_VOICE_TEST);
+        assertThat(tenantAdmin).doesNotContain(Permissions.AI_VOICE_TEST);
+        assertThat(receptionist).doesNotContain(Permissions.AI_VOICE_TEST);
+        assertThat(platformAdmin).contains(Permissions.AI_VOICE_TEST);
         assertThat(doctor).doesNotContain(Permissions.AI_VOICE_TEST);
     }
 

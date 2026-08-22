@@ -44,7 +44,7 @@ public final class NotificationOperationsDtos {
             long failedCount,
             long skippedCount,
             long partialCount,
-            double successRate,
+            Double successRate,
             double averageDeliveryLatencyMs,
             long retryCount,
             long staleDeliveriesSuppressed,

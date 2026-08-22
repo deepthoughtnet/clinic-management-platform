@@ -157,9 +157,9 @@ export const MODULE_REGISTRY: Record<TenantModuleCode, ModuleDefinition> = {
   AI_COPILOT: {
     id: "AI_COPILOT",
     displayName: "AI Copilot",
-    defaultLandingPage: "/admin/ai-ops",
+    defaultLandingPage: "/platform/ai-ops",
     navigationEntries: ["ai-ops", "realtime-ai", "ai-reasoning-console"],
-    routes: ["/admin/ai-ops", "/admin/realtime-ai", "/admin/ai-reasoning-console"],
+    routes: ["/platform/ai-ops", "/platform/realtime-ai", "/platform/ai-reasoning-console"],
     dashboardWidgets: [],
     featureFlags: ["ai.voice.test"],
   },
@@ -407,6 +407,9 @@ export function isRouteAccessibleForAuth(
     if (path === "/platform/plans") return auth.rolesUpper.includes("PLATFORM_ADMIN") || auth.rolesUpper.includes("PLATFORM_TENANT_SUPPORT");
     if (path === "/platform/commercial-catalog") return auth.rolesUpper.includes("PLATFORM_ADMIN");
     if (path === "/platform/users") return auth.rolesUpper.includes("PLATFORM_ADMIN");
+    return auth.rolesUpper.includes("PLATFORM_ADMIN");
+  }
+  if (path === "/admin/integrations" || path === "/admin/ai-ops" || path === "/admin/ai-reasoning-console" || path === "/admin/platform-ops" || path === "/admin/realtime-ai" || path === "/ai/voice-test") {
     return auth.rolesUpper.includes("PLATFORM_ADMIN");
   }
   if (path.startsWith("/carepilot/")) return canAccessFeature(auth, "carepilot");

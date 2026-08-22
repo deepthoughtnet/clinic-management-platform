@@ -36,76 +36,76 @@ public class PlatformOpsController {
     }
 
     @GetMapping("/platform-health")
-    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR')")
+    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN')")
     public PlatformHealthResponse platformHealth() { return platformOpsService.platformHealth(RequestContextHolder.requireTenantId()); }
 
     @GetMapping("/schedulers")
-    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR')")
+    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN')")
     public SchedulerStatusResponse schedulers() { return platformOpsService.schedulers(RequestContextHolder.requireTenantId()); }
 
     @GetMapping("/queues")
-    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR')")
+    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN')")
     public QueueMetricsResponse queues() { return platformOpsService.queues(RequestContextHolder.requireTenantId()); }
 
     @GetMapping("/providers")
-    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR')")
+    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN')")
     public ProviderMetricsResponse providers() { return platformOpsService.providers(RequestContextHolder.requireTenantId()); }
 
     @GetMapping("/provider-slos")
-    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR')")
+    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN')")
     public ProviderSlosResponse providerSlos() { return platformOpsService.providerSlos(RequestContextHolder.requireTenantId()); }
 
     @GetMapping("/ai-metrics")
-    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR')")
+    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN')")
     public com.deepthoughtnet.clinic.api.ops.dto.PlatformOpsDtos.AiMetricsResponse aiMetrics() { return platformOpsService.aiMetrics(RequestContextHolder.requireTenantId()); }
 
     @GetMapping({"/webhooks", "/webhook-metrics"})
-    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR')")
+    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN')")
     public WebhookMetricsResponse webhooks() { return platformOpsService.webhooks(RequestContextHolder.requireTenantId()); }
 
     @GetMapping("/alerts")
-    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR')")
+    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN')")
     public OperationalAlertsResponse alerts() { return new OperationalAlertsResponse(platformOpsService.alerts(RequestContextHolder.requireTenantId())); }
 
     @GetMapping({"/alerts/rules", "/rules"})
-    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR')")
+    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN')")
     public AlertRulesResponse alertRules() { return platformOpsService.alertRules(RequestContextHolder.requireTenantId()); }
 
     @PostMapping("/alerts/{id}/acknowledge")
-    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('CLINIC_ADMIN')")
+    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN')")
     public OperationalAlertResponse acknowledge(@PathVariable UUID id) {
         var ctx = RequestContextHolder.require();
         return platformOpsService.acknowledgeAlert(ctx.tenantId().value(), id, ctx.appUserId());
     }
 
     @PostMapping("/alerts/{id}/resolve")
-    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('CLINIC_ADMIN')")
+    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN')")
     public OperationalAlertResponse resolve(@PathVariable UUID id, @RequestBody(required = false) AlertActionRequest request) {
         var ctx = RequestContextHolder.require();
         return platformOpsService.resolveAlert(ctx.tenantId().value(), id, ctx.appUserId(), request == null ? null : request.notes());
     }
 
     @PostMapping("/alerts/{id}/suppress")
-    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('CLINIC_ADMIN')")
+    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN')")
     public OperationalAlertResponse suppress(@PathVariable UUID id) {
         var ctx = RequestContextHolder.require();
         return platformOpsService.suppressAlert(ctx.tenantId().value(), id);
     }
 
     @GetMapping("/runtime/summary")
-    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR')")
+    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN')")
     public RuntimeSummaryResponse runtimeSummary() { return platformOpsService.runtimeSummary(RequestContextHolder.requireTenantId()); }
 
     @GetMapping("/runtime/errors")
-    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR')")
+    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN')")
     public RuntimeSummaryResponse runtimeErrors() { return platformOpsService.runtimeErrors(RequestContextHolder.requireTenantId()); }
 
     @GetMapping("/runtime/failures")
-    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR')")
+    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN')")
     public RuntimeSummaryResponse runtimeFailures() { return platformOpsService.runtimeFailures(RequestContextHolder.requireTenantId()); }
 
     @GetMapping("/dead-letter")
-    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR')")
+    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN')")
     public DeadLetterResponse deadLetter() {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return new DeadLetterResponse(deadLetterService.list(tenantId).stream().map(row -> new DeadLetterRow(
@@ -115,7 +115,7 @@ public class PlatformOpsController {
     }
 
     @PostMapping("/dead-letter/{id}/replay")
-    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('CLINIC_ADMIN')")
+    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN')")
     public DeadLetterRow replayDeadLetter(@PathVariable UUID id) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         var row = deadLetterService.replay(tenantId, id);

@@ -40,10 +40,14 @@ public class AdminIntegrationsStatusService {
         this.voiceProviderRegistry = voiceProviderRegistry;
     }
 
+    public List<IntegrationStatusRow> status(UUID tenantId) {
+        return status(tenantId, false);
+    }
+
     /**
      * Returns grouped integration rows for messaging/webhooks/webinar/AI-voice.
      */
-    public List<IntegrationStatusRow> status(UUID tenantId) {
+    public List<IntegrationStatusRow> status(UUID tenantId, boolean includeTechnicalDetails) {
         List<IntegrationStatusRow> rows = new ArrayList<>();
         var providers = messagingStatusService.providerStatuses();
         OffsetDateTime now = OffsetDateTime.now();
@@ -61,8 +65,8 @@ public class AdminIntegrationsStatusService {
                 p.enabled(),
                 p.configured(),
                 p.providerName(),
-                p.missingConfigurationKeys(),
-                safeHintsForMessaging(p.channel().name()),
+                includeTechnicalDetails ? p.missingConfigurationKeys() : List.of(),
+                safeHintsForMessaging(p.channel().name(), p.status(), p.enabled(), p.configured()),
                 p.message(),
                 p.lastCheckedAt(),
                 p.supportsTestSend()
@@ -74,11 +78,8 @@ public class AdminIntegrationsStatusService {
                 whatsAppProperties.isEnabled(),
                 StringUtils.hasText(whatsAppProperties.getWebhookVerifyToken()),
                 "carepilot-whatsapp-meta-cloud-api",
-                List.of("carepilot.messaging.whatsapp.webhook-verify-token"),
-                List.of(
-                        "CLINIC_CAREPILOT_WHATSAPP_WEBHOOK_VERIFY_TOKEN=<token>",
-                        "CLINIC_CAREPILOT_WHATSAPP_APP_SECRET=<secret>"
-                ),
+                includeTechnicalDetails ? List.of("carepilot.messaging.whatsapp.webhook-verify-token") : List.of(),
+                webhookGuidance("WhatsApp", whatsAppProperties.isEnabled(), StringUtils.hasText(whatsAppProperties.getWebhookVerifyToken())),
                 now
         ));
 
@@ -88,8 +89,8 @@ public class AdminIntegrationsStatusService {
                 smsProperties.isEnabled(),
                 StringUtils.hasText(smsProperties.getWebhookSecret()),
                 smsProperties.getProvider(),
-                List.of("carepilot.messaging.sms.webhook-secret"),
-                List.of("CLINIC_CAREPILOT_SMS_WEBHOOK_SECRET=<secret>"),
+                includeTechnicalDetails ? List.of("carepilot.messaging.sms.webhook-secret") : List.of(),
+                webhookGuidance("SMS", smsProperties.isEnabled(), StringUtils.hasText(smsProperties.getWebhookSecret())),
                 now
         ));
 
@@ -102,7 +103,7 @@ public class AdminIntegrationsStatusService {
                 true,
                 "external-url",
                 List.of(),
-                List.of("Store secure webinar links (HTTPS) in webinar records"),
+                List.of("External HTTPS webinar links are supported."),
                 "External webinar links are supported.",
                 now,
                 false
@@ -120,12 +121,10 @@ public class AdminIntegrationsStatusService {
                 ai.runtimeEnabled(),
                 ai.providerConfigured(),
                 ai.provider(),
-                ai.providerConfigured() ? List.of() : List.of("clinic.ai.provider", "clinic.ai.enabled"),
-                List.of(
-                        "CLINIC_AI_ENABLED=true",
-                        "CLINIC_AI_PROVIDER=gemini",
-                        "CLINIC_AI_GEMINI_API_KEY=<secret>"
-                ),
+                includeTechnicalDetails && !ai.providerConfigured() ? List.of("clinic.ai.provider", "clinic.ai.enabled") : List.of(),
+                ai.providerConfigured()
+                        ? List.of("AI provider is configured and ready.", "Provider credentials are managed securely by Platform Admin.")
+                        : List.of("AI provider is not configured.", "Platform Admin must choose a provider and provide credentials."),
                 ai.message(),
                 now,
                 false
@@ -139,8 +138,10 @@ public class AdminIntegrationsStatusService {
                 voiceProvider.isReady(),
                 voiceProvider.isReady(),
                 voiceProvider.providerName(),
-                voiceProvider.isReady() ? List.of() : List.of("carepilot.voice.mock.enabled"),
-                List.of("Enable voice provider configuration for production deployment."),
+                includeTechnicalDetails && !voiceProvider.isReady() ? List.of("carepilot.voice.mock.enabled") : List.of(),
+                voiceProvider.isReady()
+                        ? List.of("Voice provider is configured.", "Platform Admin can manage production provider settings.")
+                        : List.of("Voice provider is not configured.", "Platform Admin can enable a supported voice provider or keep the mock provider active."),
                 voiceProvider.isReady() ? "Voice provider is ready." : "Voice provider is not configured yet.",
                 now,
                 false
@@ -164,10 +165,10 @@ public class AdminIntegrationsStatusService {
         String message;
         if (!enabled) {
             status = IntegrationStatus.DISABLED;
-            message = name + " is disabled because channel is disabled.";
+            message = name + " is unavailable because the parent channel is disabled.";
         } else if (!configured) {
             status = IntegrationStatus.NOT_CONFIGURED;
-            message = name + " is enabled but secret/token configuration is missing.";
+            message = name + " requires platform setup before it can be used.";
         } else {
             status = IntegrationStatus.READY;
             message = name + " is configured.";
@@ -198,34 +199,85 @@ public class AdminIntegrationsStatusService {
                 false,
                 null,
                 List.of(),
-                List.of(),
+                List.of("Planned for a future release."),
                 "Planned for future release.",
                 now,
                 false
         );
     }
 
-    private List<String> safeHintsForMessaging(String channel) {
+    private List<String> safeHintsForMessaging(String channel, ProviderReadinessStatus status, boolean enabled, boolean configured) {
         if ("EMAIL".equals(channel)) {
+            if (status == ProviderReadinessStatus.READY) {
+                return List.of(
+                        "SMTP server configured.",
+                        "Sender address configured.",
+                        "Email delivery is ready.",
+                        "Contact Platform Admin if configuration changes are required."
+                );
+            }
             return List.of(
-                    "CLINIC_CAREPILOT_MESSAGING_EMAIL_ENABLED=true",
-                    "CLINIC_CAREPILOT_MESSAGING_EMAIL_FROM_ADDRESS=carepilot@clinic.com",
-                    "SPRING_MAIL_HOST=<smtp-host>",
-                    "SPRING_MAIL_PORT=<smtp-port>"
+                    "SMTP server configuration is incomplete.",
+                    "Configure the SMTP server and sender address.",
+                    "Contact Platform Admin to complete email setup."
             );
         }
         if ("SMS".equals(channel)) {
+            if (status == ProviderReadinessStatus.READY) {
+                return List.of(
+                        "SMS provider is configured and ready.",
+                        "SMS delivery is enabled for the tenant.",
+                        "Contact Platform Admin for provider changes."
+                );
+            }
+            if (!enabled || status == ProviderReadinessStatus.DISABLED) {
+                return List.of(
+                        "SMS provider is disabled or not configured.",
+                        "Contact Platform Admin to enable SMS delivery."
+                );
+            }
             return List.of(
-                    "CLINIC_CAREPILOT_MESSAGING_SMS_ENABLED=true",
-                    "CLINIC_CAREPILOT_MESSAGING_SMS_PROVIDER=generic-http",
-                    "CLINIC_CAREPILOT_MESSAGING_SMS_API_URL=https://provider/send"
+                    "SMS provider is not configured.",
+                    "Configure an SMS provider and sender identity.",
+                    "Contact Platform Admin to enable SMS delivery."
+            );
+        }
+        if (status == ProviderReadinessStatus.READY) {
+            return List.of(
+                    "WhatsApp provider is configured and ready.",
+                    "WhatsApp delivery is enabled for the tenant.",
+                    "Contact Platform Admin for provider changes."
+            );
+        }
+        if (!enabled || status == ProviderReadinessStatus.DISABLED) {
+            return List.of(
+                    "WhatsApp provider is disabled or not configured.",
+                    "Contact Platform Admin to complete credentials and verification."
             );
         }
         return List.of(
-                "CLINIC_CAREPILOT_MESSAGING_WHATSAPP_ENABLED=true",
-                "CLINIC_CAREPILOT_MESSAGING_WHATSAPP_PROVIDER=meta-cloud-api",
-                "CLINIC_CAREPILOT_MESSAGING_WHATSAPP_PHONE_NUMBER_ID=<id>",
-                "CLINIC_CAREPILOT_MESSAGING_WHATSAPP_BUSINESS_ACCOUNT_ID=<id>"
+                "WhatsApp provider is not configured.",
+                "Connect a supported WhatsApp Business provider and phone number.",
+                "Contact Platform Admin to complete credentials and verification."
+        );
+    }
+
+    private List<String> webhookGuidance(String channel, boolean enabled, boolean configured) {
+        if (!enabled) {
+            return List.of(
+                    channel + " webhook is unavailable because " + channel.toLowerCase() + " is disabled.",
+                    "Webhook verification must be configured by Platform Admin before use."
+            );
+        }
+        if (!configured) {
+            return List.of(
+                    channel + " webhook is not configured.",
+                    "Webhook verification must be configured by Platform Admin before use."
+            );
+        }
+        return List.of(
+                channel + " webhook is configured and ready.",
+                "Webhook verification is managed by Platform Admin."
         );
     }
 

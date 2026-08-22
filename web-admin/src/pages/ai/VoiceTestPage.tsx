@@ -453,8 +453,8 @@ function toVoiceError(err: unknown) {
 }
 
 export default function VoiceTestPage() {
-  const { accessToken, tenantId, hasPermission } = useAuth();
-  const canUseVoiceTest = hasPermission("ai.voice.test");
+  const { accessToken, tenantId, rolesUpper } = useAuth();
+  const canUseVoiceTest = rolesUpper.includes("PLATFORM_ADMIN");
 
   const [tab, setTab] = useState<VoiceTab>("file");
   const [language, setLanguage] = useState("en");

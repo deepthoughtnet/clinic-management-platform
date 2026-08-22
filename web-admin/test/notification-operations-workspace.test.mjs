@@ -41,6 +41,7 @@ test("notification operations workspace is wired into navigation, routes, tabs, 
   assert.ok(page.includes("Provider readiness"));
   assert.ok(page.includes("Operational success"));
   assert.ok(page.includes("Healthy notification deliveries"));
+  assert.ok(page.includes("No delivery data"));
   assert.ok(page.includes("Technical counts that support operational review."));
   assert.ok(page.includes("Drawer"));
   assert.ok(page.includes("Notification Operations"));
@@ -52,6 +53,13 @@ test("notification operations workspace is wired into navigation, routes, tabs, 
   assert.ok(model.includes("channelDisplayStatus"));
   assert.ok(model.includes("overallStatusLabel"));
   assert.ok(model.includes("channelSummaryLabel"));
+  assert.ok(model.includes("formatSuccessRate"));
+  assert.ok(model.includes("successRateTone"));
+  assert.ok(model.includes("successRateStatusLabel"));
+  assert.ok(model.includes("successRateDetailLabel"));
+  assert.ok(model.includes("providerOperationalSuccessRate"));
+  assert.ok(model.includes("No delivery activity in the selected period."));
+  assert.ok(model.includes("N/A"));
 
   assert.ok(nav.includes('label: "Notification Operations"'));
   assert.ok(nav.includes('path: "/admin/notification-operations"'));

@@ -30,6 +30,8 @@ public class AiUsageSummaryServiceImpl implements AiUsageSummaryService {
         long outputTokens = asLong(totals, 1);
         BigDecimal estimatedCost = asDecimal(totals, 2);
         long avgLatency = asLong(totals, 3);
+        boolean outputTokenTelemetryAvailable = hasTelemetry(totals, 4);
+        boolean estimatedCostTelemetryAvailable = hasTelemetry(totals, 5);
 
         return new AiUsageSummary(
                 totalCalls,
@@ -37,7 +39,9 @@ public class AiUsageSummaryServiceImpl implements AiUsageSummaryService {
                 failedCalls,
                 inputTokens,
                 outputTokens,
+                outputTokenTelemetryAvailable,
                 estimatedCost,
+                estimatedCostTelemetryAvailable,
                 avgLatency,
                 toMap(repository.groupByProvider(tenantId, from, to, blankToNull(provider), blankToNull(useCase))),
                 toMap(repository.groupByUseCase(tenantId, from, to, blankToNull(provider), blankToNull(useCase))),
@@ -65,6 +69,13 @@ public class AiUsageSummaryServiceImpl implements AiUsageSummaryService {
             return decimal;
         }
         return BigDecimal.valueOf(((Number) rows[idx]).doubleValue());
+    }
+
+    private boolean hasTelemetry(Object[] rows, int idx) {
+        if (rows == null || rows.length <= idx || rows[idx] == null) {
+            return false;
+        }
+        return extractLong(rows, idx, "telemetry-count") > 0L;
     }
 
     private String blankToNull(String value) {

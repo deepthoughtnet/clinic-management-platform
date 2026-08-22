@@ -40,7 +40,7 @@ test("users page exposes username employee code mobile and department", () => {
   assert.ok(source.includes("Mobile Number"));
   assert.ok(source.includes("Department"));
   assert.ok(source.includes("user.username || user.email"));
-  assert.ok(source.includes("Login ID already in use."));
+  assert.ok(source.includes("This login ID is already in use."));
   assert.ok(source.includes("This email address is already associated with a Jeevanam account."));
   assert.ok(source.includes("Please correct the highlighted account details."));
 });

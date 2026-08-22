@@ -10,26 +10,26 @@ import org.springframework.web.multipart.MultipartFile;
 class VoiceTestControllerSecurityTest {
 
     @Test
-    void testEndpointRequiresAiVoicePermission() throws Exception {
+    void testEndpointRequiresPlatformAdminRole() throws Exception {
         Method method = VoiceTestController.class.getMethod("test", MultipartFile.class, String.class, String.class, String.class);
 
         assertThat(method.getAnnotation(PreAuthorize.class).value())
-                .isEqualTo("@permissionChecker.hasPermission('ai.voice.test')");
+                .isEqualTo("@permissionChecker.hasRole('PLATFORM_ADMIN')");
     }
 
     @Test
-    void statusEndpointRequiresAiVoicePermission() throws Exception {
+    void statusEndpointRequiresPlatformAdminRole() throws Exception {
         Method method = VoiceTestController.class.getMethod("status", boolean.class);
 
         assertThat(method.getAnnotation(PreAuthorize.class).value())
-                .isEqualTo("@permissionChecker.hasPermission('ai.voice.test')");
+                .isEqualTo("@permissionChecker.hasRole('PLATFORM_ADMIN')");
     }
 
     @Test
-    void debugSttEndpointRequiresAiVoicePermission() throws Exception {
+    void debugSttEndpointRequiresPlatformAdminRole() throws Exception {
         Method method = VoiceTestController.class.getMethod("debugStt", MultipartFile.class, String.class);
 
         assertThat(method.getAnnotation(PreAuthorize.class).value())
-                .isEqualTo("@permissionChecker.hasPermission('ai.voice.test')");
+                .isEqualTo("@permissionChecker.hasRole('PLATFORM_ADMIN')");
     }
 }

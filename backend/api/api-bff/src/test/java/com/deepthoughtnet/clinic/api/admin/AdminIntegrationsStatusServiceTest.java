@@ -67,6 +67,39 @@ class AdminIntegrationsStatusServiceTest {
         assertThat(rows).anyMatch(r -> r.key().equals("webinar.zoom") && r.status().name().equals("FUTURE"));
 
         assertThat(rows.stream().flatMap(r -> r.safeConfigurationHints().stream()).toList())
-                .noneMatch(v -> v.toLowerCase().contains("access-token=") || v.toLowerCase().contains("api-key="));
+                .noneMatch(v -> v.toLowerCase().contains("access-token=") || v.toLowerCase().contains("api-key=") || v.contains("CLINIC_") || v.contains("SPRING_MAIL"));
+        assertThat(rows.stream().flatMap(r -> r.missingConfigurationKeys().stream()).toList()).isEmpty();
+        assertThat(rows.stream().flatMap(r -> r.safeConfigurationHints().stream()).toList())
+                .anyMatch(v -> v.contains("SMTP server configured"))
+                .anyMatch(v -> v.contains("SMS provider is not configured"))
+                .anyMatch(v -> v.contains("WhatsApp provider is disabled"));
+        assertThat(rows.toString()).doesNotContain("super-secret", "access-token", "api-key", "password", "bearer");
+    }
+
+    @Test
+    void technicalDetailsCanBeIncludedForPlatformRoles() {
+        UUID tenantId = UUID.randomUUID();
+        var rows = service.status(tenantId, true);
+
+        assertThat(rows.stream().flatMap(r -> r.missingConfigurationKeys().stream()).toList())
+                .anyMatch(v -> v.contains("clinic.carepilot.messaging.sms.api-url") || v.contains("carepilot.messaging.whatsapp.webhook-verify-token") || v.contains("clinic.ai.provider"));
+    }
+
+    @Test
+    void futureAndReadinessGuidanceRemainsBusinessFriendly() {
+        UUID tenantId = UUID.randomUUID();
+        var rows = service.status(tenantId);
+
+        assertThat(rows.stream().filter(row -> "webinar.external-url".equals(row.key())).findFirst())
+                .get()
+                .satisfies(row -> assertThat(row.safeConfigurationHints()).contains("External HTTPS webinar links are supported."));
+        assertThat(rows.stream().filter(row -> "ai.orchestration".equals(row.key())).findFirst())
+                .get()
+                .satisfies(row -> assertThat(row.safeConfigurationHints()).anyMatch(v -> v.contains("AI provider is configured and ready")));
+        assertThat(rows.stream().filter(row -> "voice.provider".equals(row.key())).findFirst())
+                .get()
+                .satisfies(row -> assertThat(row.safeConfigurationHints()).anyMatch(v -> v.contains("Voice provider is configured") || v.contains("Voice provider is not configured")));
+        assertThat(rows.stream().filter(row -> row.status().name().equals("FUTURE")).toList())
+                .allSatisfy(row -> assertThat(row.safeConfigurationHints()).contains("Planned for a future release."));
     }
 }

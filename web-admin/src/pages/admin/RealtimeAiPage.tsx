@@ -100,7 +100,7 @@ export default function RealtimeAiPage() {
   const [sessionType, setSessionType] = useState<RealtimeVoiceSessionType>("AI_RECEPTIONIST");
   const [userText, setUserText] = useState("");
 
-  const canManage = rolesUpper.some((role: string) => ["PLATFORM_ADMIN", "CLINIC_ADMIN", "RECEPTIONIST"].includes(role));
+  const canManage = rolesUpper.includes("PLATFORM_ADMIN");
 
   async function loadAll() {
     if (!accessToken || !tenantId) return;

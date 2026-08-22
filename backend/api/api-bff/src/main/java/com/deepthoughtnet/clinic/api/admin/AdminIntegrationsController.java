@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.api.admin;
 
 import com.deepthoughtnet.clinic.api.admin.dto.AdminIntegrationsDtos.IntegrationStatusResponse;
+import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -20,9 +21,12 @@ public class AdminIntegrationsController {
     }
 
     @GetMapping("/status")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN')")
     public IntegrationStatusResponse status() {
-        var tenantId = RequestContextHolder.requireTenantId();
-        return new IntegrationStatusResponse(integrationsStatusService.status(tenantId));
+        RequestContext context = RequestContextHolder.require();
+        var tenantId = context.tenantId().value();
+        boolean includeTechnicalDetails = context.tokenRoles() != null && context.tokenRoles().stream()
+                .anyMatch(role -> "PLATFORM_ADMIN".equalsIgnoreCase(role) || "PLATFORM_TENANT_SUPPORT".equalsIgnoreCase(role));
+        return new IntegrationStatusResponse(integrationsStatusService.status(tenantId, includeTechnicalDetails));
     }
 }

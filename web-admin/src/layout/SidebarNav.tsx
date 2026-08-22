@@ -24,6 +24,7 @@ import ReceiptLongRoundedIcon from "@mui/icons-material/ReceiptLongRounded";
 import VaccinesRoundedIcon from "@mui/icons-material/VaccinesRounded";
 import Inventory2RoundedIcon from "@mui/icons-material/Inventory2Rounded";
 import MedicationRoundedIcon from "@mui/icons-material/MedicationRounded";
+import MicRoundedIcon from "@mui/icons-material/MicRounded";
 import LocalPharmacyRoundedIcon from "@mui/icons-material/LocalPharmacyRounded";
 import PaymentsRoundedIcon from "@mui/icons-material/PaymentsRounded";
 import BarChartRoundedIcon from "@mui/icons-material/BarChartRounded";
@@ -90,12 +91,16 @@ function iconFor(key: string): React.ReactNode {
     "platform-provider-connections": <LinkRoundedIcon fontSize="small" />,
     "platform-care-access-requests": <BadgeRoundedIcon fontSize="small" />,
     "platform-provider-access-requests": <ContactPhoneRoundedIcon fontSize="small" />,
+    "platform-ops": <MonitorHeartRoundedIcon fontSize="small" />,
     "platform-plans": <AutoAwesomeMotionRoundedIcon fontSize="small" />,
     "platform-users": <GroupRoundedIcon fontSize="small" />,
     "platform-help": <DescriptionRoundedIcon fontSize="small" />,
     "platform-subscriptions": <ReceiptLongRoundedIcon fontSize="small" />,
     "platform-analytics": <BarChartRoundedIcon fontSize="small" />,
     "platform-health": <MonitorHeartRoundedIcon fontSize="small" />,
+    "ai-reasoning-console": <SmartToyRoundedIcon fontSize="small" />,
+    "realtime-ai": <SmartToyRoundedIcon fontSize="small" />,
+    "voice-test": <MicRoundedIcon fontSize="small" />,
     dashboard: <DashboardRoundedIcon fontSize="small" />,
     "pharmacy-dashboard": <LocalPharmacyRoundedIcon fontSize="small" />,
     patients: <PeopleAltRoundedIcon fontSize="small" />,
@@ -153,7 +158,7 @@ function roleDefaultExpanded(roles: Set<string>, groupKey: string): boolean {
     || roles.has("PHARMACIST")
     || roles.has("PHARMACY_INVENTORY_MANAGER")
     || roles.has("PHARMACY_POS_USER");
-  if (isPlatformAdmin) return groupKey === "platform";
+  if (isPlatformAdmin) return groupKey === "platform-administration" || groupKey === "platform-ai-operations";
   if (isBillingUser) return groupKey === "finance";
   if (isPharmacyRole) return groupKey === "pharmacy";
   if (groupKey === "operations" || groupKey === "clinical") return true;

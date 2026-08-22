@@ -85,6 +85,12 @@ function formatPathLabel(pathname: string): string {
   if (pathname === "/pharmacy/operations") return "Procurement";
   if (pathname === "/pharmacy/stock-movements") return "Reports & Audit";
   if (pathname === "/notification-center") return "My Notifications";
+  if (pathname === "/platform/integrations") return "Integrations";
+  if (pathname === "/platform/ai-ops") return "AI Ops";
+  if (pathname === "/platform/ai-reasoning-console") return "AI Reasoning Console";
+  if (pathname === "/platform/operations" || pathname === "/platform/platform-ops") return "Platform Ops";
+  if (pathname === "/platform/realtime-ai") return "Realtime AI";
+  if (pathname === "/platform/voice-test") return "Voice Test";
   if (pathname === "/carepilot/ai-operations") return "AI Operations";
   if (pathname.startsWith("/platform/tenants")) return "Platform Tenants";
   if (pathname.startsWith("/platform/commercial/subscriptions")) return "Subscriptions";

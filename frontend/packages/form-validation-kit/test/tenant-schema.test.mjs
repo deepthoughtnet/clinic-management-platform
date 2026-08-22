@@ -16,6 +16,7 @@ test("tenant schema accepts a valid payload", () => {
     clinicEmail: "clinic@example.com",
     addressLine1: "123 Main Road",
     addressLine2: "",
+    registrationNumber: "JEEVANAM-AUTO-REG-001",
     planId: "FREE",
     adminEmail: "admin@example.com",
     adminFirstName: "Admin",
@@ -26,6 +27,44 @@ test("tenant schema accepts a valid payload", () => {
   });
 
   assert.equal(result.success, true);
+});
+
+test("tenant schema rejects a blank registration number", () => {
+  const result = createTenantSchema.safeParse({
+    clinicName: "Arogia Clinic",
+    tenantCode: "arogia-clinic",
+    displayName: "Arogia Clinic",
+    city: "Pune",
+    state: "Maharashtra",
+    country: "India",
+    registrationNumber: "   ",
+    adminEmail: "admin@example.com",
+    adminFirstName: "Admin",
+    adminLastName: "User",
+    planId: "FREE",
+  });
+
+  assert.equal(result.success, false);
+  assert.match(result.error.issues.find((issue) => issue.path.join(".") === "registrationNumber")?.message || "", /required/i);
+});
+
+test("tenant schema rejects an overlong registration number", () => {
+  const result = createTenantSchema.safeParse({
+    clinicName: "Arogia Clinic",
+    tenantCode: "arogia-clinic",
+    displayName: "Arogia Clinic",
+    city: "Pune",
+    state: "Maharashtra",
+    country: "India",
+    registrationNumber: "J".repeat(129),
+    adminEmail: "admin@example.com",
+    adminFirstName: "Admin",
+    adminLastName: "User",
+    planId: "FREE",
+  });
+
+  assert.equal(result.success, false);
+  assert.ok(result.error.issues.some((issue) => issue.path.join(".") === "registrationNumber"));
 });
 
 test("tenant schema rejects a missing clinic name", () => {
@@ -55,6 +94,7 @@ test("tenant schema rejects an invalid email", () => {
     state: "Maharashtra",
     country: "India",
     clinicEmail: "not-an-email",
+    registrationNumber: "JEEVANAM-AUTO-REG-001",
     adminEmail: "admin@example.com",
     adminFirstName: "Admin",
     adminLastName: "User",
@@ -73,6 +113,7 @@ test("tenant schema rejects an invalid Indian mobile number", () => {
     city: "Pune",
     state: "Maharashtra",
     country: "India",
+    registrationNumber: "JEEVANAM-AUTO-REG-001",
     phone: "12345",
     adminEmail: "admin@example.com",
     adminFirstName: "Admin",
@@ -92,6 +133,7 @@ test("tenant schema allows optional fields to be omitted", () => {
     city: "Pune",
     state: "Maharashtra",
     country: "India",
+    registrationNumber: "JEEVANAM-AUTO-REG-001",
     adminEmail: "admin@example.com",
     adminFirstName: "Admin",
     adminLastName: "User",
