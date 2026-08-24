@@ -135,6 +135,9 @@ public class LabOrderEntity {
     @Column(name = "report_published_by_user_id")
     private UUID reportPublishedByUserId;
 
+    @Column(name = "report_verification_token", length = 64)
+    private String reportVerificationToken;
+
     @Column(name = "report_delivery_status", length = 32)
     private String reportDeliveryStatus;
 
@@ -312,6 +315,7 @@ public class LabOrderEntity {
         this.reportDeliveryStatus = reportDeliveryStatus;
         this.reportDeliveryChannels = reportDeliveryChannels;
         this.reportDeliveryNotes = reportDeliveryNotes;
+        ensureReportVerificationToken();
         this.updatedAt = this.reportGeneratedAt;
     }
 
@@ -401,6 +405,7 @@ public class LabOrderEntity {
     public String getReportFilename() { return reportFilename; }
     public OffsetDateTime getReportPublishedAt() { return reportPublishedAt; }
     public UUID getReportPublishedByUserId() { return reportPublishedByUserId; }
+    public String getReportVerificationToken() { return reportVerificationToken; }
     public String getReportDeliveryStatus() { return reportDeliveryStatus; }
     public String getReportDeliveryChannels() { return reportDeliveryChannels; }
     public String getReportDeliveryNotes() { return reportDeliveryNotes; }
@@ -419,4 +424,11 @@ public class LabOrderEntity {
     public UUID getDeliveredByUserId() { return deliveredByUserId; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
+
+    public void ensureReportVerificationToken() {
+        if (this.reportVerificationToken == null || this.reportVerificationToken.isBlank()) {
+            this.reportVerificationToken = UUID.randomUUID().toString().replace("-", "");
+            this.updatedAt = OffsetDateTime.now();
+        }
+    }
 }

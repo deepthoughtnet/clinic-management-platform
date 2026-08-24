@@ -50,6 +50,8 @@ public record LabOrderResponse(
         String sampleCollectionNotes,
         OffsetDateTime processingStartedAt,
         OffsetDateTime resultEnteredAt,
+        String resultEnteredByUserId,
+        String resultEnteredBy,
         String resultComments,
         OffsetDateTime reportGeneratedAt,
         String reportGeneratedByUserId,
@@ -57,10 +59,12 @@ public record LabOrderResponse(
         String reportFilename,
         OffsetDateTime reportPublishedAt,
         String reportPublishedByUserId,
+        String reportVerificationToken,
         String reportDeliveryStatus,
         List<String> reportDeliveryChannels,
         String reportDeliveryNotes,
         List<ReportDeliveryAuditResponse> reportDeliveryHistory,
+        List<ReportArtifactResponse> reportArtifacts,
         OffsetDateTime doctorReviewedAt,
         String doctorReviewedByUserId,
         String doctorReviewedBy,
@@ -75,6 +79,7 @@ public record LabOrderResponse(
         String labVerificationReason,
         List<LabOrderAttachmentResponse> attachments,
         List<LabOrderItemResponse> items,
+        List<OrderedTestResponse> orderedTests,
         List<LabSampleResponse> samples,
         List<LabOrderResultResponse> results,
         OffsetDateTime createdAt,
@@ -113,6 +118,72 @@ public record LabOrderResponse(
             OffsetDateTime occurredAt,
             String actorAppUserId,
             String summary
+    ) {
+    }
+
+    public record ReportArtifactResponse(
+            String id,
+            int versionNumber,
+            String reportMode,
+            String reportType,
+            String reportStatus,
+            String filename,
+            String storageReference,
+            String verificationToken,
+            String verificationUrl,
+            List<String> deliveryChannels,
+            List<String> selectedOrderedTestIds,
+            OffsetDateTime generatedAt,
+            String generatedByUserId,
+            OffsetDateTime publishedAt,
+            String publishedByUserId,
+            String supersededByArtifactId,
+            OffsetDateTime supersededAt,
+            String notes
+    ) {
+    }
+
+    public record OrderedTestSpecimenResponse(
+            String labOrderSampleId,
+            String accessionNumber,
+            String barcodeValue,
+            String specimenType,
+            String containerType,
+            String sampleStatus,
+            boolean active,
+            OffsetDateTime collectedAt,
+            OffsetDateTime receivedAt,
+            OffsetDateTime linkedAt,
+            OffsetDateTime unlinkedAt
+    ) {
+    }
+
+    public record OrderedTestResponse(
+            String labOrderItemId,
+            String labTestId,
+            String testCode,
+            String testName,
+            String category,
+            String department,
+            String sampleType,
+            String unit,
+            String referenceRange,
+            String turnaroundTime,
+            BigDecimal price,
+            int sortOrder,
+            String state,
+            int latestResultRevision,
+            String latestVerificationDecision,
+            OffsetDateTime latestVerificationAt,
+            String latestVerificationBy,
+            Integer latestPublicationArtifactNumber,
+            OffsetDateTime latestPublicationAt,
+            String latestPublicationBy,
+            List<String> publicationChannels,
+            String latestResultSnapshotJson,
+            OffsetDateTime latestResultEnteredAt,
+            String latestResultEnteredBy,
+            List<OrderedTestSpecimenResponse> specimenLinks
     ) {
     }
 

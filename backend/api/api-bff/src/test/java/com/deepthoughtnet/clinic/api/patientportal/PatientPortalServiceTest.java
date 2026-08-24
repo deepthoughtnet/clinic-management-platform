@@ -26,6 +26,8 @@ import com.deepthoughtnet.clinic.api.lab.service.LabService;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderResultRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderStatusRecord;
+import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderedTestRecord;
+import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderedTestSpecimenRecord;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalAppointmentBookingRequest;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalAppointmentConfirmationResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorSlotResponse;
@@ -1473,6 +1475,8 @@ class PatientPortalServiceTest {
                 null,
                 now,
                 null,
+                null,
+                null,
                 status == LabOrderStatusRecord.DOCTOR_REVIEWED ? now : null,
                 null,
                 null,
@@ -1480,8 +1484,10 @@ class PatientPortalServiceTest {
                 status == LabOrderStatusRecord.REPORT_GENERATED ? now : null,
                 null,
                 status == LabOrderStatusRecord.REPORT_GENERATED ? "PUBLISHED" : null,
+                null,
                 status == LabOrderStatusRecord.REPORT_GENERATED ? List.of("PATIENT_PORTAL") : List.of(),
                 null,
+                List.of(),
                 status == LabOrderStatusRecord.DOCTOR_REVIEWED ? now : null,
                 null,
                 null,
@@ -1496,6 +1502,45 @@ class PatientPortalServiceTest {
                 null,
                 List.of(),
                 List.of(),
+                List.of(new LabOrderedTestRecord(
+                        UUID.randomUUID(),
+                        UUID.randomUUID(),
+                        "CBC",
+                        "Complete Blood Count",
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        BigDecimal.ONE,
+                        1,
+                        "VERIFIED",
+                        1,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        List.of(),
+                        null,
+                        null,
+                        null,
+                        List.of(new LabOrderedTestSpecimenRecord(
+                                UUID.randomUUID(),
+                                "ACC-001",
+                                "BAR-001",
+                                "Blood",
+                                null,
+                                "COLLECTED",
+                                true,
+                                now,
+                                now,
+                                now,
+                                null
+                        ))
+                )),
                 List.of(),
                 List.of(result),
                 now.minusDays(1),

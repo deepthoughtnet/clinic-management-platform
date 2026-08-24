@@ -15,11 +15,18 @@ test("lab sample collection auto-fills collected by and offers configured contai
   assert.ok(source.includes('const [sampleCollectionStatus, setSampleCollectionStatus] = React.useState<SampleCollectionStatus>("Collected");'));
   assert.ok(source.includes('setSampleCollectedBy(auth.username || auth.appUserId || "");'));
   assert.ok(source.includes('setSampleCollectionStatus("Collected");'));
+  assert.ok(source.includes('const sampleCollectingRef = React.useRef(false);'));
+  assert.ok(source.includes('const closeSampleDialog = React.useCallback(() => {'));
+  assert.ok(source.includes('const resetSampleDialogState = React.useCallback(() => {'));
+  assert.ok(!source.includes('const canCollectSample = canUseLabReception || auth.hasPermission("lab.order.collect_sample");'));
   assert.ok(!source.includes('collectedBy: sampleCollectedBy.trim() || auth.username || auth.appUserId || null,'));
+  assert.ok(source.includes('setSampleSuccessMessage('));
+  assert.ok(source.includes('setSampleSuccessMessage(null);'));
   assert.ok(source.includes('InputProps={{ readOnly: true }}'));
   assert.ok(source.includes('Auto-populated from the signed-in user and sent by the server audit trail.'));
   assert.ok(source.includes('<MenuItem value="">Select container type</MenuItem>'));
   assert.ok(source.includes('label="Collection Status"'));
+  assert.ok(source.includes('disabled={saving || sampleCollectingRef.current || !sampleTarget}'));
 });
 
 test("lab order rows show compact sample audit chips", () => {
@@ -27,6 +34,9 @@ test("lab order rows show compact sample audit chips", () => {
   assert.ok(source.includes('Collected by: ${row.sampleCollectedBy || row.sampleCollectedByUserId || "—"}'));
   assert.ok(source.includes('Date: ${formatDateChip(row.sampleCollectedAt)}'));
   assert.ok(source.includes('Time: ${formatTimeChip(row.sampleCollectedAt)}'));
+  assert.ok(source.includes('Tests: {sampleLinkedTestsLabel(sample)}'));
+  assert.ok(source.includes('row.samples.length > 1 ? ('));
+  assert.ok(source.includes('Linked tests: {row.linkedTestNames.join(", ")}'));
 });
 
 test("dashboard counters still route into the correct work queues", () => {

@@ -8,7 +8,8 @@ import jakarta.validation.constraints.Size;
 
 public record LabOrderResultRequest(
         @NotEmpty List<LabOrderResultItemRequest> items,
-        @Size(max = 250) String comments
+        @Size(max = 250) String comments,
+        List<UUID> orderedTestIds
 ) {
     public record LabOrderResultItemRequest(
             @NotNull UUID labOrderItemId,

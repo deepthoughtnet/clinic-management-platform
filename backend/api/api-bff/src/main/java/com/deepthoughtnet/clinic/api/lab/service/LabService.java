@@ -19,11 +19,16 @@ import com.deepthoughtnet.clinic.api.lab.db.LabTestParameterEntity;
 import com.deepthoughtnet.clinic.api.lab.db.LabTestParameterRepository;
 import com.deepthoughtnet.clinic.api.lab.LabCatalogueConfigService;
 import com.deepthoughtnet.clinic.api.lab.LabCategoryCatalog;
+import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
 import com.deepthoughtnet.clinic.api.clinicaldocument.service.ClinicalDocumentService;
 import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
+import com.deepthoughtnet.clinic.api.lab.dto.LabReportVerificationResponse;
+import com.deepthoughtnet.clinic.api.lab.service.LabReportVerificationProperties;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderCreateCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderDirectCreateCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderDoctorReviewCommand;
+import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderedTestRecord;
+import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderedTestSpecimenRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderPublishReportCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderItemRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderResultComponentCommand;
@@ -70,11 +75,18 @@ import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
 import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
 import com.deepthoughtnet.clinic.patient.db.PatientEntity;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
+import com.deepthoughtnet.clinic.platform.audit.AuditEventQueryService;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventCommand;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
+import com.deepthoughtnet.clinic.platform.audit.AuditEventRecord;
 import com.deepthoughtnet.clinic.platform.branding.BrandingProperties;
 import com.deepthoughtnet.clinic.platform.modulith.events.ModuleBusinessEventPublisher;
 import com.deepthoughtnet.clinic.platform.modulith.events.model.LabReportPublishedEvent;
+import com.deepthoughtnet.clinic.laboratory.service.model.LaboratoryOrderedTestView;
+import com.deepthoughtnet.clinic.laboratory.service.LaboratoryWorkflowService;
+import com.deepthoughtnet.clinic.laboratory.db.LaboratoryReportPublicationArtifactEntity;
+import com.deepthoughtnet.clinic.laboratory.service.model.LaboratoryReportArtifactView;
+import com.deepthoughtnet.clinic.laboratory.service.model.LaboratoryResultRevisionCommand;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
@@ -86,20 +98,32 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.Collection;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.Objects;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.awt.image.BufferedImage;
 import javax.imageio.ImageIO;
+import com.google.zxing.BarcodeFormat;
+import com.google.zxing.EncodeHintType;
+import com.google.zxing.WriterException;
+import com.google.zxing.common.BitMatrix;
+import com.google.zxing.qrcode.QRCodeWriter;
+import com.google.zxing.client.j2se.MatrixToImageWriter;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
@@ -150,14 +174,18 @@ public class LabService {
     private final TenantUserManagementService tenantUserManagementService;
     private final BillingService billingService;
     private final ClinicProfileService clinicProfileService;
+    private final ClinicTimeZoneResolver clinicTimeZoneResolver;
     private final ClinicalDocumentService clinicalDocumentService;
     private final ObjectStorageService objectStorageService;
     private final LabNotificationService labNotificationService;
     private final ModuleBusinessEventPublisher moduleBusinessEventPublisher;
+    private final AuditEventQueryService auditEventQueryService;
     private final AuditEventPublisher auditEventPublisher;
     private final ObjectMapper objectMapper;
     private final BrandingProperties brandingProperties;
+    private final LabReportVerificationProperties labReportVerificationProperties;
     private final LabCatalogueConfigService labCatalogueConfigService;
+    private final LaboratoryWorkflowService laboratoryWorkflowService;
     private final TransactionTemplate requiresNewTransactionTemplate;
 
     public LabService(
@@ -173,14 +201,18 @@ public class LabService {
             TenantUserManagementService tenantUserManagementService,
             BillingService billingService,
             ClinicProfileService clinicProfileService,
+            ClinicTimeZoneResolver clinicTimeZoneResolver,
             ClinicalDocumentService clinicalDocumentService,
             ObjectStorageService objectStorageService,
             LabNotificationService labNotificationService,
             ModuleBusinessEventPublisher moduleBusinessEventPublisher,
+            AuditEventQueryService auditEventQueryService,
             AuditEventPublisher auditEventPublisher,
             ObjectMapper objectMapper,
             BrandingProperties brandingProperties,
+            LabReportVerificationProperties labReportVerificationProperties,
             LabCatalogueConfigService labCatalogueConfigService,
+            LaboratoryWorkflowService laboratoryWorkflowService,
             PlatformTransactionManager platformTransactionManager
     ) {
         this.labTestMasterRepository = labTestMasterRepository;
@@ -195,14 +227,18 @@ public class LabService {
         this.tenantUserManagementService = tenantUserManagementService;
         this.billingService = billingService;
         this.clinicProfileService = clinicProfileService;
+        this.clinicTimeZoneResolver = clinicTimeZoneResolver;
         this.clinicalDocumentService = clinicalDocumentService;
         this.objectStorageService = objectStorageService;
         this.labNotificationService = labNotificationService;
         this.moduleBusinessEventPublisher = moduleBusinessEventPublisher;
+        this.auditEventQueryService = auditEventQueryService;
         this.auditEventPublisher = auditEventPublisher;
         this.objectMapper = objectMapper;
         this.brandingProperties = brandingProperties;
+        this.labReportVerificationProperties = labReportVerificationProperties;
         this.labCatalogueConfigService = labCatalogueConfigService;
+        this.laboratoryWorkflowService = laboratoryWorkflowService;
         this.requiresNewTransactionTemplate = new TransactionTemplate(platformTransactionManager);
         this.requiresNewTransactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
@@ -470,8 +506,13 @@ public class LabService {
         order.markPaymentCollected();
         order.markReadyForCollection();
         LabOrderEntity saved = labOrderRepository.save(order);
+        synchronizeAggregateStatus(tenantId, saved, actorAppUserId);
         auditOrder(tenantId, saved, "lab_order.payment_collected", actorAppUserId, "Collected lab order payment");
         return new LabOrderPaymentRecord(toRecord(tenantId, saved), payment);
+    }
+
+    public String receivedByDisplayLabel(UUID tenantId, UUID receivedByAppUserId) {
+        return billingService.receivedByDisplayLabel(tenantId, receivedByAppUserId);
     }
 
     @Transactional(readOnly = true)
@@ -501,7 +542,7 @@ public class LabService {
                 receipt.amount(),
                 payment == null ? null : payment.paymentMode(),
                 payment == null ? null : payment.referenceNumber(),
-                payment == null || payment.receivedBy() == null ? null : payment.receivedBy().toString(),
+                payment == null ? null : receivedByDisplayLabel(tenantId, payment.receivedBy()),
                 collectedAt,
                 printUrl,
                 printUrl
@@ -531,8 +572,9 @@ public class LabService {
         requireId(orderId, "orderId");
         labOrderRepository.findByTenantIdAndId(tenantId, orderId)
                 .orElseThrow(() -> new IllegalArgumentException("Lab order not found"));
+        Map<UUID, SampleLinkSummary> sampleLinkSummaries = buildSampleLinkSummaries(tenantId, orderId);
         return labOrderSampleRepository.findByTenantIdAndLabOrderIdOrderByCollectedAtAscCreatedAtAsc(tenantId, orderId).stream()
-                .map(this::toRecord)
+                .map(sample -> toRecord(sample, sampleLinkSummaries.get(sample.getId())))
                 .toList();
     }
 
@@ -551,6 +593,7 @@ public class LabService {
         Map<UUID, LabOrderItemEntity> orderItems = labOrderItemRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAsc(tenantId, orderId).stream()
                 .collect(Collectors.toMap(LabOrderItemEntity::getId, Function.identity(), (left, right) -> left, LinkedHashMap::new));
         List<LabOrderSampleEntity> entities = new ArrayList<>();
+        List<SampleCollectionGroup> groupedCommands = new ArrayList<>();
         HashSet<String> reservedAccessions = new HashSet<>();
         OffsetDateTime firstCollectedAt = null;
         String firstSpecimenType = null;
@@ -563,22 +606,56 @@ public class LabService {
                 throw new IllegalArgumentException("Unknown lab order item for sample collection");
             }
             String specimenType = normalize(command.specimenType());
+            OffsetDateTime collectedAt = command.collectedAt() == null ? OffsetDateTime.now() : command.collectedAt();
+            SampleCollectionGroup group = groupedCommands.stream()
+                    .filter(existing -> existing.matches(specimenType, normalizeNullable(command.containerType()), collectedAt, normalizeNullable(command.notes())))
+                    .findFirst()
+                    .orElseGet(() -> {
+                        SampleCollectionGroup created = new SampleCollectionGroup(
+                                specimenType,
+                                normalizeNullable(command.containerType()),
+                                collectedAt,
+                                normalizeNullable(command.notes())
+                        );
+                        groupedCommands.add(created);
+                        return created;
+                    });
+            if (command.labOrderItemId() == null) {
+                group.assignToAllOrderItems = true;
+            } else {
+                group.linkedOrderItemIds.add(command.labOrderItemId());
+            }
+            if (firstCollectedAt == null || collectedAt.isBefore(firstCollectedAt)) {
+                firstCollectedAt = collectedAt;
+                firstSpecimenType = specimenType;
+                firstNotes = normalizeNullable(command.notes());
+                firstCollectedBy = actorAppUserId;
+            }
+        }
+        Map<UUID, SampleLinkSummary> sampleLinkSummaries = new LinkedHashMap<>();
+        for (SampleCollectionGroup group : groupedCommands) {
+            List<UUID> linkedOrderItemIds = group.assignToAllOrderItems
+                    ? new ArrayList<>(orderItems.keySet())
+                    : new ArrayList<>(group.linkedOrderItemIds);
+            if (linkedOrderItemIds.isEmpty()) {
+                linkedOrderItemIds = new ArrayList<>(orderItems.keySet());
+            }
+            UUID primaryOrderItemId = linkedOrderItemIds.size() == 1 ? linkedOrderItemIds.getFirst() : null;
             LabOrderSampleEntity savedSample = null;
             for (int attempt = 0; attempt < 5; attempt++) {
                 String accessionNumber = generateAccessionNumber(tenantId, reservedAccessions);
                 String barcodeValue = generateBarcodeValue(accessionNumber);
-                OffsetDateTime collectedAt = command.collectedAt() == null ? OffsetDateTime.now() : command.collectedAt();
                 LabOrderSampleEntity entity = LabOrderSampleEntity.create(
                         tenantId,
                         orderId,
-                        command.labOrderItemId(),
+                        primaryOrderItemId,
                         accessionNumber,
                         barcodeValue,
-                        specimenType,
-                        normalizeNullable(command.containerType()),
-                        collectedAt,
+                        group.specimenType,
+                        group.containerType,
+                        group.collectedAt,
                         actorAppUserId,
-                        normalizeNullable(command.notes()),
+                        group.notes,
                         actorAppUserId
                 );
                 try {
@@ -595,12 +672,26 @@ public class LabService {
             }
             reservedAccessions.add(savedSample.getAccessionNumber());
             entities.add(savedSample);
-            if (firstCollectedAt == null || savedSample.getCollectedAt().isBefore(firstCollectedAt)) {
-                firstCollectedAt = savedSample.getCollectedAt();
-                firstSpecimenType = specimenType;
-                firstNotes = savedSample.getNotes();
-                firstCollectedBy = savedSample.getCollectedBy();
-            }
+            laboratoryWorkflowService.linkSpecimenToTests(
+                    tenantId,
+                    orderId,
+                    savedSample.getId(),
+                    linkedOrderItemIds,
+                    savedSample.getAccessionNumber(),
+                    savedSample.getBarcodeValue(),
+                    savedSample.getSpecimenType(),
+                    savedSample.getContainerType(),
+                    savedSample.getStatus() == null ? null : savedSample.getStatus().name(),
+                    savedSample.getCollectedAt(),
+                    savedSample.getReceivedAt(),
+                    actorAppUserId
+            );
+            List<String> linkedTestNames = linkedOrderItemIds.stream()
+                    .map(orderItems::get)
+                    .filter(Objects::nonNull)
+                    .map(LabOrderItemEntity::getTestName)
+                    .toList();
+            sampleLinkSummaries.put(savedSample.getId(), new SampleLinkSummary(new ArrayList<>(linkedOrderItemIds), new ArrayList<>(linkedTestNames)));
         }
         order.markSampleCollected(
                 firstCollectedAt,
@@ -610,6 +701,7 @@ public class LabService {
                 firstNotes
         );
         LabOrderEntity saved = labOrderRepository.save(order);
+        synchronizeAggregateStatus(tenantId, saved, actorAppUserId);
         auditOrder(tenantId, saved, "lab_order.sample_collected", actorAppUserId, "Collected lab sample");
         for (LabOrderSampleEntity sample : entities) {
             auditSample(tenantId, sample, "lab_sample.accession_generated", actorAppUserId, "Generated accession number");
@@ -624,7 +716,9 @@ public class LabService {
                 saved.getDoctorName(),
                 actorAppUserId
         );
-        return entities.stream().map(this::toRecord).toList();
+        return entities.stream()
+                .map(sample -> toRecord(sample, sampleLinkSummaries.get(sample.getId())))
+                .toList();
     }
 
     @Transactional
@@ -640,7 +734,7 @@ public class LabService {
         sample.markReceived(command == null ? null : command.receivedAt(), receivedBy, actorAppUserId);
         LabOrderSampleEntity saved = labOrderSampleRepository.save(sample);
         auditSample(tenantId, saved, "lab_sample.received", actorAppUserId, "Received lab sample");
-        return toRecord(saved);
+        return toRecord(saved, buildSampleLinkSummaries(tenantId, saved.getLabOrderId()).get(saved.getId()));
     }
 
     @Transactional
@@ -653,11 +747,19 @@ public class LabService {
         if (sample.getStatus() != LabSampleStatus.COLLECTED && sample.getStatus() != LabSampleStatus.RECEIVED) {
             throw new IllegalArgumentException("Lab sample cannot be rejected in its current state");
         }
-        ensureNoResultsEnteredForSample(tenantId, sample);
+        Map<UUID, SampleLinkSummary> sampleLinkSummaries = buildSampleLinkSummaries(tenantId, sample.getLabOrderId());
+        SampleLinkSummary summary = sampleLinkSummaries.getOrDefault(sample.getId(), SampleLinkSummary.empty());
+        ensureNoResultsEnteredForSample(tenantId, sample, summary);
         sample.markRejected(normalize(command.rejectionReason()), command.recollectionRequired(), normalizeNullable(command.notes()), actorAppUserId);
         LabOrderSampleEntity savedSample = labOrderSampleRepository.save(sample);
         LabOrderEntity order = labOrderRepository.findByTenantIdAndId(tenantId, sample.getLabOrderId())
                 .orElseThrow(() -> new IllegalArgumentException("Lab order not found"));
+        List<UUID> affectedItemIds = summary.linkedLabOrderItemIds().isEmpty()
+                ? (sample.getLabOrderItemId() == null
+                        ? labOrderItemRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAsc(tenantId, order.getId()).stream().map(LabOrderItemEntity::getId).toList()
+                        : List.of(sample.getLabOrderItemId()))
+                : summary.linkedLabOrderItemIds();
+        laboratoryWorkflowService.rejectSpecimenForTests(tenantId, order.getId(), savedSample.getId(), affectedItemIds, actorAppUserId);
         if (savedSample.getStatus() == LabSampleStatus.RECOLLECTION_REQUIRED) {
             boolean allNeedRecollection = labOrderSampleRepository.findByTenantIdAndLabOrderIdOrderByCollectedAtAscCreatedAtAsc(tenantId, order.getId()).stream()
                     .allMatch(existing -> existing.getStatus() == LabSampleStatus.RECOLLECTION_REQUIRED || existing.getStatus() == LabSampleStatus.REJECTED);
@@ -669,7 +771,7 @@ public class LabService {
         } else {
             auditSample(tenantId, savedSample, "lab_sample.rejected", actorAppUserId, "Rejected lab sample");
         }
-        return toRecord(savedSample);
+        return toRecord(savedSample, sampleLinkSummaries.get(savedSample.getId()));
     }
 
     @Transactional
@@ -679,32 +781,55 @@ public class LabService {
         validateResults(command);
         LabOrderEntity order = labOrderRepository.findByTenantIdAndId(tenantId, orderId)
                 .orElseThrow(() -> new IllegalArgumentException("Lab order not found"));
-        if (order.getStatus() == LabOrderStatus.REPORT_READY
+        if (order.getStatus() == LabOrderStatus.DOCTOR_REVIEWED
+                || order.getStatus() == LabOrderStatus.REPORT_READY
                 || order.getStatus() == LabOrderStatus.REPORT_GENERATED
                 || order.getStatus() == LabOrderStatus.DELIVERED) {
             throw new IllegalArgumentException("Results are verified and cannot be edited. Use amendment workflow in a future release.");
         }
-        if (order.getStatus() != LabOrderStatus.SAMPLE_COLLECTED
-                && order.getStatus() != LabOrderStatus.PROCESSING
-                && order.getStatus() != LabOrderStatus.RESULT_ENTERED
-                && order.getStatus() != LabOrderStatus.DOCTOR_REVIEWED) {
-            throw new IllegalArgumentException("Lab order is not ready for result entry");
-        }
-        if (order.getStatus() == LabOrderStatus.DOCTOR_REVIEWED) {
-            throw new IllegalArgumentException("Lab order has already been reviewed and cannot be edited");
-        }
         List<LabOrderSampleEntity> orderSamples = labOrderSampleRepository.findByTenantIdAndLabOrderIdOrderByCollectedAtAscCreatedAtAsc(tenantId, orderId);
-        if (!orderSamples.isEmpty()) {
-            boolean hasUsableSample = orderSamples.stream().anyMatch(sample -> sample.getStatus() == LabSampleStatus.COLLECTED || sample.getStatus() == LabSampleStatus.RECEIVED);
-            if (!hasUsableSample) {
-                throw new IllegalArgumentException("Lab order requires recollection before result entry");
-            }
+        boolean hasReceivedSample = orderSamples.stream().anyMatch(sample -> sample.getStatus() == LabSampleStatus.RECEIVED);
+        if (!hasReceivedSample) {
+            throw new IllegalArgumentException("A received sample is required before result entry");
         }
-        LabOrderStatus previousStatus = order.getStatus();
         Map<UUID, LabOrderItemEntity> orderItems = labOrderItemRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAsc(tenantId, orderId).stream()
                 .collect(Collectors.toMap(LabOrderItemEntity::getId, Function.identity(), (a, b) -> a, LinkedHashMap::new));
+        Map<UUID, SampleLinkSummary> sampleLinkSummaries = buildSampleLinkSummaries(tenantId, orderId);
+        List<LaboratoryOrderedTestView> lifecycleViews = laboratoryWorkflowService.listOrderTests(tenantId, orderId);
+        Map<UUID, LaboratoryOrderedTestView> lifecycleByItemId = lifecycleViews.stream()
+                .filter(view -> view.labOrderItemId() != null)
+                .collect(Collectors.toMap(
+                        LaboratoryOrderedTestView::labOrderItemId,
+                        Function.identity(),
+                        (left, right) -> left,
+                        LinkedHashMap::new
+                ));
+        List<UUID> selectedTestIds = command.orderedTestIds() == null ? List.of() : command.orderedTestIds().stream().filter(Objects::nonNull).distinct().toList();
+        List<UUID> editableTestIds = selectedTestIds.isEmpty()
+                ? selectEditableTestsForResultEntry(orderItems.values(), lifecycleViews)
+                : validateSelectedTestsForResultEntry(selectedTestIds, lifecycleByItemId);
+        if (editableTestIds.isEmpty()) {
+            throw new IllegalArgumentException("Lab order has no editable tests for result entry");
+        }
+        LabOrderStatus previousStatus = order.getStatus();
         if (orderItems.isEmpty()) {
             throw new IllegalArgumentException("Lab order has no ordered tests");
+        }
+        Map<UUID, LabOrderResultItemCommand> itemCommandById = command.items().stream()
+                .filter(item -> item != null && item.labOrderItemId() != null)
+                .collect(Collectors.toMap(
+                        LabOrderResultItemCommand::labOrderItemId,
+                        Function.identity(),
+                        (left, right) -> left,
+                        LinkedHashMap::new
+                ));
+        for (UUID selectedTestId : editableTestIds) {
+            if (!itemCommandById.containsKey(selectedTestId)) {
+                throw new IllegalArgumentException("Missing result payload for selected test");
+            }
+        }
+        for (UUID selectedTestId : editableTestIds) {
+            ensureUsableSampleForOrderItem(orderSamples, sampleLinkSummaries, selectedTestId);
         }
         Map<UUID, List<LabTestParameterEntity>> parametersByTestId = orderItems.values().stream()
                 .filter(item -> item.getLabTestId() != null)
@@ -714,16 +839,27 @@ public class LabService {
                         (left, right) -> left,
                         LinkedHashMap::new
                 ));
-        labOrderResultRepository.deleteByTenantIdAndLabOrderId(tenantId, orderId);
+        List<LabOrderResultEntity> currentResults = labOrderResultRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAscCreatedAtAsc(tenantId, orderId);
+        Map<UUID, List<LabOrderResultEntity>> currentResultsByItem = currentResults.stream()
+                .filter(result -> result.getLabOrderItemId() != null)
+                .collect(Collectors.groupingBy(LabOrderResultEntity::getLabOrderItemId, LinkedHashMap::new, Collectors.toList()));
+        labOrderResultRepository.deleteByTenantIdAndLabOrderItemIdIn(tenantId, editableTestIds);
         List<LabOrderResultEntity> persistedResults = new ArrayList<>();
         List<String> criticalLabels = new ArrayList<>();
-        int sortOrder = 1;
-        for (LabOrderResultItemCommand itemCommand : command.items()) {
-            LabOrderItemEntity orderItem = orderItems.get(itemCommand.labOrderItemId());
+        int sortOrder = currentResults.stream()
+                .map(LabOrderResultEntity::getSortOrder)
+                .filter(Objects::nonNull)
+                .mapToInt(Integer::intValue)
+                .max()
+                .orElse(0) + 1;
+        for (UUID selectedTestId : editableTestIds) {
+            LabOrderItemEntity orderItem = orderItems.get(selectedTestId);
             if (orderItem == null) {
                 throw new IllegalArgumentException("Unknown lab order item in results payload");
             }
-            ensureUsableSampleForOrderItem(orderSamples, orderItem.getId());
+            LabOrderResultItemCommand itemCommand = itemCommandById.get(selectedTestId);
+            List<LabOrderResultEntity> existingRows = currentResultsByItem.getOrDefault(selectedTestId, List.of());
+            int rowSortOrder = sortOrder;
             List<LabOrderResultComponentCommand> components = itemCommand.componentResults() == null ? List.of() : itemCommand.componentResults();
             if (!components.isEmpty()) {
                 for (LabOrderResultComponentCommand component : components) {
@@ -744,7 +880,7 @@ public class LabService {
                             normalizeNullable(component.resultValue()),
                             normalizeNullable(component.unit()),
                             normalizeNullable(component.referenceRange()),
-                            sortOrder++,
+                            rowSortOrder++,
                             resolution.flag().name(),
                             resolution.critical()
                     ));
@@ -767,16 +903,35 @@ public class LabService {
                         normalizeNullable(itemCommand.resultValue()),
                         normalizeNullable(itemCommand.unit()),
                         normalizeNullable(itemCommand.referenceRange()),
-                        sortOrder++,
+                        rowSortOrder,
                         resolution.flag().name(),
                         resolution.critical()
                 ));
+                rowSortOrder++;
             }
+            sortOrder = rowSortOrder;
         }
         labOrderResultRepository.saveAll(persistedResults);
+        laboratoryWorkflowService.initializeOrderTests(tenantId, orderId, orderItems.keySet(), actorAppUserId);
+        Map<UUID, List<LabOrderResultEntity>> resultsByItem = persistedResults.stream()
+                .collect(Collectors.groupingBy(LabOrderResultEntity::getLabOrderItemId, LinkedHashMap::new, Collectors.toList()));
+        List<LaboratoryResultRevisionCommand> revisionCommands = resultsByItem.entrySet().stream()
+                .map(entry -> new LaboratoryResultRevisionCommand(
+                        entry.getKey(),
+                        entry.getValue().isEmpty() ? null : entry.getValue().getFirst().getId(),
+                        0,
+                        serializeResultSnapshot(entry.getValue()),
+                        normalizeNullable(command.comments()),
+                        "SUBMITTED",
+                        OffsetDateTime.now(ZoneOffset.UTC),
+                        actorAppUserId
+                ))
+                .toList();
+        laboratoryWorkflowService.recordResultRevisions(tenantId, orderId, revisionCommands, actorAppUserId);
         order.markProcessingStarted();
         order.markResultsEntered(normalizeNullable(command.comments()));
         LabOrderEntity saved = labOrderRepository.save(order);
+        synchronizeAggregateStatus(tenantId, saved, actorAppUserId);
         String resultAuditAction = previousStatus == LabOrderStatus.RESULT_ENTERED ? "lab_order.results_updated_before_verification" : "lab_order.results_entered";
         auditOrder(tenantId, saved, resultAuditAction, actorAppUserId, "Entered lab results");
         if (!criticalLabels.isEmpty()) {
@@ -802,9 +957,6 @@ public class LabService {
         validateVerification(command);
         LabOrderEntity order = labOrderRepository.findByTenantIdAndId(tenantId, orderId)
                 .orElseThrow(() -> new IllegalArgumentException("Lab order not found"));
-        if (order.getStatus() != LabOrderStatus.RESULT_ENTERED) {
-            throw new IllegalArgumentException("Lab order is not ready for verification");
-        }
         List<LabOrderResultEntity> results = labOrderResultRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAscCreatedAtAsc(tenantId, orderId);
         if (results.isEmpty()) {
             throw new IllegalArgumentException("Lab order has no result values to verify");
@@ -815,12 +967,40 @@ public class LabService {
             throw new IllegalArgumentException("Lab order requires a valid sample before verification");
         }
         String decision = normalizeReviewDecision(command.decision());
+        List<LaboratoryOrderedTestView> lifecycleViews = laboratoryWorkflowService.listOrderTests(tenantId, orderId);
+        Map<UUID, LaboratoryOrderedTestView> lifecycleByItemId = lifecycleViews.stream()
+                .filter(view -> view.labOrderItemId() != null)
+                .collect(Collectors.toMap(
+                        LaboratoryOrderedTestView::labOrderItemId,
+                        Function.identity(),
+                        (left, right) -> left,
+                        LinkedHashMap::new
+                ));
+        List<UUID> selectedTestIds = command.orderedTestIds() == null ? List.of() : command.orderedTestIds().stream().filter(Objects::nonNull).distinct().toList();
+        List<UUID> eligibleTestIds = selectedTestIds.isEmpty()
+                ? selectEligibleTestsForVerification(tenantId, orderId, lifecycleViews)
+                : validateSelectedTestsForVerification(selectedTestIds, lifecycleByItemId);
+        if (eligibleTestIds.isEmpty()) {
+            throw new IllegalArgumentException("Lab order has no eligible tests for verification");
+        }
+        boolean recollectionRequired = !"SEND_BACK".equals(decision) && Boolean.TRUE.equals(command.recollectionRequired());
+        laboratoryWorkflowService.verifyTests(
+                tenantId,
+                orderId,
+                eligibleTestIds,
+                decision,
+                normalizeNullable(command.reason()),
+                normalizeNullable(command.comments()),
+                recollectionRequired,
+                actorAppUserId
+        );
         if ("SEND_BACK".equals(decision)) {
             order.markLabVerificationSentBack(actorAppUserId, decision, normalizeNullable(command.reason()), normalizeNullable(command.comments()));
         } else {
             order.markLabVerified(actorAppUserId, decision, normalizeNullable(command.reason()), normalizeNullable(command.comments()));
         }
         LabOrderEntity saved = labOrderRepository.save(order);
+        synchronizeAggregateStatus(tenantId, saved, actorAppUserId);
         auditOrder(
                 tenantId,
                 saved,
@@ -837,11 +1017,96 @@ public class LabService {
         requireId(orderId, "orderId");
         LabOrderEntity order = labOrderRepository.findByTenantIdAndId(tenantId, orderId)
                 .orElseThrow(() -> new IllegalArgumentException("Lab order not found"));
-        if (order.getStatus() != LabOrderStatus.REPORT_READY) {
+        if (order.getStatus() != LabOrderStatus.DOCTOR_REVIEWED
+                && order.getStatus() != LabOrderStatus.REPORT_READY
+                && order.getStatus() != LabOrderStatus.PARTIALLY_READY
+                && order.getStatus() != LabOrderStatus.PARTIALLY_PUBLISHED
+                && order.getStatus() != LabOrderStatus.REPORT_GENERATED
+                && order.getStatus() != LabOrderStatus.DELIVERED) {
             throw new IllegalArgumentException("Lab order is not ready for report publishing");
         }
-        LabOrderResultPdf pdf = renderReportPdf(tenantId, orderId);
-        String deliveryChannelsJson = serializeJson(normalizeDeliveryChannels(command == null ? null : command.deliveryChannels()));
+        List<String> requestedChannels = normalizeDeliveryChannels(command == null ? null : command.deliveryChannels());
+        List<UUID> selectedTestIds = command == null || command.orderedTestIds() == null
+                ? List.of()
+                : command.orderedTestIds().stream().filter(Objects::nonNull).distinct().toList();
+        List<LaboratoryOrderedTestView> lifecycleViews = laboratoryWorkflowService.listOrderTests(tenantId, orderId);
+        Map<UUID, LaboratoryOrderedTestView> lifecycleByItemId = lifecycleViews.stream()
+                .filter(view -> view.labOrderItemId() != null)
+                .collect(Collectors.toMap(
+                        LaboratoryOrderedTestView::labOrderItemId,
+                        Function.identity(),
+                        (left, right) -> left,
+                        LinkedHashMap::new
+                ));
+        // The request IDs describe report content. Lifecycle publication is derived
+        // separately so already-published tests can be included without republishing.
+        List<UUID> reportContentTestIds = selectedTestIds.isEmpty()
+                ? selectPublishableTestsForReportPublishing(lifecycleViews)
+                : validateSelectedTestsForReportPublishing(selectedTestIds, lifecycleByItemId);
+        if (reportContentTestIds.isEmpty() && !selectedTestIds.isEmpty()) {
+            throw new IllegalArgumentException("Lab order has no eligible tests for report publishing");
+        }
+        List<UUID> lifecycleTransitionTestIds = reportContentTestIds.stream()
+                .filter(testId -> {
+                    LaboratoryOrderedTestView view = lifecycleByItemId.get(testId);
+                    return view != null && "VERIFIED".equalsIgnoreCase(view.state());
+                })
+                .toList();
+        String requestedReportMode = command == null ? null : command.reportMode();
+        String effectiveReportMode = StringUtils.hasText(requestedReportMode)
+                ? requestedReportMode.trim().toUpperCase(Locale.ROOT)
+                : deriveReportModeForPublication(lifecycleViews, reportContentTestIds);
+        if (StringUtils.hasText(requestedReportMode)) {
+            validateReportModeSelection(effectiveReportMode, reportContentTestIds);
+        }
+        String effectiveReportType = deriveReportTypeForPublication(lifecycleViews, reportContentTestIds);
+        // Re-selecting the exact current final artifact is a read-only report
+        // lookup, not a publication/version transition.
+        if (hasIdenticalCurrentReport(tenantId, orderId, effectiveReportMode, effectiveReportType, reportContentTestIds)) {
+            return toRecord(tenantId, order);
+        }
+        order.ensureReportVerificationToken();
+        LabOrderResultPdf pdf = renderReportPdf(tenantId, orderId, reportContentTestIds, effectiveReportMode, effectiveReportType);
+        String deliveryChannelsJson = serializeJson(requestedChannels);
+        boolean makeCurrent = shouldNewArtifactBecomeCurrent(
+                tenantId,
+                orderId,
+                effectiveReportMode,
+                effectiveReportType
+        );
+        if (makeCurrent) {
+            laboratoryWorkflowService.publishTests(
+                    tenantId,
+                    orderId,
+                    reportContentTestIds,
+                    order.getReportVerificationToken(),
+                    pdf.filename(),
+                    "lab/report/" + pdf.filename(),
+                    requestedChannels,
+                    effectiveReportMode,
+                    effectiveReportType,
+                    normalizeNullable(command == null ? null : command.publishNotes()),
+                    actorAppUserId
+            );
+        } else {
+            laboratoryWorkflowService.generateReportArtifact(
+                    tenantId,
+                    orderId,
+                    reportContentTestIds,
+                    order.getReportVerificationToken(),
+                    pdf.filename(),
+                    "lab/report/" + pdf.filename(),
+                    requestedChannels,
+                    effectiveReportMode,
+                    effectiveReportType,
+                    LaboratoryReportPublicationArtifactEntity.REPORT_STATUS_HISTORICAL,
+                    normalizeNullable(command == null ? null : command.publishNotes()),
+                    actorAppUserId
+            );
+        }
+        if (!makeCurrent) {
+            return toRecord(tenantId, order);
+        }
         order.markReportPublished(
                 actorAppUserId,
                 pdf.filename(),
@@ -850,8 +1115,9 @@ public class LabService {
                 normalizeNullable(command == null ? null : command.publishNotes())
         );
         LabOrderEntity saved = labOrderRepository.save(order);
+        synchronizeAggregateStatus(tenantId, saved, actorAppUserId);
         auditOrder(tenantId, saved, "lab_order.report_published", actorAppUserId, "Published lab report");
-        recordDeliveryChannelAudits(tenantId, saved, command == null ? List.of() : normalizeDeliveryChannels(command.deliveryChannels()), actorAppUserId);
+        recordDeliveryChannelAudits(tenantId, saved, requestedChannels, actorAppUserId);
 
         clinicalDocumentService.publishLabReport(new ClinicalDocumentUploadCommand(
                 tenantId,
@@ -871,10 +1137,12 @@ public class LabService {
                 normalizeNullable(command == null ? null : command.publishNotes())
         ));
 
-        notifyRequestingDoctor(tenantId, saved, actorAppUserId);
+        if (requestedChannels.contains("DOCTOR_NOTIFICATION")) {
+            notifyRequestingDoctor(tenantId, saved, actorAppUserId);
+        }
         var clinic = clinicProfileService.findByTenantId(tenantId).orElse(null);
         String clinicDisplayName = clinic == null ? null : firstText(clinic.displayName(), clinic.clinicName(), "Clinic");
-        String timezone = ZoneId.of("Asia/Kolkata").getId();
+        String timezone = clinicTimeZoneResolver.resolve(tenantId).getId();
         OffsetDateTime publishedAt = OffsetDateTime.now(ZoneOffset.UTC);
         moduleBusinessEventPublisher.publish(LabReportPublishedEvent.published(
                 tenantId,
@@ -907,6 +1175,52 @@ public class LabService {
         return toRecord(tenantId, order);
     }
 
+    @Transactional(readOnly = true)
+    public LabReportVerificationResponse verifyPublishedReport(String verificationToken) {
+        if (!StringUtils.hasText(verificationToken)) {
+            throw new IllegalArgumentException("verificationToken is required");
+        }
+        String normalizedToken = verificationToken.trim();
+        Optional<LaboratoryReportArtifactView> artifactLookup = laboratoryWorkflowService.findReportArtifactByVerificationToken(normalizedToken);
+        LabOrderEntity order;
+        LaboratoryReportArtifactView artifact;
+        boolean legacyFallback = false;
+        if (artifactLookup.isPresent()) {
+            artifact = artifactLookup.get();
+            order = labOrderRepository.findByTenantIdAndId(artifact.tenantId(), artifact.labOrderId())
+                    .orElseThrow(() -> new IllegalArgumentException("Lab order not found"));
+        } else {
+            order = labOrderRepository.findByReportVerificationToken(normalizedToken)
+                    .orElseThrow(() -> new IllegalArgumentException("Lab report verification record not found"));
+            artifact = legacyReportArtifactView(order, normalizedToken);
+            legacyFallback = true;
+        }
+        if (order.getReportPublishedAt() == null) {
+            throw new IllegalArgumentException("Lab report is not published");
+        }
+        UUID tenantId = order.getTenantId();
+        String clinicName = clinicProfileService.findByTenantId(tenantId)
+                .map(clinic -> firstText(clinic.displayName(), clinic.clinicName(), "Clinic"))
+                .filter(StringUtils::hasText)
+                .orElse("Clinic");
+        return new LabReportVerificationResponse(
+                true,
+                artifact.verificationToken(),
+                order.getOrderNumber(),
+                clinicName,
+                legacyFallback ? businessReportStatusLabel(order) : businessReportStatusLabel(order, artifact),
+                LaboratoryReportPublicationArtifactEntity.REPORT_STATUS_SUPERSEDED.equalsIgnoreCase(artifact.reportStatus()) ? "SUPERSEDED" : "VERIFIED",
+                artifact.publishedAt(),
+                artifact.filename(),
+                artifact.artifactNumber(),
+                artifact.reportMode(),
+                artifact.reportType(),
+                artifact.reportStatus(),
+                artifact.verificationUrl(),
+                artifact.selectedItemIds()
+        );
+    }
+
     @Transactional
     public LabOrderResultPdf generateReportPdf(UUID tenantId, UUID orderId, UUID actorAppUserId) {
         LabOrderEntity order = labOrderRepository.findByTenantIdAndId(tenantId, orderId)
@@ -914,11 +1228,13 @@ public class LabService {
         LabOrderStatus currentStatus = order.getStatus();
         if (currentStatus != LabOrderStatus.DOCTOR_REVIEWED
                 && currentStatus != LabOrderStatus.REPORT_READY
+                && currentStatus != LabOrderStatus.PARTIALLY_READY
+                && currentStatus != LabOrderStatus.PARTIALLY_PUBLISHED
                 && currentStatus != LabOrderStatus.REPORT_GENERATED
                 && currentStatus != LabOrderStatus.DELIVERED) {
             throw new IllegalArgumentException("Lab order results are not approved for report generation");
         }
-        LabOrderResultPdf pdf = renderReportPdf(tenantId, orderId);
+        LabOrderResultPdf pdf = renderReportPdf(tenantId, orderId, latestPublicationSelection(tenantId, orderId));
         if (currentStatus == LabOrderStatus.DOCTOR_REVIEWED) {
             order.markReportGenerated(actorAppUserId, pdf.filename());
             LabOrderEntity saved = labOrderRepository.save(order);
@@ -929,17 +1245,29 @@ public class LabService {
 
     @Transactional(readOnly = true)
     public LabOrderResultPdf renderReportPdf(UUID tenantId, UUID orderId) {
+        return renderReportPdf(tenantId, orderId, List.of(), null, null);
+    }
+
+    @Transactional(readOnly = true)
+    public LabOrderResultPdf renderReportPdf(UUID tenantId, UUID orderId, List<UUID> selectedItemIds) {
+        return renderReportPdf(tenantId, orderId, selectedItemIds, null, null);
+    }
+
+    @Transactional(readOnly = true)
+    LabOrderResultPdf renderReportPdf(UUID tenantId, UUID orderId, List<UUID> selectedItemIds, String reportMode, String reportType) {
         requireTenant(tenantId);
         requireId(orderId, "orderId");
         LabOrderEntity order = labOrderRepository.findByTenantIdAndId(tenantId, orderId)
                 .orElseThrow(() -> new IllegalArgumentException("Lab order not found"));
         if (order.getStatus() != LabOrderStatus.DOCTOR_REVIEWED
                 && order.getStatus() != LabOrderStatus.REPORT_READY
+                && order.getStatus() != LabOrderStatus.PARTIALLY_READY
+                && order.getStatus() != LabOrderStatus.PARTIALLY_PUBLISHED
                 && order.getStatus() != LabOrderStatus.REPORT_GENERATED
                 && order.getStatus() != LabOrderStatus.DELIVERED) {
             throw new IllegalArgumentException("Lab order results are not ready for report generation");
         }
-        return buildReportPdf(tenantId, order);
+        return buildReportPdf(tenantId, order, selectedItemIds, reportMode, reportType);
     }
 
     @Transactional
@@ -985,6 +1313,7 @@ public class LabService {
         }
         if (order.getStatus() != LabOrderStatus.DOCTOR_REVIEWED
                 && order.getStatus() != LabOrderStatus.REPORT_GENERATED
+                && order.getStatus() != LabOrderStatus.PARTIALLY_PUBLISHED
                 && order.getStatus() != LabOrderStatus.REPORT_READY) {
             return toRecord(tenantId, order);
         }
@@ -1003,6 +1332,7 @@ public class LabService {
                 .map(this::toRecord)
                 .toList();
         List<LabOrderItemEntity> itemEntities = labOrderItemRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAsc(tenantId, order.getId());
+        Map<UUID, LabOrderItemEntity> itemById = itemEntities.stream().collect(Collectors.toMap(LabOrderItemEntity::getId, Function.identity(), (left, right) -> left, LinkedHashMap::new));
         List<LabOrderItemRecord> items = itemEntities.stream()
                 .map(item -> new LabOrderItemRecord(
                         item.getId(),
@@ -1021,8 +1351,56 @@ public class LabService {
                         resolveParameters(tenantId, item)
                 ))
                 .toList();
+        List<LaboratoryOrderedTestView> lifecycleViews = laboratoryWorkflowService.listOrderTests(tenantId, order.getId());
+        List<LabOrderedTestRecord> orderedTests = lifecycleViews.stream()
+                .map(view -> {
+                    LabOrderItemEntity item = itemById.get(view.labOrderItemId());
+                    return new LabOrderedTestRecord(
+                            view.labOrderItemId(),
+                            item == null ? null : item.getLabTestId(),
+                            item == null ? null : item.getTestCode(),
+                            item == null ? null : item.getTestName(),
+                            item == null ? null : item.getCategory(),
+                            item == null ? null : item.getDepartment(),
+                            item == null ? null : item.getSampleType(),
+                            item == null ? null : item.getUnit(),
+                            item == null ? null : item.getReferenceRange(),
+                            item == null ? null : item.getTurnaroundTime(),
+                            item == null ? null : item.getPrice(),
+                            item == null ? 0 : item.getSortOrder(),
+                            view.state(),
+                            view.latestResultRevision(),
+                            view.latestVerificationDecision(),
+                            view.latestVerificationAt(),
+                            view.latestVerificationBy(),
+                            view.latestPublicationArtifactNumber(),
+                            view.latestPublicationAt(),
+                            view.latestPublicationBy(),
+                            view.publicationChannels(),
+                            view.latestResultSnapshotJson(),
+                            view.latestResultEnteredAt(),
+                            view.latestResultEnteredBy(),
+                            view.specimenLinks().stream()
+                                    .map(link -> new LabOrderedTestSpecimenRecord(
+                                            link.labOrderSampleId(),
+                                            link.accessionNumber(),
+                                            link.barcodeValue(),
+                                            link.specimenType(),
+                                            link.containerType(),
+                                            link.sampleStatus(),
+                                            link.active(),
+                                            link.collectedAt(),
+                                            link.receivedAt(),
+                                            link.linkedAt(),
+                                            link.unlinkedAt()
+                                    ))
+                                    .toList()
+                    );
+                })
+                .toList();
+        Map<UUID, SampleLinkSummary> sampleLinkSummaries = buildSampleLinkSummaries(tenantId, order.getId());
         List<LabSampleRecord> samples = labOrderSampleRepository.findByTenantIdAndLabOrderIdOrderByCollectedAtAscCreatedAtAsc(tenantId, order.getId()).stream()
-                .map(this::toRecord)
+                .map(sample -> toRecord(sample, sampleLinkSummaries.get(sample.getId())))
                 .toList();
         LabSampleRecord primarySample = samples.isEmpty() ? null : samples.getFirst();
         LabSampleStatusRecord sampleSummaryStatus = summarizeSampleStatus(samples);
@@ -1045,6 +1423,8 @@ public class LabService {
                         result.getUpdatedAt()
                 ))
                 .toList();
+        List<LabOrderRecord.LabReportArtifactRecord> reportArtifacts = reportArtifacts(tenantId, order.getId());
+        ResultEntryAuditMetadata resultEntryAudit = resolveResultEntryAudit(tenantId, order.getId());
         BillRecord bill = order.getBillId() == null ? null : billingService.findById(tenantId, order.getBillId()).orElse(null);
         return new LabOrderRecord(
                 order.getId(),
@@ -1086,6 +1466,8 @@ public class LabService {
                 order.getSampleCollectionNotes(),
                 order.getProcessingStartedAt(),
                 order.getResultEnteredAt(),
+                resultEntryAudit == null ? null : resultEntryAudit.actorAppUserId(),
+                resultEntryAudit == null ? null : resultEntryAudit.actorDisplayName(),
                 order.getResultComments(),
                 order.getReportGeneratedAt(),
                 order.getReportGeneratedByUserId(),
@@ -1093,9 +1475,11 @@ public class LabService {
                 order.getReportFilename(),
                 order.getReportPublishedAt(),
                 order.getReportPublishedByUserId(),
+                order.getReportVerificationToken(),
                 order.getReportDeliveryStatus(),
                 parseDeliveryChannels(order.getReportDeliveryChannels()),
                 order.getReportDeliveryNotes(),
+                reportArtifacts,
                 order.getDoctorReviewedAt(),
                 order.getDoctorReviewedByUserId(),
                 order.getDoctorReviewedBy(),
@@ -1110,6 +1494,7 @@ public class LabService {
                 order.getLabVerificationReason(),
                 attachments,
                 items,
+                orderedTests,
                 samples,
                 results,
                 order.getCreatedAt(),
@@ -1126,6 +1511,9 @@ public class LabService {
             case SAMPLE_COLLECTED -> LabOrderStatusRecord.SAMPLE_COLLECTED;
             case PROCESSING -> LabOrderStatusRecord.PROCESSING;
             case RESULT_ENTERED -> LabOrderStatusRecord.RESULT_ENTERED;
+            case IN_PROGRESS -> LabOrderStatusRecord.IN_PROGRESS;
+            case PARTIALLY_READY -> LabOrderStatusRecord.PARTIALLY_READY;
+            case PARTIALLY_PUBLISHED -> LabOrderStatusRecord.PARTIALLY_PUBLISHED;
             case REPORT_READY -> LabOrderStatusRecord.REPORT_READY;
             case REPORT_GENERATED -> LabOrderStatusRecord.REPORT_GENERATED;
             case DOCTOR_REVIEWED -> LabOrderStatusRecord.DOCTOR_REVIEWED;
@@ -1134,7 +1522,7 @@ public class LabService {
         };
     }
 
-    private LabSampleRecord toRecord(LabOrderSampleEntity entity) {
+    private LabSampleRecord toRecord(LabOrderSampleEntity entity, SampleLinkSummary summary) {
         return new LabSampleRecord(
                 entity.getId(),
                 entity.getLabOrderId(),
@@ -1151,11 +1539,17 @@ public class LabService {
                 entity.getRejectionReason(),
                 entity.isRecollectionRequired(),
                 entity.getNotes(),
+                summary == null ? List.of() : summary.linkedLabOrderItemIds(),
+                summary == null ? List.of() : summary.linkedTestNames(),
                 entity.getCreatedAt(),
                 entity.getCreatedBy(),
                 entity.getUpdatedAt(),
                 entity.getUpdatedBy()
         );
+    }
+
+    private LabSampleRecord toRecord(LabOrderSampleEntity entity) {
+        return toRecord(entity, SampleLinkSummary.empty());
     }
 
     private LabSampleStatusRecord toRecord(LabSampleStatus status) {
@@ -1169,8 +1563,8 @@ public class LabService {
         };
     }
 
-    private LabOrderResultPdf buildReportPdf(UUID tenantId, LabOrderEntity order) {
-        LabOrderRecord record = toRecord(tenantId, order);
+    private LabOrderResultPdf buildReportPdf(UUID tenantId, LabOrderEntity order, List<UUID> selectedItemIds, String reportMode, String reportType) {
+        LabOrderRecord record = filterRecordForSelectedTests(toRecord(tenantId, order), selectedItemIds);
         var clinic = clinicProfileService.findByTenantId(tenantId).orElse(null);
         String clinicName = clinic == null ? "Clinic" : firstText(clinic.displayName(), clinic.clinicName(), "Clinic");
         if (!StringUtils.hasText(clinicName)) {
@@ -1183,22 +1577,20 @@ public class LabService {
                 .filter(StringUtils::hasText)
                 .collect(Collectors.joining(", "));
         BufferedImage logo = loadClinicLogo(tenantId, clinic);
-        float margin = 28f;
+        BufferedImage verificationQr = buildVerificationQr(verificationUrl(tenantId, record));
+        ZoneId tenantZone = clinicTimeZoneResolver.resolve(tenantId);
+        String reportTitle = reportTitleLabel(record, reportMode, reportType);
+        float margin = 34f;
         try (PDDocument document = new PDDocument(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
-            PDPage page = new PDPage(PDRectangle.A4);
-            document.addPage(page);
-            try (PDPageContentStream content = new PDPageContentStream(document, page)) {
-                float width = page.getMediaBox().getWidth() - (margin * 2);
-                float y = page.getMediaBox().getHeight() - margin;
-                drawReportBorder(content, page, margin);
-                y = drawReportHeader(document, content, clinicName, clinicAddress, clinicContact, logo, page, margin, y);
-                y = drawMetaBlock(tenantId, content, record, page, margin, width, y);
-                y = drawResultsTable(content, record, page, margin, width, y);
-                y = drawNotesBlock(content, record, margin, width, y);
-                y = drawSignatureBlock(tenantId, content, page, record, margin, width, y);
-                drawFooter(content, "Generated by Jeevanam Healthcare | Powered by AIVA", margin, y, width);
+            try (PdfReportLayout layout = new PdfReportLayout(document, margin)) {
+                drawReportHeader(layout, clinicName, clinicAddress, clinicContact, logo, reportTitle, businessReportStatusLabel(record, reportMode, reportType));
+                drawMetaBlock(tenantId, layout, record, tenantZone);
+                drawVerificationBlock(layout, verificationUrl(tenantId, record), record.reportVerificationToken(), verificationQr);
+                drawResultsTable(layout, record);
+                drawNotesBlock(layout, record);
+                drawSignatureBlock(tenantId, layout, record);
             }
-            drawPageNumbers(document, margin);
+            drawPageFooters(document, margin, "Generated by Jeevanam Healthcare | Powered by AIVA");
             document.save(output);
             return new LabOrderResultPdf(safeFilename(record.orderNumber()) + "-lab-report.pdf", output.toByteArray());
         } catch (IOException ex) {
@@ -1206,170 +1598,372 @@ public class LabService {
         }
     }
 
-    private float drawReportHeader(PDDocument document, PDPageContentStream content, String clinicName, String clinicAddress, String clinicContact, BufferedImage logo, PDPage page, float margin, float y) throws IOException {
-        float pageWidth = page.getMediaBox().getWidth();
-        float pageHeight = page.getMediaBox().getHeight();
-        float logoSize = 42f;
-        PDType1Font boldFont = new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD);
-        float titleFontSize = 18f;
-        if (logo != null) {
-            PDImageXObject image = LosslessFactory.createFromImage(document, logo);
-            content.drawImage(image, margin + 2, pageHeight - margin - logoSize - 2, logoSize, logoSize);
-        } else {
-            setFillColor(content, 30, 64, 175);
-            content.addRect(margin + 2, pageHeight - margin - logoSize - 2, logoSize, logoSize);
-            content.fill();
+    private LabOrderRecord filterRecordForSelectedTests(LabOrderRecord record, List<UUID> selectedItemIds) {
+        if (record == null || selectedItemIds == null || selectedItemIds.isEmpty()) {
+            return record;
         }
-        float textX = margin + logoSize + 14f;
-        writeLine(content, clinicName, 16, textX, y - 4, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
-        y -= 16;
-        if (StringUtils.hasText(clinicAddress)) {
-            y = writeWrapped(content, clinicAddress, 9f, textX, y, pageWidth - textX - margin);
+        Set<UUID> selected = selectedItemIds.stream().filter(Objects::nonNull).collect(Collectors.toCollection(HashSet::new));
+        if (selected.isEmpty()) {
+            return record;
         }
-        if (StringUtils.hasText(clinicContact)) {
-            y = writeWrapped(content, clinicContact, 9f, textX, y - 2, pageWidth - textX - margin);
-        }
-        float titleWidth = textWidth(boldFont, titleFontSize, "LABORATORY REPORT");
-        float titleX = Math.max(textX + 16f, pageWidth - margin - titleWidth);
-        writeLine(content, "LABORATORY REPORT", titleFontSize, titleX, pageHeight - margin - 4, boldFont);
-        y -= 10;
-        content.moveTo(margin, y);
-        content.lineTo(pageWidth - margin, y);
-        content.stroke();
-        return y - 16;
+        List<com.deepthoughtnet.clinic.api.lab.service.model.LabOrderItemRecord> items = safeList(record.items()).stream()
+                .filter(item -> selected.contains(item.id()))
+                .toList();
+        List<com.deepthoughtnet.clinic.api.lab.service.model.LabOrderResultRecord> results = safeList(record.results()).stream()
+                .filter(result -> result.labOrderItemId() != null && selected.contains(result.labOrderItemId()))
+                .toList();
+        List<LabOrderedTestRecord> orderedTests = safeList(record.orderedTests()).stream()
+                .filter(test -> selected.contains(test.labOrderItemId()))
+                .toList();
+        return new LabOrderRecord(
+                record.id(),
+                record.tenantId(),
+                record.orderNumber(),
+                record.patientId(),
+                record.patientNumber(),
+                record.patientName(),
+                record.doctorUserId(),
+                record.doctorName(),
+                record.consultationId(),
+                record.orderOrigin(),
+                record.requestedByInternalDoctorId(),
+                record.externalDoctorName(),
+                record.externalDoctorMobile(),
+                record.externalClinicName(),
+                record.referralSource(),
+                record.notes(),
+                record.status(),
+                record.orderedAt(),
+                record.billId(),
+                record.billNumber(),
+                record.billStatus(),
+                record.billTotalAmount(),
+                record.billDueAmount(),
+                record.externalLabVendor(),
+                record.externalReferenceNumber(),
+                record.deliveredAt(),
+                record.deliveredByUserId(),
+                record.paymentCollectedAt(),
+                record.readyForCollectionAt(),
+                record.sampleAccessionNumber(),
+                record.sampleBarcodeValue(),
+                record.sampleSummaryStatus(),
+                record.sampleType(),
+                record.sampleCollectedAt(),
+                record.sampleCollectedByUserId(),
+                record.sampleCollectedBy(),
+                record.sampleCollectionNotes(),
+                record.processingStartedAt(),
+                record.resultEnteredAt(),
+                record.resultEnteredByUserId(),
+                record.resultEnteredBy(),
+                record.resultComments(),
+                record.reportGeneratedAt(),
+                record.reportGeneratedByUserId(),
+                record.reportGeneratedBy(),
+                record.reportFilename(),
+                record.reportPublishedAt(),
+                record.reportPublishedByUserId(),
+                record.reportVerificationToken(),
+                record.reportDeliveryStatus(),
+                record.reportDeliveryChannels(),
+                record.reportDeliveryNotes(),
+                record.reportArtifacts(),
+                record.doctorReviewedAt(),
+                record.doctorReviewedByUserId(),
+                record.doctorReviewedBy(),
+                record.doctorReviewDecision(),
+                record.doctorReviewReason(),
+                record.doctorComments(),
+                record.labVerifiedAt(),
+                record.labVerifiedBy(),
+                record.labVerifiedByName(),
+                record.labVerificationDecision(),
+                record.labVerificationComments(),
+                record.labVerificationReason(),
+                record.attachments(),
+                items.stream().map(item -> new com.deepthoughtnet.clinic.api.lab.service.model.LabOrderItemRecord(
+                        item.id(),
+                        item.labTestId(),
+                        item.testCode(),
+                        item.testName(),
+                        item.category(),
+                        item.department(),
+                        item.sampleType(),
+                        item.unit(),
+                        item.referenceRange(),
+                        item.turnaroundTime(),
+                        item.price(),
+                        item.sortOrder(),
+                        item.createdAt(),
+                        item.parameters()
+                )).toList(),
+                orderedTests,
+                record.samples(),
+                results,
+                record.createdAt(),
+                record.updatedAt()
+        );
     }
 
-    private float drawMetaBlock(UUID tenantId, PDPageContentStream content, LabOrderRecord record, PDPage page, float margin, float width, float y) throws IOException {
-        List<MetaPair> pairs = List.of(
-                new MetaPair("Order No", record.orderNumber()),
-                new MetaPair("Generated", formatDateTime(record.reportGeneratedAt() == null ? OffsetDateTime.now() : record.reportGeneratedAt())),
-                new MetaPair("Accession", record.sampleAccessionNumber()),
-                new MetaPair("Patient", record.patientName()),
+    private void drawReportHeader(PdfReportLayout layout, String clinicName, String clinicAddress, String clinicContact, BufferedImage logo, String reportHeading, String reportStatus) throws IOException {
+        float headerHeight = 88f;
+        layout.ensureSpace(headerHeight + 14f);
+        float headerTop = layout.y;
+        float leftWidth = layout.width * 0.64f;
+        float rightWidth = layout.width - leftWidth;
+        float logoSize = 52f;
+        float identityX = layout.margin + 12f + logoSize + 12f;
+        PDType1Font boldFont = new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD);
+        PDType1Font regularFont = new PDType1Font(Standard14Fonts.FontName.HELVETICA);
+
+        layout.content.addRect(layout.margin, headerTop - headerHeight, layout.width, headerHeight);
+        layout.content.stroke();
+
+        if (logo != null) {
+            PDImageXObject image = LosslessFactory.createFromImage(layout.document, logo);
+            layout.content.drawImage(image, layout.margin + 14f, headerTop - 62f, logoSize, logoSize);
+        } else {
+            layout.content.addRect(layout.margin + 14f, headerTop - 62f, logoSize, logoSize);
+            layout.content.stroke();
+            String fallback = logoFallbackText(clinicName);
+            float fallbackWidth = textWidth(boldFont, 12f, fallback);
+            writeLine(layout.content, fallback, 12f, layout.margin + 14f + Math.max(4f, (logoSize - fallbackWidth) / 2f), headerTop - 34f, boldFont);
+        }
+
+        float textY = headerTop - 18f;
+        textY = writeWrapped(layout.content, clinicName, 14.5f, identityX, textY, leftWidth - logoSize - 34f, boldFont, 16f);
+        if (StringUtils.hasText(clinicAddress)) {
+            textY = writeWrapped(layout.content, clinicAddress, 9.2f, identityX, textY - 2f, leftWidth - logoSize - 34f, regularFont, 10.4f);
+        }
+        if (StringUtils.hasText(clinicContact)) {
+            textY = writeWrapped(layout.content, clinicContact, 9.2f, identityX, textY - 2f, leftWidth - logoSize - 34f, regularFont, 10.4f);
+        }
+
+        float rightX = layout.margin + leftWidth + 12f;
+        writeLine(layout.content, "LABORATORY REPORT", 16f, rightX, headerTop - 20f, boldFont);
+        writeLine(layout.content, safe(reportHeading), 11f, rightX, headerTop - 38f, boldFont);
+        writeLine(layout.content, safe(reportStatus), 9.2f, rightX, headerTop - 56f, regularFont);
+        float dividerY = headerTop - headerHeight - 8f;
+        layout.content.moveTo(layout.margin, dividerY);
+        layout.content.lineTo(layout.margin + layout.width, dividerY);
+        layout.content.stroke();
+        layout.y = dividerY - 12f;
+    }
+
+    private void drawMetaBlock(UUID tenantId, PdfReportLayout layout, LabOrderRecord record, ZoneId tenantZone) throws IOException {
+        List<MetaPair> pairs = Stream.of(
+                new MetaPair("Patient Name", record.patientName()),
                 new MetaPair("Patient ID", record.patientNumber()),
-                new MetaPair("Doctor", record.doctorName()),
-                new MetaPair("External Lab", record.externalLabVendor()),
-                new MetaPair("External Ref", record.externalReferenceNumber()),
+                new MetaPair("Order No", record.orderNumber()),
+                new MetaPair("Accession No", record.sampleAccessionNumber()),
                 new MetaPair("Sample Type", firstText(record.sampleType(), fallbackSampleType(record))),
-                new MetaPair("Sample By", record.sampleCollectedBy()),
-                new MetaPair("Reviewed By", record.doctorReviewedBy()),
-                new MetaPair("Reviewed At", formatDateTime(record.doctorReviewedAt())),
-                new MetaPair("Approved By", firstText(record.labVerifiedByName(), resolveUserDisplayName(tenantId, record.labVerifiedBy()).orElse(null), record.doctorReviewedBy())),
-                new MetaPair("Approved At", formatDateTime(record.labVerifiedAt())),
-                new MetaPair("Published By", resolveUserDisplayName(tenantId, record.reportPublishedByUserId()).orElse(null)),
-                new MetaPair("Published At", formatDateTime(record.reportPublishedAt())),
-                new MetaPair("Status", String.valueOf(record.status())),
-                new MetaPair("QR / Verification URL", verificationUrl(record))
-        );
-        float columnWidth = width / 2f;
+                new MetaPair("Collected At", formatDateTime(record.sampleCollectedAt(), tenantZone)),
+                new MetaPair("Approved By", firstText(record.labVerifiedByName(), resolveUserDisplayName(tenantId, record.labVerifiedBy()).orElse(null))),
+                new MetaPair("Approved At", formatDateTime(record.labVerifiedAt() == null ? record.reportPublishedAt() : record.labVerifiedAt(), tenantZone)),
+                new MetaPair("Reported At", formatDateTime(record.reportPublishedAt() == null ? record.reportGeneratedAt() : record.reportPublishedAt(), tenantZone))
+        ).filter(pair -> StringUtils.hasText(pair.value()) && !"-".equals(pair.value())).toList();
+        writeSectionHeader(layout.content, "Patient & Report Details", layout.margin, layout.y, layout.width);
+        layout.y -= 18f;
+        float columnWidth = layout.width / 2f;
         for (int i = 0; i < pairs.size(); i += 2) {
             MetaPair left = pairs.get(i);
             MetaPair right = i + 1 < pairs.size() ? pairs.get(i + 1) : new MetaPair("", "");
-            float rowHeight = Math.max(28f, Math.max(measureMetaCellHeight(left, columnWidth), measureMetaCellHeight(right, columnWidth)));
-            ensureSpace(page, margin, y, rowHeight + 4);
-            drawMetaCell(content, margin, y, columnWidth, rowHeight, left);
-            drawMetaCell(content, margin + columnWidth, y, columnWidth, rowHeight, right);
-            y -= rowHeight;
+            float rowHeight = Math.max(24f, Math.max(measureMetaCellHeight(left, columnWidth), measureMetaCellHeight(right, columnWidth)));
+            layout.ensureSpace(rowHeight + 2f);
+            drawMetaCell(layout.content, layout.margin, layout.y, columnWidth, rowHeight, left);
+            drawMetaCell(layout.content, layout.margin + columnWidth, layout.y, columnWidth, rowHeight, right);
+            layout.y -= rowHeight;
         }
-        return y - 12;
+        layout.y -= 8f;
     }
 
-    private float drawSignatureBlock(UUID tenantId, PDPageContentStream content, PDPage page, LabOrderRecord record, float margin, float width, float y) throws IOException {
-        float blockHeight = 54f;
-        ensureSpace(page, margin, y, blockHeight + 8);
-        content.addRect(margin, y - blockHeight, width, blockHeight);
-        content.stroke();
-        writeLine(content, "Digital signature", 9.2f, margin + 6, y - 12, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
-        writeLine(content, "Verified and approved for patient delivery", 8.5f, margin + 6, y - 24, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
-        writeLine(content, "Approved by: " + safe(firstText(record.labVerifiedByName(), record.doctorReviewedBy())), 8.7f, margin + 6, y - 36, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
-        writeLine(content, "Published by: " + safe(firstText(resolveUserDisplayName(tenantId, record.reportPublishedByUserId()).orElse(null), record.reportGeneratedBy())), 8.7f, margin + 6, y - 48, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
-        return y - blockHeight - 10;
+    private void drawVerificationBlock(PdfReportLayout layout, String verificationUrl, String token, BufferedImage verificationQr) throws IOException {
+        float blockHeight = 52f;
+        layout.ensureSpace(blockHeight + 10f);
+        writeSectionHeader(layout.content, "Verification", layout.margin, layout.y, layout.width);
+        layout.y -= 17f;
+        float top = layout.y;
+        float qrColumnWidth = 68f;
+        float qrSize = 44f;
+        float textWidth = layout.width - qrColumnWidth - 24f;
+        layout.content.addRect(layout.margin, top - blockHeight, layout.width, blockHeight);
+        layout.content.stroke();
+        writeLine(layout.content, "Verification Reference", 8.6f, layout.margin + 12f, top - 15f, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+        writeLine(layout.content, shortVerificationReference(token), 8.8f, layout.margin + 12f, top - 26f, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+        writeLine(layout.content, "Verify online:", 8.6f, layout.margin + 12f, top - 39f, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+        writeWrapped(layout.content, verificationUrl, 8.1f, layout.margin + 12f, top - 49f, textWidth, new PDType1Font(Standard14Fonts.FontName.HELVETICA), 8.8f);
+        if (verificationQr != null) {
+            PDImageXObject image = LosslessFactory.createFromImage(layout.document, verificationQr);
+            float qrX = layout.margin + layout.width - qrColumnWidth + (qrColumnWidth - qrSize) / 2f;
+            float qrY = top - qrSize - 6f;
+            layout.content.drawImage(image, qrX, qrY, qrSize, qrSize);
+            float captionWidth = textWidth(new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD), 7.9f, "Scan to verify");
+            writeLine(layout.content, "Scan to verify", 7.9f, qrX + (qrSize - captionWidth) / 2f, qrY - 8f, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+        }
+        layout.y = top - blockHeight - 8f;
+    }
+
+    private void drawSignatureBlock(UUID tenantId, PdfReportLayout layout, LabOrderRecord record) throws IOException {
+        float blockHeight = 34f;
+        layout.ensureSpace(blockHeight + 8f);
+        writeSectionHeader(layout.content, "Authorized Signatory", layout.margin, layout.y, layout.width);
+        layout.y -= 16f;
+        float top = layout.y;
+        layout.content.addRect(layout.margin, top - blockHeight, layout.width, blockHeight);
+        layout.content.stroke();
+        writeLine(layout.content, safe(firstText(record.labVerifiedByName(), resolveUserDisplayName(tenantId, record.labVerifiedBy()).orElse(null))), 9.2f, layout.margin + 12f, top - 13f, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+        writeLine(layout.content, "Digitally verified", 8.7f, layout.margin + 12f, top - 25f, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+        layout.y = top - blockHeight - 6f;
     }
 
     private void drawMetaCell(PDPageContentStream content, float x, float y, float width, float height, MetaPair pair) throws IOException {
         content.addRect(x, y - height, width, height);
         content.stroke();
-        writeLine(content, pair.label(), 8.5f, x + 6, y - 9, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
-        writeWrapped(content, safe(pair.value()), 9f, x + 6, y - 19, width - 12f);
+        writeLine(content, pair.label(), 8.3f, x + 7f, y - 10.5f, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+        writeWrapped(content, safe(pair.value()), 8.8f, x + 7f, y - 23f, width - 14f);
     }
 
-    private float drawResultsTable(PDPageContentStream content, LabOrderRecord record, PDPage page, float margin, float width, float y) throws IOException {
-        writeSectionHeader(content, "Results", margin, y, width);
-        y -= 20;
-        String[] headers = new String[]{"Test / Component", "Result", "Unit", "Reference Range", "Interpretation"};
-        float[] columns = new float[]{0.40f, 0.12f, 0.10f, 0.20f, 0.18f};
-        float headerHeight = 18f;
-        PDType1Font boldFont = new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD);
-        content.setNonStrokingColor(232 / 255f, 240 / 255f, 254 / 255f);
-        content.addRect(margin, y - headerHeight, width, headerHeight);
-        content.fill();
-        content.setNonStrokingColor(0f, 0f, 0f);
-        float x = margin;
-        for (int i = 0; i < headers.length; i++) {
-            float colWidth = width * columns[i];
-            content.addRect(x, y - headerHeight, colWidth, headerHeight);
-            content.stroke();
-            writeLine(content, headers[i], 8.2f, x + 4, y - 11, boldFont);
-            x += colWidth;
+    private void drawResultsTable(PdfReportLayout layout, LabOrderRecord record) throws IOException {
+        List<LabOrderedTestRecord> orderedTests = safeList(record.orderedTests());
+        Map<UUID, List<LabOrderResultRecord>> resultsByItem = safeList(record.results()).stream()
+                .filter(result -> result.labOrderItemId() != null)
+                .collect(Collectors.groupingBy(LabOrderResultRecord::labOrderItemId, LinkedHashMap::new, Collectors.toList()));
+        writeSectionHeader(layout.content, "Results", layout.margin, layout.y, layout.width);
+        layout.y -= 18f;
+        if (orderedTests.isEmpty() && resultsByItem.isEmpty()) {
+            layout.ensureSpace(32f);
+            writeLine(layout.content, "No results entered", 9f, layout.margin + 8, layout.y - 14, new PDType1Font(Standard14Fonts.FontName.HELVETICA_OBLIQUE));
+            layout.y -= 22f;
+            return;
         }
-        y -= headerHeight;
-        if (record.results().isEmpty()) {
-            float rowHeight = 20f;
-            content.addRect(margin, y - rowHeight, width, rowHeight);
-            content.stroke();
-            writeLine(content, "No results entered", 9f, margin + 6, y - 12, new PDType1Font(Standard14Fonts.FontName.HELVETICA_OBLIQUE));
-            return y - rowHeight - 10;
+        float[] columns = new float[]{0.38f, 0.13f, 0.11f, 0.21f, 0.17f};
+        String[] headers = new String[]{"Parameter / Component", "Result", "Unit", "Reference Range", "Interpretation"};
+        if (!orderedTests.isEmpty()) {
+            for (LabOrderedTestRecord orderedTest : orderedTests) {
+                drawResultTestSection(layout, orderedTest.testName(), orderedTest.testCode(), resultsByItem.getOrDefault(orderedTest.labOrderItemId(), List.of()), headers, columns);
+            }
+        } else {
+            for (Map.Entry<UUID, List<LabOrderResultRecord>> entry : resultsByItem.entrySet()) {
+                drawResultTestSection(layout, "Ordered Test", entry.getKey() == null ? null : entry.getKey().toString(), entry.getValue(), headers, columns);
+            }
         }
-        for (LabOrderResultRecord row : record.results()) {
-            x = margin;
-            String label = StringUtils.hasText(row.parameterName()) ? row.testName() + " / " + row.parameterName() : (StringUtils.hasText(row.componentName()) ? row.testName() + " / " + row.componentName() : row.testName());
-            String[] values = new String[]{label, safe(row.resultValue()), safe(row.unit()), safe(row.referenceRange()), interpretationLabel(row.resultFlag())};
-            float rowHeight = measureResultRowHeight(values, columns, width);
-            ensureSpace(page, margin, y, rowHeight + 4);
+        layout.y -= 8f;
+    }
+
+    private void drawResultTestSection(PdfReportLayout layout, String testName, String testCode, List<LabOrderResultRecord> rows, String[] headers, float[] columns) throws IOException {
+        String sectionTitle = StringUtils.hasText(testName) ? testName : firstText(testCode, "Test");
+        List<LabOrderResultRecord> effectiveRows = rows == null ? List.of() : rows;
+        float required = 34f;
+        if (effectiveRows.isEmpty()) {
+            required += 24f;
+        } else {
+            for (LabOrderResultRecord row : effectiveRows) {
+                required += measureResultRowHeight(resultRowValues(sectionTitle, row), columns, layout.width) + 2f;
+            }
+        }
+        layout.ensureSpace(required + 18f);
+        layout.content.setNonStrokingColor(245 / 255f, 247 / 255f, 251 / 255f);
+        layout.content.addRect(layout.margin, layout.y - 16f, layout.width, 16f);
+        layout.content.fill();
+        layout.content.setNonStrokingColor(0f, 0f, 0f);
+        writeLine(layout.content, sectionTitle, 10f, layout.margin + 8f, layout.y - 11f, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+        layout.y -= 18f;
+        drawResultsHeader(layout, headers, columns);
+        if (effectiveRows.isEmpty()) {
+            float rowHeight = 24f;
+            layout.content.addRect(layout.margin, layout.y - rowHeight, layout.width, rowHeight);
+            layout.content.stroke();
+            writeLine(layout.content, "No results entered", 9f, layout.margin + 8, layout.y - 15, new PDType1Font(Standard14Fonts.FontName.HELVETICA_OBLIQUE));
+            layout.y -= rowHeight + 8f;
+            return;
+        }
+        for (LabOrderResultRecord row : effectiveRows) {
+            String[] values = resultRowValues(sectionTitle, row);
+            float rowHeight = measureResultRowHeight(values, columns, layout.width);
+            if (!layout.hasSpace(rowHeight + 10f)) {
+                layout.newPage();
+                writeSectionHeader(layout.content, "Results (continued)", layout.margin, layout.y, layout.width);
+                layout.y -= 18f;
+                drawResultsHeader(layout, headers, columns);
+            }
+            float x = layout.margin;
             for (int i = 0; i < values.length; i++) {
-                float colWidth = width * columns[i];
-                content.addRect(x, y - rowHeight, colWidth, rowHeight);
-                content.stroke();
+                float colWidth = layout.width * columns[i];
+                layout.content.addRect(x, layout.y - rowHeight, colWidth, rowHeight);
+                layout.content.stroke();
                 if (i == 4 && StringUtils.hasText(values[i])) {
                     if (isCriticalInterpretation(values[i])) {
-                        setFillColor(content, 185, 28, 28);
+                        setFillColor(layout.content, 185, 28, 28);
                     } else if ("Low".equalsIgnoreCase(values[i]) || "High".equalsIgnoreCase(values[i])) {
-                        setFillColor(content, 237, 108, 2);
+                        setFillColor(layout.content, 237, 108, 2);
                     } else {
-                        setFillColor(content, 27, 94, 32);
+                        setFillColor(layout.content, 27, 94, 32);
                     }
                 }
-                writeWrappedInCell(content, values[i], 8.6f, x + 4, y - 10, colWidth - 8);
+                writeWrappedInCell(layout.content, values[i], 9f, x + 6, layout.y - 13, colWidth - 12);
                 if (i == 4) {
-                    setFillColor(content, 0, 0, 0);
+                    setFillColor(layout.content, 0, 0, 0);
                 }
                 x += colWidth;
             }
-            y -= rowHeight;
+            layout.y -= rowHeight;
         }
-        return y - 10;
+        layout.y -= 8f;
     }
 
-    private float drawNotesBlock(PDPageContentStream content, LabOrderRecord record, float margin, float width, float y) throws IOException {
-        List<String> notes = new ArrayList<>();
-        if (StringUtils.hasText(record.sampleCollectionNotes())) {
-            notes.add("Sample collection notes: " + record.sampleCollectionNotes());
+    private void drawResultsHeader(PdfReportLayout layout, String[] headers, float[] columns) throws IOException {
+        float headerHeight = 20f;
+        layout.content.setNonStrokingColor(232 / 255f, 240 / 255f, 254 / 255f);
+        layout.content.addRect(layout.margin, layout.y - headerHeight, layout.width, headerHeight);
+        layout.content.fill();
+        layout.content.setNonStrokingColor(0f, 0f, 0f);
+        PDType1Font boldFont = new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD);
+        float x = layout.margin;
+        for (int i = 0; i < headers.length; i++) {
+            float colWidth = layout.width * columns[i];
+            layout.content.addRect(x, layout.y - headerHeight, colWidth, headerHeight);
+            layout.content.stroke();
+            writeLine(layout.content, headers[i], 8.3f, x + 5f, layout.y - 13f, boldFont);
+            x += colWidth;
         }
-        if (StringUtils.hasText(record.resultComments())) {
-            notes.add("Comments: " + record.resultComments());
-        }
-        if (StringUtils.hasText(record.doctorComments())) {
-            notes.add("Doctor review: " + record.doctorComments());
-        }
+        layout.y -= headerHeight;
+    }
+
+    private void drawNotesBlock(PdfReportLayout layout, LabOrderRecord record) throws IOException {
+        List<String> notes = clinicalNotes(record);
         if (notes.isEmpty()) {
-            return y;
+            return;
         }
-        writeSectionHeader(content, "Comments", margin, y, width);
-        y -= 20;
+        float needed = 18f;
         for (String note : notes) {
-            y = writeWrapped(content, note, 9f, margin, y, width);
-            y -= 4;
+            needed += 14f + wrap(note, new PDType1Font(Standard14Fonts.FontName.HELVETICA), 8.8f, layout.width - 34f).size() * 9.5f;
         }
-        return y - 4;
+        layout.ensureSpace(Math.min(needed, 96f));
+        writeSectionHeader(layout.content, "Clinical / Laboratory Notes", layout.margin, layout.y, layout.width);
+        layout.y -= 16f;
+        for (String note : notes) {
+            List<String> lines = wrap(note, new PDType1Font(Standard14Fonts.FontName.HELVETICA), 8.8f, layout.width - 34f);
+            float boxHeight = 12f + Math.max(1, lines.size()) * 9.5f;
+            layout.ensureSpace(boxHeight + 6f);
+            layout.content.setNonStrokingColor(250 / 255f, 251 / 255f, 253 / 255f);
+            layout.content.addRect(layout.margin, layout.y - boxHeight, layout.width, boxHeight);
+            layout.content.fill();
+            layout.content.setNonStrokingColor(0f, 0f, 0f);
+            writeLine(layout.content, "•", 9.5f, layout.margin + 10f, layout.y - 10f, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+            layout.y -= 12f;
+            for (String line : lines) {
+                if (!layout.hasSpace(14f)) {
+                    layout.newPage();
+                    writeSectionHeader(layout.content, "Clinical / Laboratory Notes (continued)", layout.margin, layout.y, layout.width);
+                    layout.y -= 16f;
+                }
+                writeLine(layout.content, line, 8.8f, layout.margin + 18f, layout.y, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+                layout.y -= 9.5f;
+            }
+            layout.y -= 6f;
+        }
+        layout.y -= 1f;
     }
 
     private void drawReportBorder(PDPageContentStream content, PDPage page, float margin) throws IOException {
@@ -1399,14 +1993,18 @@ public class LabService {
     }
 
     private float writeWrapped(PDPageContentStream content, String text, float fontSize, float x, float y, float maxWidth) throws IOException {
-        List<String> lines = wrap(text, new PDType1Font(Standard14Fonts.FontName.HELVETICA), fontSize, maxWidth);
+        return writeWrapped(content, text, fontSize, x, y, maxWidth, new PDType1Font(Standard14Fonts.FontName.HELVETICA), fontSize + 1f);
+    }
+
+    private float writeWrapped(PDPageContentStream content, String text, float fontSize, float x, float y, float maxWidth, PDType1Font font, float lineHeight) throws IOException {
+        List<String> lines = wrap(text, font, fontSize, maxWidth);
         if (lines.isEmpty()) {
             lines = List.of("");
         }
         float lineY = y;
         for (String line : lines) {
-            writeLine(content, line, fontSize, x, lineY, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
-            lineY -= fontSize + 1;
+            writeLine(content, line, fontSize, x, lineY, font);
+            lineY -= lineHeight;
         }
         return lineY;
     }
@@ -1418,23 +2016,46 @@ public class LabService {
         }
         List<String> lines = new ArrayList<>();
         StringBuilder current = new StringBuilder();
-        for (String token : value.split("\\s+")) {
-            String candidate = current.isEmpty() ? token : current + " " + token;
-            if (textWidth(font, fontSize, candidate) <= maxWidth) {
-                current.setLength(0);
-                current.append(candidate);
-            } else {
-                if (current.length() > 0) {
-                    lines.add(current.toString());
+        for (String rawToken : value.split("\\s+")) {
+            List<String> tokenParts = splitLongToken(rawToken, font, fontSize, maxWidth);
+            for (String token : tokenParts) {
+                String candidate = current.isEmpty() ? token : current + " " + token;
+                if (textWidth(font, fontSize, candidate) <= maxWidth) {
+                    current.setLength(0);
+                    current.append(candidate);
+                } else {
+                    if (current.length() > 0) {
+                        lines.add(current.toString());
+                    }
+                    current.setLength(0);
+                    current.append(token);
                 }
-                current.setLength(0);
-                current.append(token);
             }
         }
         if (current.length() > 0) {
             lines.add(current.toString());
         }
         return lines;
+    }
+
+    private List<String> splitLongToken(String token, PDType1Font font, float fontSize, float maxWidth) throws IOException {
+        if (textWidth(font, fontSize, token) <= maxWidth) {
+            return List.of(token);
+        }
+        List<String> parts = new ArrayList<>();
+        StringBuilder part = new StringBuilder();
+        for (int i = 0; i < token.length(); i++) {
+            String candidate = part.toString() + token.charAt(i);
+            if (part.length() > 0 && textWidth(font, fontSize, candidate) > maxWidth) {
+                parts.add(part.toString());
+                part.setLength(0);
+            }
+            part.append(token.charAt(i));
+        }
+        if (part.length() > 0) {
+            parts.add(part.toString());
+        }
+        return parts;
     }
 
     private float textWidth(PDType1Font font, float fontSize, String text) throws IOException {
@@ -1454,19 +2075,7 @@ public class LabService {
         content.setStrokingColor(red / 255f, green / 255f, blue / 255f);
     }
 
-    private void drawFooter(PDPageContentStream content, String text, float margin, float y, float width) throws IOException {
-        PDType1Font font = new PDType1Font(Standard14Fonts.FontName.HELVETICA);
-        float fontSize = 8f;
-        float textWidth = textWidth(font, fontSize, text);
-        if (textWidth <= width) {
-            float x = margin + Math.max(0f, (width - textWidth) / 2f);
-            writeLine(content, text, fontSize, x, y - 10, font);
-        } else {
-            writeWrapped(content, text, fontSize, margin, y - 10, width);
-        }
-    }
-
-    private void drawPageNumbers(PDDocument document, float margin) throws IOException {
+    private void drawPageFooters(PDDocument document, float margin, String footerText) throws IOException {
         int totalPages = document.getNumberOfPages();
         PDType1Font font = new PDType1Font(Standard14Fonts.FontName.HELVETICA);
         for (int i = 0; i < totalPages; i++) {
@@ -1475,25 +2084,128 @@ public class LabService {
                 String pageLabel = "Page " + (i + 1) + " of " + totalPages;
                 float fontSize = 8f;
                 float pageWidth = page.getMediaBox().getWidth();
-                float textWidth = textWidth(font, fontSize, pageLabel);
-                writeLine(content, pageLabel, fontSize, pageWidth - margin - textWidth, margin - 8, font);
+                float pageLabelWidth = textWidth(font, fontSize, pageLabel);
+                content.moveTo(margin + 8f, margin + 24f);
+                content.lineTo(pageWidth - margin - 8f, margin + 24f);
+                content.stroke();
+                writeLine(content, footerText, fontSize, margin + 8f, margin + 11f, font);
+                writeLine(content, pageLabel, fontSize, pageWidth - margin - 8f - pageLabelWidth, margin + 11f, font);
             }
         }
     }
 
     private float measureMetaCellHeight(MetaPair pair, float width) throws IOException {
-        List<String> lines = wrap(safe(pair.value()), new PDType1Font(Standard14Fonts.FontName.HELVETICA), 9f, width - 12f);
-        return Math.max(28f, 14f + Math.max(1, lines.size()) * 10f);
+        List<String> lines = wrap(safe(pair.value()), new PDType1Font(Standard14Fonts.FontName.HELVETICA), 8.8f, width - 14f);
+        return Math.max(22f, 12f + Math.max(1, lines.size()) * 8.8f);
+    }
+
+    private List<String> clinicalNotes(LabOrderRecord record) {
+        LinkedHashSet<String> notes = new LinkedHashSet<>();
+        if (record == null) {
+            return List.of();
+        }
+        if (isPatientFacingClinicalNote(record.sampleCollectionNotes())) {
+            notes.add(record.sampleCollectionNotes().trim());
+        }
+        if (isPatientFacingClinicalNote(record.resultComments())) {
+            notes.add(record.resultComments().trim());
+        }
+        return List.copyOf(notes);
+    }
+
+    private boolean isPatientFacingClinicalNote(String note) {
+        if (!StringUtils.hasText(note)) {
+            return false;
+        }
+        String normalized = note.trim().toLowerCase(java.util.Locale.ROOT);
+        if (normalized.contains("uat")
+                || normalized.contains("internal")
+                || normalized.contains("workflow")
+                || normalized.contains("partial publication")
+                || normalized.contains("shared specimen")
+                || normalized.contains("e2e")
+                || normalized.contains("retest")) {
+            return false;
+        }
+        return normalized.contains("fasting")
+                || normalized.contains("hemoly")
+                || normalized.contains("haemoly")
+                || normalized.contains("interpret with caution")
+                || normalized.contains("repeat specimen")
+                || normalized.contains("repeat analysis")
+                || normalized.contains("confirmed")
+                || normalized.contains("recommend");
     }
 
     private float measureResultRowHeight(String[] values, float[] columns, float width) throws IOException {
-        float max = 22f;
+        float max = 28f;
         for (int i = 0; i < values.length; i++) {
-            float colWidth = width * columns[i] - 8f;
-            List<String> lines = wrap(values[i], new PDType1Font(Standard14Fonts.FontName.HELVETICA), 8.6f, colWidth);
-            max = Math.max(max, 8f + Math.max(1, lines.size()) * 9.6f);
+            float colWidth = width * columns[i] - 12f;
+            List<String> lines = wrap(values[i], new PDType1Font(Standard14Fonts.FontName.HELVETICA), 9f, colWidth);
+            max = Math.max(max, 12f + Math.max(1, lines.size()) * 10.5f);
         }
         return max;
+    }
+
+    private void drawLabelValue(PDPageContentStream content, String label, String value, float x, float y, float width) throws IOException {
+        PDType1Font bold = new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD);
+        writeLine(content, label + ":", 8.8f, x, y, bold);
+        float labelWidth = textWidth(bold, 8.8f, label + ":") + 8f;
+        writeWrapped(content, value, 9f, x + labelWidth, y, width - labelWidth);
+    }
+
+    private String shortVerificationReference(String token) {
+        if (!StringUtils.hasText(token)) {
+            return "Not available";
+        }
+        String normalized = token.trim().toUpperCase();
+        int visible = Math.min(12, normalized.length());
+        return "LAB-" + normalized.substring(0, visible);
+    }
+
+    private final class PdfReportLayout implements AutoCloseable {
+        private final PDDocument document;
+        private final float margin;
+        private final float width;
+        private PDPage page;
+        private PDPageContentStream content;
+        private float y;
+
+        private PdfReportLayout(PDDocument document, float margin) throws IOException {
+            this.document = document;
+            this.margin = margin;
+            this.width = PDRectangle.A4.getWidth() - (margin * 2f);
+            newPage();
+        }
+
+        private boolean hasSpace(float needed) {
+            return y - needed >= margin + 34f;
+        }
+
+        private void ensureSpace(float needed) throws IOException {
+            if (!hasSpace(needed)) {
+                newPage();
+            }
+        }
+
+        private void newPage() throws IOException {
+            if (content != null) {
+                content.close();
+            }
+            page = new PDPage(PDRectangle.A4);
+            document.addPage(page);
+            content = new PDPageContentStream(document, page);
+            drawReportBorder(content, page, margin);
+            y = page.getMediaBox().getHeight() - margin - 14f;
+        }
+
+        @Override
+        public void close() throws IOException {
+            if (content != null) {
+                content.close();
+                content = null;
+            }
+        }
     }
 
     private String interpretationLabel(String resultFlag) {
@@ -1558,8 +2270,211 @@ public class LabService {
         };
     }
 
-    private String verificationUrl(LabOrderRecord record) {
-        return "/lab/reports/" + safe(record.orderNumber()) + "/verify";
+    private String verificationUrl(UUID tenantId, LabOrderRecord record) {
+        String token = record == null ? null : record.reportVerificationToken();
+        if (!StringUtils.hasText(token)) {
+            return null;
+        }
+        String path = "/api/public/lab/reports/" + token.trim() + "/verify";
+        String baseUrl = labReportVerificationProperties == null ? null : labReportVerificationProperties.getPublicBaseUrl();
+        if (!StringUtils.hasText(baseUrl)) {
+            return path;
+        }
+        return trimTrailingSlash(baseUrl) + path;
+    }
+
+    private BufferedImage buildVerificationQr(String verificationUrl) {
+        if (!StringUtils.hasText(verificationUrl)) {
+            return null;
+        }
+        try {
+            QRCodeWriter writer = new QRCodeWriter();
+            BitMatrix matrix = writer.encode(verificationUrl, BarcodeFormat.QR_CODE, 240, 240, Map.of(EncodeHintType.MARGIN, 1));
+            return MatrixToImageWriter.toBufferedImage(matrix);
+        } catch (WriterException ex) {
+            return null;
+        }
+    }
+
+    private String trimTrailingSlash(String value) {
+        if (value == null) {
+            return null;
+        }
+        return value.replaceAll("/+$", "");
+    }
+
+    private String businessReportStatusLabel(LabOrderRecord record) {
+        return businessReportStatusLabel(record, currentReportArtifact(record));
+    }
+
+    private String businessReportStatusLabel(LabOrderRecord record, String reportMode, String reportType) {
+        if (StringUtils.hasText(reportType)) {
+            if (LaboratoryReportPublicationArtifactEntity.REPORT_TYPE_FINAL.equalsIgnoreCase(reportType)) {
+                return "Final";
+            }
+            if (LaboratoryReportPublicationArtifactEntity.REPORT_TYPE_INTERIM.equalsIgnoreCase(reportType)) {
+                if (LaboratoryReportPublicationArtifactEntity.REPORT_MODE_INDIVIDUAL.equalsIgnoreCase(reportMode)) {
+                    return "Individual Interim";
+                }
+                if (LaboratoryReportPublicationArtifactEntity.REPORT_MODE_GROUPED.equalsIgnoreCase(reportMode)) {
+                    return "Grouped Interim";
+                }
+                return "Interim";
+            }
+        }
+        return businessReportStatusLabel(record);
+    }
+
+    private String businessReportStatusLabel(LabOrderEntity order) {
+        if (order == null) {
+            return "Published";
+        }
+        if (order.getReportPublishedAt() != null || StringUtils.hasText(order.getReportFilename())) {
+            return "Published";
+        }
+        if (order.getStatus() == null) {
+            return "Published";
+        }
+        return switch (order.getStatus()) {
+            case REPORT_GENERATED, DELIVERED -> "Published";
+            case REPORT_READY -> "Final";
+            default -> order.getStatus().name().replace('_', ' ');
+        };
+    }
+
+    private String businessReportStatusLabel(LabOrderEntity order, LaboratoryReportArtifactView artifact) {
+        if (artifact != null) {
+            if (LaboratoryReportPublicationArtifactEntity.REPORT_TYPE_FINAL.equalsIgnoreCase(artifact.reportType())) {
+                return "Final";
+            }
+            if (LaboratoryReportPublicationArtifactEntity.REPORT_TYPE_INTERIM.equalsIgnoreCase(artifact.reportType())) {
+                if (LaboratoryReportPublicationArtifactEntity.REPORT_MODE_INDIVIDUAL.equalsIgnoreCase(artifact.reportMode())) {
+                    return "Individual Interim";
+                }
+                if (LaboratoryReportPublicationArtifactEntity.REPORT_MODE_GROUPED.equalsIgnoreCase(artifact.reportMode())) {
+                    return "Grouped Interim";
+                }
+                return "Interim";
+            }
+        }
+        return businessReportStatusLabel(order);
+    }
+
+    private String businessReportStatusLabel(LabOrderRecord record, LabOrderRecord.LabReportArtifactRecord artifact) {
+        if (artifact != null) {
+            if (LaboratoryReportPublicationArtifactEntity.REPORT_TYPE_FINAL.equalsIgnoreCase(artifact.reportType())) {
+                return "Final";
+            }
+            if (LaboratoryReportPublicationArtifactEntity.REPORT_TYPE_INTERIM.equalsIgnoreCase(artifact.reportType())) {
+                if (LaboratoryReportPublicationArtifactEntity.REPORT_MODE_INDIVIDUAL.equalsIgnoreCase(artifact.reportMode())) {
+                    return "Individual Interim";
+                }
+                if (LaboratoryReportPublicationArtifactEntity.REPORT_MODE_GROUPED.equalsIgnoreCase(artifact.reportMode())) {
+                    return "Grouped Interim";
+                }
+                return "Interim";
+            }
+        }
+        if (record == null) {
+            return "Published";
+        }
+        if (record.reportPublishedAt() != null || record.reportFilename() != null) {
+            return "Published";
+        }
+        if (record.status() == null) {
+            return "Published";
+        }
+        return switch (record.status()) {
+            case REPORT_GENERATED, DELIVERED -> "Published";
+            case REPORT_READY -> "Final";
+            default -> record.status().name().replace('_', ' ');
+        };
+    }
+
+    private String reportTitleLabel(LabOrderRecord record) {
+        return reportTitleLabel(record, null, null);
+    }
+
+    private String reportTitleLabel(LabOrderRecord record, String reportMode, String reportType) {
+        if (StringUtils.hasText(reportMode)) {
+            if (LaboratoryReportPublicationArtifactEntity.REPORT_MODE_CONSOLIDATED.equalsIgnoreCase(reportMode)
+                    && LaboratoryReportPublicationArtifactEntity.REPORT_TYPE_FINAL.equalsIgnoreCase(reportType)) {
+                return "FINAL LABORATORY REPORT";
+            }
+            if (LaboratoryReportPublicationArtifactEntity.REPORT_MODE_INDIVIDUAL.equalsIgnoreCase(reportMode)) {
+                return "INDIVIDUAL LABORATORY REPORT";
+            }
+            if (LaboratoryReportPublicationArtifactEntity.REPORT_MODE_GROUPED.equalsIgnoreCase(reportMode)) {
+                return "GROUPED LABORATORY REPORT";
+            }
+            if (LaboratoryReportPublicationArtifactEntity.REPORT_TYPE_FINAL.equalsIgnoreCase(reportType)) {
+                return "FINAL LABORATORY REPORT";
+            }
+        }
+        LabOrderRecord.LabReportArtifactRecord artifact = currentReportArtifact(record);
+        if (artifact == null) {
+            return "Interim Report";
+        }
+        if (LaboratoryReportPublicationArtifactEntity.REPORT_TYPE_FINAL.equalsIgnoreCase(artifact.reportType())) {
+            return "FINAL LABORATORY REPORT";
+        }
+        if (LaboratoryReportPublicationArtifactEntity.REPORT_MODE_INDIVIDUAL.equalsIgnoreCase(artifact.reportMode())) {
+            return "INDIVIDUAL LABORATORY REPORT";
+        }
+        if (LaboratoryReportPublicationArtifactEntity.REPORT_MODE_GROUPED.equalsIgnoreCase(artifact.reportMode())) {
+            return "GROUPED LABORATORY REPORT";
+        }
+        return "INTERIM LABORATORY REPORT";
+    }
+
+    private String reportTypeLabel(LabOrderRecord.LabReportArtifactRecord artifact) {
+        if (artifact == null) {
+            return "Interim";
+        }
+        if (LaboratoryReportPublicationArtifactEntity.REPORT_TYPE_FINAL.equalsIgnoreCase(artifact.reportType())) {
+            return "Final";
+        }
+        if (LaboratoryReportPublicationArtifactEntity.REPORT_MODE_INDIVIDUAL.equalsIgnoreCase(artifact.reportMode())) {
+            return "Individual Interim";
+        }
+        if (LaboratoryReportPublicationArtifactEntity.REPORT_MODE_GROUPED.equalsIgnoreCase(artifact.reportMode())) {
+            return "Grouped Interim";
+        }
+        return "Interim";
+    }
+
+    private String[] resultRowValues(String testName, LabOrderResultRecord row) {
+        String label = StringUtils.hasText(row.parameterName())
+                ? testName + " / " + row.parameterName()
+                : StringUtils.hasText(row.componentName())
+                ? testName + " / " + row.componentName()
+                : testName;
+        return new String[]{
+                label,
+                safe(row.resultValue()),
+                safe(row.unit()),
+                safe(row.referenceRange()),
+                interpretationLabel(row.resultFlag())
+        };
+    }
+
+    private String logoFallbackText(String clinicName) {
+        String value = StringUtils.hasText(clinicName) ? clinicName.trim() : "LAB";
+        String[] parts = value.split("\\s+");
+        if (parts.length == 1) {
+            return parts[0].substring(0, Math.min(3, parts[0].length())).toUpperCase(java.util.Locale.ROOT);
+        }
+        StringBuilder builder = new StringBuilder();
+        for (String part : parts) {
+            if (!StringUtils.hasText(part)) {
+                continue;
+            }
+            builder.append(Character.toUpperCase(part.charAt(0)));
+            if (builder.length() == 3) {
+                break;
+            }
+        }
+        return builder.length() == 0 ? "LAB" : builder.toString();
     }
 
 
@@ -1617,12 +2532,12 @@ public class LabService {
         return samples.getFirst().status();
     }
 
-    private void ensureUsableSampleForOrderItem(List<LabOrderSampleEntity> samples, UUID labOrderItemId) {
+    private void ensureUsableSampleForOrderItem(List<LabOrderSampleEntity> samples, Map<UUID, SampleLinkSummary> sampleLinkSummaries, UUID labOrderItemId) {
         if (samples == null || samples.isEmpty()) {
             return;
         }
         List<LabOrderSampleEntity> relevantSamples = samples.stream()
-                .filter(sample -> sample.getLabOrderItemId() == null || sample.getLabOrderItemId().equals(labOrderItemId))
+                .filter(sample -> sampleAppliesToOrderItem(sample, sampleLinkSummaries == null ? null : sampleLinkSummaries.get(sample.getId()), labOrderItemId))
                 .toList();
         if (relevantSamples.isEmpty()) {
             throw new IllegalArgumentException("A collected sample is required before result entry");
@@ -1633,20 +2548,101 @@ public class LabService {
         }
     }
 
-    private void ensureNoResultsEnteredForSample(UUID tenantId, LabOrderSampleEntity sample) {
-        if (sample.getLabOrderItemId() == null) {
-            if (!labOrderResultRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAscCreatedAtAsc(tenantId, sample.getLabOrderId()).isEmpty()) {
+    private void ensureNoResultsEnteredForSample(UUID tenantId, LabOrderSampleEntity sample, SampleLinkSummary summary) {
+        List<UUID> linkedItemIds = summary == null ? List.of() : summary.linkedLabOrderItemIds();
+        if (linkedItemIds.isEmpty()) {
+            if (sample.getLabOrderItemId() == null) {
+                if (!labOrderResultRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAscCreatedAtAsc(tenantId, sample.getLabOrderId()).isEmpty()) {
+                    throw new IllegalArgumentException("Lab sample cannot be rejected after results are entered");
+                }
+                return;
+            }
+            linkedItemIds = List.of(sample.getLabOrderItemId());
+        }
+        for (UUID labOrderItemId : linkedItemIds) {
+            if (!labOrderResultRepository.findByTenantIdAndLabOrderItemId(tenantId, labOrderItemId).isEmpty()) {
                 throw new IllegalArgumentException("Lab sample cannot be rejected after results are entered");
             }
-            return;
-        }
-        if (!labOrderResultRepository.findByTenantIdAndLabOrderItemId(tenantId, sample.getLabOrderItemId()).isEmpty()) {
-            throw new IllegalArgumentException("Lab sample cannot be rejected after results are entered");
         }
     }
 
-    private String formatDateTime(OffsetDateTime value) {
-        return value == null ? "-" : value.format(DateTimeFormatter.ofPattern("dd MMM yyyy hh:mm a"));
+    private boolean sampleAppliesToOrderItem(LabOrderSampleEntity sample, SampleLinkSummary summary, UUID labOrderItemId) {
+        if (sample == null || labOrderItemId == null) {
+            return false;
+        }
+        if (summary != null && !summary.linkedLabOrderItemIds().isEmpty()) {
+            return summary.linkedLabOrderItemIds().contains(labOrderItemId);
+        }
+        return sample.getLabOrderItemId() == null || sample.getLabOrderItemId().equals(labOrderItemId);
+    }
+
+    private Map<UUID, SampleLinkSummary> buildSampleLinkSummaries(UUID tenantId, UUID orderId) {
+        if (tenantId == null || orderId == null) {
+            return Map.of();
+        }
+        Map<UUID, LabOrderItemEntity> orderItems = labOrderItemRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAsc(tenantId, orderId).stream()
+                .collect(Collectors.toMap(LabOrderItemEntity::getId, Function.identity(), (left, right) -> left, LinkedHashMap::new));
+        Map<UUID, LinkedHashSet<UUID>> linkedItemIdsBySample = new LinkedHashMap<>();
+        Map<UUID, LinkedHashSet<String>> linkedTestNamesBySample = new LinkedHashMap<>();
+        for (LaboratoryOrderedTestView orderedTest : laboratoryWorkflowService.listOrderTests(tenantId, orderId)) {
+            LabOrderItemEntity item = orderItems.get(orderedTest.labOrderItemId());
+            String testName = item == null ? null : item.getTestName();
+            if (orderedTest.specimenLinks() == null) {
+                continue;
+            }
+            for (com.deepthoughtnet.clinic.laboratory.service.model.LaboratorySpecimenLinkView link : orderedTest.specimenLinks()) {
+                if (link == null || link.labOrderSampleId() == null) {
+                    continue;
+                }
+                linkedItemIdsBySample.computeIfAbsent(link.labOrderSampleId(), ignored -> new LinkedHashSet<>()).add(orderedTest.labOrderItemId());
+                if (StringUtils.hasText(testName)) {
+                    linkedTestNamesBySample.computeIfAbsent(link.labOrderSampleId(), ignored -> new LinkedHashSet<>()).add(testName);
+                }
+            }
+        }
+        Map<UUID, SampleLinkSummary> result = new LinkedHashMap<>();
+        for (UUID sampleId : linkedItemIdsBySample.keySet()) {
+            result.put(sampleId, new SampleLinkSummary(
+                    new ArrayList<>(linkedItemIdsBySample.get(sampleId)),
+                    new ArrayList<>(linkedTestNamesBySample.getOrDefault(sampleId, new LinkedHashSet<>()))
+            ));
+        }
+        return result;
+    }
+
+    private Map<UUID, SampleLinkSummary> buildSampleLinkSummaries(List<LabOrderedTestRecord> orderedTests) {
+        Map<UUID, LinkedHashSet<UUID>> linkedItemIdsBySample = new LinkedHashMap<>();
+        Map<UUID, LinkedHashSet<String>> linkedTestNamesBySample = new LinkedHashMap<>();
+        if (orderedTests != null) {
+            for (LabOrderedTestRecord orderedTest : orderedTests) {
+                if (orderedTest == null || orderedTest.specimenLinks() == null) {
+                    continue;
+                }
+                for (LabOrderedTestSpecimenRecord link : orderedTest.specimenLinks()) {
+                    if (link == null || link.labOrderSampleId() == null) {
+                        continue;
+                    }
+                    linkedItemIdsBySample.computeIfAbsent(link.labOrderSampleId(), ignored -> new LinkedHashSet<>()).add(orderedTest.labOrderItemId());
+                    linkedTestNamesBySample.computeIfAbsent(link.labOrderSampleId(), ignored -> new LinkedHashSet<>()).add(orderedTest.testName());
+                }
+            }
+        }
+        Map<UUID, SampleLinkSummary> result = new LinkedHashMap<>();
+        for (UUID sampleId : linkedItemIdsBySample.keySet()) {
+            result.put(sampleId, new SampleLinkSummary(
+                    new ArrayList<>(linkedItemIdsBySample.get(sampleId)),
+                    new ArrayList<>(linkedTestNamesBySample.getOrDefault(sampleId, new LinkedHashSet<>()))
+            ));
+        }
+        return result;
+    }
+
+    private String formatDateTime(OffsetDateTime value, ZoneId zoneId) {
+        if (value == null) {
+            return "-";
+        }
+        ZoneId safeZone = zoneId == null ? ZoneId.of("UTC") : zoneId;
+        return value.atZoneSameInstant(safeZone).format(DateTimeFormatter.ofPattern("dd MMM yyyy hh:mm a z"));
     }
 
     private String firstText(String... values) {
@@ -1659,6 +2655,35 @@ public class LabService {
     }
 
     private record MetaPair(String label, String value) {
+    }
+
+    private static final class SampleCollectionGroup {
+        private final String specimenType;
+        private final String containerType;
+        private final OffsetDateTime collectedAt;
+        private final String notes;
+        private final LinkedHashSet<UUID> linkedOrderItemIds = new LinkedHashSet<>();
+        private boolean assignToAllOrderItems;
+
+        private SampleCollectionGroup(String specimenType, String containerType, OffsetDateTime collectedAt, String notes) {
+            this.specimenType = specimenType;
+            this.containerType = containerType;
+            this.collectedAt = collectedAt;
+            this.notes = notes;
+        }
+
+        private boolean matches(String specimenType, String containerType, OffsetDateTime collectedAt, String notes) {
+            return Objects.equals(this.specimenType, specimenType)
+                    && Objects.equals(this.containerType, containerType)
+                    && Objects.equals(this.collectedAt, collectedAt)
+                    && Objects.equals(this.notes, notes);
+        }
+    }
+
+    private record SampleLinkSummary(List<UUID> linkedLabOrderItemIds, List<String> linkedTestNames) {
+        private static SampleLinkSummary empty() {
+            return new SampleLinkSummary(List.of(), List.of());
+        }
     }
 
     private record Range(BigDecimal low, boolean lowInclusive, BigDecimal high, boolean highInclusive) {
@@ -1729,12 +2754,6 @@ public class LabService {
     }
 
     private record ResultFlagResolution(LabResultFlag flag, boolean critical) {
-    }
-
-    private void ensureSpace(PDPage page, float margin, float y, float needed) {
-        if (y - needed < margin) {
-            throw new IllegalStateException("Lab report PDF content overflow");
-        }
     }
 
     private LabTestRecord toRecord(LabTestMasterEntity entity) {
@@ -1865,6 +2884,12 @@ public class LabService {
                     sortOrder++
             )));
         }
+        laboratoryWorkflowService.initializeOrderTests(
+                tenantId,
+                savedOrder.getId(),
+                items.stream().map(LabOrderItemEntity::getId).toList(),
+                actorAppUserId
+        );
         List<BillLineCommand> billLines = items.stream()
                 .map(item -> new BillLineCommand(
                         BillItemType.TEST,
@@ -1896,6 +2921,7 @@ public class LabService {
         savedOrder.linkBill(issuedBill.id());
         savedOrder.markStatus(LabOrderStatus.PAYMENT_PENDING);
         LabOrderEntity persisted = labOrderRepository.save(savedOrder);
+        synchronizeAggregateStatus(tenantId, persisted, actorAppUserId);
         auditOrder(tenantId, persisted, "lab_order.created", actorAppUserId, auditMessage);
         if (persisted.getOrderOrigin() == LabOrderOrigin.WALK_IN || persisted.getOrderOrigin() == LabOrderOrigin.DOCTOR_REFERRAL) {
             auditOrder(tenantId, persisted, "lab_order.direct_registration_created", actorAppUserId, "Created direct laboratory registration");
@@ -2463,6 +3489,10 @@ public class LabService {
         return normalized.replaceAll("-+", "-");
     }
 
+    private static <T> List<T> safeList(List<T> values) {
+        return values == null ? List.of() : values;
+    }
+
     private String normalizeCategory(String value) {
         return LabCategoryCatalog.normalize(value);
     }
@@ -2507,6 +3537,25 @@ public class LabService {
         auditEventPublisher.record(new AuditEventCommand(tenantId, SAMPLE_ENTITY_TYPE, entity.getId(), action, actorAppUserId, OffsetDateTime.now(), message, detailsJson(entity)));
     }
 
+    private ResultEntryAuditMetadata resolveResultEntryAudit(UUID tenantId, UUID orderId) {
+        if (tenantId == null || orderId == null || auditEventQueryService == null) {
+            return null;
+        }
+        List<AuditEventRecord> events = auditEventQueryService.listForEntity(tenantId, ORDER_ENTITY_TYPE, orderId);
+        if (events == null || events.isEmpty()) {
+            return null;
+        }
+        return events.stream()
+                .filter(event -> isResultEntryAction(event.action()))
+                .max(Comparator.comparing(AuditEventRecord::occurredAt, Comparator.nullsLast(Comparator.naturalOrder())))
+                .map(event -> new ResultEntryAuditMetadata(
+                        event.actorAppUserId(),
+                        event.actorAppUserId() == null ? null : resolveUserDisplayName(tenantId, event.actorAppUserId()).orElse(null),
+                        event.occurredAt()
+                ))
+                .orElse(null);
+    }
+
     private String detailsJson(LabTestMasterEntity entity) {
         Map<String, Object> details = new LinkedHashMap<>();
         details.put("id", entity.getId());
@@ -2548,6 +3597,401 @@ public class LabService {
         } catch (JsonProcessingException ex) {
             return "{\"id\":\"" + entity.getId() + "\"}";
         }
+    }
+
+    private void synchronizeAggregateStatus(UUID tenantId, LabOrderEntity order, UUID actorAppUserId) {
+        if (tenantId == null || order == null) {
+            return;
+        }
+        String derived = laboratoryWorkflowService.deriveAggregateOrderState(tenantId, order.getId());
+        LabOrderStatus target = toOrderStatus(derived);
+        if (target != null && target != order.getStatus()) {
+            if (target == LabOrderStatus.ORDERED && order.getStatus() != LabOrderStatus.ORDERED) {
+                return;
+            }
+            order.markStatus(target);
+            labOrderRepository.save(order);
+        }
+    }
+
+    private List<UUID> selectEligibleTestsForVerification(UUID tenantId, UUID orderId, List<LaboratoryOrderedTestView> lifecycleViews) {
+        List<UUID> eligibleFromLifecycle = labOrderItemRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAsc(tenantId, orderId).stream()
+                .map(LabOrderItemEntity::getId)
+                .filter(itemId -> {
+                    String state = lifecycleViews.stream()
+                            .filter(view -> itemId.equals(view.labOrderItemId()))
+                            .map(LaboratoryOrderedTestView::state)
+                            .findFirst()
+                            .orElse(null);
+                    return isReviewEligibleTestState(state);
+                })
+                .toList();
+        if (!eligibleFromLifecycle.isEmpty() || lifecycleViews != null && !lifecycleViews.isEmpty()) {
+            return eligibleFromLifecycle;
+        }
+        return labOrderResultRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAscCreatedAtAsc(tenantId, orderId).stream()
+                .map(LabOrderResultEntity::getLabOrderItemId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+    }
+
+    private List<UUID> validateSelectedTestsForVerification(List<UUID> selectedTestIds, Map<UUID, LaboratoryOrderedTestView> lifecycleByItemId) {
+        for (UUID selectedTestId : selectedTestIds) {
+            LaboratoryOrderedTestView lifecycle = lifecycleByItemId.get(selectedTestId);
+            if (lifecycle == null) {
+                throw new IllegalArgumentException("Selected test is not part of this order");
+            }
+            String state = lifecycle.state();
+            if ("VERIFIED".equalsIgnoreCase(state)) {
+                throw new IllegalArgumentException("Selected test is already verified");
+            }
+            if (isPublishedTestState(state)) {
+                throw new IllegalArgumentException("Selected test is already published");
+            }
+            if (!isReviewEligibleTestState(state)) {
+                throw new IllegalArgumentException("Selected test is not ready for review");
+            }
+        }
+        return selectedTestIds;
+    }
+
+    private boolean isReviewEligibleTestState(String state) {
+        return "RESULT_ENTERED".equalsIgnoreCase(state) || "PENDING_REVIEW".equalsIgnoreCase(state);
+    }
+
+    private List<UUID> selectEditableTestsForResultEntry(Collection<LabOrderItemEntity> orderItems, List<LaboratoryOrderedTestView> lifecycleViews) {
+        if (orderItems == null || orderItems.isEmpty()) {
+            return List.of();
+        }
+        Map<UUID, String> stateByItemId = lifecycleViews == null ? Map.of() : lifecycleViews.stream()
+                .filter(view -> view.labOrderItemId() != null)
+                .collect(Collectors.toMap(
+                        LaboratoryOrderedTestView::labOrderItemId,
+                        view -> view.state(),
+                        (left, right) -> left,
+                        LinkedHashMap::new
+                ));
+        List<UUID> editableFromLifecycle = orderItems.stream()
+                .map(LabOrderItemEntity::getId)
+                .filter(itemId -> isEditableResultEntryState(stateByItemId.get(itemId)))
+                .toList();
+        if (!editableFromLifecycle.isEmpty() || lifecycleViews != null && !lifecycleViews.isEmpty()) {
+            return editableFromLifecycle;
+        }
+        return orderItems.stream().map(LabOrderItemEntity::getId).toList();
+    }
+
+    private List<UUID> validateSelectedTestsForResultEntry(List<UUID> selectedTestIds, Map<UUID, LaboratoryOrderedTestView> lifecycleByItemId) {
+        for (UUID selectedTestId : selectedTestIds) {
+            LaboratoryOrderedTestView lifecycle = lifecycleByItemId.get(selectedTestId);
+            if (lifecycle == null) {
+                throw new IllegalArgumentException("Selected test is not part of this order");
+            }
+            String state = lifecycle.state();
+            if ("VERIFIED".equalsIgnoreCase(state)) {
+                throw new IllegalArgumentException("Selected test is already verified");
+            }
+            if ("PUBLISHED".equalsIgnoreCase(state) || "REPORT_READY".equalsIgnoreCase(state) || "REPORT_GENERATED".equalsIgnoreCase(state) || "DELIVERED".equalsIgnoreCase(state)) {
+                throw new IllegalArgumentException("Selected test is already published");
+            }
+            if ("RECOLLECTION_REQUIRED".equalsIgnoreCase(state)) {
+                throw new IllegalArgumentException("Selected test requires recollection before result entry");
+            }
+            if (!isEditableResultEntryState(state)) {
+                throw new IllegalArgumentException("Selected test is not ready for result entry");
+            }
+        }
+        return selectedTestIds;
+    }
+
+    private boolean isEditableResultEntryState(String state) {
+        return "ORDERED".equalsIgnoreCase(state)
+                || "SAMPLE_COLLECTED".equalsIgnoreCase(state)
+                || "RESULT_ENTERED".equalsIgnoreCase(state)
+                || "RESULT_SENT_BACK".equalsIgnoreCase(state)
+                || "PENDING_REVIEW".equalsIgnoreCase(state)
+                || "RESULT_DRAFT".equalsIgnoreCase(state);
+    }
+
+    private boolean isPublishedTestState(String state) {
+        return "REPORT_READY".equalsIgnoreCase(state)
+                || "PARTIALLY_READY".equalsIgnoreCase(state)
+                || "PARTIALLY_PUBLISHED".equalsIgnoreCase(state)
+                || "REPORT_GENERATED".equalsIgnoreCase(state)
+                || "DELIVERED".equalsIgnoreCase(state)
+                || "PUBLISHED".equalsIgnoreCase(state);
+    }
+
+    private List<UUID> selectPublishableTestsForReportPublishing(List<LaboratoryOrderedTestView> lifecycleViews) {
+        if (lifecycleViews == null || lifecycleViews.isEmpty()) {
+            return List.of();
+        }
+        return lifecycleViews.stream()
+                .filter(view -> isReportComposableTestState(view.state()))
+                .map(LaboratoryOrderedTestView::labOrderItemId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+    }
+
+    private List<UUID> validateSelectedTestsForReportPublishing(List<UUID> selectedTestIds, Map<UUID, LaboratoryOrderedTestView> lifecycleByItemId) {
+        for (UUID selectedTestId : selectedTestIds) {
+            LaboratoryOrderedTestView lifecycle = lifecycleByItemId.get(selectedTestId);
+            if (lifecycle == null) {
+                throw new IllegalArgumentException("Selected test is not part of this order");
+            }
+            String state = lifecycle.state();
+            if (!isReportComposableTestState(state)) {
+                throw new IllegalArgumentException("Selected test is not ready for report publishing");
+            }
+        }
+        return selectedTestIds;
+    }
+
+    private boolean isReportComposableTestState(String state) {
+        if (!StringUtils.hasText(state)) {
+            return false;
+        }
+        String normalized = state.trim().toUpperCase();
+        return "VERIFIED".equals(normalized)
+                || "PUBLISHED".equals(normalized)
+                || "REPORT_GENERATED".equals(normalized)
+                || "DELIVERED".equals(normalized);
+    }
+
+    private String deriveReportModeForPublication(List<LaboratoryOrderedTestView> lifecycleViews, List<UUID> publishableTestIds) {
+        int count = publishableTestIds == null ? 0 : publishableTestIds.size();
+        if (count <= 1) {
+            return LaboratoryReportPublicationArtifactEntity.REPORT_MODE_INDIVIDUAL;
+        }
+        Set<UUID> selected = publishableTestIds.stream().filter(Objects::nonNull).collect(Collectors.toSet());
+        Set<UUID> total = lifecycleViews == null ? Set.of() : lifecycleViews.stream()
+                .map(LaboratoryOrderedTestView::labOrderItemId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        if (!total.isEmpty() && selected.containsAll(total)) {
+            return LaboratoryReportPublicationArtifactEntity.REPORT_MODE_CONSOLIDATED;
+        }
+        return LaboratoryReportPublicationArtifactEntity.REPORT_MODE_GROUPED;
+    }
+
+    private String deriveReportTypeForPublication(List<LaboratoryOrderedTestView> lifecycleViews, List<UUID> publishableTestIds) {
+        Set<UUID> selected = publishableTestIds == null ? Set.of() : publishableTestIds.stream().filter(Objects::nonNull).collect(Collectors.toSet());
+        if (lifecycleViews == null || lifecycleViews.isEmpty()) {
+            return LaboratoryReportPublicationArtifactEntity.REPORT_TYPE_INTERIM;
+        }
+        Set<UUID> total = lifecycleViews.stream()
+                .map(LaboratoryOrderedTestView::labOrderItemId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Set<UUID> alreadyPublished = lifecycleViews.stream()
+                .filter(view -> "PUBLISHED".equalsIgnoreCase(view.state())
+                        || "REPORT_GENERATED".equalsIgnoreCase(view.state())
+                        || "DELIVERED".equalsIgnoreCase(view.state()))
+                .map(LaboratoryOrderedTestView::labOrderItemId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        if (selected.isEmpty()) {
+            return LaboratoryReportPublicationArtifactEntity.REPORT_TYPE_INTERIM;
+        }
+        Set<UUID> finalSelection = new HashSet<>(alreadyPublished);
+        finalSelection.addAll(selected);
+        if (finalSelection.containsAll(total)) {
+            return LaboratoryReportPublicationArtifactEntity.REPORT_TYPE_FINAL;
+        }
+        return LaboratoryReportPublicationArtifactEntity.REPORT_TYPE_INTERIM;
+    }
+
+    private LaboratoryReportArtifactView legacyReportArtifactView(LabOrderEntity order, String verificationToken) {
+        if (order == null) {
+            return null;
+        }
+        List<UUID> selectedItemIds = latestPublicationSelection(order.getTenantId(), order.getId());
+        String verificationUrl = verificationUrl(order.getTenantId(), toRecord(order.getTenantId(), order));
+        String reportMode = selectedItemIds.size() <= 1
+                ? LaboratoryReportPublicationArtifactEntity.REPORT_MODE_INDIVIDUAL
+                : LaboratoryReportPublicationArtifactEntity.REPORT_MODE_GROUPED;
+        return new LaboratoryReportArtifactView(
+                order.getId(),
+                order.getTenantId(),
+                order.getId(),
+                1,
+                reportMode,
+                null,
+                order.getStatus() == LabOrderStatus.REPORT_READY
+                        ? LaboratoryReportPublicationArtifactEntity.REPORT_STATUS_CURRENT
+                        : LaboratoryReportPublicationArtifactEntity.REPORT_STATUS_HISTORICAL,
+                order.getReportFilename(),
+                order.getReportFilename(),
+                verificationToken,
+                verificationUrl,
+                order.getReportDeliveryChannels() == null || order.getReportDeliveryChannels().isBlank()
+                        ? List.of()
+                        : Arrays.stream(order.getReportDeliveryChannels().split(","))
+                                .map(String::trim)
+                                .filter(StringUtils::hasText)
+                                .toList(),
+                selectedItemIds,
+                order.getReportGeneratedAt(),
+                order.getReportGeneratedByUserId(),
+                order.getReportPublishedAt(),
+                order.getReportPublishedByUserId(),
+                null,
+                null,
+                order.getReportDeliveryNotes()
+        );
+    }
+
+    private LabOrderStatus toOrderStatus(String value) {
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
+        try {
+            return LabOrderStatus.valueOf(value.trim().toUpperCase());
+        } catch (IllegalArgumentException ex) {
+            return null;
+        }
+    }
+
+    private String serializeResultSnapshot(List<LabOrderResultEntity> results) {
+        List<Map<String, Object>> snapshot = results == null ? List.of() : results.stream().map(result -> {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("resultId", result.getId());
+            row.put("testCode", result.getTestCode());
+            row.put("testName", result.getTestName());
+            row.put("parameterName", result.getParameterName());
+            row.put("componentName", result.getComponentName());
+            row.put("resultValue", result.getResultValue());
+            row.put("unit", result.getUnit());
+            row.put("referenceRange", result.getReferenceRange());
+            row.put("sortOrder", result.getSortOrder());
+            row.put("resultFlag", result.getResultFlag());
+            row.put("criticalResult", result.isCriticalResult());
+            row.put("createdAt", result.getCreatedAt());
+            return row;
+        }).toList();
+        try {
+            return objectMapper.writeValueAsString(snapshot);
+        } catch (JsonProcessingException ex) {
+            return "[]";
+        }
+    }
+
+    private List<UUID> latestPublicationSelection(UUID tenantId, UUID orderId) {
+        return laboratoryWorkflowService.latestPublicationSelection(tenantId, orderId);
+    }
+
+    private LabOrderRecord.LabReportArtifactRecord currentReportArtifact(LabOrderRecord record) {
+        if (record == null || record.reportArtifacts() == null || record.reportArtifacts().isEmpty()) {
+            return null;
+        }
+        return record.reportArtifacts().stream()
+                .filter(artifact -> artifact != null && LaboratoryReportPublicationArtifactEntity.REPORT_STATUS_CURRENT.equalsIgnoreCase(artifact.reportStatus()))
+                .max(Comparator.comparingInt(LabOrderRecord.LabReportArtifactRecord::versionNumber))
+                .orElse(record.reportArtifacts().getFirst());
+    }
+
+    private List<LabOrderRecord.LabReportArtifactRecord> reportArtifacts(UUID tenantId, UUID orderId) {
+        return safeList(laboratoryWorkflowService.listReportArtifacts(tenantId, orderId)).stream()
+                .map(this::toRecord)
+                .toList();
+    }
+
+    private boolean hasIdenticalCurrentReport(
+            UUID tenantId,
+            UUID orderId,
+            String reportMode,
+            String reportType,
+            List<UUID> selectedTestIds
+    ) {
+        Set<UUID> selected = selectedTestIds == null
+                ? Set.of()
+                : selectedTestIds.stream().filter(Objects::nonNull).collect(Collectors.toSet());
+        return safeList(laboratoryWorkflowService.listReportArtifacts(tenantId, orderId)).stream()
+                .filter(artifact -> artifact != null
+                        && LaboratoryReportPublicationArtifactEntity.REPORT_STATUS_CURRENT.equalsIgnoreCase(artifact.reportStatus()))
+                .max(Comparator.comparingInt(LaboratoryReportArtifactView::artifactNumber))
+                .map(artifact -> LaboratoryReportPublicationArtifactEntity.REPORT_MODE_CONSOLIDATED.equalsIgnoreCase(reportMode)
+                        && LaboratoryReportPublicationArtifactEntity.REPORT_TYPE_FINAL.equalsIgnoreCase(reportType)
+                        && LaboratoryReportPublicationArtifactEntity.REPORT_MODE_CONSOLIDATED.equalsIgnoreCase(artifact.reportMode())
+                        && LaboratoryReportPublicationArtifactEntity.REPORT_TYPE_FINAL.equalsIgnoreCase(artifact.reportType())
+                        && selected.equals(artifact.selectedItemIds() == null
+                        ? Set.of()
+                        : artifact.selectedItemIds().stream().filter(Objects::nonNull).collect(Collectors.toSet())))
+                .orElse(false);
+    }
+
+    private void validateReportModeSelection(String reportMode, List<UUID> selectedTestIds) {
+        int selectedCount = selectedTestIds == null ? 0 : selectedTestIds.size();
+        if (LaboratoryReportPublicationArtifactEntity.REPORT_MODE_INDIVIDUAL.equalsIgnoreCase(reportMode)
+                && selectedCount != 1) {
+            throw new IllegalArgumentException("Individual reports require exactly one selected test");
+        }
+        if (LaboratoryReportPublicationArtifactEntity.REPORT_MODE_GROUPED.equalsIgnoreCase(reportMode)
+                && selectedCount < 2) {
+            throw new IllegalArgumentException("Grouped reports require at least two selected tests");
+        }
+    }
+
+    private boolean shouldNewArtifactBecomeCurrent(
+            UUID tenantId,
+            UUID orderId,
+            String reportMode,
+            String reportType
+    ) {
+        List<LaboratoryReportArtifactView> artifacts = safeList(laboratoryWorkflowService.listReportArtifacts(tenantId, orderId));
+        Optional<LaboratoryReportArtifactView> current = artifacts.stream()
+                .filter(artifact -> artifact != null
+                        && LaboratoryReportPublicationArtifactEntity.REPORT_STATUS_CURRENT.equalsIgnoreCase(artifact.reportStatus()))
+                .max(Comparator.comparingInt(LaboratoryReportArtifactView::artifactNumber));
+        if (current.isEmpty()) {
+            return true;
+        }
+        if (LaboratoryReportPublicationArtifactEntity.REPORT_MODE_CONSOLIDATED.equalsIgnoreCase(reportMode)
+                && LaboratoryReportPublicationArtifactEntity.REPORT_TYPE_FINAL.equalsIgnoreCase(reportType)) {
+            return true;
+        }
+        return LaboratoryReportPublicationArtifactEntity.REPORT_TYPE_INTERIM.equalsIgnoreCase(current.get().reportType())
+                && LaboratoryReportPublicationArtifactEntity.REPORT_TYPE_FINAL.equalsIgnoreCase(reportType);
+    }
+
+    private LabOrderRecord.LabReportArtifactRecord toRecord(LaboratoryReportArtifactView artifact) {
+        if (artifact == null) {
+            return null;
+        }
+        return new LabOrderRecord.LabReportArtifactRecord(
+                artifact.id(),
+                artifact.artifactNumber(),
+                artifact.reportMode(),
+                artifact.reportType(),
+                artifact.reportStatus(),
+                artifact.filename(),
+                artifact.storageReference(),
+                artifact.verificationToken(),
+                artifact.verificationUrl(),
+                artifact.deliveryChannels() == null ? List.of() : List.copyOf(artifact.deliveryChannels()),
+                artifact.selectedItemIds() == null ? List.of() : List.copyOf(artifact.selectedItemIds()),
+                artifact.generatedAt(),
+                artifact.generatedBy(),
+                artifact.publishedAt(),
+                artifact.publishedBy(),
+                artifact.supersededByArtifactId(),
+                artifact.supersededAt(),
+                artifact.notes()
+        );
+    }
+
+    private boolean isResultEntryAction(String action) {
+        if (!StringUtils.hasText(action)) {
+            return false;
+        }
+        String normalized = action.trim().toLowerCase(java.util.Locale.ROOT);
+        return normalized.equals("lab_order.results_entered")
+                || normalized.equals("lab_order.results_updated_before_verification");
+    }
+
+    private record ResultEntryAuditMetadata(UUID actorAppUserId, String actorDisplayName, OffsetDateTime occurredAt) {
     }
 
     private void notifyRequestingDoctor(UUID tenantId, LabOrderEntity order, UUID actorAppUserId) {

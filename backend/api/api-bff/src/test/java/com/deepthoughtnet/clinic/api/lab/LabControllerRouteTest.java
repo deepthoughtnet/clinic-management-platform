@@ -164,6 +164,7 @@ class LabControllerRouteTest {
                 org.mockito.ArgumentMatchers.any(),
                 org.mockito.ArgumentMatchers.eq(actorId)
         )).thenReturn(new LabOrderPaymentRecord(order, payment));
+        when(labService.receivedByDisplayLabel(tenantId, actorId)).thenReturn("UAT Automation Lab Front Desk");
         RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), actorId, "sub", Set.of("LAB_FRONT_DESK"), "LAB_FRONT_DESK", "cid"));
         MockMvc mockMvc = MockMvcBuilders
                 .standaloneSetup(controller(labService, mock(LabCsvService.class), mock(LabCatalogueConfigService.class)))
@@ -183,7 +184,8 @@ class LabControllerRouteTest {
                 .andExpect(content().string(org.hamcrest.Matchers.containsString(paymentId.toString())))
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("\"paymentMode\":\"CASH\"")))
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("\"paymentReceipt\"")))
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("\"receiptNumber\":\"REC-0001\"")));
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("\"receiptNumber\":\"REC-0001\"")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("\"receivedBy\":\"UAT Automation Lab Front Desk\"")));
     }
 
     @Test

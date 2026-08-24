@@ -10,13 +10,17 @@ function readSource(relPath) {
 
 test("lab payment receipt flow reuses billing receipt component and exposes post-payment actions", () => {
   const source = readSource("pages/lab/LabPage.tsx");
+  const receiptSource = readSource("components/finance/PrintableBillingDocuments.tsx");
   assert.ok(source.includes('ReceiptPrintDialog'));
   assert.ok(source.includes('type ReceiptPrintData'));
   assert.ok(source.includes('getClinicProfile'));
+  assert.ok(source.includes('getPatient'));
   assert.ok(source.includes('sendReceipt'));
   assert.ok(source.includes('paymentReceipt'));
   assert.ok(source.includes('buildReceiptPaymentSummary'));
+  assert.ok(receiptSource.includes('Reg. No.'));
   assert.ok(source.includes('receiptTimestampText'));
+  assert.ok(source.includes('receivedByLabel: receiptSummary?.receivedByLabel || auth.username || null,'));
   assert.ok(source.includes('View Receipt'));
   assert.ok(source.includes('Download PDF'));
   assert.ok(source.includes('Print Receipt'));

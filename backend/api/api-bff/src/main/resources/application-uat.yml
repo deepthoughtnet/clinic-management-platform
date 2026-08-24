@@ -23,6 +23,9 @@ server:
   port: 8089
 
 clinic:
+  report:
+    verification:
+      public-base-url: ${CLINIC_PUBLIC_BASE_URL:}
   database:
     destructive-seed-enabled: ${CLINIC_DATABASE_DESTRUCTIVE_SEED_ENABLED:false}
     test-schema-creator-enabled: ${CLINIC_DATABASE_TEST_SCHEMA_CREATOR_ENABLED:false}

@@ -20,6 +20,8 @@ import {
   InputLabel,
   Menu,
   MenuItem,
+  Radio,
+  RadioGroup,
   Tooltip,
   Select,
   Stack,
@@ -57,6 +59,7 @@ import CommentSuggestions from "../../shared/components/comment-suggestions/Comm
 import {
   getLabCategoryConfig,
   getClinicProfile,
+  getPatient,
   collectLabOrderSamples,
   collectLabOrderPayment,
   createLabTest,
@@ -173,18 +176,26 @@ type SampleCollectionFormRow = {
   specimenType: string;
   containerType: string;
   notes: string;
+  linkedTestNames: string[];
 };
 type SampleCollectionStatus = (typeof SAMPLE_COLLECTION_STATUS_OPTIONS)[number];
 
-const SAMPLE_REJECTION_REASONS = [
-  "Hemolysed sample",
-  "Insufficient quantity",
-  "Wrong container",
-  "Clotted sample",
-  "Leaked sample",
-  "Patient not fasting",
-  "Label mismatch",
-  "Other",
+const SAMPLE_REJECTION_REASON_OPTIONS = [
+  { value: "SAMPLE_HEMOLYZED", label: "Sample hemolyzed" },
+  { value: "INSUFFICIENT_SAMPLE", label: "Insufficient sample quantity" },
+  { value: "SAMPLE_MISMATCH", label: "Sample/specimen mismatch" },
+  { value: "WRONG_CONTAINER_SPECIMEN", label: "Wrong container/specimen" },
+  { value: "REPEAT_SAMPLE_REQUIRED", label: "Repeat sample required" },
+  { value: "OTHER_SPECIMEN_ISSUE", label: "Other specimen issue" },
+] as const;
+const RESULT_CORRECTION_REASON_OPTIONS = [
+  { value: "INCORRECT_RESULT", label: "Incorrect result value" },
+  { value: "DATA_ENTRY_ERROR", label: "Data entry / transcription error" },
+  { value: "UNIT_MISMATCH", label: "Unit mismatch" },
+  { value: "REFERENCE_RANGE_MISMATCH", label: "Reference range mismatch" },
+  { value: "INCOMPLETE_RESULT", label: "Incomplete result" },
+  { value: "TECHNICAL_RECHECK_REQUIRED", label: "Result requires technical recheck" },
+  { value: "OTHER_RESULT_CORRECTION", label: "Other result correction issue" },
 ] as const;
 const SAMPLE_CONTAINER_TYPE_OPTIONS = [
   "EDTA",
@@ -375,7 +386,7 @@ function buildReceiptPaymentSummary(row: LabOrder) {
       paymentAmount: receipt.amount ?? row.paymentAmount ?? row.billTotalAmount ?? row.billDueAmount ?? null,
       paymentMode: receipt.paymentMode || row.paymentMode || null,
       referenceNumber: receipt.referenceNumber || row.referenceNumber || null,
-      receivedBy: staffDisplayName(receipt.collectedBy || null, row.receivedBy),
+      receivedByLabel: staffDisplayName(receipt.collectedBy || null, row.receivedBy),
     };
   }
   if (!row.receiptId || !row.receiptNumber) return null;
@@ -389,7 +400,7 @@ function buildReceiptPaymentSummary(row: LabOrder) {
     paymentAmount: row.paymentAmount ?? row.billTotalAmount ?? row.billDueAmount ?? null,
     paymentMode: row.paymentMode || null,
     referenceNumber: row.referenceNumber || null,
-    receivedBy: staffDisplayName(null, row.receivedBy),
+    receivedByLabel: staffDisplayName(null, row.receivedBy),
   };
 }
 
@@ -472,7 +483,7 @@ function receiptActionLabel(row: LabOrder) {
   return "View Receipt";
 }
 
-function resultTone(flag: string | null | undefined) {
+function resultTone(flag: string | null | undefined): ReviewResultTone {
   switch ((flag || "").toUpperCase()) {
     case "CRITICAL":
     case "CRITICAL_LOW":
@@ -505,6 +516,115 @@ function resultFlagLabel(flag: string | null | undefined) {
     default:
       return flag || "Pending";
   }
+}
+
+type ReviewResultTone = "default" | "success" | "warning" | "error";
+
+type ReviewResultRow = {
+  key: string;
+  testName: string;
+  parameterLabel: string;
+  resultValue: string | null;
+  unit: string | null;
+  referenceRange: string | null;
+  criticalRange: string | null;
+  resultFlag: string | null;
+  criticalResult: boolean;
+  enteredBy: string | null;
+  enteredAt: string | null;
+};
+
+type ReviewResultGroup = {
+  key: string;
+  testName: string;
+  testCode: string | null;
+  rows: ReviewResultRow[];
+};
+
+type OrderedTestState = LabOrder["orderedTests"][number]["state"];
+
+function orderedTestDisplayState(state: OrderedTestState | string | null | undefined) {
+  switch (state) {
+    case "VERIFIED":
+      return "Verified";
+    case "RESULT_ENTERED":
+      return "Ready for review";
+    case "RESULT_SENT_BACK":
+      return "Sent back";
+    case "RECOLLECTION_REQUIRED":
+      return "Recollection required";
+    case "PUBLISHED":
+      return "Published";
+    default:
+      return state ? state.replaceAll("_", " ").toLowerCase().replace(/(^|\s)\w/g, (match) => match.toUpperCase()) : "Unknown";
+  }
+}
+
+function orderedTestStateTone(state: OrderedTestState | string | null | undefined): "default" | "success" | "warning" | "error" | "info" {
+  switch (state) {
+    case "VERIFIED":
+    case "PUBLISHED":
+      return "success";
+    case "RESULT_ENTERED":
+      return "info";
+    case "RESULT_SENT_BACK":
+    case "RECOLLECTION_REQUIRED":
+      return "warning";
+    default:
+      return "default";
+  }
+}
+
+function selectEligibleOrderedTests(order: LabOrder | null | undefined, predicate: (row: LabOrder["orderedTests"][number]) => boolean) {
+  return (order?.orderedTests || []).filter(predicate).map((row) => row.labOrderItemId);
+}
+
+function normalizeReviewLookup(value: string | null | undefined) {
+  return value ? value.trim().toLowerCase() : "";
+}
+
+function resolveReviewResultParameter(item: LabOrder["items"][number] | null | undefined, result: LabOrder["results"][number]) {
+  if (!item?.parameters?.length) return null;
+  const lookupTerms = [result.parameterName, result.componentName]
+    .map((value) => normalizeReviewLookup(value))
+    .filter(Boolean);
+  if (!lookupTerms.length) {
+    return item.parameters.length === 1 ? item.parameters[0] : null;
+  }
+  const match = item.parameters.find((parameter) => lookupTerms.includes(normalizeReviewLookup(parameter.parameterName)));
+  return match || (item.parameters.length === 1 ? item.parameters[0] : null);
+}
+
+function buildReviewResultGroups(order: LabOrder | null | undefined): ReviewResultGroup[] {
+  if (!order?.results?.length) return [];
+  const itemById = new Map(order.items.map((item) => [item.id, item] as const));
+  const groups = new Map<string, ReviewResultGroup>();
+  order.results.forEach((result) => {
+    const item = result.labOrderItemId ? itemById.get(result.labOrderItemId) : null;
+    const groupKey = item?.id || `${normalizeReviewLookup(result.testName)}:${normalizeReviewLookup(result.parameterName || result.componentName)}`;
+    const group = groups.get(groupKey) || {
+      key: groupKey,
+      testName: item?.testName || result.testName,
+      testCode: item?.testCode || result.testCode,
+      rows: [],
+    };
+    const parameter = resolveReviewResultParameter(item, result);
+    group.rows.push({
+      key: result.id,
+      testName: item?.testName || result.testName,
+      parameterLabel: result.parameterName || result.componentName || parameter?.parameterName || item?.testName || result.testName,
+      resultValue: result.resultValue,
+      unit: result.unit || parameter?.unit || item?.unit || null,
+      referenceRange: result.referenceRange || parameter?.normalRange || item?.referenceRange || null,
+      criticalRange: parameter?.criticalRange || null,
+      resultFlag: result.resultFlag,
+      criticalResult: result.criticalResult,
+      enteredBy: order.resultEnteredBy || null,
+      enteredAt: result.createdAt,
+    });
+    groups.set(groupKey, group);
+  });
+  return Array.from(groups.values());
 }
 
 function isSameLocalDay(value: string | null | undefined, reference: Date) {
@@ -581,6 +701,116 @@ function deliveryChannelsLabel(channels: string[] | null | undefined) {
 
 function actionableSample(order: LabOrder) {
   return [...order.samples].reverse().find((sample) => sample.status === "COLLECTED" || sample.status === "RECEIVED") || null;
+}
+
+function sampleLinkedTestsLabel(sample: LabSample) {
+  return sample.linkedTestNames?.length ? sample.linkedTestNames.join(", ") : sample.labOrderItemId || "-";
+}
+
+function reviewableOrderedTests(order: LabOrder | null | undefined) {
+  return order?.orderedTests.filter((orderedTest) => orderedTest.state === "RESULT_ENTERED") || [];
+}
+
+function hasReviewableOrderedTests(order: LabOrder | null | undefined) {
+  return reviewableOrderedTests(order).length > 0;
+}
+
+function initialResultOrderedTests(order: LabOrder | null | undefined) {
+  return order?.orderedTests.filter((orderedTest) => orderedTest.state === "ORDERED" || orderedTest.state === "SAMPLE_COLLECTED" || orderedTest.state === "RESULT_DRAFT") || [];
+}
+
+function correctionOrderedTests(order: LabOrder | null | undefined) {
+  return order?.orderedTests.filter((orderedTest) => orderedTest.state === "RESULT_SENT_BACK") || [];
+}
+
+function editableResultOrderedTests(order: LabOrder | null | undefined) {
+  const initial = initialResultOrderedTests(order);
+  const continuation = order?.orderedTests.filter((orderedTest) => orderedTest.state === "RESULT_ENTERED" || orderedTest.state === "PENDING_REVIEW" || orderedTest.state === "RESULT_SENT_BACK") || [];
+  return [...initial, ...continuation];
+}
+
+function hasInitialResultEntryWork(order: LabOrder | null | undefined) {
+  return initialResultOrderedTests(order).length > 0;
+}
+
+function hasCorrectionWork(order: LabOrder | null | undefined) {
+  return correctionOrderedTests(order).length > 0;
+}
+
+function hasReceivedResultSample(order: LabOrder | null | undefined) {
+  return Boolean(order?.samples.some((sample) => sample.status === "RECEIVED"));
+}
+
+function hasTechnicianWork(order: LabOrder | null | undefined) {
+  return hasReceivedResultSample(order) && (hasInitialResultEntryWork(order) || hasCorrectionWork(order));
+}
+
+function hasSentBackResultOrderedTests(order: LabOrder | null | undefined) {
+  return hasCorrectionWork(order);
+}
+
+function publishableOrderedTests(order: LabOrder | null | undefined) {
+  return order?.orderedTests.filter((orderedTest) => orderedTest.state === "VERIFIED" || orderedTest.state === "PUBLISHED") || [];
+}
+
+function hasPublishableOrderedTests(order: LabOrder | null | undefined) {
+  return publishableOrderedTests(order).length > 0;
+}
+
+function isReportGenerationOnly(order: LabOrder | null | undefined) {
+  return Boolean(order?.orderedTests.length && order.orderedTests.every((orderedTest) => orderedTest.state === "PUBLISHED"));
+}
+
+function reportModeLabel(mode: string | null | undefined) {
+  switch (mode) {
+    case "INDIVIDUAL":
+      return "Individual";
+    case "GROUPED":
+      return "Grouped";
+    case "CONSOLIDATED":
+      return "Final consolidated";
+    default:
+      return "Consolidated";
+  }
+}
+
+function reportTypeLabel(mode: string | null | undefined, type: string | null | undefined) {
+  const resolvedType = type === "FINAL" ? "Final" : type === "INTERIM" ? "Interim" : "";
+  if (resolvedType) return resolvedType;
+  if (mode === "INDIVIDUAL") return "Individual interim";
+  if (mode === "GROUPED") return "Grouped interim";
+  return "Final";
+}
+
+function deriveDefaultReportMode(order: LabOrder | null | undefined) {
+  const eligible = publishableOrderedTests(order);
+  if (eligible.length <= 1) {
+    return "INDIVIDUAL" as const;
+  }
+  const allComplete = (order?.orderedTests || []).length > 0
+    && (order?.orderedTests || []).every((orderedTest) => orderedTest.state === "VERIFIED" || orderedTest.state === "PUBLISHED");
+  if (allComplete) {
+    return "CONSOLIDATED" as const;
+  }
+  return "GROUPED" as const;
+}
+
+function defaultPublishSelection(order: LabOrder | null | undefined, mode: string | null | undefined) {
+  const eligible = publishableOrderedTests(order).map((orderedTest) => orderedTest.labOrderItemId);
+  if (!eligible.length) {
+    return [];
+  }
+  if (mode === "INDIVIDUAL") {
+    return eligible.slice(0, 1);
+  }
+  if (mode === "CONSOLIDATED") {
+    return eligible;
+  }
+  return eligible.length >= 2 ? eligible : eligible.slice(0, 1);
+}
+
+function currentReportArtifact(order: LabOrder | null | undefined) {
+  return order?.reportArtifacts?.find((artifact) => artifact.reportStatus === "CURRENT") || order?.reportArtifacts?.[0] || null;
 }
 
 function toDatetimeLocal(value: string | null | undefined) {
@@ -781,6 +1011,7 @@ export default function LabPage() {
   const [sampleCollectionStatus, setSampleCollectionStatus] = React.useState<SampleCollectionStatus>("Collected");
   const [sampleRows, setSampleRows] = React.useState<SampleCollectionFormRow[]>([]);
   const [collectedSamples, setCollectedSamples] = React.useState<LabSample[]>([]);
+  const [sampleSuccessMessage, setSampleSuccessMessage] = React.useState<string | null>(null);
   const [receiveTarget, setReceiveTarget] = React.useState<LabSample | null>(null);
   const [rejectTarget, setRejectTarget] = React.useState<LabSample | null>(null);
   const [rejectReason, setRejectReason] = React.useState("");
@@ -800,10 +1031,14 @@ export default function LabPage() {
   const [reviewComments, setReviewComments] = React.useState("");
   const [reviewDecision, setReviewDecision] = React.useState<"APPROVE" | "SEND_BACK">("APPROVE");
   const [reviewReason, setReviewReason] = React.useState("");
+  const [reviewSelectedTestIds, setReviewSelectedTestIds] = React.useState<string[]>([]);
   const [publishTarget, setPublishTarget] = React.useState<LabOrder | null>(null);
   const [publishNotes, setPublishNotes] = React.useState("");
   const [publishChannels, setPublishChannels] = React.useState<string[]>(["PATIENT_PORTAL"]);
+  const [publishReportMode, setPublishReportMode] = React.useState<"INDIVIDUAL" | "GROUPED" | "CONSOLIDATED">("CONSOLIDATED");
+  const [publishSelectedTestIds, setPublishSelectedTestIds] = React.useState<string[]>([]);
   const [publishSuccessTarget, setPublishSuccessTarget] = React.useState<LabOrder | null>(null);
+  const [publishWasNoOp, setPublishWasNoOp] = React.useState(false);
   const [importOpen, setImportOpen] = React.useState(false);
   const [importResult, setImportResult] = React.useState<LabTestCsvImportResult | null>(null);
   const [requestOpen, setRequestOpen] = React.useState(false);
@@ -815,6 +1050,7 @@ export default function LabPage() {
   const [patientOptionsLoaded, setPatientOptionsLoaded] = React.useState(false);
   const [selectedPatient, setSelectedPatient] = React.useState<Patient | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+  const sampleCollectingRef = React.useRef(false);
 
   const canManageTests = auth.hasPermission("lab.test.manage");
   const canUseLabReception = auth.hasPermission("lab.reception.access") || auth.rolesUpper.includes("LAB_FRONT_DESK");
@@ -826,7 +1062,7 @@ export default function LabPage() {
     || auth.hasPermission("lab.order.generate_report")
     || auth.hasPermission("lab.order.create");
   const canCollectPayment = auth.hasPermission("lab.order.collect_payment");
-  const canCollectSample = canUseLabReception || auth.hasPermission("lab.order.collect_sample");
+  const canCollectSample = auth.hasPermission("lab.order.collect_sample");
   const canEnterResults = auth.hasPermission("lab.order.result_entry");
   const canGenerateReport = auth.hasPermission("lab.order.generate_report");
   const canSendReceipt = auth.hasPermission("notification.send") || auth.hasPermission("billing.read") || auth.hasPermission("payment.collect");
@@ -987,10 +1223,10 @@ export default function LabPage() {
   );
 
   const pendingSampleOrders = React.useMemo(() => orders.filter((row) => row.status === "READY_FOR_COLLECTION"), [orders]);
-  const pendingResultsOrders = React.useMemo(() => orders.filter((row) => row.status === "SAMPLE_COLLECTED" || row.status === "PROCESSING" || row.status === "RESULT_ENTERED"), [orders]);
-  const pendingReviewOrders = React.useMemo(() => orders.filter((row) => row.status === "RESULT_ENTERED"), [orders]);
+  const pendingResultsOrders = React.useMemo(() => orders.filter((row) => hasTechnicianWork(row)), [orders]);
+  const pendingReviewOrders = React.useMemo(() => orders.filter((row) => hasReviewableOrderedTests(row)), [orders]);
   const visibleStatusFilters = React.useMemo(() => {
-    const defaultStatuses: Array<"ALL" | LabOrderStatus> = ["ALL", "PAYMENT_PENDING", "READY_FOR_COLLECTION", "SAMPLE_COLLECTED", "RESULT_ENTERED", "REPORT_READY", "DOCTOR_REVIEWED", "DELIVERED", "CANCELLED"];
+    const defaultStatuses: Array<"ALL" | LabOrderStatus> = ["ALL", "PAYMENT_PENDING", "READY_FOR_COLLECTION", "SAMPLE_COLLECTED", "IN_PROGRESS", "RESULT_ENTERED", "PARTIALLY_READY", "REPORT_READY", "PARTIALLY_PUBLISHED", "REPORT_GENERATED", "DOCTOR_REVIEWED", "DELIVERED", "CANCELLED"];
     const presentStatuses = orders.map((row) => row.status).filter((status) => !defaultStatuses.includes(status));
     return [...defaultStatuses, ...presentStatuses.filter((status, index) => presentStatuses.indexOf(status) === index)];
   }, [orders]);
@@ -1018,9 +1254,9 @@ export default function LabPage() {
       .reduce((sum, row) => sum + (row.billTotalAmount ?? 0), 0);
     const pendingPaymentCount = orders.filter((row) => row.status === "PAYMENT_PENDING").length;
     const pendingCollectionCount = orders.filter((row) => row.status === "READY_FOR_COLLECTION").length;
-    const workQueueCount = orders.filter((row) => ["SAMPLE_COLLECTED", "PROCESSING"].includes(row.status)).length;
+    const workQueueCount = orders.filter((row) => hasTechnicianWork(row)).length;
     const pendingReviewCount = pendingReviewOrders.length;
-    const readyToPublishCount = orders.filter((row) => row.status === "REPORT_READY" || row.status === "REPORT_GENERATED" || row.status === "DOCTOR_REVIEWED").length;
+    const readyToPublishCount = orders.filter((row) => hasPublishableOrderedTests(row)).length;
     const criticalResultsCount = orders.filter((row) => row.results.some((result) => result.criticalResult || /critical/i.test(result.resultFlag || ""))).length;
     const tatBreachedCount = orders.filter((row) => {
       if (row.status === "DELIVERED" || row.status === "CANCELLED") return false;
@@ -1133,17 +1369,38 @@ export default function LabPage() {
   const openSampleDialog = React.useCallback((row: LabOrder) => {
     setSampleTarget(row);
     setCollectedSamples([]);
+    setSampleSuccessMessage(null);
     setSampleRows((row.samples.length ? row.samples : row.items).map((item) => ({
       labOrderItemId: "labOrderItemId" in item ? item.labOrderItemId : item.id,
-      testName: "testName" in item ? item.testName : "Sample",
+      testName: "testName" in item
+        ? item.testName
+        : "linkedTestNames" in item && item.linkedTestNames.length
+          ? item.linkedTestNames.join(", ")
+          : "Sample",
       specimenType: ("specimenType" in item ? item.specimenType : item.sampleType) || row.sampleType || "",
       containerType: "containerType" in item ? (item.containerType || "") : "",
-        notes: ("notes" in item ? item.notes : row.sampleCollectionNotes) || "",
-      })));
+      notes: ("notes" in item ? item.notes : row.sampleCollectionNotes) || "",
+      linkedTestNames: "linkedTestNames" in item && item.linkedTestNames.length
+        ? item.linkedTestNames
+        : ["testName" in item ? item.testName : row.sampleType || "Sample"],
+    })));
     setSampleCollectedBy(auth.username || auth.appUserId || "");
     setSampleCollectedAt(toDatetimeLocal(new Date().toISOString()));
     setSampleCollectionStatus("Collected");
   }, [auth.appUserId, auth.username]);
+
+  const resetSampleDialogState = React.useCallback(() => {
+    setSampleTarget(null);
+    setCollectedSamples([]);
+    setSampleRows([]);
+    setSampleCollectedBy("");
+    setSampleCollectedAt(toDatetimeLocal(new Date().toISOString()));
+    setSampleCollectionStatus("Collected");
+  }, []);
+
+  const closeSampleDialog = React.useCallback(() => {
+    resetSampleDialogState();
+  }, [resetSampleDialogState]);
 
   const openCreate = () => {
     setEditing(null);
@@ -1286,7 +1543,8 @@ export default function LabPage() {
           paymentMode: savedOrder.paymentMode || parsed.data.paymentMode,
           referenceNumber: savedOrder.referenceNumber ?? null,
           notes: parsed.data.notes ?? null,
-          receivedBy: savedOrder.receivedBy ?? auth.appUserId ?? null,
+          receivedBy: savedOrder.receivedBy || auth.username || null,
+          receivedByLabel: savedOrder.paymentReceipt?.collectedBy || savedOrder.receivedBy || auth.username || null,
           receiptId: savedOrder.receiptId,
           receiptNumber: savedOrder.receiptNumber,
           receiptDate: savedOrder.receiptDate || savedOrder.paymentDate || savedOrder.paymentCollectedAt?.slice(0, 10) || "",
@@ -1328,6 +1586,13 @@ export default function LabPage() {
     setReceiptPrintData(null);
     setReceiptActionError(null);
     try {
+      const [resolvedClinicProfile, patientDetail] = await Promise.all([
+        clinicProfile ? Promise.resolve(clinicProfile) : getClinicProfile(auth.accessToken, auth.tenantId).catch(() => null),
+        order.patientId ? getPatient(auth.accessToken, auth.tenantId, order.patientId).catch(() => null) : Promise.resolve(null),
+      ]);
+      if (resolvedClinicProfile && !clinicProfile) {
+        setClinicProfile(resolvedClinicProfile);
+      }
       const bill = buildLabReceiptBill(order);
       const receiptSummary = buildReceiptPaymentSummary(order);
       const paymentMode = receiptSummary?.paymentMode || order.paymentMode || receiptPreview?.payment.paymentMode || "CASH";
@@ -1339,7 +1604,7 @@ export default function LabPage() {
       const paymentAmount = receiptSummary?.paymentAmount ?? order.paymentAmount ?? order.billTotalAmount ?? order.billDueAmount ?? receiptPreview?.receipt.amount ?? 0;
       const paymentId = receiptSummary?.paymentId || order.paymentId || receiptPreview?.payment.id || receiptId;
       setReceiptPrintData({
-        clinicProfile,
+        clinicProfile: resolvedClinicProfile,
         bill,
         receipt: {
           id: receiptId,
@@ -1362,13 +1627,13 @@ export default function LabPage() {
           referenceNumber: receiptSummary?.referenceNumber || order.referenceNumber || null,
           notes: null,
           receivedBy: order.receivedBy || null,
-          receivedByLabel: receiptSummary?.receivedBy || null,
+          receivedByLabel: receiptSummary?.receivedByLabel || auth.username || null,
           receiptId,
           receiptNumber,
           receiptDate,
           createdAt: order.updatedAt,
         },
-        patient: null,
+        patient: patientDetail?.patient ?? null,
         appointment: null,
         consultation: null,
       });
@@ -1413,6 +1678,7 @@ export default function LabPage() {
 
   const collectSample = async () => {
     if (!auth.accessToken || !auth.tenantId || !sampleTarget) return;
+    if (sampleCollectingRef.current) return;
     const collectedAt = toIsoFromDatetimeLocal(sampleCollectedAt);
     if (!collectedAt) {
       setError("Collection date/time is required.");
@@ -1423,8 +1689,10 @@ export default function LabPage() {
       setError(`Specimen type is required for ${invalidRow.testName}.`);
       return;
     }
+    sampleCollectingRef.current = true;
     setSaving(true);
     setError(null);
+    setSampleSuccessMessage(null);
     try {
       const savedSamples = await collectLabOrderSamples(auth.accessToken, auth.tenantId, sampleTarget.id, {
         samples: sampleRows.map((row) => ({
@@ -1435,15 +1703,19 @@ export default function LabPage() {
           notes: row.notes.trim() || null,
         })),
       });
-      setCollectedSamples(savedSamples);
-      setSampleCollectedBy("");
-      setSampleCollectedAt(toDatetimeLocal(new Date().toISOString()));
-      setSampleCollectionStatus("Collected");
+      const accessionList = savedSamples.map((sample) => sample.accessionNumber).filter(Boolean).join(", ");
+      resetSampleDialogState();
+      setSampleSuccessMessage(
+        accessionList
+          ? `Sample collection saved for ${sampleTarget.orderNumber}. Accession numbers: ${accessionList}.`
+          : `Sample collection saved for ${sampleTarget.orderNumber}.`,
+      );
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to collect sample");
     } finally {
       setSaving(false);
+      sampleCollectingRef.current = false;
     }
   };
 
@@ -1563,10 +1835,12 @@ export default function LabPage() {
     setReviewDecision((row.doctorReviewDecision as "APPROVE" | "SEND_BACK" | null) || "APPROVE");
     setReviewReason(row.doctorReviewReason || "");
     setReviewComments(row.doctorComments || "");
+    setReviewSelectedTestIds(selectEligibleOrderedTests(row, (orderedTest) => orderedTest.state === "RESULT_ENTERED"));
   };
 
   const saveResults = async () => {
     if (!auth.accessToken || !auth.tenantId || !resultTarget) return;
+    const editableOrderedTestIds = resultEditableOrderedTests.map((orderedTest) => orderedTest.labOrderItemId);
     const parsed = labResultEntrySchema.safeParse({
       comments: resultComments.trim() || undefined,
       items: resultItems.map((item) => ({
@@ -1592,6 +1866,7 @@ export default function LabPage() {
     try {
       await enterLabOrderResults(auth.accessToken, auth.tenantId, resultTarget.id, {
         comments: parsed.data.comments || null,
+        orderedTestIds: editableOrderedTestIds,
         items: parsed.data.items.map((item) => ({
           labOrderItemId: item.labOrderItemId,
           resultValue: item.resultValue || null,
@@ -1690,6 +1965,7 @@ export default function LabPage() {
     try {
       await verifyLabOrder(auth.accessToken, auth.tenantId, reviewTarget.id, {
         decision: parsed.data.decision,
+        orderedTestIds: reviewSelectedTestIds.length ? reviewSelectedTestIds : selectEligibleOrderedTests(reviewTarget, (orderedTest) => orderedTest.state === "RESULT_ENTERED"),
         reason: parsed.data.reason || null,
         comments: parsed.data.remarks || null,
       });
@@ -1697,6 +1973,7 @@ export default function LabPage() {
       setReviewDecision("APPROVE");
       setReviewReason("");
       setReviewComments("");
+      setReviewSelectedTestIds([]);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to review lab report");
@@ -1705,13 +1982,40 @@ export default function LabPage() {
     }
   };
 
+  const reviewResultGroups = React.useMemo(() => buildReviewResultGroups(reviewTarget), [reviewTarget]);
+  const reviewHasCriticalResults = React.useMemo(
+    () => reviewResultGroups.some((group) => group.rows.some((row) => row.criticalResult || /critical/i.test(row.resultFlag || ""))),
+    [reviewResultGroups],
+  );
+  const reviewEligibleOrderedTests = React.useMemo(
+    () => reviewableOrderedTests(reviewTarget),
+    [reviewTarget],
+  );
+  const reviewOrderedTests = React.useMemo(
+    () => reviewTarget?.orderedTests || [],
+    [reviewTarget],
+  );
+  const reviewHasMixedStates = React.useMemo(
+    () => Boolean(reviewOrderedTests.length && new Set(reviewOrderedTests.map((orderedTest) => orderedTest.state)).size > 1),
+    [reviewOrderedTests],
+  );
+  const resultEditableOrderedTests = React.useMemo(
+    () => editableResultOrderedTests(resultTarget),
+    [resultTarget],
+  );
+  const resultEditableOrderedTestIds = React.useMemo(
+    () => new Set(resultEditableOrderedTests.map((orderedTest) => orderedTest.labOrderItemId)),
+    [resultEditableOrderedTests],
+  );
+
   const openPublishDialog = (row: LabOrder) => {
     setPublishTarget(row);
+    setPublishWasNoOp(false);
     setPublishNotes("");
-    setPublishChannels([
-      "PATIENT_PORTAL",
-      ...(row.requestedByInternalDoctorId || row.consultationId ? ["DOCTOR_NOTIFICATION"] : []),
-    ]);
+    setPublishChannels(["PATIENT_PORTAL"]);
+    const mode = deriveDefaultReportMode(row);
+    setPublishReportMode(mode);
+    setPublishSelectedTestIds(defaultPublishSelection(row, mode));
   };
 
   const savePublish = async () => {
@@ -1719,13 +2023,28 @@ export default function LabPage() {
     setSaving(true);
     setError(null);
     try {
+      const selectedTestIds = publishSelectedTestIds.length
+        ? publishSelectedTestIds
+        : defaultPublishSelection(publishTarget, publishReportMode);
+      const currentBefore = currentReportArtifact(publishTarget);
+      const selectedSet = new Set(selectedTestIds);
+      const currentSet = new Set(currentBefore?.selectedOrderedTestIds || []);
+      const identicalCurrentFinal = currentBefore?.reportMode === "CONSOLIDATED"
+        && currentBefore.reportType === "FINAL"
+        && selectedSet.size === currentSet.size
+        && [...selectedSet].every((testId) => currentSet.has(testId));
       const published = await publishLabOrderReport(auth.accessToken, auth.tenantId, publishTarget.id, {
         deliveryChannels: publishChannels,
+        orderedTestIds: selectedTestIds,
         publishNotes: publishNotes.trim() || null,
+        reportMode: publishReportMode,
       });
       setPublishTarget(null);
       setPublishNotes("");
       setPublishChannels(["PATIENT_PORTAL"]);
+      setPublishReportMode("CONSOLIDATED");
+      setPublishSelectedTestIds([]);
+      setPublishWasNoOp(Boolean(identicalCurrentFinal && currentReportArtifact(published)?.id === currentBefore?.id));
       setPublishSuccessTarget(published);
       await load();
     } catch (err) {
@@ -1734,6 +2053,22 @@ export default function LabPage() {
       setSaving(false);
     }
   };
+  const publishEligibleOrderedTests = React.useMemo(
+    () => publishableOrderedTests(publishTarget),
+    [publishTarget],
+  );
+  const publishPendingOrderedTests = React.useMemo(
+    () => publishTarget?.orderedTests.filter((orderedTest) => orderedTest.state === "RESULT_ENTERED" || orderedTest.state === "RESULT_SENT_BACK") || [],
+    [publishTarget],
+  );
+  const publishRecollectionOrderedTests = React.useMemo(
+    () => publishTarget?.orderedTests.filter((orderedTest) => orderedTest.state === "RECOLLECTION_REQUIRED") || [],
+    [publishTarget],
+  );
+  const publishHasMixedStates = React.useMemo(
+    () => Boolean(publishTarget?.orderedTests?.length && new Set(publishTarget.orderedTests.map((orderedTest) => orderedTest.state)).size > 1),
+    [publishTarget],
+  );
 
   const recordAndOpenLabReport = async (row: LabOrder, action: string, mode: "view" | "print" | "download") => {
     if (!auth.accessToken || !auth.tenantId) return;
@@ -2044,6 +2379,7 @@ export default function LabPage() {
       <input ref={fileInputRef} type="file" accept=".csv,text/csv" hidden onChange={handleImportCsv} />
 
       {error ? <Alert severity="error">{error}</Alert> : null}
+      {sampleSuccessMessage ? <Alert severity="success">{sampleSuccessMessage}</Alert> : null}
       {resultSaveMessage && !resultTarget ? <Alert severity="success">{resultSaveMessage}</Alert> : null}
 
       <LabDashboard
@@ -2347,7 +2683,7 @@ export default function LabPage() {
                                     Paid {formatMoney(receiptSummary.paymentAmount ?? row.billTotalAmount ?? row.billDueAmount ?? 0)} • {receiptSummary.paymentMode || "-"}
                                   </Typography>
                                   <Typography variant="caption" color="text.secondary">
-                                    Ref: {receiptSummary.referenceNumber || "—"} • By {receiptSummary.receivedBy || "Staff User"}
+                                    Ref: {receiptSummary.referenceNumber || "—"} • By {receiptSummary.receivedByLabel}
                                   </Typography>
                                   <Typography variant="caption" color="text.secondary">
                                     {receiptSummary.paymentDateTime ? formatDateTime(receiptSummary.paymentDateTime) : receiptTimestampText(row)}
@@ -2414,10 +2750,12 @@ export default function LabPage() {
                                   Reject
                                 </Button>
                               ) : null}
-                              {canEnterResults && (row.status === "SAMPLE_COLLECTED" || row.status === "PROCESSING" || row.status === "RESULT_ENTERED") ? (
-                                <Button size="small" variant="outlined" onClick={() => openResultsDialog(row)}>Enter results</Button>
+                              {canEnterResults && hasTechnicianWork(row) ? (
+                                <Button size="small" variant="outlined" onClick={() => openResultsDialog(row)}>
+                                  {hasSentBackResultOrderedTests(row) ? "Correct results" : "Enter results"}
+                                </Button>
                               ) : null}
-                              {canGenerateReport && row.status === "REPORT_READY" ? (
+                              {canGenerateReport && hasPublishableOrderedTests(row) ? (
                                 <Button size="small" variant="outlined" onClick={() => openPublishDialog(row)}>
                                   Publish report
                                 </Button>
@@ -2434,9 +2772,9 @@ export default function LabPage() {
                                   onShareLink={shareReportLink}
                                 />
                               ) : null}
-                              {canReviewReport && row.status === "RESULT_ENTERED" ? (
+                              {canReviewReport && hasReviewableOrderedTests(row) ? (
                                 <Button size="small" variant="outlined" onClick={() => openReviewDialog(row)}>
-                                  Review
+                                  {row.status === "PARTIALLY_READY" ? "Continue Review" : "Review"}
                                 </Button>
                               ) : null}
                             </Stack>
@@ -2706,10 +3044,7 @@ export default function LabPage() {
         onPrint={() => window.print()}
       />
 
-      <Dialog open={Boolean(sampleTarget)} onClose={() => {
-        setSampleTarget(null);
-        setCollectedSamples([]);
-      }} fullWidth maxWidth="md">
+      <Dialog open={Boolean(sampleTarget)} onClose={closeSampleDialog} fullWidth maxWidth="md">
         <DialogTitle>Collect Sample</DialogTitle>
         <DialogContent dividers>
           <Stack spacing={2} sx={{ pt: 0.5 }}>
@@ -2718,6 +3053,11 @@ export default function LabPage() {
               <Card key={`${row.labOrderItemId || "sample"}-${index}`} variant="outlined">
                 <CardContent sx={{ display: "grid", gap: 1.25 }}>
                   <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>{row.testName}</Typography>
+                  {row.linkedTestNames.length > 1 ? (
+                    <Typography variant="caption" color="text.secondary">
+                      Linked tests: {row.linkedTestNames.join(", ")}
+                    </Typography>
+                  ) : null}
                   <Grid container spacing={1.25}>
                     <Grid size={{ xs: 12, md: 4 }}>
                       <TextField
@@ -2789,11 +3129,8 @@ export default function LabPage() {
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => {
-            setSampleTarget(null);
-            setCollectedSamples([]);
-          }}>Close</Button>
-          <Button variant="contained" startIcon={<ScienceRoundedIcon />} onClick={() => void collectSample()} disabled={saving || !sampleTarget}>Collect Sample</Button>
+          <Button onClick={closeSampleDialog}>Close</Button>
+          <Button variant="contained" startIcon={<ScienceRoundedIcon />} onClick={() => void collectSample()} disabled={saving || sampleCollectingRef.current || !sampleTarget}>Collect Sample</Button>
         </DialogActions>
       </Dialog>
 
@@ -2816,17 +3153,20 @@ export default function LabPage() {
         <DialogContent dividers>
           <Stack spacing={2} sx={{ pt: 0.5 }}>
             <Alert severity="warning">{rejectTarget ? `${rejectTarget.accessionNumber} • ${rejectTarget.specimenType}` : ""}</Alert>
-            <FormControl fullWidth>
-              <InputLabel id="sample-reject-reason-label"><RequiredLabel text="Rejection Reason" required /></InputLabel>
-              <Select
-                labelId="sample-reject-reason-label"
-                label="Rejection Reason"
-                value={rejectReason}
-                onChange={(e) => setRejectReason(String(e.target.value))}
-              >
-                {SAMPLE_REJECTION_REASONS.map((reason) => <MenuItem key={reason} value={reason}>{reason}</MenuItem>)}
-              </Select>
-            </FormControl>
+            <CommentSuggestions
+              category="LAB_SPECIMEN_REJECTION"
+              selectedReason={rejectReason}
+              remarks={rejectNotes}
+              onReasonChange={setRejectReason}
+              onRemarksChange={setRejectNotes}
+              requiredReason
+              reasonOptions={SAMPLE_REJECTION_REASON_OPTIONS}
+              reasonLabel="Specimen rejection reason"
+              remarksLabel="Notes"
+              maxRemarksLength={250}
+              reasonHelperText="Select the specimen issue before rejecting the sample."
+              remarksHelperText="Optional rejection notes."
+            />
             <FormControl fullWidth>
               <InputLabel id="sample-recollect-label">Recollection Required</InputLabel>
               <Select
@@ -2839,7 +3179,6 @@ export default function LabPage() {
                 <MenuItem value="YES">Yes</MenuItem>
               </Select>
             </FormControl>
-            <TextField label="Notes" value={rejectNotes} onChange={(e) => setRejectNotes(e.target.value.slice(0, 250))} multiline minRows={2} inputProps={{ maxLength: 250 }} />
           </Stack>
         </DialogContent>
         <DialogActions>
@@ -2867,109 +3206,136 @@ export default function LabPage() {
             <Alert severity="info">
               {resultTarget ? `${resultTarget.orderNumber} • ${resultTarget.patientName || "-"} • ${resultTarget.sampleAccessionNumber || "Accession pending"} • ${resultTarget.sampleSummaryStatus || "No sample"}` : ""}
             </Alert>
+            {resultTarget?.labVerificationDecision === "SEND_BACK" ? (
+              <Alert severity="warning">
+                <Typography variant="body2" sx={{ fontWeight: 700 }}>Correction required</Typography>
+                <Typography variant="body2">
+                  {resultTarget.labVerificationReason || "A result-correction reason was recorded."}
+                </Typography>
+                {resultTarget.labVerificationComments ? (
+                  <Typography variant="body2" sx={{ whiteSpace: "pre-wrap" }}>
+                    {resultTarget.labVerificationComments}
+                  </Typography>
+                ) : null}
+              </Alert>
+            ) : null}
             {resultSaveMessage ? <Alert severity="success">{resultSaveMessage}</Alert> : null}
             {resultDraftLoaded ? <Alert severity="info">Draft restored from your last save.</Alert> : null}
             <TextField label="Comments" value={resultComments} onChange={(e) => setResultComments(e.target.value)} multiline minRows={2} />
             <Stack spacing={1.5}>
-              {resultItems.map((item, index) => (
-                <Card key={item.labOrderItemId} variant="outlined">
-                  <CardContent sx={{ display: "grid", gap: 1.25 }}>
-                    <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, flexWrap: "wrap", alignItems: "center" }}>
-                      <Box>
-                        <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>{item.testName}</Typography>
-                        <Typography variant="caption" color="text.secondary">{item.testCode}</Typography>
-                        <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
-                          Reference {item.referenceRange || "-"} | Critical {item.criticalRange || "-"}
-                        </Typography>
-                      </Box>
-                      <Button size="small" onClick={() => {
-                        setResultItems((current) => current.map((row, rowIndex) => rowIndex === index ? ({
+              {resultItems.map((item, index) => {
+                const orderedTest = resultTarget?.orderedTests.find((test) => test.labOrderItemId === item.labOrderItemId);
+                const editable = resultEditableOrderedTestIds.has(item.labOrderItemId);
+                const readOnly = !editable;
+                const severity = getResultSeverity(item.resultValue, item.referenceRange, item.criticalRange);
+                return (
+                  <Card
+                    key={item.labOrderItemId}
+                    variant="outlined"
+                    sx={{
+                      borderColor: orderedTest?.state === "RESULT_SENT_BACK" ? "warning.main" : orderedTest?.state === "VERIFIED" ? "success.main" : "divider",
+                      backgroundColor: readOnly ? "action.disabledBackground" : "transparent",
+                    }}
+                  >
+                    <CardContent sx={{ display: "grid", gap: 1.25 }}>
+                      <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, flexWrap: "wrap", alignItems: "center" }}>
+                        <Box>
+                          <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>{item.testName}</Typography>
+                          <Typography variant="caption" color="text.secondary">{item.testCode}</Typography>
+                          {orderedTest?.state === "RESULT_SENT_BACK" ? (
+                            <Typography variant="caption" color="warning.main" sx={{ display: "block", fontWeight: 700 }}>
+                              Correction required
+                            </Typography>
+                          ) : null}
+                          <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
+                            Reference {item.referenceRange || "-"} | Critical {item.criticalRange || "-"}
+                          </Typography>
+                        </Box>
+                        <Button
+                          size="small"
+                          onClick={() => {
+                            setResultItems((current) => current.map((row, rowIndex) => rowIndex === index ? ({
                               ...row,
                               componentResults: [...row.componentResults, { parameterName: "", componentName: "", resultValue: "", unit: "", referenceRange: "", criticalRange: "" }],
-                        }) : row));
-                      }}>
-                        Add component
-                      </Button>
-                    </Box>
-                    {item.componentResults.length ? (
-                      <Stack spacing={1}>
-                        {item.componentResults.map((component, componentIndex) => (
-                          <Grid container spacing={1} key={`${item.labOrderItemId}-component-${componentIndex}`}>
-                            <Grid size={{ xs: 12, md: 3 }}><TextField fullWidth size="small" label="Parameter" value={component.parameterName} onChange={(e) => setResultItems((current) => current.map((row, rowIndex) => rowIndex === index ? ({
-                              ...row,
-                              componentResults: row.componentResults.map((currentComponent, currentIndex) => currentIndex === componentIndex ? { ...currentComponent, parameterName: e.target.value } : currentComponent),
-                            }) : row))} /></Grid>
-                            <Grid size={{ xs: 12, md: 3 }}><TextField fullWidth size="small" label="Component" value={component.componentName} onChange={(e) => setResultItems((current) => current.map((row, rowIndex) => rowIndex === index ? ({
-                              ...row,
-                              componentResults: row.componentResults.map((currentComponent, currentIndex) => currentIndex === componentIndex ? { ...currentComponent, componentName: e.target.value } : currentComponent),
-                            }) : row))} /></Grid>
-                            <Grid size={{ xs: 12, md: 2 }}>
-                              {(() => {
-                                const severity = getResultSeverity(component.resultValue, component.referenceRange, component.criticalRange);
-                                return (
-                                  <TextField
-                                    fullWidth
-                                    size="small"
-                                    label="Result Value"
-                                    value={component.resultValue}
-                                    onChange={(e) => setResultItems((current) => current.map((row, rowIndex) => rowIndex === index ? ({
-                                      ...row,
-                                      componentResults: row.componentResults.map((currentComponent, currentIndex) => currentIndex === componentIndex ? { ...currentComponent, resultValue: e.target.value } : currentComponent),
-                                    }) : row))}
-                                    error={severity === "error"}
-                                    helperText={`Ref ${formatReferenceBadge(component.referenceRange)} • Crit ${formatReferenceBadge(component.criticalRange)}`}
-                                    sx={resultFieldSx(severity)}
-                                  />
-                                );
-                              })()}
-                            </Grid>
-                            <Grid size={{ xs: 12, md: 2 }}><TextField fullWidth size="small" label="Unit" value={component.unit} onChange={(e) => setResultItems((current) => current.map((row, rowIndex) => rowIndex === index ? ({
-                              ...row,
-                              componentResults: row.componentResults.map((currentComponent, currentIndex) => currentIndex === componentIndex ? { ...currentComponent, unit: e.target.value } : currentComponent),
-                            }) : row))} /></Grid>
-                            <Grid size={{ xs: 12, md: 3 }}><TextField fullWidth size="small" label="Reference Range" value={component.referenceRange} onChange={(e) => setResultItems((current) => current.map((row, rowIndex) => rowIndex === index ? ({
-                              ...row,
-                              componentResults: row.componentResults.map((currentComponent, currentIndex) => currentIndex === componentIndex ? { ...currentComponent, referenceRange: e.target.value } : currentComponent),
-                            }) : row))} /></Grid>
-                            <Grid size={{ xs: 12, md: 3 }}><TextField fullWidth size="small" label="Critical Range" value={component.criticalRange} disabled /></Grid>
-                            <Grid size={{ xs: 12, md: 1 }} sx={{ display: "flex", alignItems: "center", justifyContent: "flex-end" }}>
-                              <IconButton size="small" onClick={() => setResultItems((current) => current.map((row, rowIndex) => rowIndex === index ? ({
+                            }) : row));
+                          }}
+                          disabled={readOnly}
+                        >
+                          Add component
+                        </Button>
+                      </Box>
+                      {item.componentResults.length ? (
+                        <Stack spacing={1}>
+                          {item.componentResults.map((component, componentIndex) => (
+                            <Grid container spacing={1} key={`${item.labOrderItemId}-component-${componentIndex}`}>
+                              <Grid size={{ xs: 12, md: 3 }}><TextField fullWidth size="small" label="Parameter" value={component.parameterName} onChange={(e) => setResultItems((current) => current.map((row, rowIndex) => rowIndex === index ? ({
                                 ...row,
-                                componentResults: row.componentResults.filter((_, currentIndex) => currentIndex !== componentIndex),
-                              }) : row))}>
-                                <Typography variant="caption">x</Typography>
-                              </IconButton>
+                                componentResults: row.componentResults.map((currentComponent, currentIndex) => currentIndex === componentIndex ? { ...currentComponent, parameterName: e.target.value } : currentComponent),
+                              }) : row))} disabled={readOnly} /></Grid>
+                              <Grid size={{ xs: 12, md: 3 }}><TextField fullWidth size="small" label="Component" value={component.componentName} onChange={(e) => setResultItems((current) => current.map((row, rowIndex) => rowIndex === index ? ({
+                                ...row,
+                                componentResults: row.componentResults.map((currentComponent, currentIndex) => currentIndex === componentIndex ? { ...currentComponent, componentName: e.target.value } : currentComponent),
+                              }) : row))} disabled={readOnly} /></Grid>
+                              <Grid size={{ xs: 12, md: 2 }}>
+                                <TextField
+                                  fullWidth
+                                  size="small"
+                                  label="Result Value"
+                                  value={component.resultValue}
+                                  onChange={(e) => setResultItems((current) => current.map((row, rowIndex) => rowIndex === index ? ({
+                                    ...row,
+                                    componentResults: row.componentResults.map((currentComponent, currentIndex) => currentIndex === componentIndex ? { ...currentComponent, resultValue: e.target.value } : currentComponent),
+                                  }) : row))}
+                                  disabled={readOnly}
+                                  error={severity === "error"}
+                                  helperText={`Ref ${formatReferenceBadge(component.referenceRange)} • Crit ${formatReferenceBadge(component.criticalRange)}`}
+                                  sx={resultFieldSx(severity)}
+                                />
+                              </Grid>
+                              <Grid size={{ xs: 12, md: 2 }}><TextField fullWidth size="small" label="Unit" value={component.unit} onChange={(e) => setResultItems((current) => current.map((row, rowIndex) => rowIndex === index ? ({
+                                ...row,
+                                componentResults: row.componentResults.map((currentComponent, currentIndex) => currentIndex === componentIndex ? { ...currentComponent, unit: e.target.value } : currentComponent),
+                              }) : row))} disabled={readOnly} /></Grid>
+                              <Grid size={{ xs: 12, md: 3 }}><TextField fullWidth size="small" label="Reference Range" value={component.referenceRange} onChange={(e) => setResultItems((current) => current.map((row, rowIndex) => rowIndex === index ? ({
+                                ...row,
+                                componentResults: row.componentResults.map((currentComponent, currentIndex) => currentIndex === componentIndex ? { ...currentComponent, referenceRange: e.target.value } : currentComponent),
+                              }) : row))} disabled={readOnly} /></Grid>
+                              <Grid size={{ xs: 12, md: 3 }}><TextField fullWidth size="small" label="Critical Range" value={component.criticalRange} disabled /></Grid>
+                              <Grid size={{ xs: 12, md: 1 }} sx={{ display: "flex", alignItems: "center", justifyContent: "flex-end" }}>
+                                <IconButton size="small" onClick={() => setResultItems((current) => current.map((row, rowIndex) => rowIndex === index ? ({
+                                  ...row,
+                                  componentResults: row.componentResults.filter((_, currentIndex) => currentIndex !== componentIndex),
+                                }) : row))} disabled={readOnly}>
+                                  <Typography variant="caption">x</Typography>
+                                </IconButton>
+                              </Grid>
                             </Grid>
+                          ))}
+                        </Stack>
+                      ) : (
+                        <Grid container spacing={1}>
+                          <Grid size={{ xs: 12, md: 4 }}>
+                            <TextField
+                              fullWidth
+                              size="small"
+                              label="Result Value"
+                              value={item.resultValue}
+                              onChange={(e) => setResultItems((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, resultValue: e.target.value } : row))}
+                              disabled={readOnly}
+                              error={severity === "error"}
+                              helperText={`Ref ${formatReferenceBadge(item.referenceRange)} • Crit ${formatReferenceBadge(item.criticalRange)}`}
+                              sx={resultFieldSx(severity)}
+                            />
                           </Grid>
-                        ))}
-                      </Stack>
-                    ) : (
-                      <Grid container spacing={1}>
-                        <Grid size={{ xs: 12, md: 4 }}>
-                          {(() => {
-                            const severity = getResultSeverity(item.resultValue, item.referenceRange, item.criticalRange);
-                            return (
-                              <TextField
-                                fullWidth
-                                size="small"
-                                label="Result Value"
-                                value={item.resultValue}
-                                onChange={(e) => setResultItems((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, resultValue: e.target.value } : row))}
-                                error={severity === "error"}
-                                helperText={`Ref ${formatReferenceBadge(item.referenceRange)} • Crit ${formatReferenceBadge(item.criticalRange)}`}
-                                sx={resultFieldSx(severity)}
-                              />
-                            );
-                          })()}
+                          <Grid size={{ xs: 12, md: 2 }}><TextField fullWidth size="small" label="Unit" value={item.unit} onChange={(e) => setResultItems((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, unit: e.target.value } : row))} disabled={readOnly} /></Grid>
+                          <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth size="small" label="Reference Range" value={item.referenceRange} onChange={(e) => setResultItems((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, referenceRange: e.target.value } : row))} disabled={readOnly} /></Grid>
+                          <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth size="small" label="Critical Range" value={item.criticalRange} disabled /></Grid>
                         </Grid>
-                        <Grid size={{ xs: 12, md: 2 }}><TextField fullWidth size="small" label="Unit" value={item.unit} onChange={(e) => setResultItems((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, unit: e.target.value } : row))} /></Grid>
-                        <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth size="small" label="Reference Range" value={item.referenceRange} onChange={(e) => setResultItems((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, referenceRange: e.target.value } : row))} /></Grid>
-                        <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth size="small" label="Critical Range" value={item.criticalRange} disabled /></Grid>
-                      </Grid>
-                    )}
-                  </CardContent>
-                </Card>
-              ))}
+                      )}
+                    </CardContent>
+                  </Card>
+                );
+              })}
               {resultTarget?.attachments?.length ? (
                 <Card variant="outlined">
                   <CardContent sx={{ display: "grid", gap: 1.25 }}>
@@ -3035,16 +3401,153 @@ export default function LabPage() {
         </DialogActions>
       </Dialog>
 
-      <Dialog open={Boolean(reviewTarget)} onClose={() => setReviewTarget(null)} fullWidth maxWidth="sm">
+      <Dialog open={Boolean(reviewTarget)} onClose={() => setReviewTarget(null)} fullWidth maxWidth="lg">
         <DialogTitle>Lab Verification</DialogTitle>
         <DialogContent dividers>
           <Stack spacing={2} sx={{ pt: 0.5 }}>
-            <Alert severity="info">{reviewTarget ? `${reviewTarget.orderNumber} • ${reviewTarget.patientName || "-"} • ${reviewTarget.sampleAccessionNumber || "Accession pending"}` : ""}</Alert>
-            {reviewTarget?.results.some((result) => result.criticalResult) ? (
-              <Alert severity="warning">
-                Critical results: {reviewTarget.results.filter((result) => result.criticalResult).map((result) => `${result.parameterName || result.componentName || result.testName} (${resultFlagLabel(result.resultFlag)})`).join(", ")}
+            <Alert severity={reviewHasCriticalResults ? "error" : "info"}>
+              {reviewTarget ? `${reviewTarget.orderNumber} • ${reviewTarget.patientName || "-"} • ${reviewTarget.sampleAccessionNumber || "Accession pending"}` : ""}
+            </Alert>
+            {reviewTarget?.resultEnteredAt || reviewTarget?.resultEnteredBy ? (
+              <Card variant="outlined">
+                <CardContent sx={{ display: "grid", gap: 0.5 }}>
+                  <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Technician entry metadata</Typography>
+                  <Typography variant="body2"><b>Entered by:</b> {reviewTarget?.resultEnteredBy || "Not recorded"}</Typography>
+                  <Typography variant="body2"><b>Entered at:</b> {formatDateTime(reviewTarget?.resultEnteredAt || null)}</Typography>
+                </CardContent>
+              </Card>
+            ) : null}
+            {reviewTarget?.resultComments ? (
+              <Card variant="outlined">
+                <CardContent sx={{ display: "grid", gap: 0.5 }}>
+                  <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Technician comment</Typography>
+                  <Typography variant="body2" sx={{ whiteSpace: "pre-wrap" }}>{reviewTarget.resultComments}</Typography>
+                </CardContent>
+              </Card>
+            ) : null}
+            {reviewHasCriticalResults ? (
+              <Alert severity="error">
+                Critical result rows are highlighted below. Review the complete result set before approving.
               </Alert>
             ) : null}
+            <Card variant="outlined">
+              <CardContent sx={{ display: "grid", gap: 1 }}>
+                <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, flexWrap: "wrap", alignItems: "center" }}>
+                  <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Ordered tests</Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    Selected for action: {reviewSelectedTestIds.length || reviewEligibleOrderedTests.length}
+                  </Typography>
+                </Box>
+                {reviewOrderedTests.length ? (
+                  <Stack spacing={0.5}>
+                    {reviewOrderedTests.map((orderedTest) => {
+                      const reviewable = orderedTest.state === "RESULT_ENTERED";
+                      const readOnly = orderedTest.state === "VERIFIED" || orderedTest.state === "PUBLISHED";
+                      const notSelectable = orderedTest.state === "RESULT_SENT_BACK" || orderedTest.state === "RECOLLECTION_REQUIRED";
+                      const checked = reviewSelectedTestIds.includes(orderedTest.labOrderItemId);
+                      return (
+                        <FormControlLabel
+                          key={orderedTest.labOrderItemId}
+                          control={(
+                            <Checkbox
+                              checked={reviewable ? checked : false}
+                              disabled={!reviewable}
+                              onChange={(event) => {
+                                setReviewSelectedTestIds((current) => event.target.checked
+                                  ? Array.from(new Set([...current, orderedTest.labOrderItemId]))
+                                  : current.filter((id) => id !== orderedTest.labOrderItemId));
+                              }}
+                            />
+                          )}
+                          label={(
+                            <Stack spacing={0.25}>
+                              <Typography variant="body2" sx={{ fontWeight: 700 }}>{orderedTest.testName || orderedTest.testCode || orderedTest.labOrderItemId}</Typography>
+                              <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
+                                <Chip size="small" label={orderedTestDisplayState(orderedTest.state)} color={orderedTestStateTone(orderedTest.state)} variant="outlined" />
+                                {readOnly ? <Chip size="small" label="Read only" variant="outlined" /> : null}
+                                {notSelectable ? <Chip size="small" label="Not selectable" variant="outlined" /> : null}
+                                {orderedTest.latestVerificationDecision ? <Chip size="small" label={`Verified: ${orderedTest.latestVerificationDecision}`} variant="outlined" /> : null}
+                              </Stack>
+                            </Stack>
+                          )}
+                        />
+                      );
+                    })}
+                  </Stack>
+                ) : (
+                  <Typography variant="body2" color="text.secondary">No tests are eligible for verification.</Typography>
+                )}
+                {reviewHasMixedStates ? (
+                  <Alert severity="info">
+                    Mixed ordered-test states detected. Only selected eligible tests will be verified.
+                  </Alert>
+                ) : null}
+              </CardContent>
+            </Card>
+            <Stack spacing={1.5}>
+              {reviewResultGroups.length ? reviewResultGroups.map((group) => {
+                const groupHasCritical = group.rows.some((row) => row.criticalResult || /critical/i.test(row.resultFlag || ""));
+                return (
+                  <Card key={group.key} variant="outlined" sx={{ borderColor: groupHasCritical ? "error.main" : "divider" }}>
+                    <CardContent sx={{ display: "grid", gap: 1.25 }}>
+                      <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, flexWrap: "wrap", alignItems: "center" }}>
+                        <Box>
+                          <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>{group.testName}</Typography>
+                          <Typography variant="caption" color="text.secondary">{group.testCode || "-"}</Typography>
+                        </Box>
+                        {groupHasCritical ? <Chip size="small" color="error" label="Critical result present" /> : null}
+                      </Box>
+                      <Box sx={{ overflowX: "auto" }}>
+                        <Table size="small" aria-label={`${group.testName} results`}>
+                          <TableHead>
+                            <TableRow>
+                              <TableCell sx={{ whiteSpace: "nowrap" }}>Parameter / component</TableCell>
+                              <TableCell sx={{ whiteSpace: "nowrap" }}>Result</TableCell>
+                              <TableCell sx={{ whiteSpace: "nowrap" }}>Unit</TableCell>
+                              <TableCell sx={{ whiteSpace: "nowrap" }}>Reference range</TableCell>
+                              <TableCell sx={{ whiteSpace: "nowrap" }}>Critical range</TableCell>
+                              <TableCell sx={{ whiteSpace: "nowrap" }}>Status</TableCell>
+                              <TableCell sx={{ whiteSpace: "nowrap" }}>Entered by</TableCell>
+                              <TableCell sx={{ whiteSpace: "nowrap" }}>Entered at</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {group.rows.map((row) => {
+                              const severity = row.criticalResult ? "error" : resultTone(row.resultFlag);
+                              return (
+                                <TableRow
+                                  key={row.key}
+                                  sx={{
+                                    backgroundColor: severity === "error"
+                                      ? "rgba(211, 47, 47, 0.08)"
+                                      : severity === "warning"
+                                        ? "rgba(237, 108, 2, 0.08)"
+                                        : "transparent",
+                                  }}
+                                >
+                                  <TableCell sx={{ fontWeight: 600 }}>{row.parameterLabel}</TableCell>
+                                  <TableCell sx={{ fontWeight: 800, color: severity === "error" ? "error.main" : severity === "warning" ? "warning.main" : "text.primary" }}>
+                                    {row.resultValue || "—"}
+                                  </TableCell>
+                                  <TableCell>{row.unit || "—"}</TableCell>
+                                  <TableCell>{row.referenceRange || "—"}</TableCell>
+                                  <TableCell>{row.criticalRange || "—"}</TableCell>
+                                  <TableCell>
+                                    <Chip size="small" color={severity} variant={severity === "default" ? "outlined" : "filled"} label={resultFlagLabel(row.resultFlag)} />
+                                  </TableCell>
+                                  <TableCell>{row.enteredBy || "Not recorded"}</TableCell>
+                                  <TableCell>{formatDateTime(row.enteredAt)}</TableCell>
+                                </TableRow>
+                              );
+                            })}
+                          </TableBody>
+                        </Table>
+                      </Box>
+                    </CardContent>
+                  </Card>
+                );
+              }) : <Alert severity="info">No result rows are available for this order.</Alert>}
+            </Stack>
             <FormControl fullWidth>
               <InputLabel id="lab-review-decision-label">
                 <RequiredLabel text="Verification decision" required />
@@ -3060,17 +3563,18 @@ export default function LabPage() {
               </Select>
             </FormControl>
             <CommentSuggestions
-              category="LAB_REJECTION"
+              category="LAB_RESULT_CORRECTION"
               selectedReason={reviewReason}
               remarks={reviewComments}
               onReasonChange={setReviewReason}
               onRemarksChange={setReviewComments}
               requiredReason={reviewDecision === "SEND_BACK"}
-              reasonLabel="Reason"
-              remarksLabel="Comments"
+              reasonOptions={RESULT_CORRECTION_REASON_OPTIONS}
+              reasonLabel="Result correction reason"
+              remarksLabel="Comments to technician"
               maxRemarksLength={250}
-              reasonHelperText={reviewDecision === "SEND_BACK" ? "Select a reason before sending the result back." : "Reason is optional when approving."}
-              remarksHelperText={reviewDecision === "SEND_BACK" ? "Add comments for the technician." : "Optional verification comments."}
+              reasonHelperText={reviewDecision === "SEND_BACK" ? "Select a result-correction reason before sending the result back." : "Reason is optional when approving."}
+              remarksHelperText={reviewDecision === "SEND_BACK" ? "Optional comments for the technician." : "Optional verification comments."}
             />
           </Stack>
         </DialogContent>
@@ -3081,7 +3585,7 @@ export default function LabPage() {
       </Dialog>
 
       <Dialog open={Boolean(publishTarget)} onClose={() => setPublishTarget(null)} fullWidth maxWidth="sm">
-        <DialogTitle>Publish Lab Report</DialogTitle>
+        <DialogTitle>{isReportGenerationOnly(publishTarget) ? "Generate Lab Report" : "Publish Lab Report"}</DialogTitle>
         <DialogContent dividers>
           <Stack spacing={2} sx={{ pt: 0.5 }}>
             <Alert severity="info">
@@ -3091,6 +3595,110 @@ export default function LabPage() {
               <Alert severity="warning">
                 Critical results: {publishTarget.results.filter((result) => result.criticalResult).map((result) => `${result.parameterName || result.componentName || result.testName} (${resultFlagLabel(result.resultFlag)})`).join(", ")}
               </Alert>
+            ) : null}
+            <Card variant="outlined">
+              <CardContent sx={{ display: "grid", gap: 1.25 }}>
+                <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, flexWrap: "wrap", alignItems: "center" }}>
+                  <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Report generation</Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    Selected: {publishSelectedTestIds.length || publishEligibleOrderedTests.length}
+                  </Typography>
+                </Box>
+                <FormControl>
+                  <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5 }}>Report mode</Typography>
+                  <RadioGroup
+                    row
+                    value={publishReportMode}
+                    onChange={(_, value) => {
+                      const nextMode = value as "INDIVIDUAL" | "GROUPED" | "CONSOLIDATED";
+                      setPublishReportMode(nextMode);
+                      setPublishSelectedTestIds(defaultPublishSelection(publishTarget, nextMode));
+                    }}
+                  >
+                    <FormControlLabel value="INDIVIDUAL" control={<Radio size="small" />} label="Individual" />
+                    <FormControlLabel value="GROUPED" control={<Radio size="small" />} label="Grouped" />
+                    <FormControlLabel value="CONSOLIDATED" control={<Radio size="small" />} label="Final consolidated" />
+                  </RadioGroup>
+                </FormControl>
+                {publishEligibleOrderedTests.length ? (
+                  <Stack spacing={0.75}>
+                    {publishEligibleOrderedTests.map((orderedTest) => (
+                      <FormControlLabel
+                        key={orderedTest.labOrderItemId}
+                        control={(
+                          <Checkbox
+                            checked={publishSelectedTestIds.includes(orderedTest.labOrderItemId)}
+                            onChange={(event) => {
+                              setPublishSelectedTestIds((current) => event.target.checked
+                                ? Array.from(new Set([...current, orderedTest.labOrderItemId]))
+                                : current.filter((id) => id !== orderedTest.labOrderItemId));
+                            }}
+                          />
+                        )}
+                        label={(
+                          <Stack spacing={0.25}>
+                            <Typography variant="body2" sx={{ fontWeight: 700 }}>{orderedTest.testName || orderedTest.testCode || orderedTest.labOrderItemId}</Typography>
+                            <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
+                              <Chip size="small" label={orderedTestDisplayState(orderedTest.state)} color={orderedTestStateTone(orderedTest.state)} variant="outlined" />
+                              {orderedTest.latestVerificationDecision ? <Chip size="small" label={`Verification: ${orderedTest.latestVerificationDecision}`} variant="outlined" /> : null}
+                            </Stack>
+                          </Stack>
+                        )}
+                      />
+                    ))}
+                  </Stack>
+                ) : (
+                  <Typography variant="body2" color="text.secondary">No verified or published tests are ready for report generation.</Typography>
+                )}
+                {publishPendingOrderedTests.length ? (
+                  <Box>
+                    <Typography variant="caption" color="text.secondary">Pending tests</Typography>
+                    <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                      {publishPendingOrderedTests.map((orderedTest) => (
+                        <Chip key={orderedTest.labOrderItemId} size="small" label={orderedTest.testName || orderedTest.testCode || orderedTest.labOrderItemId} variant="outlined" />
+                      ))}
+                    </Stack>
+                  </Box>
+                ) : null}
+                {publishRecollectionOrderedTests.length ? (
+                  <Box>
+                    <Typography variant="caption" color="text.secondary">Recollection required</Typography>
+                    <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                      {publishRecollectionOrderedTests.map((orderedTest) => (
+                        <Chip key={orderedTest.labOrderItemId} size="small" label={orderedTest.testName || orderedTest.testCode || orderedTest.labOrderItemId} color="warning" variant="outlined" />
+                      ))}
+                    </Stack>
+                  </Box>
+                ) : null}
+                {publishHasMixedStates ? (
+                  <Alert severity="info">
+                    Mixed ordered-test states detected. The selected mode will determine the report artifact, while already published tests remain immutable.
+                  </Alert>
+                ) : null}
+              </CardContent>
+            </Card>
+            {publishTarget?.reportArtifacts?.length ? (
+              <Card variant="outlined">
+                <CardContent sx={{ display: "grid", gap: 1 }}>
+                  <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Report history</Typography>
+                  <Stack spacing={1}>
+                    {publishTarget.reportArtifacts.map((artifact) => (
+                      <Box key={artifact.id} sx={{ display: "grid", gap: 0.5, p: 1, border: 1, borderColor: "divider", borderRadius: 1 }}>
+                        <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" alignItems="center">
+                          <Chip size="small" label={`v${artifact.versionNumber}`} />
+                          <Chip size="small" label={reportModeLabel(artifact.reportMode)} variant="outlined" />
+                          <Chip size="small" label={reportTypeLabel(artifact.reportMode, artifact.reportType)} variant="outlined" />
+                          <Chip size="small" label={artifact.reportStatus} variant="outlined" />
+                        </Stack>
+                        <Typography variant="body2" sx={{ fontWeight: 700 }}>{artifact.filename || "Report artifact"}</Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          Included tests: {artifact.selectedOrderedTestIds.length} • Generated {artifact.generatedAt ? formatDateTime(artifact.generatedAt) : "-"}
+                        </Typography>
+                      </Box>
+                    ))}
+                  </Stack>
+                </CardContent>
+              </Card>
             ) : null}
             <Box>
               <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>Delivery channels</Typography>
@@ -3129,7 +3737,9 @@ export default function LabPage() {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setPublishTarget(null)}>Cancel</Button>
-          <Button variant="contained" onClick={() => void savePublish()} disabled={saving || !publishTarget}>Publish</Button>
+          <Button variant="contained" onClick={() => void savePublish()} disabled={saving || !publishTarget}>
+            {publishReportMode === "GROUPED" || isReportGenerationOnly(publishTarget) ? "Generate Report" : "Publish"}
+          </Button>
         </DialogActions>
       </Dialog>
 
@@ -3139,28 +3749,30 @@ export default function LabPage() {
           {publishSuccessTarget ? (
             <Stack spacing={2} sx={{ pt: 0.5 }}>
               <Alert severity="success">
-                {publishSuccessTarget.orderNumber} is now published and available to the selected delivery channels.
+                {publishWasNoOp
+                  ? `The current final consolidated report for ${publishSuccessTarget.orderNumber} already contains the selected tests.`
+                  : `${publishSuccessTarget.orderNumber} is now published and available to the requested delivery channels.`}
               </Alert>
               <Card variant="outlined">
                 <CardContent>
                   <Stack spacing={1.25}>
-                    <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Delivery channels</Typography>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Requested channels</Typography>
                     <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
-                      {[
-                        ["Patient Portal", publishSuccessTarget.reportDeliveryChannels.includes("PATIENT_PORTAL")],
-                        ["Doctor Notification", publishSuccessTarget.reportDeliveryChannels.includes("DOCTOR_NOTIFICATION")],
-                        ["Email", publishSuccessTarget.reportDeliveryChannels.includes("EMAIL")],
-                        ["WhatsApp", publishSuccessTarget.reportDeliveryChannels.includes("WHATSAPP")],
-                        ["Print", publishSuccessTarget.reportDeliveryChannels.includes("PRINT")],
-                      ].map(([label, enabled]) => (
+                      {publishSuccessTarget.reportDeliveryChannels.length ? publishSuccessTarget.reportDeliveryChannels.map((channel) => (
                         <Chip
-                          key={String(label)}
+                          key={channel}
                           size="small"
-                          label={`${label} • ${enabled ? "Queued" : "Skipped"}`}
-                          color={enabled ? "success" : "default"}
+                          label={deliveryChannelsLabel([channel])}
+                          color="success"
                           variant="outlined"
                         />
-                      ))}
+                      )) : <Chip size="small" label="No delivery channels requested" variant="outlined" />}
+                    </Stack>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Recorded delivery actions</Typography>
+                    <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
+                      {publishSuccessTarget.reportDeliveryHistory.length ? reportDeliveryHistorySummary(publishSuccessTarget.reportDeliveryHistory).map((label, index) => (
+                        <Chip key={`${publishSuccessTarget.id}-delivery-audit-${index}`} size="small" label={label} variant="outlined" />
+                      )) : <Chip size="small" label="No delivery audit recorded" variant="outlined" />}
                     </Stack>
                     <Typography variant="caption" color="text.secondary">
                       Delivery audit is recorded on the published report record and can be reviewed from the order row.
@@ -3168,6 +3780,24 @@ export default function LabPage() {
                   </Stack>
                 </CardContent>
               </Card>
+              {currentReportArtifact(publishSuccessTarget) ? (
+                <Card variant="outlined">
+                  <CardContent>
+                    <Stack spacing={1}>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Current report</Typography>
+                      <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
+                        <Chip size="small" label={`v${currentReportArtifact(publishSuccessTarget)?.versionNumber || "-"}`} />
+                        <Chip size="small" label={reportModeLabel(currentReportArtifact(publishSuccessTarget)?.reportMode)} variant="outlined" />
+                        <Chip size="small" label={reportTypeLabel(currentReportArtifact(publishSuccessTarget)?.reportMode, currentReportArtifact(publishSuccessTarget)?.reportType)} variant="outlined" />
+                        <Chip size="small" label={currentReportArtifact(publishSuccessTarget)?.reportStatus || "CURRENT"} variant="outlined" />
+                      </Stack>
+                      <Typography variant="caption" color="text.secondary">
+                        Included tests: {currentReportArtifact(publishSuccessTarget)?.selectedOrderedTestIds.length || 0}
+                      </Typography>
+                    </Stack>
+                  </CardContent>
+                </Card>
+              ) : null}
               <Stack direction="row" spacing={1} flexWrap="wrap">
                 <Button variant="outlined" onClick={() => { setPublishSuccessTarget(null); if (publishSuccessTarget) viewReport(publishSuccessTarget); }}>View Report</Button>
                 <Button variant="outlined" onClick={() => { setPublishSuccessTarget(null); if (publishSuccessTarget) printReport(publishSuccessTarget); }}>Print Report</Button>
@@ -3180,7 +3810,7 @@ export default function LabPage() {
           ) : null}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setPublishSuccessTarget(null)}>Continue to Sample Collection</Button>
+          <Button onClick={() => { setPublishSuccessTarget(null); setTab(4); }}>Back to Lab Orders</Button>
         </DialogActions>
       </Dialog>
 
@@ -3451,19 +4081,61 @@ function OrderQueue(props: {
                 </Stack>
               </TableCell>
               <TableCell>
-                <Stack spacing={0.5}>
-                              <Chip size="small" label={sampleSummaryLabel(row)} color={sampleStatusTone(row.sampleSummaryStatus)} variant="outlined" />
-                              <Typography variant="caption" color="text.secondary">{row.sampleAccessionNumber || "Accession pending"}</Typography>
-                              {row.sampleBarcodeValue ? <Typography variant="caption" color="text.secondary">Barcode: {row.sampleBarcodeValue}</Typography> : null}
-                              {(row.sampleCollectedBy || row.sampleCollectedAt) ? (
-                                <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
-                                  <Chip size="small" variant="outlined" label={`Collected by: ${row.sampleCollectedBy || row.sampleCollectedByUserId || "—"}`} />
-                                  <Chip size="small" variant="outlined" label={`Date: ${formatDateChip(row.sampleCollectedAt)}`} />
-                                  <Chip size="small" variant="outlined" label={`Time: ${formatTimeChip(row.sampleCollectedAt)}`} />
-                                </Stack>
-                              ) : null}
+                <Stack spacing={0.75}>
+                  {row.samples.length > 1 ? (
+                    row.samples.map((sample) => {
+                      const canReceiveSample = sample.status === "COLLECTED";
+                      const canRejectSample = sample.status === "COLLECTED" || sample.status === "RECEIVED";
+                      return (
+                        <Card key={sample.id} variant="outlined" sx={{ p: 1 }}>
+                          <Stack spacing={0.5}>
+                            <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                              <Chip size="small" label={sample.status.replaceAll("_", " ")} color={sampleStatusTone(sample.status)} variant="outlined" />
+                              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700 }}>{sample.accessionNumber}</Typography>
                             </Stack>
-                          </TableCell>
+                            <Typography variant="caption" color="text.secondary">{sample.specimenType}{sample.containerType ? ` / ${sample.containerType}` : ""}</Typography>
+                            <Typography variant="caption" color="text.secondary">Tests: {sampleLinkedTestsLabel(sample)}</Typography>
+                            {sample.barcodeValue ? <Typography variant="caption" color="text.secondary">Barcode: {sample.barcodeValue}</Typography> : null}
+                            {(sample.collectedBy || sample.collectedAt) ? (
+                              <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                <Chip size="small" variant="outlined" label={`Collected by: ${sample.collectedBy || "—"}`} />
+                                <Chip size="small" variant="outlined" label={`Date: ${formatDateChip(sample.collectedAt)}`} />
+                                <Chip size="small" variant="outlined" label={`Time: ${formatTimeChip(sample.collectedAt)}`} />
+                              </Stack>
+                            ) : null}
+                            {canManageSamples ? (
+                              <Stack direction="row" spacing={1} flexWrap="wrap">
+                                {canReceiveSample ? (
+                                  <Button size="small" variant="outlined" onClick={() => onReceiveSample(sample)}>Receive</Button>
+                                ) : null}
+                                {canRejectSample ? (
+                                  <Button size="small" variant="outlined" color="error" onClick={() => onRejectSample(sample)}>Reject</Button>
+                                ) : null}
+                              </Stack>
+                            ) : null}
+                          </Stack>
+                        </Card>
+                      );
+                    })
+                  ) : (
+                    <Stack spacing={0.5}>
+                      <Chip size="small" label={sampleSummaryLabel(row)} color={sampleStatusTone(row.sampleSummaryStatus)} variant="outlined" />
+                      <Typography variant="caption" color="text.secondary">{row.sampleAccessionNumber || "Accession pending"}</Typography>
+                      {row.samples.length === 1 && row.samples[0]?.linkedTestNames?.length ? (
+                        <Typography variant="caption" color="text.secondary">Tests: {sampleLinkedTestsLabel(row.samples[0])}</Typography>
+                      ) : null}
+                      {row.sampleBarcodeValue ? <Typography variant="caption" color="text.secondary">Barcode: {row.sampleBarcodeValue}</Typography> : null}
+                      {(row.sampleCollectedBy || row.sampleCollectedAt) ? (
+                        <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                          <Chip size="small" variant="outlined" label={`Collected by: ${row.sampleCollectedBy || row.sampleCollectedByUserId || "—"}`} />
+                          <Chip size="small" variant="outlined" label={`Date: ${formatDateChip(row.sampleCollectedAt)}`} />
+                          <Chip size="small" variant="outlined" label={`Time: ${formatTimeChip(row.sampleCollectedAt)}`} />
+                        </Stack>
+                      ) : null}
+                    </Stack>
+                  )}
+                </Stack>
+              </TableCell>
               <TableCell>
                 <Stack spacing={0.25}>
                   <Typography variant="body2" sx={{ fontWeight: 700 }}>{row.billNumber || "-"}</Typography>
@@ -3479,7 +4151,7 @@ function OrderQueue(props: {
                         Paid {formatMoney(receiptSummary.paymentAmount ?? row.billTotalAmount ?? row.billDueAmount ?? 0)} • {receiptSummary.paymentMode || "-"}
                       </Typography>
                       <Typography variant="caption" color="text.secondary">
-                        Ref: {receiptSummary.referenceNumber || "—"} • By {receiptSummary.receivedBy || "Staff User"}
+                        Ref: {receiptSummary.referenceNumber || "—"} • By {receiptSummary.receivedByLabel}
                       </Typography>
                       <Typography variant="caption" color="text.secondary">
                         {receiptSummary.paymentDateTime ? formatDateTime(receiptSummary.paymentDateTime) : receiptTimestampText(row)}
@@ -3522,16 +4194,18 @@ function OrderQueue(props: {
                       Collect sample
                     </Button>
                   ) : null}
-                  {canManageSamples && sampleAction?.status === "COLLECTED" ? (
+                  {canManageSamples && row.samples.length <= 1 && sampleAction?.status === "COLLECTED" ? (
                     <Button size="small" variant="outlined" onClick={() => onReceiveSample(sampleAction)}>Receive</Button>
                   ) : null}
-                  {canManageSamples && sampleAction ? (
+                  {canManageSamples && row.samples.length <= 1 && sampleAction ? (
                     <Button size="small" variant="outlined" color="error" onClick={() => onRejectSample(sampleAction)}>Reject</Button>
                   ) : null}
-                  {canEnterResults && (row.status === "SAMPLE_COLLECTED" || row.status === "PROCESSING" || row.status === "RESULT_ENTERED") ? (
-                    <Button size="small" variant="outlined" onClick={() => onEnterResults(row)}>Enter results</Button>
+                  {canEnterResults && hasTechnicianWork(row) ? (
+                    <Button size="small" variant="outlined" onClick={() => onEnterResults(row)}>
+                      {hasSentBackResultOrderedTests(row) ? "Correct results" : "Enter results"}
+                    </Button>
                   ) : null}
-                  {canGenerateReport && row.status === "REPORT_READY" ? (
+                  {canGenerateReport && hasPublishableOrderedTests(row) ? (
                     <Button size="small" variant="outlined" onClick={() => onPublishReport(row)}>
                       Publish report
                     </Button>
@@ -3564,9 +4238,9 @@ function OrderQueue(props: {
                     </>
                     ) : null;
                   })()}
-                  {canReviewReport && row.status === "RESULT_ENTERED" ? (
+                  {canReviewReport && hasReviewableOrderedTests(row) ? (
                     <Button size="small" variant="outlined" onClick={() => onReview(row)}>
-                      Review
+                      {row.status === "PARTIALLY_READY" ? "Continue Review" : "Review"}
                     </Button>
                   ) : null}
                 </Stack>

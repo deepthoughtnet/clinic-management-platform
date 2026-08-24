@@ -47,6 +47,8 @@ public record LabOrderRecord(
         String sampleCollectionNotes,
         OffsetDateTime processingStartedAt,
         OffsetDateTime resultEnteredAt,
+        UUID resultEnteredByUserId,
+        String resultEnteredBy,
         String resultComments,
         OffsetDateTime reportGeneratedAt,
         UUID reportGeneratedByUserId,
@@ -54,9 +56,11 @@ public record LabOrderRecord(
         String reportFilename,
         OffsetDateTime reportPublishedAt,
         UUID reportPublishedByUserId,
+        String reportVerificationToken,
         String reportDeliveryStatus,
         List<String> reportDeliveryChannels,
         String reportDeliveryNotes,
+        List<LabReportArtifactRecord> reportArtifacts,
         OffsetDateTime doctorReviewedAt,
         UUID doctorReviewedByUserId,
         String doctorReviewedBy,
@@ -71,9 +75,31 @@ public record LabOrderRecord(
         String labVerificationReason,
         List<LabOrderAttachmentRecord> attachments,
         List<LabOrderItemRecord> items,
+        List<LabOrderedTestRecord> orderedTests,
         List<LabSampleRecord> samples,
         List<LabOrderResultRecord> results,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt
 ) {
+    public record LabReportArtifactRecord(
+            UUID id,
+            int versionNumber,
+            String reportMode,
+            String reportType,
+            String reportStatus,
+            String filename,
+            String storageReference,
+            String verificationToken,
+            String verificationUrl,
+            List<String> deliveryChannels,
+            List<UUID> selectedItemIds,
+            OffsetDateTime generatedAt,
+            UUID generatedBy,
+            OffsetDateTime publishedAt,
+            UUID publishedBy,
+            UUID supersededByArtifactId,
+            OffsetDateTime supersededAt,
+            String notes
+    ) {
+    }
 }

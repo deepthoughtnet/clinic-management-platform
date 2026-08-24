@@ -161,13 +161,6 @@ export const labDoctorReviewSchema = z.object({
         message: "Reason is required when sending back a result.",
       });
     }
-    if (!value.remarks) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["remarks"],
-        message: "Remarks are required when sending back a result.",
-      });
-    }
   }
 });
 

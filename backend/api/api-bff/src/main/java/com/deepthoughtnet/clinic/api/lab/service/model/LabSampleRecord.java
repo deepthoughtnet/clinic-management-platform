@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.api.lab.service.model;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.UUID;
 
 public record LabSampleRecord(
@@ -19,6 +20,8 @@ public record LabSampleRecord(
         String rejectionReason,
         boolean recollectionRequired,
         String notes,
+        List<UUID> linkedLabOrderItemIds,
+        List<String> linkedTestNames,
         OffsetDateTime createdAt,
         UUID createdBy,
         OffsetDateTime updatedAt,

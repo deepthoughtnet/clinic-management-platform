@@ -40,6 +40,8 @@ import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderPaymentRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabPaymentReceiptRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderPublishReportCommand;
+import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderedTestRecord;
+import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderedTestSpecimenRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderSampleCollectionCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderStatusRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderVerificationCommand;
@@ -338,7 +340,7 @@ public class LabController {
                         mapComponentResults(item.componentResults())
                 ))
                 .toList();
-        return toResponse(labService.enterResults(tenantId, id, new LabOrderResultEntryCommand(items, request.comments()), actorAppUserId));
+        return toResponse(labService.enterResults(tenantId, id, new LabOrderResultEntryCommand(items, request.comments(), request.orderedTestIds()), actorAppUserId));
     }
 
     @GetMapping(value = "/orders/{id}/pdf", produces = MediaType.APPLICATION_PDF_VALUE)
@@ -372,6 +374,8 @@ public class LabController {
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         return toResponse(labService.verifyResults(tenantId, id, new LabOrderVerificationCommand(
                 request.decision() == null ? null : request.decision().name(),
+                request.orderedTestIds(),
+                Boolean.TRUE.equals(request.recollectionRequired()),
                 request.reason(),
                 request.comments()
         ), actorAppUserId));
@@ -382,10 +386,12 @@ public class LabController {
     public LabOrderResponse publishReport(@PathVariable UUID id, @Valid @RequestBody(required = false) LabOrderPublishReportRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
-        LabOrderPublishReportRequest effectiveRequest = request == null ? new LabOrderPublishReportRequest(List.of(), null) : request;
+        LabOrderPublishReportRequest effectiveRequest = request == null ? new LabOrderPublishReportRequest(List.of(), List.of(), null, null) : request;
         return toResponse(labService.publishReport(tenantId, id, new LabOrderPublishReportCommand(
                 effectiveRequest.deliveryChannels() == null ? List.of() : effectiveRequest.deliveryChannels(),
-                effectiveRequest.publishNotes()
+                effectiveRequest.orderedTestIds() == null ? List.of() : effectiveRequest.orderedTestIds(),
+                effectiveRequest.publishNotes(),
+                effectiveRequest.reportMode()
         ), actorAppUserId));
     }
 
@@ -524,6 +530,7 @@ public class LabController {
     private LabOrderResponse toResponse(LabOrderRecord record, PaymentRecord payment, LabPaymentReceiptRecord paymentReceipt) {
         LabPaymentReceiptRecord receiptSummary = paymentReceipt;
         if (receiptSummary == null && payment != null && payment.receiptId() != null) {
+            String paymentReceivedByLabel = payment.receivedBy() == null ? null : labService.receivedByDisplayLabel(record.tenantId(), payment.receivedBy());
             receiptSummary = new LabPaymentReceiptRecord(
                     payment.receiptId(),
                     payment.receiptNumber(),
@@ -532,7 +539,7 @@ public class LabController {
                     payment.amount(),
                     payment.paymentMode(),
                     payment.referenceNumber(),
-                    payment.receivedBy() == null ? null : payment.receivedBy().toString(),
+                    paymentReceivedByLabel,
                     payment.paymentDateTime() != null ? payment.paymentDateTime() : payment.receiptDate() == null ? null : payment.receiptDate().atStartOfDay().atOffset(java.time.ZoneOffset.UTC),
                     "/api/receipts/" + payment.receiptId() + "/pdf",
                     "/api/receipts/" + payment.receiptId() + "/pdf"
@@ -581,6 +588,8 @@ public class LabController {
                 record.sampleCollectionNotes(),
                 record.processingStartedAt(),
                 record.resultEnteredAt(),
+                record.resultEnteredByUserId() == null ? null : record.resultEnteredByUserId().toString(),
+                record.resultEnteredBy(),
                 record.resultComments(),
                 record.reportGeneratedAt(),
                 record.reportGeneratedByUserId() == null ? null : record.reportGeneratedByUserId().toString(),
@@ -588,10 +597,12 @@ public class LabController {
                 record.reportFilename(),
                 record.reportPublishedAt(),
                 record.reportPublishedByUserId() == null ? null : record.reportPublishedByUserId().toString(),
+                record.reportVerificationToken(),
                 record.reportDeliveryStatus(),
                 record.reportDeliveryChannels(),
                 record.reportDeliveryNotes(),
                 buildReportDeliveryHistory(record.tenantId(), record.id()),
+                safeList(record.reportArtifacts()).stream().map(this::toResponse).toList(),
                 record.doctorReviewedAt(),
                 record.doctorReviewedByUserId() == null ? null : record.doctorReviewedByUserId().toString(),
                 record.doctorReviewedBy(),
@@ -604,7 +615,7 @@ public class LabController {
                 record.labVerificationDecision(),
                 record.labVerificationComments(),
                 record.labVerificationReason(),
-                record.attachments().stream()
+                safeList(record.attachments()).stream()
                         .map(attachment -> new LabOrderResponse.LabOrderAttachmentResponse(
                                 attachment.id() == null ? null : attachment.id().toString(),
                                 attachment.labOrderId() == null ? null : attachment.labOrderId().toString(),
@@ -619,9 +630,10 @@ public class LabController {
                                 attachment.createdAt()
                         ))
                         .toList(),
-                record.items().stream().map(this::toResponse).toList(),
-                record.samples().stream().map(this::toResponse).toList(),
-                record.results().stream().map(this::toResponse).toList(),
+                safeList(record.items()).stream().map(this::toResponse).toList(),
+                safeList(record.orderedTests()).stream().map(this::toResponse).toList(),
+                safeList(record.samples()).stream().map(this::toResponse).toList(),
+                safeList(record.results()).stream().map(this::toResponse).toList(),
                 record.createdAt(),
                 record.updatedAt(),
                 payment == null || payment.id() == null ? null : payment.id().toString(),
@@ -633,7 +645,7 @@ public class LabController {
                 payment == null ? null : payment.amount(),
                 payment == null ? null : payment.paymentMode(),
                 payment == null ? null : payment.referenceNumber(),
-                payment == null || payment.receivedBy() == null ? null : payment.receivedBy().toString(),
+                payment == null || payment.receivedBy() == null ? null : labService.receivedByDisplayLabel(record.tenantId(), payment.receivedBy()),
                 receiptSummary == null ? null : new LabOrderResponse.PaymentReceiptResponse(
                         receiptSummary.receiptId() == null ? null : receiptSummary.receiptId().toString(),
                         receiptSummary.receiptNumber(),
@@ -647,6 +659,75 @@ public class LabController {
                         receiptSummary.printUrl(),
                         receiptSummary.downloadUrl()
                 )
+        );
+    }
+
+    private LabOrderResponse.OrderedTestResponse toResponse(LabOrderedTestRecord record) {
+        return new LabOrderResponse.OrderedTestResponse(
+                record.labOrderItemId() == null ? null : record.labOrderItemId().toString(),
+                record.labTestId() == null ? null : record.labTestId().toString(),
+                record.testCode(),
+                record.testName(),
+                record.category(),
+                record.department(),
+                record.sampleType(),
+                record.unit(),
+                record.referenceRange(),
+                record.turnaroundTime(),
+                record.price(),
+                record.sortOrder(),
+                record.state(),
+                record.latestResultRevision(),
+                record.latestVerificationDecision(),
+                record.latestVerificationAt(),
+                record.latestVerificationBy() == null ? null : record.latestVerificationBy().toString(),
+                record.latestPublicationArtifactNumber(),
+                record.latestPublicationAt(),
+                record.latestPublicationBy() == null ? null : record.latestPublicationBy().toString(),
+                record.publicationChannels(),
+                record.latestResultSnapshotJson(),
+                record.latestResultEnteredAt(),
+                record.latestResultEnteredBy() == null ? null : record.latestResultEnteredBy().toString(),
+                record.specimenLinks().stream().map(this::toResponse).toList()
+        );
+    }
+
+    private LabOrderResponse.OrderedTestSpecimenResponse toResponse(LabOrderedTestSpecimenRecord record) {
+        return new LabOrderResponse.OrderedTestSpecimenResponse(
+                record.labOrderSampleId() == null ? null : record.labOrderSampleId().toString(),
+                record.accessionNumber(),
+                record.barcodeValue(),
+                record.specimenType(),
+                record.containerType(),
+                record.sampleStatus(),
+                record.active(),
+                record.collectedAt(),
+                record.receivedAt(),
+                record.linkedAt(),
+                record.unlinkedAt()
+        );
+    }
+
+    private LabOrderResponse.ReportArtifactResponse toResponse(LabOrderRecord.LabReportArtifactRecord record) {
+        return new LabOrderResponse.ReportArtifactResponse(
+                record.id() == null ? null : record.id().toString(),
+                record.versionNumber(),
+                record.reportMode(),
+                record.reportType(),
+                record.reportStatus(),
+                record.filename(),
+                record.storageReference(),
+                record.verificationToken(),
+                record.verificationUrl(),
+                record.deliveryChannels(),
+                record.selectedItemIds() == null ? List.of() : record.selectedItemIds().stream().map(UUID::toString).toList(),
+                record.generatedAt(),
+                record.generatedBy() == null ? null : record.generatedBy().toString(),
+                record.publishedAt(),
+                record.publishedBy() == null ? null : record.publishedBy().toString(),
+                record.supersededByArtifactId() == null ? null : record.supersededByArtifactId().toString(),
+                record.supersededAt(),
+                record.notes()
         );
     }
 
@@ -715,6 +796,10 @@ public class LabController {
         };
     }
 
+    private static <T> List<T> safeList(List<T> values) {
+        return values == null ? List.of() : values;
+    }
+
     private LabSampleResponse toResponse(LabSampleRecord record) {
         return new LabSampleResponse(
                 record.id() == null ? null : record.id().toString(),
@@ -731,8 +816,17 @@ public class LabController {
                 record.receivedBy() == null ? null : record.receivedBy().toString(),
                 record.rejectionReason(),
                 record.recollectionRequired(),
-                record.notes()
+                record.notes(),
+                safeUuidStrings(record.linkedLabOrderItemIds()),
+                safeList(record.linkedTestNames())
         );
+    }
+
+    private List<String> safeUuidStrings(List<UUID> values) {
+        if (values == null || values.isEmpty()) {
+            return List.of();
+        }
+        return values.stream().filter(java.util.Objects::nonNull).map(UUID::toString).toList();
     }
 
     private UUID resolveDoctorScope(UUID requestedDoctorUserId) {

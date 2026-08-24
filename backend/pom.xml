@@ -27,6 +27,7 @@
     <module>domains/consultation-domain</module>
     <module>domains/identity-domain</module>
     <module>domains/inventory-domain</module>
+    <module>domains/laboratory-domain</module>
     <module>domains/notification-domain</module>
     <module>domains/patient-domain</module>
     <module>domains/prescription-domain</module>

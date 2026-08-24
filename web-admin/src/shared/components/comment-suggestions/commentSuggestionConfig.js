@@ -119,6 +119,29 @@ const COMMENT_SUGGESTION_CONFIG = {
       "Lab test cancelled.",
     ],
   },
+  LAB_RESULT_CORRECTION: {
+    reasons: ["INCORRECT_RESULT", "DATA_ENTRY_ERROR", "UNIT_MISMATCH", "REFERENCE_RANGE_MISMATCH", "INCOMPLETE_RESULT", "TECHNICAL_RECHECK_REQUIRED", "OTHER_RESULT_CORRECTION"],
+    suggestions: [
+      "Incorrect result value.",
+      "Data entry / transcription error.",
+      "Unit mismatch.",
+      "Reference range mismatch.",
+      "Incomplete result.",
+      "Result requires technical recheck.",
+      "Other result correction issue.",
+    ],
+  },
+  LAB_SPECIMEN_REJECTION: {
+    reasons: ["SAMPLE_HEMOLYZED", "INSUFFICIENT_SAMPLE", "SAMPLE_MISMATCH", "WRONG_CONTAINER_SPECIMEN", "REPEAT_SAMPLE_REQUIRED", "OTHER_SPECIMEN_ISSUE"],
+    suggestions: [
+      "Sample hemolyzed.",
+      "Insufficient sample quantity.",
+      "Sample/specimen mismatch.",
+      "Wrong container/specimen.",
+      "Repeat sample required.",
+      "Other specimen issue.",
+    ],
+  },
   LEAD_LOST_REASON: {
     reasons: ["NOT_INTERESTED", "PRICE_CONCERN", "CHOSE_COMPETITOR", "NOT_REACHABLE", "FUTURE_FOLLOW_UP"],
     suggestions: [

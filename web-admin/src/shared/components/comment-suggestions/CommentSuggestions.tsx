@@ -15,6 +15,11 @@ import {
 import RequiredLabel from "../../../components/forms/RequiredLabel";
 import { appendSuggestionToRemarks, filterSuggestionChips, getCommentSuggestionCategoryConfig, type CommentSuggestionCategory } from "./commentSuggestionConfig.js";
 
+type ReasonOption = {
+  value: string;
+  label: string;
+};
+
 type CommentSuggestionsProps = {
   category: CommentSuggestionCategory;
   selectedReason: string;
@@ -31,6 +36,7 @@ type CommentSuggestionsProps = {
   remarksError?: boolean;
   remarksHelperText?: React.ReactNode;
   remarksInputRef?: React.Ref<HTMLInputElement | HTMLTextAreaElement>;
+  reasonOptions?: readonly ReasonOption[];
   dense?: boolean;
 };
 
@@ -50,10 +56,12 @@ export default function CommentSuggestions({
   remarksError = false,
   remarksHelperText,
   remarksInputRef,
+  reasonOptions,
   dense = false,
 }: CommentSuggestionsProps) {
   const [query, setQuery] = React.useState("");
   const config = getCommentSuggestionCategoryConfig(category);
+  const options = reasonOptions ?? config.reasons.map((reason) => ({ value: reason, label: reason }));
   const filteredSuggestions = React.useMemo(
     () => filterSuggestionChips(config.suggestions, query),
     [config.suggestions, query],
@@ -74,8 +82,8 @@ export default function CommentSuggestions({
           disabled={disabled}
         >
           <MenuItem value=""><em>None</em></MenuItem>
-          {config.reasons.map((reason) => (
-            <MenuItem key={reason} value={reason}>{reason}</MenuItem>
+          {options.map((reason) => (
+            <MenuItem key={reason.value} value={reason.value}>{reason.label}</MenuItem>
           ))}
         </Select>
         {reasonHelperText ? <FormHelperText>{reasonHelperText}</FormHelperText> : null}

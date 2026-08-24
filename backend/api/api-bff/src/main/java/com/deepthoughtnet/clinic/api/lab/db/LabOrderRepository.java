@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface LabOrderRepository extends JpaRepository<LabOrderEntity, UUID> {
     Optional<LabOrderEntity> findByTenantIdAndId(UUID tenantId, UUID id);
     Optional<LabOrderEntity> findByTenantIdAndOrderNumber(UUID tenantId, String orderNumber);
+    Optional<LabOrderEntity> findByReportVerificationToken(String reportVerificationToken);
     List<LabOrderEntity> findByTenantIdOrderByOrderedAtDescCreatedAtDesc(UUID tenantId);
     List<LabOrderEntity> findByTenantIdAndConsultationIdOrderByCreatedAtDesc(UUID tenantId, UUID consultationId);
     List<LabOrderEntity> findByTenantIdAndPatientIdOrderByCreatedAtDesc(UUID tenantId, UUID patientId);

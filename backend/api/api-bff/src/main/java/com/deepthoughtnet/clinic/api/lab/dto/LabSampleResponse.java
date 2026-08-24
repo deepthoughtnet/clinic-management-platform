@@ -2,6 +2,7 @@ package com.deepthoughtnet.clinic.api.lab.dto;
 
 import com.deepthoughtnet.clinic.api.lab.service.model.LabSampleStatusRecord;
 import java.time.OffsetDateTime;
+import java.util.List;
 
 public record LabSampleResponse(
         String id,
@@ -18,6 +19,8 @@ public record LabSampleResponse(
         String receivedBy,
         String rejectionReason,
         boolean recollectionRequired,
-        String notes
+        String notes,
+        List<String> linkedLabOrderItemIds,
+        List<String> linkedTestNames
 ) {
 }

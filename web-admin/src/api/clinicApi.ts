@@ -2588,6 +2588,9 @@ export type LabOrderStatus =
   | "SAMPLE_COLLECTED"
   | "PROCESSING"
   | "RESULT_ENTERED"
+  | "IN_PROGRESS"
+  | "PARTIALLY_READY"
+  | "PARTIALLY_PUBLISHED"
   | "REPORT_READY"
   | "REPORT_GENERATED"
   | "DOCTOR_REVIEWED"
@@ -2646,6 +2649,48 @@ export type LabOrderResult = {
   updatedAt: string;
 };
 
+export type LabOrderedTestSpecimen = {
+  labOrderSampleId: string | null;
+  accessionNumber: string | null;
+  barcodeValue: string | null;
+  specimenType: string | null;
+  containerType: string | null;
+  sampleStatus: string | null;
+  active: boolean;
+  collectedAt: string | null;
+  receivedAt: string | null;
+  linkedAt: string | null;
+  unlinkedAt: string | null;
+};
+
+export type LabOrderedTest = {
+  labOrderItemId: string;
+  labTestId: string | null;
+  testCode: string | null;
+  testName: string | null;
+  category: string | null;
+  department: string | null;
+  sampleType: string | null;
+  unit: string | null;
+  referenceRange: string | null;
+  turnaroundTime: string | null;
+  price: number | null;
+  sortOrder: number;
+  state: string;
+  latestResultRevision: number;
+  latestVerificationDecision: string | null;
+  latestVerificationAt: string | null;
+  latestVerificationBy: string | null;
+  latestPublicationArtifactNumber: number | null;
+  latestPublicationAt: string | null;
+  latestPublicationBy: string | null;
+  publicationChannels: string[];
+  latestResultSnapshotJson: string | null;
+  latestResultEnteredAt: string | null;
+  latestResultEnteredBy: string | null;
+  specimenLinks: LabOrderedTestSpecimen[];
+};
+
 export type LabOrderAttachment = {
   id: string;
   labOrderId: string;
@@ -2676,6 +2721,8 @@ export type LabSample = {
   rejectionReason: string | null;
   recollectionRequired: boolean;
   notes: string | null;
+  linkedLabOrderItemIds: string[];
+  linkedTestNames: string[];
 };
 
 export type LabOrder = {
@@ -2718,6 +2765,8 @@ export type LabOrder = {
   sampleCollectionNotes: string | null;
   processingStartedAt: string | null;
   resultEnteredAt: string | null;
+  resultEnteredByUserId: string | null;
+  resultEnteredBy: string | null;
   resultComments: string | null;
   reportGeneratedAt: string | null;
   reportGeneratedByUserId: string | null;
@@ -2725,10 +2774,12 @@ export type LabOrder = {
   reportFilename: string | null;
   reportPublishedAt: string | null;
   reportPublishedByUserId: string | null;
+  reportVerificationToken: string | null;
   reportDeliveryStatus: string | null;
   reportDeliveryChannels: string[];
   reportDeliveryNotes: string | null;
   reportDeliveryHistory: LabReportDeliveryEvent[];
+  reportArtifacts: LabReportArtifact[];
   doctorReviewedAt: string | null;
   doctorReviewedByUserId: string | null;
   doctorReviewedBy: string | null;
@@ -2754,6 +2805,7 @@ export type LabOrder = {
   paymentReceipt?: LabOrderPaymentReceipt | null;
   attachments: LabOrderAttachment[];
   items: LabOrderItem[];
+  orderedTests: LabOrderedTest[];
   samples: LabSample[];
   results: LabOrderResult[];
   createdAt: string;
@@ -2769,10 +2821,46 @@ export type LabReportDeliveryEvent = {
   summary: string | null;
 };
 
+export type LabReportArtifact = {
+  id: string;
+  versionNumber: number;
+  reportMode: "INDIVIDUAL" | "GROUPED" | "CONSOLIDATED" | string;
+  reportType: "INTERIM" | "FINAL" | string;
+  reportStatus: "CURRENT" | "HISTORICAL" | "SUPERSEDED" | string;
+  filename: string | null;
+  storageReference: string | null;
+  verificationToken: string | null;
+  verificationUrl: string | null;
+  deliveryChannels: string[];
+  selectedOrderedTestIds: string[];
+  generatedAt: string | null;
+  generatedByUserId: string | null;
+  publishedAt: string | null;
+  publishedByUserId: string | null;
+  supersededByArtifactId: string | null;
+  supersededAt: string | null;
+  notes: string | null;
+};
+
 export type LabOrderReportDeliveryActionInput = {
   action: string;
   channel?: string | null;
   notes?: string | null;
+};
+
+export type LabOrderVerificationInput = {
+  decision: "APPROVE" | "SEND_BACK";
+  orderedTestIds?: string[] | null;
+  recollectionRequired?: boolean | null;
+  reason?: string | null;
+  comments?: string | null;
+};
+
+export type LabOrderPublishReportInput = {
+  deliveryChannels?: string[];
+  orderedTestIds?: string[] | null;
+  publishNotes?: string | null;
+  reportMode?: "INDIVIDUAL" | "GROUPED" | "CONSOLIDATED" | null;
 };
 
 export type PatientVaccination = {
@@ -4620,6 +4708,7 @@ export async function rejectLabSample(token: string, tenantId: string, sampleId:
 
 export async function enterLabOrderResults(token: string, tenantId: string, id: string, body: {
   comments?: string | null;
+  orderedTestIds?: string[] | null;
   items: Array<{
     labOrderItemId: string;
     resultValue?: string | null;
@@ -4634,23 +4723,31 @@ export async function enterLabOrderResults(token: string, tenantId: string, id: 
     }>;
   }>;
 }) {
-  return httpPost<LabOrder>(`/api/lab/orders/${id}/results`, body, { token, tenantId });
+  return httpPost<LabOrder>(`/api/lab/orders/${id}/results`, {
+    comments: body.comments ?? null,
+    orderedTestIds: body.orderedTestIds ?? [],
+    items: body.items,
+  }, { token, tenantId });
 }
 
 export async function reviewLabOrder(token: string, tenantId: string, id: string, body: { decision: "APPROVE" | "SEND_BACK"; reason?: string | null; comments?: string | null }) {
   return httpPost<LabOrder>(`/api/lab/orders/${id}/doctor-review`, { decision: body.decision, reason: body.reason ?? null, comments: body.comments ?? null }, { token, tenantId });
 }
 
-export async function verifyLabOrder(token: string, tenantId: string, id: string, body: { decision: "APPROVE" | "SEND_BACK"; reason?: string | null; comments?: string | null }) {
-  return httpPost<LabOrder>(`/api/lab/orders/${id}/verify`, { decision: body.decision, reason: body.reason ?? null, comments: body.comments ?? null }, { token, tenantId });
+export async function verifyLabOrder(token: string, tenantId: string, id: string, body: LabOrderVerificationInput) {
+  return httpPost<LabOrder>(`/api/lab/orders/${id}/verify`, {
+    decision: body.decision,
+    orderedTestIds: body.orderedTestIds ?? [],
+    recollectionRequired: body.recollectionRequired ?? false,
+    reason: body.reason ?? null,
+    comments: body.comments ?? null,
+  }, { token, tenantId });
 }
 
-export async function publishLabOrderReport(token: string, tenantId: string, id: string, body: {
-  deliveryChannels?: string[];
-  publishNotes?: string | null;
-}) {
+export async function publishLabOrderReport(token: string, tenantId: string, id: string, body: LabOrderPublishReportInput) {
   return httpPost<LabOrder>(`/api/lab/orders/${id}/publish-report`, {
     deliveryChannels: body.deliveryChannels ?? [],
+    orderedTestIds: body.orderedTestIds ?? [],
     publishNotes: body.publishNotes ?? null,
   }, { token, tenantId });
 }

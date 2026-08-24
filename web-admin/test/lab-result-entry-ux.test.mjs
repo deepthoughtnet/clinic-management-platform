@@ -18,10 +18,15 @@ test("lab result entry supports draft save, resume, preview, and review queue ha
   assert.ok(source.includes('Save Draft'));
   assert.ok(source.includes('Save Results'));
   assert.ok(source.includes('Results saved. Order moved to Pending Lab Review.'));
+  assert.ok(source.includes('Correct results'));
+  assert.ok(source.includes('Correction required'));
+  assert.ok(source.includes('SAMPLE_COLLECTED'));
+  assert.ok(source.includes('hasTechnicianWork'));
   assert.ok(source.includes('setTab(3);'));
   assert.ok(source.includes('getLabOrderAttachmentBlob'));
   assert.ok(source.includes('Attachments'));
   assert.ok(source.includes('Preview is available for images and PDF files.'));
+  assert.ok(source.includes('orderedTestIds: editableOrderedTestIds'));
   assert.ok(source.includes('Ref ${formatReferenceBadge(item.referenceRange)} • Crit ${formatReferenceBadge(item.criticalRange)}'));
   assert.ok(source.includes('error={severity === "error"}'));
   assert.ok(source.includes('sx={resultFieldSx(severity)}'));

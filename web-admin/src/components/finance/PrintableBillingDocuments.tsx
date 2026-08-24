@@ -22,7 +22,6 @@ import type {
   Bill,
   ClinicProfile,
   Consultation,
-  Patient,
   Payment,
   PaymentLedgerRow,
   Receipt,
@@ -31,9 +30,16 @@ import { footerBrandingLine } from "../../branding";
 import { useAuthenticatedImage } from "../../hooks/useAuthenticatedImage";
 import { staffDisplayName } from "../../utils/staffDisplay";
 
+type ReceiptPatient = {
+  firstName: string;
+  lastName: string | null;
+  patientNumber: string;
+  mobile: string;
+};
+
 type BasePrintData = {
   clinicProfile: ClinicProfile | null;
-  patient: Patient | null;
+  patient: ReceiptPatient | null;
   appointment: Appointment | null;
   consultation: Consultation | null;
   brandingLogoUrl?: string | null;
@@ -371,6 +377,11 @@ function PrintShell({
                 <Typography variant="body2" color="text.secondary" sx={{ wordBreak: "break-word" }}>
                   {phoneLine(clinicProfile)}
                 </Typography>
+                {clinicProfile?.registrationNumber ? (
+                  <Typography variant="body2" color="text.secondary" sx={{ wordBreak: "break-word" }}>
+                    Reg. No. {clinicProfile.registrationNumber}
+                  </Typography>
+                ) : null}
               </Box>
             </Box>
 
