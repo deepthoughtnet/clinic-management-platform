@@ -221,6 +221,116 @@ class LabServiceValidationTest {
     }
 
     @Test
+    void rejectsWhitespaceOnlyLabTestCodeOnCreate() {
+        assertThatThrownBy(() -> service.createTest(TENANT_ID, new LabTestUpsertCommand(
+                "   ",
+                "Complete Blood Count",
+                "HEMATOLOGY",
+                null,
+                "Blood",
+                null,
+                null,
+                "24",
+                BigDecimal.valueOf(100),
+                true,
+                List.of()
+        ), ACTOR_ID))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("testCode");
+    }
+
+    @Test
+    void rejectsInvalidCharactersInLabTestCodeOnCreate() {
+        assertThatThrownBy(() -> service.createTest(TENANT_ID, new LabTestUpsertCommand(
+                "CBC#",
+                "Complete Blood Count",
+                "HEMATOLOGY",
+                null,
+                "Blood",
+                null,
+                null,
+                "24",
+                BigDecimal.valueOf(100),
+                true,
+                List.of()
+        ), ACTOR_ID))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("invalid characters");
+    }
+
+    @Test
+    void rejectsTooLongLabTestCodeOnCreate() {
+        assertThatThrownBy(() -> service.createTest(TENANT_ID, new LabTestUpsertCommand(
+                "C".repeat(31),
+                "Complete Blood Count",
+                "HEMATOLOGY",
+                null,
+                "Blood",
+                null,
+                null,
+                "24",
+                BigDecimal.valueOf(100),
+                true,
+                List.of()
+        ), ACTOR_ID))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("30 characters or fewer");
+    }
+
+    @Test
+    void trimsLabTestCodeAndNameBeforePersisting() {
+        when(labCatalogueConfigService.isCategoryActive(TENANT_ID, "HEMATOLOGY")).thenReturn(true);
+        when(labTestMasterRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        service.createTest(TENANT_ID, new LabTestUpsertCommand(
+                "  cbc  ",
+                "  Complete Blood Count  ",
+                "HEMATOLOGY",
+                "  Hematology  ",
+                "  Blood  ",
+                "  g/dL  ",
+                "  13.0-17.0  ",
+                "24",
+                BigDecimal.valueOf(100),
+                true,
+                List.of()
+        ), ACTOR_ID);
+
+        ArgumentCaptor<LabTestMasterEntity> captor = ArgumentCaptor.forClass(LabTestMasterEntity.class);
+        verify(labTestMasterRepository).save(captor.capture());
+        assertThat(captor.getValue().getTestCode()).isEqualTo("cbc");
+        assertThat(captor.getValue().getTestName()).isEqualTo("Complete Blood Count");
+        assertThat(captor.getValue().getDepartment()).isEqualTo("Hematology");
+        assertThat(captor.getValue().getSampleType()).isEqualTo("Blood");
+        assertThat(captor.getValue().getUnit()).isEqualTo("g/dL");
+        assertThat(captor.getValue().getReferenceRange()).isEqualTo("13.0-17.0");
+    }
+
+    @Test
+    void rejectsLabTestCodeChangeOnUpdate() {
+        LabTestMasterEntity existing = LabTestMasterEntity.create(TENANT_ID, "CBC", "Complete Blood Count");
+        setEntityId(existing, TEST_ID);
+        existing.update("CBC", "Complete Blood Count", "HEMATOLOGY", null, "Blood", null, null, "24", BigDecimal.valueOf(100), true);
+        when(labTestMasterRepository.findByTenantIdAndId(TENANT_ID, TEST_ID)).thenReturn(Optional.of(existing));
+
+        assertThatThrownBy(() -> service.updateTest(TENANT_ID, TEST_ID, new LabTestUpsertCommand(
+                "CBC-2",
+                "Complete Blood Count",
+                "HEMATOLOGY",
+                null,
+                "Blood",
+                null,
+                null,
+                "24",
+                BigDecimal.valueOf(100),
+                true,
+                List.of()
+        ), ACTOR_ID))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("cannot be changed");
+    }
+
+    @Test
     void rejectsDuplicateLabTestCode() {
         LabTestMasterEntity existing = LabTestMasterEntity.create(TENANT_ID, "CBC", "Existing");
         existing.update("CBC", "Existing", "HEMATOLOGY", null, null, null, null, null, BigDecimal.valueOf(100), true);
@@ -239,6 +349,124 @@ class LabServiceValidationTest {
                 true,
                 List.of()
         ), ACTOR_ID)).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("code");
+    }
+
+    @Test
+    void rejectsCaseInsensitiveDuplicateLabTestCode() {
+        LabTestMasterEntity existing = LabTestMasterEntity.create(TENANT_ID, "CBC", "Existing");
+        existing.update("CBC", "Existing", "HEMATOLOGY", null, null, null, null, null, BigDecimal.valueOf(100), true);
+        when(labTestMasterRepository.findByTenantIdAndTestCodeIgnoreCase(TENANT_ID, "cbc")).thenReturn(Optional.of(existing));
+
+        assertThatThrownBy(() -> service.createTest(TENANT_ID, new LabTestUpsertCommand(
+                "cbc",
+                "Lowercase CBC",
+                "HEMATOLOGY",
+                null,
+                "Blood",
+                null,
+                null,
+                "24",
+                BigDecimal.valueOf(100),
+                true,
+                List.of()
+        ), ACTOR_ID)).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("code");
+    }
+
+    @Test
+    void rejectsCaseInsensitiveDuplicateLabTestName() {
+        LabTestMasterEntity existing = LabTestMasterEntity.create(TENANT_ID, "CBC", "Complete Blood Count");
+        existing.update("CBC", "Complete Blood Count", "HEMATOLOGY", null, null, null, null, null, BigDecimal.valueOf(100), true);
+        when(labTestMasterRepository.findByTenantIdAndTestNameIgnoreCase(TENANT_ID, "complete blood count")).thenReturn(Optional.of(existing));
+
+        assertThatThrownBy(() -> service.createTest(TENANT_ID, new LabTestUpsertCommand(
+                "CBC-2",
+                "  complete blood count  ",
+                "HEMATOLOGY",
+                null,
+                "Blood",
+                null,
+                null,
+                "24",
+                BigDecimal.valueOf(100),
+                true,
+                List.of()
+        ), ACTOR_ID)).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("exists");
+    }
+
+    @Test
+    void rejectsInactiveCategoryWhenCreatingLabTest() {
+        when(labCatalogueConfigService.isCategoryActive(TENANT_ID, "HEMATOLOGY")).thenReturn(false);
+
+        assertThatThrownBy(() -> service.createTest(TENANT_ID, new LabTestUpsertCommand(
+                "CBC",
+                "Complete Blood Count",
+                "HEMATOLOGY",
+                null,
+                "Blood",
+                null,
+                null,
+                "24",
+                BigDecimal.valueOf(100),
+                true,
+                List.of()
+        ), ACTOR_ID)).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("inactive");
+    }
+
+    @Test
+    void rejectsBlankParameterRowWhenSavingLabTest() {
+        when(labCatalogueConfigService.isCategoryActive(TENANT_ID, "HEMATOLOGY")).thenReturn(true);
+
+        assertThatThrownBy(() -> service.createTest(TENANT_ID, new LabTestUpsertCommand(
+                "CBC",
+                "Complete Blood Count",
+                "HEMATOLOGY",
+                null,
+                "Blood",
+                null,
+                null,
+                "24",
+                BigDecimal.valueOf(100),
+                true,
+                List.of(new com.deepthoughtnet.clinic.api.lab.service.model.LabTestParameterUpsertCommand("", null, null, null, 1))
+        ), ACTOR_ID)).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("parameterName");
+    }
+
+    @Test
+    void wrapsConcurrentDuplicateCodeConstraintAsBusinessError() {
+        when(labCatalogueConfigService.isCategoryActive(TENANT_ID, "HEMATOLOGY")).thenReturn(true);
+        when(labTestMasterRepository.save(any())).thenThrow(new DataIntegrityViolationException("duplicate key value violates unique constraint \"uq_lab_tests_tenant_code_ci\""));
+
+        assertThatThrownBy(() -> service.createTest(TENANT_ID, new LabTestUpsertCommand(
+                "CBC",
+                "Complete Blood Count",
+                "HEMATOLOGY",
+                null,
+                "Blood",
+                null,
+                null,
+                "24",
+                BigDecimal.valueOf(100),
+                true,
+                List.of()
+        ), ACTOR_ID)).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("code");
+    }
+
+    @Test
+    void clearsTenantOverridesByFallingBackToMasterPriceAndTat() {
+        setupConsultationAndPatient();
+        LabTestMasterEntity test = LabTestMasterEntity.create(TENANT_ID, "CBC", "Complete Blood Count");
+        setEntityId(test, TEST_ID);
+        test.update("CBC", "Complete Blood Count", "HEMATOLOGY", null, "Blood", null, null, "24", BigDecimal.valueOf(250), true);
+        when(labTestMasterRepository.findAllById(anyList())).thenReturn(List.of(test));
+        when(billingService.createDraft(any(), any(), any())).thenReturn(sampleBill());
+        when(billingService.issue(any(), any(), any())).thenReturn(sampleBill());
+        ArgumentCaptor<LabOrderItemEntity> itemCaptor = ArgumentCaptor.forClass(LabOrderItemEntity.class);
+        when(labOrderItemRepository.save(itemCaptor.capture())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        service.createOrderFromConsultation(TENANT_ID, CONSULTATION_ID, new LabOrderCreateCommand(List.of(TEST_ID), null), ACTOR_ID);
+
+        assertThat(itemCaptor.getValue().getTurnaroundTime()).isEqualTo("24");
+        assertThat(itemCaptor.getValue().getPrice()).isEqualByComparingTo("250.00");
     }
 
     @Test
@@ -603,6 +831,21 @@ class LabServiceValidationTest {
         var order = sampleOrder(LabOrderStatus.READY_FOR_COLLECTION);
         setOrderId(order, ORDER_ID);
         when(labOrderRepository.findByTenantIdAndId(TENANT_ID, ORDER_ID)).thenReturn(Optional.of(order));
+        when(tenantUserManagementService.list(TENANT_ID)).thenReturn(List.of(new TenantUserRecord(
+                ACTOR_ID,
+                TENANT_ID,
+                "keycloak-sub",
+                "lab.tech@example.com",
+                "labtech",
+                null,
+                "UAT Automation Lab Assistant",
+                "ACTIVE",
+                "LAB_TECHNICIAN",
+                "ACTIVE",
+                OffsetDateTime.now().minusDays(1),
+                OffsetDateTime.now(),
+                "ACTIVE"
+        )));
 
         var samples = service.collectSamples(TENANT_ID, ORDER_ID, List.of(new com.deepthoughtnet.clinic.api.lab.service.model.LabSampleCollectionCommand(
                 null,
@@ -613,7 +856,7 @@ class LabServiceValidationTest {
         )), ACTOR_ID);
 
         assertThat(samples).hasSize(1);
-        assertThat(samples.getFirst().collectedBy()).isEqualTo(ACTOR_ID);
+        assertThat(samples.getFirst().collectedBy()).isEqualTo("UAT Automation Lab Assistant");
         assertThat(order.getSampleCollectedByUserId()).isEqualTo(ACTOR_ID);
     }
 
@@ -1125,6 +1368,87 @@ class LabServiceValidationTest {
     }
 
     @Test
+    void enterResultsScopesToSelectedAccessionAndLeavesSiblingPending() {
+        UUID cbcItemId = UUID.fromString("cccccccc-cccc-cccc-cccc-cccccccccccc");
+        UUID hba1cItemId = UUID.fromString("dddddddd-dddd-dddd-dddd-dddddddddddd");
+        var order = sampleOrder(LabOrderStatus.SAMPLE_COLLECTED);
+        setOrderId(order, ORDER_ID);
+        LabOrderItemEntity cbcItem = sampleOrderItem(cbcItemId, "CBC", "Complete Blood Count", 1);
+        LabOrderItemEntity hba1cItem = sampleOrderItem(hba1cItemId, "HbA1c", "Hemoglobin A1c", 2);
+        LabOrderSampleEntity cbcSample = sampleWithAccession(TENANT_ID, "LAB-20260824-0002");
+        LabOrderSampleEntity hba1cSample = sampleWithAccession(TENANT_ID, "LAB-20260824-0003");
+        cbcSample.markReceived(OffsetDateTime.now().minusMinutes(12), ACTOR_ID, ACTOR_ID);
+        hba1cSample.markReceived(OffsetDateTime.now().minusMinutes(11), ACTOR_ID, ACTOR_ID);
+        when(labOrderRepository.findByTenantIdAndId(TENANT_ID, ORDER_ID)).thenReturn(Optional.of(order));
+        when(labOrderItemRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAsc(TENANT_ID, ORDER_ID)).thenReturn(List.of(cbcItem, hba1cItem));
+        when(labOrderSampleRepository.findByTenantIdAndLabOrderIdOrderByCollectedAtAscCreatedAtAsc(TENANT_ID, ORDER_ID)).thenReturn(List.of(cbcSample, hba1cSample));
+        when(laboratoryWorkflowService.listOrderTests(TENANT_ID, ORDER_ID)).thenReturn(List.of(
+                specimenView(cbcItem.getId(), cbcItem.getTestName(), cbcSample.getId(), cbcItem.getTestCode()),
+                specimenView(hba1cItem.getId(), hba1cItem.getTestName(), hba1cSample.getId(), hba1cItem.getTestCode())
+        ));
+        when(laboratoryWorkflowService.deriveAggregateOrderState(TENANT_ID, ORDER_ID)).thenReturn("IN_PROGRESS");
+        AtomicReference<List<LabOrderResultEntity>> savedResults = new AtomicReference<>(List.of());
+        when(labOrderResultRepository.saveAll(anyList())).thenAnswer(invocation -> {
+            savedResults.set(invocation.getArgument(0));
+            return invocation.getArgument(0);
+        });
+
+        var result = service.enterResults(
+                TENANT_ID,
+                ORDER_ID,
+                new LabOrderResultEntryCommand(
+                        hba1cSample.getId(),
+                        List.of(new LabOrderResultItemCommand(hba1cItemId, "6.8", "%", "4.0-6.0", List.of())),
+                        null,
+                        List.of(hba1cItemId)
+                ),
+                ACTOR_ID
+        );
+
+        assertThat(result.status()).isEqualTo(com.deepthoughtnet.clinic.api.lab.service.model.LabOrderStatusRecord.IN_PROGRESS);
+        assertThat(savedResults.get()).hasSize(1);
+        assertThat(savedResults.get().getFirst().getLabOrderItemId()).isEqualTo(hba1cItemId);
+        verify(labOrderResultRepository).deleteByTenantIdAndLabOrderItemIdIn(TENANT_ID, List.of(hba1cItemId));
+    }
+
+    @Test
+    void enterResultsRejectsCrossAccessionPayloadForSelectedSample() {
+        UUID cbcItemId = UUID.fromString("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee");
+        UUID hba1cItemId = UUID.fromString("ffffffff-ffff-ffff-ffff-ffffffffffff");
+        var order = sampleOrder(LabOrderStatus.SAMPLE_COLLECTED);
+        setOrderId(order, ORDER_ID);
+        LabOrderItemEntity cbcItem = sampleOrderItem(cbcItemId, "CBC", "Complete Blood Count", 1);
+        LabOrderItemEntity hba1cItem = sampleOrderItem(hba1cItemId, "HbA1c", "Hemoglobin A1c", 2);
+        LabOrderSampleEntity cbcSample = sampleWithAccession(TENANT_ID, "LAB-20260824-0002");
+        LabOrderSampleEntity hba1cSample = sampleWithAccession(TENANT_ID, "LAB-20260824-0003");
+        cbcSample.markReceived(OffsetDateTime.now().minusMinutes(12), ACTOR_ID, ACTOR_ID);
+        hba1cSample.markReceived(OffsetDateTime.now().minusMinutes(11), ACTOR_ID, ACTOR_ID);
+        when(labOrderRepository.findByTenantIdAndId(TENANT_ID, ORDER_ID)).thenReturn(Optional.of(order));
+        when(labOrderItemRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAsc(TENANT_ID, ORDER_ID)).thenReturn(List.of(cbcItem, hba1cItem));
+        when(labOrderSampleRepository.findByTenantIdAndLabOrderIdOrderByCollectedAtAscCreatedAtAsc(TENANT_ID, ORDER_ID)).thenReturn(List.of(cbcSample, hba1cSample));
+        when(laboratoryWorkflowService.listOrderTests(TENANT_ID, ORDER_ID)).thenReturn(List.of(
+                specimenView(cbcItem.getId(), cbcItem.getTestName(), cbcSample.getId(), cbcItem.getTestCode()),
+                specimenView(hba1cItem.getId(), hba1cItem.getTestName(), hba1cSample.getId(), hba1cItem.getTestCode())
+        ));
+
+        assertThatThrownBy(() -> service.enterResults(
+                TENANT_ID,
+                ORDER_ID,
+                new LabOrderResultEntryCommand(
+                        hba1cSample.getId(),
+                        List.of(
+                                new LabOrderResultItemCommand(hba1cItemId, "6.8", "%", "4.0-6.0", List.of()),
+                                new LabOrderResultItemCommand(cbcItemId, "14.2", "g/dL", "13.0-17.0", List.of())
+                        ),
+                        null,
+                        List.of(hba1cItemId, cbcItemId)
+                ),
+                ACTOR_ID
+        )).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("selected accession");
+    }
+
+    @Test
     void enterResultsRejectsExplicitVerifiedSiblingSelection() {
         UUID cbcItemId = UUID.fromString("cccccccc-cccc-cccc-cccc-cccccccccccc");
         UUID hba1cItemId = UUID.fromString("dddddddd-dddd-dddd-dddd-dddddddddddd");
@@ -1349,6 +1673,10 @@ class LabServiceValidationTest {
         var order = sampleOrder(LabOrderStatus.REPORT_READY);
         setOrderId(order, ORDER_ID);
         when(labOrderRepository.findByTenantIdAndId(TENANT_ID, ORDER_ID)).thenReturn(Optional.of(order));
+        UUID itemId = UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        when(laboratoryWorkflowService.listOrderTests(TENANT_ID, ORDER_ID)).thenReturn(List.of(
+                new LaboratoryOrderedTestView(itemId, "VERIFIED", 1, "APPROVE", OffsetDateTime.now().minusMinutes(5), ACTOR_ID, null, null, null, List.of(), null, OffsetDateTime.now().minusMinutes(5), ACTOR_ID, List.of())
+        ));
 
         var published = service.publishReport(
                 TENANT_ID,
@@ -1390,6 +1718,9 @@ class LabServiceValidationTest {
                 "READY"
         )));
         when(labOrderRepository.findByTenantIdAndId(TENANT_ID, ORDER_ID)).thenReturn(Optional.of(order));
+        when(laboratoryWorkflowService.listOrderTests(TENANT_ID, ORDER_ID)).thenReturn(List.of(
+                new LaboratoryOrderedTestView(UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"), "VERIFIED", 1, "APPROVE", OffsetDateTime.now().minusMinutes(5), ACTOR_ID, null, null, null, List.of(), null, OffsetDateTime.now().minusMinutes(5), ACTOR_ID, List.of())
+        ));
 
         service.publishReport(
                 TENANT_ID,
@@ -1399,6 +1730,130 @@ class LabServiceValidationTest {
         );
 
         verify(labNotificationService, never()).notifyDoctorReportPublished(any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void publishReportAllowsPartialPublicationFromMixedInProgressOrder() {
+        UUID cbcItemId = UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        UUID hba1cItemId = UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+        var order = sampleOrder(LabOrderStatus.IN_PROGRESS);
+        setOrderId(order, ORDER_ID);
+        LabOrderItemEntity cbcItem = sampleOrderItem(cbcItemId, "CBC", "Complete Blood Count", 1);
+        LabOrderItemEntity hba1cItem = sampleOrderItem(hba1cItemId, "HbA1c", "Hemoglobin A1c", 2);
+        when(labOrderRepository.findByTenantIdAndId(TENANT_ID, ORDER_ID)).thenReturn(Optional.of(order));
+        when(labOrderItemRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAsc(TENANT_ID, ORDER_ID)).thenReturn(List.of(cbcItem, hba1cItem));
+        when(labOrderSampleRepository.findByTenantIdAndLabOrderIdOrderByCollectedAtAscCreatedAtAsc(TENANT_ID, ORDER_ID)).thenReturn(List.of(collectedSample()));
+        when(labOrderResultRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAscCreatedAtAsc(TENANT_ID, ORDER_ID)).thenReturn(List.of());
+        when(laboratoryWorkflowService.listOrderTests(TENANT_ID, ORDER_ID)).thenReturn(List.of(
+                new LaboratoryOrderedTestView(cbcItemId, "ORDERED", 1, null, null, null, null, null, null, List.of(), null, null, null, List.of()),
+                new LaboratoryOrderedTestView(hba1cItemId, "VERIFIED", 1, "APPROVE", OffsetDateTime.now().minusMinutes(5), ACTOR_ID, null, null, null, List.of(), null, OffsetDateTime.now().minusMinutes(5), ACTOR_ID, List.of())
+        ));
+        when(laboratoryWorkflowService.deriveAggregateOrderState(TENANT_ID, ORDER_ID)).thenReturn("PARTIALLY_PUBLISHED");
+        when(laboratoryWorkflowService.listReportArtifacts(TENANT_ID, ORDER_ID)).thenReturn(List.of());
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<UUID>> selectedCaptor = ArgumentCaptor.forClass((Class) List.class);
+
+        var published = service.publishReport(
+                TENANT_ID,
+                ORDER_ID,
+                new com.deepthoughtnet.clinic.api.lab.service.model.LabOrderPublishReportCommand(
+                        List.of("PATIENT_PORTAL"),
+                        List.of(hba1cItemId),
+                        "Partial publication while sibling remains pending",
+                        "INDIVIDUAL"),
+                ACTOR_ID
+        );
+
+        verify(laboratoryWorkflowService).publishTests(
+                org.mockito.ArgumentMatchers.eq(TENANT_ID),
+                org.mockito.ArgumentMatchers.eq(ORDER_ID),
+                selectedCaptor.capture(),
+                anyString(),
+                anyString(),
+                anyString(),
+                org.mockito.ArgumentMatchers.anyList(),
+                anyString(),
+                anyString(),
+                nullable(String.class),
+                org.mockito.ArgumentMatchers.eq(ACTOR_ID)
+        );
+        assertThat(selectedCaptor.getValue()).containsExactly(hba1cItemId);
+        assertThat(published.status()).isEqualTo(com.deepthoughtnet.clinic.api.lab.service.model.LabOrderStatusRecord.PARTIALLY_PUBLISHED);
+        assertThat(published.reportDeliveryStatus()).isEqualTo("PUBLISHED");
+        verify(clinicalDocumentService).publishLabReport(any());
+    }
+
+    @Test
+    void publishReportAllowsFinalConsolidatedAfterPartialPublicationCompletesSibling() {
+        UUID cbcItemId = UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        UUID hba1cItemId = UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+        var order = sampleOrder(LabOrderStatus.PARTIALLY_PUBLISHED);
+        setOrderId(order, ORDER_ID);
+        LabOrderItemEntity cbcItem = sampleOrderItem(cbcItemId, "CBC", "Complete Blood Count", 1);
+        LabOrderItemEntity hba1cItem = sampleOrderItem(hba1cItemId, "HbA1c", "Hemoglobin A1c", 2);
+        when(labOrderRepository.findByTenantIdAndId(TENANT_ID, ORDER_ID)).thenReturn(Optional.of(order));
+        when(labOrderItemRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAsc(TENANT_ID, ORDER_ID)).thenReturn(List.of(cbcItem, hba1cItem));
+        when(labOrderSampleRepository.findByTenantIdAndLabOrderIdOrderByCollectedAtAscCreatedAtAsc(TENANT_ID, ORDER_ID)).thenReturn(List.of(collectedSample()));
+        when(labOrderResultRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAscCreatedAtAsc(TENANT_ID, ORDER_ID)).thenReturn(List.of());
+        when(laboratoryWorkflowService.listOrderTests(TENANT_ID, ORDER_ID)).thenReturn(List.of(
+                new LaboratoryOrderedTestView(cbcItemId, "VERIFIED", 1, "APPROVE", OffsetDateTime.now().minusMinutes(20), ACTOR_ID, null, null, null, List.of(), null, OffsetDateTime.now().minusMinutes(20), ACTOR_ID, List.of()),
+                new LaboratoryOrderedTestView(hba1cItemId, "PUBLISHED", 1, "APPROVE", OffsetDateTime.now().minusMinutes(5), ACTOR_ID, null, null, null, List.of(), null, OffsetDateTime.now().minusMinutes(5), ACTOR_ID, List.of())
+        ));
+        when(laboratoryWorkflowService.deriveAggregateOrderState(TENANT_ID, ORDER_ID)).thenReturn("DELIVERED");
+        when(laboratoryWorkflowService.listReportArtifacts(TENANT_ID, ORDER_ID)).thenReturn(List.of(
+                new LaboratoryReportArtifactView(
+                        UUID.randomUUID(),
+                        TENANT_ID,
+                        ORDER_ID,
+                        1,
+                        "INDIVIDUAL",
+                        "INTERIM",
+                        "CURRENT",
+                        "lab-report-v1.pdf",
+                        "lab/report/lab-report-v1.pdf",
+                        "verification-token",
+                        "https://reports.example.com/api/public/lab/reports/verification-token",
+                        List.of("PATIENT_PORTAL"),
+                        List.of(hba1cItemId),
+                        OffsetDateTime.now().minusMinutes(30),
+                        ACTOR_ID,
+                        OffsetDateTime.now().minusMinutes(30),
+                        ACTOR_ID,
+                        null,
+                        null,
+                        null
+                )
+        ));
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<UUID>> selectedCaptor = ArgumentCaptor.forClass((Class) List.class);
+
+        var published = service.publishReport(
+                TENANT_ID,
+                ORDER_ID,
+                new com.deepthoughtnet.clinic.api.lab.service.model.LabOrderPublishReportCommand(
+                        List.of("PATIENT_PORTAL"),
+                        List.of(cbcItemId, hba1cItemId),
+                        "Finalize after sibling completion",
+                        "CONSOLIDATED"),
+                ACTOR_ID
+        );
+
+        verify(laboratoryWorkflowService).publishTests(
+                org.mockito.ArgumentMatchers.eq(TENANT_ID),
+                org.mockito.ArgumentMatchers.eq(ORDER_ID),
+                selectedCaptor.capture(),
+                anyString(),
+                anyString(),
+                anyString(),
+                org.mockito.ArgumentMatchers.anyList(),
+                anyString(),
+                anyString(),
+                nullable(String.class),
+                org.mockito.ArgumentMatchers.eq(ACTOR_ID)
+        );
+        assertThat(selectedCaptor.getValue()).containsExactly(cbcItemId, hba1cItemId);
+        assertThat(published.status()).isEqualTo(com.deepthoughtnet.clinic.api.lab.service.model.LabOrderStatusRecord.DELIVERED);
+        verify(laboratoryWorkflowService, never()).generateReportArtifact(any(), any(), anyCollection(), anyString(), anyString(), anyString(), anyList(), anyString(), anyString(), anyString(), nullable(String.class), any());
     }
 
     @Test
@@ -1747,6 +2202,9 @@ class LabServiceValidationTest {
         var order = sampleOrder(LabOrderStatus.REPORT_READY);
         setOrderId(order, ORDER_ID);
         when(labOrderRepository.findByTenantIdAndId(TENANT_ID, ORDER_ID)).thenReturn(Optional.of(order));
+        when(laboratoryWorkflowService.listOrderTests(TENANT_ID, ORDER_ID)).thenReturn(List.of(
+                new LaboratoryOrderedTestView(UUID.fromString("cccccccc-cccc-cccc-cccc-cccccccccccc"), "VERIFIED", 1, "APPROVE", OffsetDateTime.now().minusMinutes(5), ACTOR_ID, null, null, null, List.of(), null, OffsetDateTime.now().minusMinutes(5), ACTOR_ID, List.of())
+        ));
 
         service.publishReport(
                 TENANT_ID,
@@ -1837,8 +2295,8 @@ class LabServiceValidationTest {
         setupPatientOnly();
         LabTestMasterEntity test = LabTestMasterEntity.create(TENANT_ID, "TSH", "Thyroid Stimulating Hormone");
         setEntityId(test, TEST_ID);
-        test.update("TSH", "Thyroid Stimulating Hormone", "ENDOCRINOLOGY", null, "Blood", null, null, "48 hrs", BigDecimal.valueOf(150), true);
-        test.updateCatalogueConfig(true, BigDecimal.valueOf(275), "24 hrs", 7, true);
+        test.update("TSH", "Thyroid Stimulating Hormone", "ENDOCRINOLOGY", null, "Blood", null, null, "48", BigDecimal.valueOf(150), true);
+        test.updateCatalogueConfig(true, BigDecimal.valueOf(275), "24", 7, true);
         when(labTestMasterRepository.findAllById(anyList())).thenReturn(List.of(test));
         when(billingService.createDraft(any(), any(), any())).thenReturn(sampleBill());
         when(billingService.issue(any(), any(), any())).thenReturn(sampleBill());
@@ -1848,7 +2306,7 @@ class LabServiceValidationTest {
         ArgumentCaptor<LabOrderItemEntity> itemCaptor = ArgumentCaptor.forClass(LabOrderItemEntity.class);
         verify(labOrderItemRepository).save(itemCaptor.capture());
         assertThat(itemCaptor.getValue().getPrice()).isEqualByComparingTo("275.00");
-        assertThat(itemCaptor.getValue().getTurnaroundTime()).isEqualTo("24 hrs");
+        assertThat(itemCaptor.getValue().getTurnaroundTime()).isEqualTo("24");
     }
 
     @Test

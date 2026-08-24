@@ -1,10 +1,11 @@
 package com.deepthoughtnet.clinic.api.lab;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyList;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import com.deepthoughtnet.clinic.api.lab.db.LabTestMasterEntity;
 import com.deepthoughtnet.clinic.api.lab.db.LabTestMasterRepository;
@@ -18,8 +19,8 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.Mock;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
 
@@ -42,12 +43,11 @@ class LabCsvServiceTest {
     @Test
     void importsLabTestsFromCsvAndReportsRowErrors() throws Exception {
         when(labTestMasterRepository.findByTenantIdAndTestCodeIgnoreCase(TENANT_ID, "CBC")).thenReturn(Optional.empty());
-        when(labTestMasterRepository.findByTenantIdAndTestNameIgnoreCase(TENANT_ID, "Complete Blood Count")).thenReturn(Optional.empty());
-        when(labService.createTest(any(), any(), any())).thenReturn(sampleRecord());
+        lenient().when(labService.createTest(any(), any(), any())).thenReturn(sampleRecord());
 
         String csv = String.join("\n",
                 "testCode,testName,category,sampleType,department,unit,referenceRange,turnaroundTime,price,active,parameters",
-                "CBC,Complete Blood Count,HEMATOLOGY,Blood,Hematology,g/dL,13.0-17.0,24 hrs,250.00,true,\"Hemoglobin|g/dL|13.0-17.0|<7.0|1\"",
+                "CBC,Complete Blood Count,HEMATOLOGY,Blood,Hematology,g/dL,13.0-17.0,24,250.00,true,\"Hemoglobin|g/dL|13.0-17.0|<7.0|1\"",
                 ",,HEMATOLOGY,Blood,,,,-1,true,"
         );
 
@@ -57,6 +57,19 @@ class LabCsvServiceTest {
         assertThat(result.updatedCount()).isZero();
         assertThat(result.failedCount()).isEqualTo(1);
         assertThat(result.rowErrors()).hasSize(1);
+        assertThat(result.rowErrors().get(0).message()).contains("testCode");
+    }
+
+    @Test
+    void rejectsMissingTestNameInCsvImport() throws Exception {
+        String csv = String.join("\n",
+                "testCode,testName,category,sampleType,department,unit,referenceRange,turnaroundTime,price,active,parameters",
+                "CBC,,HEMATOLOGY,Blood,Hematology,g/dL,13.0-17.0,24,250.00,true,"
+        );
+
+        var result = service.importCsv(TENANT_ID, csv.getBytes(), ACTOR_ID);
+
+        assertThat(result.failedCount()).isEqualTo(1);
         assertThat(result.rowErrors().get(0).message()).contains("testName");
     }
 
@@ -68,7 +81,7 @@ class LabCsvServiceTest {
 
         String csv = String.join("\n",
                 "testCode,testName,category,sampleType,department,unit,referenceRange,turnaroundTime,price,active,parameters",
-                "CBC,Complete Blood Count,HEMATOLOGY,Blood,Hematology,g/dL,13.0-17.0,24 hrs,250.00,true,"
+                "CBC,Complete Blood Count,HEMATOLOGY,Blood,Hematology,g/dL,13.0-17.0,24,250.00,true,"
         );
 
         var result = service.importCsv(TENANT_ID, csv.getBytes(), ACTOR_ID);
@@ -79,21 +92,41 @@ class LabCsvServiceTest {
     }
 
     @Test
+    void updatesExistingLabTestByCanonicalCodeWithoutChangingStoredCasing() throws Exception {
+        LabTestMasterEntity existing = LabTestMasterEntity.create(TENANT_ID, "CBC", "Complete Blood Count");
+        when(labTestMasterRepository.findByTenantIdAndTestCodeIgnoreCase(TENANT_ID, "cbc")).thenReturn(Optional.of(existing));
+        when(labService.updateTest(any(), any(), any(), any())).thenReturn(sampleRecord());
+
+        String csv = String.join("\n",
+                "testCode,testName,category,sampleType,department,unit,referenceRange,turnaroundTime,price,active,parameters",
+                "cbc,Complete Blood Count,HEMATOLOGY,Blood,Hematology,g/dL,13.0-17.0,24,250.00,true,"
+        );
+
+        var result = service.importCsv(TENANT_ID, csv.getBytes(), ACTOR_ID);
+
+        assertThat(result.createdCount()).isZero();
+        assertThat(result.updatedCount()).isEqualTo(1);
+        ArgumentCaptor<com.deepthoughtnet.clinic.api.lab.service.model.LabTestUpsertCommand> captor = ArgumentCaptor.forClass(com.deepthoughtnet.clinic.api.lab.service.model.LabTestUpsertCommand.class);
+        verify(labService).updateTest(any(), any(), captor.capture(), any());
+        assertThat(captor.getValue().testCode()).isEqualTo("CBC");
+    }
+
+    @Test
     void importTemplateIncludesHeaders() throws Exception {
         String csv = service.importTemplateCsv();
         assertThat(csv).contains("testCode,testName,category,sampleType,department,unit,referenceRange,turnaroundTime,price,active,parameters");
+        assertThat(csv).contains(",24,");
         assertThat(csv).contains("Complete Blood Count");
     }
 
     @Test
     void acceptsExpandedCategoriesAndNormalizesThyroidToEndocrinology() throws Exception {
         when(labTestMasterRepository.findByTenantIdAndTestCodeIgnoreCase(TENANT_ID, "THYROID-1")).thenReturn(Optional.empty());
-        when(labTestMasterRepository.findByTenantIdAndTestNameIgnoreCase(TENANT_ID, "Thyroid Panel")).thenReturn(Optional.empty());
-        when(labService.createTest(any(), any(), any())).thenReturn(sampleRecord());
+        lenient().when(labService.createTest(any(), any(), any())).thenReturn(sampleRecord());
 
         String csv = String.join("\n",
                 "testCode,testName,category,sampleType,department,unit,referenceRange,turnaroundTime,price,active,parameters",
-                "THYROID-1,Thyroid Panel,THYROID,Blood,Endocrinology,ng/dL,0.4-4.0,24 hrs,250.00,true,"
+                "THYROID-1,Thyroid Panel,THYROID,Blood,Endocrinology,ng/dL,0.4-4.0,24,250.00,true,"
         );
 
         var result = service.importCsv(TENANT_ID, csv.getBytes(), ACTOR_ID);
@@ -108,7 +141,7 @@ class LabCsvServiceTest {
     void invalidCategoryMessageIncludesAllowedValues() throws Exception {
         String csv = String.join("\n",
                 "testCode,testName,category,sampleType,department,unit,referenceRange,turnaroundTime,price,active,parameters",
-                "BAD-1,Invalid Category,BADCATEGORY,Blood,Lab,mg/dL,0-1,24 hrs,100.00,true,"
+                "BAD-1,Invalid Category,BADCATEGORY,Blood,Lab,mg/dL,0-1,24,100.00,true,"
         );
 
         var result = service.importCsv(TENANT_ID, csv.getBytes(), ACTOR_ID);
@@ -120,6 +153,70 @@ class LabCsvServiceTest {
     }
 
     @Test
+    void rejectsLegacyTathrsFormatInCsvImport() throws Exception {
+        String csv = String.join("\n",
+                "testCode,testName,category,sampleType,department,unit,referenceRange,turnaroundTime,price,active,parameters",
+                "CBC,Complete Blood Count,HEMATOLOGY,Blood,Hematology,g/dL,13.0-17.0,24 hrs,250.00,true,"
+        );
+
+        var result = service.importCsv(TENANT_ID, csv.getBytes(), ACTOR_ID);
+
+        assertThat(result.failedCount()).isEqualTo(1);
+        assertThat(result.rowErrors().get(0).message()).contains("turnaroundTime");
+    }
+
+    @Test
+    void rejectsTooPrecisePriceInCsvImport() throws Exception {
+        String csv = String.join("\n",
+                "testCode,testName,category,sampleType,department,unit,referenceRange,turnaroundTime,price,active,parameters",
+                "CBC,Complete Blood Count,HEMATOLOGY,Blood,Hematology,g/dL,13.0-17.0,24,250.001,true,"
+        );
+
+        var result = service.importCsv(TENANT_ID, csv.getBytes(), ACTOR_ID);
+
+        assertThat(result.failedCount()).isEqualTo(1);
+        assertThat(result.rowErrors().get(0).message()).contains("price");
+    }
+
+    @Test
+    void rejectsBlankParameterRowInCsvImport() throws Exception {
+        String csv = String.join("\n",
+                "testCode,testName,category,sampleType,department,unit,referenceRange,turnaroundTime,price,active,parameters",
+                "CBC,Complete Blood Count,HEMATOLOGY,Blood,Hematology,g/dL,13.0-17.0,24,250.00,true,\" |g/dL|13.0-17.0|<7.0|1\""
+        );
+
+        var result = service.importCsv(TENANT_ID, csv.getBytes(), ACTOR_ID);
+
+        assertThat(result.failedCount()).isEqualTo(1);
+        assertThat(result.rowErrors().get(0).message()).contains("parameter name");
+    }
+
+    @Test
+    void rejectsInactiveCategoryInCsvImport() throws Exception {
+        LabTestMasterEntity existing = LabTestMasterEntity.create(TENANT_ID, "CBC", "Complete Blood Count");
+        when(labTestMasterRepository.findByTenantIdAndTestCodeIgnoreCase(TENANT_ID, "CBC")).thenReturn(Optional.of(existing));
+        when(labService.updateTest(any(), any(), any(), any()))
+                .thenThrow(new IllegalArgumentException("category is inactive"));
+
+        String csv = String.join("\n",
+                "testCode,testName,category,sampleType,department,unit,referenceRange,turnaroundTime,price,active,parameters",
+                "CBC,Complete Blood Count,HEMATOLOGY,Blood,Hematology,g/dL,13.0-17.0,24,250.00,true,"
+        );
+
+        var result = service.importCsv(TENANT_ID, csv.getBytes(), ACTOR_ID);
+
+        assertThat(result.failedCount()).isEqualTo(1);
+        assertThat(result.rowErrors().get(0).message()).contains("inactive");
+    }
+
+    @Test
+    void rejectsEmptyCsvFile() {
+        assertThatThrownBy(() -> service.importCsv(TENANT_ID, new byte[0], ACTOR_ID))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("CSV file is required");
+    }
+
+    @Test
     void duplicateParameterConstraintIsReportedAsRowError() throws Exception {
         LabTestMasterEntity existing = LabTestMasterEntity.create(TENANT_ID, "CBC", "Complete Blood Count");
         when(labTestMasterRepository.findByTenantIdAndTestCodeIgnoreCase(TENANT_ID, "CBC")).thenReturn(Optional.of(existing));
@@ -128,7 +225,7 @@ class LabCsvServiceTest {
 
         String csv = String.join("\n",
                 "testCode,testName,category,sampleType,department,unit,referenceRange,turnaroundTime,price,active,parameters",
-                "CBC,Complete Blood Count,HEMATOLOGY,Blood,Hematology,g/dL,13.0-17.0,24 hrs,250.00,true,\"Hemoglobin|g/dL|13.0-17.0|<7.0|1\""
+                "CBC,Complete Blood Count,HEMATOLOGY,Blood,Hematology,g/dL,13.0-17.0,24,250.00,true,\"Hemoglobin|g/dL|13.0-17.0|<7.0|1\""
         );
 
         var result = service.importCsv(TENANT_ID, csv.getBytes(), ACTOR_ID);
@@ -150,7 +247,7 @@ class LabCsvServiceTest {
                 "Blood",
                 "g/dL",
                 "13.0-17.0",
-                "24 hrs",
+                "24",
                 BigDecimal.valueOf(250),
                 true,
                 null,

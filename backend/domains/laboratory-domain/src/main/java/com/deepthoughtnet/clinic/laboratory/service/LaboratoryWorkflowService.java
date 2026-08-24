@@ -440,16 +440,23 @@ public class LaboratoryWorkflowService {
         );
         if (makeCurrent) {
             for (LaboratoryReportPublicationArtifactEntity previousCurrent : previousCurrents) {
-                previousCurrent.markSuperseded(artifact.getId());
+                previousCurrent.markSuperseded();
                 publicationArtifactRepository.save(previousCurrent);
+            }
+            if (!previousCurrents.isEmpty()) {
+                publicationArtifactRepository.flush();
             }
         }
         try {
-            if (makeCurrent && !previousCurrents.isEmpty()) {
-                publicationArtifactRepository.flush();
-            }
             publicationArtifactRepository.save(artifact);
             publicationArtifactRepository.flush();
+            if (makeCurrent && !previousCurrents.isEmpty()) {
+                for (LaboratoryReportPublicationArtifactEntity previousCurrent : previousCurrents) {
+                    previousCurrent.linkSupersededByArtifact(artifact.getId());
+                    publicationArtifactRepository.save(previousCurrent);
+                }
+                publicationArtifactRepository.flush();
+            }
         } catch (DataIntegrityViolationException ex) {
             throw new IllegalArgumentException(
                     "Report was updated by another action. Refresh and try again.",

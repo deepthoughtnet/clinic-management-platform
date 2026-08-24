@@ -221,9 +221,18 @@ public class LaboratoryReportPublicationArtifactEntity {
     }
 
     public void markSuperseded(UUID supersededByArtifactId) {
-        this.reportStatus = REPORT_STATUS_SUPERSEDED;
+        markSuperseded();
         this.supersededByArtifactId = supersededByArtifactId;
+    }
+
+    public void markSuperseded() {
+        this.reportStatus = REPORT_STATUS_SUPERSEDED;
+        this.supersededByArtifactId = null;
         this.supersededAt = OffsetDateTime.now();
+    }
+
+    public void linkSupersededByArtifact(UUID supersededByArtifactId) {
+        this.supersededByArtifactId = supersededByArtifactId;
     }
 
     public void markHistorical() {

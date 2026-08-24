@@ -1,5 +1,6 @@
 package com.deepthoughtnet.clinic.laboratory.service;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -95,7 +96,11 @@ class LaboratoryWorkflowServiceReportVersionTest {
         order.verify(artifactRepository).flush();
         order.verify(artifactRepository).save(any(LaboratoryReportPublicationArtifactEntity.class));
         order.verify(artifactRepository).flush();
+        order.verify(artifactRepository).save(oldArtifact);
+        order.verify(artifactRepository).flush();
         verify(lifecycleRepository).save(any(LaboratoryOrderedTestLifecycleEntity.class));
+        assertThat(oldArtifact.getReportStatus()).isEqualTo(LaboratoryReportPublicationArtifactEntity.REPORT_STATUS_SUPERSEDED);
+        assertThat(oldArtifact.getSupersededByArtifactId()).isNotNull();
     }
 
     private LaboratoryReportPublicationArtifactEntity currentArtifact() {

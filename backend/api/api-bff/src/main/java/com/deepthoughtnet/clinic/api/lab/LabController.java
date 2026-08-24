@@ -116,7 +116,7 @@ public class LabController {
     @PreAuthorize("@permissionChecker.hasPermission('lab.test.manage')")
     public LabCategoryConfigResponse updateCategoryConfig(
             @PathVariable String code,
-            @RequestBody LabCategoryConfigUpdateRequest request
+            @Valid @RequestBody LabCategoryConfigUpdateRequest request
     ) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
@@ -141,7 +141,7 @@ public class LabController {
 
     @PutMapping("/config/tests/{id}")
     @PreAuthorize("@permissionChecker.hasPermission('lab.test.manage')")
-    public LabTestCatalogueConfigResponse updateTestConfig(@PathVariable UUID id, @RequestBody LabTestCatalogueConfigUpdateRequest request) {
+    public LabTestCatalogueConfigResponse updateTestConfig(@PathVariable UUID id, @Valid @RequestBody LabTestCatalogueConfigUpdateRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         return labCatalogueConfigService.updateTest(tenantId, id, request, actorAppUserId);
@@ -340,7 +340,12 @@ public class LabController {
                         mapComponentResults(item.componentResults())
                 ))
                 .toList();
-        return toResponse(labService.enterResults(tenantId, id, new LabOrderResultEntryCommand(items, request.comments(), request.orderedTestIds()), actorAppUserId));
+        return toResponse(labService.enterResults(tenantId, id, new LabOrderResultEntryCommand(
+                parseUuid(request.labOrderSampleId(), "labOrderSampleId"),
+                items,
+                request.comments(),
+                request.orderedTestIds()
+        ), actorAppUserId));
     }
 
     @GetMapping(value = "/orders/{id}/pdf", produces = MediaType.APPLICATION_PDF_VALUE)
@@ -811,7 +816,7 @@ public class LabController {
                 record.containerType(),
                 record.status(),
                 record.collectedAt(),
-                record.collectedBy() == null ? null : record.collectedBy().toString(),
+                record.collectedBy(),
                 record.receivedAt(),
                 record.receivedBy() == null ? null : record.receivedBy().toString(),
                 record.rejectionReason(),

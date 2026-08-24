@@ -43,6 +43,8 @@ The aggregate order retains existing statuses when children are uniform. Mixed c
 - One order-level collection may associate one specimen to all eligible tests requiring the same specimen.
 - Existing results and published reports remain authoritative and viewable.
 - Granular request fields and response projections are additive and optional.
+- Publishing must allow selected verified tests from a mixed-state order even while sibling tests remain pending, provided the request scope matches eligible tests.
+- Partial publication should preserve pending sibling tests and may derive `PARTIALLY_PUBLISHED` at the aggregate level when at least one child is published and others remain incomplete.
 
 # Persistence And Backfill
 

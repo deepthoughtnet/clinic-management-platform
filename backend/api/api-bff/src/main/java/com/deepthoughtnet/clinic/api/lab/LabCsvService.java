@@ -64,9 +64,9 @@ public class LabCsvService {
                 int rowNumber = Math.toIntExact(record.getRecordNumber()) + 1;
                 try {
                     ParsedLabTestRow row = parseRow(record, rowNumber);
-                    Optional<LabTestMasterEntity> existing = findExisting(tenantId, row.testCode(), row.testName());
+                    Optional<LabTestMasterEntity> existing = findExisting(tenantId, row.testCode());
                     LabTestUpsertCommand command = new LabTestUpsertCommand(
-                            row.testCode(),
+                            existing.map(LabTestMasterEntity::getTestCode).orElse(row.testCode()),
                             row.testName(),
                             row.category(),
                             row.department(),
@@ -111,7 +111,7 @@ public class LabCsvService {
                     "Hematology",
                     "g/dL",
                     "13.0-17.0",
-                    "24 hrs",
+                    "24",
                     "250.00",
                     "true",
                     "Hemoglobin|g/dL|13.0-17.0|<7.0|1;WBC|10^3/uL|4.0-11.0|>20.0|2"
@@ -121,24 +121,15 @@ public class LabCsvService {
         }
     }
 
-    private Optional<LabTestMasterEntity> findExisting(UUID tenantId, String testCode, String testName) {
+    private Optional<LabTestMasterEntity> findExisting(UUID tenantId, String testCode) {
         if (StringUtils.hasText(testCode)) {
-            Optional<LabTestMasterEntity> byCode = labTestMasterRepository.findByTenantIdAndTestCodeIgnoreCase(tenantId, testCode.trim());
-            if (byCode.isPresent()) {
-                return byCode;
-            }
-        }
-        if (StringUtils.hasText(testName)) {
-            return labTestMasterRepository.findByTenantIdAndTestNameIgnoreCase(tenantId, testName.trim());
+            return labTestMasterRepository.findByTenantIdAndTestCodeIgnoreCase(tenantId, testCode.trim());
         }
         return Optional.empty();
     }
 
     private ParsedLabTestRow parseRow(CSVRecord record, int rowNumber) {
-        String testCode = normalizeNullable(value(record, "testCode"));
-        if (StringUtils.hasText(testCode) && !testCode.matches("^[A-Za-z0-9/_-]{1,30}$")) {
-            throw new IllegalArgumentException("testCode contains invalid characters");
-        }
+        String testCode = LabValidationSupport.normalizeTestCode(requireText(value(record, "testCode"), "testCode is required"), "testCode");
         String testName = requireText(value(record, "testName"), "testName is required");
         if (testName.length() > 100) {
             throw new IllegalArgumentException("testName must be 100 characters or fewer");
@@ -147,8 +138,8 @@ public class LabCsvService {
             throw new IllegalArgumentException("testName must contain letters or numbers");
         }
         String category = LabCategoryCatalog.normalize(requireText(value(record, "category"), "category is required"));
-        String sampleType = requireText(value(record, "sampleType"), "sampleType is required");
-        if (sampleType.length() > 60) {
+        String sampleType = normalizeNullable(value(record, "sampleType"));
+        if (sampleType != null && sampleType.length() > 60) {
             throw new IllegalArgumentException("sampleType must be 60 characters or fewer");
         }
         String department = normalizeNullable(value(record, "department"));
@@ -164,9 +155,7 @@ public class LabCsvService {
             throw new IllegalArgumentException("referenceRange must be 120 characters or fewer");
         }
         String turnaroundTime = normalizeNullable(value(record, "turnaroundTime"));
-        if (turnaroundTime != null && turnaroundTime.length() > 30) {
-            throw new IllegalArgumentException("turnaroundTime must be 30 characters or fewer");
-        }
+        turnaroundTime = LabValidationSupport.normalizeWholeHours(turnaroundTime, "turnaroundTime");
         String priceText = requireText(value(record, "price"), "price is required");
         BigDecimal price;
         try {
@@ -174,9 +163,7 @@ public class LabCsvService {
         } catch (NumberFormatException ex) {
             throw new IllegalArgumentException("price must be a valid amount");
         }
-        if (price.compareTo(BigDecimal.ZERO) < 0 || price.compareTo(new BigDecimal("999999.00")) > 0) {
-            throw new IllegalArgumentException("price must be between 0 and 999999.00");
-        }
+        price = LabValidationSupport.normalizeMoney(price, "price");
         boolean active = parseBoolean(value(record, "active"), true);
         List<com.deepthoughtnet.clinic.api.lab.service.model.LabTestParameterUpsertCommand> parameters = parseParameters(value(record, "parameters"));
         return new ParsedLabTestRow(testCode, testName, category, department, sampleType, unit, referenceRange, turnaroundTime, price, active, parameters);

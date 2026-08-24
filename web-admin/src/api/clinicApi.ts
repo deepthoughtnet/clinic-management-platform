@@ -4707,6 +4707,7 @@ export async function rejectLabSample(token: string, tenantId: string, sampleId:
 }
 
 export async function enterLabOrderResults(token: string, tenantId: string, id: string, body: {
+  labOrderSampleId?: string | null;
   comments?: string | null;
   orderedTestIds?: string[] | null;
   items: Array<{
@@ -4724,6 +4725,7 @@ export async function enterLabOrderResults(token: string, tenantId: string, id: 
   }>;
 }) {
   return httpPost<LabOrder>(`/api/lab/orders/${id}/results`, {
+    labOrderSampleId: body.labOrderSampleId ?? null,
     comments: body.comments ?? null,
     orderedTestIds: body.orderedTestIds ?? [],
     items: body.items,

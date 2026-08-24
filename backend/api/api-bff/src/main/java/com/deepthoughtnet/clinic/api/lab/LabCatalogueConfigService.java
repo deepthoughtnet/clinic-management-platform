@@ -60,8 +60,15 @@ public class LabCatalogueConfigService {
         String normalizedCode = LabCategoryCatalog.normalize(code);
         LabCategorySettingEntity entity = labCategorySettingRepository.findByTenantIdAndCategoryCodeIgnoreCase(tenantId, normalizedCode)
                 .orElseGet(() -> LabCategorySettingEntity.create(tenantId, normalizedCode, LabCategoryCatalog.displayName(normalizedCode), true, LabCategoryCatalog.CATEGORY_CODES.indexOf(normalizedCode) + 1));
-        String displayName = StringUtils.hasText(request.displayName()) ? request.displayName().trim() : LabCategoryCatalog.displayName(normalizedCode);
-        entity.update(displayName, request.active() == null || request.active(), request.displayOrder());
+        String displayName = request.displayName() == null ? LabCategoryCatalog.displayName(normalizedCode) : request.displayName().trim();
+        if (!StringUtils.hasText(displayName)) {
+            throw new IllegalArgumentException("displayName is required");
+        }
+        if (displayName.length() > 128) {
+            throw new IllegalArgumentException("displayName must be 128 characters or fewer");
+        }
+        Integer displayOrder = LabValidationSupport.normalizeDisplayOrder(request.displayOrder(), "displayOrder");
+        entity.update(displayName, request.active() == null || request.active(), displayOrder);
         LabCategorySettingEntity saved = labCategorySettingRepository.save(entity);
         return new LabCategoryConfigResponse(saved.getCategoryCode(), saved.getDisplayName(), saved.isActive(), saved.getDisplayOrder());
     }
@@ -82,11 +89,12 @@ public class LabCatalogueConfigService {
     public LabTestCatalogueConfigResponse updateTest(UUID tenantId, UUID id, LabTestCatalogueConfigUpdateRequest request, UUID actorAppUserId) {
         LabTestMasterEntity entity = labTestMasterRepository.findByTenantIdAndId(tenantId, id)
                 .orElseThrow(() -> new IllegalArgumentException("Lab test not found"));
-        BigDecimal priceOverride = request.tenantPriceOverride();
-        String tatOverride = normalizeNullable(request.tenantTatOverride());
+        BigDecimal priceOverride = request.tenantPriceOverride() == null ? null : LabValidationSupport.normalizeMoney(request.tenantPriceOverride(), "tenantPriceOverride");
+        String tatOverride = LabValidationSupport.normalizeWholeHours(request.tenantTatOverride(), "tenantTatOverride");
         boolean enabled = request.enabled() == null || request.enabled();
         boolean active = request.active() == null || request.active();
-        entity.updateCatalogueConfig(enabled, priceOverride, tatOverride, request.displayOrder(), active);
+        Integer displayOrder = LabValidationSupport.normalizeDisplayOrder(request.displayOrder(), "displayOrder");
+        entity.updateCatalogueConfig(enabled, priceOverride, tatOverride, displayOrder, active);
         LabTestMasterEntity saved = labTestMasterRepository.save(entity);
         return toResponse(saved, currentCategoryActiveMap(tenantId));
     }

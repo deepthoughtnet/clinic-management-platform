@@ -663,6 +663,29 @@ function parseTurnaroundHours(value: string | null | undefined) {
   }
 }
 
+function normalizeTurnaroundHoursInput(value: string | null | undefined) {
+  if (!value) return "";
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  const numeric = trimmed.match(/^(\d{1,3})$/);
+  if (numeric) return numeric[1];
+  const legacy = trimmed.match(/^(\d{1,3})\s*hrs?$/i);
+  if (legacy) return legacy[1];
+  return trimmed;
+}
+
+function formatTurnaroundHoursDisplay(value: string | null | undefined) {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (/^\d{1,3}$/.test(trimmed)) {
+    return `${Number(trimmed)} hrs`;
+  }
+  const legacy = trimmed.match(/^(\d{1,3})\s*hrs?$/i);
+  if (legacy) return `${Number(legacy[1])} hrs`;
+  return trimmed;
+}
+
 function sampleStatusTone(status: LabSampleStatus | null | undefined) {
   switch (status) {
     case "REJECTED":
@@ -707,6 +730,23 @@ function sampleLinkedTestsLabel(sample: LabSample) {
   return sample.linkedTestNames?.length ? sample.linkedTestNames.join(", ") : sample.labOrderItemId || "-";
 }
 
+function resolveResultEntrySample(order: LabOrder | null | undefined, sampleId: string | null | undefined) {
+  if (!order) return null;
+  if (sampleId) {
+    return order.samples.find((sample) => sample.id === sampleId) || null;
+  }
+  return order.samples.length === 1 ? order.samples[0] : null;
+}
+
+function resultEntryItemIds(order: LabOrder | null | undefined, sampleId: string | null | undefined) {
+  const sample = resolveResultEntrySample(order, sampleId);
+  if (!sample) {
+    return null;
+  }
+  const linkedIds = new Set(sample.linkedLabOrderItemIds || []);
+  return linkedIds.size ? linkedIds : (sample.labOrderItemId ? new Set([sample.labOrderItemId]) : null);
+}
+
 function reviewableOrderedTests(order: LabOrder | null | undefined) {
   return order?.orderedTests.filter((orderedTest) => orderedTest.state === "RESULT_ENTERED") || [];
 }
@@ -723,9 +763,13 @@ function correctionOrderedTests(order: LabOrder | null | undefined) {
   return order?.orderedTests.filter((orderedTest) => orderedTest.state === "RESULT_SENT_BACK") || [];
 }
 
-function editableResultOrderedTests(order: LabOrder | null | undefined) {
-  const initial = initialResultOrderedTests(order);
-  const continuation = order?.orderedTests.filter((orderedTest) => orderedTest.state === "RESULT_ENTERED" || orderedTest.state === "PENDING_REVIEW" || orderedTest.state === "RESULT_SENT_BACK") || [];
+function editableResultOrderedTests(order: LabOrder | null | undefined, sampleId: string | null | undefined = null) {
+  const itemIds = resultEntryItemIds(order, sampleId);
+  const scopedTests = itemIds
+    ? (order?.orderedTests || []).filter((orderedTest) => itemIds.has(orderedTest.labOrderItemId))
+    : (order?.orderedTests || []);
+  const initial = scopedTests.filter((orderedTest) => orderedTest.state === "ORDERED" || orderedTest.state === "SAMPLE_COLLECTED" || orderedTest.state === "RESULT_DRAFT");
+  const continuation = scopedTests.filter((orderedTest) => orderedTest.state === "RESULT_ENTERED" || orderedTest.state === "PENDING_REVIEW" || orderedTest.state === "RESULT_SENT_BACK");
   return [...initial, ...continuation];
 }
 
@@ -994,6 +1038,7 @@ export default function LabPage() {
   const [paymentTarget, setPaymentTarget] = React.useState<LabOrder | null>(null);
   const [sampleTarget, setSampleTarget] = React.useState<LabOrder | null>(null);
   const [resultTarget, setResultTarget] = React.useState<LabOrder | null>(null);
+  const [resultScopeSampleId, setResultScopeSampleId] = React.useState<string | null>(null);
   const [reviewTarget, setReviewTarget] = React.useState<LabOrder | null>(null);
   const [paymentMode, setPaymentMode] = React.useState<PaymentMode>("CASH");
   const [paymentReference, setPaymentReference] = React.useState("");
@@ -1418,7 +1463,7 @@ export default function LabPage() {
       sampleType: row.sampleType,
       unit: row.unit,
       referenceRange: row.referenceRange,
-      turnaroundTime: row.turnaroundTime,
+      turnaroundTime: normalizeTurnaroundHoursInput(row.turnaroundTime),
       price: row.price,
       active: row.active,
       parameters: row.parameters.map((parameter, index) => ({
@@ -1440,7 +1485,7 @@ export default function LabPage() {
       return;
     }
     const payload = {
-      testCode: parsed.data.testCode || "",
+      testCode: editing?.testCode || parsed.data.testCode || "",
       testName: parsed.data.testName,
       category: parsed.data.category,
       department: parsed.data.department || null,
@@ -1763,15 +1808,15 @@ export default function LabPage() {
     }
   };
 
-  const resultDraftStorageKey = React.useCallback((orderId: string) => {
+  const resultDraftStorageKey = React.useCallback((orderId: string, sampleId?: string | null) => {
     const tenant = auth.tenantId || "unknown-tenant";
-    return `lab.result-entry.draft.${tenant}.${orderId}`;
+    return `lab.result-entry.draft.${tenant}.${orderId}${sampleId ? `.${sampleId}` : ""}`;
   }, [auth.tenantId]);
 
-  const readResultDraft = React.useCallback((orderId: string) => {
+  const readResultDraft = React.useCallback((orderId: string, sampleId?: string | null) => {
     if (!orderId || typeof window === "undefined") return null;
     try {
-      const raw = window.localStorage.getItem(resultDraftStorageKey(orderId));
+      const raw = window.localStorage.getItem(resultDraftStorageKey(orderId, sampleId));
       if (!raw) return null;
       return JSON.parse(raw) as { comments: string; items: ResultItemForm[]; updatedAt: string };
     } catch {
@@ -1779,19 +1824,19 @@ export default function LabPage() {
     }
   }, [resultDraftStorageKey]);
 
-  const clearResultDraft = React.useCallback((orderId: string) => {
+  const clearResultDraft = React.useCallback((orderId: string, sampleId?: string | null) => {
     if (!orderId || typeof window === "undefined") return;
     try {
-      window.localStorage.removeItem(resultDraftStorageKey(orderId));
+      window.localStorage.removeItem(resultDraftStorageKey(orderId, sampleId));
     } catch {
       // ignore
     }
   }, [resultDraftStorageKey]);
 
-  const saveResultDraft = React.useCallback((order: LabOrder, comments: string, items: ResultItemForm[]) => {
+  const saveResultDraft = React.useCallback((order: LabOrder, comments: string, items: ResultItemForm[], sampleId?: string | null) => {
     if (typeof window === "undefined") return;
     try {
-      window.localStorage.setItem(resultDraftStorageKey(order.id), JSON.stringify({
+      window.localStorage.setItem(resultDraftStorageKey(order.id, sampleId), JSON.stringify({
         comments,
         items,
         updatedAt: new Date().toISOString(),
@@ -1814,17 +1859,24 @@ export default function LabPage() {
     closeAttachmentPreview();
   }, [closeAttachmentPreview]);
 
-  const openResultsDialog = (row: LabOrder) => {
+  const openResultsDialog = (row: LabOrder, sample?: LabSample | null) => {
+    const scopedSample = resolveResultEntrySample(row, sample?.id || null);
+    const scopeSampleId = scopedSample?.id || null;
+    const scopeItemIds = resultEntryItemIds(row, scopeSampleId);
+    const items = scopeItemIds
+      ? row.items.filter((item) => scopeItemIds.has(item.id))
+      : row.items;
     setResultTarget(row);
-    const draft = readResultDraft(row.id);
+    setResultScopeSampleId(scopeSampleId);
+    const draft = readResultDraft(row.id, scopeSampleId) || (!scopeSampleId ? readResultDraft(row.id) : null);
     if (draft) {
       setResultComments(draft.comments || "");
-      setResultItems(draft.items.length ? draft.items : row.items.map((item) => defaultResultsForItem(item, row.results)));
+      setResultItems(draft.items.length ? draft.items : items.map((item) => defaultResultsForItem(item, row.results)));
       setResultDraftLoaded(true);
       setResultSaveMessage(`Draft loaded for ${row.orderNumber}.`);
     } else {
       setResultComments(row.resultComments || "");
-      setResultItems(row.items.map((item) => defaultResultsForItem(item, row.results)));
+      setResultItems(items.map((item) => defaultResultsForItem(item, row.results)));
       setResultDraftLoaded(false);
       setResultSaveMessage(null);
     }
@@ -1865,6 +1917,7 @@ export default function LabPage() {
     setError(null);
     try {
       await enterLabOrderResults(auth.accessToken, auth.tenantId, resultTarget.id, {
+        labOrderSampleId: resultScopeSampleId,
         comments: parsed.data.comments || null,
         orderedTestIds: editableOrderedTestIds,
         items: parsed.data.items.map((item) => ({
@@ -1881,8 +1934,9 @@ export default function LabPage() {
           })),
         })),
       });
-      clearResultDraft(resultTarget.id);
+      clearResultDraft(resultTarget.id, resultScopeSampleId);
       setResultTarget(null);
+      setResultScopeSampleId(null);
       setResultComments("");
       setResultItems([]);
       setResultDraftLoaded(false);
@@ -1900,7 +1954,7 @@ export default function LabPage() {
     if (!resultTarget) return;
     setResultSavingDraft(true);
     try {
-      saveResultDraft(resultTarget, resultComments, resultItems);
+      saveResultDraft(resultTarget, resultComments, resultItems, resultScopeSampleId);
       setResultDraftLoaded(true);
       setResultSaveMessage(`Draft saved for ${resultTarget.orderNumber}.`);
     } finally {
@@ -2000,8 +2054,8 @@ export default function LabPage() {
     [reviewOrderedTests],
   );
   const resultEditableOrderedTests = React.useMemo(
-    () => editableResultOrderedTests(resultTarget),
-    [resultTarget],
+    () => editableResultOrderedTests(resultTarget, resultScopeSampleId),
+    [resultScopeSampleId, resultTarget],
   );
   const resultEditableOrderedTestIds = React.useMemo(
     () => new Set(resultEditableOrderedTests.map((orderedTest) => orderedTest.labOrderItemId)),
@@ -2442,7 +2496,7 @@ export default function LabPage() {
                           <TableCell>
                             <Stack spacing={0.25}>
                               <Typography variant="body2" sx={{ fontWeight: 700 }}>{row.testName}</Typography>
-                              <Typography variant="caption" color="text.secondary">{row.department || row.turnaroundTime || "-"}</Typography>
+                          <Typography variant="caption" color="text.secondary">{row.department || formatTurnaroundHoursDisplay(row.turnaroundTime) || "-"}</Typography>
                             </Stack>
                           </TableCell>
                           <TableCell>{row.category}</TableCell>
@@ -2805,8 +2859,17 @@ export default function LabPage() {
         <DialogTitle>{editing ? "Edit Lab Test" : "New Lab Test"}</DialogTitle>
         <DialogContent dividers>
           <Grid container spacing={2} sx={{ pt: 0.5 }}>
-            <Grid size={{ xs: 12, md: 3 }}><TextField fullWidth label="Test Code" value={form.testCode} onChange={(e) => setForm((current) => ({ ...current, testCode: e.target.value }))} /></Grid>
-            <Grid size={{ xs: 12, md: 5 }}><TextField fullWidth label={<RequiredLabel text="Test Name" required />} value={form.testName} onChange={(e) => setForm((current) => ({ ...current, testName: e.target.value }))} required /></Grid>
+            <Grid size={{ xs: 12, md: 3 }}>
+              <TextField
+                fullWidth
+                label={<RequiredLabel text="Test Code" required />}
+                value={form.testCode}
+                onChange={(e) => setForm((current) => ({ ...current, testCode: e.target.value }))}
+                disabled={Boolean(editing)}
+                InputProps={{ readOnly: Boolean(editing) }}
+              />
+            </Grid>
+            <Grid size={{ xs: 12, md: 5 }}><TextField fullWidth label={<RequiredLabel text="Test Name" required />} value={form.testName} onChange={(e) => setForm((current) => ({ ...current, testName: e.target.value }))} /></Grid>
             <Grid size={{ xs: 12, md: 4 }}>
               <FormControl fullWidth>
                 <InputLabel id="lab-category-label"><RequiredLabel text="Category" required /></InputLabel>
@@ -2819,8 +2882,8 @@ export default function LabPage() {
             <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth label="Sample Type" value={form.sampleType || ""} onChange={(e) => setForm((current) => ({ ...current, sampleType: e.target.value }))} /></Grid>
             <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth label="Unit" value={form.unit || ""} onChange={(e) => setForm((current) => ({ ...current, unit: e.target.value }))} /></Grid>
             <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth label="Reference Range" value={form.referenceRange || ""} onChange={(e) => setForm((current) => ({ ...current, referenceRange: e.target.value }))} /></Grid>
-            <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth label="Turnaround Time" value={form.turnaroundTime || ""} onChange={(e) => setForm((current) => ({ ...current, turnaroundTime: e.target.value }))} /></Grid>
-            <Grid size={{ xs: 12, md: 2 }}><TextField fullWidth type="number" label={<RequiredLabel text="Price" required />} value={form.price} onChange={(e) => setForm((current) => ({ ...current, price: Number(e.target.value) }))} required /></Grid>
+            <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth label="Turnaround Time (Hours)" value={form.turnaroundTime || ""} onChange={(e) => setForm((current) => ({ ...current, turnaroundTime: e.target.value }))} inputProps={{ inputMode: "numeric", pattern: "[0-9]*", min: 0, max: 999 }} /></Grid>
+            <Grid size={{ xs: 12, md: 2 }}><TextField fullWidth type="number" label={<RequiredLabel text="Price" required />} value={form.price} onChange={(e) => setForm((current) => ({ ...current, price: Number(e.target.value) }))} /></Grid>
             <Grid size={{ xs: 12, md: 2 }}><TextField fullWidth label="Status" value={form.active ? "Active" : "Inactive"} disabled /></Grid>
           </Grid>
           <Stack spacing={1.5} sx={{ mt: 3 }}>
@@ -3191,6 +3254,7 @@ export default function LabPage() {
         open={Boolean(resultTarget)}
         onClose={() => {
           setResultTarget(null);
+          setResultScopeSampleId(null);
           setResultComments("");
           setResultItems([]);
           setResultDraftLoaded(false);
@@ -3204,7 +3268,7 @@ export default function LabPage() {
         <DialogContent dividers>
           <Stack spacing={2} sx={{ pt: 0.5 }}>
             <Alert severity="info">
-              {resultTarget ? `${resultTarget.orderNumber} • ${resultTarget.patientName || "-"} • ${resultTarget.sampleAccessionNumber || "Accession pending"} • ${resultTarget.sampleSummaryStatus || "No sample"}` : ""}
+              {resultTarget ? `${resultTarget.orderNumber} • ${resultTarget.patientName || "-"} • ${resolveResultEntrySample(resultTarget, resultScopeSampleId)?.accessionNumber || resultTarget.sampleAccessionNumber || "Accession pending"} • ${resolveResultEntrySample(resultTarget, resultScopeSampleId)?.specimenType || resultTarget.sampleSummaryStatus || "No sample"}` : ""}
             </Alert>
             {resultTarget?.labVerificationDecision === "SEND_BACK" ? (
               <Alert severity="warning">
@@ -4006,7 +4070,7 @@ function OrderQueue(props: {
   onCollectSample: (row: LabOrder) => void;
   onReceiveSample: (sample: LabSample) => void;
   onRejectSample: (sample: LabSample) => void;
-  onEnterResults: (row: LabOrder) => void;
+  onEnterResults: (row: LabOrder, sample?: LabSample | null) => void;
   onReview: (row: LabOrder) => void;
   onPublishReport: (row: LabOrder) => void;
   onViewReport: (row: LabOrder) => void;
@@ -4113,6 +4177,15 @@ function OrderQueue(props: {
                                 ) : null}
                               </Stack>
                             ) : null}
+                            {canEnterResults && editableResultOrderedTests(row, sample.id).length ? (
+                              <Button
+                                size="small"
+                                variant="outlined"
+                                onClick={() => onEnterResults(row, sample)}
+                              >
+                                {editableResultOrderedTests(row, sample.id).some((orderedTest) => orderedTest.state === "RESULT_SENT_BACK") ? "Correct results" : "Enter results"}
+                              </Button>
+                            ) : null}
                           </Stack>
                         </Card>
                       );
@@ -4200,8 +4273,8 @@ function OrderQueue(props: {
                   {canManageSamples && row.samples.length <= 1 && sampleAction ? (
                     <Button size="small" variant="outlined" color="error" onClick={() => onRejectSample(sampleAction)}>Reject</Button>
                   ) : null}
-                  {canEnterResults && hasTechnicianWork(row) ? (
-                    <Button size="small" variant="outlined" onClick={() => onEnterResults(row)}>
+                  {canEnterResults && hasTechnicianWork(row) && row.samples.length <= 1 ? (
+                    <Button size="small" variant="outlined" onClick={() => onEnterResults(row, row.samples[0] || null)}>
                       {hasSentBackResultOrderedTests(row) ? "Correct results" : "Enter results"}
                     </Button>
                   ) : null}

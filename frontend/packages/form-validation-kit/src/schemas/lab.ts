@@ -7,8 +7,10 @@ import {
   labOptionalIntegerText,
   labOptionalNamedText,
   labOptionalPlainText,
+  labOptionalWholeHoursText,
   labOrderOriginValues,
   labOrderStatusValues,
+  labRequiredCodeText,
   labRequiredNamedText,
   labRequiredPositiveMoney,
   labReviewDecisionValues,
@@ -55,14 +57,14 @@ export const labTestParameterSchema = z.object({
 });
 
 export const labTestMasterSchema = z.object({
-  testCode: labOptionalCodeText(30, "Test code must be 30 characters or fewer and may contain letters, numbers, dash, slash, or underscore."),
+  testCode: labRequiredCodeText(30, "Test code is required and may contain letters, numbers, dash, slash, or underscore."),
   testName: labRequiredNamedText(100, "Test name is required."),
   category: z.enum(labCategoryValues),
   department: labOptionalPlainText(60, "Department must be 60 characters or fewer."),
   sampleType: labOptionalNamedText(60, "Sample type must be 60 characters or fewer."),
   unit: labOptionalPlainText(30, "Unit must be 30 characters or fewer."),
   referenceRange: labOptionalPlainText(120, "Reference range must be 120 characters or fewer."),
-  turnaroundTime: labOptionalIntegerText(999, "Turnaround time must be a whole number between 0 and 999."),
+  turnaroundTime: labOptionalWholeHoursText(999, "Turnaround time must be a whole number between 0 and 999."),
   price: labRequiredPositiveMoney(999999, "Price is required and must be zero or greater."),
   active: z.boolean().optional(),
   parameters: z.array(labTestParameterSchema).optional().default([]),

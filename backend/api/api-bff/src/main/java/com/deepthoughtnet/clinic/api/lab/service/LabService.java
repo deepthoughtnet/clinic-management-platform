@@ -17,6 +17,7 @@ import com.deepthoughtnet.clinic.api.lab.db.LabTestMasterEntity;
 import com.deepthoughtnet.clinic.api.lab.db.LabTestMasterRepository;
 import com.deepthoughtnet.clinic.api.lab.db.LabTestParameterEntity;
 import com.deepthoughtnet.clinic.api.lab.db.LabTestParameterRepository;
+import com.deepthoughtnet.clinic.api.lab.LabValidationSupport;
 import com.deepthoughtnet.clinic.api.lab.LabCatalogueConfigService;
 import com.deepthoughtnet.clinic.api.lab.LabCategoryCatalog;
 import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
@@ -272,21 +273,25 @@ public class LabService {
     @Transactional
     public LabTestRecord createTest(UUID tenantId, LabTestUpsertCommand command, UUID actorAppUserId) {
         requireTenant(tenantId);
-        validateTest(command);
-        ensureUniqueTestCode(tenantId, command.testCode(), null);
-        ensureUniqueTestName(tenantId, command.testName(), null);
+        validateTest(tenantId, command);
+        String normalizedTestCode = LabValidationSupport.normalizeTestCode(command.testCode(), "testCode");
+        String normalizedTestName = normalize(command.testName());
+        ensureUniqueTestCode(tenantId, normalizedTestCode, null);
+        ensureUniqueTestName(tenantId, normalizedTestName, null);
         try {
-            LabTestMasterEntity entity = LabTestMasterEntity.create(tenantId, normalizeNullable(command.testCode()), normalize(command.testName()));
+            String normalizedTurnaroundTime = LabValidationSupport.normalizeWholeHours(command.turnaroundTime(), "turnaroundTime");
+            BigDecimal normalizedPrice = LabValidationSupport.normalizeMoney(command.price(), "price");
+            LabTestMasterEntity entity = LabTestMasterEntity.create(tenantId, normalizedTestCode, normalizedTestName);
             entity.update(
-                    normalizeNullable(command.testCode()),
-                    normalize(command.testName()),
+                    normalizedTestCode,
+                    normalizedTestName,
                     normalizeCategory(command.category()),
                     normalizeNullable(command.department()),
                     normalizeNullable(command.sampleType()),
                     normalizeNullable(command.unit()),
                     normalizeNullable(command.referenceRange()),
-                    normalizeNullable(command.turnaroundTime()),
-                    normalizeMoney(command.price()),
+                    normalizedTurnaroundTime,
+                    normalizedPrice,
                     command.active()
             );
             LabTestMasterEntity saved = labTestMasterRepository.save(entity);
@@ -302,22 +307,29 @@ public class LabService {
     public LabTestRecord updateTest(UUID tenantId, UUID id, LabTestUpsertCommand command, UUID actorAppUserId) {
         requireTenant(tenantId);
         requireId(id, "id");
-        validateTest(command);
+        validateTest(tenantId, command);
         LabTestMasterEntity entity = labTestMasterRepository.findByTenantIdAndId(tenantId, id)
                 .orElseThrow(() -> new IllegalArgumentException("Lab test not found"));
-        ensureUniqueTestCode(tenantId, command.testCode(), id);
-        ensureUniqueTestName(tenantId, command.testName(), id);
+        String normalizedTestCode = LabValidationSupport.normalizeTestCode(command.testCode(), "testCode");
+        String normalizedTestName = normalize(command.testName());
+        if (!Objects.equals(entity.getTestCode(), normalizedTestCode)) {
+            throw new IllegalArgumentException("Test code cannot be changed after creation");
+        }
+        ensureUniqueTestCode(tenantId, normalizedTestCode, id);
+        ensureUniqueTestName(tenantId, normalizedTestName, id);
         try {
+            String normalizedTurnaroundTime = LabValidationSupport.normalizeWholeHours(command.turnaroundTime(), "turnaroundTime");
+            BigDecimal normalizedPrice = LabValidationSupport.normalizeMoney(command.price(), "price");
             entity.update(
-                    normalizeNullable(command.testCode()),
-                    normalize(command.testName()),
+                    normalizedTestCode,
+                    normalizedTestName,
                     normalizeCategory(command.category()),
                     normalizeNullable(command.department()),
                     normalizeNullable(command.sampleType()),
                     normalizeNullable(command.unit()),
                     normalizeNullable(command.referenceRange()),
-                    normalizeNullable(command.turnaroundTime()),
-                    normalizeMoney(command.price()),
+                    normalizedTurnaroundTime,
+                    normalizedPrice,
                     command.active()
             );
             LabTestMasterEntity saved = labTestMasterRepository.save(entity);
@@ -574,7 +586,7 @@ public class LabService {
                 .orElseThrow(() -> new IllegalArgumentException("Lab order not found"));
         Map<UUID, SampleLinkSummary> sampleLinkSummaries = buildSampleLinkSummaries(tenantId, orderId);
         return labOrderSampleRepository.findByTenantIdAndLabOrderIdOrderByCollectedAtAscCreatedAtAsc(tenantId, orderId).stream()
-                .map(sample -> toRecord(sample, sampleLinkSummaries.get(sample.getId())))
+                .map(sample -> toRecord(tenantId, sample, sampleLinkSummaries.get(sample.getId())))
                 .toList();
     }
 
@@ -717,7 +729,7 @@ public class LabService {
                 actorAppUserId
         );
         return entities.stream()
-                .map(sample -> toRecord(sample, sampleLinkSummaries.get(sample.getId())))
+                .map(sample -> toRecord(tenantId, sample, sampleLinkSummaries.get(sample.getId())))
                 .toList();
     }
 
@@ -734,7 +746,7 @@ public class LabService {
         sample.markReceived(command == null ? null : command.receivedAt(), receivedBy, actorAppUserId);
         LabOrderSampleEntity saved = labOrderSampleRepository.save(sample);
         auditSample(tenantId, saved, "lab_sample.received", actorAppUserId, "Received lab sample");
-        return toRecord(saved, buildSampleLinkSummaries(tenantId, saved.getLabOrderId()).get(saved.getId()));
+        return toRecord(tenantId, saved, buildSampleLinkSummaries(tenantId, saved.getLabOrderId()).get(saved.getId()));
     }
 
     @Transactional
@@ -771,7 +783,7 @@ public class LabService {
         } else {
             auditSample(tenantId, savedSample, "lab_sample.rejected", actorAppUserId, "Rejected lab sample");
         }
-        return toRecord(savedSample, sampleLinkSummaries.get(savedSample.getId()));
+        return toRecord(tenantId, savedSample, sampleLinkSummaries.get(savedSample.getId()));
     }
 
     @Transactional
@@ -792,6 +804,8 @@ public class LabService {
         if (!hasReceivedSample) {
             throw new IllegalArgumentException("A received sample is required before result entry");
         }
+        Map<UUID, LabOrderSampleEntity> samplesById = orderSamples.stream()
+                .collect(Collectors.toMap(LabOrderSampleEntity::getId, Function.identity(), (left, right) -> left, LinkedHashMap::new));
         Map<UUID, LabOrderItemEntity> orderItems = labOrderItemRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAsc(tenantId, orderId).stream()
                 .collect(Collectors.toMap(LabOrderItemEntity::getId, Function.identity(), (a, b) -> a, LinkedHashMap::new));
         Map<UUID, SampleLinkSummary> sampleLinkSummaries = buildSampleLinkSummaries(tenantId, orderId);
@@ -804,10 +818,37 @@ public class LabService {
                         (left, right) -> left,
                         LinkedHashMap::new
                 ));
+        UUID scopedSampleId = command.labOrderSampleId();
+        if (orderSamples.size() > 1 && scopedSampleId == null) {
+            throw new IllegalArgumentException("A specimen accession must be selected for multi-specimen result entry");
+        }
         List<UUID> selectedTestIds = command.orderedTestIds() == null ? List.of() : command.orderedTestIds().stream().filter(Objects::nonNull).distinct().toList();
-        List<UUID> editableTestIds = selectedTestIds.isEmpty()
-                ? selectEditableTestsForResultEntry(orderItems.values(), lifecycleViews)
-                : validateSelectedTestsForResultEntry(selectedTestIds, lifecycleByItemId);
+        List<UUID> editableTestIds;
+        if (scopedSampleId != null) {
+            LabOrderSampleEntity scopedSample = samplesById.get(scopedSampleId);
+            if (scopedSample == null) {
+                throw new IllegalArgumentException("Selected sample is not part of this order");
+            }
+            editableTestIds = selectEditableTestsForResultEntry(orderItems.values(), lifecycleViews, scopedSampleId, scopedSample, sampleLinkSummaries);
+            if (editableTestIds.isEmpty()) {
+                throw new IllegalArgumentException("Selected sample has no editable tests for result entry");
+            }
+            Set<UUID> expectedTestIds = new LinkedHashSet<>(editableTestIds);
+            Set<UUID> payloadTestIds = command.items().stream()
+                    .map(LabOrderResultItemCommand::labOrderItemId)
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
+            if (!payloadTestIds.equals(expectedTestIds)) {
+                throw new IllegalArgumentException("Submitted results do not match the selected accession");
+            }
+            if (!selectedTestIds.isEmpty() && !new LinkedHashSet<>(selectedTestIds).equals(expectedTestIds)) {
+                throw new IllegalArgumentException("Submitted results do not match the selected accession");
+            }
+        } else {
+            editableTestIds = selectedTestIds.isEmpty()
+                    ? selectEditableTestsForResultEntry(orderItems.values(), lifecycleViews)
+                    : validateSelectedTestsForResultEntry(selectedTestIds, lifecycleByItemId);
+        }
         if (editableTestIds.isEmpty()) {
             throw new IllegalArgumentException("Lab order has no editable tests for result entry");
         }
@@ -1017,14 +1058,6 @@ public class LabService {
         requireId(orderId, "orderId");
         LabOrderEntity order = labOrderRepository.findByTenantIdAndId(tenantId, orderId)
                 .orElseThrow(() -> new IllegalArgumentException("Lab order not found"));
-        if (order.getStatus() != LabOrderStatus.DOCTOR_REVIEWED
-                && order.getStatus() != LabOrderStatus.REPORT_READY
-                && order.getStatus() != LabOrderStatus.PARTIALLY_READY
-                && order.getStatus() != LabOrderStatus.PARTIALLY_PUBLISHED
-                && order.getStatus() != LabOrderStatus.REPORT_GENERATED
-                && order.getStatus() != LabOrderStatus.DELIVERED) {
-            throw new IllegalArgumentException("Lab order is not ready for report publishing");
-        }
         List<String> requestedChannels = normalizeDeliveryChannels(command == null ? null : command.deliveryChannels());
         List<UUID> selectedTestIds = command == null || command.orderedTestIds() == null
                 ? List.of()
@@ -1043,7 +1076,7 @@ public class LabService {
         List<UUID> reportContentTestIds = selectedTestIds.isEmpty()
                 ? selectPublishableTestsForReportPublishing(lifecycleViews)
                 : validateSelectedTestsForReportPublishing(selectedTestIds, lifecycleByItemId);
-        if (reportContentTestIds.isEmpty() && !selectedTestIds.isEmpty()) {
+        if (reportContentTestIds.isEmpty()) {
             throw new IllegalArgumentException("Lab order has no eligible tests for report publishing");
         }
         List<UUID> lifecycleTransitionTestIds = reportContentTestIds.stream()
@@ -1066,7 +1099,7 @@ public class LabService {
             return toRecord(tenantId, order);
         }
         order.ensureReportVerificationToken();
-        LabOrderResultPdf pdf = renderReportPdf(tenantId, orderId, reportContentTestIds, effectiveReportMode, effectiveReportType);
+        LabOrderResultPdf pdf = buildReportPdf(tenantId, order, reportContentTestIds, effectiveReportMode, effectiveReportType);
         String deliveryChannelsJson = serializeJson(requestedChannels);
         boolean makeCurrent = shouldNewArtifactBecomeCurrent(
                 tenantId,
@@ -1400,7 +1433,7 @@ public class LabService {
                 .toList();
         Map<UUID, SampleLinkSummary> sampleLinkSummaries = buildSampleLinkSummaries(tenantId, order.getId());
         List<LabSampleRecord> samples = labOrderSampleRepository.findByTenantIdAndLabOrderIdOrderByCollectedAtAscCreatedAtAsc(tenantId, order.getId()).stream()
-                .map(sample -> toRecord(sample, sampleLinkSummaries.get(sample.getId())))
+                .map(sample -> toRecord(tenantId, sample, sampleLinkSummaries.get(sample.getId())))
                 .toList();
         LabSampleRecord primarySample = samples.isEmpty() ? null : samples.getFirst();
         LabSampleStatusRecord sampleSummaryStatus = summarizeSampleStatus(samples);
@@ -1522,7 +1555,7 @@ public class LabService {
         };
     }
 
-    private LabSampleRecord toRecord(LabOrderSampleEntity entity, SampleLinkSummary summary) {
+    private LabSampleRecord toRecord(UUID tenantId, LabOrderSampleEntity entity, SampleLinkSummary summary) {
         return new LabSampleRecord(
                 entity.getId(),
                 entity.getLabOrderId(),
@@ -1533,7 +1566,9 @@ public class LabService {
                 entity.getContainerType(),
                 toRecord(entity.getStatus()),
                 entity.getCollectedAt(),
-                entity.getCollectedBy(),
+                entity.getCollectedBy() == null
+                        ? null
+                        : resolveUserDisplayName(tenantId, entity.getCollectedBy()).orElse(entity.getCollectedBy().toString()),
                 entity.getReceivedAt(),
                 entity.getReceivedBy(),
                 entity.getRejectionReason(),
@@ -1548,8 +1583,8 @@ public class LabService {
         );
     }
 
-    private LabSampleRecord toRecord(LabOrderSampleEntity entity) {
-        return toRecord(entity, SampleLinkSummary.empty());
+    private LabSampleRecord toRecord(UUID tenantId, LabOrderSampleEntity entity) {
+        return toRecord(tenantId, entity, SampleLinkSummary.empty());
     }
 
     private LabSampleStatusRecord toRecord(LabSampleStatus status) {
@@ -2942,14 +2977,11 @@ public class LabService {
         return toRecord(tenantId, persisted);
     }
 
-    private void validateTest(LabTestUpsertCommand command) {
+    private void validateTest(UUID tenantId, LabTestUpsertCommand command) {
         if (command == null) {
             throw new IllegalArgumentException("command is required");
         }
-        String testCode = normalizeNullable(command.testCode());
-        if (StringUtils.hasText(testCode) && !testCode.matches("^[A-Za-z0-9/_-]+$")) {
-            throw new IllegalArgumentException("testCode contains invalid characters");
-        }
+        LabValidationSupport.normalizeTestCode(command.testCode(), "testCode");
         if (!StringUtils.hasText(command.testName())) {
             throw new IllegalArgumentException("testName is required");
         }
@@ -2962,15 +2994,15 @@ public class LabService {
         if (!StringUtils.hasText(command.category())) {
             throw new IllegalArgumentException("category is required");
         }
-        if (normalize(command.category()).length() > 30) {
+        String category = normalizeCategory(command.category());
+        if (category.length() > 30) {
             throw new IllegalArgumentException("category must be 30 characters or fewer");
         }
-        if (command.price() == null || command.price().compareTo(ZERO) < 0) {
-            throw new IllegalArgumentException("price is required");
+        if (!labCatalogueConfigService.isCategoryActive(tenantId, category)) {
+            throw new IllegalArgumentException("category is inactive");
         }
-        if (command.price().compareTo(new BigDecimal("999999.00")) > 0) {
-            throw new IllegalArgumentException("price exceeds the allowed maximum");
-        }
+        LabValidationSupport.normalizeWholeHours(command.turnaroundTime(), "turnaroundTime");
+        LabValidationSupport.normalizeMoney(command.price(), "price");
         if (command.parameters() != null) {
             List<String> seen = new ArrayList<>();
             for (LabTestParameterUpsertCommand parameter : command.parameters()) {
@@ -3082,9 +3114,6 @@ public class LabService {
     }
 
     private void ensureUniqueTestCode(UUID tenantId, String testCode, UUID currentId) {
-        if (!StringUtils.hasText(testCode)) {
-            return;
-        }
         labTestMasterRepository.findByTenantIdAndTestCodeIgnoreCase(tenantId, normalize(testCode))
                 .filter(entity -> currentId == null || !currentId.equals(entity.getId()))
                 .ifPresent(entity -> {
@@ -3305,8 +3334,11 @@ public class LabService {
         int sortOrder = 1;
         List<LabTestParameterEntity> entities = new ArrayList<>();
         for (LabTestParameterUpsertCommand command : commands) {
-            if (command == null || !StringUtils.hasText(command.parameterName())) {
+            if (command == null) {
                 continue;
+            }
+            if (!StringUtils.hasText(command.parameterName())) {
+                throw new IllegalArgumentException("parameterName is required when parameters are provided");
             }
             entities.add(LabTestParameterEntity.create(
                     tenantId,
@@ -3328,10 +3360,10 @@ public class LabService {
             root = root.getCause();
         }
         String message = root.getMessage() == null ? "" : root.getMessage().toLowerCase();
-        if (message.contains("uq_lab_tests_tenant_code") || message.contains("test_code")) {
+        if (message.contains("uq_lab_tests_tenant_code") || message.contains("uq_lab_tests_tenant_code_ci") || message.contains("test_code")) {
             return new IllegalArgumentException("Lab test code already exists");
         }
-        if (message.contains("uq_lab_tests_tenant_name") || message.contains("test_name")) {
+        if (message.contains("uq_lab_tests_tenant_name") || message.contains("uq_lab_tests_tenant_name_ci") || message.contains("test_name")) {
             return new IllegalArgumentException("Lab test already exists");
         }
         if (command.parameters() != null && !command.parameters().isEmpty()) {
@@ -3680,6 +3712,42 @@ public class LabService {
             return editableFromLifecycle;
         }
         return orderItems.stream().map(LabOrderItemEntity::getId).toList();
+    }
+
+    private List<UUID> selectEditableTestsForResultEntry(
+            Collection<LabOrderItemEntity> orderItems,
+            List<LaboratoryOrderedTestView> lifecycleViews,
+            UUID labOrderSampleId,
+            LabOrderSampleEntity scopedSample,
+            Map<UUID, SampleLinkSummary> sampleLinkSummaries
+    ) {
+        if (orderItems == null || orderItems.isEmpty() || labOrderSampleId == null) {
+            return List.of();
+        }
+        Set<UUID> linkedItemIds = new LinkedHashSet<>();
+        SampleLinkSummary summary = sampleLinkSummaries == null ? null : sampleLinkSummaries.get(labOrderSampleId);
+        if (summary != null && summary.linkedLabOrderItemIds() != null) {
+            linkedItemIds.addAll(summary.linkedLabOrderItemIds());
+        }
+        if (linkedItemIds.isEmpty()) {
+            if (scopedSample != null && scopedSample.getLabOrderItemId() != null) {
+                linkedItemIds.add(scopedSample.getLabOrderItemId());
+            }
+        }
+        if (lifecycleViews == null || lifecycleViews.isEmpty()) {
+            return new ArrayList<>(linkedItemIds);
+        }
+        Map<UUID, String> stateByItemId = lifecycleViews == null ? Map.of() : lifecycleViews.stream()
+                .filter(view -> view.labOrderItemId() != null)
+                .collect(Collectors.toMap(
+                        LaboratoryOrderedTestView::labOrderItemId,
+                        view -> view.state(),
+                        (left, right) -> left,
+                        LinkedHashMap::new
+                ));
+        return linkedItemIds.stream()
+                .filter(itemId -> isEditableResultEntryState(stateByItemId.get(itemId)))
+                .toList();
     }
 
     private List<UUID> validateSelectedTestsForResultEntry(List<UUID> selectedTestIds, Map<UUID, LaboratoryOrderedTestView> lifecycleByItemId) {

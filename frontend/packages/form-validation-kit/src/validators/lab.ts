@@ -98,11 +98,28 @@ export function labOptionalCodeText(maxLength: number, message: string) {
   );
 }
 
+export function labRequiredCodeText(maxLength: number, message: string) {
+  return z.preprocess(
+    toTrimmedRequiredString,
+    z.string().min(1, message).max(maxLength, message).refine(hasAllowedCodeChars, message),
+  );
+}
+
 export function labOptionalIntegerText(maxValue: number, message: string) {
   return z.preprocess(
     toTrimmedOptionalString,
     z.string()
       .regex(/^\d+$/, message)
+      .refine((value) => value == null || value === "" || Number(value) <= maxValue, message)
+      .optional(),
+  );
+}
+
+export function labOptionalWholeHoursText(maxValue: number, message: string) {
+  return z.preprocess(
+    toTrimmedOptionalString,
+    z.string()
+      .regex(/^\d{1,3}$/, message)
       .refine((value) => value == null || value === "" || Number(value) <= maxValue, message)
       .optional(),
   );

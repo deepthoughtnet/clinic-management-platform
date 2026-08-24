@@ -14,7 +14,7 @@ public record LabSampleRecord(
         String containerType,
         LabSampleStatusRecord status,
         OffsetDateTime collectedAt,
-        UUID collectedBy,
+        String collectedBy,
         OffsetDateTime receivedAt,
         UUID receivedBy,
         String rejectionReason,

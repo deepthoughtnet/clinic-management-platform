@@ -39,11 +39,60 @@ type TestDraft = {
   displayOrder: string;
 };
 
-function parseOptionalNumber(value: string) {
+function parseOptionalDisplayOrder(value: string) {
   const trimmed = value.trim();
   if (!trimmed) return null;
+  if (!/^-?\d+$/.test(trimmed)) {
+    throw new Error("Display order must be a whole number.");
+  }
   const parsed = Number(trimmed);
-  return Number.isFinite(parsed) ? parsed : null;
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error("Display order must be zero or greater.");
+  }
+  return parsed;
+}
+
+function parseOptionalMoney(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (!/^-?\d+(\.\d+)?$/.test(trimmed)) {
+    throw new Error("Price override must be a valid amount.");
+  }
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error("Price override must be zero or greater.");
+  }
+  if (!/^\d+(\.\d{1,2})?$/.test(trimmed)) {
+    throw new Error("Price override must have at most 2 decimal places.");
+  }
+  if (parsed > 999999) {
+    throw new Error("Price override exceeds the allowed maximum.");
+  }
+  return parsed;
+}
+
+function parseOptionalWholeHours(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (!/^\d{1,3}$/.test(trimmed)) {
+    throw new Error("TAT override must be a whole number between 0 and 999.");
+  }
+  const parsed = Number(trimmed);
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 999) {
+    throw new Error("TAT override must be a whole number between 0 and 999.");
+  }
+  return String(parsed);
+}
+
+function validateDisplayName(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error("Display name is required.");
+  }
+  if (trimmed.length > 128) {
+    throw new Error("Display name must be 128 characters or fewer.");
+  }
+  return trimmed;
 }
 
 function toCategoryDraft(row: LabCategoryConfig): CategoryDraft {
@@ -75,6 +124,7 @@ export default function LabConfigurationPanel({
   const [testDrafts, setTestDrafts] = React.useState<Record<string, TestDraft>>({});
   const [categorySaving, setCategorySaving] = React.useState<string | null>(null);
   const [testSaving, setTestSaving] = React.useState<string | null>(null);
+  const [validationError, setValidationError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     setCategoryDrafts(Object.fromEntries(categories.map((row) => [row.categoryCode, toCategoryDraft(row)])));
@@ -88,12 +138,15 @@ export default function LabConfigurationPanel({
     const draft = categoryDrafts[code];
     if (!draft) return;
     setCategorySaving(code);
+    setValidationError(null);
     try {
       await onSaveCategory(code, {
-        displayName: draft.displayName,
+        displayName: validateDisplayName(draft.displayName),
         active: draft.active,
-        displayOrder: parseOptionalNumber(draft.displayOrder),
+        displayOrder: parseOptionalDisplayOrder(draft.displayOrder),
       });
+    } catch (err) {
+      setValidationError(err instanceof Error ? err.message : "Unable to save category configuration.");
     } finally {
       setCategorySaving(null);
     }
@@ -103,14 +156,17 @@ export default function LabConfigurationPanel({
     const draft = testDrafts[id];
     if (!draft) return;
     setTestSaving(id);
+    setValidationError(null);
     try {
       await onSaveTest(id, {
         enabled: draft.enabled,
         active: draft.active,
-        tenantPriceOverride: parseOptionalNumber(draft.tenantPriceOverride),
-        tenantTatOverride: draft.tenantTatOverride.trim() === "" ? null : draft.tenantTatOverride.trim(),
-        displayOrder: parseOptionalNumber(draft.displayOrder),
+        tenantPriceOverride: parseOptionalMoney(draft.tenantPriceOverride),
+        tenantTatOverride: parseOptionalWholeHours(draft.tenantTatOverride),
+        displayOrder: parseOptionalDisplayOrder(draft.displayOrder),
       });
+    } catch (err) {
+      setValidationError(err instanceof Error ? err.message : "Unable to save lab test configuration.");
     } finally {
       setTestSaving(null);
     }
@@ -121,6 +177,7 @@ export default function LabConfigurationPanel({
       <Alert severity="info">
         Lab configuration is tenant-scoped. Category toggles affect lab ordering only; historical orders remain unchanged.
       </Alert>
+      {validationError ? <Alert severity="error">{validationError}</Alert> : null}
 
       <CompactFilterCard title="Categories" subtitle="Enable or disable catalogue categories for this tenant.">
         <Box sx={{ overflowX: "auto" }}>
@@ -194,7 +251,7 @@ export default function LabConfigurationPanel({
                 <TableCell>Enabled</TableCell>
                 <TableCell>Active</TableCell>
                 <TableCell>Price Override</TableCell>
-                <TableCell>TAT Override</TableCell>
+                <TableCell>TAT Override (Hours)</TableCell>
                 <TableCell>Display Order</TableCell>
                 <TableCell align="right">Actions</TableCell>
               </TableRow>
