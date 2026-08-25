@@ -59,6 +59,7 @@ import CommentSuggestions from "../../shared/components/comment-suggestions/Comm
 import {
   getLabCategoryConfig,
   getClinicProfile,
+  getAdminIntegrationsStatus,
   getPatient,
   collectLabOrderSamples,
   collectLabOrderPayment,
@@ -104,6 +105,7 @@ import {
   type Bill,
   type BillLine,
   type ClinicProfile,
+  type AdminIntegrationStatusRow,
   type PaymentMode,
   type Payment,
   type Receipt,
@@ -222,6 +224,40 @@ const DELIVERY_CHANNEL_OPTIONS = [
   { value: "DOCTOR_NOTIFICATION", label: "Doctor notification" },
   { value: "PRINT", label: "Print" },
 ] as const;
+const DOCTOR_NOTIFICATION_CHANNEL_NOT_CONFIGURED_LABEL = "Doctor notification (Channel not configured)";
+
+function integrationRow(rows: AdminIntegrationStatusRow[] | null | undefined, key: string) {
+  return rows?.find((row) => row.key === key) || null;
+}
+
+function isIntegrationReady(row: AdminIntegrationStatusRow | null | undefined) {
+  return Boolean(row && row.status === "READY" && row.enabled && row.configured);
+}
+
+function deliveryActionLabel(rows: AdminIntegrationStatusRow[] | null | undefined, key: string, label: string) {
+  const row = integrationRow(rows, key);
+  if (isIntegrationReady(row)) {
+    return label;
+  }
+  return `${label} (Channel not configured)`;
+}
+
+function deliveryActionReason(rows: AdminIntegrationStatusRow[] | null | undefined, key: string, label: string) {
+  const row = integrationRow(rows, key);
+  if (isIntegrationReady(row)) {
+    return null;
+  }
+  return row?.message || `${label} channel not configured.`;
+}
+
+function deliveryActionState(rows: AdminIntegrationStatusRow[] | null | undefined, key: string, label: string) {
+  const ready = isIntegrationReady(integrationRow(rows, key));
+  return {
+    ready,
+    label: ready ? label : `${label} (Channel not configured)`,
+    reason: deliveryActionReason(rows, key, label),
+  };
+}
 
 function formatOrderOrigin(origin: LabOrderOrigin | string | null | undefined) {
   switch (origin) {
@@ -925,11 +961,13 @@ function ReportActionMenuButton(props: {
   onViewReport: (row: LabOrder) => void;
   onPrintReport: (row: LabOrder) => void;
   onDownloadReport: (row: LabOrder) => void;
+  emailLabel: string;
+  whatsappLabel: string;
   onEmailReport: (row: LabOrder) => void;
   onWhatsappReport: (row: LabOrder) => void;
   onShareLink: (row: LabOrder) => void;
 }) {
-  const { row, disabled, onViewReport, onPrintReport, onDownloadReport, onEmailReport, onWhatsappReport, onShareLink } = props;
+  const { row, disabled, onViewReport, onPrintReport, onDownloadReport, emailLabel, whatsappLabel, onEmailReport, onWhatsappReport, onShareLink } = props;
   const [anchorEl, setAnchorEl] = React.useState<HTMLElement | null>(null);
   const open = Boolean(anchorEl);
 
@@ -944,8 +982,8 @@ function ReportActionMenuButton(props: {
         <MenuItem onClick={() => { setAnchorEl(null); onViewReport(row); }}>View Report</MenuItem>
         <MenuItem onClick={() => { setAnchorEl(null); onPrintReport(row); }}>Print Report</MenuItem>
         <MenuItem onClick={() => { setAnchorEl(null); onDownloadReport(row); }}>Download PDF</MenuItem>
-        <MenuItem onClick={() => { setAnchorEl(null); onEmailReport(row); }}>Email</MenuItem>
-        <MenuItem onClick={() => { setAnchorEl(null); onWhatsappReport(row); }}>WhatsApp</MenuItem>
+        <MenuItem disabled={emailLabel !== "Email"} onClick={() => { setAnchorEl(null); onEmailReport(row); }}>{emailLabel}</MenuItem>
+        <MenuItem disabled={whatsappLabel !== "WhatsApp"} onClick={() => { setAnchorEl(null); onWhatsappReport(row); }}>{whatsappLabel}</MenuItem>
         <MenuItem onClick={() => { setAnchorEl(null); onShareLink(row); }}>Share Link</MenuItem>
       </Menu>
     </>
@@ -1051,6 +1089,7 @@ export default function LabPage() {
   const [receiptPrintAutoPrint, setReceiptPrintAutoPrint] = React.useState(false);
   const [receiptPrintData, setReceiptPrintData] = React.useState<ReceiptPrintData | null>(null);
   const [clinicProfile, setClinicProfile] = React.useState<ClinicProfile | null>(null);
+  const [deliveryIntegrationRows, setDeliveryIntegrationRows] = React.useState<AdminIntegrationStatusRow[]>([]);
   const [sampleCollectedBy, setSampleCollectedBy] = React.useState("");
   const [sampleCollectedAt, setSampleCollectedAt] = React.useState(toDatetimeLocal(new Date().toISOString()));
   const [sampleCollectionStatus, setSampleCollectionStatus] = React.useState<SampleCollectionStatus>("Collected");
@@ -1135,18 +1174,20 @@ export default function LabPage() {
     setLoading(true);
     setError(null);
     try {
-      const [categoryRows, testRows, orderRows, categoryConfigRows, testConfigRows] = await Promise.all([
+      const [categoryRows, testRows, orderRows, categoryConfigRows, testConfigRows, integrationStatus] = await Promise.all([
         getLabCategories(auth.accessToken, auth.tenantId),
         getLabTests(auth.accessToken, auth.tenantId, { active: null }),
         canViewOrders ? getLabOrders(auth.accessToken, auth.tenantId, {}) : Promise.resolve([] as LabOrder[]),
         canManageTests ? getLabCategoryConfig(auth.accessToken, auth.tenantId) : Promise.resolve([] as LabCategoryConfig[]),
         canManageTests ? getLabTestConfig(auth.accessToken, auth.tenantId) : Promise.resolve([] as LabTestCatalogueConfig[]),
+        getAdminIntegrationsStatus(auth.accessToken, auth.tenantId).catch(() => ({ rows: [] as AdminIntegrationStatusRow[] })),
       ]);
       setCategories(categoryRows);
       setTests(testRows);
       setOrders(orderRows);
       setCategoryConfigs(categoryConfigRows);
       setTestConfigs(testConfigRows);
+      setDeliveryIntegrationRows(integrationStatus.rows || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load laboratory module");
     } finally {
@@ -1157,6 +1198,19 @@ export default function LabPage() {
   React.useEffect(() => {
     void load();
   }, [load]);
+
+  const emailDeliveryAction = React.useMemo(
+    () => deliveryActionState(deliveryIntegrationRows, "messaging.email", "Email"),
+    [deliveryIntegrationRows],
+  );
+  const whatsappDeliveryAction = React.useMemo(
+    () => deliveryActionState(deliveryIntegrationRows, "messaging.whatsapp", "WhatsApp"),
+    [deliveryIntegrationRows],
+  );
+  const doctorNotificationDeliveryAction = React.useMemo(
+    () => deliveryActionState(deliveryIntegrationRows, "messaging.in_app", "Doctor notification"),
+    [deliveryIntegrationRows],
+  );
 
   React.useEffect(() => {
     orders
@@ -2554,6 +2608,7 @@ export default function LabPage() {
               onEmailReport={emailReport}
               onWhatsappReport={whatsappReport}
               onShareReportLink={shareReportLink}
+              deliveryIntegrationRows={deliveryIntegrationRows}
             />
           ) : tab === 2 ? (
             <OrderQueue
@@ -2593,6 +2648,7 @@ export default function LabPage() {
               onEmailReport={emailReport}
               onWhatsappReport={whatsappReport}
               onShareReportLink={shareReportLink}
+              deliveryIntegrationRows={deliveryIntegrationRows}
             />
           ) : tab === 3 ? (
             <OrderQueue
@@ -2632,6 +2688,7 @@ export default function LabPage() {
               onEmailReport={emailReport}
               onWhatsappReport={whatsappReport}
               onShareReportLink={shareReportLink}
+              deliveryIntegrationRows={deliveryIntegrationRows}
             />
           ) : tab === 4 ? (
             <Stack spacing={2}>
@@ -2818,6 +2875,8 @@ export default function LabPage() {
                                 <ReportActionMenuButton
                                   row={row}
                                   disabled={saving}
+                                  emailLabel={emailDeliveryAction.label}
+                                  whatsappLabel={whatsappDeliveryAction.label}
                                   onViewReport={viewReport}
                                   onPrintReport={printReport}
                                   onDownloadReport={downloadReport}
@@ -3772,6 +3831,7 @@ export default function LabPage() {
                     key={option.value}
                     control={
                       <Checkbox
+                        disabled={option.value === "DOCTOR_NOTIFICATION" && !doctorNotificationDeliveryAction.ready}
                         checked={publishChannels.includes(option.value)}
                         onChange={(event) => {
                           setPublishChannels((current) => event.target.checked
@@ -3780,7 +3840,9 @@ export default function LabPage() {
                         }}
                       />
                     }
-                    label={option.label}
+                    label={option.value === "DOCTOR_NOTIFICATION" && !doctorNotificationDeliveryAction.ready
+                      ? DOCTOR_NOTIFICATION_CHANNEL_NOT_CONFIGURED_LABEL
+                      : option.label}
                   />
                 ))}
               </Stack>
@@ -3866,8 +3928,8 @@ export default function LabPage() {
                 <Button variant="outlined" onClick={() => { setPublishSuccessTarget(null); if (publishSuccessTarget) viewReport(publishSuccessTarget); }}>View Report</Button>
                 <Button variant="outlined" onClick={() => { setPublishSuccessTarget(null); if (publishSuccessTarget) printReport(publishSuccessTarget); }}>Print Report</Button>
                 <Button variant="outlined" startIcon={<DownloadRoundedIcon />} onClick={() => { setPublishSuccessTarget(null); if (publishSuccessTarget) downloadReport(publishSuccessTarget); }}>Download PDF</Button>
-                <Button variant="outlined" onClick={() => { setPublishSuccessTarget(null); if (publishSuccessTarget) emailReport(publishSuccessTarget); }}>Email</Button>
-                <Button variant="outlined" onClick={() => { setPublishSuccessTarget(null); if (publishSuccessTarget) whatsappReport(publishSuccessTarget); }}>WhatsApp</Button>
+                <Button variant="outlined" disabled={!emailDeliveryAction.ready} onClick={() => { setPublishSuccessTarget(null); if (publishSuccessTarget) emailReport(publishSuccessTarget); }}>{emailDeliveryAction.label}</Button>
+                <Button variant="outlined" disabled={!whatsappDeliveryAction.ready} onClick={() => { setPublishSuccessTarget(null); if (publishSuccessTarget) whatsappReport(publishSuccessTarget); }}>{whatsappDeliveryAction.label}</Button>
                 <Button variant="outlined" onClick={() => { setPublishSuccessTarget(null); if (publishSuccessTarget) shareReportLink(publishSuccessTarget); }}>Share Link</Button>
               </Stack>
             </Stack>
@@ -4056,6 +4118,7 @@ function OrderQueue(props: {
   rows: LabOrder[];
   emptySubtitle: string;
   actionDisabled: boolean;
+  deliveryIntegrationRows: AdminIntegrationStatusRow[];
   canCollectPayment: boolean;
   canCollectSample: boolean;
   canManageSamples: boolean;
@@ -4080,7 +4143,15 @@ function OrderQueue(props: {
   onWhatsappReport: (row: LabOrder) => void;
   onShareReportLink: (row: LabOrder) => void;
 }) {
-  const { rows, emptySubtitle, actionDisabled, canCollectPayment, canCollectSample, canManageSamples, canEnterResults, canGenerateReport, canReviewReport, canAccessLabReceipts, onViewReceipt, onPrintReceipt, onDownloadReceipt, onCollectPayment, onCollectSample, onReceiveSample, onRejectSample, onEnterResults, onReview, onPublishReport, onViewReport, onPrintReport, onDownloadReport, onEmailReport, onWhatsappReport, onShareReportLink } = props;
+  const { rows, emptySubtitle, actionDisabled, deliveryIntegrationRows, canCollectPayment, canCollectSample, canManageSamples, canEnterResults, canGenerateReport, canReviewReport, canAccessLabReceipts, onViewReceipt, onPrintReceipt, onDownloadReceipt, onCollectPayment, onCollectSample, onReceiveSample, onRejectSample, onEnterResults, onReview, onPublishReport, onViewReport, onPrintReport, onDownloadReport, onEmailReport, onWhatsappReport, onShareReportLink } = props;
+  const emailDeliveryAction = React.useMemo(
+    () => deliveryActionState(deliveryIntegrationRows, "messaging.email", "Email"),
+    [deliveryIntegrationRows],
+  );
+  const whatsappDeliveryAction = React.useMemo(
+    () => deliveryActionState(deliveryIntegrationRows, "messaging.whatsapp", "WhatsApp"),
+    [deliveryIntegrationRows],
+  );
 
   if (!rows.length) {
     return <CompactEmptyState title="No lab orders found" subtitle={emptySubtitle} />;
@@ -4287,6 +4358,8 @@ function OrderQueue(props: {
                     <ReportActionMenuButton
                       row={row}
                       disabled={actionDisabled}
+                      emailLabel={emailDeliveryAction.label}
+                      whatsappLabel={whatsappDeliveryAction.label}
                       onViewReport={onViewReport}
                       onPrintReport={onPrintReport}
                       onDownloadReport={onDownloadReport}

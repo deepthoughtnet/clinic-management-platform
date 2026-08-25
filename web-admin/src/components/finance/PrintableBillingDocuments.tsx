@@ -363,13 +363,13 @@ function PrintShell({
                 <Box
                   component="img"
                   src={logoObjectUrl}
-                  alt={`${clinicProfile?.displayName || clinicProfile?.clinicName || "Clinic"} logo`}
+                  alt={`${clinicTitle(clinicProfile)} logo`}
                   sx={{ width: 42, height: 42, objectFit: "contain", flexShrink: 0, mt: 0.15 }}
                 />
               ) : null}
               <Box sx={{ minWidth: 0 }}>
                 <Typography variant="h6" sx={{ fontWeight: 900, lineHeight: 1.05, letterSpacing: -0.3 }}>
-                  {clinicProfile?.displayName || clinicProfile?.clinicName || "Clinic Name"}
+                  {clinicTitle(clinicProfile)}
                 </Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, wordBreak: "break-word" }}>
                   {compactAddress(clinicProfile).join(" • ")}

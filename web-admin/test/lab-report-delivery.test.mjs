@@ -23,6 +23,9 @@ test("lab report delivery UI exposes action menu and publish success panel", () 
   assert.ok(source.includes("Recorded delivery actions"));
   assert.ok(source.includes("Delivery audit is recorded on the published report record"));
   assert.ok(source.includes("reportDeliveryHistorySummary"));
+  assert.ok(source.includes("getAdminIntegrationsStatus"));
+  assert.ok(source.includes("deliveryActionState"));
+  assert.ok(source.includes("Doctor notification (Channel not configured)"));
   assert.ok(source.includes('publishReportMode === "GROUPED" || isReportGenerationOnly(publishTarget) ? "Generate Report" : "Publish"'));
   assert.ok(source.includes("Portal viewed"));
   assert.ok(source.includes("PDF downloaded"));

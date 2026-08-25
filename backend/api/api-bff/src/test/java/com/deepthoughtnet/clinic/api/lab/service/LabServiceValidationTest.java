@@ -1159,6 +1159,144 @@ class LabServiceValidationTest {
     }
 
     @Test
+    void rendersFinalConsolidatedLabReportPdfWithMultipleAccessionsInHeaderAndAccessionsSection() throws Exception {
+        UUID cbcItemId = UUID.fromString("cccccccc-cccc-cccc-cccc-cccccccccccc");
+        UUID hba1cItemId = UUID.fromString("dddddddd-dddd-dddd-dddd-dddddddddddd");
+        var order = sampleOrder(LabOrderStatus.DELIVERED);
+        setOrderId(order, ORDER_ID);
+        order.ensureReportVerificationToken();
+        setOrderField(order, "labVerifiedBy", ACTOR_ID);
+        setOrderField(order, "labVerifiedAt", OffsetDateTime.now().minusMinutes(15));
+        setOrderField(order, "reportPublishedAt", OffsetDateTime.now().minusMinutes(10));
+        when(tenantUserManagementService.list(TENANT_ID)).thenReturn(List.of(new TenantUserRecord(
+                ACTOR_ID,
+                TENANT_ID,
+                "approver-sub",
+                "approver@example.com",
+                "UAT Automation Lab Approver",
+                "ACTIVE",
+                "LAB_APPROVER",
+                "ACTIVE",
+                OffsetDateTime.now().minusDays(1),
+                OffsetDateTime.now(),
+                "ACTIVE"
+        )));
+        LabOrderItemEntity cbcItem = sampleOrderItem(cbcItemId, "CBC", "Complete Blood Count", 1);
+        LabOrderItemEntity hba1cItem = sampleOrderItem(hba1cItemId, "HBA1C", "HbA1c", 2);
+        when(labOrderRepository.findByTenantIdAndId(TENANT_ID, ORDER_ID)).thenReturn(Optional.of(order));
+        when(labOrderItemRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAsc(TENANT_ID, ORDER_ID)).thenReturn(List.of(cbcItem, hba1cItem));
+        when(labOrderResultRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAscCreatedAtAsc(TENANT_ID, ORDER_ID)).thenReturn(List.of(
+                LabOrderResultEntity.create(TENANT_ID, ORDER_ID, cbcItemId, "CBC", "Complete Blood Count", "Hemoglobin", null, "14.2", "g/dL", "13.0-17.0", 1, "NORMAL", false),
+                LabOrderResultEntity.create(TENANT_ID, ORDER_ID, hba1cItemId, "HBA1C", "HbA1c", "HbA1c", null, "5.8", "%", "4.0-6.0", 2, "NORMAL", false)
+        ));
+        LabOrderSampleEntity cbcSample = LabOrderSampleEntity.create(
+                TENANT_ID,
+                ORDER_ID,
+                cbcItemId,
+                "LAB-20260824-0002",
+                "LAB-20260824-0002",
+                "Blood",
+                "EDTA",
+                OffsetDateTime.parse("2026-08-24T04:30:00Z"),
+                ACTOR_ID,
+                null,
+                ACTOR_ID
+        );
+        cbcSample.markReceived(OffsetDateTime.parse("2026-08-24T04:35:00Z"), ACTOR_ID, ACTOR_ID);
+        LabOrderSampleEntity hba1cSample = LabOrderSampleEntity.create(
+                TENANT_ID,
+                ORDER_ID,
+                hba1cItemId,
+                "LAB-20260824-0003",
+                "LAB-20260824-0003",
+                "Blood",
+                "Plain Tube",
+                OffsetDateTime.parse("2026-08-24T04:40:00Z"),
+                ACTOR_ID,
+                null,
+                ACTOR_ID
+        );
+        hba1cSample.markReceived(OffsetDateTime.parse("2026-08-24T04:45:00Z"), ACTOR_ID, ACTOR_ID);
+        when(labOrderSampleRepository.findByTenantIdAndLabOrderIdOrderByCollectedAtAscCreatedAtAsc(TENANT_ID, ORDER_ID)).thenReturn(List.of(cbcSample, hba1cSample));
+        when(laboratoryWorkflowService.listOrderTests(TENANT_ID, ORDER_ID)).thenReturn(List.of(
+                new LaboratoryOrderedTestView(
+                        cbcItemId,
+                        "PUBLISHED",
+                        1,
+                        null,
+                        null,
+                        null,
+                        2,
+                        OffsetDateTime.now().minusMinutes(10),
+                        ACTOR_ID,
+                        List.of("PATIENT_PORTAL"),
+                        null,
+                        OffsetDateTime.now().minusMinutes(20),
+                        ACTOR_ID,
+                        List.of(new LaboratorySpecimenLinkView(
+                                cbcSample.getId(),
+                                "LAB-20260824-0002",
+                                "LAB-20260824-0002",
+                                "Blood",
+                                "EDTA",
+                                "RECEIVED",
+                                true,
+                                OffsetDateTime.parse("2026-08-24T04:30:00Z"),
+                                OffsetDateTime.parse("2026-08-24T04:35:00Z"),
+                                OffsetDateTime.parse("2026-08-24T04:35:00Z"),
+                                null
+                        ))
+                ),
+                new LaboratoryOrderedTestView(
+                        hba1cItemId,
+                        "PUBLISHED",
+                        1,
+                        null,
+                        null,
+                        null,
+                        2,
+                        OffsetDateTime.now().minusMinutes(10),
+                        ACTOR_ID,
+                        List.of("PATIENT_PORTAL"),
+                        null,
+                        OffsetDateTime.now().minusMinutes(15),
+                        ACTOR_ID,
+                        List.of(new LaboratorySpecimenLinkView(
+                                hba1cSample.getId(),
+                                "LAB-20260824-0003",
+                                "LAB-20260824-0003",
+                                "Blood",
+                                "Plain Tube",
+                                "RECEIVED",
+                                true,
+                                OffsetDateTime.parse("2026-08-24T04:40:00Z"),
+                                OffsetDateTime.parse("2026-08-24T04:45:00Z"),
+                                OffsetDateTime.parse("2026-08-24T04:45:00Z"),
+                                null
+                        ))
+                )
+        ));
+
+        var pdf = service.renderReportPdf(TENANT_ID, ORDER_ID, List.of(cbcItemId, hba1cItemId), "CONSOLIDATED", "FINAL");
+
+        try (PDDocument document = Loader.loadPDF(pdf.content())) {
+            String text = new PDFTextStripper().getText(document);
+            assertThat(document.getNumberOfPages()).isEqualTo(1);
+            assertThat(text).contains("Patient & Report Details");
+            assertThat(text).contains("Accession No");
+            assertThat(text).contains("Sample Type");
+            assertThat(text).contains("Multiple");
+            assertThat(text).contains("Specimens / Accessions");
+            assertThat(text).contains("LAB-20260824-0002");
+            assertThat(text).contains("LAB-20260824-0003");
+            assertThat(text).contains("Complete Blood Count");
+            assertThat(text).contains("HbA1c");
+            assertThat(text).contains("EDTA");
+            assertThat(text).contains("Plain Tube");
+        }
+    }
+
+    @Test
     void rendersOnlyClinicalNotesInPatientFacingPdf() throws Exception {
         var order = sampleOrder(LabOrderStatus.REPORT_READY);
         setOrderId(order, ORDER_ID);

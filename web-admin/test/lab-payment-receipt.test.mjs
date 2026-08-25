@@ -35,4 +35,6 @@ test("lab payment receipt flow reuses billing receipt component and exposes post
   assert.ok(source.includes('Receipt: {receiptSummary.receiptNumber || "-"}'));
   assert.ok(source.includes('loadReceiptPrintData(true)'));
   assert.ok(source.includes('open={receiptPrintOpen || receiptPrintLoading}'));
+  assert.ok(receiptSource.includes('clinicTitle(clinicProfile)'));
+  assert.equal(receiptSource.includes('Clinic Name'), false);
 });

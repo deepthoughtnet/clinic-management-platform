@@ -1791,8 +1791,8 @@ public class LabService {
                 new MetaPair("Patient Name", record.patientName()),
                 new MetaPair("Patient ID", record.patientNumber()),
                 new MetaPair("Order No", record.orderNumber()),
-                new MetaPair("Accession No", record.sampleAccessionNumber()),
-                new MetaPair("Sample Type", firstText(record.sampleType(), fallbackSampleType(record))),
+                new MetaPair("Accession No", reportAccessionLabel(record)),
+                new MetaPair("Sample Type", reportSampleTypeLabel(record)),
                 new MetaPair("Collected At", formatDateTime(record.sampleCollectedAt(), tenantZone)),
                 new MetaPair("Approved By", firstText(record.labVerifiedByName(), resolveUserDisplayName(tenantId, record.labVerifiedBy()).orElse(null))),
                 new MetaPair("Approved At", formatDateTime(record.labVerifiedAt() == null ? record.reportPublishedAt() : record.labVerifiedAt(), tenantZone)),
@@ -1811,6 +1811,87 @@ public class LabService {
             layout.y -= rowHeight;
         }
         layout.y -= 8f;
+        if (hasMultipleAccessions(record)) {
+            drawSpecimenAccessionsBlock(layout, record, tenantZone);
+        }
+    }
+
+    private boolean hasMultipleAccessions(LabOrderRecord record) {
+        return safeList(record.samples()).stream()
+                .map(LabSampleRecord::accessionNumber)
+                .filter(StringUtils::hasText)
+                .distinct()
+                .count() > 1;
+    }
+
+    private String reportAccessionLabel(LabOrderRecord record) {
+        List<LabSampleRecord> samples = safeList(record.samples()).stream()
+                .filter(sample -> StringUtils.hasText(sample.accessionNumber()))
+                .toList();
+        if (samples.size() > 1) {
+            return "Multiple";
+        }
+        if (!samples.isEmpty()) {
+            return samples.get(0).accessionNumber();
+        }
+        return firstText(record.sampleAccessionNumber(), "Accession pending");
+    }
+
+    private String reportSampleTypeLabel(LabOrderRecord record) {
+        List<LabSampleRecord> samples = safeList(record.samples()).stream()
+                .filter(sample -> StringUtils.hasText(sample.accessionNumber()))
+                .toList();
+        if (samples.size() > 1) {
+            return "Multiple";
+        }
+        if (!samples.isEmpty()) {
+            return firstText(samples.get(0).specimenType(), record.sampleType(), fallbackSampleType(record));
+        }
+        return firstText(record.sampleType(), fallbackSampleType(record));
+    }
+
+    private void drawSpecimenAccessionsBlock(PdfReportLayout layout, LabOrderRecord record, ZoneId tenantZone) throws IOException {
+        List<LabSampleRecord> samples = safeList(record.samples()).stream()
+                .filter(sample -> StringUtils.hasText(sample.accessionNumber()))
+                .toList();
+        if (samples.size() <= 1) {
+            return;
+        }
+        writeSectionHeader(layout.content, "Specimens / Accessions", layout.margin, layout.y, layout.width);
+        layout.y -= 17f;
+        PDType1Font regularFont = new PDType1Font(Standard14Fonts.FontName.HELVETICA);
+        float rowPadding = 8f;
+        float rowWidth = layout.width;
+        for (LabSampleRecord sample : samples) {
+            String summary = specimenAccessionsSummary(sample, tenantZone);
+            float rowHeight = Math.max(26f, wrap(summary, regularFont, 8.4f, rowWidth - (rowPadding * 2f)).size() * 9.2f + 8f);
+            layout.ensureSpace(rowHeight + 4f);
+            float top = layout.y;
+            layout.content.addRect(layout.margin, top - rowHeight, rowWidth, rowHeight);
+            layout.content.stroke();
+            writeWrapped(layout.content, summary, 8.4f, layout.margin + rowPadding, top - 11f, rowWidth - (rowPadding * 2f), regularFont, 9.2f);
+            layout.y = top - rowHeight - 4f;
+        }
+    }
+
+    private String specimenAccessionsSummary(LabSampleRecord sample, ZoneId tenantZone) {
+        List<String> parts = new ArrayList<>();
+        if (StringUtils.hasText(sample.accessionNumber())) {
+            parts.add(sample.accessionNumber().trim());
+        }
+        if (StringUtils.hasText(sample.specimenType())) {
+            parts.add(sample.specimenType().trim());
+        }
+        if (StringUtils.hasText(sample.containerType())) {
+            parts.add(sample.containerType().trim());
+        }
+        if (sample.linkedTestNames() != null && !sample.linkedTestNames().isEmpty()) {
+            parts.add(String.join(", ", sample.linkedTestNames().stream().filter(StringUtils::hasText).map(String::trim).toList()));
+        }
+        if (sample.collectedAt() != null) {
+            parts.add("Collected " + formatDateTime(sample.collectedAt(), tenantZone));
+        }
+        return String.join(" | ", parts);
     }
 
     private void drawVerificationBlock(PdfReportLayout layout, String verificationUrl, String token, BufferedImage verificationQr) throws IOException {
