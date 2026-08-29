@@ -84,7 +84,8 @@ record ProcurementLineRequest(
         BigDecimal sellingPrice,
         String unit,
         UUID locationId,
-        String remarks
+        String remarks,
+        BigDecimal discount
 ) {
 }
 
@@ -94,7 +95,8 @@ record PurchaseOrderRequest(
         String orderDate,
         String expectedDeliveryDate,
         List<ProcurementLineRequest> items,
-        String approvalNote
+        String approvalNote,
+        String notes
 ) {
 }
 
@@ -110,6 +112,7 @@ record PurchaseOrderRecord(
         String matchingStatus,
         String varianceSummary,
         String approvalNote,
+        String notes,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt
 ) {

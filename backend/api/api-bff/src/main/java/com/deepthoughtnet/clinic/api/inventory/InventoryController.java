@@ -3,14 +3,20 @@ package com.deepthoughtnet.clinic.api.inventory;
 import com.deepthoughtnet.clinic.inventory.service.InventoryService;
 import com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionCommand;
 import com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionRecord;
+import com.deepthoughtnet.clinic.inventory.service.model.InventoryTransferCommand;
 import com.deepthoughtnet.clinic.inventory.service.model.InventoryLocationRecord;
 import com.deepthoughtnet.clinic.inventory.service.model.InventoryLocationUpsertCommand;
 import com.deepthoughtnet.clinic.inventory.service.model.LowStockRecord;
 import com.deepthoughtnet.clinic.inventory.service.model.StockRecord;
 import com.deepthoughtnet.clinic.inventory.service.model.StockUpsertCommand;
+import com.deepthoughtnet.clinic.inventory.service.model.PhysicalCountSessionRecord;
+import com.deepthoughtnet.clinic.inventory.service.model.PhysicalCountSessionSaveCommand;
 import com.deepthoughtnet.clinic.api.pharmacy.PharmacyOperationsService;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.util.List;
+import java.util.LinkedHashSet;
+import java.util.Locale;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -64,6 +70,29 @@ public class InventoryController {
         return inventoryService.listLocations(tenantId);
     }
 
+    @GetMapping("/physical-count-sessions")
+    @PreAuthorize("@permissionChecker.hasPermission('inventory.manage') or @permissionChecker.hasPermission('report.read')")
+    public List<PhysicalCountSessionRecord> listPhysicalCountSessions() {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        return inventoryService.listPhysicalCountSessions(tenantId);
+    }
+
+    @GetMapping("/physical-count-sessions/{id}")
+    @PreAuthorize("@permissionChecker.hasPermission('inventory.manage') or @permissionChecker.hasPermission('report.read')")
+    public PhysicalCountSessionRecord getPhysicalCountSession(@PathVariable UUID id) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        return inventoryService.findPhysicalCountSession(tenantId, id)
+                .orElseThrow(() -> new IllegalArgumentException("Physical count session not found"));
+    }
+
+    @PutMapping("/physical-count-sessions/{id}")
+    @PreAuthorize("@permissionChecker.hasAnyRole('PHARMACIST', 'PHARMA', 'PHARMACY', 'PHARMACY_INVENTORY_MANAGER', 'CLINIC_ADMIN')")
+    public PhysicalCountSessionRecord savePhysicalCountSession(@PathVariable UUID id, @jakarta.validation.Valid @RequestBody PhysicalCountSessionSaveCommand request) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        return inventoryService.savePhysicalCountSession(tenantId, id, request, actorAppUserId, currentPhysicalCountRoles());
+    }
+
     @PostMapping("/locations")
     @ResponseStatus(HttpStatus.CREATED)
     @PreAuthorize("@permissionChecker.hasPermission('inventory.manage')")
@@ -98,9 +127,25 @@ public class InventoryController {
         return inventoryService.updateStock(tenantId, id, request, actorAppUserId);
     }
 
+    @PostMapping("/transfers")
+    @ResponseStatus(HttpStatus.CREATED)
+    @PreAuthorize("@permissionChecker.hasPermission('inventory.manage')")
+    public InventoryTransactionRecord transferStock(@jakarta.validation.Valid @RequestBody InventoryTransferRequest request) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        return inventoryService.transferStock(tenantId, new InventoryTransferCommand(
+                request.medicineId(),
+                request.stockBatchId(),
+                request.fromLocationId(),
+                request.toLocationId(),
+                request.quantity(),
+                request.reason()
+        ), actorAppUserId);
+    }
+
     @PostMapping("/transactions")
     @ResponseStatus(HttpStatus.CREATED)
-    @PreAuthorize("@permissionChecker.hasPermission('inventory.manage') or @permissionChecker.hasPermission('billing.create')")
+    @PreAuthorize("@permissionChecker.hasPermission('inventory.manage')")
     public InventoryTransactionResponse createTransaction(@jakarta.validation.Valid @RequestBody InventoryTransactionCommand request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
@@ -134,5 +179,23 @@ public class InventoryController {
     public List<StockRecord> expiring(@RequestParam(defaultValue = "30") int days) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return inventoryService.listExpiringStocks(tenantId, days);
+    }
+
+    private Set<String> currentPhysicalCountRoles() {
+        var context = RequestContextHolder.require();
+        Set<String> roles = new LinkedHashSet<>();
+        addRole(roles, context.tenantRole());
+        if (context.tokenRoles() != null) {
+            context.tokenRoles().forEach(role -> addRole(roles, role));
+        }
+        return roles;
+    }
+
+    private void addRole(Set<String> roles, String role) {
+        if (role == null || role.isBlank()) {
+            return;
+        }
+        String normalized = role.trim().toUpperCase(Locale.ROOT);
+        roles.add(normalized.startsWith("ROLE_") ? normalized.substring(5) : normalized);
     }
 }

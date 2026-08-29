@@ -554,6 +554,10 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
     () => (invoiceForm.purchaseOrderId ? purchaseOrders.find((row) => row.id === invoiceForm.purchaseOrderId) ?? null : null),
     [invoiceForm.purchaseOrderId, purchaseOrders],
   );
+  const defaultInwardLocationId = React.useMemo(
+    () => selectedLocationId || locations.find((location) => location.defaultLocation)?.id || locations[0]?.id || "",
+    [locations, selectedLocationId],
+  );
   const selectedInvoicePurchaseOrderItems = React.useMemo(
     () => parseProcurementItems(selectedInvoicePurchaseOrder?.itemsJson),
     [selectedInvoicePurchaseOrder],
@@ -757,6 +761,10 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
         setLocations(locationRows);
         setSelectedLocationId((current) => current || locationRows.find((location) => location.defaultLocation)?.id || "");
         setGrnForm((current) => ({ ...current, locationId: current.locationId || locationRows.find((location) => location.defaultLocation)?.id || "" }));
+        setInwardForm((current) => ({
+          ...current,
+          locationId: current.locationId || locationRows.find((location) => location.defaultLocation)?.id || locationRows[0]?.id || null,
+        }));
       }
       if (loadErrors.length) {
         setError(loadErrors[0]);
@@ -985,13 +993,20 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
   }, [supplierForm, supplierId, suppliers]);
 
   const validateInwardForm = React.useCallback((): StockInwardValues | null => {
-    const parsed = stockInwardSchema.safeParse(inwardForm);
+    const payload = {
+      ...inwardForm,
+      locationId: inwardForm.locationId || defaultInwardLocationId,
+    };
+    const parsed = stockInwardSchema.safeParse(payload);
     if (!parsed.success) {
       const errors = mapZodErrors(parsed.error);
       setInwardFieldErrors(errors);
       setError(pickFirstError(errors));
       focusFirstInvalidField("inward-medicine", "inward-supplier", "inward-location", "inward-inward-date", "inward-grn", "inward-expiry", "inward-qty", "inward-threshold", "inward-unit-cost", "inward-selling-price");
       return null;
+    }
+    if (!inwardForm.locationId && payload.locationId) {
+      setInwardForm((current) => (current.locationId ? current : { ...current, locationId: payload.locationId }));
     }
     const selectedSupplier = parsed.data.supplierId ? suppliers.find((supplier) => supplier.id === parsed.data.supplierId) : null;
     if (selectedSupplier && !selectedSupplier.active) {
@@ -1003,7 +1018,7 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
     }
     setInwardFieldErrors(emptyErrors());
     return parsed.data;
-  }, [inwardForm, suppliers]);
+  }, [defaultInwardLocationId, inwardForm, suppliers]);
 
   const validateProcurementLineForm = React.useCallback((): ProcurementLineValues | null => {
     const payload = {
@@ -2164,7 +2179,7 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
                       <Grid size={{ xs: 12, md: 6 }}>
                         <FormControl fullWidth size="small" error={Boolean(inwardFieldErrors.locationId)}>
                           <InputLabel id="inward-location-label"><RequiredLabel text="Location" required /></InputLabel>
-                          <Select id="inward-location" labelId="inward-location-label" label="Location" value={inwardForm.locationId || selectedLocationId} onChange={(e) => setInwardForm((current) => ({ ...current, locationId: String(e.target.value) || null }))} required inputProps={{ "aria-required": true }}>
+                          <Select id="inward-location" labelId="inward-location-label" label="Location" value={inwardForm.locationId || defaultInwardLocationId} onChange={(e) => setInwardForm((current) => ({ ...current, locationId: String(e.target.value) || null }))} required inputProps={{ "aria-required": true }}>
                             <MenuItem value="">Default location</MenuItem>
                             {locations.map((location) => <MenuItem key={location.id} value={location.id}>{location.locationName}</MenuItem>)}
                           </Select>
@@ -2198,7 +2213,7 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
                     </Grid>
                     <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
                       <Button size="small" variant="contained" onClick={() => void submitInward()} disabled={!canManageOperations || saving}>Post Direct Goods Receipt</Button>
-                      <Button size="small" onClick={() => { setInwardForm(emptyInward); setInwardFieldErrors(emptyErrors()); setInwardMedicineSearch(""); }}>Clear</Button>
+                      <Button size="small" onClick={() => { setInwardForm({ ...emptyInward, locationId: defaultInwardLocationId || null }); setInwardFieldErrors(emptyErrors()); setInwardMedicineSearch(""); }}>Clear</Button>
                       {supplierCount === 0 ? <Button size="small" variant="outlined" onClick={() => updateProcurementWorkspaceRoute("suppliers", "supplier")}>Add Supplier</Button> : null}
                     </Stack>
                   </Stack>

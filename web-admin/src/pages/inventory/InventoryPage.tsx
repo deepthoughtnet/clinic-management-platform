@@ -64,16 +64,20 @@ import {
 } from "@deepthoughtnet/form-validation-kit";
 import {
   createInventoryTransaction,
+  createInventoryLocation,
   createMedicine,
   getInventoryLocations,
   getInventoryTransactions,
+  listPhysicalCountSessions,
   getLowStock,
   getMedicines,
   listPharmacyPosSales,
   getStocks,
   returnPharmacyPosSale,
+  savePhysicalCountSession,
   transferInventoryStock,
   updateStock,
+  updateInventoryLocation,
   type InventoryLocation,
   type InventoryTransaction,
   type InventoryTransactionInput,
@@ -113,6 +117,7 @@ type TransactionFormState = {
   referenceType: string;
   referenceId: string;
   notes: string;
+  businessReference: string;
 };
 
 type StockCountFormState = {
@@ -139,8 +144,8 @@ type PhysicalCountReviewChecklist = {
 };
 
 type PhysicalCountAuditFields = {
-  createdBy: string;
-  createdAt: string;
+  createdBy: string | null;
+  createdAt: string | null;
   startedBy: string | null;
   startedAt: string | null;
   lastUpdatedAt: string | null;
@@ -152,13 +157,13 @@ type PhysicalCountAuditFields = {
   reviewedDate: string | null;
   approvedBy: string | null;
   approvedAt: string | null;
-  approvalNotes: string;
+  approvalNotes: string | null;
   rejectedBy: string | null;
   rejectedAt: string | null;
-  rejectionReason: string;
+  rejectionReason: string | null;
   returnedBy: string | null;
   returnedAt: string | null;
-  returnReason: string;
+  returnReason: string | null;
   postedBy: string | null;
   postedAt: string | null;
   sessionDuration: string | null;
@@ -196,6 +201,7 @@ type PhysicalCountSessionLine = {
 
 type PhysicalCountSession = {
   id: string;
+  tenantId: string;
   sessionName: string;
   locationId: string;
   locationName: string;
@@ -205,9 +211,19 @@ type PhysicalCountSession = {
   status: PhysicalCountSessionStatus;
   lines: PhysicalCountSessionLine[];
   audit: PhysicalCountAuditFields;
+  createdAt: string;
+  updatedAt: string;
 };
 
 type FormErrorMap = Record<string, string>;
+
+type InventoryLocationFormState = {
+  locationName: string;
+  locationCode: string;
+  locationType: string;
+  defaultLocation: boolean;
+  active: boolean;
+};
 
 const TABS = [
   { value: "stocks", label: "Stock" },
@@ -277,6 +293,17 @@ function emptyTransactionForm(): TransactionFormState {
     referenceType: "",
     referenceId: "",
     notes: "",
+    businessReference: "",
+  };
+}
+
+function emptyInventoryLocationForm(): InventoryLocationFormState {
+  return {
+    locationName: "",
+    locationCode: "",
+    locationType: "PHARMACY",
+    defaultLocation: false,
+    active: true,
   };
 }
 
@@ -395,6 +422,29 @@ function normalizeInventoryText(value: string | null | undefined) {
   return (value || "").trim();
 }
 
+function normalizeRoleValue(value: string | null | undefined) {
+  return normalizeInventoryText(value).replace(/^ROLE_/i, "").toUpperCase();
+}
+
+function hasAnyNormalizedRole(
+  auth: Pick<ReturnType<typeof useAuth>, "rolesUpper" | "tenantRole">,
+  ...roles: string[]
+) {
+  const activeRoles = new Set<string>([
+    ...auth.rolesUpper.map((role) => normalizeRoleValue(role)),
+    normalizeRoleValue(auth.tenantRole),
+  ].filter(Boolean));
+  return roles.some((role) => activeRoles.has(normalizeRoleValue(role)));
+}
+
+function isPhysicalCountMakerStatus(status: PhysicalCountSessionStatus) {
+  return status === "DRAFT" || status === "IN_PROGRESS" || status === "SUBMITTED";
+}
+
+function isPhysicalCountCheckerStatus(status: PhysicalCountSessionStatus) {
+  return status === "SUBMITTED" || status === "REVIEWED" || status === "APPROVED" || status === "POSTED" || status === "REJECTED";
+}
+
 function parseOptionalNumberInput(value: string) {
   const trimmed = value.trim();
   if (!trimmed) return null;
@@ -448,6 +498,7 @@ function transactionInput(form: TransactionFormState): InventoryTransactionInput
     referenceType: form.referenceType.trim() || null,
     referenceId: form.referenceId.trim() || null,
     notes: [form.reason.trim() || null, form.notes.trim() || null].filter(Boolean).join(" • ") || null,
+    businessReference: form.businessReference.trim() || null,
   };
 }
 
@@ -562,8 +613,57 @@ function physicalCountStatusLabel(status: PhysicalCountSessionStatus) {
   }
 }
 
+function normalizePhysicalCountSessionLineForUi(line: PhysicalCountSessionLine): PhysicalCountSessionLine {
+  return {
+    ...line,
+    medicineName: normalizeInventoryText(line.medicineName),
+    batchNumber: normalizeInventoryText(line.batchNumber),
+    locationId: normalizeInventoryText(line.locationId),
+    locationName: normalizeInventoryText(line.locationName),
+    stockBatchId: normalizeInventoryText(line.stockBatchId),
+    countedQty: normalizeInventoryText(line.countedQty),
+    reason: normalizeInventoryText(line.reason),
+    reviewerRemarks: normalizeInventoryText(line.reviewerRemarks),
+  };
+}
+
+function normalizePhysicalCountAuditFieldsForUi(audit: PhysicalCountAuditFields): PhysicalCountAuditFields {
+  return {
+    ...audit,
+    createdBy: normalizeInventoryText(audit.createdBy),
+    startedBy: normalizeInventoryText(audit.startedBy),
+    submittedBy: normalizeInventoryText(audit.submittedBy),
+    reviewedBy: normalizeInventoryText(audit.reviewedBy),
+    reviewer: normalizeInventoryText(audit.reviewer),
+    approvedBy: normalizeInventoryText(audit.approvedBy),
+    approvalNotes: normalizeInventoryText(audit.approvalNotes),
+    rejectedBy: normalizeInventoryText(audit.rejectedBy),
+    rejectionReason: normalizeInventoryText(audit.rejectionReason),
+    returnedBy: normalizeInventoryText(audit.returnedBy),
+    returnReason: normalizeInventoryText(audit.returnReason),
+    postedBy: normalizeInventoryText(audit.postedBy),
+    sessionDuration: normalizeInventoryText(audit.sessionDuration),
+    generalNotes: normalizeInventoryText(audit.generalNotes),
+    counterNotes: normalizeInventoryText(audit.counterNotes),
+    reviewerNotes: normalizeInventoryText(audit.reviewerNotes),
+    auditNotes: normalizeInventoryText(audit.auditNotes),
+    reviewChecklist: { ...audit.reviewChecklist },
+  };
+}
+
+function normalizePhysicalCountSessionForUi(session: PhysicalCountSession): PhysicalCountSession {
+  return {
+    ...session,
+    sessionName: normalizeInventoryText(session.sessionName),
+    locationName: normalizeInventoryText(session.locationName),
+    scopeLabel: normalizeInventoryText(session.scopeLabel),
+    lines: session.lines.map(normalizePhysicalCountSessionLineForUi),
+    audit: normalizePhysicalCountAuditFieldsForUi(session.audit),
+  };
+}
+
 function physicalCountLineDifference(line: Pick<PhysicalCountSessionLine, "countedQty" | "systemQty">) {
-  const trimmed = line.countedQty.trim();
+  const trimmed = normalizeInventoryText(line.countedQty);
   if (!trimmed) return null;
   const countedQty = Number(trimmed);
   if (!Number.isFinite(countedQty)) return null;
@@ -731,6 +831,7 @@ function buildDemoPhysicalCountSessions(
   medicines: Medicine[],
   locations: InventoryLocation[],
   createdBy: string,
+  tenantId: string,
 ) {
   if (!stocks.length || !locations.length) {
     return [] as PhysicalCountSession[];
@@ -773,6 +874,7 @@ function buildDemoPhysicalCountSessions(
   const sessions: PhysicalCountSession[] = [
     {
       id: "physical-count-demo-draft",
+      tenantId,
       sessionName: "Annual Audit Preparation",
       locationId: defaultLocation.id,
       locationName: defaultLocation.locationName,
@@ -793,9 +895,12 @@ function buildDemoPhysicalCountSessions(
         createdAt: new Date(Date.now() - (1000 * 60 * 60 * 24 * 2)).toISOString(),
         generalNotes: "Annual count scope drafted for audit preparation.",
       },
+      createdAt: new Date(Date.now() - (1000 * 60 * 60 * 24 * 2)).toISOString(),
+      updatedAt: new Date(Date.now() - (1000 * 60 * 60 * 24 * 2)).toISOString(),
     },
     {
       id: "physical-count-demo-progress",
+      tenantId,
       sessionName: "Cycle Count Fast Movers",
       locationId: secondaryLocation.id,
       locationName: secondaryLocation.locationName,
@@ -813,9 +918,12 @@ function buildDemoPhysicalCountSessions(
         sessionDuration: "8h 30m",
         counterNotes: "Fast-moving items started by afternoon shift.",
       },
+      createdAt: new Date(Date.now() - (1000 * 60 * 60 * 10)).toISOString(),
+      updatedAt: new Date(Date.now() - (1000 * 60 * 30)).toISOString(),
     },
     {
       id: "physical-count-demo-submitted",
+      tenantId,
       sessionName: "Monthly Main Pharmacy Count",
       locationId: defaultLocation.id,
       locationName: defaultLocation.locationName,
@@ -841,9 +949,12 @@ function buildDemoPhysicalCountSessions(
         generalNotes: "Monthly count ready for review.",
         counterNotes: "Variance notes added against damaged shelf stock.",
       },
+      createdAt: new Date(Date.now() - (1000 * 60 * 60 * 24 * 12)).toISOString(),
+      updatedAt: new Date(Date.now() - (1000 * 60 * 60 * 24)).toISOString(),
     },
     {
       id: "physical-count-demo-reviewed",
+      tenantId,
       sessionName: "Quarterly Audit OTC Shelf",
       locationId: defaultLocation.id,
       locationName: defaultLocation.locationName,
@@ -881,6 +992,8 @@ function buildDemoPhysicalCountSessions(
           supportingRemarksAdded: true,
         },
       },
+      createdAt: new Date(Date.now() - (1000 * 60 * 60 * 24 * 18)).toISOString(),
+      updatedAt: new Date(Date.now() - (1000 * 60 * 60 * 24 * 16)).toISOString(),
     },
   ];
   return sessions.filter((session) => session.lines.length > 0);
@@ -940,13 +1053,20 @@ export default function InventoryPage() {
   const auth = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const canManageInventory = auth.hasPermission("inventory.manage") || auth.rolesUpper.includes("CLINIC_ADMIN");
+  const canManageInventory = auth.hasPermission("inventory.manage") || auth.rolesUpper.includes("CLINIC_ADMIN") || auth.rolesUpper.includes("TENANT_ADMIN");
+  const canCreatePhysicalCountSession = hasAnyNormalizedRole(auth, "PHARMACIST", "PHARMA", "PHARMACY", "CLINIC_ADMIN");
+  const canCheckPhysicalCountSession = hasAnyNormalizedRole(auth, "PHARMACY_INVENTORY_MANAGER", "CLINIC_ADMIN");
   const [tab, setTab] = React.useState<(typeof TABS)[number]["value"]>("stocks");
   const [medicines, setMedicines] = React.useState<Medicine[]>([]);
   const [stocks, setStocks] = React.useState<Stock[]>([]);
   const [transactions, setTransactions] = React.useState<InventoryTransaction[]>([]);
   const [lowStock, setLowStock] = React.useState<LowStockItem[]>([]);
   const [locations, setLocations] = React.useState<InventoryLocation[]>([]);
+  const [locationForm, setLocationForm] = React.useState<InventoryLocationFormState>(emptyInventoryLocationForm());
+  const [locationEditorOpen, setLocationEditorOpen] = React.useState(false);
+  const [editingLocationId, setEditingLocationId] = React.useState<string | null>(null);
+  const [locationFieldErrors, setLocationFieldErrors] = React.useState<FormErrorMap>({});
+  const [savingLocation, setSavingLocation] = React.useState(false);
   const [stockForm, setStockForm] = React.useState<StockFormState>(emptyStockForm());
   const [transactionForm, setTransactionForm] = React.useState<TransactionFormState>(emptyTransactionForm());
   const [transactionSearchInput, setTransactionSearchInput] = React.useState("");
@@ -1090,8 +1210,8 @@ export default function InventoryPage() {
     const postedSessions = physicalCountSessions.filter((session) => session.status === "POSTED");
     const pendingSessions = physicalCountSessions.filter((session) => session.status !== "POSTED" && session.status !== "REJECTED");
     const latestPostedSession = [...postedSessions].sort((left, right) => {
-      const leftDate = left.audit.postedAt || left.audit.reviewedAt || left.audit.submittedAt || left.audit.lastUpdatedAt || left.audit.createdAt;
-      const rightDate = right.audit.postedAt || right.audit.reviewedAt || right.audit.submittedAt || right.audit.lastUpdatedAt || right.audit.createdAt;
+      const leftDate = left.audit.postedAt || left.audit.reviewedAt || left.audit.submittedAt || left.audit.lastUpdatedAt || left.audit.createdAt || "";
+      const rightDate = right.audit.postedAt || right.audit.reviewedAt || right.audit.submittedAt || right.audit.lastUpdatedAt || right.audit.createdAt || "";
       return rightDate.localeCompare(leftDate);
     })[0] || null;
     const latestAdjustmentTransaction = [...transactions]
@@ -1099,7 +1219,7 @@ export default function InventoryPage() {
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0] || null;
     const now = new Date();
     const postedThisMonth = postedSessions.filter((session) => {
-      const postedAt = session.audit.postedAt || session.audit.reviewedAt || session.audit.lastUpdatedAt || session.audit.createdAt;
+      const postedAt = session.audit.postedAt || session.audit.reviewedAt || session.audit.lastUpdatedAt || session.audit.createdAt || now.toISOString();
       const postedDate = new Date(postedAt);
       return postedDate.getUTCFullYear() === now.getUTCFullYear() && postedDate.getUTCMonth() === now.getUTCMonth();
     }).length;
@@ -1335,12 +1455,6 @@ export default function InventoryPage() {
   }, [locations, selectedLocationId]);
 
   React.useEffect(() => {
-    if (!physicalCountSessions.length && stocks.length && locations.length) {
-      setPhysicalCountSessions(buildDemoPhysicalCountSessions(stocks, medicines, locations, inventoryActorLabel));
-    }
-  }, [inventoryActorLabel, locations, medicines, physicalCountSessions.length, stocks]);
-
-  React.useEffect(() => {
     setSetupQueueEdits((current) => {
       const next = { ...current };
       let changed = false;
@@ -1438,13 +1552,14 @@ export default function InventoryPage() {
     if (!auth.accessToken || !auth.tenantId) {
       return;
     }
-    const [medicineRows, stockRows, transactionRows, lowStockRows, locationRows, saleRows] = await Promise.all([
+    const [medicineRows, stockRows, transactionRows, lowStockRows, locationRows, saleRows, physicalCountRows] = await Promise.all([
       getMedicines(auth.accessToken, auth.tenantId),
       getStocks(auth.accessToken, auth.tenantId),
       getInventoryTransactions(auth.accessToken, auth.tenantId),
       getLowStock(auth.accessToken, auth.tenantId),
       getInventoryLocations(auth.accessToken, auth.tenantId),
       listPharmacyPosSales(auth.accessToken, auth.tenantId).catch(() => [] as PharmacyPosSale[]),
+      listPhysicalCountSessions(auth.accessToken, auth.tenantId),
     ]);
     setMedicines(medicineRows);
     setStocks(stockRows);
@@ -1452,8 +1567,111 @@ export default function InventoryPage() {
     setLowStock(lowStockRows);
     setLocations(locationRows);
     setSales(saleRows);
+    setPhysicalCountSessions(physicalCountRows.map(normalizePhysicalCountSessionForUi));
     setSelectedLocationId((current) => current || locationRows.find((location) => location.defaultLocation)?.id || null);
   }, [auth.accessToken, auth.tenantId]);
+
+  const openLocationEditor = React.useCallback((location?: InventoryLocation) => {
+    if (location) {
+      setEditingLocationId(location.id);
+      setLocationForm({
+        locationName: location.locationName,
+        locationCode: location.locationCode || "",
+        locationType: location.locationType || "PHARMACY",
+        defaultLocation: location.defaultLocation,
+        active: location.active,
+      });
+    } else {
+      setEditingLocationId(null);
+      setLocationForm(emptyInventoryLocationForm());
+    }
+    setLocationFieldErrors({});
+    setLocationEditorOpen(true);
+  }, []);
+
+  const saveLocation = React.useCallback(async () => {
+    if (!auth.accessToken || !auth.tenantId) return;
+    const trimmedName = locationForm.locationName.trim();
+    const trimmedCode = locationForm.locationCode.trim();
+    const trimmedType = locationForm.locationType.trim();
+    const fieldErrors: FormErrorMap = {};
+
+    if (!trimmedName) {
+      fieldErrors.locationName = "Location name is required.";
+    } else if (trimmedName.length > 256) {
+      fieldErrors.locationName = "Location name must be 256 characters or fewer.";
+    }
+    if (trimmedCode.length > 64) {
+      fieldErrors.locationCode = "Location code must be 64 characters or fewer.";
+    }
+    if (!trimmedType) {
+      fieldErrors.locationType = "Location type is required.";
+    } else if (trimmedType.length > 32) {
+      fieldErrors.locationType = "Location type must be 32 characters or fewer.";
+    }
+
+    if (Object.keys(fieldErrors).length) {
+      setLocationFieldErrors(fieldErrors);
+      setError(Object.values(fieldErrors)[0] || "Location could not be saved.");
+      return;
+    }
+
+    const payload = {
+      locationName: trimmedName,
+      locationCode: trimmedCode || null,
+      locationType: trimmedType,
+      defaultLocation: locationForm.defaultLocation,
+      active: locationForm.active,
+    };
+
+    setSavingLocation(true);
+    setLocationFieldErrors({});
+    setError(null);
+    setSuccess(null);
+    try {
+      if (editingLocationId) {
+        await updateInventoryLocation(auth.accessToken, auth.tenantId, editingLocationId, payload);
+      } else {
+        await createInventoryLocation(auth.accessToken, auth.tenantId, payload);
+      }
+      await loadAll();
+      setLocationEditorOpen(false);
+      setEditingLocationId(null);
+      setLocationForm(emptyInventoryLocationForm());
+      setSuccess(editingLocationId ? "Location updated." : "Location created.");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to save location";
+      const normalized = message.toLowerCase();
+      if (normalized.includes("exists") || normalized.includes("duplicate")) {
+        setLocationFieldErrors({ locationName: "Location name already exists." });
+      }
+      setError(message);
+    } finally {
+      setSavingLocation(false);
+    }
+  }, [auth.accessToken, auth.tenantId, editingLocationId, loadAll, locationForm.active, locationForm.defaultLocation, locationForm.locationCode, locationForm.locationName, locationForm.locationType]);
+
+  const toggleLocationActive = React.useCallback(async (location: InventoryLocation) => {
+    if (!auth.accessToken || !auth.tenantId) return;
+    setSavingLocation(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      await updateInventoryLocation(auth.accessToken, auth.tenantId, location.id, {
+        locationName: location.locationName,
+        locationCode: location.locationCode,
+        locationType: location.locationType,
+        defaultLocation: location.defaultLocation,
+        active: !location.active,
+      });
+      await loadAll();
+      setSuccess(location.active ? "Location deactivated." : "Location activated.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update location");
+    } finally {
+      setSavingLocation(false);
+    }
+  }, [auth.accessToken, auth.tenantId, loadAll]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -1528,6 +1746,11 @@ export default function InventoryPage() {
     patch: Partial<Pick<PhysicalCountSessionLine, "countedQty" | "reason" | "reviewerRemarks" | "flagged" | "reviewed">>,
   ) => {
     updatePhysicalCountSession(sessionId, (session) => {
+      const makerEditable = session.status === "DRAFT" || session.status === "IN_PROGRESS";
+      const checkerEditable = session.status === "SUBMITTED" || session.status === "REVIEWED";
+      if ((makerEditable && !canCreatePhysicalCountSession) || (checkerEditable && !canCheckPhysicalCountSession) || session.status === "APPROVED" || session.status === "POSTED" || session.status === "REJECTED") {
+        return session;
+      }
       const nextLines = session.lines.map((line) => line.id === lineId ? { ...line, ...patch } : line);
       const now = new Date().toISOString();
       const startedAt = session.audit.startedAt ?? now;
@@ -1551,36 +1774,96 @@ export default function InventoryPage() {
     sessionId: string,
     patch: Partial<Pick<PhysicalCountAuditFields, "generalNotes" | "counterNotes" | "reviewerNotes" | "auditNotes" | "approvalNotes" | "rejectionReason" | "returnReason">>,
   ) => {
-    updatePhysicalCountSession(sessionId, (session) => ({
-      ...session,
-      audit: {
-        ...session.audit,
-        ...patch,
-        lastUpdatedAt: new Date().toISOString(),
-      },
-    }));
+    updatePhysicalCountSession(sessionId, (session) => {
+      const makerEditable = session.status === "DRAFT" || session.status === "IN_PROGRESS";
+      const checkerEditable = session.status === "SUBMITTED" || session.status === "REVIEWED";
+      if ((makerEditable && !canCreatePhysicalCountSession) || (checkerEditable && !canCheckPhysicalCountSession) || session.status === "APPROVED" || session.status === "POSTED" || session.status === "REJECTED") {
+        return session;
+      }
+      return {
+        ...session,
+        audit: {
+          ...session.audit,
+          ...patch,
+          lastUpdatedAt: new Date().toISOString(),
+        },
+      };
+    });
   };
 
   const updatePhysicalCountReviewChecklist = (sessionId: string, key: keyof PhysicalCountReviewChecklist, value: boolean) => {
-    updatePhysicalCountSession(sessionId, (session) => ({
-      ...session,
-      audit: {
-        ...session.audit,
-        reviewChecklist: {
-          ...session.audit.reviewChecklist,
-          [key]: value,
+    updatePhysicalCountSession(sessionId, (session) => {
+      if (session.status !== "SUBMITTED" || !canCheckPhysicalCountSession) {
+        return session;
+      }
+      return {
+        ...session,
+        audit: {
+          ...session.audit,
+          reviewChecklist: {
+            ...session.audit.reviewChecklist,
+            [key]: value,
+          },
+          lastUpdatedAt: new Date().toISOString(),
         },
-        lastUpdatedAt: new Date().toISOString(),
-      },
-    }));
+      };
+    });
+  };
+
+  const buildPhysicalCountSaveInput = (session: PhysicalCountSession) => ({
+    sessionName: session.sessionName,
+    locationId: session.locationId,
+    locationName: session.locationName,
+    scope: session.scope,
+    scopeLabel: session.scopeLabel,
+    reason: session.reason,
+    status: session.status,
+    lines: session.lines.map((line) => ({ ...line })),
+    audit: {
+      ...session.audit,
+      reviewChecklist: { ...session.audit.reviewChecklist },
+    },
+  });
+
+  const persistPhysicalCountSession = async (session: PhysicalCountSession, nextMessage: string) => {
+    if (!auth.accessToken || !auth.tenantId) {
+      setError("No tenant is selected for this session.");
+      return null;
+    }
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const saved = await savePhysicalCountSession(auth.accessToken, auth.tenantId, session.id, buildPhysicalCountSaveInput(session));
+      const normalizedSaved = normalizePhysicalCountSessionForUi(saved);
+      setPhysicalCountSessions((current) => {
+        const exists = current.some((item) => item.id === normalizedSaved.id);
+        return exists ? current.map((item) => item.id === normalizedSaved.id ? normalizedSaved : item) : [normalizedSaved, ...current];
+      });
+      setSuccess(nextMessage);
+      return normalizedSaved;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save physical count session.");
+      return null;
+    } finally {
+      setSaving(false);
+    }
   };
 
   const openPhysicalCountDrawer = (sessionId: string, mode: "view" | "review") => {
+    if (mode === "review" && !canCheckPhysicalCountSession) {
+      setError("You do not have permission to review physical count sessions.");
+      return;
+    }
     setPhysicalCountDrawerSessionId(sessionId);
     setPhysicalCountDrawerMode(mode);
   };
 
   const openPhysicalCountWorkspace = (sessionId: string, mode: PhysicalCountWorkspaceMode) => {
+    if (mode === "continue" && !canCreatePhysicalCountSession) {
+      setError("You do not have permission to edit physical count sessions.");
+      return;
+    }
     setPhysicalCountWorkspaceSessionId(sessionId);
     setPhysicalCountWorkspaceMode(mode);
     setPhysicalCountSearch("");
@@ -1603,12 +1886,31 @@ export default function InventoryPage() {
     });
   };
 
-  const savePhysicalCountSessionDraft = (nextMessage = "Physical count session saved locally. Inventory quantity is unchanged.") => {
-    setError(null);
-    setSuccess(nextMessage);
+  const savePhysicalCountSessionDraft = async (
+    nextMessage = "Physical count progress saved. Inventory quantity is unchanged until adjustments are posted.",
+    sessionOverride?: PhysicalCountSession,
+  ) => {
+    const session = sessionOverride || physicalCountWorkspaceSession;
+    if (!session) {
+      setError("Open a session before saving it.");
+      return null;
+    }
+    if (!canCreatePhysicalCountSession) {
+      setError("You do not have permission to save physical count progress.");
+      return null;
+    }
+    return persistPhysicalCountSession(session, nextMessage);
   };
 
-  const createPhysicalCountSession = () => {
+  const createPhysicalCountSession = async () => {
+    if (!auth.accessToken || !auth.tenantId) {
+      setError("No tenant is selected for this session.");
+      return;
+    }
+    if (!canCreatePhysicalCountSession) {
+      setError("You do not have permission to create physical count sessions.");
+      return;
+    }
     if (!physicalCountForm.sessionName.trim()) {
       setError("Enter a session name.");
       return;
@@ -1632,6 +1934,8 @@ export default function InventoryPage() {
       return;
     }
 
+    const now = new Date().toISOString();
+    const sessionId = crypto.randomUUID();
     const locationName = locations.find((location) => location.id === physicalCountForm.locationId)?.locationName || "Main Pharmacy";
     const scopeDetail = physicalCountForm.scope === "CATEGORY"
       ? `${physicalCountScopeLabel(physicalCountForm.scope)}: ${physicalCountForm.category.trim()}`
@@ -1640,8 +1944,9 @@ export default function InventoryPage() {
         : physicalCountScopeLabel(physicalCountForm.scope);
 
     const createdSession: PhysicalCountSession = {
-      id: `physical-count-${Date.now()}`,
+      id: sessionId,
       sessionName: physicalCountForm.sessionName.trim(),
+      tenantId: auth.tenantId,
       locationId: physicalCountForm.locationId,
       locationName,
       scope: physicalCountForm.scope,
@@ -1650,21 +1955,28 @@ export default function InventoryPage() {
       status: "DRAFT",
       lines,
       audit: emptyPhysicalCountAuditFields(inventoryActorLabel),
+      createdAt: now,
+      updatedAt: now,
     };
 
-    setPhysicalCountSessions((current) => [createdSession, ...current]);
+    const saved = await persistPhysicalCountSession(createdSession, `Physical count session saved. System quantities were captured for ${lines.length} batch${lines.length === 1 ? "" : "es"} for comparison.`);
+    if (!saved) {
+      return;
+    }
     setPhysicalCountForm({
       ...emptyPhysicalCountSessionForm(),
       locationId: physicalCountForm.locationId,
     });
     setPhysicalCountCreateOpen(false);
-    setError(null);
-    setSuccess(`Session created locally. System quantities were captured for ${lines.length} batch${lines.length === 1 ? "" : "es"} for comparison.`);
   };
 
-  const submitPhysicalCountSession = () => {
+  const submitPhysicalCountSession = async () => {
     if (!physicalCountWorkspaceSession) {
       setError("Open a session before submitting it.");
+      return;
+    }
+    if (!canCreatePhysicalCountSession) {
+      setError("You do not have permission to submit physical count sessions.");
       return;
     }
     if (physicalCountWorkspaceSession.status !== "IN_PROGRESS") {
@@ -1676,121 +1988,132 @@ export default function InventoryPage() {
       setError("Complete pending counted quantities before submitting this session.");
       return;
     }
-    updatePhysicalCountSession(physicalCountWorkspaceSession.id, (session) => {
-      const now = new Date().toISOString();
-      return {
-        ...session,
-        status: "SUBMITTED",
-        audit: {
-          ...session.audit,
-          submittedBy: inventoryActorLabel,
-          submittedAt: now,
-          lastUpdatedAt: now,
-          sessionDuration: physicalCountDurationLabel(session.audit.startedAt, now),
-        },
-      };
-    });
-    setError(null);
-    setSuccess("Physical count session submitted in local workflow only. Inventory quantity is unchanged.");
+    const now = new Date().toISOString();
+    const nextSession: PhysicalCountSession = {
+      ...physicalCountWorkspaceSession,
+      status: "SUBMITTED" as PhysicalCountSessionStatus,
+      audit: {
+        ...physicalCountWorkspaceSession.audit,
+        submittedBy: inventoryActorLabel,
+        submittedAt: now,
+        lastUpdatedAt: now,
+        sessionDuration: physicalCountDurationLabel(physicalCountWorkspaceSession.audit.startedAt, now),
+      },
+    };
+    await persistPhysicalCountSession(nextSession, "Physical count session submitted. Inventory quantity is unchanged until adjustments are posted.");
   };
 
-  const markPhysicalCountSessionReviewed = () => {
+  const markPhysicalCountSessionReviewed = async () => {
     if (!physicalCountDrawerSession || physicalCountDrawerSession.status !== "SUBMITTED") {
       setError("Only submitted sessions can be marked reviewed.");
       return;
     }
-    updatePhysicalCountSession(physicalCountDrawerSession.id, (session) => {
-      const now = new Date().toISOString();
-      return {
-        ...session,
-        status: "REVIEWED",
-        lines: session.lines.map((line) => ({ ...line, reviewed: true })),
-        audit: {
-          ...session.audit,
-          reviewedBy: inventoryActorLabel,
-          reviewedAt: now,
-          reviewer: inventoryActorLabel,
-          reviewedDate: now,
-          lastUpdatedAt: now,
-          sessionDuration: physicalCountDurationLabel(session.audit.startedAt, now),
-        },
-      };
-    });
-    setError(null);
-    setSuccess("Physical count session marked reviewed in local workflow only. Inventory quantity is unchanged.");
+    if (!canCheckPhysicalCountSession) {
+      setError("You do not have permission to review physical count sessions.");
+      return;
+    }
+    const now = new Date().toISOString();
+    const nextSession = {
+      ...physicalCountDrawerSession,
+      status: "REVIEWED" as PhysicalCountSessionStatus,
+      lines: physicalCountDrawerSession.lines.map((line) => ({ ...line, reviewed: true })),
+      audit: {
+        ...physicalCountDrawerSession.audit,
+        reviewedBy: inventoryActorLabel,
+        reviewedAt: now,
+        reviewer: inventoryActorLabel,
+        reviewedDate: now,
+        lastUpdatedAt: now,
+        sessionDuration: physicalCountDurationLabel(physicalCountDrawerSession.audit.startedAt, now),
+      },
+    };
+    await persistPhysicalCountSession(nextSession, "Physical count session marked reviewed. Inventory quantity is unchanged until adjustments are posted.");
   };
 
-  const approvePhysicalCountSession = () => {
+  const approvePhysicalCountSession = async () => {
     if (!physicalCountDrawerSession || physicalCountDrawerSession.status !== "REVIEWED") {
       setError("Only reviewed sessions can be approved.");
       return;
     }
+    if (!canCheckPhysicalCountSession) {
+      setError("You do not have permission to approve physical count sessions.");
+      return;
+    }
     const now = new Date().toISOString();
-    updatePhysicalCountSession(physicalCountDrawerSession.id, (session) => ({
-      ...session,
-      status: "APPROVED",
+    const nextSession: PhysicalCountSession = {
+      ...physicalCountDrawerSession,
+      status: "APPROVED" as PhysicalCountSessionStatus,
       audit: {
-        ...session.audit,
+        ...physicalCountDrawerSession.audit,
         approvedBy: inventoryActorLabel,
         approvedAt: now,
         lastUpdatedAt: now,
       },
-    }));
-    setError(null);
-    setSuccess("Physical count session approved. Inventory quantity is unchanged until posting.");
+    };
+    await persistPhysicalCountSession(nextSession, "Physical count session approved. Inventory quantity is unchanged until posting.");
   };
 
-  const rejectPhysicalCountSession = () => {
+  const rejectPhysicalCountSession = async () => {
     if (!physicalCountDrawerSession || physicalCountDrawerSession.status !== "REVIEWED") {
       setError("Only reviewed sessions can be rejected.");
       return;
     }
-    if (!physicalCountDrawerSession.audit.rejectionReason.trim()) {
+    if (!canCheckPhysicalCountSession) {
+      setError("You do not have permission to reject physical count sessions.");
+      return;
+    }
+    if (!physicalCountDrawerSession.audit.rejectionReason?.trim()) {
       setError("Enter a rejection reason before rejecting this session.");
       return;
     }
     const now = new Date().toISOString();
-    updatePhysicalCountSession(physicalCountDrawerSession.id, (session) => ({
-      ...session,
-      status: "REJECTED",
+    const nextSession: PhysicalCountSession = {
+      ...physicalCountDrawerSession,
+      status: "REJECTED" as PhysicalCountSessionStatus,
       audit: {
-        ...session.audit,
+        ...physicalCountDrawerSession.audit,
         rejectedBy: inventoryActorLabel,
         rejectedAt: now,
         lastUpdatedAt: now,
       },
-    }));
-    setError(null);
-    setSuccess("Physical count session rejected. Inventory quantity is unchanged.");
+    };
+    await persistPhysicalCountSession(nextSession, "Physical count session rejected. Inventory quantity is unchanged.");
   };
 
-  const returnPhysicalCountSessionForRecount = () => {
+  const returnPhysicalCountSessionForRecount = async () => {
     if (!physicalCountDrawerSession || physicalCountDrawerSession.status !== "REVIEWED") {
       setError("Only reviewed sessions can be returned for recount.");
       return;
     }
-    if (!physicalCountDrawerSession.audit.returnReason.trim()) {
+    if (!canCheckPhysicalCountSession) {
+      setError("You do not have permission to return physical count sessions for recount.");
+      return;
+    }
+    if (!physicalCountDrawerSession.audit.returnReason?.trim()) {
       setError("Enter a return reason before sending this session back for recount.");
       return;
     }
     const now = new Date().toISOString();
-    updatePhysicalCountSession(physicalCountDrawerSession.id, (session) => ({
-      ...session,
-      status: "IN_PROGRESS",
+    const nextSession: PhysicalCountSession = {
+      ...physicalCountDrawerSession,
+      status: "IN_PROGRESS" as PhysicalCountSessionStatus,
       audit: {
-        ...session.audit,
+        ...physicalCountDrawerSession.audit,
         returnedBy: inventoryActorLabel,
         returnedAt: now,
         lastUpdatedAt: now,
       },
-    }));
-    setError(null);
-    setSuccess("Physical count session returned for recount. Inventory quantity is unchanged.");
+    };
+    await persistPhysicalCountSession(nextSession, "Physical count session returned for recount. Inventory quantity is unchanged.");
   };
 
   const postPhysicalCountAdjustments = async () => {
     if (!auth.accessToken || !auth.tenantId || !physicalCountDrawerSession) {
       setError("Open an approved session before posting.");
+      return;
+    }
+    if (!canCheckPhysicalCountSession) {
+      setError("You do not have permission to post physical count adjustments.");
       return;
     }
     if (physicalCountDrawerSession.status !== "APPROVED") {
@@ -1811,7 +2134,7 @@ export default function InventoryPage() {
         setError(`Counted quantity is missing for ${line.medicineName}.`);
         return;
       }
-      if (difference !== 0 && !line.reason.trim()) {
+      if (difference !== 0 && !normalizeInventoryText(line.reason)) {
         setError(`Reason is required for variance line ${line.medicineName} / ${line.batchNumber}.`);
         return;
       }
@@ -1822,6 +2145,8 @@ export default function InventoryPage() {
     try {
       for (const line of varianceLines) {
         const difference = physicalCountLineDifference(line) ?? 0;
+        const reason = normalizeInventoryText(line.reason);
+        const reviewerRemarks = normalizeInventoryText(line.reviewerRemarks);
         const movementType: InventoryTransactionType = difference > 0 ? "ADJUSTMENT_IN" : "ADJUSTMENT_OUT";
         const beforeQty = line.systemQty;
         const afterQty = line.systemQty + difference;
@@ -1842,10 +2167,10 @@ export default function InventoryPage() {
             `Before Qty: ${beforeQty}`,
             `After Qty: ${afterQty}`,
             `Adjustment Qty: ${Math.abs(difference)}`,
-            `Reason: ${line.reason.trim()}`,
+            `Reason: ${reason}`,
             `Posted By: ${inventoryActorLabel}`,
             `Posted At: ${new Date().toISOString()}`,
-            line.reviewerRemarks.trim() || null,
+            reviewerRemarks || null,
           ].filter(Boolean).join(" • "),
         });
       }
@@ -2064,6 +2389,12 @@ export default function InventoryPage() {
       ...current,
       medicineId: stock.medicineId,
       stockBatchId: stock.id,
+      quantity: "",
+      reason: "",
+      referenceType: "",
+      referenceId: "",
+      notes: "",
+      businessReference: "",
     }));
   };
 
@@ -2083,6 +2414,7 @@ export default function InventoryPage() {
         ...current,
         medicineId: transactionBatchOptions[0].medicineId,
         stockBatchId: transactionBatchOptions[0].id,
+        businessReference: "",
       }));
     }
   }, [transactionBatchOptions, transactionForm.stockBatchId]);
@@ -2135,7 +2467,7 @@ export default function InventoryPage() {
         stockBatchId: "inventory-transaction-batch",
         quantity: "inventory-transaction-quantity",
         referenceType: "inventory-transaction-reference-type",
-        referenceId: "inventory-transaction-reference-id",
+        businessReference: "inventory-transaction-business-reference",
         notes: "inventory-transaction-notes",
       });
       return;
@@ -2492,6 +2824,88 @@ export default function InventoryPage() {
           { label: "Reconciliation", tone: "info" },
         ]}
       />
+
+      <Card>
+        <CardContent>
+          <Stack spacing={1.5}>
+            <Stack direction="row" justifyContent="space-between" spacing={1} useFlexGap flexWrap="wrap" alignItems="flex-start">
+              <Box>
+                <Typography variant="h6" sx={{ fontWeight: 800 }}>
+                  Inventory locations
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Manage stock locations used by transfer, direct goods receipt, and batch setup.
+                </Typography>
+              </Box>
+              {canManageInventory ? (
+                <Button size="small" variant="contained" onClick={() => openLocationEditor()}>
+                  Add Location
+                </Button>
+              ) : null}
+            </Stack>
+            <Typography variant="caption" color="text.secondary">
+              Marking a different location as default will clear the previous default automatically.
+            </Typography>
+            {!locations.length ? (
+              <CompactEmptyState
+                title="No inventory locations found."
+                subtitle="Main Pharmacy will be created automatically when inventory data is loaded."
+              />
+            ) : (
+              <TableContainer>
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Location name</TableCell>
+                      <TableCell>Code</TableCell>
+                      <TableCell>Type</TableCell>
+                      <TableCell>Default</TableCell>
+                      <TableCell>Active</TableCell>
+                      {canManageInventory ? <TableCell align="right">Actions</TableCell> : null}
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {locations.map((location) => (
+                      <TableRow key={location.id} hover>
+                        <TableCell>
+                          <Stack spacing={0.2}>
+                            <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                              {location.locationName}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              {location.id}
+                            </Typography>
+                          </Stack>
+                        </TableCell>
+                        <TableCell>{location.locationCode || "-"}</TableCell>
+                        <TableCell>{location.locationType}</TableCell>
+                        <TableCell>
+                          <Chip size="small" label={location.defaultLocation ? "Yes" : "No"} color={location.defaultLocation ? "primary" : "default"} variant={location.defaultLocation ? "filled" : "outlined"} />
+                        </TableCell>
+                        <TableCell>
+                          <Chip size="small" label={location.active ? "Active" : "Inactive"} color={location.active ? "success" : "default"} variant={location.active ? "filled" : "outlined"} />
+                        </TableCell>
+                        {canManageInventory ? (
+                          <TableCell align="right">
+                            <Stack direction="row" spacing={1} justifyContent="flex-end" useFlexGap flexWrap="wrap">
+                              <Button size="small" variant="outlined" onClick={() => openLocationEditor(location)}>
+                                Edit
+                              </Button>
+                              <Button size="small" variant="text" onClick={() => void toggleLocationActive(location)} disabled={savingLocation}>
+                                {location.active ? "Deactivate" : "Activate"}
+                              </Button>
+                            </Stack>
+                          </TableCell>
+                        ) : null}
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            )}
+          </Stack>
+        </CardContent>
+      </Card>
 
       {tab === "stocks" ? (
         <Grid container spacing={2}>
@@ -2896,7 +3310,7 @@ export default function InventoryPage() {
                         onInputChange={(_, value, reason) => {
                           setTransactionSearchInput(value);
                           if (reason === "clear") {
-                            setTransactionForm((current) => ({ ...current, medicineId: "", stockBatchId: "", quantity: "", reason: "", referenceType: "", referenceId: "", notes: "" }));
+                            setTransactionForm((current) => ({ ...current, medicineId: "", stockBatchId: "", quantity: "", reason: "", referenceType: "", referenceId: "", notes: "", businessReference: "" }));
                           }
                         }}
                         onChange={(_, stock) => {
@@ -2913,6 +3327,12 @@ export default function InventoryPage() {
                             ...current,
                             medicineId: stock.medicineId,
                             stockBatchId: stock.id,
+                            quantity: "",
+                            reason: "",
+                            referenceType: "",
+                            referenceId: "",
+                            notes: "",
+                            businessReference: "",
                           }));
                         }}
                         getOptionLabel={(option) => typeof option === "string"
@@ -2971,7 +3391,7 @@ export default function InventoryPage() {
                                         </Stack>
                                         <Typography variant="caption" color="text.secondary">{stock.locationName || "Main Pharmacy"} • Qty {stock.quantityOnHand}</Typography>
                                         <Typography variant="caption" color="text.secondary">Expiry {stock.expiryDate || "No expiry"} • {stock.purchaseReferenceNumber || "No GRN/reference"}</Typography>
-                                        <Button size="small" variant={selected ? "contained" : "outlined"} onClick={() => setTransactionForm((current) => ({ ...current, medicineId: stock.medicineId, stockBatchId: stock.id }))}>
+                                        <Button size="small" variant={selected ? "contained" : "outlined"} onClick={() => setTransactionForm((current) => ({ ...current, medicineId: stock.medicineId, stockBatchId: stock.id, quantity: "", reason: "", referenceType: "", referenceId: "", notes: "", businessReference: "" }))}>
                                           {selected ? "Selected" : "Select Batch"}
                                         </Button>
                                       </Stack>
@@ -3040,7 +3460,7 @@ export default function InventoryPage() {
                       <TextField id="inventory-transaction-reference-type" size="small" fullWidth label="Reference type" value={transactionForm.referenceType} onChange={(e) => setTransactionForm((current) => ({ ...current, referenceType: e.target.value }))} error={Boolean(transactionFieldErrors.referenceType)} helperText={transactionFieldErrors.referenceType || "Optional reference type."} />
                     </Grid>
                     <Grid size={{ xs: 12, md: 6 }}>
-                      <TextField id="inventory-transaction-reference-id" size="small" fullWidth label="Reference ID" value={transactionForm.referenceId} onChange={(e) => setTransactionForm((current) => ({ ...current, referenceId: e.target.value }))} error={Boolean(transactionFieldErrors.referenceId)} helperText={transactionFieldErrors.referenceId || "Optional UUID reference identifier."} />
+                      <TextField id="inventory-transaction-business-reference" size="small" fullWidth label="Business reference" value={transactionForm.businessReference} onChange={(e) => setTransactionForm((current) => ({ ...current, businessReference: e.target.value }))} error={Boolean(transactionFieldErrors.businessReference)} helperText={transactionFieldErrors.businessReference || "Optional human-readable reference such as ADJ-UAT-0001."} />
                     </Grid>
                     <Grid size={12}>
                       <TextField id="inventory-transaction-notes" size="small" fullWidth label="Notes" value={transactionForm.notes} onChange={(e) => setTransactionForm((current) => ({ ...current, notes: e.target.value }))} multiline minRows={2} helperText="Optional operational note." />
@@ -3599,7 +4019,7 @@ export default function InventoryPage() {
 
           <WorkflowGuide
             title="Physical Count Workflow"
-            subtitle="Session workflow is UI-first only in this batch. System quantities are captured for comparison, but no stock adjustment is posted from sessions yet."
+            subtitle="Session progress is saved server-side. System quantities are captured for comparison, but no stock adjustment is posted from sessions yet."
             steps={[
               { label: "Create Session", tone: "primary" },
               { label: "Count Medicines" },
@@ -3632,14 +4052,15 @@ export default function InventoryPage() {
             </Typography>
           </CompactFilterCard>
 
-          <Accordion expanded={physicalCountCreateOpen} onChange={(_, expanded) => setPhysicalCountCreateOpen(expanded)} disableGutters sx={compactAccordionSx}>
+          {canCreatePhysicalCountSession ? (
+            <Accordion expanded={physicalCountCreateOpen} onChange={(_, expanded) => setPhysicalCountCreateOpen(expanded)} disableGutters sx={compactAccordionSx}>
             <AccordionSummary expandIcon={<ExpandMoreRounded />} sx={{ px: 1.5, py: 0.25, minHeight: 40 }}>
               <Stack spacing={0.4}>
                 <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
                   Create Physical Count Session
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
-                  Create a local session shell and freeze system quantities for variance review.
+                  Create a physical count session and freeze system quantities for variance review.
                 </Typography>
               </Stack>
             </AccordionSummary>
@@ -3739,7 +4160,7 @@ export default function InventoryPage() {
                   ) : null}
                   <Grid size={12}>
                     <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
-                      <Button variant="contained" disabled={!canManageInventory || saving || !stocks.length} onClick={createPhysicalCountSession}>
+                      <Button variant="contained" disabled={!canCreatePhysicalCountSession || saving || !stocks.length} onClick={createPhysicalCountSession}>
                         Create Session
                       </Button>
                       <Button variant="outlined" onClick={() => setPhysicalCountForm({
@@ -3753,7 +4174,8 @@ export default function InventoryPage() {
                 </Grid>
               </Box>
             </AccordionDetails>
-          </Accordion>
+            </Accordion>
+          ) : null}
 
           <OperationalTableCard
             title="Count Sessions"
@@ -3792,8 +4214,8 @@ export default function InventoryPage() {
                     return difference != null && difference !== 0;
                   }).length;
                   const completion = physicalCountCompletionPercent(session.lines);
-                  const disableContinue = !["DRAFT", "IN_PROGRESS"].includes(session.status);
-                  const disableReview = session.status !== "SUBMITTED";
+                  const canContinueSession = canCreatePhysicalCountSession && ["DRAFT", "IN_PROGRESS"].includes(session.status);
+                  const canReviewSession = canCheckPhysicalCountSession && session.status === "SUBMITTED";
                   return (
                     <TableRow key={session.id} hover selected={session.id === physicalCountWorkspaceSessionId || session.id === physicalCountDrawerSessionId} sx={{ "& td": { verticalAlign: "top" } }}>
                       <TableCell>
@@ -3803,8 +4225,8 @@ export default function InventoryPage() {
                         </Stack>
                       </TableCell>
                       <TableCell>{session.locationName}</TableCell>
-                      <TableCell>{session.audit.createdBy}</TableCell>
-                      <TableCell>{formatInventoryDateTime(session.audit.createdAt)}</TableCell>
+                      <TableCell>{session.audit.createdBy || "-"}</TableCell>
+                      <TableCell>{session.audit.createdAt ? formatInventoryDateTime(session.audit.createdAt) : "-"}</TableCell>
                       <TableCell>{session.audit.lastUpdatedAt ? formatInventoryDateTime(session.audit.lastUpdatedAt) : "-"}</TableCell>
                       <TableCell align="right">{session.lines.length}</TableCell>
                       <TableCell align="right">{counted}</TableCell>
@@ -3818,8 +4240,8 @@ export default function InventoryPage() {
                       </TableCell>
                       <TableCell align="right">
                         <Stack direction="row" spacing={0.75} justifyContent="flex-end" useFlexGap flexWrap="wrap">
-                          <Button size="small" disabled={disableContinue} onClick={() => openPhysicalCountWorkspace(session.id, "continue")}>Continue</Button>
-                          <Button size="small" variant="outlined" disabled={disableReview} onClick={() => openPhysicalCountDrawer(session.id, "review")}>Review Session</Button>
+                          {canContinueSession ? <Button size="small" onClick={() => openPhysicalCountWorkspace(session.id, "continue")}>Continue</Button> : null}
+                          {canReviewSession ? <Button size="small" variant="outlined" onClick={() => openPhysicalCountDrawer(session.id, "review")}>Review Session</Button> : null}
                           <Button size="small" variant="outlined" onClick={() => openPhysicalCountDrawer(session.id, "view")}>View</Button>
                         </Stack>
                       </TableCell>
@@ -3894,7 +4316,7 @@ export default function InventoryPage() {
                             const difference = physicalCountLineDifference(line);
                             const status = physicalCountLineStatus(line);
                             const isActive = line.id === physicalCountWorkspaceLine?.id;
-                            const readOnly = physicalCountWorkspaceMode === "view" || physicalCountWorkspaceSession.status === "SUBMITTED" || physicalCountWorkspaceSession.status === "REVIEWED";
+                            const readOnly = physicalCountWorkspaceMode === "view" || !canCreatePhysicalCountSession || physicalCountWorkspaceSession.status === "SUBMITTED" || physicalCountWorkspaceSession.status === "REVIEWED";
                             return (
                               <TableRow key={line.id} hover selected={isActive} onClick={() => setPhysicalCountWorkspaceLineId(line.id)} sx={{ "& td": { verticalAlign: "top" } }}>
                                 <TableCell>
@@ -3979,38 +4401,39 @@ export default function InventoryPage() {
                       </Button>
                     </Stack>
                     <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
-                      <Button
-                        variant="outlined"
-                        disabled={physicalCountWorkspaceMode === "view" || physicalCountWorkspaceSession.status !== "IN_PROGRESS"}
-                        onClick={() => savePhysicalCountSessionDraft()}
-                      >
-                        Save
-                      </Button>
-                      <Button
-                        variant="contained"
-                        disabled={physicalCountWorkspaceMode === "view" || physicalCountWorkspaceSession.status !== "IN_PROGRESS" || physicalCountWorkspaceLineIndex < 0 || physicalCountWorkspaceLineIndex >= physicalCountWorkspaceLines.length - 1}
-                        onClick={() => {
-                          savePhysicalCountSessionDraft("Physical count line saved locally. Inventory quantity is unchanged.");
-                          const next = physicalCountWorkspaceLines[physicalCountWorkspaceLineIndex + 1];
-                          if (next) setPhysicalCountWorkspaceLineId(next.id);
-                        }}
-                      >
-                        Save & Next
-                      </Button>
-                      <Button
-                        variant="contained"
-                        color="warning"
-                        disabled={physicalCountWorkspaceMode === "view" || physicalCountWorkspaceSession.status !== "IN_PROGRESS" || physicalCountSessionSummary.pending > 0}
-                        onClick={submitPhysicalCountSession}
-                      >
-                        Submit Session
-                      </Button>
-                      <Tooltip title="Coming after count session backend is enabled.">
-                        <span><Button variant="outlined" disabled>Approve</Button></span>
-                      </Tooltip>
-                      <Tooltip title="Coming after count session backend is enabled.">
-                        <span><Button variant="outlined" disabled>Post</Button></span>
-                      </Tooltip>
+                      {canCreatePhysicalCountSession ? (
+                        <>
+                          <Button
+                            variant="outlined"
+                            disabled={physicalCountWorkspaceMode === "view" || physicalCountWorkspaceSession.status !== "IN_PROGRESS"}
+                            onClick={() => { void savePhysicalCountSessionDraft(); }}
+                          >
+                            Save
+                          </Button>
+                          <Button
+                            variant="contained"
+                            disabled={physicalCountWorkspaceMode === "view" || physicalCountWorkspaceSession.status !== "IN_PROGRESS" || physicalCountWorkspaceLineIndex < 0 || physicalCountWorkspaceLineIndex >= physicalCountWorkspaceLines.length - 1}
+                            onClick={async () => {
+                              const saved = await savePhysicalCountSessionDraft("Physical count progress saved. Inventory quantity is unchanged until adjustments are posted.");
+                              if (!saved) {
+                                return;
+                              }
+                              const next = physicalCountWorkspaceLines[physicalCountWorkspaceLineIndex + 1];
+                              if (next) setPhysicalCountWorkspaceLineId(next.id);
+                            }}
+                          >
+                            Save & Next
+                          </Button>
+                          <Button
+                            variant="contained"
+                            color="warning"
+                            disabled={physicalCountWorkspaceMode === "view" || physicalCountWorkspaceSession.status !== "IN_PROGRESS" || physicalCountSessionSummary.pending > 0}
+                            onClick={() => { void submitPhysicalCountSession(); }}
+                          >
+                            Submit Session
+                          </Button>
+                        </>
+                      ) : null}
                     </Stack>
                   </Stack>
                 </Stack>
@@ -4082,10 +4505,10 @@ export default function InventoryPage() {
                         <TextField size="small" fullWidth label="Scope" value={physicalCountDrawerSession.scopeLabel} InputProps={{ readOnly: true }} />
                       </Grid>
                       <Grid size={{ xs: 12, sm: 6 }}>
-                        <TextField size="small" fullWidth label="Created By" value={physicalCountDrawerSession.audit.createdBy} InputProps={{ readOnly: true }} />
+                        <TextField size="small" fullWidth label="Created By" value={physicalCountDrawerSession.audit.createdBy || ""} InputProps={{ readOnly: true }} />
                       </Grid>
                       <Grid size={{ xs: 12, sm: 6 }}>
-                        <TextField size="small" fullWidth label="Created Date" value={formatInventoryDateTime(physicalCountDrawerSession.audit.createdAt)} InputProps={{ readOnly: true }} />
+                        <TextField size="small" fullWidth label="Created Date" value={physicalCountDrawerSession.audit.createdAt ? formatInventoryDateTime(physicalCountDrawerSession.audit.createdAt) : ""} InputProps={{ readOnly: true }} />
                       </Grid>
                       <Grid size={{ xs: 12, sm: 6 }}>
                         <TextField size="small" fullWidth label="Status" value={physicalCountStatusLabel(physicalCountDrawerSession.status)} InputProps={{ readOnly: true }} />
@@ -4402,8 +4825,8 @@ export default function InventoryPage() {
 
                   <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
                     <Button size="small" onClick={() => setPhysicalCountDrawerSessionId(null)}>Close</Button>
-                    {physicalCountDrawerMode === "review" && physicalCountDrawerSession.status === "SUBMITTED" ? (
-                      <Button size="small" variant="contained" color="success" onClick={markPhysicalCountSessionReviewed}>Mark Reviewed</Button>
+                    {physicalCountDrawerMode === "review" && canCheckPhysicalCountSession && physicalCountDrawerSession.status === "SUBMITTED" ? (
+                      <Button size="small" variant="contained" color="success" onClick={() => { void markPhysicalCountSessionReviewed(); }}>Mark Reviewed</Button>
                     ) : null}
                     <Tooltip title="Available in next workflow phase.">
                       <span><Button size="small" variant="outlined" disabled>Print</Button></span>
@@ -4411,10 +4834,16 @@ export default function InventoryPage() {
                     <Tooltip title="Available in next workflow phase.">
                       <span><Button size="small" variant="outlined" disabled>Export PDF</Button></span>
                     </Tooltip>
-                    <Button size="small" variant="outlined" disabled={physicalCountDrawerSession.status !== "REVIEWED" || saving} onClick={approvePhysicalCountSession}>Approve Session</Button>
-                    <Button size="small" variant="outlined" color="error" disabled={physicalCountDrawerSession.status !== "REVIEWED" || saving} onClick={rejectPhysicalCountSession}>Reject</Button>
-                    <Button size="small" variant="outlined" color="warning" disabled={physicalCountDrawerSession.status !== "REVIEWED" || saving} onClick={returnPhysicalCountSessionForRecount}>Return for Recount</Button>
-                    <Button size="small" variant="contained" disabled={physicalCountDrawerSession.status !== "APPROVED" || Boolean(physicalCountDrawerSession.audit.postedAt) || saving} onClick={() => void postPhysicalCountAdjustments()}>Post Adjustments</Button>
+                    {canCheckPhysicalCountSession && physicalCountDrawerSession.status === "REVIEWED" ? (
+                      <>
+                        <Button size="small" variant="outlined" disabled={saving} onClick={() => { void approvePhysicalCountSession(); }}>Approve Session</Button>
+                        <Button size="small" variant="outlined" color="error" disabled={saving} onClick={() => { void rejectPhysicalCountSession(); }}>Reject</Button>
+                        <Button size="small" variant="outlined" color="warning" disabled={saving} onClick={() => { void returnPhysicalCountSessionForRecount(); }}>Return for Recount</Button>
+                      </>
+                    ) : null}
+                    {canCheckPhysicalCountSession && physicalCountDrawerSession.status === "APPROVED" && !Boolean(physicalCountDrawerSession.audit.postedAt) ? (
+                      <Button size="small" variant="contained" disabled={saving} onClick={() => void postPhysicalCountAdjustments()}>Post Adjustments</Button>
+                    ) : null}
                   </Stack>
                 </Stack>
               ) : null}
@@ -5228,6 +5657,65 @@ export default function InventoryPage() {
           </Grid>
         </Stack>
       ) : null}
+
+      <Dialog open={locationEditorOpen} onClose={() => { setLocationEditorOpen(false); setLocationFieldErrors({}); }} fullWidth maxWidth="sm">
+        <DialogTitle>{editingLocationId ? "Edit Location" : "Add Location"}</DialogTitle>
+        <DialogContent>
+          <Stack spacing={1.25} sx={{ mt: 0.25 }}>
+            <TextField
+              size="small"
+              fullWidth
+              label={<RequiredLabel text="Location Name" required />}
+              value={locationForm.locationName}
+              onChange={(e) => setLocationForm((current) => ({ ...current, locationName: e.target.value }))}
+              error={Boolean(locationFieldErrors.locationName)}
+              helperText={locationFieldErrors.locationName || "Human-friendly location name."}
+            />
+            <TextField
+              size="small"
+              fullWidth
+              label="Location Code"
+              value={locationForm.locationCode}
+              onChange={(e) => setLocationForm((current) => ({ ...current, locationCode: e.target.value }))}
+              error={Boolean(locationFieldErrors.locationCode)}
+              helperText={locationFieldErrors.locationCode || "Optional code such as MAIN_PHARMACY or SECONDARY_PHARMACY."}
+            />
+            <TextField
+              size="small"
+              fullWidth
+              label={<RequiredLabel text="Location Type" required />}
+              value={locationForm.locationType}
+              onChange={(e) => setLocationForm((current) => ({ ...current, locationType: e.target.value }))}
+              error={Boolean(locationFieldErrors.locationType)}
+              helperText={locationFieldErrors.locationType || "Stored as configured inventory location type."}
+            />
+            <FormControlLabel
+              control={(
+                <Checkbox
+                  checked={locationForm.defaultLocation}
+                  onChange={(e) => setLocationForm((current) => ({ ...current, defaultLocation: e.target.checked }))}
+                />
+              )}
+              label="Default location"
+            />
+            <FormControlLabel
+              control={(
+                <Checkbox
+                  checked={locationForm.active}
+                  onChange={(e) => setLocationForm((current) => ({ ...current, active: e.target.checked }))}
+                />
+              )}
+              label="Active"
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => { setLocationEditorOpen(false); setLocationFieldErrors({}); }}>Cancel</Button>
+          <Button variant="contained" disabled={savingLocation} onClick={() => void saveLocation()}>
+            {savingLocation ? "Saving..." : "Save Location"}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Dialog open={quickMedicineOpen} onClose={() => setQuickMedicineOpen(false)} fullWidth maxWidth="md">
         <DialogTitle>Quick Add Medicine</DialogTitle>

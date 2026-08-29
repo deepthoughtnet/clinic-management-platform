@@ -49,7 +49,7 @@ public class PatientVaccinationController {
     }
 
     @PostMapping("/{vaccinationId}/verify")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('TENANT_ADMIN') or @doctorAssignmentSecurityService.isDoctor()")
+    @PreAuthorize("@vaccineAccessChecker.canVerifyExternalVaccination() or @doctorAssignmentSecurityService.isDoctor()")
     public PatientVaccinationResponse verifyExternalHistory(
             @PathVariable UUID patientId,
             @PathVariable UUID vaccinationId,

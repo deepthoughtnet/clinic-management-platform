@@ -19,7 +19,7 @@ import java.util.UUID;
                 @Index(name = "ix_medicine_catalogue_tenant_name", columnList = "tenant_id,medicine_name")
         },
         uniqueConstraints = {
-                @UniqueConstraint(name = "uq_medicine_catalogue_tenant_name", columnNames = {"tenant_id", "medicine_name"}),
+                @UniqueConstraint(name = "uq_medicine_catalogue_tenant_name_type_strength", columnNames = {"tenant_id", "medicine_name", "medicine_type", "strength"}),
                 @UniqueConstraint(name = "uq_medicine_catalogue_tenant_barcode", columnNames = {"tenant_id", "barcode"}),
                 @UniqueConstraint(name = "uq_medicine_catalogue_tenant_external_code", columnNames = {"tenant_id", "external_code"})
         }

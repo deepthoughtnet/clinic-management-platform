@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.api.pharmacy;
 
 import com.deepthoughtnet.clinic.api.inventory.service.PrescriptionDispensingService;
+import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
 import com.deepthoughtnet.clinic.inventory.db.GoodsReceiptEntity;
 import com.deepthoughtnet.clinic.inventory.db.GoodsReceiptRepository;
 import com.deepthoughtnet.clinic.inventory.db.InventoryLocationEntity;
@@ -27,20 +28,31 @@ import com.deepthoughtnet.clinic.inventory.service.model.MedicineRecord;
 import com.deepthoughtnet.clinic.inventory.service.model.MedicineUpsertCommand;
 import com.deepthoughtnet.clinic.inventory.service.model.StockRecord;
 import com.deepthoughtnet.clinic.inventory.service.model.StockUpsertCommand;
+import com.deepthoughtnet.clinic.identity.service.PlatformTenantManagementService;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventCommand;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
+import com.deepthoughtnet.clinic.notification.service.NotificationHistoryService;
+import com.deepthoughtnet.clinic.notification.service.model.NotificationHistoryRecord;
+import com.deepthoughtnet.clinic.notify.NotificationAttachment;
+import com.deepthoughtnet.clinic.notify.NotificationDeliveryException;
+import com.deepthoughtnet.clinic.notify.NotificationMessage;
+import com.deepthoughtnet.clinic.notify.NotificationProvider;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import com.deepthoughtnet.clinic.platform.storage.ObjectStorageService;
 import com.deepthoughtnet.clinic.ocr.spi.OcrDocument;
 import com.deepthoughtnet.clinic.ocr.spi.OcrProvider;
 import com.deepthoughtnet.clinic.ocr.spi.OcrResult;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.io.StringWriter;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -60,6 +72,12 @@ import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVParser;
 import org.apache.commons.csv.CSVPrinter;
 import org.apache.commons.csv.CSVRecord;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDPageContentStream;
+import org.apache.pdfbox.pdmodel.common.PDRectangle;
+import org.apache.pdfbox.pdmodel.font.PDType1Font;
+import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -98,9 +116,13 @@ public class PharmacyOperationsService {
     private final GoodsReceiptRepository goodsReceiptRepository;
     private final PrescriptionDispensingService dispensingService;
     private final AuditEventPublisher auditEventPublisher;
+    private final PlatformTenantManagementService tenantManagementService;
+    private final NotificationHistoryService notificationHistoryService;
+    private final NotificationProvider notificationProvider;
     private final ObjectStorageService storageService;
     private final ObjectProvider<OcrProvider> ocrProvider;
     private final ObjectMapper objectMapper;
+    private final ClinicTimeZoneResolver clinicTimeZoneResolver;
     private final TransactionTemplate requiresNewTransactionTemplate;
 
     public PharmacyOperationsService(
@@ -115,9 +137,13 @@ public class PharmacyOperationsService {
             GoodsReceiptRepository goodsReceiptRepository,
             PrescriptionDispensingService dispensingService,
             AuditEventPublisher auditEventPublisher,
+            PlatformTenantManagementService tenantManagementService,
+            NotificationHistoryService notificationHistoryService,
+            NotificationProvider notificationProvider,
             ObjectStorageService storageService,
             ObjectProvider<OcrProvider> ocrProvider,
             ObjectMapper objectMapper,
+            ClinicTimeZoneResolver clinicTimeZoneResolver,
             PlatformTransactionManager transactionManager
     ) {
         this.inventoryService = inventoryService;
@@ -131,9 +157,13 @@ public class PharmacyOperationsService {
         this.goodsReceiptRepository = goodsReceiptRepository;
         this.dispensingService = dispensingService;
         this.auditEventPublisher = auditEventPublisher;
+        this.tenantManagementService = tenantManagementService;
+        this.notificationHistoryService = notificationHistoryService;
+        this.notificationProvider = notificationProvider;
         this.storageService = storageService;
         this.ocrProvider = ocrProvider;
         this.objectMapper = objectMapper;
+        this.clinicTimeZoneResolver = clinicTimeZoneResolver;
         this.requiresNewTransactionTemplate = new TransactionTemplate(transactionManager);
         this.requiresNewTransactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
@@ -653,19 +683,24 @@ public class PharmacyOperationsService {
         if (request == null || request.supplierId() == null || !StringUtils.hasText(request.poNumber()) || !StringUtils.hasText(request.orderDate())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Supplier, PO number, and order date are required");
         }
+        if (StringUtils.hasText(request.notes()) && request.notes().trim().length() > 500) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Notes must be 500 characters or fewer");
+        }
         SupplierEntity supplier = supplierRepository.findByTenantIdAndId(tenantId, request.supplierId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Supplier not found"));
         ensureActiveSupplier(supplier, "Inactive supplier cannot be used for procurement");
         validatePurchaseOrder(tenantId, request);
         String itemsJson = serializeItems(request.items());
+        String normalizedNotes = normalizeNullable(request.notes());
         PurchaseOrderEntity entity = purchaseOrderRepository.findByTenantIdAndPoNumberIgnoreCase(tenantId, request.poNumber())
-                .orElseGet(() -> PurchaseOrderEntity.create(tenantId, supplier.getId(), normalize(request.poNumber()), parseDate(request.orderDate(), "orderDate"), parseDate(request.expectedDeliveryDate(), "expectedDeliveryDate"), itemsJson, actorAppUserId));
+                .orElseGet(() -> PurchaseOrderEntity.create(tenantId, supplier.getId(), normalize(request.poNumber()), parseDate(request.orderDate(), "orderDate"), parseDate(request.expectedDeliveryDate(), "expectedDeliveryDate"), itemsJson, normalizedNotes, actorAppUserId));
         entity.upsertHeaderAndItems(
                 supplier.getId(),
                 normalize(request.poNumber()),
                 parseDate(request.orderDate(), "orderDate"),
                 parseDate(request.expectedDeliveryDate(), "expectedDeliveryDate"),
-                itemsJson
+                itemsJson,
+                normalizedNotes
         );
         entity.review(matchStatusForPurchaseOrder(itemsJson, null), null, normalizeNullable(request.approvalNote()));
         PurchaseOrderEntity saved = purchaseOrderRepository.save(entity);
@@ -684,6 +719,95 @@ public class PharmacyOperationsService {
         entity.review("CANCELLED", entity.getVarianceSummary(), normalizeNullable("CANCELLED:" + reason.trim()));
         PurchaseOrderEntity saved = purchaseOrderRepository.save(entity);
         return toRecord(saved, supplier);
+    }
+
+    @Transactional(readOnly = true)
+    public PurchaseOrderDocumentResponse generatePurchaseOrderPdf(UUID tenantId, UUID id, UUID actorAppUserId) {
+        PurchaseOrderEntity entity = purchaseOrderRepository.findByTenantIdAndId(tenantId, id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Purchase order not found"));
+        PurchaseOrderStatus status = parsePurchaseOrderStatus(entity.getApprovalNote());
+        if (status == PurchaseOrderStatus.DRAFT || status == PurchaseOrderStatus.CANCELLED) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Purchase order is not available for printing");
+        }
+        SupplierEntity supplier = supplierRepository.findByTenantIdAndId(tenantId, entity.getSupplierId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Supplier not found"));
+        PurchaseOrderDocumentResponse pdf = buildPurchaseOrderPdf(tenantId, entity, supplier);
+        audit(
+                "pharmacy.purchase-order.pdf_generated",
+                "PURCHASE_ORDER",
+                tenantId,
+                entity.getId(),
+                actorAppUserId,
+                "Generated purchase order PDF",
+                Map.of(
+                        "poNumber", entity.getPoNumber(),
+                        "status", status.name(),
+                        "filename", pdf.filename()
+                )
+        );
+        return pdf;
+    }
+
+    @Transactional
+    public PurchaseOrderSendResponse sendPurchaseOrder(UUID tenantId, UUID id, UUID actorAppUserId) {
+        PurchaseOrderEntity entity = purchaseOrderRepository.findByTenantIdAndId(tenantId, id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Purchase order not found"));
+        PurchaseOrderStatus status = parsePurchaseOrderStatus(entity.getApprovalNote());
+        if (status != PurchaseOrderStatus.GENERATED) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Only generated purchase orders can be sent");
+        }
+        SupplierEntity supplier = supplierRepository.findByTenantIdAndId(tenantId, entity.getSupplierId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Supplier not found"));
+        String recipient = normalizeNullable(supplier.getEmail());
+        if (!StringUtils.hasText(recipient)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Supplier email is required to send purchase order");
+        }
+        PurchaseOrderDocumentResponse pdf = buildPurchaseOrderPdf(tenantId, entity, supplier);
+        String subject = "Purchase Order " + entity.getPoNumber();
+        String message = "Purchase order " + entity.getPoNumber() + " is attached.";
+        NotificationHistoryRecord queued = notificationHistoryService.queue(
+                tenantId,
+                null,
+                "PURCHASE_ORDER_SENT",
+                "email",
+                recipient,
+                subject,
+                message,
+                "PURCHASE_ORDER",
+                entity.getId(),
+                actorAppUserId
+        );
+        try {
+            notificationProvider.send(new NotificationMessage(
+                    tenantId,
+                    "EMAIL",
+                    recipient,
+                    subject,
+                    message,
+                    "{\"sourceType\":\"PURCHASE_ORDER\",\"sourceId\":\"" + entity.getId() + "\"}",
+                    null,
+                    List.of(new NotificationAttachment(pdf.filename(), "application/pdf", pdf.content()))
+            ));
+            notificationHistoryService.markSent(tenantId, queued.id());
+        } catch (NotificationDeliveryException ex) {
+            notificationHistoryService.markFailed(tenantId, queued.id(), "Email provider rejected purchase order");
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Purchase order email could not be sent. Please check email provider configuration.");
+        }
+        entity.review(entity.getMatchingStatus(), entity.getVarianceSummary(), "SENT");
+        purchaseOrderRepository.save(entity);
+        audit(
+                "pharmacy.purchase-order.sent",
+                "PURCHASE_ORDER",
+                tenantId,
+                entity.getId(),
+                actorAppUserId,
+                "Sent purchase order to supplier",
+                Map.of(
+                        "poNumber", entity.getPoNumber(),
+                        "recipient", recipient
+                )
+        );
+        return new PurchaseOrderSendResponse(true, "Purchase order sent", recipient, OffsetDateTime.now());
     }
 
     @Transactional(readOnly = true)
@@ -710,7 +834,7 @@ public class PharmacyOperationsService {
         String itemsJson = serializeItems(request.items());
         String normalizedInvoiceNumber = normalize(request.invoiceNumber());
         BigDecimal varianceAmount = varianceAmountForInvoice(po, request.totalAmount());
-        String varianceReason = normalizeNullable(request.varianceReason());
+        String varianceReason = varianceAmount.compareTo(BigDecimal.ZERO) == 0 ? null : normalizeNullable(request.varianceReason());
         SupplierInvoiceEntity entity;
         if (id == null) {
             if (supplierInvoiceRepository.existsByTenantIdAndSupplierIdAndInvoiceNumberIgnoreCase(tenantId, supplier.getId(), normalizedInvoiceNumber)) {
@@ -722,10 +846,10 @@ public class PharmacyOperationsService {
                     po.getId(),
                     normalizedInvoiceNumber,
                     parseDate(request.invoiceDate(), "invoiceDate"),
-                    request.invoiceAmount(),
-                    request.taxAmount(),
-                    request.discountAmount(),
-                    request.totalAmount(),
+                    normalizeMoney(request.invoiceAmount()),
+                    normalizeMoney(request.taxAmount()),
+                    normalizeMoney(request.discountAmount()),
+                    normalizeMoney(request.totalAmount()),
                     itemsJson,
                     actorAppUserId
             );
@@ -741,20 +865,20 @@ public class PharmacyOperationsService {
                     po.getId(),
                     normalizedInvoiceNumber,
                     parseDate(request.invoiceDate(), "invoiceDate"),
-                    request.invoiceAmount(),
-                    request.taxAmount(),
-                    request.discountAmount(),
-                    request.totalAmount(),
+                    normalizeMoney(request.invoiceAmount()),
+                    normalizeMoney(request.taxAmount()),
+                    normalizeMoney(request.discountAmount()),
+                    normalizeMoney(request.totalAmount()),
                     itemsJson,
                     varianceReason,
                     normalizeNullable(request.approvalNote())
             );
         }
         entity.review(
-                matchStatusForInvoice(po, itemsJson),
+                matchStatusForInvoice(po, request.totalAmount(), itemsJson),
                 varianceAmount,
                 varianceReason,
-                varianceSummaryForInvoice(po, itemsJson),
+                varianceSummaryForInvoice(po, request.totalAmount(), itemsJson),
                 normalizeNullable(request.approvalNote())
         );
         SupplierInvoiceEntity saved = supplierInvoiceRepository.save(entity);
@@ -766,6 +890,21 @@ public class PharmacyOperationsService {
         SupplierInvoiceEntity entity = supplierInvoiceRepository.findByTenantIdAndId(tenantId, id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Supplier invoice not found"));
         ensureSupplierInvoiceStatus(entity, "DRAFT");
+        BigDecimal varianceAmount = entity.getVarianceAmount();
+        if (varianceAmount == null) {
+            PurchaseOrderEntity purchaseOrder = entity.getPurchaseOrderId() == null
+                    ? null
+                    : purchaseOrderRepository.findByTenantIdAndId(tenantId, entity.getPurchaseOrderId()).orElse(null);
+            varianceAmount = purchaseOrder == null || entity.getTotalAmount() == null
+                    ? null
+                    : varianceAmountForInvoice(purchaseOrder, entity.getTotalAmount());
+        }
+        if (varianceAmount != null && varianceAmount.compareTo(BigDecimal.ZERO) != 0) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Supplier invoice has a variance and cannot be marked matched");
+        }
+        if (!"MATCHED".equalsIgnoreCase(normalizeNullable(entity.getMatchingStatus()))) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Supplier invoice is not eligible for matching");
+        }
         entity.markMatched();
         SupplierInvoiceEntity saved = supplierInvoiceRepository.save(entity);
         SupplierEntity supplier = supplierRepository.findByTenantIdAndId(tenantId, saved.getSupplierId())
@@ -1039,6 +1178,7 @@ public class PharmacyOperationsService {
         String defaultFrequency = value(record, "defaultFrequency");
         Integer defaultDurationDays = parseInteger(value(record, "defaultDurationDays"), "defaultDurationDays");
         String defaultTiming = value(record, "defaultTiming");
+        validateMedicineTiming(defaultTiming);
         String defaultInstructions = valueAny(record, "defaultInstructions", "instructions");
         BigDecimal defaultPrice = parseDecimal(value(record, "defaultPrice"), "defaultPrice");
         BigDecimal taxPercent = parseDecimal(valueAny(record, "taxPercent", "taxRate"), "taxPercent");
@@ -1087,6 +1227,19 @@ public class PharmacyOperationsService {
                 )
                 : null;
         return new ParsedMedicineImportRow(rowNumber, medicineName, command, stockData);
+    }
+
+    private void validateMedicineTiming(String defaultTiming) {
+        if (!StringUtils.hasText(defaultTiming)) {
+            return;
+        }
+        String normalizedTiming = defaultTiming.trim().toUpperCase(Locale.ROOT);
+        if (!normalizedTiming.equals("BEFORE_FOOD")
+                && !normalizedTiming.equals("AFTER_FOOD")
+                && !normalizedTiming.equals("WITH_FOOD")
+                && !normalizedTiming.equals("ANYTIME")) {
+            throw new IllegalArgumentException("defaultTiming must be one of BEFORE_FOOD, AFTER_FOOD, WITH_FOOD, ANYTIME");
+        }
     }
 
     private MedicineImportOutcome persistMedicineImportRow(UUID tenantId, ParsedMedicineImportRow row, UUID actorAppUserId) {
@@ -1303,7 +1456,9 @@ public class PharmacyOperationsService {
             case "INJECTION" -> "INJECTION";
             case "DROP", "DROPS" -> "DROP";
             case "OINTMENT", "CREAM", "GEL" -> "OINTMENT";
-            default -> "OTHER";
+            case "SACHET" -> "SACHET";
+            case "OTHER" -> "OTHER";
+            default -> throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "type must be one of TABLET, CAPSULE, SYRUP, INJECTION, DROP, OINTMENT, SACHET, OTHER");
         };
     }
 
@@ -1408,6 +1563,9 @@ public class PharmacyOperationsService {
     private void validateStockInwardFields(StockInwardRequest request) {
         validateReferenceField(request.purchaseReferenceNumber(), 60, "Invoice number must be 60 characters or fewer and can include letters, numbers, dashes, underscores, slashes, and spaces.", INVOICE_REFERENCE_PATTERN, "invoice number");
         validateReferenceField(request.batchNumber(), 30, "GRN number must be 3 to 30 characters and use letters, numbers, dashes, underscores, or slashes.", BATCH_PATTERN, "GRN number", 3);
+        if (request.locationId() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Location is required");
+        }
         if (StringUtils.hasText(request.barcode()) && !request.barcode().trim().matches("^\\d{8,20}$")) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Barcode must be 8 to 20 digits");
         }
@@ -1617,6 +1775,9 @@ public class PharmacyOperationsService {
         }
         if (item.sellingPrice() != null && item.sellingPrice().compareTo(BigDecimal.ZERO) < 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Selling price cannot be negative");
+        }
+        if (item.discount() != null && item.discount().compareTo(BigDecimal.ZERO) < 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Discount cannot be negative");
         }
         if (item.expectedUnitCost() != null && item.sellingPrice() != null && item.sellingPrice().compareTo(item.expectedUnitCost()) < 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Selling price cannot be less than expected/unit cost.");
@@ -2116,11 +2277,11 @@ public class PharmacyOperationsService {
         return StringUtils.hasText(varianceSummary) ? "REVIEW_REQUIRED" : "MATCHED";
     }
 
-    private String matchStatusForInvoice(PurchaseOrderEntity purchaseOrder, String itemsJson) {
+    private String matchStatusForInvoice(PurchaseOrderEntity purchaseOrder, BigDecimal invoiceTotalAmount, String itemsJson) {
         if (purchaseOrder == null) {
             return "MISSING_PO";
         }
-        return varianceSummaryForInvoice(purchaseOrder, itemsJson).isBlank() ? "MATCHED" : "REVIEW_REQUIRED";
+        return varianceSummaryForInvoice(purchaseOrder, invoiceTotalAmount, itemsJson).isBlank() ? "MATCHED" : "REVIEW_REQUIRED";
     }
 
     private String matchStatusForReceipt(PurchaseOrderEntity purchaseOrder, SupplierInvoiceEntity invoice, String itemsJson) {
@@ -2133,14 +2294,24 @@ public class PharmacyOperationsService {
         return varianceSummaryForReceipt(purchaseOrder, invoice, itemsJson).isBlank() ? "MATCHED" : "REVIEW_REQUIRED";
     }
 
-    private String varianceSummaryForInvoice(PurchaseOrderEntity purchaseOrder, String itemsJson) {
+    private String varianceSummaryForInvoice(PurchaseOrderEntity purchaseOrder, BigDecimal invoiceTotalAmount, String itemsJson) {
         if (purchaseOrder == null) {
             return "Missing purchase order linkage";
         }
-        return Stream.of(
+        List<String> variances = new ArrayList<>();
+        BigDecimal poTotalAmount = procurementTotal(deserializeItems(purchaseOrder.getItemsJson()));
+        if (invoiceTotalAmount != null) {
+            BigDecimal canonicalInvoiceTotal = invoiceTotalAmount.setScale(2, RoundingMode.HALF_UP);
+            BigDecimal amountVariance = canonicalInvoiceTotal.subtract(poTotalAmount).setScale(2, RoundingMode.HALF_UP);
+            if (amountVariance.compareTo(BigDecimal.ZERO) != 0) {
+                variances.add("Invoice total expected INR " + money(poTotalAmount) + " received INR " + money(canonicalInvoiceTotal) + " (variance INR " + money(amountVariance) + ")");
+            }
+        }
+        variances.addAll(Stream.of(
                 compareQuantities(deserializeItems(purchaseOrder.getItemsJson()), deserializeItems(itemsJson)),
                 compareCosts(deserializeItems(purchaseOrder.getItemsJson()), deserializeItems(itemsJson))
-        ).filter(StringUtils::hasText).filter(value -> !"OK".equals(value)).collect(Collectors.joining(" | "));
+        ).filter(StringUtils::hasText).filter(value -> !"OK".equals(value)).toList());
+        return variances.isEmpty() ? "" : String.join(" | ", variances);
     }
 
     private String varianceSummaryForReceipt(PurchaseOrderEntity purchaseOrder, SupplierInvoiceEntity invoice, String itemsJson) {
@@ -2231,8 +2402,351 @@ public class PharmacyOperationsService {
         return variances.isEmpty() ? "OK" : String.join("; ", variances);
     }
 
+    private PurchaseOrderDocumentResponse buildPurchaseOrderPdf(UUID tenantId, PurchaseOrderEntity entity, SupplierEntity supplier) {
+        var tenant = tenantManagementService.get(tenantId);
+        String clinicName = StringUtils.hasText(tenant.name()) ? tenant.name().trim() : "Clinic";
+        List<ProcurementLineRequest> items = deserializeItems(entity.getItemsJson());
+        PurchaseOrderStatus status = parsePurchaseOrderStatus(entity.getApprovalNote());
+        ZoneId clinicZone = clinicTimeZoneResolver.resolve(tenantId);
+        String statusDate = formatDateTime(entity.getUpdatedAt(), clinicZone);
+        try (PDDocument document = new PDDocument(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            PDPage page = new PDPage(PDRectangle.A4);
+            document.addPage(page);
+            try (PDPageContentStream content = new PDPageContentStream(document, page)) {
+                float margin = 40f;
+                float y = page.getMediaBox().getHeight() - margin;
+                float pageWidth = page.getMediaBox().getWidth();
+                float metadataWidth = 114f;
+                float metadataGap = 12f;
+                float rightColumnX = pageWidth - margin - (metadataWidth * 2f + metadataGap);
+                float contentWidth = pageWidth - (margin * 2);
+                PDType1Font bold = new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD);
+                PDType1Font regular = new PDType1Font(Standard14Fonts.FontName.HELVETICA);
+
+                y = drawText(content, bold, 18, margin, y, clinicName);
+                y = drawText(content, bold, 13, margin, y - 14f, "PURCHASE ORDER");
+                float metaTopY = y + 14f;
+                float metaBottomY = drawPurchaseOrderMetadataGrid(content, bold, regular, rightColumnX, metaTopY, metadataWidth, metadataGap,
+                        entity.getPoNumber(), entity.getOrderDate(), entity.getExpectedDeliveryDate(), status.label(), statusDate);
+                y = Math.min(y, metaBottomY);
+                drawDivider(content, margin, y - 10f, contentWidth);
+                y -= 28f;
+
+                y = drawKeyValue(content, bold, regular, "Supplier", safeText(supplier.getSupplierName()), margin, y);
+                y = drawKeyValue(content, bold, regular, "Supplier Contact", joinNonBlank(" | ", supplier.getContactPerson(), supplier.getPhone(), supplier.getEmail()), margin, y - 14f);
+                y = drawKeyValue(content, bold, regular, "Supplier GSTIN", safeText(supplier.getGstNumber()), margin, y - 14f);
+                y = drawKeyValue(content, bold, regular, "Supplier Address", safeText(supplier.getAddress()), margin, y - 14f);
+                y = drawWrappedSection(content, bold, regular, "Reference / Notes", safeText(entity.getNotes()), margin, y - 14f, contentWidth);
+
+                y -= 4f;
+                float[] columns = {margin, margin + 28f, margin + 180f, margin + 240f, margin + 300f, margin + 370f, margin + 435f, margin + 505f};
+                drawTableHeader(content, bold, columns, y, List.of("#", "Medicine", "Unit", "Qty", "Unit Price", "GST %", "Discount", "Line Total"));
+                y -= 18f;
+                for (int i = 0; i < items.size(); i++) {
+                    ProcurementLineRequest item = items.get(i);
+                    drawTableRow(content, regular, columns, y, List.of(
+                            String.valueOf(i + 1),
+                            truncate(safeText(item.medicineName()), 28),
+                            safeText(item.unit()),
+                            String.valueOf(item.quantity()),
+                            money(item.unitCost() != null ? item.unitCost() : item.expectedUnitCost()),
+                            money(item.taxPercent()),
+                            money(item.discount()),
+                            money(purchaseOrderLineTotal(item))
+                    ));
+                    y -= 16f;
+                }
+
+                y -= 8f;
+                drawDivider(content, margin, y, contentWidth);
+                y -= 18f;
+                y = drawAmountRow(content, regular, "Subtotal", purchaseOrderSubtotal(items), rightColumnX, y);
+                y = drawAmountRow(content, regular, "GST total", purchaseOrderGstTotal(items), rightColumnX, y - 12f);
+                y = drawAmountRow(content, regular, "Discount total", purchaseOrderDiscountTotal(items), rightColumnX, y - 12f);
+                drawAmountRow(content, bold, "Grand total", purchaseOrderGrandTotal(items), rightColumnX, y - 14f);
+            }
+            document.save(output);
+            return new PurchaseOrderDocumentResponse(safeFilename(entity.getPoNumber()) + ".pdf", output.toByteArray(), entity.getUpdatedAt());
+        } catch (IOException ex) {
+            throw new IllegalStateException("Unable to generate purchase order PDF", ex);
+        }
+    }
+
+    private BigDecimal purchaseOrderSubtotal(List<ProcurementLineRequest> items) {
+        return items.stream()
+                .filter(Objects::nonNull)
+                .map(item -> {
+                    BigDecimal quantity = BigDecimal.valueOf(item.quantity());
+                    BigDecimal unitCost = item.unitCost() != null ? item.unitCost() : item.expectedUnitCost() == null ? BigDecimal.ZERO : item.expectedUnitCost();
+                    return unitCost.multiply(quantity);
+                })
+                .reduce(BigDecimal.ZERO, BigDecimal::add)
+                .setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal purchaseOrderGstTotal(List<ProcurementLineRequest> items) {
+        return items.stream()
+                .filter(Objects::nonNull)
+                .map(item -> {
+                    BigDecimal quantity = BigDecimal.valueOf(item.quantity());
+                    BigDecimal unitCost = item.unitCost() != null ? item.unitCost() : item.expectedUnitCost() == null ? BigDecimal.ZERO : item.expectedUnitCost();
+                    BigDecimal subtotal = unitCost.multiply(quantity);
+                    BigDecimal taxPercent = item.taxPercent() == null ? BigDecimal.ZERO : item.taxPercent();
+                    return subtotal.multiply(taxPercent).divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
+                })
+                .reduce(BigDecimal.ZERO, BigDecimal::add)
+                .setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal purchaseOrderDiscountTotal(List<ProcurementLineRequest> items) {
+        return items.stream()
+                .filter(Objects::nonNull)
+                .map(item -> normalizeMoney(item.discount()))
+                .map(value -> value == null ? BigDecimal.ZERO : value)
+                .reduce(BigDecimal.ZERO, BigDecimal::add)
+                .setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal purchaseOrderGrandTotal(List<ProcurementLineRequest> items) {
+        return items.stream()
+                .filter(Objects::nonNull)
+                .map(item -> {
+                    BigDecimal quantity = BigDecimal.valueOf(item.quantity());
+                    BigDecimal unitCost = item.unitCost() != null ? item.unitCost() : item.expectedUnitCost() == null ? BigDecimal.ZERO : item.expectedUnitCost();
+                    BigDecimal subtotal = unitCost.multiply(quantity);
+                    BigDecimal gst = subtotal.multiply(item.taxPercent() == null ? BigDecimal.ZERO : item.taxPercent()).divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
+                    BigDecimal discount = normalizeMoney(item.discount()) == null ? BigDecimal.ZERO : normalizeMoney(item.discount());
+                    return subtotal.add(gst).subtract(discount).max(BigDecimal.ZERO);
+                })
+                .reduce(BigDecimal.ZERO, BigDecimal::add)
+                .setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal purchaseOrderLineTotal(ProcurementLineRequest item) {
+        BigDecimal quantity = BigDecimal.valueOf(item.quantity());
+        BigDecimal unitCost = item.unitCost() != null ? item.unitCost() : item.expectedUnitCost() == null ? BigDecimal.ZERO : item.expectedUnitCost();
+        BigDecimal subtotal = unitCost.multiply(quantity);
+        BigDecimal gst = subtotal.multiply(item.taxPercent() == null ? BigDecimal.ZERO : item.taxPercent()).divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
+        BigDecimal discount = normalizeMoney(item.discount()) == null ? BigDecimal.ZERO : normalizeMoney(item.discount());
+        return subtotal.add(gst).subtract(discount).max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private float drawAmountRow(PDPageContentStream content, PDType1Font font, String label, BigDecimal value, float x, float y) throws IOException {
+        content.beginText();
+        content.setFont(font, 10);
+        content.newLineAtOffset(x, y);
+        content.showText(safePdfText(label + ": INR " + money(value)));
+        content.endText();
+        return y;
+    }
+
+    private float drawKeyValue(PDPageContentStream content, PDType1Font bold, PDType1Font regular, String label, String value, float x, float y) throws IOException {
+        content.beginText();
+        content.setFont(bold, 10);
+        content.newLineAtOffset(x, y);
+        content.showText(safePdfText(label + ":"));
+        content.endText();
+        content.beginText();
+        content.setFont(regular, 10);
+        content.newLineAtOffset(x + 110f, y);
+        content.showText(safePdfText(value));
+        content.endText();
+        return y;
+    }
+
+    private float drawWrappedSection(PDPageContentStream content, PDType1Font bold, PDType1Font regular, String label, String value, float x, float y, float width) throws IOException {
+        y = drawText(content, bold, 10, x, y, label);
+        y -= 12f;
+        for (String line : wrap(value, Math.max(30, (int) (width / 6f)))) {
+            y = drawText(content, regular, 10, x, y, line);
+            y -= 12f;
+        }
+        return y;
+    }
+
+    private void drawTableHeader(PDPageContentStream content, PDType1Font font, float[] columns, float y, List<String> headers) throws IOException {
+        for (int i = 0; i < headers.size(); i++) {
+            content.beginText();
+            content.setFont(font, 9);
+            content.newLineAtOffset(columns[i], y);
+            content.showText(safePdfText(headers.get(i)));
+            content.endText();
+        }
+    }
+
+    private void drawTableRow(PDPageContentStream content, PDType1Font font, float[] columns, float y, List<String> values) throws IOException {
+        for (int i = 0; i < values.size(); i++) {
+            content.beginText();
+            content.setFont(font, 8.5f);
+            content.newLineAtOffset(columns[i], y);
+            content.showText(safePdfText(values.get(i)));
+            content.endText();
+        }
+    }
+
+    private float drawText(PDPageContentStream content, PDType1Font font, float size, float x, float y, String text) throws IOException {
+        content.beginText();
+        content.setFont(font, size);
+        content.newLineAtOffset(x, y);
+        content.showText(safePdfText(text));
+        content.endText();
+        return y;
+    }
+
+    private void drawDivider(PDPageContentStream content, float margin, float y, float width) throws IOException {
+        content.moveTo(margin, y);
+        content.lineTo(margin + width, y);
+        content.stroke();
+    }
+
+    private List<String> wrap(String value, int maxCharsPerLine) {
+        String text = safeText(value);
+        if ("-".equals(text)) {
+            return List.of("-");
+        }
+        List<String> lines = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        for (String word : text.split("\\s+")) {
+            if (current.isEmpty()) {
+                current.append(word);
+                continue;
+            }
+            if (current.length() + 1 + word.length() > maxCharsPerLine) {
+                lines.add(current.toString());
+                current.setLength(0);
+                current.append(word);
+            } else {
+                current.append(' ').append(word);
+            }
+        }
+        if (!current.isEmpty()) {
+            lines.add(current.toString());
+        }
+        return lines.isEmpty() ? List.of(text) : lines;
+    }
+
+    private String safePdfText(String value) {
+        return safeText(value)
+                .replace("\\", "\\\\")
+                .replace("(", "\\(")
+                .replace(")", "\\)");
+    }
+
+    private String safeText(String value) {
+        return StringUtils.hasText(value) ? value.trim() : "-";
+    }
+
+    private String formatDate(LocalDate date) {
+        return date == null ? "-" : date.toString();
+    }
+
+    private float drawPurchaseOrderMetadataGrid(PDPageContentStream content, PDType1Font bold, PDType1Font regular, float x, float y, float columnWidth, float gap, String poNumber, LocalDate orderDate, LocalDate expectedDeliveryDate, String status, String statusDate) throws IOException {
+        float leftX = x;
+        float rightX = x + columnWidth + gap;
+        float leftRowOneBottom = drawPurchaseOrderMetadataCell(content, bold, regular, leftX, y, columnWidth, "PO Number", safeText(poNumber));
+        float rightRowOneBottom = drawPurchaseOrderMetadataCell(content, bold, regular, rightX, y, columnWidth, "PO Date", formatDate(orderDate));
+        float nextRowY = Math.min(leftRowOneBottom, rightRowOneBottom) - 6f;
+        float leftRowTwoBottom = drawPurchaseOrderMetadataCell(content, bold, regular, leftX, nextRowY, columnWidth, "Expected Delivery", formatDate(expectedDeliveryDate));
+        float rightRowTwoBottom = drawPurchaseOrderMetadataCell(content, bold, regular, rightX, nextRowY, columnWidth, "Status", status);
+        float thirdRowY = Math.min(leftRowTwoBottom, rightRowTwoBottom) - 6f;
+        float leftRowThreeBottom = drawPurchaseOrderMetadataCell(content, bold, regular, leftX, thirdRowY, columnWidth, "Status Date", statusDate);
+        return leftRowThreeBottom;
+    }
+
+    private float drawPurchaseOrderMetadataCell(PDPageContentStream content, PDType1Font bold, PDType1Font regular, float x, float y, float width, String label, String value) throws IOException {
+        float labelY = y;
+        float valueY = y - 10f;
+        y = drawText(content, bold, 9f, x, labelY, label);
+        List<String> lines = wrap(value, Math.max(16, (int) (width / 5.5f)));
+        float currentY = valueY;
+        for (String line : lines) {
+            y = drawText(content, regular, 9f, x, currentY, line);
+            currentY -= 10f;
+        }
+        return currentY;
+    }
+
+    private String formatDateTime(OffsetDateTime dateTime, ZoneId zoneId) {
+        if (dateTime == null) {
+            return "-";
+        }
+        ZoneId effectiveZone = zoneId == null ? ZoneId.of("Asia/Kolkata") : zoneId;
+        return dateTime.atZoneSameInstant(effectiveZone).format(DateTimeFormatter.ofPattern("dd MMM yyyy hh:mm a", Locale.ENGLISH));
+    }
+
+    private String money(BigDecimal value) {
+        return value == null ? "-" : value.setScale(2, RoundingMode.HALF_UP).toPlainString();
+    }
+
+    private String truncate(String value, int maxLength) {
+        String normalized = safeText(value);
+        if (normalized.length() <= maxLength) {
+            return normalized;
+        }
+        return normalized.substring(0, Math.max(0, maxLength - 1)) + "…";
+    }
+
+    private String joinNonBlank(String separator, String... values) {
+        return Stream.of(values)
+                .filter(StringUtils::hasText)
+                .map(String::trim)
+                .collect(Collectors.joining(separator));
+    }
+
+    private String safeFilename(String value) {
+        String normalized = StringUtils.hasText(value) ? value.trim() : "purchase-order";
+        return normalized.replaceAll("[^A-Za-z0-9._-]", "_");
+    }
+
+    private PurchaseOrderStatus parsePurchaseOrderStatus(String approvalNote) {
+        String normalized = normalizeNullable(approvalNote);
+        if (!StringUtils.hasText(normalized)) {
+            return PurchaseOrderStatus.DRAFT;
+        }
+        String upper = normalized.toUpperCase(Locale.ROOT);
+        if (upper.startsWith("CANCELLED")) {
+            return PurchaseOrderStatus.CANCELLED;
+        }
+        if ("GENERATED".equals(upper)) {
+            return PurchaseOrderStatus.GENERATED;
+        }
+        if ("SENT".equals(upper)) {
+            return PurchaseOrderStatus.SENT;
+        }
+        if ("PARTIALLY RECEIVED".equals(upper) || "PARTIALLY_RECEIVED".equals(upper)) {
+            return PurchaseOrderStatus.PARTIALLY_RECEIVED;
+        }
+        if ("RECEIVED".equals(upper)) {
+            return PurchaseOrderStatus.RECEIVED;
+        }
+        if ("CLOSED".equals(upper)) {
+            return PurchaseOrderStatus.CLOSED;
+        }
+        return PurchaseOrderStatus.DRAFT;
+    }
+
+    private enum PurchaseOrderStatus {
+        DRAFT("Draft"),
+        GENERATED("Generated"),
+        SENT("Sent"),
+        PARTIALLY_RECEIVED("Partially Received"),
+        RECEIVED("Received"),
+        CLOSED("Closed"),
+        CANCELLED("Cancelled");
+
+        private final String label;
+
+        PurchaseOrderStatus(String label) {
+            this.label = label;
+        }
+
+        private String label() {
+            return label;
+        }
+    }
+
     private PurchaseOrderRecord toRecord(PurchaseOrderEntity entity, SupplierEntity supplier) {
-        return new PurchaseOrderRecord(entity.getId(), entity.getTenantId(), entity.getSupplierId(), supplier == null ? null : supplier.getSupplierName(), entity.getPoNumber(), entity.getOrderDate() == null ? null : entity.getOrderDate().toString(), entity.getExpectedDeliveryDate() == null ? null : entity.getExpectedDeliveryDate().toString(), entity.getItemsJson(), entity.getMatchingStatus(), entity.getVarianceSummary(), entity.getApprovalNote(), entity.getCreatedAt(), entity.getUpdatedAt());
+        return new PurchaseOrderRecord(entity.getId(), entity.getTenantId(), entity.getSupplierId(), supplier == null ? null : supplier.getSupplierName(), entity.getPoNumber(), entity.getOrderDate() == null ? null : entity.getOrderDate().toString(), entity.getExpectedDeliveryDate() == null ? null : entity.getExpectedDeliveryDate().toString(), entity.getItemsJson(), entity.getMatchingStatus(), entity.getVarianceSummary(), entity.getApprovalNote(), entity.getNotes(), entity.getCreatedAt(), entity.getUpdatedAt());
     }
 
     private SupplierInvoiceRecord toRecord(SupplierInvoiceEntity entity, SupplierEntity supplier) {
@@ -2295,20 +2809,14 @@ public class PharmacyOperationsService {
 
     private BigDecimal varianceAmountForInvoice(PurchaseOrderEntity purchaseOrder, BigDecimal invoiceTotalAmount) {
         BigDecimal poTotalAmount = procurementTotal(deserializeItems(purchaseOrder.getItemsJson()));
-        return invoiceTotalAmount.subtract(poTotalAmount).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal canonicalInvoiceTotal = invoiceTotalAmount == null ? BigDecimal.ZERO : invoiceTotalAmount.setScale(2, RoundingMode.HALF_UP);
+        return canonicalInvoiceTotal.subtract(poTotalAmount).setScale(2, RoundingMode.HALF_UP);
     }
 
     private BigDecimal procurementTotal(List<ProcurementLineRequest> items) {
         return items.stream()
                 .filter(Objects::nonNull)
-                .map(item -> {
-                    BigDecimal quantity = BigDecimal.valueOf(item.quantity());
-                    BigDecimal unitCost = item.unitCost() != null ? item.unitCost() : item.expectedUnitCost() == null ? BigDecimal.ZERO : item.expectedUnitCost();
-                    BigDecimal subTotal = unitCost.multiply(quantity);
-                    BigDecimal taxPercent = item.taxPercent() == null ? BigDecimal.ZERO : item.taxPercent();
-                    BigDecimal taxAmount = subTotal.multiply(taxPercent).divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
-                    return subTotal.add(taxAmount);
-                })
+                .map(this::purchaseOrderLineTotal)
                 .reduce(BigDecimal.ZERO, BigDecimal::add)
                 .setScale(2, RoundingMode.HALF_UP);
     }
@@ -2414,7 +2922,7 @@ public class PharmacyOperationsService {
     private ImportDuplicateTracker buildDuplicateTracker(UUID tenantId) {
         ImportDuplicateTracker tracker = new ImportDuplicateTracker();
         for (MedicineEntity medicine : medicineRepository.findByTenantIdOrderByMedicineNameAsc(tenantId)) {
-            tracker.registerExisting(medicine.getMedicineName(), medicine.getBarcode(), medicine.getExternalCode());
+            tracker.registerExisting(medicine.getMedicineName(), medicine.getMedicineType(), medicine.getStrength(), medicine.getBarcode(), medicine.getExternalCode());
         }
         return tracker;
     }
@@ -2463,17 +2971,17 @@ public class PharmacyOperationsService {
         private final Map<String, String> existingKeys = new HashMap<>();
         private final Map<String, String> importedKeys = new HashMap<>();
 
-        private void registerExisting(String medicineName, String barcode, String externalCode) {
-            registerKey(existingKeys, "name", medicineName);
+        private void registerExisting(String medicineName, String medicineType, String strength, String barcode, String externalCode) {
+            registerKey(existingKeys, "identity", medicineName, medicineType, strength);
             registerKey(existingKeys, "barcode", barcode);
             registerKey(existingKeys, "externalCode", externalCode);
         }
 
         private String duplicateMessage(MedicineUpsertCommand command) {
-            if (hasKey(existingKeys, "name", command.medicineName())
+            if (hasKey(existingKeys, "identity", command.medicineName(), command.medicineType(), command.strength())
                     || hasKey(existingKeys, "barcode", command.barcode())
                     || hasKey(existingKeys, "externalCode", command.externalCode())
-                    || hasKey(importedKeys, "name", command.medicineName())
+                    || hasKey(importedKeys, "identity", command.medicineName(), command.medicineType(), command.strength())
                     || hasKey(importedKeys, "barcode", command.barcode())
                     || hasKey(importedKeys, "externalCode", command.externalCode())) {
                 return "Medicine already exists";
@@ -2482,13 +2990,18 @@ public class PharmacyOperationsService {
         }
 
         private void registerSuccessfulImport(MedicineUpsertCommand command) {
-            registerKey(importedKeys, "name", command.medicineName());
+            registerKey(importedKeys, "identity", command.medicineName(), command.medicineType(), command.strength());
             registerKey(importedKeys, "barcode", command.barcode());
             registerKey(importedKeys, "externalCode", command.externalCode());
         }
 
         private static boolean hasKey(Map<String, String> keys, String field, String value) {
             String normalized = normalizeKey(field, value);
+            return normalized != null && keys.containsKey(normalized);
+        }
+
+        private static boolean hasKey(Map<String, String> keys, String field, String medicineName, String medicineType, String strength) {
+            String normalized = normalizeKey(field, medicineName, medicineType, strength);
             return normalized != null && keys.containsKey(normalized);
         }
 
@@ -2499,8 +3012,22 @@ public class PharmacyOperationsService {
             }
         }
 
+        private static void registerKey(Map<String, String> keys, String field, String medicineName, String medicineType, String strength) {
+            String normalized = normalizeKey(field, medicineName, medicineType, strength);
+            if (normalized != null) {
+                keys.put(normalized, normalized);
+            }
+        }
+
         private static String normalizeKey(String field, String value) {
             return StringUtils.hasText(value) ? field + ":" + value.trim().toLowerCase(Locale.ROOT) : null;
+        }
+
+        private static String normalizeKey(String field, String medicineName, String medicineType, String strength) {
+            if (!StringUtils.hasText(medicineName) || !StringUtils.hasText(medicineType) || !StringUtils.hasText(strength)) {
+                return null;
+            }
+            return field + ":" + medicineName.trim().toLowerCase(Locale.ROOT) + "|" + medicineType.trim().toUpperCase(Locale.ROOT) + "|" + strength.trim().toLowerCase(Locale.ROOT);
         }
     }
 }

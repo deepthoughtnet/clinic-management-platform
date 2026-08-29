@@ -3,6 +3,18 @@ import { assertValidKeycloakClient, keycloak } from "./keycloakClient";
 import { initKeycloakOnce, resetKeycloakInit } from "./keycloakInit";
 import { decodeJwtPayload, extractRolesUpper, extractTenantIdClaim, extractUsername } from "./tokenUtils";
 import { AuthContext, type AuthContextValue, type SelectedTenant } from "./AuthContext";
+import {
+  computeInactivityWindow,
+  createSharedSessionEvent,
+  INACTIVITY_EXPIRED_MESSAGE,
+  INACTIVITY_WARNING_MESSAGE,
+  parseSharedActivityTimestamp,
+  parseSharedSessionEvent,
+  resolveInactivityTimeoutMs,
+  SESSION_ACTIVITY_STORAGE_KEY,
+  SESSION_EVENT_STORAGE_KEY,
+  SESSION_EXPIRED_MESSAGE,
+} from "./sessionInactivity";
 
 type MeResponse = {
   email?: string | null;
@@ -66,10 +78,19 @@ type ActiveMembership = {
 };
 
 const SELECTED_TENANT_STORAGE_KEY = "clinic_selected_tenant";
+const SESSION_NOTICE_STORAGE_KEY = "clinic_auth_session_notice";
+const INACTIVITY_ACTIVITY_THROTTLE_MS = 1000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function baseUrl(): string {
   return (import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "");
+}
+
+function loginRedirectUri(): string {
+  if (typeof window === "undefined") {
+    return "/login";
+  }
+  return new URL("/login", window.location.origin).toString();
 }
 
 async function fetchMe(token: string, tenantId?: string | null, signal?: AbortSignal): Promise<MeResponse> {
@@ -126,6 +147,27 @@ function storeSelectedTenant(tenant: SelectedTenant | null): void {
     tenant,
     storedValue: localStorage.getItem(SELECTED_TENANT_STORAGE_KEY),
   });
+}
+
+function readStoredSessionNotice(): string | null {
+  try {
+    const notice = sessionStorage.getItem(SESSION_NOTICE_STORAGE_KEY);
+    return notice && notice.trim() ? notice.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function storeSessionNotice(notice: string | null): void {
+  try {
+    if (!notice || !notice.trim()) {
+      sessionStorage.removeItem(SESSION_NOTICE_STORAGE_KEY);
+      return;
+    }
+    sessionStorage.setItem(SESSION_NOTICE_STORAGE_KEY, notice.trim());
+  } catch {
+    // Ignore storage failures; auth state must still update.
+  }
 }
 
 function isSystemTenantValue(value?: string | null): boolean {
@@ -220,7 +262,16 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
   const [tenantModules, setTenantModules] = React.useState<{ carePilot?: boolean | null; aiCopilot?: boolean | null } | null>(null);
   const [enabledTenantModules, setEnabledTenantModules] = React.useState<Record<string, boolean> | null>(null);
   const [initError, setInitError] = React.useState<string | null>(null);
+  const [sessionWarning, setSessionWarning] = React.useState<string | null>(null);
+  const [sessionNotice, setSessionNotice] = React.useState<string | null>(() => readStoredSessionNotice());
   const [initVersion, setInitVersion] = React.useState(0);
+  const inactivityTimeoutMs = React.useMemo(() => resolveInactivityTimeoutMs(import.meta.env.VITE_WEB_ADMIN_INACTIVITY_TIMEOUT_MINUTES), []);
+  const inactivityWarningLeadMs = React.useMemo(() => Math.min(2 * 60_000, Math.max(0, inactivityTimeoutMs - 60_000)), [inactivityTimeoutMs]);
+  const lastActivityAtRef = React.useRef<number>(Date.now());
+  const lastPersistedActivityAtRef = React.useRef<number>(0);
+  const inactivityWarningTimerRef = React.useRef<number | null>(null);
+  const inactivityLogoutTimerRef = React.useRef<number | null>(null);
+  const sessionInvalidatedRef = React.useRef(false);
 
   const hydrateFromToken = React.useCallback((token: string | null) => {
     const payload = token ? decodeJwtPayload(token) : null;
@@ -239,7 +290,18 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
     });
   }, []);
 
-  const clearSession = React.useCallback(() => {
+  const clearInactivityTimers = React.useCallback(() => {
+    if (inactivityWarningTimerRef.current !== null) {
+      window.clearTimeout(inactivityWarningTimerRef.current);
+      inactivityWarningTimerRef.current = null;
+    }
+    if (inactivityLogoutTimerRef.current !== null) {
+      window.clearTimeout(inactivityLogoutTimerRef.current);
+      inactivityLogoutTimerRef.current = null;
+    }
+  }, []);
+
+  const resetAuthState = React.useCallback((notice: string | null, persistNotice: boolean) => {
     storeSelectedTenant(null);
     setAuthenticated(false);
     setAccessToken(null);
@@ -252,7 +314,145 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
     setActiveTenantMemberships([]);
     setTenantModules(null);
     setEnabledTenantModules(null);
+    setSessionWarning(null);
+    if (persistNotice && notice) {
+      setSessionNotice(notice);
+      storeSessionNotice(notice);
+    } else {
+      setSessionNotice(null);
+      storeSessionNotice(null);
+    }
   }, []);
+
+  const persistSharedActivity = React.useCallback((timestamp: number) => {
+    if (!Number.isFinite(timestamp) || timestamp <= 0) {
+      return;
+    }
+    if (timestamp - lastPersistedActivityAtRef.current < INACTIVITY_ACTIVITY_THROTTLE_MS) {
+      return;
+    }
+    try {
+      localStorage.setItem(SESSION_ACTIVITY_STORAGE_KEY, String(timestamp));
+      lastPersistedActivityAtRef.current = timestamp;
+    } catch {
+      // Ignore storage failures; the local timer still runs.
+    }
+  }, []);
+
+  const broadcastLogout = React.useCallback((reason: string) => {
+    try {
+      localStorage.setItem(SESSION_EVENT_STORAGE_KEY, createSharedSessionEvent(reason));
+      window.setTimeout(() => {
+        try {
+          localStorage.removeItem(SESSION_EVENT_STORAGE_KEY);
+        } catch {
+          // Ignore storage cleanup failures.
+        }
+      }, 0);
+    } catch {
+      // Ignore storage failures; the local tab still logs out.
+    }
+  }, []);
+
+  const terminateKeycloakSession = React.useCallback(async (reason: "explicit" | "inactivity") => {
+    try {
+      assertValidKeycloakClient(keycloak);
+      console.info("[auth] ending keycloak session", {
+        reason,
+        redirectUri: loginRedirectUri(),
+      });
+      await keycloak.logout({ redirectUri: loginRedirectUri() });
+    } catch (err) {
+      console.warn("[auth] keycloak logout failed", {
+        reason,
+        error: err instanceof Error ? err.message : err ? String(err) : null,
+      });
+      if (typeof window !== "undefined") {
+        window.location.assign(loginRedirectUri());
+      }
+    }
+  }, []);
+
+  const handleInactivityLogout = React.useCallback((source: "timer" | "storage") => {
+    if (sessionInvalidatedRef.current) {
+      return;
+    }
+    sessionInvalidatedRef.current = true;
+    clearInactivityTimers();
+    console.warn("[auth] session expired due to inactivity", { source });
+    resetAuthState(INACTIVITY_EXPIRED_MESSAGE, true);
+    if (source === "timer") {
+      broadcastLogout("inactivity");
+      void terminateKeycloakSession("inactivity");
+    }
+  }, [broadcastLogout, clearInactivityTimers, resetAuthState, terminateKeycloakSession]);
+
+  const handleSharedLogout = React.useCallback((reason: string) => {
+    if (sessionInvalidatedRef.current) {
+      return;
+    }
+    sessionInvalidatedRef.current = true;
+    clearInactivityTimers();
+    console.warn("[auth] shared logout received", { reason });
+    const notice = reason === "inactivity" ? INACTIVITY_EXPIRED_MESSAGE : reason === "explicit" ? null : SESSION_EXPIRED_MESSAGE;
+    resetAuthState(notice, Boolean(notice));
+  }, [clearInactivityTimers, resetAuthState]);
+
+  const syncInactivityFromTimestamp = React.useCallback((timestamp: number, persist = false, force = false) => {
+    if (!authenticated || sessionInvalidatedRef.current) {
+      return;
+    }
+    if (!Number.isFinite(timestamp) || timestamp <= 0) {
+      return;
+    }
+    if (!force && timestamp <= lastActivityAtRef.current) {
+      return;
+    }
+    lastActivityAtRef.current = timestamp;
+    setSessionWarning(null);
+    if (persist) {
+      persistSharedActivity(timestamp);
+    }
+    clearInactivityTimers();
+    const inactivityWindow = computeInactivityWindow(timestamp, Date.now(), inactivityTimeoutMs, inactivityWarningLeadMs);
+    if (inactivityWindow.shouldExpire) {
+      void handleInactivityLogout("timer");
+      return;
+    }
+    if (inactivityWindow.shouldWarn) {
+      setSessionWarning(INACTIVITY_WARNING_MESSAGE);
+    } else {
+      inactivityWarningTimerRef.current = window.setTimeout(() => {
+        if (!sessionInvalidatedRef.current && authenticated) {
+          setSessionWarning(INACTIVITY_WARNING_MESSAGE);
+        }
+      }, inactivityWindow.warningInMs);
+    }
+    inactivityLogoutTimerRef.current = window.setTimeout(() => {
+      if (!sessionInvalidatedRef.current && authenticated) {
+        void handleInactivityLogout("timer");
+      }
+    }, inactivityWindow.expiresInMs);
+  }, [authenticated, clearInactivityTimers, handleInactivityLogout, inactivityTimeoutMs, inactivityWarningLeadMs, persistSharedActivity]);
+
+  const clearSession = React.useCallback(() => {
+    clearInactivityTimers();
+    resetAuthState(null, false);
+  }, [clearInactivityTimers, resetAuthState]);
+
+  const markSessionExpired = React.useCallback((reason: string, error?: unknown) => {
+    console.warn("[auth] session expired", {
+      reason,
+      error: error instanceof Error ? error.message : error ? String(error) : null,
+    });
+    if (sessionInvalidatedRef.current) {
+      return;
+    }
+    sessionInvalidatedRef.current = true;
+    clearInactivityTimers();
+    resetAuthState(SESSION_EXPIRED_MESSAGE, true);
+    broadcastLogout("expired");
+  }, [broadcastLogout, clearInactivityTimers, resetAuthState]);
 
   const refreshTenantContext = React.useCallback(async (tenant: SelectedTenant | null, tokenOverride?: string | null) => {
     const token = tokenOverride ?? accessToken;
@@ -283,6 +483,8 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
       setEnabledTenantModules(normalizeEnabledModules(me.enabledModules));
       setPermissions((me.permissions || []).map((permission) => permission.toLowerCase()));
       setInitError(null);
+      setSessionNotice(null);
+      storeSessionNotice(null);
       console.info("[auth] tenant context refresh completed", {
         activeMode: tenant ? "clinic" : "platform",
         tenantId: tenant?.id || null,
@@ -297,6 +499,9 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
   React.useEffect(() => {
     let cancelled = false;
     let refreshInterval: number | null = null;
+    let handleStorageEvent: ((event: StorageEvent) => void) | null = null;
+    let handleActivityEvent: (() => void) | null = null;
+    let activityEvents: Array<keyof WindowEventMap> = [];
 
     async function bootstrap() {
       console.info("[auth] bootstrap started");
@@ -323,6 +528,8 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
         hydrateFromToken(token);
 
         if (ok && token) {
+          setSessionNotice(null);
+          storeSessionNotice(null);
           console.info("[auth] tenant bootstrap started");
           const payload = decodeJwtPayload(token);
           const tokenRolesUpper = extractRolesUpper(payload);
@@ -436,19 +643,76 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
             }
           }
 
+          const startInactivityWatch = () => {
+            const startedAt = Date.now();
+            sessionInvalidatedRef.current = false;
+            lastActivityAtRef.current = startedAt;
+            clearInactivityTimers();
+            persistSharedActivity(startedAt);
+            syncInactivityFromTimestamp(startedAt, false, true);
+          };
+
+          handleActivityEvent = () => {
+            if (!authenticated || sessionInvalidatedRef.current) {
+              return;
+            }
+            syncInactivityFromTimestamp(Date.now(), true);
+          };
+
+          handleStorageEvent = (event: StorageEvent) => {
+            if (event.key === SESSION_ACTIVITY_STORAGE_KEY) {
+              const timestamp = parseSharedActivityTimestamp(event.newValue);
+              if (timestamp != null) {
+                syncInactivityFromTimestamp(timestamp, false);
+              }
+              return;
+            }
+            if (event.key === SESSION_EVENT_STORAGE_KEY) {
+              const sharedEvent = parseSharedSessionEvent(event.newValue);
+              if (sharedEvent) {
+                handleSharedLogout(sharedEvent.reason);
+              }
+            }
+          };
+
+          activityEvents = ["pointerdown", "mousedown", "keydown", "click", "touchstart", "wheel", "scroll"];
+
+          startInactivityWatch();
+          window.addEventListener("storage", handleStorageEvent!);
+          activityEvents.forEach((eventName) => window.addEventListener(eventName, handleActivityEvent!, { capture: true, passive: true }));
+
           refreshInterval = window.setInterval(async () => {
             try {
-              if (!keycloak.authenticated) return;
+              if (!keycloak.authenticated || sessionInvalidatedRef.current) return;
               await keycloak.updateToken(30);
               const newToken = keycloak.token || null;
+              if (sessionInvalidatedRef.current) return;
               hydrateFromToken(newToken);
               setAuthenticated(!!newToken);
             } catch {
               if (!cancelled) {
-                clearSession();
+                markSessionExpired("refresh-token-update-failed");
               }
             }
           }, 10_000);
+
+          keycloak.onTokenExpired = () => {
+            console.info("[auth] access token expired; attempting refresh");
+            void keycloak.updateToken(30)
+              .then(() => {
+                if (sessionInvalidatedRef.current) {
+                  return;
+                }
+                const newToken = keycloak.token || null;
+                hydrateFromToken(newToken);
+                setAuthenticated(!!newToken);
+              })
+              .catch((err) => {
+                if (!cancelled) {
+                  markSessionExpired("access-token-expired-refresh-failed", err);
+                }
+              });
+          };
         }
       } catch (err) {
         if (!cancelled) {
@@ -472,8 +736,16 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
       if (refreshInterval) {
         window.clearInterval(refreshInterval);
       }
+      if (handleStorageEvent) {
+        window.removeEventListener("storage", handleStorageEvent);
+      }
+      if (handleActivityEvent) {
+        activityEvents.forEach((eventName) => window.removeEventListener(eventName, handleActivityEvent!, true));
+      }
+      clearInactivityTimers();
+      keycloak.onTokenExpired = undefined;
     };
-  }, [clearSession, hydrateFromToken, initVersion]);
+  }, [clearInactivityTimers, clearSession, handleSharedLogout, hydrateFromToken, initVersion, markSessionExpired, persistSharedActivity, syncInactivityFromTimestamp]);
 
   const value = React.useMemo<AuthContextValue>(
     () => ({
@@ -492,6 +764,8 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
       enabledTenantModules,
       accessToken,
       initError,
+      sessionWarning,
+      sessionNotice,
       selectTenant: (tenant) => {
         console.info("[auth] selectTenant invoked", {
           tenant,
@@ -503,7 +777,12 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
       },
       retryInit: () => {
         resetKeycloakInit();
+        sessionInvalidatedRef.current = false;
+        clearInactivityTimers();
         setInitVersion((v) => v + 1);
+        setSessionWarning(null);
+        setSessionNotice(null);
+        storeSessionNotice(null);
       },
       clearSession,
       hasPermission: (permission: string) => permissions.includes(permission.trim().toLowerCase()),
@@ -512,17 +791,15 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
         await keycloak.login({ prompt: "login" });
       },
       logout: async () => {
+        console.info("[auth] user initiated logout");
+        sessionInvalidatedRef.current = true;
+        clearInactivityTimers();
         clearSession();
-        if (keycloak && typeof keycloak.logout === "function") {
-          await keycloak.logout({ redirectUri: `${window.location.origin}/login` });
-          return;
-        }
-        if (typeof window !== "undefined") {
-          window.location.href = "/";
-        }
+        broadcastLogout("explicit");
+        await terminateKeycloakSession("explicit");
       },
     }),
-    [initialized, authenticated, username, rolesUpper, permissions, selectedTenant, activeTenantMemberships, tenantModules, enabledTenantModules, accessToken, initError, appUserId, tenantRole, clearSession, refreshTenantContext]
+    [initialized, authenticated, username, rolesUpper, permissions, selectedTenant, activeTenantMemberships, tenantModules, enabledTenantModules, accessToken, initError, sessionWarning, sessionNotice, appUserId, tenantRole, clearSession, refreshTenantContext, clearInactivityTimers, broadcastLogout, terminateKeycloakSession]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

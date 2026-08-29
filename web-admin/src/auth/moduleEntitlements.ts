@@ -68,7 +68,7 @@ function labelForRole(role: string): string {
 }
 
 export function hasTenantModule(
-  auth: Pick<AuthContextValue, "tenantId" | "tenantModules" | "enabledTenantModules" | "activeTenantMemberships">,
+  auth: Pick<AuthContextValue, "tenantId" | "tenantModules" | "enabledTenantModules" | "activeTenantMemberships" | "tenantRole" | "rolesUpper">,
   moduleKey: ModuleFlag,
 ): boolean {
   if (moduleKey === "carePilot") {

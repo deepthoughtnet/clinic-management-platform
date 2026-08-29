@@ -219,7 +219,7 @@ export default function SidebarNav({ open, variant, width, onClose }: SidebarNav
         if (item.moduleAny && !item.moduleAny.some((moduleCode) => enabledTenantModules.has(moduleCode))) return false;
         if (group.key === "pharmacy") {
           const inventoryManagerAllowed = new Set(["pharmacy-dashboard", "medicine-master", "inventory", "pharmacy-procurement", "pharmacy-reconciliation", "reports-audit"]);
-          const posUserAllowed = new Set(["pharmacy-dashboard", "pharmacy-pos", "inventory", "reports-audit"]);
+          const posUserAllowed = new Set(["pharmacy-pos"]);
           if (tenantRole === "PHARMACY_POS_USER" && !posUserAllowed.has(item.key)) return false;
           if (tenantRole === "PHARMACY_INVENTORY_MANAGER" && !inventoryManagerAllowed.has(item.key) && !(item.key === "pharmacy-pos" && canUsePosSale)) return false;
           if ((tenantRole === "PHARMACY_POS_USER" || tenantRole === "PHARMACY_INVENTORY_MANAGER") && item.key === "pharmacy-pos" && !canUsePosSale) return false;

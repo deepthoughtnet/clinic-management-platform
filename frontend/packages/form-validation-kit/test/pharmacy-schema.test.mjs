@@ -1,7 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { hasDuplicateMedicineMaster, medicineMasterIdentityKey, medicineMasterSchema, pharmacyPosLineSchema, pharmacyPosSaleSchema } from "../dist/index.js";
+import { hasDuplicateMedicineMaster, medicineMasterIdentityKey, medicineMasterSchema, medicineTimingSchema, pharmacyPosLineSchema, pharmacyPosSaleSchema, stockInwardSchema } from "../dist/index.js";
+
+function offsetUtcDate(days) {
+  const date = new Date();
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
 
 const baseMedicine = {
   medicineName: "Paracetamol 500",
@@ -91,6 +97,18 @@ test("medicine master schema rejects medicine name longer than 60 characters", (
   assert.equal(medicineMasterSchema.safeParse({ ...baseMedicine, medicineName: "a".repeat(61) }).success, false);
 });
 
+test("medicine master schema rejects invalid medicine types", () => {
+  assert.equal(medicineMasterSchema.safeParse({ ...baseMedicine, medicineType: "PILL" }).success, false);
+});
+
+test("medicine master schema accepts sachet medicines", () => {
+  assert.equal(medicineMasterSchema.safeParse({ ...baseMedicine, medicineType: "SACHET" }).success, true);
+});
+
+test("medicine master schema rejects invalid barcode formats", () => {
+  assert.equal(medicineMasterSchema.safeParse({ ...baseMedicine, barcode: "BAD CODE" }).success, false);
+});
+
 test("medicine master schema rejects duplicate medicine identity", () => {
   assert.equal(
     hasDuplicateMedicineMaster(
@@ -147,9 +165,100 @@ test("medicine master schema rejects text fields longer than 60 characters", () 
   assert.equal(medicineMasterSchema.safeParse({ ...baseMedicine, dosageForm: "f".repeat(61) }).success, false);
 });
 
+test("medicine master schema rejects symbol-only generic and brand names", () => {
+  assert.equal(medicineMasterSchema.safeParse({ ...baseMedicine, genericName: "@@@###" }).success, false);
+  assert.equal(medicineMasterSchema.safeParse({ ...baseMedicine, brandName: "@@@###" }).success, false);
+});
+
 test("medicine master schema allows instructions up to 250 characters", () => {
   assert.equal(medicineMasterSchema.safeParse({ ...baseMedicine, defaultInstructions: "i".repeat(250) }).success, true);
   assert.equal(medicineMasterSchema.safeParse({ ...baseMedicine, defaultInstructions: "i".repeat(251) }).success, false);
+});
+
+test("medicine timing schema accepts canonical codes and rejects free text", () => {
+  assert.equal(medicineTimingSchema.safeParse("BEFORE_FOOD").success, true);
+  assert.equal(medicineTimingSchema.safeParse("AFTER_FOOD").success, true);
+  assert.equal(medicineTimingSchema.safeParse("WITH_FOOD").success, true);
+  assert.equal(medicineTimingSchema.safeParse("ANYTIME").success, true);
+  assert.equal(medicineTimingSchema.safeParse("After food").success, false);
+});
+
+test("stock inward schema accepts a selected location and future expiry date", () => {
+  const result = stockInwardSchema.safeParse({
+    medicineId: "11111111-1111-4111-8111-111111111111",
+    supplierId: null,
+    locationId: "22222222-2222-4222-8222-222222222222",
+    purchaseReferenceNumber: "DGR-UAT-0001",
+    batchNumber: "PAN-UAT-D01",
+    barcode: null,
+    qrCode: null,
+    externalCode: null,
+    expiryDate: offsetUtcDate(30),
+    purchaseDate: offsetUtcDate(0),
+    quantity: 50,
+    lowStockThreshold: 15,
+    unitCost: 6,
+    sellingPrice: 8,
+  });
+  assert.equal(result.success, true);
+});
+
+test("stock inward schema rejects missing location", () => {
+  const result = stockInwardSchema.safeParse({
+    medicineId: "11111111-1111-4111-8111-111111111111",
+    supplierId: null,
+    locationId: "",
+    purchaseReferenceNumber: "DGR-UAT-0001",
+    batchNumber: "PAN-UAT-D01",
+    barcode: null,
+    qrCode: null,
+    externalCode: null,
+    expiryDate: offsetUtcDate(30),
+    purchaseDate: offsetUtcDate(0),
+    quantity: 50,
+    lowStockThreshold: 15,
+    unitCost: 6,
+    sellingPrice: 8,
+  });
+  assert.equal(result.success, false);
+});
+
+test("stock inward schema rejects future received dates and accepts future expiry dates", () => {
+  const receivedInFuture = stockInwardSchema.safeParse({
+    medicineId: "11111111-1111-4111-8111-111111111111",
+    supplierId: null,
+    locationId: "22222222-2222-4222-8222-222222222222",
+    purchaseReferenceNumber: "DGR-UAT-0001",
+    batchNumber: "PAN-UAT-D01",
+    barcode: null,
+    qrCode: null,
+    externalCode: null,
+    expiryDate: offsetUtcDate(30),
+    purchaseDate: offsetUtcDate(1),
+    quantity: 50,
+    lowStockThreshold: 15,
+    unitCost: 6,
+    sellingPrice: 8,
+  });
+  assert.equal(receivedInFuture.success, false);
+
+  const expiryFuture = stockInwardSchema.safeParse({
+    medicineId: "11111111-1111-4111-8111-111111111111",
+    supplierId: null,
+    locationId: "22222222-2222-4222-8222-222222222222",
+    purchaseReferenceNumber: "DGR-UAT-0001",
+    batchNumber: "PAN-UAT-D01",
+    barcode: null,
+    qrCode: null,
+    externalCode: null,
+    expiryDate: offsetUtcDate(30),
+    purchaseDate: offsetUtcDate(0),
+    quantity: 50,
+    lowStockThreshold: 15,
+    unitCost: 6,
+    sellingPrice: 8,
+  });
+  assert.equal(expiryFuture.success, true);
 });
 
 test("medicine master identity key normalizes name, strength, and type", () => {

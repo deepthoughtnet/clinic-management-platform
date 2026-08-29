@@ -136,7 +136,7 @@ public class VaccinationService {
     @Transactional
     public VaccineMasterRecord createVaccine(UUID tenantId, VaccineUpsertCommand command, UUID actorAppUserId) {
         requireTenant(tenantId);
-        validateMaster(command);
+        validateMaster(tenantId, command);
         ensureUniqueName(tenantId, normalize(command.vaccineName()), null);
         ensureUniqueMasterCombination(tenantId, command, null);
         VaccineMasterEntity entity = VaccineMasterEntity.create(tenantId, normalize(command.vaccineName()));
@@ -150,7 +150,7 @@ public class VaccinationService {
     public VaccineMasterRecord updateVaccine(UUID tenantId, UUID id, VaccineUpsertCommand command, UUID actorAppUserId) {
         requireTenant(tenantId);
         requireId(id, "id");
-        validateMaster(command);
+        validateMaster(tenantId, command);
         VaccineMasterEntity entity = vaccineMasterRepository.findByTenantIdAndId(tenantId, id)
                 .orElseThrow(() -> new IllegalArgumentException("Vaccine not found"));
         ensureUniqueName(tenantId, normalize(command.vaccineName()), id);
@@ -248,6 +248,17 @@ public class VaccinationService {
                 throw new IllegalArgumentException("Vaccine is inactive");
             }
         }
+        LocalDate givenDate = command.givenDate() == null ? LocalDate.now() : command.givenDate();
+        if (givenDate.isAfter(LocalDate.now())) {
+            throw new IllegalArgumentException("Given date cannot be in the future.");
+        }
+        if (patient.getDateOfBirth() != null && givenDate.isBefore(patient.getDateOfBirth())) {
+            throw new IllegalArgumentException("Given date cannot be before the patient's date of birth.");
+        }
+        LocalDate nextDueDate = command.nextDueDate();
+        if (nextDueDate != null && nextDueDate.isBefore(givenDate)) {
+            throw new IllegalArgumentException("nextDueDate cannot be earlier than givenDate");
+        }
         if ("EXTERNAL".equals(source) && vaccine == null && StringUtils.hasText(command.vaccineName())) {
             vaccine = vaccineMasterRepository.findByTenantIdOrderByVaccineNameAsc(tenantId).stream()
                     .filter(candidate -> candidate.isActive() && candidate.getVaccineName() != null && candidate.getVaccineName().trim().equalsIgnoreCase(command.vaccineName().trim()))
@@ -256,12 +267,11 @@ public class VaccinationService {
         }
         Optional<MedicineRecord> mappedMedicine = resolveVaccineMedicine(tenantId, vaccine);
 
-        UUID administeredBy = command.administeredByUserId() == null ? actorAppUserId : command.administeredByUserId();
-        LocalDate givenDate = command.givenDate() == null ? LocalDate.now() : command.givenDate();
-        LocalDate nextDueDate = command.nextDueDate();
+        UUID administeredBy = resolveAdministeredByUser(tenantId, command.administeredByUserId(), actorAppUserId, source);
         if (!"EXTERNAL".equals(source) && nextDueDate == null && vaccine != null && vaccine.getRecommendedGapDays() != null) {
             nextDueDate = givenDate.plusDays(vaccine.getRecommendedGapDays());
         }
+        rejectDuplicateInternalVaccination(tenantId, patientId, command, givenDate, source);
         String vaccineNameSnapshot = resolveVaccineNameSnapshot(command, vaccine);
         String verifiedStatus = normalizeVerifiedStatus(command.verifiedStatus(), source);
 
@@ -324,6 +334,9 @@ public class VaccinationService {
                 .orElseThrow(() -> new IllegalArgumentException("Vaccination record not found"));
         if (!patientId.equals(entity.getPatientId())) {
             throw new IllegalArgumentException("Vaccination record does not belong to patient");
+        }
+        if ("EXTERNAL".equalsIgnoreCase(normalizeSource(entity.getSource()))) {
+            throw new IllegalArgumentException("External vaccinations cannot be billed.");
         }
         if (entity.getBillId() != null) {
             return toRecord(entity, tenantData(tenantId), billHistoryByVaccination(tenantId).get(entity.getId()));
@@ -513,8 +526,8 @@ public class VaccinationService {
             return null;
         }
         BigDecimal price = billItemUnitPrice != null
-                ? normalizeMoney(billItemUnitPrice)
-                : normalizeMoney(vaccine == null || vaccine.getDefaultPrice() == null ? BigDecimal.ZERO : vaccine.getDefaultPrice());
+                ? normalizeMoney(billItemUnitPrice, "billItemUnitPrice")
+                : normalizeMoney(vaccine == null || vaccine.getDefaultPrice() == null ? BigDecimal.ZERO : vaccine.getDefaultPrice(), "defaultPrice");
         BillRecord linkedBill;
         if (billId != null) {
             linkedBill = addVaccinationLineToBill(tenantId, billId, saved, vaccine, price, actorAppUserId);
@@ -819,7 +832,8 @@ public class VaccinationService {
 
     private PatientVaccinationRecord toRecord(PatientVaccinationEntity entity, VaccinationTenantData data, BillHistoryRecord billHistory, List<String> workflowWarnings) {
         PatientEntity patient = data.patients().get(entity.getPatientId());
-        TenantUserRecord admin = data.users().get(entity.getAdministeredByUserId());
+        boolean externalSource = "EXTERNAL".equalsIgnoreCase(normalizeSource(entity.getSource()));
+        TenantUserRecord admin = externalSource ? null : data.users().get(entity.getAdministeredByUserId());
         TenantUserRecord createdBy = data.users().get(entity.getCreatedByUserId());
         TenantUserRecord updatedBy = data.users().get(entity.getUpdatedByUserId());
         TenantUserRecord verifiedBy = data.users().get(entity.getVerifiedByUserId());
@@ -922,13 +936,23 @@ public class VaccinationService {
         return new VaccinationTenantData(patients, users, tenantName, clinicName, displayName, address);
     }
 
-    private void validateMaster(VaccineUpsertCommand command) {
+    private void validateMaster(UUID tenantId, VaccineUpsertCommand command) {
         if (command == null) {
             throw new IllegalArgumentException("command is required");
         }
         if (!StringUtils.hasText(command.vaccineName())) {
             throw new IllegalArgumentException("vaccineName is required");
         }
+        if (normalize(command.vaccineName()).length() > 100) {
+            throw new IllegalArgumentException("vaccineName must be 100 characters or fewer");
+        }
+        validateTextLength(command.description(), 250, "description");
+        validateTextLength(command.manufacturer(), 250, "manufacturer");
+        validateTextLength(command.brandName(), 250, "brandName");
+        validateTextLength(command.vaccineGroup(), 128, "vaccineGroup");
+        validateTextLength(command.administrationSite(), 128, "administrationSite");
+        validateTextLength(command.storageTemperature(), 128, "storageTemperature");
+        validateTextLength(command.ndcBarcode(), 128, "ndcBarcode");
         validateNonNegative(command.doseNumber(), "doseNumber");
         validateNonNegative(command.minAgeDays(), "minAgeDays");
         validateNonNegative(command.recommendedAgeDays(), "recommendedAgeDays");
@@ -943,11 +967,30 @@ public class VaccinationService {
         validateRecommendationPolicy(command.recommendationPolicy());
         validateCatchUpPolicy(command.catchUpPolicy());
         validateApplicableAgeGroup(command.applicableAgeGroup());
+        validateTextLength(command.ageGroup(), 60, "ageGroup");
+        validateTextLength(command.boosterRules(), 500, "boosterRules");
+        validateTextLength(command.clinicalIndications(), 1000, "clinicalIndications");
+        validateAgeRange(command.minAgeDays(), command.recommendedAgeDays(), command.maxAgeDays());
+        String catchUpPolicy = normalizeCatchUpPolicyValue(command.catchUpPolicy());
+        if ("ALLOWED_UNTIL_AGE".equals(catchUpPolicy) && command.catchUpMaxAgeDays() == null) {
+            throw new IllegalArgumentException("catchUpMaxAgeDays is required when catch-up policy is ALLOWED_UNTIL_AGE");
+        }
         if (command.inventoryItemCode() != null && command.inventoryItemCode().length() > 128) {
             throw new IllegalArgumentException("inventoryItemCode must be 128 characters or fewer");
         }
-        if (command.defaultPrice() != null && command.defaultPrice().signum() < 0) {
-            throw new IllegalArgumentException("defaultPrice must be 0 or greater");
+        UUID inventoryItemId = command.inventoryItemId();
+        if (command.stockTrackingEnabled() && inventoryItemId == null) {
+            throw new IllegalArgumentException("inventoryItemId is required when stock tracking is enabled");
+        }
+        if (inventoryItemId != null) {
+            MedicineRecord medicine = inventoryService.findMedicine(tenantId, inventoryItemId)
+                    .orElseThrow(() -> new IllegalArgumentException("Inventory item not found"));
+            if (!medicine.active()) {
+                throw new IllegalArgumentException("Inventory item is inactive");
+            }
+        }
+        if (command.defaultPrice() != null) {
+            normalizeMoney(command.defaultPrice(), "defaultPrice");
         }
     }
 
@@ -961,6 +1004,9 @@ public class VaccinationService {
         }
         if ("EXTERNAL".equals(source) && !StringUtils.hasText(command.vaccineName()) && command.vaccineId() == null) {
             throw new IllegalArgumentException("vaccineName is required for external vaccination history");
+        }
+        if (command.doseNumber() != null && command.doseNumber() < 1) {
+            throw new IllegalArgumentException("doseNumber must be a positive whole number");
         }
         normalizeVerifiedStatus(command.verifiedStatus(), source);
     }
@@ -988,7 +1034,19 @@ public class VaccinationService {
                 .findFirst()
                 .ifPresent(entity -> {
                     throw new IllegalArgumentException("Duplicate vaccine group/dose/schedule combination already exists for tenant");
-                });
+        });
+    }
+
+    private void validateAgeRange(Integer minAgeDays, Integer recommendedAgeDays, Integer maxAgeDays) {
+        if (minAgeDays != null && recommendedAgeDays != null && recommendedAgeDays < minAgeDays) {
+            throw new IllegalArgumentException("recommendedAgeDays must be on or after minAgeDays");
+        }
+        if (minAgeDays != null && maxAgeDays != null && maxAgeDays < minAgeDays) {
+            throw new IllegalArgumentException("maxAgeDays must be on or after minAgeDays");
+        }
+        if (recommendedAgeDays != null && maxAgeDays != null && maxAgeDays < recommendedAgeDays) {
+            throw new IllegalArgumentException("maxAgeDays must be on or after recommendedAgeDays");
+        }
     }
 
     private void auditMaster(UUID tenantId, VaccineMasterEntity entity, String action, UUID actorAppUserId, String message) {
@@ -1056,11 +1114,17 @@ public class VaccinationService {
         }
     }
 
-    private BigDecimal normalizeMoney(BigDecimal value) {
+    private BigDecimal normalizeMoney(BigDecimal value, String field) {
         if (value == null) {
             return null;
         }
-        return value.setScale(2, RoundingMode.HALF_UP);
+        if (value.signum() < 0) {
+            throw new IllegalArgumentException(field + " must be 0 or greater");
+        }
+        if (value.scale() > 2) {
+            throw new IllegalArgumentException(field + " must use at most 2 decimals");
+        }
+        return value.setScale(2, RoundingMode.UNNECESSARY);
     }
 
     private String normalize(String value) {
@@ -1069,6 +1133,39 @@ public class VaccinationService {
 
     private String normalizeNullable(String value) {
         return StringUtils.hasText(value) ? value.trim() : null;
+    }
+
+    private void rejectDuplicateInternalVaccination(UUID tenantId, UUID patientId, PatientVaccinationCommand command, LocalDate givenDate, String source) {
+        if (!"INTERNAL".equals(source) || command.vaccineId() == null) {
+            return;
+        }
+        String batchNumber = normalizeNullable(command.batchNumber());
+        boolean duplicate = patientVaccinationRepository.findByTenantIdOrderByGivenDateDesc(tenantId).stream()
+                .filter(existing -> Objects.equals(existing.getPatientId(), patientId))
+                .anyMatch(existing -> Objects.equals(existing.getVaccineId(), command.vaccineId())
+                        && Objects.equals(existing.getDoseNumber(), command.doseNumber())
+                        && Objects.equals(existing.getGivenDate(), givenDate)
+                        && Objects.equals(normalizeNullable(existing.getBatchNumber()), batchNumber)
+                        && "INTERNAL".equalsIgnoreCase(normalizeSource(existing.getSource())));
+        if (duplicate) {
+            throw new IllegalArgumentException("This vaccination has already been recorded for the selected patient.");
+        }
+    }
+
+    private UUID resolveAdministeredByUser(UUID tenantId, UUID administeredByUserId, UUID actorAppUserId, String source) {
+        if ("EXTERNAL".equalsIgnoreCase(source)) {
+            return null;
+        }
+        UUID resolved = administeredByUserId == null ? actorAppUserId : administeredByUserId;
+        if (resolved == null) {
+            return null;
+        }
+        boolean activeTenantUser = tenantUserManagementService.list(tenantId).stream()
+                .anyMatch(user -> resolved.equals(user.appUserId()) && "ACTIVE".equalsIgnoreCase(user.membershipStatus()));
+        if (!activeTenantUser) {
+            throw new IllegalArgumentException("administeredByUserId must be a valid active tenant user");
+        }
+        return resolved;
     }
 
     private String normalizeSource(String value) {
@@ -1219,7 +1316,7 @@ public class VaccinationService {
                 command.catchUpMaxAgeDays(),
                 resolveApplicableAgeGroup(command),
                 normalizeNullable(command.clinicalIndications()),
-                normalizeMoney(command.defaultPrice()),
+                normalizeMoney(command.defaultPrice(), "defaultPrice"),
                 command.active()
         );
     }
@@ -1227,6 +1324,13 @@ public class VaccinationService {
     private void validateNonNegative(Integer value, String field) {
         if (value != null && value < 0) {
             throw new IllegalArgumentException(field + " must be 0 or greater");
+        }
+    }
+
+    private void validateTextLength(String value, int maxLength, String field) {
+        String normalized = normalizeNullable(value);
+        if (normalized != null && normalized.length() > maxLength) {
+            throw new IllegalArgumentException(field + " must be " + maxLength + " characters or fewer");
         }
     }
 

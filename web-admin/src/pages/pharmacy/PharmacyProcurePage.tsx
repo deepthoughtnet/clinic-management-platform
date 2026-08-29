@@ -50,10 +50,12 @@ import {
   getInventoryLocations,
   getMedicines,
   getPurchaseOrder,
+  getPurchaseOrderPdf,
   getPurchaseOrders,
   getSupplierInvoices,
   listSuppliers,
   matchSupplierInvoice,
+  sendPurchaseOrder,
   updateSupplierInvoice,
   updateSupplier,
   uploadSupplierInvoiceAttachment,
@@ -101,6 +103,7 @@ type PurchaseOrderRow = {
   cancelReason: string | null;
   items: PurchaseOrderLineState[];
   approvalNote: string | null;
+  notes: string | null;
   totalQty: number;
   subtotal: number;
   totalGst: number;
@@ -493,6 +496,11 @@ function stringFromUnknown(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
+function roundCurrency(value: number) {
+  if (!Number.isFinite(value)) return 0;
+  return Number((Math.round((value + Number.EPSILON) * 100) / 100).toFixed(2));
+}
+
 function goodsReceiptLineStatus(pendingQty: number, receiveQty: number) {
   if (pendingQty <= 0) return "Complete" as const;
   if (receiveQty > 0 && receiveQty >= pendingQty) return "Complete" as const;
@@ -580,13 +588,13 @@ function computePurchaseOrderTotals(lines: PurchaseOrderLineState[]) {
     const gstRate = parsed.data.gst;
     const discount = parsed.data.discount;
     const lineSubTotal = qty * unitPrice;
-    const lineGst = lineSubTotal * (gstRate / 100);
-    const lineTotal = Math.max(0, lineSubTotal - discount + lineGst);
+    const lineGst = roundCurrency(lineSubTotal * (gstRate / 100));
+    const lineTotal = roundCurrency(Math.max(0, lineSubTotal - discount + lineGst));
     acc.totalQty += qty;
-    acc.subtotal += lineSubTotal;
-    acc.totalGst += lineGst;
-    acc.totalDiscount += discount;
-    acc.totalValue += lineTotal;
+    acc.subtotal = roundCurrency(acc.subtotal + lineSubTotal);
+    acc.totalGst = roundCurrency(acc.totalGst + lineGst);
+    acc.totalDiscount = roundCurrency(acc.totalDiscount + discount);
+    acc.totalValue = roundCurrency(acc.totalValue + lineTotal);
     return acc;
   }, { totalQty: 0, subtotal: 0, totalGst: 0, totalDiscount: 0, totalValue: 0 });
 }
@@ -595,8 +603,8 @@ function computePurchaseOrderLineTotal(line: PurchaseOrderLineState) {
   const parsed = parsePurchaseOrderLine(line);
   if (!parsed.success) return null;
   const subtotal = parsed.data.quantity * parsed.data.unitPrice;
-  const gstAmount = subtotal * (parsed.data.gst / 100);
-  return Math.max(0, subtotal - parsed.data.discount + gstAmount);
+  const gstAmount = roundCurrency(subtotal * (parsed.data.gst / 100));
+  return roundCurrency(Math.max(0, subtotal - parsed.data.discount + gstAmount));
 }
 
 function normalizePurchaseOrderLine(item: unknown): PurchaseOrderLineState {
@@ -724,7 +732,13 @@ function formatPurchaseOrderDate(value: string) {
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString();
 }
 
-function renderPurchaseOrderPrintDocument(clinicName: string, purchaseOrder: PurchaseOrderRow) {
+function formatPurchaseOrderTimestamp(value: string) {
+  if (!value) return "-";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+}
+
+function renderPurchaseOrderPrintDocument(clinicName: string, supplier: Supplier | null, purchaseOrder: PurchaseOrderRow, generatedAt: string) {
   const totals = computePurchaseOrderTotals(purchaseOrder.items);
   const rows = purchaseOrder.items.map((item, index) => {
     const lineTotal = computePurchaseOrderLineTotal(item) ?? 0;
@@ -755,6 +769,7 @@ function renderPurchaseOrderPrintDocument(clinicName: string, purchaseOrder: Pur
         .meta-card { border: 1px solid #d1d5db; border-radius: 8px; padding: 12px; }
         .label { font-size: 12px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.04em; }
         .value { font-size: 14px; font-weight: 700; margin-top: 4px; }
+        .multiline { white-space: pre-wrap; }
         table { width: 100%; border-collapse: collapse; margin-top: 20px; }
         th, td { border: 1px solid #d1d5db; padding: 8px; font-size: 12px; vertical-align: top; }
         th { background: #f3f4f6; text-align: left; }
@@ -768,10 +783,15 @@ function renderPurchaseOrderPrintDocument(clinicName: string, purchaseOrder: Pur
       <h2>Purchase Order</h2>
       <div class="meta">
         <div class="meta-card"><div class="label">Supplier</div><div class="value">${escapePrintHtml(purchaseOrder.supplierName || "-")}</div></div>
+        <div class="meta-card"><div class="label">Supplier Contact</div><div class="value multiline">${escapePrintHtml([supplier?.contactPerson, supplier?.phone, supplier?.email].filter(Boolean).join(" | ") || "-")}</div></div>
+        <div class="meta-card"><div class="label">Supplier GSTIN</div><div class="value">${escapePrintHtml(supplier?.gstNumber || "-")}</div></div>
+        <div class="meta-card"><div class="label">Supplier Address</div><div class="value multiline">${escapePrintHtml(supplier?.address || "-")}</div></div>
         <div class="meta-card"><div class="label">PO Number</div><div class="value">${escapePrintHtml(purchaseOrder.poNumber || "-")}</div></div>
         <div class="meta-card"><div class="label">PO Date</div><div class="value">${escapePrintHtml(formatPurchaseOrderDate(purchaseOrder.orderDate))}</div></div>
         <div class="meta-card"><div class="label">Expected Delivery</div><div class="value">${escapePrintHtml(formatPurchaseOrderDate(purchaseOrder.expectedDelivery))}</div></div>
         <div class="meta-card"><div class="label">Status</div><div class="value">${escapePrintHtml(purchaseOrder.status)}</div></div>
+        <div class="meta-card"><div class="label">Status Date</div><div class="value">${escapePrintHtml(generatedAt)}</div></div>
+        <div class="meta-card"><div class="label">Reference / Notes</div><div class="value multiline">${escapePrintHtml(purchaseOrder.notes || "-")}</div></div>
       </div>
       <table>
         <thead>
@@ -860,6 +880,7 @@ function mapBackendPurchaseOrder(record: PurchaseOrder, medicineById?: Map<strin
     cancelReason: statusInfo.cancelReason,
     items,
     approvalNote: record.approvalNote,
+    notes: record.notes || "",
     totalQty: totals.totalQty,
     subtotal: totals.subtotal,
     totalGst: totals.totalGst,
@@ -902,7 +923,7 @@ function mapBackendSupplierInvoice(record: SupplierInvoice): SupplierInvoiceRow 
   const gstAmount = typeof record.taxAmount === "number" ? record.taxAmount : 0;
   const invoiceAmount = typeof record.invoiceAmount === "number" ? record.invoiceAmount : totalAmount;
   const discountAmount = typeof record.discountAmount === "number" ? record.discountAmount : 0;
-  const varianceAmount = typeof record.varianceAmount === "number" ? record.varianceAmount : 0;
+  const varianceAmount = roundCurrency(typeof record.varianceAmount === "number" ? record.varianceAmount : 0);
   return {
     id: record.id,
     invoiceNumber: record.invoiceNumber,
@@ -975,6 +996,7 @@ function mapPurchaseOrderLineToApi(line: PurchaseOrderLineState): ProcurementLin
     unit: line.unit || null,
     locationId: null,
     remarks: null,
+    discount: parsed.discount,
   };
 }
 
@@ -987,7 +1009,8 @@ function mapMedicineSaveError(error: unknown): string {
   const normalized = message.toLowerCase();
   if (normalized.includes("medicinename")) return "Medicine name is required.";
   if (normalized.includes("medicinetype")) return "Medicine type is required.";
-  if (normalized.includes("medicine already exists")) return "A medicine with this name already exists.";
+  if (normalized.includes("same name, type, and strength")) return "A medicine with this name, type, and strength already exists.";
+  if (normalized.includes("medicine already exists")) return "A medicine with this name, type, and strength already exists.";
   if (normalized.includes("barcode already exists")) return "This barcode is already linked to another medicine.";
   if (normalized.includes("external code already exists")) return "This external code is already linked to another medicine.";
   return message;
@@ -1361,13 +1384,19 @@ export default function PharmacyProcurePage() {
     const amount = Number(invoiceForm.invoiceAmount || 0);
     const gstAmount = Number(invoiceForm.gstAmount || 0);
     const discount = Number(invoiceForm.discount || 0);
-    return Math.max(0, amount + gstAmount - discount);
+    return roundCurrency(Math.max(0, amount + gstAmount - discount));
   }, [invoiceForm.discount, invoiceForm.gstAmount, invoiceForm.invoiceAmount]);
 
   const invoiceVsPoDifference = React.useMemo(() => {
     if (!selectedInvoicePurchaseOrder) return null;
-    return invoiceComputedPayable - selectedInvoicePoTotal;
+    return roundCurrency(invoiceComputedPayable - selectedInvoicePoTotal);
   }, [invoiceComputedPayable, selectedInvoicePoTotal, selectedInvoicePurchaseOrder]);
+
+  React.useEffect(() => {
+    if (invoiceVsPoDifference === 0 && invoiceForm.varianceReason) {
+      setInvoiceForm((current) => current.varianceReason ? { ...current, varianceReason: "" } : current);
+    }
+  }, [invoiceForm.varianceReason, invoiceVsPoDifference]);
   const filteredInvoices = React.useMemo(() => {
     return invoices.filter((invoice) => {
       if (
@@ -1377,7 +1406,7 @@ export default function PharmacyProcurePage() {
       ) return false;
       if (invoiceSupplierFilter !== "ALL" && invoice.supplierId !== invoiceSupplierFilter) return false;
       if (invoicePoFilter !== "ALL" && (invoice.purchaseOrderId || "") !== invoicePoFilter) return false;
-      if (invoiceVarianceOnly && Math.abs(invoice.varianceAmount) < 0.005) return false;
+      if (invoiceVarianceOnly && roundCurrency(invoice.varianceAmount) === 0) return false;
       if (invoiceDateFromFilter && invoice.invoiceDate < invoiceDateFromFilter) return false;
       if (invoiceDateToFilter && invoice.invoiceDate > invoiceDateToFilter) return false;
       return true;
@@ -1565,7 +1594,7 @@ export default function PharmacyProcurePage() {
         poNumber: mapped.poNumber,
         orderDate: mapped.orderDate,
         expectedDelivery: mapped.expectedDelivery,
-        notes: "",
+        notes: mapped.notes || "",
       });
       setPoLines(mapped.items.length ? mapped.items : []);
       setPoFieldErrors({});
@@ -1591,6 +1620,7 @@ export default function PharmacyProcurePage() {
           matchingStatus: selectedListRow.status,
           varianceSummary: null,
           approvalNote: selectedListRow.approvalNote,
+          notes: selectedListRow.notes,
           createdAt: selectedListRow.updatedAt,
           updatedAt: selectedListRow.updatedAt,
         } as PurchaseOrder, medicineById);
@@ -1602,7 +1632,7 @@ export default function PharmacyProcurePage() {
           poNumber: fallback.poNumber,
           orderDate: fallback.orderDate,
           expectedDelivery: fallback.expectedDelivery,
-          notes: "",
+          notes: fallback.notes || "",
         });
         setPoLines(fallback.items.length ? fallback.items : []);
         logPo("PO_MAPPED_FORM", {
@@ -1662,6 +1692,7 @@ export default function PharmacyProcurePage() {
       expectedDeliveryDate: validated.expectedDelivery || null,
       items: poLines.map(mapPurchaseOrderLineToApi),
       approvalNote: encodePurchaseOrderApprovalNote(status, status === "Cancelled" ? cancelReason : ""),
+      notes: validated.notes || null,
     };
     logPo("PO_SAVE_PAYLOAD", payload);
     setPurchaseOrderError(null);
@@ -1731,18 +1762,63 @@ export default function PharmacyProcurePage() {
   }, []);
 
   const openPrintWindow = React.useCallback((purchaseOrder: PurchaseOrderRow) => {
-    const printWindow = window.open("", "_blank", "noopener,noreferrer,width=1024,height=768");
+    const printWindow = window.open("", "_blank", "width=1024,height=768");
     if (!printWindow) {
       setPurchaseOrderError("Unable to open print preview. Allow popups and try again.");
       return;
     }
     const clinicName = auth.tenantName || auth.selectedTenant?.name || "Clinic";
+    const supplier = suppliers.find((row) => row.id === purchaseOrder.supplierId) || null;
     printWindow.document.open();
-    printWindow.document.write(renderPurchaseOrderPrintDocument(clinicName, purchaseOrder));
+    printWindow.document.write(renderPurchaseOrderPrintDocument(clinicName, supplier, purchaseOrder, formatPurchaseOrderTimestamp(purchaseOrder.updatedAt)));
     printWindow.document.close();
     printWindow.focus();
-    printWindow.print();
-  }, [auth.selectedTenant?.name, auth.tenantName]);
+    setTimeout(() => {
+      try {
+        printWindow.print();
+      } catch {
+        // Ignore browsers that block auto-print from scripted windows.
+      }
+    }, 150);
+  }, [auth.selectedTenant?.name, auth.tenantName, suppliers]);
+
+  const handleDownloadPurchaseOrderPdf = React.useCallback(async (purchaseOrder: PurchaseOrderRow) => {
+    if (!auth.accessToken || !auth.tenantId) return;
+    setPurchaseOrderError(null);
+    try {
+      const pdf = await getPurchaseOrderPdf(auth.accessToken, auth.tenantId, purchaseOrder.id);
+      const url = URL.createObjectURL(pdf.blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = pdf.filename;
+      anchor.rel = "noopener";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) {
+      setPurchaseOrderError(err instanceof Error ? err.message : "Failed to download purchase order PDF");
+    }
+  }, [auth.accessToken, auth.tenantId]);
+
+  const handleSendPurchaseOrderFromDrawer = React.useCallback(async (purchaseOrder: PurchaseOrderRow) => {
+    if (!auth.accessToken || !auth.tenantId) return;
+    const supplier = suppliers.find((row) => row.id === purchaseOrder.supplierId);
+    if (!supplier?.email?.trim()) {
+      setPurchaseOrderError("Supplier email is required to send purchase order.");
+      return;
+    }
+    setPurchaseOrderError(null);
+    try {
+      const response = await sendPurchaseOrder(auth.accessToken, auth.tenantId, purchaseOrder.id);
+      setPurchaseOrderSuccess(response.message || "Purchase order sent.");
+      await loadPurchaseOrders();
+      await loadPurchaseOrderDetail(purchaseOrder.id);
+      setPoDrawerOpen(false);
+    } catch (err) {
+      setPurchaseOrderError(err instanceof Error ? err.message : "Failed to send purchase order");
+    }
+  }, [auth.accessToken, auth.tenantId, loadPurchaseOrderDetail, loadPurchaseOrders, suppliers]);
 
   const handleViewPurchaseOrderFromDrawer = React.useCallback((po: PurchaseOrderRow) => {
     openPurchaseOrderForView(po);
@@ -1765,6 +1841,7 @@ export default function PharmacyProcurePage() {
       expectedDeliveryDate: mapped.expectedDelivery || null,
       items: mapped.items.map(mapPurchaseOrderLineToApi),
       approvalNote: encodePurchaseOrderApprovalNote("Generated", ""),
+      notes: mapped.notes || null,
     };
     logPo("PO_SAVE_PAYLOAD", payload);
     setPurchaseOrderError(null);
@@ -1892,7 +1969,7 @@ export default function PharmacyProcurePage() {
       invoiceAmount: invoice.invoiceAmount ? String(invoice.invoiceAmount) : "",
       gstAmount: invoice.gstAmount ? String(invoice.gstAmount) : "0",
       discount: invoice.discountAmount ? String(invoice.discountAmount) : "0",
-      varianceReason: invoice.varianceReason || "",
+      varianceReason: roundCurrency(invoice.varianceAmount) === 0 ? "" : invoice.varianceReason || "",
       notes: invoice.notes || "",
     });
   }, []);
@@ -2175,8 +2252,8 @@ export default function PharmacyProcurePage() {
       setInvoiceError("Supplier is required.");
       return;
     }
-    const totalAmount = Math.max(0, parsed.data.invoiceAmount + parsed.data.gstAmount - parsed.data.discount);
-    const variance = Number((totalAmount - selectedPo.totalValue).toFixed(2));
+    const totalAmount = roundCurrency(Math.max(0, parsed.data.invoiceAmount + parsed.data.gstAmount - parsed.data.discount));
+    const variance = roundCurrency(totalAmount - selectedPo.totalValue);
     if (variance !== 0 && !parsed.data.varianceReason?.trim()) {
       setInvoiceFieldErrors({ varianceReason: "Variance reason is required when invoice amount differs from PO amount." });
       setInvoiceError("Variance reason is required when invoice amount differs from PO amount.");
@@ -2204,7 +2281,7 @@ export default function PharmacyProcurePage() {
       discountAmount: parsed.data.discount,
       totalAmount,
       items: selectedPo.items.map(mapPurchaseOrderLineToApi),
-      varianceReason: parsed.data.varianceReason?.trim() || null,
+      varianceReason: variance === 0 ? null : parsed.data.varianceReason?.trim() || null,
       approvalNote: parsed.data.notes ?? null,
     };
 
@@ -2941,10 +3018,14 @@ export default function PharmacyProcurePage() {
                   const showDraftActions = po.status === "Draft";
                   const showGeneratedActions = po.status === "Generated";
                   const showSentActions = po.status === "Sent";
-                  const showClosedActions = po.status === "Received" || po.status === "Closed";
+                  const showClosedActions = po.status === "Partially Received" || po.status === "Received" || po.status === "Closed";
                   const showCancelledActions = po.status === "Cancelled";
-                  const disabledPdfTooltip = "PDF download will be available after document template setup.";
-                  const disabledSendTooltip = "Send PO will be available after supplier email setup.";
+                  const supplierEmail = suppliers.find((supplier) => supplier.id === po.supplierId)?.email?.trim() || "";
+                  const canDownloadPdf = po.status === "Generated" || po.status === "Sent" || po.status === "Partially Received" || po.status === "Received" || po.status === "Closed";
+                  const canSendPo = po.status === "Generated" && Boolean(supplierEmail);
+                  const sendDisabledTooltip = po.status !== "Generated"
+                    ? "Send is available only for generated purchase orders."
+                    : "Supplier email is required to send purchase order.";
                   const disabledHistoryTooltip = "Activity history will be available after audit timeline setup.";
                   return (
                     <Card
@@ -2978,30 +3059,28 @@ export default function PharmacyProcurePage() {
                             {showGeneratedActions ? (
                               <>
                                 <Button size="small" variant="outlined" onClick={() => void handlePrintPurchaseOrderFromDrawer(po)}>Print</Button>
-                                <Tooltip title={disabledPdfTooltip}>
-                                  <span><Button size="small" variant="outlined" disabled>Download PDF</Button></span>
-                                </Tooltip>
-                                <Tooltip title={disabledSendTooltip}>
-                                  <span><Button size="small" variant="outlined" disabled>Send</Button></span>
-                                </Tooltip>
+                                <Button size="small" variant="outlined" onClick={() => void handleDownloadPurchaseOrderPdf(po)} disabled={!canDownloadPdf}>Download PDF</Button>
+                                {canSendPo ? (
+                                  <Button size="small" variant="outlined" onClick={() => void handleSendPurchaseOrderFromDrawer(po)}>Send</Button>
+                                ) : (
+                                  <Tooltip title={sendDisabledTooltip}>
+                                    <span><Button size="small" variant="outlined" disabled>Send</Button></span>
+                                  </Tooltip>
+                                )}
                                 <Button size="small" variant="outlined" color="inherit" onClick={() => handleCancelPurchaseOrderFromDrawer(po)}>Cancel</Button>
                               </>
                             ) : null}
                             {showSentActions ? (
                               <>
                                 <Button size="small" variant="outlined" onClick={() => void handlePrintPurchaseOrderFromDrawer(po)}>Print</Button>
-                                <Tooltip title={disabledPdfTooltip}>
-                                  <span><Button size="small" variant="outlined" disabled>Download PDF</Button></span>
-                                </Tooltip>
+                                <Button size="small" variant="outlined" onClick={() => void handleDownloadPurchaseOrderPdf(po)} disabled={!canDownloadPdf}>Download PDF</Button>
                                 <Button size="small" variant="outlined" color="inherit" onClick={() => handleCancelPurchaseOrderFromDrawer(po)}>Cancel</Button>
                               </>
                             ) : null}
                             {showClosedActions ? (
                               <>
                                 <Button size="small" variant="outlined" onClick={() => void handlePrintPurchaseOrderFromDrawer(po)}>Print</Button>
-                                <Tooltip title={disabledPdfTooltip}>
-                                  <span><Button size="small" variant="outlined" disabled>Download PDF</Button></span>
-                                </Tooltip>
+                                <Button size="small" variant="outlined" onClick={() => void handleDownloadPurchaseOrderPdf(po)} disabled={!canDownloadPdf}>Download PDF</Button>
                                 <Tooltip title={disabledHistoryTooltip}>
                                   <span><Button size="small" variant="outlined" disabled>Activity History</Button></span>
                                 </Tooltip>
@@ -3234,7 +3313,7 @@ export default function PharmacyProcurePage() {
                       <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
                         <Chip size="small" {...supplierInvoiceStatusLabel(selectedInvoice.status)} />
                         <Chip size="small" {...supplierInvoiceMatchLabel(selectedInvoice.matchingStatus)} />
-                        {Math.abs(selectedInvoice.varianceAmount) > 0.004 ? <Chip size="small" color="warning" label={`Variance INR ${selectedInvoice.varianceAmount.toFixed(2)}`} /> : null}
+                        {roundCurrency(selectedInvoice.varianceAmount) !== 0 ? <Chip size="small" color="warning" label={`Variance INR ${roundCurrency(selectedInvoice.varianceAmount).toFixed(2)}`} /> : null}
                         {selectedInvoice.attachmentFileName ? <Chip size="small" label={selectedInvoice.attachmentFileName} /> : null}
                         {selectedInvoice.purchaseOrderId ? <Button size="small" variant="outlined" onClick={() => void openPurchaseOrderReference(selectedInvoice.purchaseOrderId)}>Linked PO</Button> : null}
                         {relatedGrnByInvoiceId.get(selectedInvoice.id) ? <Button size="small" variant="outlined" onClick={() => setSelectedGrn(relatedGrnByInvoiceId.get(selectedInvoice.id) ?? null)}>Linked GRN</Button> : null}
@@ -3518,7 +3597,7 @@ export default function PharmacyProcurePage() {
                           <TableCell align="right">
                             <Stack spacing={0.25} sx={{ alignItems: "flex-end" }}>
                               <Typography variant="body2">INR {invoice.totalAmount.toFixed(2)}</Typography>
-                              {Math.abs(invoice.varianceAmount) > 0.004 ? <Typography variant="caption" color="warning.main">Var {invoice.varianceAmount.toFixed(2)}</Typography> : null}
+                              {roundCurrency(invoice.varianceAmount) !== 0 ? <Typography variant="caption" color="warning.main">Var {roundCurrency(invoice.varianceAmount).toFixed(2)}</Typography> : null}
                             </Stack>
                           </TableCell>
                           <TableCell>
@@ -3532,7 +3611,7 @@ export default function PharmacyProcurePage() {
                             <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
                               <Button size="small" variant="outlined" onClick={() => loadInvoiceIntoForm(invoice, "view")}>View</Button>
                               {(invoice.status === "DRAFT" || invoice.status === "MATCHED") ? <Button size="small" variant="outlined" onClick={() => loadInvoiceIntoForm(invoice, "edit")}>Edit</Button> : null}
-                              {invoice.status === "DRAFT" ? <Button size="small" variant="outlined" onClick={() => void handleMatchInvoice(invoice)}>Match</Button> : null}
+                              {invoice.status === "DRAFT" && roundCurrency(invoice.varianceAmount) === 0 ? <Button size="small" variant="outlined" onClick={() => void handleMatchInvoice(invoice)}>Match</Button> : null}
                               {invoice.status === "MATCHED" ? <Button size="small" variant="outlined" onClick={() => void handleApproveInvoice(invoice)}>Approve for Payment</Button> : null}
                               {invoice.status === "READY_FOR_PAYMENT" || invoice.status === "APPROVED_FOR_PAYMENT" ? (
                                 <Tooltip title="Payment posting will be available after billing/payment integration.">

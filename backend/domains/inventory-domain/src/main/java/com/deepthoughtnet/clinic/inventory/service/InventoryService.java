@@ -8,10 +8,13 @@ import com.deepthoughtnet.clinic.inventory.service.model.InventoryTransferComman
 import com.deepthoughtnet.clinic.inventory.service.model.LowStockRecord;
 import com.deepthoughtnet.clinic.inventory.service.model.MedicineRecord;
 import com.deepthoughtnet.clinic.inventory.service.model.MedicineUpsertCommand;
+import com.deepthoughtnet.clinic.inventory.service.model.PhysicalCountSessionRecord;
+import com.deepthoughtnet.clinic.inventory.service.model.PhysicalCountSessionSaveCommand;
 import com.deepthoughtnet.clinic.inventory.service.model.StockRecord;
 import com.deepthoughtnet.clinic.inventory.service.model.StockUpsertCommand;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 public interface InventoryService {
@@ -38,4 +41,8 @@ public interface InventoryService {
 
     List<InventoryLocationRecord> listLocations(UUID tenantId);
     InventoryLocationRecord saveLocation(UUID tenantId, UUID id, InventoryLocationUpsertCommand command, UUID actorAppUserId);
+
+    List<PhysicalCountSessionRecord> listPhysicalCountSessions(UUID tenantId);
+    Optional<PhysicalCountSessionRecord> findPhysicalCountSession(UUID tenantId, UUID id);
+    PhysicalCountSessionRecord savePhysicalCountSession(UUID tenantId, UUID id, PhysicalCountSessionSaveCommand command, UUID actorAppUserId, Set<String> actorRoles);
 }

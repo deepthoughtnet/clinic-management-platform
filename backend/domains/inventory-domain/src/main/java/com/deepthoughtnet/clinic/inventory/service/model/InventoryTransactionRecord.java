@@ -19,6 +19,27 @@ public record InventoryTransactionRecord(
         UUID referenceId,
         UUID createdBy,
         String notes,
-        OffsetDateTime createdAt
+        OffsetDateTime createdAt,
+        String businessReference
 ) {
+    public InventoryTransactionRecord(
+            UUID id,
+            UUID tenantId,
+            UUID medicineId,
+            UUID stockBatchId,
+            UUID locationId,
+            UUID targetLocationId,
+            InventoryTransactionType transactionType,
+            int quantity,
+            Integer beforeQuantity,
+            Integer afterQuantity,
+            String reason,
+            String referenceType,
+            UUID referenceId,
+            UUID createdBy,
+            String notes,
+            OffsetDateTime createdAt
+    ) {
+        this(id, tenantId, medicineId, stockBatchId, locationId, targetLocationId, transactionType, quantity, beforeQuantity, afterQuantity, reason, referenceType, referenceId, createdBy, notes, createdAt, null);
+    }
 }

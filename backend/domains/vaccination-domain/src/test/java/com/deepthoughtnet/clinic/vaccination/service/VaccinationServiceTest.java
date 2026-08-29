@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.vaccination.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
@@ -23,6 +24,7 @@ import com.deepthoughtnet.clinic.clinic.service.model.ClinicProfileRecord;
 import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
 import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
 import com.deepthoughtnet.clinic.inventory.service.InventoryService;
+import com.deepthoughtnet.clinic.inventory.service.model.MedicineRecord;
 import com.deepthoughtnet.clinic.notification.service.NotificationHistoryService;
 import com.deepthoughtnet.clinic.patient.db.PatientEntity;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
@@ -53,6 +55,7 @@ class VaccinationServiceTest {
     private final UUID patientId = UUID.randomUUID();
     private final UUID actorId = UUID.randomUUID();
     private final UUID vaccineId = UUID.randomUUID();
+    private PatientEntity patient;
     private VaccineMasterRepository vaccineMasterRepository;
     private PatientVaccinationRepository patientVaccinationRepository;
     private PatientRepository patientRepository;
@@ -68,7 +71,7 @@ class VaccinationServiceTest {
 
     @BeforeEach
     void setUp() {
-        PatientEntity patient = patient();
+        patient = patient();
         VaccineMasterEntity vaccine = vaccine();
         vaccineMasterRepository = mock(VaccineMasterRepository.class);
         patientVaccinationRepository = mock(PatientVaccinationRepository.class);
@@ -97,7 +100,9 @@ class VaccinationServiceTest {
             savedVaccinations.put(entity.getId(), entity);
             return entity;
         });
+        when(vaccineMasterRepository.save(any(VaccineMasterEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(patientVaccinationRepository.findByTenantIdOrderByGivenDateDesc(tenantId)).thenAnswer(invocation -> List.copyOf(savedVaccinations.values()));
+        when(patientVaccinationRepository.findByTenantIdAndPatientIdOrderByGivenDateDesc(tenantId, patientId)).thenAnswer(invocation -> List.copyOf(savedVaccinations.values()));
         when(patientVaccinationRepository.findByTenantIdAndId(eq(tenantId), any())).thenAnswer(invocation -> Optional.ofNullable(savedVaccinations.get(invocation.getArgument(1))));
         when(patientRepository.findByTenantIdAndId(tenantId, patientId)).thenReturn(Optional.of(patient));
         when(patientRepository.findByTenantIdAndIdIn(eq(tenantId), any())).thenReturn(List.of(patient));
@@ -201,6 +206,537 @@ class VaccinationServiceTest {
         assertThat(billed.billLineId()).isNotNull();
     }
 
+    @Test
+    void externalVaccinationKeepsRecordedByButDoesNotReuseActorAsAdministrator() {
+        PatientVaccinationRecord recorded = service.recordVaccination(
+                tenantId,
+                patientId,
+                new PatientVaccinationCommand(
+                        null,
+                        "External vaccine",
+                        1,
+                        LocalDate.of(2026, 7, 7),
+                        null,
+                        "LOT-EXT",
+                        null,
+                        "Imported external history",
+                        "EXTERNAL",
+                        "City Hospital",
+                        null,
+                        "UNVERIFIED",
+                        null,
+                        null,
+                        false,
+                        null,
+                        false
+                ),
+                actorId
+        );
+
+        assertThat(recorded.source()).isEqualTo("EXTERNAL");
+        assertThat(recorded.administeredByUserId()).isNull();
+        assertThat(recorded.administeredByUserName()).isNull();
+        assertThat(recorded.recordedByUserId()).isEqualTo(actorId);
+        assertThat(recorded.recordedByUserName()).isEqualTo("Rohit Nair");
+    }
+
+    @Test
+    void updateExternalVaccinationRejectsCrossTenantAccess() {
+        PatientVaccinationRecord recorded = service.recordVaccination(
+                tenantId,
+                patientId,
+                new PatientVaccinationCommand(
+                        null,
+                        "External vaccine",
+                        1,
+                        LocalDate.of(2026, 7, 7),
+                        null,
+                        "LOT-EXT",
+                        null,
+                        "Imported external history",
+                        "EXTERNAL",
+                        "City Hospital",
+                        null,
+                        "UNVERIFIED",
+                        null,
+                        null,
+                        false,
+                        null,
+                        false
+                ),
+                actorId
+        );
+
+        UUID otherTenantId = UUID.randomUUID();
+
+        assertThatThrownBy(() -> service.updateExternalVaccination(
+                otherTenantId,
+                patientId,
+                recorded.id(),
+                "Updated external place",
+                null,
+                "VERIFIED",
+                actorId
+        )).isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Vaccination record not found");
+    }
+
+    @Test
+    void externalVaccinationCannotBeBilled() {
+        PatientVaccinationRecord recorded = service.recordVaccination(
+                tenantId,
+                patientId,
+                new PatientVaccinationCommand(
+                        null,
+                        "External vaccine",
+                        1,
+                        LocalDate.of(2026, 7, 7),
+                        null,
+                        "LOT-EXT",
+                        null,
+                        "Imported external history",
+                        "EXTERNAL",
+                        "City Hospital",
+                        null,
+                        "UNVERIFIED",
+                        null,
+                        null,
+                        false,
+                        null,
+                        false
+                ),
+                actorId
+        );
+
+        assertThatThrownBy(() -> service.billVaccination(tenantId, patientId, recorded.id(), null, true, null, actorId))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("External vaccinations cannot be billed");
+    }
+
+    @Test
+    void createVaccineRejectsInvalidAgeRange() {
+        assertThatThrownBy(() -> service.createVaccine(
+                tenantId,
+                new com.deepthoughtnet.clinic.vaccination.service.model.VaccineUpsertCommand(
+                        "Yellow Fever",
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        "IM",
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        false,
+                        "ADULT",
+                        null,
+                        365,
+                        30,
+                        30,
+                        null,
+                        null,
+                        null,
+                        null,
+                        false,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        new BigDecimal("12.34"),
+                        true
+                ),
+                actorId
+        ))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("recommendedAgeDays");
+    }
+
+    @Test
+    void createVaccineRejectsTooManyDecimals() {
+        assertThatThrownBy(() -> service.createVaccine(
+                tenantId,
+                new com.deepthoughtnet.clinic.vaccination.service.model.VaccineUpsertCommand(
+                        "Yellow Fever",
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        "IM",
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        false,
+                        "ADULT",
+                        null,
+                        30,
+                        30,
+                        365,
+                        null,
+                        null,
+                        null,
+                        null,
+                        false,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        new BigDecimal("12.345"),
+                        true
+                ),
+                actorId
+        ))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("defaultPrice");
+    }
+
+    @Test
+    void createVaccineRejectsInactiveInventoryItem() {
+        UUID inventoryItemId = UUID.randomUUID();
+        when(inventoryService.findMedicine(tenantId, inventoryItemId)).thenReturn(Optional.of(medicine(false)));
+
+        assertThatThrownBy(() -> service.createVaccine(
+                tenantId,
+                new com.deepthoughtnet.clinic.vaccination.service.model.VaccineUpsertCommand(
+                        "Yellow Fever",
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        "IM",
+                        null,
+                        null,
+                        null,
+                        inventoryItemId,
+                        null,
+                        false,
+                        "ADULT",
+                        null,
+                        30,
+                        30,
+                        365,
+                        null,
+                        null,
+                        null,
+                        null,
+                        false,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        new BigDecimal("12.34"),
+                        true
+                ),
+                actorId
+        ))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Inventory item is inactive");
+    }
+
+    @Test
+    void createVaccineRejectsMissingInventoryItemWhenStockTrackingEnabled() {
+        assertThatThrownBy(() -> service.createVaccine(
+                tenantId,
+                vaccineCommand(true, null, "NONE", null),
+                actorId
+        ))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("inventoryItemId is required");
+    }
+
+    @Test
+    void createVaccineAllowsMissingInventoryItemWhenStockTrackingDisabled() {
+        var record = service.createVaccine(
+                tenantId,
+                vaccineCommand(false, null, "NONE", null),
+                actorId
+        );
+
+        assertThat(record.stockTrackingEnabled()).isFalse();
+        assertThat(record.inventoryItemId()).isNull();
+    }
+
+    @Test
+    void createVaccineRejectsMissingCatchUpMaxAgeWhenPolicyRequiresIt() {
+        assertThatThrownBy(() -> service.createVaccine(
+                tenantId,
+                vaccineCommand(false, null, "ALLOWED_UNTIL_AGE", null),
+                actorId
+        ))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("catchUpMaxAgeDays is required");
+    }
+
+    @Test
+    void createVaccineAllowsCatchUpMaxAgeForOtherPoliciesToRemainOptional() {
+        var record = service.createVaccine(
+                tenantId,
+                vaccineCommand(false, null, "NONE", null),
+                actorId
+        );
+
+        assertThat(record.catchUpPolicy()).isEqualTo("NONE");
+        assertThat(record.catchUpMaxAgeDays()).isNull();
+    }
+
+    @Test
+    void createVaccineAcceptsClinicalIndicationsUpToBackendLimit() {
+        String clinicalIndications = "a".repeat(1000);
+
+        VaccineMasterEntity created = VaccineMasterEntity.create(tenantId, "seed");
+        when(vaccineMasterRepository.findByTenantIdAndVaccineNameIgnoreCase(eq(tenantId), eq("Yellow Fever"))).thenReturn(Optional.empty());
+        when(vaccineMasterRepository.findByTenantIdOrderByVaccineNameAsc(tenantId)).thenReturn(List.of(created));
+
+        var record = service.createVaccine(
+                tenantId,
+                new com.deepthoughtnet.clinic.vaccination.service.model.VaccineUpsertCommand(
+                        "Yellow Fever",
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        "IM",
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        false,
+                        "ADULT",
+                        null,
+                        30,
+                        30,
+                        365,
+                        null,
+                        null,
+                        null,
+                        null,
+                        false,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        clinicalIndications,
+                        new BigDecimal("12.34"),
+                        true
+                ),
+                actorId
+        );
+
+        assertThat(record.clinicalIndications()).hasSize(1000);
+    }
+
+    @Test
+    void recordVaccinationRejectsInvalidAdministeredByAndInvertedDueDate() {
+        UUID invalidAdminId = UUID.randomUUID();
+
+        assertThatThrownBy(() -> service.recordVaccination(
+                tenantId,
+                patientId,
+                new PatientVaccinationCommand(
+                        vaccineId,
+                        null,
+                        1,
+                        LocalDate.of(2026, 7, 7),
+                        LocalDate.of(2026, 7, 1),
+                        "LOT-3",
+                        null,
+                        "Routine vaccination",
+                        "INTERNAL",
+                        null,
+                        null,
+                        null,
+                        invalidAdminId,
+                        null,
+                        false,
+                        null,
+                        false
+                ),
+                actorId
+        ))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("nextDueDate");
+
+        assertThatThrownBy(() -> service.recordVaccination(
+                tenantId,
+                patientId,
+                new PatientVaccinationCommand(
+                        vaccineId,
+                        null,
+                        1,
+                        LocalDate.of(2026, 7, 7),
+                        null,
+                        "LOT-4",
+                        null,
+                        "Routine vaccination",
+                        "INTERNAL",
+                        null,
+                        null,
+                        null,
+                        invalidAdminId,
+                        null,
+                        false,
+                        null,
+                        false
+                ),
+                actorId
+        ))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("administeredByUserId");
+    }
+
+    @Test
+    void recordVaccinationRejectsFutureDatesBirthViolationsAndDuplicates() {
+        when(patient.getDateOfBirth()).thenReturn(LocalDate.of(2026, 7, 15));
+
+        assertThatThrownBy(() -> service.recordVaccination(
+                tenantId,
+                patientId,
+                new PatientVaccinationCommand(
+                        vaccineId,
+                        null,
+                        0,
+                        LocalDate.of(2026, 7, 20),
+                        null,
+                        "LOT-4",
+                        null,
+                        "Routine vaccination",
+                        "INTERNAL",
+                        null,
+                        null,
+                        null,
+                        actorId,
+                        null,
+                        false,
+                        null,
+                        false
+                ),
+                actorId
+        ))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("positive whole number");
+
+        assertThatThrownBy(() -> service.recordVaccination(
+                tenantId,
+                patientId,
+                new PatientVaccinationCommand(
+                        vaccineId,
+                        null,
+                        1,
+                        LocalDate.now().plusDays(1),
+                        null,
+                        "LOT-5",
+                        null,
+                        "Routine vaccination",
+                        "INTERNAL",
+                        null,
+                        null,
+                        null,
+                        actorId,
+                        null,
+                        false,
+                        null,
+                        false
+                ),
+                actorId
+        ))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("future");
+
+        assertThatThrownBy(() -> service.recordVaccination(
+                tenantId,
+                patientId,
+                new PatientVaccinationCommand(
+                        vaccineId,
+                        null,
+                        1,
+                        LocalDate.of(2026, 7, 1),
+                        null,
+                        "LOT-6",
+                        null,
+                        "Routine vaccination",
+                        "INTERNAL",
+                        null,
+                        null,
+                        null,
+                        actorId,
+                        null,
+                        false,
+                        null,
+                        false
+                ),
+                actorId
+        ))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("date of birth");
+
+        service.recordVaccination(
+                tenantId,
+                patientId,
+                new PatientVaccinationCommand(
+                        vaccineId,
+                        null,
+                        1,
+                        LocalDate.of(2026, 7, 20),
+                        null,
+                        "LOT-7",
+                        null,
+                        "Routine vaccination",
+                        "INTERNAL",
+                        null,
+                        null,
+                        null,
+                        actorId,
+                        null,
+                        false,
+                        null,
+                        false
+                ),
+                actorId
+        );
+
+        assertThatThrownBy(() -> service.recordVaccination(
+                tenantId,
+                patientId,
+                new PatientVaccinationCommand(
+                        vaccineId,
+                        null,
+                        1,
+                        LocalDate.of(2026, 7, 20),
+                        null,
+                        "LOT-7",
+                        null,
+                        "Routine vaccination",
+                        "INTERNAL",
+                        null,
+                        null,
+                        null,
+                        actorId,
+                        null,
+                        false,
+                        null,
+                        false
+                ),
+                actorId
+        ))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("already been recorded");
+    }
+
     private PatientEntity patient() {
         PatientEntity patient = mock(PatientEntity.class);
         when(patient.getId()).thenReturn(patientId);
@@ -232,40 +768,69 @@ class VaccinationServiceTest {
     }
 
     private VaccineMasterEntity vaccine() {
-        VaccineMasterEntity vaccine = VaccineMasterEntity.create(tenantId, "COVID-19 Vaccine");
-        vaccine.update(
-                "COVID-19 Vaccine",
-                null,
-                "Pfizer",
-                "Comirnaty",
-                null,
-                1,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                false,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                false,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                new BigDecimal("75.00"),
-                true
-        );
+        VaccineMasterEntity vaccine = mock(VaccineMasterEntity.class);
+        when(vaccine.getId()).thenReturn(vaccineId);
+        when(vaccine.getTenantId()).thenReturn(tenantId);
+        when(vaccine.getVaccineName()).thenReturn("COVID-19 Vaccine");
+        when(vaccine.getDescription()).thenReturn(null);
+        when(vaccine.getManufacturer()).thenReturn("Pfizer");
+        when(vaccine.getBrandName()).thenReturn("Comirnaty");
+        when(vaccine.getVaccineGroup()).thenReturn(null);
+        when(vaccine.getDoseNumber()).thenReturn(1);
+        when(vaccine.getRoute()).thenReturn(null);
+        when(vaccine.getAdministrationSite()).thenReturn(null);
+        when(vaccine.getStorageTemperature()).thenReturn(null);
+        when(vaccine.getNdcBarcode()).thenReturn(null);
+        when(vaccine.getInventoryItemId()).thenReturn(null);
+        when(vaccine.getInventoryItemCode()).thenReturn(null);
+        when(vaccine.isStockTrackingEnabled()).thenReturn(false);
+        when(vaccine.getScheduleType()).thenReturn(null);
+        when(vaccine.getAgeGroup()).thenReturn(null);
+        when(vaccine.getMinAgeDays()).thenReturn(null);
+        when(vaccine.getRecommendedAgeDays()).thenReturn(null);
+        when(vaccine.getMaxAgeDays()).thenReturn(null);
+        when(vaccine.getRecommendedGapDays()).thenReturn(null);
+        when(vaccine.getBoosterGapDays()).thenReturn(null);
+        when(vaccine.getBoosterRules()).thenReturn(null);
+        when(vaccine.isRecurring()).thenReturn(false);
+        when(vaccine.getRecurrenceDays()).thenReturn(null);
+        when(vaccine.getRecommendationPolicy()).thenReturn(null);
+        when(vaccine.getCatchUpPolicy()).thenReturn(null);
+        when(vaccine.getCatchUpMaxAgeDays()).thenReturn(null);
+        when(vaccine.getApplicableAgeGroup()).thenReturn(null);
+        when(vaccine.getClinicalIndications()).thenReturn(null);
+        when(vaccine.getDefaultPrice()).thenReturn(new BigDecimal("75.00"));
+        when(vaccine.isActive()).thenReturn(true);
         return vaccine;
+    }
+
+    private MedicineRecord medicine(boolean active) {
+        return new MedicineRecord(
+                UUID.randomUUID(),
+                tenantId,
+                "Vaccine stock",
+                "TABLET",
+                "BARCODE",
+                null,
+                "EXT-1",
+                "Generic",
+                "Brand",
+                "Category",
+                "Dosage",
+                "Strength",
+                "Unit",
+                "Manufacturer",
+                "Default dosage",
+                "Default frequency",
+                1,
+                "Morning",
+                "Instructions",
+                new BigDecimal("10.00"),
+                BigDecimal.ZERO,
+                active,
+                OffsetDateTime.now(),
+                OffsetDateTime.now()
+        );
     }
 
     private BillRecord createBillForVaccination() {
@@ -313,6 +878,42 @@ class VaccinationServiceTest {
                 OffsetDateTime.now(),
                 OffsetDateTime.now(),
                 List.of(line)
+        );
+    }
+
+    private com.deepthoughtnet.clinic.vaccination.service.model.VaccineUpsertCommand vaccineCommand(boolean stockTrackingEnabled, UUID inventoryItemId, String catchUpPolicy, Integer catchUpMaxAgeDays) {
+        return new com.deepthoughtnet.clinic.vaccination.service.model.VaccineUpsertCommand(
+                "Yellow Fever",
+                null,
+                null,
+                null,
+                null,
+                null,
+                "IM",
+                null,
+                null,
+                null,
+                inventoryItemId,
+                null,
+                stockTrackingEnabled,
+                "ADULT",
+                null,
+                30,
+                30,
+                365,
+                null,
+                null,
+                null,
+                null,
+                false,
+                null,
+                null,
+                catchUpPolicy,
+                catchUpMaxAgeDays,
+                null,
+                null,
+                new BigDecimal("12.34"),
+                true
         );
     }
 }

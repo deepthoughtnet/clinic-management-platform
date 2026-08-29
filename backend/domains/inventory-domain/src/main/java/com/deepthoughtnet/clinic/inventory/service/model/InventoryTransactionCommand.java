@@ -18,6 +18,22 @@ public record InventoryTransactionCommand(
         String referenceType,
         UUID referenceId,
         UUID createdBy,
-        String notes
+        String notes,
+        String businessReference
 ) {
+    public InventoryTransactionCommand(
+            UUID medicineId,
+            UUID stockBatchId,
+            UUID locationId,
+            UUID targetLocationId,
+            InventoryTransactionType transactionType,
+            int quantity,
+            String reason,
+            String referenceType,
+            UUID referenceId,
+            UUID createdBy,
+            String notes
+    ) {
+        this(medicineId, stockBatchId, locationId, targetLocationId, transactionType, quantity, reason, referenceType, referenceId, createdBy, notes, null);
+    }
 }

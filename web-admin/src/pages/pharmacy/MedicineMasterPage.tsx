@@ -52,6 +52,7 @@ import {
   type MedicineImportResult,
   type MedicineInput,
   type MedicineType,
+  type Timing,
   type Stock,
 } from "../../api/clinicApi";
 import {
@@ -70,7 +71,15 @@ const medicineTypeOptions: Array<{ value: MedicineType; label: string }> = [
   { value: "INJECTION", label: "Injection" },
   { value: "DROP", label: "Drop" },
   { value: "OINTMENT", label: "Ointment" },
+  { value: "SACHET", label: "Sachet" },
   { value: "OTHER", label: "Other" },
+];
+
+const defaultTimingOptions: Array<{ value: Timing; label: string }> = [
+  { value: "BEFORE_FOOD", label: "Before food" },
+  { value: "AFTER_FOOD", label: "After food" },
+  { value: "WITH_FOOD", label: "With food" },
+  { value: "ANYTIME", label: "Anytime" },
 ];
 
 const emptyForm: MedicineInput = {
@@ -116,7 +125,8 @@ function mapMedicineSaveError(error: unknown): string {
   const normalized = message.toLowerCase();
   if (normalized.includes("medicinename")) return "Medicine name is required.";
   if (normalized.includes("medicinetype")) return "Medicine type is required.";
-  if (normalized.includes("medicine already exists")) return "A medicine with this name already exists.";
+  if (normalized.includes("same name, type, and strength")) return "A medicine with this name, type, and strength already exists.";
+  if (normalized.includes("medicine already exists")) return "A medicine with this name, type, and strength already exists.";
   if (normalized.includes("barcode already exists")) return "This barcode is already linked to another medicine.";
   if (normalized.includes("external code already exists")) return "This external code is already linked to another medicine.";
   return message;
@@ -1058,6 +1068,7 @@ export default function MedicineMasterPage() {
                       <Grid size={{ xs: 12, md: 3 }}>
                         <TextField
                           fullWidth
+                          select
                           size="small"
                           label="Default timing"
                           value={form.defaultTiming || ""}
@@ -1065,8 +1076,12 @@ export default function MedicineMasterPage() {
                           helperText={fieldErrors.defaultTiming}
                           inputRef={registerFieldRef("defaultTiming")}
                           onChange={(e) => setForm((v) => ({ ...v, defaultTiming: (e.target.value || null) as MedicineInput["defaultTiming"] }))}
-                          placeholder="BEFORE_FOOD / AFTER_FOOD / WITH_FOOD / ANYTIME"
-                        />
+                        >
+                          <MenuItem value="">Not set</MenuItem>
+                          {defaultTimingOptions.map((option) => (
+                            <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>
+                          ))}
+                        </TextField>
                       </Grid>
                       <Grid size={12}>
                         <TextField
@@ -1170,7 +1185,7 @@ export default function MedicineMasterPage() {
               </Stack>
               {preview.headerWarnings.length > 0 ? (
                 <Alert severity="warning">
-                  Missing expected headers: {preview.headerWarnings.join(", ")}.
+                  Header warnings: {preview.headerWarnings.join(", ")}.
                 </Alert>
               ) : null}
               <Alert severity="info">

@@ -8,6 +8,7 @@ export type DocumentRelationshipStage = {
   documentNumber?: string | null;
   badgeLabel?: string | null;
   state: DocumentRelationshipState;
+  at?: string | null;
   onClick?: () => void;
   tooltip?: string | null;
 };
@@ -35,6 +36,29 @@ function stateLabel(state: DocumentRelationshipState) {
   if (state === "current") return "Current";
   if (state === "cancelled") return "Cancelled";
   return "Future";
+}
+
+function formatStageDetail(stage: DocumentRelationshipStage) {
+  const documentNumber = stage.documentNumber?.trim() || "";
+  const timestamp = stage.at ? new Date(stage.at).toLocaleString() : "";
+  if (stage.state === "completed") {
+    if (documentNumber && timestamp) return `${documentNumber} • ${timestamp}`;
+    if (documentNumber) return documentNumber;
+    if (timestamp) return timestamp;
+    return "Completed";
+  }
+  if (stage.state === "current") {
+    if (documentNumber && timestamp) return `${documentNumber} • ${timestamp}`;
+    if (documentNumber) return documentNumber;
+    if (timestamp) return timestamp;
+    return "Current";
+  }
+  if (stage.state === "cancelled") {
+    if (documentNumber) return documentNumber;
+    if (timestamp) return timestamp;
+    return "Cancelled";
+  }
+  return documentNumber || "Pending";
 }
 
 export default function DocumentRelationshipStrip({ title = "Document Relationship", stages }: DocumentRelationshipStripProps) {
@@ -97,7 +121,7 @@ export default function DocumentRelationshipStrip({ title = "Document Relationsh
                 </Typography>
               </Stack>
               <Typography variant="body2" color="text.secondary" sx={{ wordBreak: "break-word" }}>
-                {stage.documentNumber || "Pending"}
+                {formatStageDetail(stage)}
               </Typography>
               <Stack direction="row" spacing={0.5} alignItems="center" flexWrap="wrap" useFlexGap>
                 <Chip size="small" label={stage.badgeLabel || stateLabel(stage.state)} color={stage.state === "future" ? "default" : stage.state === "cancelled" ? "error" : stage.state === "current" ? "primary" : "success"} variant={stage.state === "future" ? "outlined" : "filled"} />

@@ -13,9 +13,11 @@ import com.deepthoughtnet.clinic.inventory.db.InventoryLocationRepository;
 import com.deepthoughtnet.clinic.inventory.db.InventoryTransactionRepository;
 import com.deepthoughtnet.clinic.inventory.db.MedicineEntity;
 import com.deepthoughtnet.clinic.inventory.db.MedicineRepository;
+import com.deepthoughtnet.clinic.inventory.db.PhysicalCountSessionRepository;
 import com.deepthoughtnet.clinic.inventory.db.StockEntity;
 import com.deepthoughtnet.clinic.inventory.db.StockRepository;
 import com.deepthoughtnet.clinic.inventory.service.InventoryServiceImpl;
+import com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionRecord;
 import com.deepthoughtnet.clinic.inventory.service.model.StockRecord;
 import com.deepthoughtnet.clinic.inventory.service.model.StockUpsertCommand;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
@@ -42,6 +44,7 @@ class InventoryServiceImplStockTest {
     private StockRepository stockRepository;
     private InventoryTransactionRepository transactionRepository;
     private InventoryLocationRepository locationRepository;
+    private PhysicalCountSessionRepository physicalCountSessionRepository;
     private AuditEventPublisher auditEventPublisher;
     private List<InventoryTransactionEntity> savedTransactions;
     private Map<UUID, StockEntity> savedStocks;
@@ -53,6 +56,7 @@ class InventoryServiceImplStockTest {
         stockRepository = mock(StockRepository.class);
         transactionRepository = mock(InventoryTransactionRepository.class);
         locationRepository = mock(InventoryLocationRepository.class);
+        physicalCountSessionRepository = mock(PhysicalCountSessionRepository.class);
         auditEventPublisher = mock(AuditEventPublisher.class);
         savedTransactions = new ArrayList<>();
         savedStocks = new LinkedHashMap<>();
@@ -69,6 +73,7 @@ class InventoryServiceImplStockTest {
         InventoryLocationEntity location = mock(InventoryLocationEntity.class);
         when(location.getId()).thenReturn(LOCATION_ID);
         when(location.getLocationName()).thenReturn("Main Pharmacy");
+        when(location.isActive()).thenReturn(true);
 
         when(medicineRepository.findByTenantIdAndId(TENANT_ID, MEDICINE_ID)).thenReturn(Optional.of(medicine));
         when(locationRepository.findByTenantIdAndId(TENANT_ID, LOCATION_ID)).thenReturn(Optional.of(location));
@@ -92,6 +97,7 @@ class InventoryServiceImplStockTest {
                 stockRepository,
                 transactionRepository,
                 locationRepository,
+                physicalCountSessionRepository,
                 auditEventPublisher,
                 new ObjectMapper()
         );
@@ -314,6 +320,135 @@ class InventoryServiceImplStockTest {
     }
 
     @Test
+    void transferStockRejectsSameSourceAndDestinationLocation() {
+        assertThatThrownBy(() -> service.transferStock(
+                TENANT_ID,
+                new com.deepthoughtnet.clinic.inventory.service.model.InventoryTransferCommand(
+                        MEDICINE_ID,
+                        null,
+                        LOCATION_ID,
+                        LOCATION_ID,
+                        5,
+                        "Internal transfer"
+                ),
+                ACTOR_ID
+        ))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("source and destination locations must differ");
+    }
+
+    @Test
+    void transferStockMovesQuantityBetweenLocationsAndPreservesTotalInventory() {
+        UUID fromLocationId = UUID.randomUUID();
+        UUID toLocationId = UUID.randomUUID();
+        StockEntity source = StockEntity.create(TENANT_ID, MEDICINE_ID, fromLocationId);
+        source.update(fromLocationId, "890100000010", null, null, "AMX-UAT-B01", "REF-10", LocalDate.now().plusYears(2), LocalDate.now().minusDays(1), "Acme Pharma", 55, 55, 5, new BigDecimal("6.00"), new BigDecimal("6.00"), new BigDecimal("8.00"), true);
+        savedStocks.put(source.getId(), source);
+
+        InventoryLocationEntity sourceLocation = mock(InventoryLocationEntity.class);
+        when(sourceLocation.getId()).thenReturn(fromLocationId);
+        when(sourceLocation.isActive()).thenReturn(true);
+        InventoryLocationEntity destinationLocation = mock(InventoryLocationEntity.class);
+        when(destinationLocation.getId()).thenReturn(toLocationId);
+        when(destinationLocation.isActive()).thenReturn(true);
+        when(locationRepository.findByTenantIdAndId(TENANT_ID, fromLocationId)).thenReturn(Optional.of(sourceLocation));
+        when(locationRepository.findByTenantIdAndId(TENANT_ID, toLocationId)).thenReturn(Optional.of(destinationLocation));
+        when(stockRepository.findByTenantIdAndMedicineIdAndLocationId(TENANT_ID, MEDICINE_ID, toLocationId)).thenReturn(List.of());
+
+        InventoryTransactionRecord saved = service.transferStock(
+                TENANT_ID,
+                new com.deepthoughtnet.clinic.inventory.service.model.InventoryTransferCommand(
+                        MEDICINE_ID,
+                        source.getId(),
+                        fromLocationId,
+                        toLocationId,
+                        10,
+                        "UAT transfer to secondary pharmacy"
+                ),
+                ACTOR_ID
+        );
+
+        assertThat(saved.transactionType()).isEqualTo(com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionType.TRANSFER_OUT);
+        assertThat(saved.quantity()).isEqualTo(10);
+        assertThat(saved.reason()).isEqualTo("UAT transfer to secondary pharmacy");
+        assertThat(savedStocks.get(source.getId()).getQuantityOnHand()).isEqualTo(45);
+        assertThat(savedStocks.values()).anySatisfy(stock -> {
+            assertThat(stock.getMedicineId()).isEqualTo(MEDICINE_ID);
+            assertThat(stock.getLocationId()).isEqualTo(toLocationId);
+            assertThat(stock.getQuantityOnHand()).isEqualTo(10);
+        });
+        assertThat(savedStocks.values().stream().mapToInt(StockEntity::getQuantityOnHand).sum()).isEqualTo(55);
+        assertThat(savedTransactions).hasSize(1);
+    }
+
+    @Test
+    void transferStockRejectsInactiveDestinationLocation() {
+        UUID fromLocationId = UUID.randomUUID();
+        UUID toLocationId = UUID.randomUUID();
+        StockEntity source = StockEntity.create(TENANT_ID, MEDICINE_ID, fromLocationId);
+        source.update(fromLocationId, "890100000011", null, null, "AMX-UAT-B02", "REF-11", LocalDate.now().plusYears(2), LocalDate.now().minusDays(1), "Acme Pharma", 55, 55, 5, new BigDecimal("6.00"), new BigDecimal("6.00"), new BigDecimal("8.00"), true);
+        savedStocks.put(source.getId(), source);
+
+        InventoryLocationEntity sourceLocation = mock(InventoryLocationEntity.class);
+        when(sourceLocation.getId()).thenReturn(fromLocationId);
+        when(sourceLocation.isActive()).thenReturn(true);
+        InventoryLocationEntity destinationLocation = mock(InventoryLocationEntity.class);
+        when(destinationLocation.getId()).thenReturn(toLocationId);
+        when(destinationLocation.isActive()).thenReturn(false);
+        when(locationRepository.findByTenantIdAndId(TENANT_ID, fromLocationId)).thenReturn(Optional.of(sourceLocation));
+        when(locationRepository.findByTenantIdAndId(TENANT_ID, toLocationId)).thenReturn(Optional.of(destinationLocation));
+
+        assertThatThrownBy(() -> service.transferStock(
+                TENANT_ID,
+                new com.deepthoughtnet.clinic.inventory.service.model.InventoryTransferCommand(
+                        MEDICINE_ID,
+                        source.getId(),
+                        fromLocationId,
+                        toLocationId,
+                        10,
+                        "UAT transfer to secondary pharmacy"
+                ),
+                ACTOR_ID
+        ))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Destination location is inactive");
+    }
+
+    @Test
+    void transferStockRejectsInsufficientQuantity() {
+        UUID fromLocationId = UUID.randomUUID();
+        UUID toLocationId = UUID.randomUUID();
+        StockEntity source = StockEntity.create(TENANT_ID, MEDICINE_ID, fromLocationId);
+        source.update(fromLocationId, "890100000012", null, null, "AMX-UAT-B03", "REF-12", LocalDate.now().plusYears(2), LocalDate.now().minusDays(1), "Acme Pharma", 5, 5, 5, new BigDecimal("6.00"), new BigDecimal("6.00"), new BigDecimal("8.00"), true);
+        savedStocks.put(source.getId(), source);
+
+        InventoryLocationEntity sourceLocation = mock(InventoryLocationEntity.class);
+        when(sourceLocation.getId()).thenReturn(fromLocationId);
+        when(sourceLocation.isActive()).thenReturn(true);
+        InventoryLocationEntity destinationLocation = mock(InventoryLocationEntity.class);
+        when(destinationLocation.getId()).thenReturn(toLocationId);
+        when(destinationLocation.isActive()).thenReturn(true);
+        when(locationRepository.findByTenantIdAndId(TENANT_ID, fromLocationId)).thenReturn(Optional.of(sourceLocation));
+        when(locationRepository.findByTenantIdAndId(TENANT_ID, toLocationId)).thenReturn(Optional.of(destinationLocation));
+        when(stockRepository.findByTenantIdAndMedicineIdAndLocationId(TENANT_ID, MEDICINE_ID, toLocationId)).thenReturn(List.of());
+
+        assertThatThrownBy(() -> service.transferStock(
+                TENANT_ID,
+                new com.deepthoughtnet.clinic.inventory.service.model.InventoryTransferCommand(
+                        MEDICINE_ID,
+                        source.getId(),
+                        fromLocationId,
+                        toLocationId,
+                        10,
+                        "UAT transfer to secondary pharmacy"
+                ),
+                ACTOR_ID
+        ))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Insufficient stock available.");
+    }
+
+    @Test
     void createStockRejectsInactiveMedicine() {
         MedicineEntity inactiveMedicine = mock(MedicineEntity.class);
         when(inactiveMedicine.getId()).thenReturn(MEDICINE_ID);
@@ -502,6 +637,40 @@ class InventoryServiceImplStockTest {
         ), ACTOR_ID))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Insufficient stock available.");
+    }
+
+    @Test
+    void createTransactionPersistsBusinessReferenceSeparatelyFromSystemReferenceFields() {
+        StockEntity existing = StockEntity.create(TENANT_ID, MEDICINE_ID, LOCATION_ID);
+        existing.update(LOCATION_ID, "890100000300", null, null, "B300", "REF-300", LocalDate.now().plusDays(30), null, "Acme Pharma", 10, 10, 5, new BigDecimal("10.00"), new BigDecimal("10.00"), new BigDecimal("12.00"), true);
+        when(stockRepository.findByTenantIdAndId(TENANT_ID, existing.getId())).thenReturn(Optional.of(existing));
+
+        com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionRecord saved = service.createTransaction(
+                TENANT_ID,
+                new com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionCommand(
+                        MEDICINE_ID,
+                        existing.getId(),
+                        LOCATION_ID,
+                        null,
+                        com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionType.ADJUSTMENT,
+                        1,
+                        "Manual correction",
+                        null,
+                        null,
+                        ACTOR_ID,
+                        "Manual adjustment from physical verification",
+                        "ADJ-UAT-0001"
+                ),
+                ACTOR_ID
+        );
+
+        assertThat(saved.businessReference()).isEqualTo("ADJ-UAT-0001");
+        assertThat(saved.referenceId()).isNull();
+        assertThat(saved.referenceType()).isNull();
+        assertThat(savedTransactions).singleElement().satisfies(tx -> {
+            assertThat(tx.getBusinessReference()).isEqualTo("ADJ-UAT-0001");
+            assertThat(tx.getReferenceId()).isNull();
+        });
     }
 
     private void executePurchase(UUID stockId, int quantity, String reference) {

@@ -153,8 +153,8 @@ export const stockInwardSchema = z.object({
   unitCost: optionalMoney(0, 999999, "Unit cost must be between 0 and 999999 with up to 2 decimals."),
   sellingPrice: optionalMoney(0, 999999, "Selling price must be between 0 and 999999 with up to 2 decimals."),
 }).superRefine((value, ctx) => {
-  dateNotAfterToday(value.purchaseDate, ["purchaseDate"], ctx);
-  dateNotBeforeToday(value.expiryDate, ["expiryDate"], ctx);
+  dateNotBeforeToday(value.purchaseDate, ["purchaseDate"], ctx);
+  dateNotAfterToday(value.expiryDate, ["expiryDate"], ctx);
   if (value.unitCost != null && value.sellingPrice != null && value.sellingPrice < value.unitCost) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["sellingPrice"], message: "Selling price cannot be less than unit cost." });
   }

@@ -36,6 +36,8 @@ export type AuthContextValue = {
   enabledTenantModules: Record<string, boolean> | null;
   accessToken: string | null;
   initError: string | null;
+  sessionWarning: string | null;
+  sessionNotice: string | null;
   selectTenant: (tenant: SelectedTenant | null) => void;
   retryInit: () => void;
   clearSession: () => void;

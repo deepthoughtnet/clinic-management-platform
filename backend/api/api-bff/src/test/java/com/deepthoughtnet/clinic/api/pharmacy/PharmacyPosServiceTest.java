@@ -9,8 +9,10 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
 import com.deepthoughtnet.clinic.billing.service.model.PaymentMode;
 import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
+import com.deepthoughtnet.clinic.clinic.service.model.ClinicProfileRecord;
 import com.deepthoughtnet.clinic.inventory.db.InventoryLocationEntity;
 import com.deepthoughtnet.clinic.inventory.db.InventoryLocationRepository;
 import com.deepthoughtnet.clinic.inventory.db.MedicineEntity;
@@ -40,10 +42,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.apache.pdfbox.Loader;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.text.PDFTextStripper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -67,6 +73,7 @@ class PharmacyPosServiceTest {
     private PharmacySalePrescriptionRepository salePrescriptionRepository;
     private AuditEventPublisher auditEventPublisher;
     private ObjectStorageService storageService;
+    private ClinicTimeZoneResolver clinicTimeZoneResolver;
     private PharmacyPosService service;
 
     private InventoryLocationEntity location;
@@ -93,6 +100,7 @@ class PharmacyPosServiceTest {
         salePrescriptionRepository = mock(PharmacySalePrescriptionRepository.class);
         auditEventPublisher = mock(AuditEventPublisher.class);
         storageService = mock(ObjectStorageService.class);
+        clinicTimeZoneResolver = mock(ClinicTimeZoneResolver.class);
 
         location = InventoryLocationEntity.create(tenantId, "Main Pharmacy", "MAIN", "PHARMACY", true);
         when(locationRepository.findByTenantIdAndDefaultLocationTrue(tenantId)).thenReturn(Optional.of(location));
@@ -180,6 +188,7 @@ class PharmacyPosServiceTest {
                 prescriptions.stream().filter(entity -> entity.getId().equals(invocation.getArgument(1))).findFirst());
         when(salePrescriptionRepository.existsByTenantIdAndStorageKey(eq(tenantId), any())).thenReturn(false);
         when(storageService.buildDocumentStorageKey(eq(tenantId), any())).thenReturn("tenants/" + tenantId + "/documents/rx-file.pdf");
+        when(clinicTimeZoneResolver.resolve(tenantId)).thenReturn(ZoneId.of("Asia/Kolkata"));
 
         when(inventoryService.createTransaction(eq(tenantId), any(), eq(actorId))).thenAnswer(invocation -> {
             InventoryTransactionCommand command = invocation.getArgument(1);
@@ -219,7 +228,8 @@ class PharmacyPosServiceTest {
                 salePrescriptionRepository,
                 storageService,
                 new ObjectMapper(),
-                new BrandingProperties()
+                new BrandingProperties(),
+                clinicTimeZoneResolver
         );
     }
 
@@ -639,6 +649,74 @@ class PharmacyPosServiceTest {
         assertThat(sale.prescriptionDocumentId()).isEqualTo(upload.documentId());
         assertThat(sale.prescriptionFileName()).isEqualTo("rx.pdf");
         assertThat(prescriptions).singleElement().satisfies(row -> assertThat(row.getLinkedSaleId()).isEqualTo(sale.id()));
+    }
+
+    @Test
+    void generateReceiptUsesTwoColumnHeaderAndClinicTimezone() throws Exception {
+        openShiftFor(actorId);
+        MedicineEntity medicine = medicine("Amoxicillin");
+        StockEntity batch = stock(medicine.getId(), "AMX-UAT-B01", LocalDate.now().plusDays(30), 10, "12.50");
+        when(medicineRepository.findByTenantIdAndId(tenantId, medicine.getId())).thenReturn(Optional.of(medicine));
+        when(medicineRepository.findByTenantIdOrderByMedicineNameAsc(tenantId)).thenReturn(List.of(medicine));
+        when(stockRepository.findSellableBatchesForUpdate(tenantId, location.getId(), medicine.getId())).thenReturn(List.of(batch));
+        when(clinicProfileService.findByTenantId(tenantId)).thenReturn(Optional.of(new ClinicProfileRecord(
+                UUID.randomUUID(),
+                tenantId,
+                "Jeevanam Automation Lab",
+                "Jeevanam Automation Lab",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                true,
+                true,
+                "uat-clinic",
+                OffsetDateTime.now(),
+                OffsetDateTime.now()
+        )));
+
+        PharmacyPosSaleResponse sale = service.createSale(tenantId, new PharmacyPosCreateSaleRequest(
+                null,
+                "Walk-in customer with a longer header name",
+                "9999999999",
+                null,
+                OffsetDateTime.parse("2026-08-29T07:02:00Z"),
+                BigDecimal.ZERO,
+                BigDecimal.ZERO,
+                new BigDecimal("12.50"),
+                PaymentMode.CASH,
+                null,
+                null,
+                "Take medicines after food",
+                List.of(new PharmacyPosSaleLineRequest(medicine.getId(), 1, new BigDecimal("12.50"), BigDecimal.ZERO, BigDecimal.ZERO))
+        ), actorId);
+
+        PharmacyPosReceiptPdf receipt = service.generateReceipt(tenantId, sale.id(), actorId);
+        try (PDDocument document = Loader.loadPDF(receipt.content())) {
+            String text = new PDFTextStripper().getText(document);
+            assertThat(text).contains("Jeevanam Automation Lab");
+            assertThat(text).contains("PHARMACY SALE RECEIPT");
+            assertThat(text).contains("Customer: Walk-in customer with a longer");
+            assertThat(text).contains("header name");
+            assertThat(text).contains("Mobile: 9999999999");
+            assertThat(text).contains("Sale No.");
+            assertThat(text).contains("Receipt No.");
+            assertThat(text).contains("Stock Allocation");
+            assertThat(text).contains("FEFO - earliest non-expired batch allocation.");
+            assertThat(text).doesNotContain("FEFO / allocation text");
+            assertThat(text).contains("29 Aug 2026 12:32 PM");
+            assertThat(text).contains("Medicine");
+            assertThat(text).contains("Batch");
+            assertThat(text).contains("Subtotal");
+            assertThat(text).contains("Paid");
+        }
     }
 
     @Test

@@ -71,15 +71,15 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "Pharmacy",
     requiresTenant: true,
     items: [
-      { key: "pharmacy-dashboard", label: "Pharmacy Dashboard", path: "/pharmacy/dashboard", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PHARMA", "PHARMACY", "PHARMACIST", "PHARMACY_INVENTORY_MANAGER", "PHARMACY_POS_USER"], moduleAny: ["INVENTORY", "PRESCRIPTION", "BILLING"] },
+      { key: "pharmacy-dashboard", label: "Pharmacy Dashboard", path: "/pharmacy/dashboard", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PHARMA", "PHARMACY", "PHARMACIST", "PHARMACY_INVENTORY_MANAGER"], moduleAny: ["INVENTORY", "PRESCRIPTION", "BILLING"] },
       { key: "prescription-register", label: "Prescription Register", path: "/prescriptions", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PHARMA", "PHARMACY", "PHARMACIST"], moduleAny: ["PRESCRIPTION"] },
-      { key: "dispense-queue", label: "Dispense Queue", path: "/pharmacy/dispensing", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "PHARMA", "PHARMACY", "PHARMACIST", "BILLING_USER", "AUDITOR", "PHARMACY_INVENTORY_MANAGER", "PHARMACY_POS_USER"], moduleAll: ["PRESCRIPTION", "INVENTORY"] },
+      { key: "dispense-queue", label: "Dispense Queue", path: "/pharmacy/dispensing", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "PHARMA", "PHARMACY", "PHARMACIST", "BILLING_USER", "AUDITOR", "PHARMACY_INVENTORY_MANAGER"], moduleAll: ["PRESCRIPTION", "INVENTORY"] },
       { key: "pharmacy-pos", label: "POS Sale", path: "/pharmacy/pos", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "PHARMA", "PHARMACY", "PHARMACIST", "AUDITOR", "PHARMACY_POS_USER", "PHARMACY_INVENTORY_MANAGER"], moduleAny: ["PHARMACY_POS"] },
       { key: "pharmacy-procure", label: "Procure", path: "/pharmacy/procure", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PHARMACY_INVENTORY_MANAGER", "PHARMACIST"], moduleAny: ["INVENTORY"] },
       { key: "pharmacy-reconcile", label: "Reconcile", path: "/pharmacy/reconcile", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PHARMACY_INVENTORY_MANAGER", "PHARMACIST"], moduleAny: ["INVENTORY"] },
-      { key: "medicine-master", label: "Medicine Master", path: "/pharmacy/medicines", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PHARMA", "PHARMACY", "PHARMACIST", "PHARMACY_INVENTORY_MANAGER", "PHARMACY_POS_USER"], moduleAny: ["INVENTORY"] },
-      { key: "inventory", label: "Inventory", path: "/inventory", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PHARMA", "PHARMACY", "PHARMACIST", "PHARMACY_INVENTORY_MANAGER", "PHARMACY_POS_USER"], moduleAny: ["INVENTORY"] },
-      { key: "reports-audit", label: "Reports & Audit", path: "/pharmacy/stock-movements", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PHARMA", "PHARMACY", "PHARMACIST", "BILLING_USER", "PHARMACY_INVENTORY_MANAGER", "PHARMACY_POS_USER"], moduleAny: ["INVENTORY"] },
+      { key: "medicine-master", label: "Medicine Master", path: "/pharmacy/medicines", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PHARMA", "PHARMACY", "PHARMACIST", "PHARMACY_INVENTORY_MANAGER"], moduleAny: ["INVENTORY"] },
+      { key: "inventory", label: "Inventory", path: "/inventory", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "TENANT_ADMIN", "AUDITOR", "PHARMA", "PHARMACY", "PHARMACIST", "PHARMACY_INVENTORY_MANAGER"], moduleAny: ["INVENTORY"] },
+      { key: "reports-audit", label: "Reports & Audit", path: "/pharmacy/stock-movements", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PHARMA", "PHARMACY", "PHARMACIST", "BILLING_USER", "PHARMACY_INVENTORY_MANAGER"], moduleAny: ["INVENTORY"] },
     ],
   },
   {
@@ -119,6 +119,7 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { key: "settings-profile", label: "Clinic Profile", path: "/settings/clinic-profile", requiresTenant: true, rolesAny: ["CLINIC_ADMIN"] },
       { key: "settings-users-roles", label: "Users & Roles", path: "/settings/users-roles", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "TENANT_ADMIN", "ADMIN", "PLATFORM_ADMIN"] },
+      { key: "vaccination-master", label: "Vaccine Master", path: "/admin/vaccine-master", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "TENANT_ADMIN", "VACCINE_MASTER_MANAGER"], moduleAny: ["VACCINATION"] },
       { key: "templates", label: "Templates", path: "/admin/templates", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"] },
       { key: "notification-settings", label: "Notification Settings", path: "/admin/notification-settings", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"] },
       { key: "notification-operations", label: "Notification Operations", path: "/admin/notification-operations", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "TENANT_ADMIN", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"] },

@@ -114,7 +114,7 @@ export const MODULE_REGISTRY: Record<TenantModuleCode, ModuleDefinition> = {
     displayName: "Vaccination",
     defaultLandingPage: "/vaccinations",
     navigationEntries: ["vaccinations"],
-    routes: ["/vaccinations"],
+    routes: ["/vaccinations", "/admin/vaccine-master"],
     dashboardWidgets: ["vaccination-summary"],
     featureFlags: ["vaccination.read"],
   },
@@ -238,7 +238,7 @@ function addPharmacyPosFallback(source: Record<string, boolean>) {
 }
 
 export function resolveEnabledTenantModules(
-  auth: Pick<AuthContextValue, "tenantId" | "tenantModules" | "enabledTenantModules" | "activeTenantMemberships">,
+  auth: Pick<AuthContextValue, "tenantId" | "tenantModules" | "enabledTenantModules" | "activeTenantMemberships" | "tenantRole" | "rolesUpper">,
 ) {
   if (!auth.tenantId) return new Set<TenantModuleCode>();
   const membership = auth.activeTenantMemberships.find((item) => item.tenantId === auth.tenantId);
@@ -249,19 +249,27 @@ export function resolveEnabledTenantModules(
     return new Set<TenantModuleCode>(DEFAULT_CLINIC_MODULES);
   }
   const normalized = addPharmacyPosFallback({ ...source });
+  const activeRoles = new Set((auth.rolesUpper || []).map((role) => normalizeRoleValue(role)));
+  const tenantRole = normalizeRoleValue(auth.tenantRole);
+  if (tenantRole) {
+    activeRoles.add(tenantRole);
+  }
+  if (activeRoles.has("PHARMACY_POS_USER")) {
+    normalized.PHARMACY_POS = true;
+  }
   const enabled = TENANT_MODULE_CODES.filter((code) => normalized[code] === true);
   return new Set<TenantModuleCode>(enabled);
 }
 
 export function hasEnabledTenantModule(
-  auth: Pick<AuthContextValue, "tenantId" | "tenantModules" | "enabledTenantModules" | "activeTenantMemberships">,
+  auth: Pick<AuthContextValue, "tenantId" | "tenantModules" | "enabledTenantModules" | "activeTenantMemberships" | "tenantRole" | "rolesUpper">,
   moduleCode: TenantModuleCode,
 ) {
   return resolveEnabledTenantModules(auth).has(moduleCode);
 }
 
 export function canAccessFeature(
-  auth: Pick<AuthContextValue, "tenantId" | "tenantModules" | "enabledTenantModules" | "activeTenantMemberships">,
+  auth: Pick<AuthContextValue, "tenantId" | "tenantModules" | "enabledTenantModules" | "activeTenantMemberships" | "tenantRole" | "rolesUpper">,
   featureId: AppFeatureId,
 ) {
   const rule = FEATURE_REGISTRY[featureId];
@@ -281,7 +289,11 @@ export function resolveTenantLandingPage(
   auth: Pick<AuthContextValue, "tenantId" | "tenantModules" | "enabledTenantModules" | "activeTenantMemberships" | "tenantRole" | "rolesUpper" | "permissions">,
 ) {
   const enabled = resolveEnabledTenantModules(auth);
+  const tenantRole = normalizeRoleValue(auth.tenantRole);
   const candidates = [
+    tenantRole === "PHARMACY_POS_USER" ? "/pharmacy/pos" : null,
+    isPharmacyPosOnlyRole(auth) ? "/pharmacy/pos" : null,
+    hasAnyRole(getActiveRoles(auth), "VACCINE_MASTER_MANAGER") ? "/admin/vaccine-master" : null,
     enabled.has("INVENTORY") && (enabled.has("PRESCRIPTION") || enabled.has("BILLING")) && isPharmacyWorkspaceRole(auth) ? "/pharmacy/dashboard" : null,
     enabled.has("LABORATORY") && (isLabWorkspaceRole(auth) || hasLabReceptionAccess(auth)) ? "/lab" : null,
     enabled.has("BILLING") && isBillingWorkspaceRole(auth) ? "/billing" : null,
@@ -332,6 +344,14 @@ export function isPharmacyWorkspaceRole(
   return hasAnyRole(getActiveRoles(auth), "CLINIC_ADMIN", "PHARMA", "PHARMACY", "PHARMACIST", "PHARMACY_INVENTORY_MANAGER", "PHARMACY_POS_USER", "PLATFORM_ADMIN");
 }
 
+export function isPharmacyPosOnlyRole(
+  auth: Pick<AuthContextValue, "tenantRole" | "rolesUpper">,
+) {
+  const activeRoles = getActiveRoles(auth);
+  return activeRoles.has("PHARMACY_POS_USER")
+    && !hasAnyRole(activeRoles, "CLINIC_ADMIN", "PHARMA", "PHARMACY", "PHARMACIST", "PHARMACY_INVENTORY_MANAGER", "PLATFORM_ADMIN");
+}
+
 export function isLabWorkspaceRole(
   auth: Pick<AuthContextValue, "tenantRole" | "rolesUpper">,
 ) {
@@ -353,6 +373,8 @@ export function isRouteAccessibleForAuth(
   const doctorRole = hasAnyRole(activeRoles, "DOCTOR");
   const billingRole = isBillingWorkspaceRole(auth);
   const pharmacyRole = isPharmacyWorkspaceRole(auth);
+  const pharmacyPosOnlyRole = isPharmacyPosOnlyRole(auth);
+  const inventoryRole = hasAnyRole(activeRoles, "CLINIC_ADMIN", "TENANT_ADMIN", "AUDITOR", "PHARMA", "PHARMACY", "PHARMACIST", "PHARMACY_INVENTORY_MANAGER", "PLATFORM_ADMIN");
   const labRole = isLabWorkspaceRole(auth);
   const labReceptionRole = hasLabReceptionAccess(auth);
   const operationalRole = hasAnyRole(activeRoles, "CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST", "AUDITOR", "PLATFORM_ADMIN");
@@ -361,7 +383,7 @@ export function isRouteAccessibleForAuth(
     return (canAccessFeature(auth, "clinic-dashboard") && operationalRole) || (!auth.tenantId && auth.rolesUpper.includes("PLATFORM_ADMIN"));
   }
   if (path === "/pharmacy/dashboard") {
-    return canAccessFeature(auth, "pharmacy-dashboard") && pharmacyRole;
+    return canAccessFeature(auth, "pharmacy-dashboard") && pharmacyRole && !pharmacyPosOnlyRole;
   }
   if (path === "/patients") return canAccessFeature(auth, "patients");
   if (path === "/patients/new") return canAccessFeature(auth, "patients");
@@ -382,14 +404,15 @@ export function isRouteAccessibleForAuth(
     if (path === "/finance/refunds") return canAccessFeature(auth, "refunds");
     return canAccessFeature(auth, "billing") && billingRole;
   }
-  if (path === "/vaccinations") return canAccessFeature(auth, "vaccinations");
+  if (path === "/vaccinations") return canAccessFeature(auth, "vaccinations") && !hasAnyRole(activeRoles, "VACCINE_MASTER_MANAGER");
+  if (path === "/admin/vaccine-master") return canAccessFeature(auth, "vaccinations") && hasAnyRole(activeRoles, "CLINIC_ADMIN", "TENANT_ADMIN", "VACCINE_MASTER_MANAGER", "PLATFORM_ADMIN");
   if (path === "/inventory" || path.startsWith("/pharmacy/inventory") || path.startsWith("/pharmacy/medicines") || path.startsWith("/pharmacy/procurement") || path.startsWith("/pharmacy/reconciliation") || path.startsWith("/pharmacy/operations") || path.startsWith("/pharmacy/stock-movements")) {
-    return canAccessFeature(auth, "inventory") && pharmacyRole;
+    return canAccessFeature(auth, "inventory") && inventoryRole && !pharmacyPosOnlyRole;
   }
-  if (path === "/pharmacy/dispensing") return canAccessFeature(auth, "pharmacy-dispensing") && pharmacyRole;
-  if (path === "/pharmacy/pos") return canAccessFeature(auth, "pharmacy-pos") && pharmacyRole;
-  if (path === "/pharmacy/procure" || path === "/pharmacy/procure-test") return canAccessFeature(auth, "pharmacy-procurement") && pharmacyRole;
-  if (path === "/pharmacy/reconcile" || path === "/pharmacy/reconcile-test") return canAccessFeature(auth, "pharmacy-reconciliation") && pharmacyRole;
+  if (path === "/pharmacy/dispensing") return canAccessFeature(auth, "pharmacy-dispensing") && pharmacyRole && !pharmacyPosOnlyRole;
+  if (path === "/pharmacy/pos") return canAccessFeature(auth, "pharmacy-pos") && (pharmacyRole || pharmacyPosOnlyRole);
+  if (path === "/pharmacy/procure" || path === "/pharmacy/procure-test") return canAccessFeature(auth, "pharmacy-procurement") && pharmacyRole && !pharmacyPosOnlyRole;
+  if (path === "/pharmacy/reconcile" || path === "/pharmacy/reconcile-test") return canAccessFeature(auth, "pharmacy-reconciliation") && pharmacyRole && !pharmacyPosOnlyRole;
   if (path === "/reports") return canAccessFeature(auth, "reports");
   if (path === "/lab" || path === "/laboratory") return canAccessFeature(auth, "laboratory") && (labRole || labReceptionRole);
   if (path.startsWith("/platform/")) {

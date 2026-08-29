@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.deepthoughtnet.clinic.api.inventory.service.PrescriptionDispensingService;
+import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
 import com.deepthoughtnet.clinic.inventory.db.GoodsReceiptRepository;
 import com.deepthoughtnet.clinic.inventory.db.InventoryLocationEntity;
 import com.deepthoughtnet.clinic.inventory.db.InventoryLocationRepository;
@@ -26,12 +27,16 @@ import com.deepthoughtnet.clinic.inventory.db.SupplierInvoiceRepository;
 import com.deepthoughtnet.clinic.inventory.service.InventoryService;
 import com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionCommand;
 import com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionType;
+import com.deepthoughtnet.clinic.identity.service.PlatformTenantManagementService;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
+import com.deepthoughtnet.clinic.notification.service.NotificationHistoryService;
+import com.deepthoughtnet.clinic.notify.NotificationProvider;
 import com.deepthoughtnet.clinic.platform.storage.ObjectStorageService;
 import com.deepthoughtnet.clinic.ocr.spi.OcrProvider;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -87,10 +92,15 @@ class PharmacyOperationsServiceReconciliationTest {
         supplierInvoiceRepository = mock(SupplierInvoiceRepository.class);
         goodsReceiptRepository = mock(GoodsReceiptRepository.class);
         dispensingService = mock(PrescriptionDispensingService.class);
+        PlatformTenantManagementService tenantManagementService = mock(PlatformTenantManagementService.class);
+        NotificationHistoryService notificationHistoryService = mock(NotificationHistoryService.class);
+        NotificationProvider notificationProvider = mock(NotificationProvider.class);
         storageService = mock(ObjectStorageService.class);
+        ClinicTimeZoneResolver clinicTimeZoneResolver = mock(ClinicTimeZoneResolver.class);
         ocrProvider = mock(ObjectProvider.class);
         objectMapper = new ObjectMapper();
         auditEventPublisher = mock(AuditEventPublisher.class);
+        when(clinicTimeZoneResolver.resolve(TENANT_ID)).thenReturn(ZoneId.of("Asia/Kolkata"));
 
         medicine = mock(MedicineEntity.class);
         stock = StockEntity.create(TENANT_ID, MEDICINE_ID, LOCATION_ID);
@@ -140,9 +150,13 @@ class PharmacyOperationsServiceReconciliationTest {
                 goodsReceiptRepository,
                 dispensingService,
                 auditEventPublisher,
+                tenantManagementService,
+                notificationHistoryService,
+                notificationProvider,
                 storageService,
                 ocrProvider,
                 objectMapper,
+                clinicTimeZoneResolver,
                 new NoOpTransactionManager()
         );
     }

@@ -130,6 +130,7 @@ test("inventory transaction form schema validates stock adjustment notes", () =>
       quantity: 1,
       referenceType: "PHYSICAL_STOCK_COUNT",
       referenceId: "66666666-6666-4666-8666-666666666666",
+      businessReference: "ADJ-UAT-0001",
       notes: "Counted variance",
     }).success,
     true,
@@ -146,4 +147,19 @@ test("inventory transaction form schema validates stock adjustment notes", () =>
     }).success,
     false,
   );
+});
+
+test("inventory transaction form schema accepts a human-readable business reference", () => {
+  const result = inventoryTransactionFormSchema.safeParse({
+    medicineId: baseBatch.medicineId,
+    stockBatchId: "55555555-5555-4555-8555-555555555555",
+    transactionType: "ADJUSTMENT",
+    quantity: 1,
+    referenceType: null,
+    referenceId: null,
+    businessReference: "ADJ-UAT-0001",
+    notes: "Manual correction",
+  });
+
+  assert.equal(result.success, true);
 });

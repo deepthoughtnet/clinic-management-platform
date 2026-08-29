@@ -236,6 +236,7 @@ export const inventoryTransactionFormSchema = z.object({
   referenceType: optionalTrimmedString(64, "Reference type must be 64 characters or fewer."),
   referenceId: z.preprocess(toOptionalUuid, z.string().uuid().nullable()),
   notes: optionalTrimmedString(250, "Notes must be 250 characters or fewer."),
+  businessReference: optionalTrimmedString(160, "Business reference must be 160 characters or fewer."),
 }).superRefine((value, ctx) => {
   if (["ADJUSTMENT", "ADJUSTMENT_IN", "ADJUSTMENT_OUT", "CUSTOMER_RETURN_IN", "CUSTOMER_RETURN_NON_SELLABLE", "VENDOR_RETURN_OUT", "WRITE_OFF"].includes(value.transactionType) && !value.notes) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["notes"], message: "Reason is required for this stock movement." });

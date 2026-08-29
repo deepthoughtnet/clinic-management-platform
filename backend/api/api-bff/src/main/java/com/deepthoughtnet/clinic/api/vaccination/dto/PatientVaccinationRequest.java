@@ -4,17 +4,19 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.UUID;
 import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.PastOrPresent;
 import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.PositiveOrZero;
+import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 
 public record PatientVaccinationRequest(
         UUID vaccineId,
         @Size(max = 256)
         String vaccineName,
-        @PositiveOrZero
+        @Positive
         Integer doseNumber,
         @NotNull
+        @PastOrPresent(message = "Given date cannot be in the future.")
         LocalDate givenDate,
         LocalDate nextDueDate,
         @Size(max = 60)

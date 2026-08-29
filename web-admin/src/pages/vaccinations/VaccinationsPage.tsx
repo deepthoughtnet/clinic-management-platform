@@ -58,7 +58,7 @@ import MoreVertRoundedIcon from "@mui/icons-material/MoreVertRounded";
 import PersonRoundedIcon from "@mui/icons-material/PersonRounded";
 import SchoolRoundedIcon from "@mui/icons-material/SchoolRounded";
 import WarningAmberRoundedIcon from "@mui/icons-material/WarningAmberRounded";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { fileUploadSchema, firstZodError, mapZodErrors, vaccinationMasterSchema, vaccinationRecordSchema } from "@deepthoughtnet/form-validation-kit";
 import { useAuth } from "../../auth/useAuth";
@@ -237,6 +237,31 @@ function formForVaccine(vaccine: VaccineMaster): VaccineFormState {
     applicableAgeGroup: vaccine.applicableAgeGroup,
     clinicalIndications: vaccine.clinicalIndications,
     active: vaccine.active,
+  };
+}
+
+function formatVaccinationSelectionPrice(value: number | null | undefined) {
+  return value != null ? value.toFixed(2) : "";
+}
+
+function applyVaccinationSelectionDefaults(
+  current: VaccinationFormState,
+  vaccine: VaccineMaster,
+  recommendation?: Pick<VaccinationRecommendation, "doseNumber" | "route" | "administrationSite" | "dueDate"> | null,
+): VaccinationFormState {
+  return {
+    ...current,
+    vaccineId: vaccine.id,
+    doseNumber: vaccine.doseNumber != null
+      ? String(vaccine.doseNumber)
+      : recommendation?.doseNumber != null
+        ? String(recommendation.doseNumber)
+        : "",
+    route: vaccine.route ?? recommendation?.route ?? "",
+    administrationSite: vaccine.administrationSite ?? recommendation?.administrationSite ?? "",
+    nextDueDate: recommendation?.dueDate ?? current.nextDueDate,
+    stockBatchId: "",
+    billItemUnitPrice: formatVaccinationSelectionPrice(vaccine.defaultPrice),
   };
 }
 
@@ -455,6 +480,18 @@ function vaccinationBillingStatusKey(row: PatientVaccination): VaccinationHistor
   if (status === "CANCELLED") return "CANCELLED";
   if (status === "DRAFT" || status === "ISSUED" || status === "PARTIALLY_PAID") return "BILL_CREATED";
   return "PAYMENT_PENDING";
+}
+
+function vaccinationSource(row: PatientVaccination) {
+  return String(row.source || "INTERNAL").toUpperCase();
+}
+
+function vaccinationAdministeredByLabel(row: PatientVaccination) {
+  const administeredBy = row.administeredByUserName?.trim();
+  if (vaccinationSource(row) === "EXTERNAL") {
+    return administeredBy || "—";
+  }
+  return administeredBy || "-";
 }
 
 function vaccinationAefiBadge(row: PatientVaccination) {
@@ -1394,8 +1431,9 @@ function recommendationStatusColor(status: VaccinationRecommendation["status"]) 
 export default function VaccinationsPage() {
   const auth = useAuth();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const enabledModules = React.useMemo(() => resolveEnabledTenantModules(auth), [auth]);
-  const canManageMaster = canManageVaccineMasterAccess(auth);
+  const showMasterWorkspace = false;
   const canBookAppointment = enabledModules.has("APPOINTMENTS") || enabledModules.has("CONSULTATION");
   const canManageVaccinationHistory = auth.hasPermission("vaccination.manage")
     || auth.hasPermission("vaccination.update")
@@ -1502,7 +1540,7 @@ export default function VaccinationsPage() {
   const [showOptionalRiskBasedTimelineItems, setShowOptionalRiskBasedTimelineItems] = React.useState(false);
   const [showNotApplicableTimelineItems, setShowNotApplicableTimelineItems] = React.useState(false);
   const [showChildhoodSchedule, setShowChildhoodSchedule] = React.useState(false);
-  const [activeVaccinationSection, setActiveVaccinationSection] = React.useState<"record" | "timeline" | "history" | "schedule" | "master">("record");
+  const [activeVaccinationSection, setActiveVaccinationSection] = React.useState<"record" | "timeline" | "history" | "schedule">("record");
   const [scheduleCalendarScheduleType, setScheduleCalendarScheduleType] = React.useState<VaccinationScheduleTypeFilter>("UIP");
   const [scheduleCalendarAgeGroup, setScheduleCalendarAgeGroup] = React.useState("");
   const [scheduleCalendarRoute, setScheduleCalendarRoute] = React.useState("");
@@ -1511,6 +1549,10 @@ export default function VaccinationsPage() {
   const [scheduleCalendarActiveOnly, setScheduleCalendarActiveOnly] = React.useState(true);
   const [scheduleCalendarExpanded, setScheduleCalendarExpanded] = React.useState(false);
   const [scheduleDetailVaccine, setScheduleDetailVaccine] = React.useState<VaccineMaster | null>(null);
+  const [operationalVaccineSearch, setOperationalVaccineSearch] = React.useState("");
+  const [operationalVaccineAgeGroup, setOperationalVaccineAgeGroup] = React.useState("");
+  const [operationalVaccineScheduleType, setOperationalVaccineScheduleType] = React.useState("");
+  const [operationalVaccineRoute, setOperationalVaccineRoute] = React.useState("");
   const historySectionRef = React.useRef<HTMLDivElement | null>(null);
   const scheduleSectionRef = React.useRef<HTMLDivElement | null>(null);
   const vaccineMasterSectionRef = React.useRef<HTMLDivElement | null>(null);
@@ -2032,6 +2074,43 @@ export default function VaccinationsPage() {
     () => vaccines.find((item) => item.id === vaccinationForm.vaccineId) || null,
     [vaccines, vaccinationForm.vaccineId],
   );
+  const activeVaccines = React.useMemo(
+    () => vaccines.filter((item) => item.active),
+    [vaccines],
+  );
+  const operationalVaccineFilterOptions = React.useMemo(() => {
+    const unique = (values: Array<string | null | undefined>) => [...new Set(values.map((value) => String(value || "").trim()).filter(Boolean))].sort((left, right) => left.localeCompare(right));
+    return {
+      ageGroups: unique(activeVaccines.map((vaccine) => vaccine.ageGroup)),
+      scheduleTypes: unique(activeVaccines.map((vaccine) => vaccine.scheduleType)),
+      routes: unique(activeVaccines.map((vaccine) => vaccine.route)),
+    };
+  }, [activeVaccines]);
+  const filteredOperationalVaccines = React.useMemo(() => {
+    const search = operationalVaccineSearch.trim().toLowerCase();
+    const ageGroup = operationalVaccineAgeGroup.trim().toLowerCase();
+    const scheduleType = operationalVaccineScheduleType.trim().toLowerCase();
+    const route = operationalVaccineRoute.trim().toLowerCase();
+
+    return activeVaccines
+      .filter((vaccine) => !search || vaccine.vaccineName.toLowerCase().includes(search))
+      .filter((vaccine) => !ageGroup || String(vaccine.ageGroup || "").toLowerCase().includes(ageGroup))
+      .filter((vaccine) => !scheduleType || String(vaccine.scheduleType || "").trim().toLowerCase() === scheduleType)
+      .filter((vaccine) => !route || String(vaccine.route || "").toLowerCase().includes(route))
+      .sort((left, right) => {
+        const leftName = left.vaccineName.toLowerCase();
+        const rightName = right.vaccineName.toLowerCase();
+        if (leftName !== rightName) {
+          return leftName.localeCompare(rightName);
+        }
+        const leftDose = left.doseNumber ?? Number.POSITIVE_INFINITY;
+        const rightDose = right.doseNumber ?? Number.POSITIVE_INFINITY;
+        if (leftDose !== rightDose) {
+          return leftDose - rightDose;
+        }
+        return left.id.localeCompare(right.id);
+      });
+  }, [activeVaccines, operationalVaccineAgeGroup, operationalVaccineRoute, operationalVaccineScheduleType, operationalVaccineSearch]);
 
   const selectedVaccinationStocks = React.useMemo(() => {
     if (!selectedVaccinationVaccine?.stockTrackingEnabled || !selectedVaccinationVaccine.inventoryItemId) {
@@ -2081,6 +2160,7 @@ export default function VaccinationsPage() {
       vaccineId: vaccinationForm.vaccineId,
       doseNumber: vaccinationForm.doseNumber.trim() ? Number(vaccinationForm.doseNumber) : null,
       givenDate: vaccinationForm.givenDate || null,
+      patientDateOfBirth: selectedPatientSummary?.dateOfBirth || null,
       nextDueDate: vaccinationForm.nextDueDate || null,
       batchNumber: vaccinationForm.batchNumber,
       notes: vaccinationForm.notes,
@@ -2101,6 +2181,32 @@ export default function VaccinationsPage() {
         const firstField = ["vaccineId", "givenDate", "patientId", "billItemUnitPrice", "batchNumber", "notes"].find((field) => errors[field]);
         document.getElementById(firstField ? `vaccination-${firstField}` : "vaccination-vaccineId")?.focus();
       }, 0);
+      return;
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    const patientDateOfBirth = selectedPatientSummary?.dateOfBirth?.trim() || null;
+    const duplicateVaccination = patientHistoryRows.some((row) => (
+      String(row.source || "INTERNAL").toUpperCase() !== "EXTERNAL"
+      && row.vaccineId === parsed.data.vaccineId
+      && String(row.doseNumber ?? "") === String(parsed.data.doseNumber ?? "")
+      && String(row.givenDate || "") === String(parsed.data.givenDate || "")
+      && String(row.batchNumber || "").trim().toLowerCase() === String(parsed.data.batchNumber || "").trim().toLowerCase()
+    ));
+    if (parsed.data.givenDate > today) {
+      setVaccinationFieldErrors((current) => ({ ...current, givenDate: "Given date cannot be in the future." }));
+      setError("Given date cannot be in the future.");
+      window.setTimeout(() => document.getElementById("vaccination-givenDate")?.focus(), 0);
+      return;
+    }
+    if (patientDateOfBirth && parsed.data.givenDate < patientDateOfBirth) {
+      setVaccinationFieldErrors((current) => ({ ...current, givenDate: "Given date cannot be before the patient's date of birth." }));
+      setError("Given date cannot be before the patient's date of birth.");
+      window.setTimeout(() => document.getElementById("vaccination-givenDate")?.focus(), 0);
+      return;
+    }
+    if (duplicateVaccination) {
+      setError("This vaccination has already been recorded for the selected patient.");
+      window.setTimeout(() => document.getElementById("vaccination-batchNumber")?.focus(), 0);
       return;
     }
     const body = {
@@ -2415,6 +2521,10 @@ export default function VaccinationsPage() {
 
   const billVaccinationRow = React.useCallback(async (row: PatientVaccination, createNewBill: boolean) => {
     if (!auth.accessToken || !auth.tenantId) {
+      return;
+    }
+    if (vaccinationSource(row) === "EXTERNAL") {
+      setError("External vaccinations cannot be billed.");
       return;
     }
     try {
@@ -2738,17 +2848,8 @@ export default function VaccinationsPage() {
 
   const handleSelectRecommendation = React.useCallback((item: VaccinationRecommendation) => {
     const vaccine = vaccines.find((entry) => entry.id === item.vaccineId);
-    if (!vaccine) {
-      setVaccinationForm((current) => ({
-        ...current,
-        vaccineId: item.vaccineId,
-        doseNumber: item.doseNumber != null ? String(item.doseNumber) : current.doseNumber,
-        route: item.route ?? current.route,
-        administrationSite: item.administrationSite ?? current.administrationSite,
-        nextDueDate: item.dueDate ?? current.nextDueDate,
-        stockBatchId: "",
-        billItemUnitPrice: current.billItemUnitPrice || "",
-      }));
+    if (!vaccine || !vaccine.active) {
+      setError("Selected vaccine is inactive.");
       return;
     }
     const mappedStocks = vaccine.stockTrackingEnabled && vaccine.inventoryItemId
@@ -2764,14 +2865,8 @@ export default function VaccinationsPage() {
           })
       : [];
     setVaccinationForm((current) => ({
-      ...current,
-      vaccineId: vaccine.id,
-      doseNumber: vaccine.doseNumber != null ? String(vaccine.doseNumber) : (item.doseNumber != null ? String(item.doseNumber) : current.doseNumber),
-      route: vaccine.route ?? item.route ?? current.route,
-      administrationSite: vaccine.administrationSite ?? item.administrationSite ?? current.administrationSite,
-      nextDueDate: item.dueDate ?? current.nextDueDate,
+      ...applyVaccinationSelectionDefaults(current, vaccine, item),
       stockBatchId: mappedStocks[0]?.id || "",
-      billItemUnitPrice: vaccine.defaultPrice != null ? vaccine.defaultPrice.toFixed(2) : current.billItemUnitPrice,
     }));
     setWorkflowNotice(`Selected ${vaccine.vaccineName} from recommendations. Recommendations are assistive. Verify against clinic protocol.`);
     window.setTimeout(() => document.getElementById("vaccination-vaccineId")?.focus(), 0);
@@ -2882,12 +2977,13 @@ export default function VaccinationsPage() {
     scheduleSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
 
-  const openVaccinationMasterWorkspace = React.useCallback(() => {
-    vaccineMasterSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, []);
-
-  const handleVaccinationSectionTabChange = React.useCallback((_: React.SyntheticEvent, value: "record" | "timeline" | "history" | "schedule" | "master") => {
+  const handleVaccinationSectionTabChange = React.useCallback((_: React.SyntheticEvent, value: "record" | "timeline" | "history" | "schedule") => {
     setActiveVaccinationSection(value);
+    if (searchParams.get("section")) {
+      const next = new URLSearchParams(searchParams);
+      next.delete("section");
+      setSearchParams(next, { replace: true });
+    }
     if (value === "record") {
       window.scrollTo({ top: 0, behavior: "smooth" });
       return;
@@ -2904,8 +3000,7 @@ export default function VaccinationsPage() {
       openVaccinationScheduleWorkspace();
       return;
     }
-    openVaccinationMasterWorkspace();
-  }, [openVaccinationHistoryWorkspace, openVaccinationMasterWorkspace, openVaccinationScheduleWorkspace]);
+  }, [openVaccinationHistoryWorkspace, openVaccinationScheduleWorkspace, searchParams, setSearchParams]);
 
   const bookAppointment = React.useCallback((row: PatientVaccination) => {
     navigate(`/appointments?patientId=${row.patientId}`, { state: { patient: patients.find((entry) => entry.id === row.patientId) || null } });
@@ -3091,7 +3186,7 @@ export default function VaccinationsPage() {
             Vaccinations
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Vaccine master data, recording, and due/overdue follow-up tracking.
+            Vaccination recording, timeline, history, and due/overdue follow-up tracking.
           </Typography>
         </Box>
         <Button variant="outlined" onClick={() => void loadAll()} disabled={loading || saving}>
@@ -3121,7 +3216,6 @@ export default function VaccinationsPage() {
             <Tab value="timeline" label="Timeline" />
             <Tab value="history" label="History" />
             <Tab value="schedule" label="Schedule Calendar" />
-            <Tab value="master" label="Vaccine Master" />
           </Tabs>
         </CardContent>
       </Card>
@@ -3426,10 +3520,10 @@ export default function VaccinationsPage() {
                       labelId="vaccination-vaccine-label"
                       label="Vaccine"
                       value={vaccinationForm.vaccineId}
-                      disabled={!vaccines.length}
+                      disabled={!activeVaccines.length}
                       onChange={(e) => {
                         const vaccineId = String(e.target.value);
-                        const vaccine = vaccines.find((item) => item.id === vaccineId);
+                        const vaccine = activeVaccines.find((item) => item.id === vaccineId);
                         const mappedStocks = vaccine?.stockTrackingEnabled && vaccine.inventoryItemId
                           ? stocks
                               .filter((stock) => stock.medicineId === vaccine.inventoryItemId && stock.quantityOnHand > 0)
@@ -3442,25 +3536,35 @@ export default function VaccinationsPage() {
                                 return new Date(left.updatedAt).getTime() - new Date(right.updatedAt).getTime();
                               })
                           : [];
+                        if (!vaccine) {
+                          setVaccinationForm((current) => ({
+                            ...current,
+                            vaccineId,
+                            doseNumber: "",
+                            route: "",
+                            administrationSite: "",
+                            stockBatchId: "",
+                            billItemUnitPrice: "",
+                          }));
+                          return;
+                        }
                         setVaccinationForm((current) => ({
-                          ...current,
-                          vaccineId,
+                          ...applyVaccinationSelectionDefaults(current, vaccine),
                           stockBatchId: mappedStocks[0]?.id || "",
-                          billItemUnitPrice: vaccine?.defaultPrice != null ? vaccine.defaultPrice.toFixed(2) : current.billItemUnitPrice,
                         }));
                       }}
                       error={Boolean(vaccinationFieldErrors.vaccineId)}
                     >
-                    {vaccines.map((vaccine) => (
-                      <MenuItem key={vaccine.id} value={vaccine.id}>
-                        {vaccine.vaccineName}
-                      </MenuItem>
-                    ))}
+                    {activeVaccines.map((vaccine) => (
+                        <MenuItem key={vaccine.id} value={vaccine.id}>
+                          {vaccine.vaccineName}
+                        </MenuItem>
+                      ))}
                   </Select>
                   {vaccinationFieldErrors.vaccineId ? <Typography variant="caption" color="error">{vaccinationFieldErrors.vaccineId}</Typography> : null}
                 </FormControl>
-                {!vaccines.length ? (
-                  <Alert severity="info">No vaccine master records. Ask Clinic Admin to import vaccines.</Alert>
+                {!activeVaccines.length ? (
+                  <Alert severity="info">No active vaccines are configured. Ask Clinic Admin to configure or import vaccines in Vaccine Master.</Alert>
                 ) : null}
 
                 <Grid container spacing={1}>
@@ -3468,7 +3572,7 @@ export default function VaccinationsPage() {
                     <TextField size="small" fullWidth id="vaccination-doseNumber" label="Dose number" value={vaccinationForm.doseNumber} onChange={(e) => setVaccinationForm((current) => ({ ...current, doseNumber: e.target.value }))} error={Boolean(vaccinationFieldErrors.doseNumber)} helperText={vaccinationFieldErrors.doseNumber || "Optional positive whole number."} />
                   </Grid>
                   <Grid size={{ xs: 12, md: 6 }}>
-                    <TextField size="small" fullWidth id="vaccination-givenDate" label={<RequiredLabel text="Given date" required />} type="date" value={vaccinationForm.givenDate} onChange={(e) => setVaccinationForm((current) => ({ ...current, givenDate: e.target.value }))} InputLabelProps={{ shrink: true }} required error={Boolean(vaccinationFieldErrors.givenDate)} helperText={vaccinationFieldErrors.givenDate || "Required."} />
+                    <TextField size="small" fullWidth id="vaccination-givenDate" label={<RequiredLabel text="Given date" required />} type="date" value={vaccinationForm.givenDate} onChange={(e) => setVaccinationForm((current) => ({ ...current, givenDate: e.target.value }))} InputLabelProps={{ shrink: true }} error={Boolean(vaccinationFieldErrors.givenDate)} helperText={vaccinationFieldErrors.givenDate || "Required."} />
                   </Grid>
                   <Grid size={{ xs: 12, md: 6 }}>
                     <TextField size="small" fullWidth id="vaccination-route" label="Route" value={vaccinationForm.route} onChange={(e) => setVaccinationForm((current) => ({ ...current, route: e.target.value }))} helperText="Optional. Populated from recommendations when available." />
@@ -3562,8 +3666,8 @@ export default function VaccinationsPage() {
             </CardContent>
           </Card>
 
-                {canManageMaster ? (
-                  <Card ref={vaccineMasterSectionRef} sx={{ mt: 2 }}>
+            {showMasterWorkspace ? (
+              <Card ref={vaccineMasterSectionRef} sx={{ mt: 2 }}>
               <CardContent sx={{ p: 1.25 }}>
                 <Stack spacing={1.25}>
                   <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 2 }}>
@@ -3946,30 +4050,116 @@ export default function VaccinationsPage() {
               </Card>
             ) : null}
 
-            {canManageMaster ? (
-              <Card>
-                <CardContent sx={{ p: 1.25 }}>
-                  <Stack spacing={1.25}>
-                    <Typography variant="h6" sx={{ fontWeight: 800 }}>
-                      Vaccine list
-                    </Typography>
-                    {vaccines.length === 0 ? (
-                      <CompactEmptyState title="No vaccines were found." subtitle="Create a vaccine in the master list to start recording doses." />
-                    ) : (
-                      <CompactTableFrame maxHeight={420}>
-                        <Table size="small" stickyHeader sx={{ minWidth: 760 }}>
+            <Card>
+              <CardContent sx={{ p: 1.25 }}>
+                <Stack spacing={1.25}>
+                  <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, flexWrap: "wrap", alignItems: "flex-start" }}>
+                    <Box>
+                      <Typography variant="h6" sx={{ fontWeight: 800 }}>
+                        Vaccine list
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        Read-only operational list for vaccine selection. Administration edits live in Vaccine Master.
+                      </Typography>
+                    </Box>
+                    <Chip size="small" variant="outlined" label={`Active only • ${filteredOperationalVaccines.length} shown`} />
+                  </Box>
+                  <Grid container spacing={1}>
+                    <Grid size={{ xs: 12, md: 4 }}>
+                      <TextField
+                        size="small"
+                        fullWidth
+                        label="Search vaccine"
+                        value={operationalVaccineSearch}
+                        onChange={(e) => setOperationalVaccineSearch(e.target.value)}
+                        helperText="Case-insensitive partial name search."
+                      />
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 2 }}>
+                      <FormControl fullWidth size="small">
+                        <InputLabel id="operational-vaccine-age-group-label">Age group</InputLabel>
+                        <Select
+                          labelId="operational-vaccine-age-group-label"
+                          label="Age group"
+                          value={operationalVaccineAgeGroup}
+                          onChange={(e) => setOperationalVaccineAgeGroup(String(e.target.value))}
+                        >
+                          <MenuItem value="">All</MenuItem>
+                          {operationalVaccineFilterOptions.ageGroups.map((value) => (
+                            <MenuItem key={value} value={value}>{value}</MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 3 }}>
+                      <FormControl fullWidth size="small">
+                        <InputLabel id="operational-vaccine-schedule-type-label">Schedule type</InputLabel>
+                        <Select
+                          labelId="operational-vaccine-schedule-type-label"
+                          label="Schedule type"
+                          value={operationalVaccineScheduleType}
+                          onChange={(e) => setOperationalVaccineScheduleType(String(e.target.value))}
+                        >
+                          <MenuItem value="">All</MenuItem>
+                          {operationalVaccineFilterOptions.scheduleTypes.map((value) => (
+                            <MenuItem key={value} value={value}>{formatScheduleType(value)}</MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 2 }}>
+                      <FormControl fullWidth size="small">
+                        <InputLabel id="operational-vaccine-route-label">Route</InputLabel>
+                        <Select
+                          labelId="operational-vaccine-route-label"
+                          label="Route"
+                          value={operationalVaccineRoute}
+                          onChange={(e) => setOperationalVaccineRoute(String(e.target.value))}
+                        >
+                          <MenuItem value="">All</MenuItem>
+                          {operationalVaccineFilterOptions.routes.map((value) => (
+                            <MenuItem key={value} value={value}>{value}</MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 1 }} sx={{ display: "flex", alignItems: "center" }}>
+                      <Button
+                        size="small"
+                        variant="text"
+                        onClick={() => {
+                          setOperationalVaccineSearch("");
+                          setOperationalVaccineAgeGroup("");
+                          setOperationalVaccineScheduleType("");
+                          setOperationalVaccineRoute("");
+                        }}
+                        disabled={!operationalVaccineSearch && !operationalVaccineAgeGroup && !operationalVaccineScheduleType && !operationalVaccineRoute}
+                      >
+                        Clear filters
+                      </Button>
+                    </Grid>
+                  </Grid>
+                  {!filteredOperationalVaccines.length ? (
+                    <CompactEmptyState
+                      title="No vaccines match the current filters."
+                      subtitle="Clear filters to restore the active vaccine list."
+                    />
+                  ) : (
+                    <CompactTableFrame maxHeight={420}>
+                      <Table size="small" stickyHeader sx={{ minWidth: 840 }}>
                         <TableHead>
                           <TableRow>
                             <TableCell sx={{ py: 0.7 }}>Name</TableCell>
                             <TableCell sx={{ py: 0.7 }}>Age group</TableCell>
+                            <TableCell sx={{ py: 0.7 }}>Schedule type</TableCell>
+                            <TableCell sx={{ py: 0.7 }}>Route</TableCell>
                             <TableCell sx={{ py: 0.7 }}>Gap days</TableCell>
                             <TableCell sx={{ py: 0.7 }}>Default price</TableCell>
                             <TableCell sx={{ py: 0.7 }}>Status</TableCell>
-                            <TableCell sx={{ py: 0.7 }} align="right">Actions</TableCell>
                           </TableRow>
                         </TableHead>
                         <TableBody>
-                          {vaccines.map((vaccine) => (
+                          {filteredOperationalVaccines.map((vaccine) => (
                             <TableRow key={vaccine.id}>
                               <TableCell>
                                 <Stack spacing={0.25}>
@@ -3982,29 +4172,22 @@ export default function VaccinationsPage() {
                                 </Stack>
                               </TableCell>
                               <TableCell>{vaccine.ageGroup || "-"}</TableCell>
+                              <TableCell>{formatScheduleType(vaccine.scheduleType)}</TableCell>
+                              <TableCell>{vaccine.route || "-"}</TableCell>
                               <TableCell>{vaccine.gapDays ?? vaccine.recommendedGapDays ?? "-"}</TableCell>
                               <TableCell>{vaccine.defaultPrice?.toFixed(2) || "-"}</TableCell>
                               <TableCell>
                                 <Chip size="small" label={vaccine.active ? "Active" : "Inactive"} color={vaccine.active ? "success" : "default"} />
                               </TableCell>
-                              <TableCell align="right" sx={{ whiteSpace: "nowrap" }}>
-                                <Button size="small" startIcon={<EditRoundedIcon fontSize="small" />} sx={{ whiteSpace: "nowrap" }} onClick={() => openVaccineEditor(vaccine)}>
-                                  Edit
-                                </Button>
-                                <Button size="small" sx={{ whiteSpace: "nowrap" }} onClick={() => void deactivate(vaccine.id)} disabled={!vaccine.active || saving}>
-                                  Deactivate
-                                </Button>
-                              </TableCell>
                             </TableRow>
                           ))}
                         </TableBody>
-                        </Table>
-                      </CompactTableFrame>
-                    )}
-                  </Stack>
-                </CardContent>
-              </Card>
-            ) : null}
+                      </Table>
+                    </CompactTableFrame>
+                  )}
+                </Stack>
+              </CardContent>
+            </Card>
           </Stack>
         </Grid>
       </Grid>
@@ -4091,27 +4274,37 @@ export default function VaccinationsPage() {
                     {filteredHistoryRows.map((row) => {
                       const billing = vaccinationBillingStatus(row);
                       const expanded = Boolean(expandedHistoryRowIds[row.id]);
+                      const isExternalVaccination = vaccinationSource(row) === "EXTERNAL";
+                      const hasLegacyBill = Boolean(row.billId || row.billNumber);
                       const vaccineMaster = vaccines.find((vaccine) => vaccine.id === row.vaccineId) || null;
                       const canSeeMenu = canManageVaccinationHistory || canCollectVaccinationPayment || canSendVaccinationReceipt || canVerifyExternalVaccination;
-                      const primaryAction = billing.isUnbilled && canManageVaccinationHistory
-                        ? (
-                          <Button size="small" variant="outlined" onClick={() => void billVaccinationRow(row, false)} disabled={saving}>
-                            Add to Bill
-                          </Button>
-                        )
-                        : billing.hasPaymentDue && canCollectVaccinationPayment
+                      const primaryAction = isExternalVaccination
+                        ? hasLegacyBill
                           ? (
-                            <Button size="small" variant="outlined" onClick={() => void collectPaymentForRow(row)} disabled={saving || !row.billId || !canCollectVaccinationPayment}>
-                              Collect Payment
+                            <Button size="small" variant="outlined" onClick={() => { if (row.billId) { navigate(`/billing?billId=${row.billId}`); } }} disabled={saving || !row.billId}>
+                              View Bill
                             </Button>
                           )
-                          : billing.isPaid && canSendVaccinationReceipt
+                          : null
+                        : billing.isUnbilled && canManageVaccinationHistory
+                          ? (
+                            <Button size="small" variant="outlined" onClick={() => void billVaccinationRow(row, false)} disabled={saving}>
+                              Add to Bill
+                            </Button>
+                          )
+                          : billing.hasPaymentDue && canCollectVaccinationPayment
                             ? (
-                              <Button size="small" variant="outlined" onClick={() => void openVaccinationReceiptForRow(row)} disabled={receiptActionLoading || !row.billId}>
-                                View Receipt
+                              <Button size="small" variant="outlined" onClick={() => void collectPaymentForRow(row)} disabled={saving || !row.billId || !canCollectVaccinationPayment}>
+                                Collect Payment
                               </Button>
                             )
-                            : null;
+                            : billing.isPaid && canSendVaccinationReceipt
+                              ? (
+                                <Button size="small" variant="outlined" onClick={() => void openVaccinationReceiptForRow(row)} disabled={receiptActionLoading || !row.billId}>
+                                  View Receipt
+                                </Button>
+                              )
+                              : null;
                       return (
                         <React.Fragment key={row.id}>
                           <TableRow hover>
@@ -4147,7 +4340,7 @@ export default function VaccinationsPage() {
                             </TableCell>
                             <TableCell sx={{ width: 160 }}>
                               <Stack spacing={0.25} sx={{ minWidth: 0 }}>
-                                <Typography variant="body2" noWrap>{row.administeredByUserName || "-"}</Typography>
+                                <Typography variant="body2" noWrap>{vaccinationAdministeredByLabel(row)}</Typography>
                                 <Typography variant="caption" color="text.secondary" noWrap>{row.recordedByUserName || "-"}</Typography>
                               </Stack>
                             </TableCell>
@@ -4183,13 +4376,14 @@ export default function VaccinationsPage() {
                                       <Grid size={{ xs: 12, sm: 6, md: 4 }}><Chip size="small" label={`Route: ${vaccineMaster?.route || "-"}`} /></Grid>
                                       <Grid size={{ xs: 12, sm: 6, md: 4 }}><Chip size="small" label={`Administration site: ${vaccineMaster?.administrationSite || "-"}`} /></Grid>
                                       <Grid size={{ xs: 12, sm: 6, md: 4 }}><Chip size="small" label={`Proof: ${row.proofDocumentId ? "Available" : "None"}`} /></Grid>
-                                      <Grid size={{ xs: 12, sm: 6, md: 4 }}><Chip size="small" label={`Verification: ${row.verifiedStatus || "-"}`} /></Grid>
-                                      <Grid size={{ xs: 12, sm: 6, md: 4 }}><Chip size="small" label={`AEFI: ${vaccinationAefiBadge(row).label}`} /></Grid>
-                                      <Grid size={{ xs: 12, sm: 6, md: 4 }}><Chip size="small" label={`AEFI status: ${row.adverseEventStatus || "NONE"}`} /></Grid>
-                                      <Grid size={{ xs: 12, sm: 6, md: 4 }}><Chip size="small" label={`Severity: ${row.adverseEventSeverity || "-"}`} /></Grid>
-                                      <Grid size={{ xs: 12, sm: 6, md: 4 }}><Chip size="small" label={`Outcome: ${row.adverseEventOutcome || "-"}`} /></Grid>
-                                      <Grid size={{ xs: 12, sm: 6, md: 4 }}><Chip size="small" label={`Follow-up: ${row.adverseEventFollowUpRequired ? (row.adverseEventFollowUpDate || "Required") : "No"}`} /></Grid>
-                                      <Grid size={{ xs: 12, sm: 6, md: 4 }}><Chip size="small" label={`Authority: ${row.adverseEventReportedToAuthority ? "Reported" : "Unreported"}`} /></Grid>
+                                     <Grid size={{ xs: 12, sm: 6, md: 4 }}><Chip size="small" label={`Verification: ${row.verifiedStatus || "-"}`} /></Grid>
+                                     <Grid size={{ xs: 12, sm: 6, md: 4 }}><Chip size="small" label={`AEFI: ${vaccinationAefiBadge(row).label}`} /></Grid>
+                                     <Grid size={{ xs: 12, sm: 6, md: 4 }}><Chip size="small" label={`AEFI status: ${row.adverseEventStatus || "NONE"}`} /></Grid>
+                                     <Grid size={{ xs: 12, sm: 6, md: 4 }}><Chip size="small" label={`Severity: ${row.adverseEventSeverity || "-"}`} /></Grid>
+                                     <Grid size={{ xs: 12, sm: 6, md: 4 }}><Chip size="small" label={`Outcome: ${row.adverseEventOutcome || "-"}`} /></Grid>
+                                     <Grid size={{ xs: 12, sm: 6, md: 4 }}><Chip size="small" label={`Follow-up: ${row.adverseEventFollowUpRequired ? (row.adverseEventFollowUpDate || "Required") : "No"}`} /></Grid>
+                                     <Grid size={{ xs: 12, sm: 6, md: 4 }}><Chip size="small" label={`Authority: ${row.adverseEventReportedToAuthority ? "Reported" : "Unreported"}`} /></Grid>
+                                      <Grid size={{ xs: 12, sm: 6, md: 4 }}><Chip size="small" label={`Administered by: ${vaccinationAdministeredByLabel(row)}`} /></Grid>
                                       <Grid size={{ xs: 12, sm: 6, md: 4 }}><Chip size="small" label={`Recorded by: ${row.recordedByUserName || "-"}`} /></Grid>
                                       <Grid size={{ xs: 12, sm: 6, md: 4 }}><Chip size="small" label={`Reminder: ${row.reminderStatus || "None"}`} /></Grid>
                                       <Grid size={{ xs: 12, sm: 6, md: 4 }}><Chip size="small" label={`Passport: ${row.patientId === selectedPatientSummary?.id ? (vaccinationPassportReference ? "Generated" : "Not generated") : "—"}`} /></Grid>
@@ -4585,11 +4779,6 @@ export default function VaccinationsPage() {
                     Reference schedule sourced from vaccine master data. Patient history and billing are not used here.
                   </Typography>
                 </Box>
-                {canManageMaster ? (
-                  <Button size="small" variant="outlined" onClick={openVaccinationMasterWorkspace}>
-                    Open Vaccine Master
-                  </Button>
-                ) : null}
               </Box>
 
               <Grid container spacing={1}>
@@ -4790,9 +4979,9 @@ export default function VaccinationsPage() {
                       {patientHistoryRows.slice(0, 12).map((row) => (
                         <Box key={row.id} sx={{ display: "flex", justifyContent: "space-between", gap: 1, flexWrap: "wrap", p: 1, border: "1px solid", borderColor: "divider", borderRadius: 1 }}>
                           <Box>
-                            <Typography variant="body2" sx={{ fontWeight: 700 }}>{row.vaccineName}</Typography>
-                            <Typography variant="caption" color="text.secondary">
-                              {row.givenDate} • {row.source || "INTERNAL"} • {row.administeredByUserName || "-"}
+                          <Typography variant="body2" sx={{ fontWeight: 700 }}>{row.vaccineName}</Typography>
+                          <Typography variant="caption" color="text.secondary">
+                              {row.givenDate} • {row.source || "INTERNAL"} • {vaccinationAdministeredByLabel(row)}
                             </Typography>
                           </Box>
                           <Chip size="small" label={row.billStatus ? billStatusLabel(row.billStatus as Bill["status"]) : "Recorded"} color={row.source === "EXTERNAL" ? "secondary" : "default"} variant="outlined" />
@@ -4856,7 +5045,13 @@ export default function VaccinationsPage() {
                 Edit
               </MenuItem>
             ) : null,
-            vaccinationBillingStatus(historyActionRow).isUnbilled ? [
+            vaccinationSource(historyActionRow) === "EXTERNAL" ? (
+              historyActionRow.billId ? (
+                <MenuItem key="view-bill" onClick={() => { navigate(`/billing?billId=${historyActionRow.billId}`); closeHistoryRowActions(); }}>
+                  View Bill
+                </MenuItem>
+              ) : null
+            ) : vaccinationBillingStatus(historyActionRow).isUnbilled ? [
               <MenuItem key="add-to-bill" onClick={() => { void billVaccinationRow(historyActionRow, false); closeHistoryRowActions(); }}>
                 Add to Bill
               </MenuItem>,

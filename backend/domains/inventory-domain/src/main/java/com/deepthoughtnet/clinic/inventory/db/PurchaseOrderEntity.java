@@ -50,6 +50,9 @@ public class PurchaseOrderEntity {
     @Column(name = "approval_note", columnDefinition = "text")
     private String approvalNote;
 
+    @Column(columnDefinition = "text")
+    private String notes;
+
     @Column(name = "created_by")
     private UUID createdBy;
 
@@ -66,7 +69,7 @@ public class PurchaseOrderEntity {
     protected PurchaseOrderEntity() {
     }
 
-    public static PurchaseOrderEntity create(UUID tenantId, UUID supplierId, String poNumber, LocalDate orderDate, LocalDate expectedDeliveryDate, String itemsJson, UUID createdBy) {
+    public static PurchaseOrderEntity create(UUID tenantId, UUID supplierId, String poNumber, LocalDate orderDate, LocalDate expectedDeliveryDate, String itemsJson, String notes, UUID createdBy) {
         OffsetDateTime now = OffsetDateTime.now();
         PurchaseOrderEntity entity = new PurchaseOrderEntity();
         entity.id = UUID.randomUUID();
@@ -77,18 +80,20 @@ public class PurchaseOrderEntity {
         entity.expectedDeliveryDate = expectedDeliveryDate;
         entity.itemsJson = itemsJson;
         entity.matchingStatus = "PENDING";
+        entity.notes = notes;
         entity.createdBy = createdBy;
         entity.createdAt = now;
         entity.updatedAt = now;
         return entity;
     }
 
-    public void upsertHeaderAndItems(UUID supplierId, String poNumber, LocalDate orderDate, LocalDate expectedDeliveryDate, String itemsJson) {
+    public void upsertHeaderAndItems(UUID supplierId, String poNumber, LocalDate orderDate, LocalDate expectedDeliveryDate, String itemsJson, String notes) {
         this.supplierId = supplierId;
         this.poNumber = poNumber;
         this.orderDate = orderDate;
         this.expectedDeliveryDate = expectedDeliveryDate;
         this.itemsJson = itemsJson;
+        this.notes = notes;
         this.updatedAt = OffsetDateTime.now();
     }
 
@@ -109,6 +114,7 @@ public class PurchaseOrderEntity {
     public String getMatchingStatus() { return matchingStatus; }
     public String getVarianceSummary() { return varianceSummary; }
     public String getApprovalNote() { return approvalNote; }
+    public String getNotes() { return notes; }
     public UUID getCreatedBy() { return createdBy; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }

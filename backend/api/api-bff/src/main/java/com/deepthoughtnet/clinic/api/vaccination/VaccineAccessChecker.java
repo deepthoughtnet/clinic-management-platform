@@ -16,4 +16,9 @@ public class VaccineAccessChecker {
         return permissionChecker.hasAnyRole("CLINIC_ADMIN", "TENANT_ADMIN", "VACCINE_MASTER_MANAGER")
                 || (permissionChecker.hasRole("PLATFORM_ADMIN") && RequestContextHolder.get() != null && RequestContextHolder.get().tenantId() != null);
     }
+
+    public boolean canVerifyExternalVaccination() {
+        return permissionChecker.hasAnyRole("CLINIC_ADMIN", "TENANT_ADMIN")
+                || (permissionChecker.hasRole("PLATFORM_ADMIN") && RequestContextHolder.get() != null && RequestContextHolder.get().tenantId() != null);
+    }
 }

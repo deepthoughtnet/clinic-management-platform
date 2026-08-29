@@ -8,7 +8,7 @@ export type AppointmentPriority = "URGENT" | "MANUAL_PRIORITY" | "FOLLOW_UP" | "
 export type ConsultationStatus = "DRAFT" | "COMPLETED" | "CANCELLED";
 export type TemperatureUnit = "CELSIUS" | "FAHRENHEIT";
 export type PrescriptionStatus = "DRAFT" | "PREVIEWED" | "FINALIZED" | "CORRECTED" | "SUPERSEDED" | "PRINTED" | "SENT" | "CANCELLED";
-export type MedicineType = "TABLET" | "SYRUP" | "INJECTION" | "DROP" | "OINTMENT" | "CAPSULE" | "OTHER";
+export type MedicineType = "TABLET" | "SYRUP" | "INJECTION" | "DROP" | "OINTMENT" | "CAPSULE" | "SACHET" | "OTHER";
 export type Timing = "BEFORE_FOOD" | "AFTER_FOOD" | "WITH_FOOD" | "ANYTIME";
 export type NotificationStatus = "PENDING" | "SENT" | "FAILED" | "SKIPPED";
 export type NotificationChannel = "EMAIL" | "WHATSAPP" | "SMS" | "PUSH" | "IN_APP";
@@ -3080,6 +3080,7 @@ export type InventoryTransactionInput = {
   referenceId: string | null;
   createdBy?: string | null;
   notes: string | null;
+  businessReference?: string | null;
 };
 
 export type LowStockItem = {
@@ -3164,6 +3165,78 @@ export type InventoryTransferInput = {
   toLocationId: string;
   quantity: number;
   reason: string | null;
+};
+
+export type PhysicalCountScope = "ENTIRE_INVENTORY" | "CATEGORY" | "SELECTED_MEDICINES";
+export type PhysicalCountReason = "MONTHLY_COUNT" | "QUARTERLY_AUDIT" | "CYCLE_COUNT" | "ANNUAL_AUDIT";
+export type PhysicalCountSessionStatus = "DRAFT" | "IN_PROGRESS" | "SUBMITTED" | "REVIEWED" | "APPROVED" | "POSTED" | "REJECTED";
+export type PhysicalCountReviewChecklist = {
+  randomSampleVerified: boolean;
+  largeVariancesInvestigated: boolean;
+  batchVerificationComplete: boolean;
+  supportingRemarksAdded: boolean;
+};
+export type PhysicalCountAuditFields = {
+  createdBy: string | null;
+  createdAt: string | null;
+  startedBy: string | null;
+  startedAt: string | null;
+  lastUpdatedAt: string | null;
+  submittedBy: string | null;
+  submittedAt: string | null;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  reviewer: string | null;
+  reviewedDate: string | null;
+  approvedBy: string | null;
+  approvedAt: string | null;
+  approvalNotes: string | null;
+  rejectedBy: string | null;
+  rejectedAt: string | null;
+  rejectionReason: string | null;
+  returnedBy: string | null;
+  returnedAt: string | null;
+  returnReason: string | null;
+  postedBy: string | null;
+  postedAt: string | null;
+  sessionDuration: string | null;
+  generalNotes: string;
+  counterNotes: string;
+  reviewerNotes: string;
+  auditNotes: string;
+  reviewChecklist: PhysicalCountReviewChecklist;
+};
+export type PhysicalCountSessionLine = {
+  id: string;
+  medicineId: string;
+  medicineName: string;
+  batchNumber: string;
+  locationId: string;
+  locationName: string;
+  stockBatchId: string;
+  systemQty: number;
+  countedQty: string;
+  reason: string;
+  reviewerRemarks: string;
+  flagged: boolean;
+  reviewed: boolean;
+};
+export type PhysicalCountSessionSaveInput = {
+  sessionName: string;
+  locationId: string;
+  locationName: string;
+  scope: PhysicalCountScope;
+  scopeLabel: string;
+  reason: PhysicalCountReason;
+  status: PhysicalCountSessionStatus;
+  lines: PhysicalCountSessionLine[];
+  audit: PhysicalCountAuditFields;
+};
+export type PhysicalCountSession = PhysicalCountSessionSaveInput & {
+  id: string;
+  tenantId: string;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type OcrExtractionRow = {
@@ -3283,6 +3356,7 @@ export type ProcurementLineInput = {
   unit?: string | null;
   locationId?: string | null;
   remarks?: string | null;
+  discount?: number | null;
 };
 
 export type PurchaseOrderInput = {
@@ -3292,6 +3366,7 @@ export type PurchaseOrderInput = {
   expectedDeliveryDate: string | null;
   items: ProcurementLineInput[];
   approvalNote: string | null;
+  notes?: string | null;
 };
 
 export type PurchaseOrder = {
@@ -3306,8 +3381,21 @@ export type PurchaseOrder = {
   matchingStatus: string;
   varianceSummary: string | null;
   approvalNote: string | null;
+  notes: string | null;
   createdAt: string;
   updatedAt: string;
+};
+
+export type PurchaseOrderPdf = {
+  blob: Blob;
+  filename: string;
+};
+
+export type PurchaseOrderSendResponse = {
+  sent: boolean;
+  message: string;
+  recipientEmail: string;
+  sentAt: string;
 };
 
 export type SupplierInvoiceInput = {
@@ -5640,6 +5728,18 @@ export async function transferInventoryStock(token: string, tenantId: string, bo
   return httpPost("/api/inventory/transfers", body, { token, tenantId });
 }
 
+export async function listPhysicalCountSessions(token: string, tenantId: string) {
+  return httpGet<PhysicalCountSession[]>("/api/inventory/physical-count-sessions", { token, tenantId });
+}
+
+export async function getPhysicalCountSession(token: string, tenantId: string, id: string) {
+  return httpGet<PhysicalCountSession>(`/api/inventory/physical-count-sessions/${id}`, { token, tenantId });
+}
+
+export async function savePhysicalCountSession(token: string, tenantId: string, id: string, body: PhysicalCountSessionSaveInput) {
+  return httpPut<PhysicalCountSession>(`/api/inventory/physical-count-sessions/${id}`, body, { token, tenantId });
+}
+
 export async function searchStocks(token: string, tenantId: string, query?: string | null) {
   const suffix = query ? `?q=${encodeURIComponent(query)}` : "";
   return httpGet<Stock[]>(`/api/inventory/stocks/search${suffix}`, { token, tenantId });
@@ -5757,6 +5857,32 @@ export async function createPurchaseOrder(token: string, tenantId: string, body:
 
 export async function cancelPurchaseOrder(token: string, tenantId: string, id: string, reason: string) {
   return httpPost<PurchaseOrder>(`/api/pharmacy/purchase-orders/${id}/cancel`, reason, { token, tenantId });
+}
+
+export async function getPurchaseOrderPdf(token: string, tenantId: string, id: string): Promise<PurchaseOrderPdf> {
+  const res = await fetch(`${(import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "")}/api/pharmacy/purchase-orders/${id}/pdf`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "X-Tenant-Id": tenantId,
+      Accept: "application/pdf",
+    },
+  });
+  if (!res.ok) {
+    const text = (await res.text()).trim();
+    throw new Error(text || `HTTP ${res.status}: ${res.statusText}`);
+  }
+  const blob = await res.blob();
+  const disposition = res.headers.get("content-disposition") || "";
+  const match = disposition.match(/filename="?([^"]+)"?/i);
+  return {
+    blob,
+    filename: match?.[1] || `PO-${id}.pdf`,
+  };
+}
+
+export async function sendPurchaseOrder(token: string, tenantId: string, id: string) {
+  return httpPost<PurchaseOrderSendResponse>(`/api/pharmacy/purchase-orders/${id}/send`, {}, { token, tenantId });
 }
 
 export async function getSupplierInvoices(token: string, tenantId: string) {

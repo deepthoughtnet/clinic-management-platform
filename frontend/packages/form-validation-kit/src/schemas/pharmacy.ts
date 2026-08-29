@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { nonNegativeNumber, optionalString, positiveNumber, requiredString } from "../validators/common.js";
 
-const medicineTypeValues = ["TABLET", "CAPSULE", "SYRUP", "INJECTION", "DROP", "OINTMENT", "OTHER"] as const;
+const medicineTypeValues = ["TABLET", "CAPSULE", "SYRUP", "INJECTION", "DROP", "OINTMENT", "SACHET", "OTHER"] as const;
 const timingValues = ["BEFORE_FOOD", "AFTER_FOOD", "WITH_FOOD", "ANYTIME"] as const;
 
 const toRequiredTrimmedString = (value: unknown) => {

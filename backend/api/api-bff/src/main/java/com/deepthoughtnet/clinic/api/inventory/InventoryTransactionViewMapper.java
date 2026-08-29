@@ -122,6 +122,9 @@ public class InventoryTransactionViewMapper {
             Map<UUID, GoodsReceiptEntity> goodsReceiptById,
             Map<UUID, PharmacyReconciliationEntity> reconciliationById
     ) {
+        if (StringUtils.hasText(row.businessReference())) {
+            return row.businessReference().trim();
+        }
         String referenceType = normalize(row.referenceType());
         if (!StringUtils.hasText(referenceType)) {
             return sanitizeNotes(row.notes());

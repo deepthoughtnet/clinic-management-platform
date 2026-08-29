@@ -43,6 +43,17 @@ class VaccineAccessCheckerTest {
     }
 
     @Test
+    void dedicatedVaccineMasterManagerCanManageVaccineMaster() {
+        PermissionChecker permissionChecker = mock(PermissionChecker.class);
+        VaccineAccessChecker accessChecker = new VaccineAccessChecker(permissionChecker);
+        RequestContextHolder.set(new RequestContext(TenantId.of(UUID.randomUUID()), UUID.randomUUID(), "sub", Set.of("VACCINE_MASTER_MANAGER"), "VACCINE_MASTER_MANAGER", "cid"));
+
+        when(permissionChecker.hasAnyRole("CLINIC_ADMIN", "TENANT_ADMIN", "VACCINE_MASTER_MANAGER")).thenReturn(true);
+
+        assertThat(accessChecker.canManageVaccineMaster()).isTrue();
+    }
+
+    @Test
     void platformAdminRequiresSelectedTenant() {
         PermissionChecker permissionChecker = mock(PermissionChecker.class);
         VaccineAccessChecker accessChecker = new VaccineAccessChecker(permissionChecker);
@@ -52,5 +63,29 @@ class VaccineAccessCheckerTest {
         when(permissionChecker.hasRole("PLATFORM_ADMIN")).thenReturn(true);
 
         assertThat(accessChecker.canManageVaccineMaster()).isTrue();
+    }
+
+    @Test
+    void platformAdminCanVerifyExternalVaccinationOnlyWithTenantContext() {
+        PermissionChecker permissionChecker = mock(PermissionChecker.class);
+        VaccineAccessChecker accessChecker = new VaccineAccessChecker(permissionChecker);
+        RequestContextHolder.set(new RequestContext(TenantId.of(UUID.randomUUID()), UUID.randomUUID(), "sub", Set.of("PLATFORM_ADMIN"), "PLATFORM_ADMIN", "cid"));
+
+        when(permissionChecker.hasAnyRole("CLINIC_ADMIN", "TENANT_ADMIN")).thenReturn(false);
+        when(permissionChecker.hasRole("PLATFORM_ADMIN")).thenReturn(true);
+
+        assertThat(accessChecker.canVerifyExternalVaccination()).isTrue();
+    }
+
+    @Test
+    void platformAdminCannotVerifyExternalVaccinationWithoutTenantContext() {
+        PermissionChecker permissionChecker = mock(PermissionChecker.class);
+        VaccineAccessChecker accessChecker = new VaccineAccessChecker(permissionChecker);
+        RequestContextHolder.set(new RequestContext(null, UUID.randomUUID(), "sub", Set.of("PLATFORM_ADMIN"), "PLATFORM_ADMIN", "cid"));
+
+        when(permissionChecker.hasAnyRole("CLINIC_ADMIN", "TENANT_ADMIN")).thenReturn(false);
+        when(permissionChecker.hasRole("PLATFORM_ADMIN")).thenReturn(true);
+
+        assertThat(accessChecker.canVerifyExternalVaccination()).isFalse();
     }
 }

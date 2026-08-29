@@ -11,7 +11,7 @@ import {
 import { dateString, optionalString, timeString } from "../validators/common.js";
 
 export const vaccinationMasterSchema = z.object({
-  vaccineName: requiredText(60, "Vaccine name is required and must contain a letter or number."),
+  vaccineName: requiredText(100, "Vaccine name is required and must contain a letter or number."),
   description: optionalText(250, "Description must be 250 characters or fewer."),
   manufacturer: optionalText(250, "Manufacturer must be 250 characters or fewer."),
   brandName: optionalText(250, "Brand name must be 250 characters or fewer."),
@@ -54,20 +54,72 @@ export const vaccinationMasterSchema = z.object({
     (value) => (value == null || value === "" ? undefined : value),
     z.enum(["NEWBORN", "INFANT", "TODDLER", "CHILD", "ADOLESCENT", "ADULT", "OLDER_ADULT", "ALL"]).optional(),
   ),
-  clinicalIndications: optionalText(500, "Clinical indications must be 500 characters or fewer."),
+  clinicalIndications: optionalText(1000, "Clinical indications must be 1000 characters or fewer."),
   defaultPrice: z.preprocess(
     (value) => (value == null || value === "" ? undefined : value),
     money(999999, "Default price must be zero or greater and use at most 2 decimals.").optional(),
   ),
   active: z.boolean(),
+}).superRefine((value, ctx) => {
+  if (value.minAgeDays != null && value.recommendedAgeDays != null && value.recommendedAgeDays < value.minAgeDays) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["recommendedAgeDays"],
+      message: "Recommended age days must be on or after minimum age days.",
+    });
+  }
+  if (value.minAgeDays != null && value.maxAgeDays != null && value.maxAgeDays < value.minAgeDays) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["maxAgeDays"],
+      message: "Maximum age days must be on or after minimum age days.",
+    });
+  }
+  if (value.recommendedAgeDays != null && value.maxAgeDays != null && value.maxAgeDays < value.recommendedAgeDays) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["maxAgeDays"],
+      message: "Maximum age days must be on or after recommended age days.",
+    });
+  }
+  if (value.stockTrackingEnabled && !value.inventoryItemId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["inventoryItemId"],
+      message: "Inventory item is required when stock tracking is enabled.",
+    });
+  }
+  if (value.catchUpPolicy === "ALLOWED_UNTIL_AGE" && value.catchUpMaxAgeDays == null) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["catchUpMaxAgeDays"],
+      message: "Catch-up max age days is required when catch-up policy is ALLOWED_UNTIL_AGE.",
+    });
+  }
 });
 
 export const vaccinationRecordSchema = z.object({
   patientId: requiredText(60, "Patient is required."),
   vaccineId: requiredText(60, "Vaccine is required."),
   vaccineName: optionalText(256, "Vaccine name must be 256 characters or fewer."),
-  doseNumber: optionalNonNegativeInteger(99, "Dose number must be 0 or greater."),
+  doseNumber: z.preprocess(
+    (value) => {
+      if (value == null || value === "") return undefined;
+      if (typeof value === "string") {
+        const trimmed = value.trim();
+        if (trimmed === "") return undefined;
+        const parsed = Number(trimmed);
+        return Number.isNaN(parsed) ? value : parsed;
+      }
+      return value;
+    },
+    z.number().int("Dose number must be a whole number.").min(1, "Dose number must be a positive whole number.").max(99, "Dose number must be 99 or less.").optional(),
+  ),
   givenDate: dateString("Given date is required."),
+  patientDateOfBirth: z.preprocess(
+    (value) => (value == null || value === "" ? undefined : value),
+    dateString("Patient date of birth must be a valid date.").optional(),
+  ),
   nextDueDate: z.preprocess(
     (value) => (value == null || value === "" ? undefined : value),
     dateString("Next due date must be a valid date.").optional(),
@@ -95,6 +147,28 @@ export const vaccinationRecordSchema = z.object({
 }).superRefine((value, ctx) => {
   if (value.addToBill && value.billItemUnitPrice == null) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["billItemUnitPrice"], message: "Bill item unit price is required when adding to bill." });
+  }
+  const today = new Date().toISOString().slice(0, 10);
+  if (value.givenDate > today) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["givenDate"],
+      message: "Given date cannot be in the future.",
+    });
+  }
+  if (value.patientDateOfBirth && value.givenDate < value.patientDateOfBirth) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["givenDate"],
+      message: "Given date cannot be before the patient's date of birth.",
+    });
+  }
+  if (value.nextDueDate && value.givenDate && value.nextDueDate < value.givenDate) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["nextDueDate"],
+      message: "Next due date cannot be earlier than the given date.",
+    });
   }
 });
 

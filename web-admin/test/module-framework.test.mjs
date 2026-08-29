@@ -42,6 +42,14 @@ test("app routes use module-aware landing and feature gates", () => {
   assert.ok(source.includes('path="/reports"') && source.includes('featureId="reports"'));
 });
 
+test("pharmacy pos users resolve to the pos workspace before the generic pharmacy dashboard", () => {
+  const source = readSource("modules/moduleRegistry.ts");
+  assert.ok(source.includes('isPharmacyPosOnlyRole(auth) ? "/pharmacy/pos" : null'));
+  assert.ok(source.includes('return canAccessFeature(auth, "pharmacy-dashboard") && pharmacyRole && !pharmacyPosOnlyRole;'));
+  assert.ok(source.includes('return canAccessFeature(auth, "inventory") && inventoryRole && !pharmacyPosOnlyRole;'));
+  assert.ok(source.includes('if (path === "/pharmacy/pos") return canAccessFeature(auth, "pharmacy-pos") && (pharmacyRole || pharmacyPosOnlyRole);'));
+});
+
 test("sidebar filters tenant navigation by module entitlements", () => {
   const source = readSource("layout/SidebarNav.tsx");
   assert.ok(source.includes("resolveEnabledTenantModules(auth)"));

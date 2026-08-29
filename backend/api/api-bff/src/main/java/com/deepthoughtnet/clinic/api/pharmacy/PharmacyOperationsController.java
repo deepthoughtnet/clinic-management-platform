@@ -7,6 +7,10 @@ import com.deepthoughtnet.clinic.inventory.service.model.InventoryTransferComman
 import java.util.List;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -217,6 +221,26 @@ public class PharmacyOperationsController {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         return service.cancelPurchaseOrder(tenantId, id, reason, actorAppUserId);
+    }
+
+    @GetMapping(value = "/purchase-orders/{id}/pdf", produces = MediaType.APPLICATION_PDF_VALUE)
+    @PreAuthorize("@permissionChecker.hasPermission('inventory.manage') or @permissionChecker.hasPermission('report.read')")
+    public ResponseEntity<byte[]> downloadPurchaseOrderPdf(@PathVariable UUID id) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        PurchaseOrderDocumentResponse pdf = service.generatePurchaseOrderPdf(tenantId, id, actorAppUserId);
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_PDF)
+                .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment().filename(pdf.filename()).build().toString())
+                .body(pdf.content());
+    }
+
+    @PostMapping("/purchase-orders/{id}/send")
+    @PreAuthorize("@permissionChecker.hasPermission('inventory.manage')")
+    public PurchaseOrderSendResponse sendPurchaseOrder(@PathVariable UUID id) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        return service.sendPurchaseOrder(tenantId, id, actorAppUserId);
     }
 
     @GetMapping("/supplier-invoices")

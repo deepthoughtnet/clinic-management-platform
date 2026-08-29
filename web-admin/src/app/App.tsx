@@ -1,6 +1,6 @@
 import * as React from "react";
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { Box, Button, CircularProgress, Paper, Typography } from "@mui/material";
+import { Alert, Box, Button, CircularProgress, Paper, Typography } from "@mui/material";
 
 import AppShell from "../layout/AppShell";
 import { AuthContext } from "../auth/AuthContext";
@@ -50,6 +50,7 @@ import PharmacyReconciliationPage from "../pages/pharmacy/PharmacyReconciliation
 import PharmacyPosPage from "../pages/pharmacy/PharmacyPosPage";
 import ReportsPage from "../pages/reports/ReportsPage";
 import VaccinationsPage from "../pages/vaccinations/VaccinationsPage";
+import VaccineMasterPage from "../pages/vaccinations/VaccineMasterPage";
 import LabPage from "../pages/lab/LabPage";
 import PlaceholderPage from "../pages/PlaceholderPage";
 import TenantsPage from "../pages/platform/TenantsPage";
@@ -170,6 +171,11 @@ function LoginPage() {
           Sign in to {branding.productName} Admin Console to manage patients, appointments,
           prescriptions, billing, and clinic operations.
         </Typography>
+        {auth?.sessionNotice ? (
+          <Alert severity="warning" sx={{ mb: 2, textAlign: "left" }}>
+            {auth.sessionNotice}
+          </Alert>
+        ) : null}
         <Button size="large" variant="contained" onClick={() => auth?.login(true)} fullWidth>
           Sign in
         </Button>
@@ -395,6 +401,15 @@ function PharmacyOperationsLegacyRedirect() {
   return <Navigate to={target} replace />;
 }
 
+function VaccinationLegacyRedirect() {
+  const location = useLocation();
+  const searchParams = new URLSearchParams(location.search);
+  if (searchParams.get("section") === "master") {
+    return <Navigate to="/admin/vaccine-master" replace />;
+  }
+  return <VaccinationsPage />;
+}
+
 function PathnameKeyedRoute({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   return <React.Fragment key={location.pathname}>{children}</React.Fragment>;
@@ -430,7 +445,28 @@ function AuthedApp() {
 
   return (
     <HelpProvider>
-      <AppShell>
+      <Box sx={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+        {auth.sessionWarning ? (
+          <Box sx={{ px: 2, pt: 2, pb: 0 }}>
+            <Alert
+              severity="warning"
+              action={(
+                <Button
+                  color="inherit"
+                  size="small"
+                  onClick={() => {
+                    window.dispatchEvent(new Event("pointerdown"));
+                  }}
+                >
+                  Stay signed in
+                </Button>
+              )}
+            >
+              {auth.sessionWarning}
+            </Alert>
+          </Box>
+        ) : null}
+        <AppShell>
         <RouteErrorBoundary>
           <Routes>
         <Route path="/" element={<HomeRedirect />} />
@@ -463,7 +499,8 @@ function AuthedApp() {
         <Route path="/finance/refunds" element={<PathnameKeyedRoute><RouteAccessGate><FeatureGate featureId="refunds"><RefundsPage /></FeatureGate></RouteAccessGate></PathnameKeyedRoute>} />
         <Route path="/notifications" element={<PathnameKeyedRoute><FeatureGate featureId="notifications"><NotificationsPage /></FeatureGate></PathnameKeyedRoute>} />
         <Route path="/admin/notification-operations" element={<PathnameKeyedRoute><NotificationOperationsGate><NotificationOperationsPage /></NotificationOperationsGate></PathnameKeyedRoute>} />
-        <Route path="/vaccinations" element={<PathnameKeyedRoute><FeatureGate featureId="vaccinations"><VaccinationsPage /></FeatureGate></PathnameKeyedRoute>} />
+        <Route path="/vaccinations" element={<PathnameKeyedRoute><FeatureGate featureId="vaccinations"><RouteAccessGate><VaccinationLegacyRedirect /></RouteAccessGate></FeatureGate></PathnameKeyedRoute>} />
+        <Route path="/admin/vaccine-master" element={<PathnameKeyedRoute><FeatureGate featureId="vaccinations"><TenantRoleGate rolesAny={["CLINIC_ADMIN", "TENANT_ADMIN", "VACCINE_MASTER_MANAGER"]}><VaccineMasterPage /></TenantRoleGate></FeatureGate></PathnameKeyedRoute>} />
         <Route path="/inventory" element={<PathnameKeyedRoute><RouteAccessGate><FeatureGate featureId="inventory"><InventoryPage /></FeatureGate></RouteAccessGate></PathnameKeyedRoute>} />
         <Route path="/pharmacy/inventory" element={<PathnameKeyedRoute><RouteAccessGate><FeatureGate featureId="inventory"><InventoryPage /></FeatureGate></RouteAccessGate></PathnameKeyedRoute>} />
         <Route path="/pharmacy/procure" element={<PathnameKeyedRoute><RouteAccessGate><FeatureGate featureId="pharmacy-procurement" title="Procure unavailable"><PharmacyProcurePage /></FeatureGate></RouteAccessGate></PathnameKeyedRoute>} />
@@ -661,7 +698,8 @@ function AuthedApp() {
         <Route path="*" element={<Navigate to={resolveTenantLandingPage(auth)} replace />} />
           </Routes>
         </RouteErrorBoundary>
-      </AppShell>
+        </AppShell>
+      </Box>
     </HelpProvider>
   );
 }
@@ -678,6 +716,7 @@ function formatPageTitle(pathname: string): string {
   if (pathname === "/pharmacy/reconciliation") return "Reconciliation";
   if (pathname === "/pharmacy/pos") return "POS Sale";
   if (pathname === "/pharmacy/operations") return "Procurement";
+  if (pathname === "/admin/vaccine-master") return "Vaccine Master";
   if (pathname === "/admin/notification-operations") return "Notification Operations";
   if (pathname === "/platform/integrations") return "Integrations";
   if (pathname === "/platform/ai-ops") return "AI Ops";

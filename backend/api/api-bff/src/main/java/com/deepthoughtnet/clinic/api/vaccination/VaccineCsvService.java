@@ -267,11 +267,15 @@ public class VaccineCsvService {
         );
         String catchUpPolicy = resolveCatchUpPolicy(value(record, "catchUpPolicy"));
         Integer catchUpMaxAgeDays = parseInteger(value(record, "catchUpMaxAgeDays"), "catchUpMaxAgeDays");
+        if ("ALLOWED_UNTIL_AGE".equals(catchUpPolicy) && catchUpMaxAgeDays == null) {
+            throw new IllegalArgumentException("catchUpMaxAgeDays is required when catch-up policy is ALLOWED_UNTIL_AGE");
+        }
         String applicableAgeGroup = resolveApplicableAgeGroup(value(record, "applicableAgeGroup"), ageGroup, recommendedAgeDays, minAgeDays);
         String clinicalIndications = normalizeNullable(value(record, "clinicalIndications"));
-        if (clinicalIndications != null && clinicalIndications.length() > 500) {
-            throw new IllegalArgumentException("clinicalIndications must be 500 characters or fewer");
+        if (clinicalIndications != null && clinicalIndications.length() > 1000) {
+            throw new IllegalArgumentException("clinicalIndications must be 1000 characters or fewer");
         }
+        validateAgeRange(minAgeDays, recommendedAgeDays, maxAgeDays);
         BigDecimal defaultPrice = parseMoney(value(record, "defaultPrice"), "defaultPrice");
         if (defaultPrice != null && defaultPrice.compareTo(BigDecimal.ZERO) < 0) {
             throw new IllegalArgumentException("defaultPrice must be 0 or greater");
@@ -403,6 +407,18 @@ public class VaccineCsvService {
             return Boolean.parseBoolean(normalized);
         }
         throw new IllegalArgumentException("isRecurring must be true or false");
+    }
+
+    private void validateAgeRange(Integer minAgeDays, Integer recommendedAgeDays, Integer maxAgeDays) {
+        if (minAgeDays != null && recommendedAgeDays != null && recommendedAgeDays < minAgeDays) {
+            throw new IllegalArgumentException("recommendedAgeDays must be on or after minAgeDays");
+        }
+        if (minAgeDays != null && maxAgeDays != null && maxAgeDays < minAgeDays) {
+            throw new IllegalArgumentException("maxAgeDays must be on or after minAgeDays");
+        }
+        if (recommendedAgeDays != null && maxAgeDays != null && maxAgeDays < recommendedAgeDays) {
+            throw new IllegalArgumentException("maxAgeDays must be on or after recommendedAgeDays");
+        }
     }
 
     private String normalizeRoute(String value) {

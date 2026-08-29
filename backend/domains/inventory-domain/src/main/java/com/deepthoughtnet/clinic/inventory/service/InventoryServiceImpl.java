@@ -4,6 +4,8 @@ import com.deepthoughtnet.clinic.inventory.db.InventoryTransactionEntity;
 import com.deepthoughtnet.clinic.inventory.db.InventoryTransactionRepository;
 import com.deepthoughtnet.clinic.inventory.db.InventoryLocationEntity;
 import com.deepthoughtnet.clinic.inventory.db.InventoryLocationRepository;
+import com.deepthoughtnet.clinic.inventory.db.PhysicalCountSessionEntity;
+import com.deepthoughtnet.clinic.inventory.db.PhysicalCountSessionRepository;
 import com.deepthoughtnet.clinic.inventory.db.MedicineEntity;
 import com.deepthoughtnet.clinic.inventory.db.MedicineRepository;
 import com.deepthoughtnet.clinic.inventory.db.StockEntity;
@@ -17,6 +19,11 @@ import com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionTyp
 import com.deepthoughtnet.clinic.inventory.service.model.LowStockRecord;
 import com.deepthoughtnet.clinic.inventory.service.model.MedicineRecord;
 import com.deepthoughtnet.clinic.inventory.service.model.MedicineUpsertCommand;
+import com.deepthoughtnet.clinic.inventory.service.model.PhysicalCountAuditFields;
+import com.deepthoughtnet.clinic.inventory.service.model.PhysicalCountReviewChecklist;
+import com.deepthoughtnet.clinic.inventory.service.model.PhysicalCountSessionLine;
+import com.deepthoughtnet.clinic.inventory.service.model.PhysicalCountSessionRecord;
+import com.deepthoughtnet.clinic.inventory.service.model.PhysicalCountSessionSaveCommand;
 import com.deepthoughtnet.clinic.inventory.service.model.StockRecord;
 import com.deepthoughtnet.clinic.inventory.service.model.StockUpsertCommand;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventCommand;
@@ -32,10 +39,12 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.Objects;
 import java.util.stream.Collectors;
+import java.util.regex.Pattern;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -51,11 +60,23 @@ public class InventoryServiceImpl implements InventoryService {
     private static final String PURCHASE_REFERENCE_REGEX = "^[A-Za-z0-9/_\\-\\s]{1,60}$";
     private static final String ALPHANUMERIC_CODE_REGEX = "^[A-Za-z0-9/_-]{1,50}$";
     private static final String DIGITS_ONLY_REGEX = "^[0-9]{8,20}$";
+    private static final int MEDICINE_NAME_MAX_LENGTH = 60;
+    private static final int MEDICINE_TEXT_MAX_LENGTH = 60;
+    private static final int MEDICINE_INSTRUCTIONS_MAX_LENGTH = 250;
+    private static final int MEDICINE_DURATION_MAX_DAYS = 365;
+    private static final int MEDICINE_PRICE_MAX_INTEGER_DIGITS = 6;
+    private static final BigDecimal MEDICINE_PRICE_MAX = new BigDecimal("999999.99");
+    private static final BigDecimal MEDICINE_TAX_MAX = new BigDecimal("100");
+    private static final Pattern LETTER_OR_NUMBER_PATTERN = Pattern.compile(".*[A-Za-z0-9].*");
+    private static final Pattern MEDICINE_BARCODE_PATTERN = Pattern.compile("^[A-Za-z0-9/_-]+$");
+    private static final List<String> SUPPORTED_MEDICINE_TYPES = List.of("TABLET", "CAPSULE", "SYRUP", "INJECTION", "DROP", "OINTMENT", "SACHET", "OTHER");
+    private static final List<String> SUPPORTED_TIMING_VALUES = List.of("BEFORE_FOOD", "AFTER_FOOD", "WITH_FOOD", "ANYTIME");
 
     private final MedicineRepository medicineRepository;
     private final StockRepository stockRepository;
     private final InventoryTransactionRepository transactionRepository;
     private final InventoryLocationRepository locationRepository;
+    private final PhysicalCountSessionRepository physicalCountSessionRepository;
     private final AuditEventPublisher auditEventPublisher;
     private final ObjectMapper objectMapper;
 
@@ -64,6 +85,7 @@ public class InventoryServiceImpl implements InventoryService {
             StockRepository stockRepository,
             InventoryTransactionRepository transactionRepository,
             InventoryLocationRepository locationRepository,
+            PhysicalCountSessionRepository physicalCountSessionRepository,
             AuditEventPublisher auditEventPublisher,
             ObjectMapper objectMapper
     ) {
@@ -71,6 +93,7 @@ public class InventoryServiceImpl implements InventoryService {
         this.stockRepository = stockRepository;
         this.transactionRepository = transactionRepository;
         this.locationRepository = locationRepository;
+        this.physicalCountSessionRepository = physicalCountSessionRepository;
         this.auditEventPublisher = auditEventPublisher;
         this.objectMapper = objectMapper;
     }
@@ -287,7 +310,8 @@ public class InventoryServiceImpl implements InventoryService {
                 command.referenceId(),
                 command.createdBy() == null ? actorAppUserId : command.createdBy(),
                 normalizeNullable(command.reason()),
-                normalizeNullable(command.notes())
+                normalizeNullable(command.notes()),
+                normalizeNullable(command.businessReference())
         ));
         auditTransaction(tenantId, entity, "inventory.transaction.created", actorAppUserId, "Created inventory transaction");
         return toRecord(entity);
@@ -300,8 +324,16 @@ public class InventoryServiceImpl implements InventoryService {
         if (command == null) {
             throw new IllegalArgumentException("command is required");
         }
-        UUID fromLocationId = resolveLocationId(tenantId, command.fromLocationId());
-        UUID toLocationId = resolveLocationId(tenantId, command.toLocationId());
+        InventoryLocationEntity fromLocation = resolveLocation(tenantId, command.fromLocationId());
+        InventoryLocationEntity toLocation = resolveLocation(tenantId, command.toLocationId());
+        if (!fromLocation.isActive()) {
+            throw new IllegalArgumentException("Source location is inactive");
+        }
+        if (!toLocation.isActive()) {
+            throw new IllegalArgumentException("Destination location is inactive");
+        }
+        UUID fromLocationId = fromLocation.getId();
+        UUID toLocationId = toLocation.getId();
         if (fromLocationId.equals(toLocationId)) {
             throw new IllegalArgumentException("source and destination locations must differ");
         }
@@ -421,8 +453,15 @@ public class InventoryServiceImpl implements InventoryService {
         if (command == null || !StringUtils.hasText(command.locationName()) || !StringUtils.hasText(command.locationType())) {
             throw new IllegalArgumentException("location name and type are required");
         }
+        String normalizedName = normalize(command.locationName());
+        if (id == null) {
+            locationRepository.findByTenantIdAndLocationNameIgnoreCase(tenantId, normalizedName)
+                    .ifPresent(existing -> { throw new IllegalArgumentException("Location already exists with this name"); });
+        } else if (locationRepository.existsByTenantIdAndLocationNameIgnoreCaseAndIdNot(tenantId, normalizedName, id)) {
+            throw new IllegalArgumentException("Location already exists with this name");
+        }
         InventoryLocationEntity entity = id == null
-                ? InventoryLocationEntity.create(tenantId, normalize(command.locationName()), normalizeNullable(command.locationCode()), normalize(command.locationType()), command.defaultLocation())
+                ? InventoryLocationEntity.create(tenantId, normalizedName, normalizeNullable(command.locationCode()), normalize(command.locationType()), command.defaultLocation())
                 : locationRepository.findByTenantIdAndId(tenantId, id).orElseThrow(() -> new IllegalArgumentException("Location not found"));
         if (id != null) {
             entity.update(normalize(command.locationName()), normalizeNullable(command.locationCode()), normalize(command.locationType()), command.defaultLocation(), command.active());
@@ -437,6 +476,68 @@ public class InventoryServiceImpl implements InventoryService {
                     });
         }
         InventoryLocationEntity saved = locationRepository.save(entity);
+        return toRecord(saved);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<PhysicalCountSessionRecord> listPhysicalCountSessions(UUID tenantId) {
+        requireTenant(tenantId);
+        return physicalCountSessionRepository.findByTenantIdOrderByUpdatedAtDesc(tenantId).stream().map(this::toRecord).toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Optional<PhysicalCountSessionRecord> findPhysicalCountSession(UUID tenantId, UUID id) {
+        requireTenant(tenantId);
+        requireId(id, "id");
+        return physicalCountSessionRepository.findByTenantIdAndId(tenantId, id).map(this::toRecord);
+    }
+
+    @Override
+    @Transactional
+    public PhysicalCountSessionRecord savePhysicalCountSession(UUID tenantId, UUID id, PhysicalCountSessionSaveCommand command, UUID actorAppUserId, Set<String> actorRoles) {
+        requireTenant(tenantId);
+        requireId(id, "id");
+        validatePhysicalCountSession(command);
+        PhysicalCountSessionEntity existingEntity = physicalCountSessionRepository.findByTenantIdAndId(tenantId, id).orElse(null);
+        PhysicalCountSessionRecord existingRecord = existingEntity == null ? null : toRecord(existingEntity);
+        validatePhysicalCountSessionTransition(existingRecord, command, actorRoles);
+        InventoryLocationEntity location = resolveLocation(tenantId, command.locationId());
+
+        PhysicalCountSessionRecord record = toRecord(tenantId, id, command, location.getLocationName());
+        String sessionJson = detailsJson(record);
+        PhysicalCountSessionEntity entity = Optional.ofNullable(existingEntity)
+                .map(existing -> {
+                    existing.update(
+                            record.sessionName(),
+                            record.locationId(),
+                            record.locationName(),
+                            record.scope(),
+                            record.scopeLabel(),
+                            record.reason(),
+                            record.status(),
+                            sessionJson,
+                            actorAppUserId
+                    );
+                    return existing;
+                })
+                .orElseGet(() -> PhysicalCountSessionEntity.create(
+                        tenantId,
+                        id,
+                        record.sessionName(),
+                        record.locationId(),
+                        record.locationName(),
+                        record.scope(),
+                        record.scopeLabel(),
+                        record.reason(),
+                        record.status(),
+                        sessionJson,
+                        actorAppUserId,
+                        actorAppUserId
+                ));
+
+        PhysicalCountSessionEntity saved = physicalCountSessionRepository.save(entity);
         return toRecord(saved);
     }
 
@@ -476,7 +577,7 @@ public class InventoryServiceImpl implements InventoryService {
     }
 
     private InventoryTransactionRecord toRecord(InventoryTransactionEntity entity) {
-        return new InventoryTransactionRecord(entity.getId(), entity.getTenantId(), entity.getMedicineId(), entity.getStockBatchId(), entity.getLocationId(), entity.getTargetLocationId(), InventoryTransactionType.valueOf(entity.getTransactionType()), entity.getQuantity(), entity.getBeforeQuantity(), entity.getAfterQuantity(), entity.getReason(), entity.getReferenceType(), entity.getReferenceId(), entity.getCreatedBy(), entity.getNotes(), entity.getCreatedAt());
+        return new InventoryTransactionRecord(entity.getId(), entity.getTenantId(), entity.getMedicineId(), entity.getStockBatchId(), entity.getLocationId(), entity.getTargetLocationId(), InventoryTransactionType.valueOf(entity.getTransactionType()), entity.getQuantity(), entity.getBeforeQuantity(), entity.getAfterQuantity(), entity.getReason(), entity.getReferenceType(), entity.getReferenceId(), entity.getCreatedBy(), entity.getNotes(), entity.getCreatedAt(), entity.getBusinessReference());
     }
 
     private InventoryLocationRecord toRecord(InventoryLocationEntity entity) {
@@ -557,9 +658,110 @@ public class InventoryServiceImpl implements InventoryService {
     }
 
     private void validateMedicine(MedicineUpsertCommand command) {
-        if (command == null) throw new IllegalArgumentException("command is required");
-        if (!StringUtils.hasText(command.medicineName())) throw new IllegalArgumentException("medicineName is required");
-        if (!StringUtils.hasText(command.medicineType())) throw new IllegalArgumentException("medicineType is required");
+        if (command == null) {
+            throw new IllegalArgumentException("command is required");
+        }
+        String medicineName = normalizeNullable(command.medicineName());
+        String medicineType = normalizeType(command.medicineType());
+        String strength = normalizeNullable(command.strength());
+        validateRequiredText(medicineName, MEDICINE_NAME_MAX_LENGTH, 2, "medicineName", true, true);
+        validateMedicineType(medicineType);
+        validateOptionalText(command.barcode(), 60, MEDICINE_BARCODE_PATTERN, "barcode", "Barcode can use letters, numbers, dashes, underscores, and slashes only.");
+        validateOptionalText(command.qrCode(), 60, null, "qrCode");
+        validateOptionalText(command.externalCode(), 60, null, "externalCode");
+        validateOptionalText(command.genericName(), MEDICINE_TEXT_MAX_LENGTH, LETTER_OR_NUMBER_PATTERN, "genericName", "Generic name must include a letter or number.");
+        validateOptionalText(command.brandName(), MEDICINE_TEXT_MAX_LENGTH, LETTER_OR_NUMBER_PATTERN, "brandName", "Brand name must include a letter or number.");
+        validateOptionalText(command.category(), MEDICINE_TEXT_MAX_LENGTH, null, "category");
+        validateOptionalText(command.dosageForm(), MEDICINE_TEXT_MAX_LENGTH, null, "dosageForm");
+        validateRequiredText(strength, MEDICINE_TEXT_MAX_LENGTH, 1, "strength", true, true);
+        validateOptionalText(command.unit(), MEDICINE_TEXT_MAX_LENGTH, null, "unit");
+        validateOptionalText(command.manufacturer(), MEDICINE_TEXT_MAX_LENGTH, null, "manufacturer");
+        validateOptionalText(command.defaultDosage(), MEDICINE_TEXT_MAX_LENGTH, null, "defaultDosage");
+        validateOptionalText(command.defaultFrequency(), MEDICINE_TEXT_MAX_LENGTH, null, "defaultFrequency");
+        validateOptionalDuration(command.defaultDurationDays());
+        validateOptionalTiming(command.defaultTiming());
+        validateOptionalText(command.defaultInstructions(), MEDICINE_INSTRUCTIONS_MAX_LENGTH, null, "defaultInstructions");
+        validateOptionalMoney(command.defaultPrice(), "defaultPrice", MEDICINE_PRICE_MAX, MEDICINE_PRICE_MAX_INTEGER_DIGITS);
+        validateOptionalMoney(command.taxRate(), "taxRate", MEDICINE_TAX_MAX, 3);
+    }
+
+    private void validateRequiredText(String value, int maxLength, int minLength, String field, boolean requireLetterOrNumber, boolean rejectBlankOnly) {
+        if (!StringUtils.hasText(value)) {
+            throw new IllegalArgumentException(field + " is required");
+        }
+        String trimmed = value.trim();
+        if (trimmed.length() < minLength || trimmed.length() > maxLength) {
+            throw new IllegalArgumentException(field + " must be between " + minLength + " and " + maxLength + " characters");
+        }
+        if (rejectBlankOnly && !LETTER_OR_NUMBER_PATTERN.matcher(trimmed).matches()) {
+            throw new IllegalArgumentException(field + " must include a letter or number");
+        }
+        if (requireLetterOrNumber && !LETTER_OR_NUMBER_PATTERN.matcher(trimmed).matches()) {
+            throw new IllegalArgumentException(field + " must include a letter or number");
+        }
+    }
+
+    private void validateOptionalText(String value, int maxLength, Pattern allowedPattern, String field) {
+        validateOptionalText(value, maxLength, allowedPattern, field, field + " has an invalid format");
+    }
+
+    private void validateOptionalText(String value, int maxLength, Pattern allowedPattern, String field, String invalidFormatMessage) {
+        if (!StringUtils.hasText(value)) {
+            return;
+        }
+        String trimmed = value.trim();
+        if (trimmed.length() > maxLength) {
+            throw new IllegalArgumentException(field + " must be " + maxLength + " characters or fewer");
+        }
+        if (allowedPattern != null && !allowedPattern.matcher(trimmed).matches()) {
+            throw new IllegalArgumentException(invalidFormatMessage);
+        }
+    }
+
+    private void validateOptionalDuration(Integer value) {
+        if (value == null) {
+            return;
+        }
+        if (value < 1 || value > MEDICINE_DURATION_MAX_DAYS) {
+            throw new IllegalArgumentException("defaultDurationDays must be between 1 and " + MEDICINE_DURATION_MAX_DAYS);
+        }
+    }
+
+    private void validateOptionalTiming(String value) {
+        if (!StringUtils.hasText(value)) {
+            return;
+        }
+        String normalized = normalize(value).toUpperCase(Locale.ROOT);
+        if (!SUPPORTED_TIMING_VALUES.contains(normalized)) {
+            throw new IllegalArgumentException("defaultTiming must be one of BEFORE_FOOD, AFTER_FOOD, WITH_FOOD, ANYTIME");
+        }
+    }
+
+    private void validateMedicineType(String medicineType) {
+        if (!StringUtils.hasText(medicineType)) {
+            throw new IllegalArgumentException("medicineType is required");
+        }
+        if (!SUPPORTED_MEDICINE_TYPES.contains(medicineType.toUpperCase(Locale.ROOT))) {
+            throw new IllegalArgumentException("medicineType must be one of TABLET, CAPSULE, SYRUP, INJECTION, DROP, OINTMENT, SACHET, OTHER");
+        }
+    }
+
+    private void validateOptionalMoney(BigDecimal value, String field, BigDecimal maxValue, int maxIntegerDigits) {
+        if (value == null) {
+            return;
+        }
+        if (value.compareTo(BigDecimal.ZERO) < 0) {
+            throw new IllegalArgumentException(field + " must be zero or greater");
+        }
+        if (value.compareTo(maxValue) > 0) {
+            throw new IllegalArgumentException(field + " exceeds the allowed maximum");
+        }
+        if (value.scale() > 2 && value.stripTrailingZeros().scale() > 2) {
+            throw new IllegalArgumentException(field + " must use at most 2 decimals");
+        }
+        if (value.precision() - value.scale() > maxIntegerDigits) {
+            throw new IllegalArgumentException(field + " exceeds the allowed maximum");
+        }
     }
 
     private void validateStock(UUID tenantId, StockUpsertCommand command, boolean creating, StockEntity currentStock) {
@@ -660,6 +862,9 @@ public class InventoryServiceImpl implements InventoryService {
         if (requiresBatch(command.transactionType()) && command.stockBatchId() == null) {
             throw new IllegalArgumentException("stockBatchId is required");
         }
+        if (StringUtils.hasText(command.businessReference()) && command.businessReference().trim().length() > 160) {
+            throw new IllegalArgumentException("businessReference must be 160 characters or fewer");
+        }
         if (medicineRepository.findByTenantIdAndId(tenantId, command.medicineId()).isEmpty()) throw new IllegalArgumentException("Medicine not found");
     }
 
@@ -678,15 +883,24 @@ public class InventoryServiceImpl implements InventoryService {
     }
 
     private void ensureUniqueMedicine(UUID tenantId, MedicineUpsertCommand command, UUID id) {
-        if (id == null) {
-            if (medicineRepository.findByTenantIdAndMedicineNameIgnoreCase(tenantId, command.medicineName()).isPresent()) throw new IllegalArgumentException("Medicine already exists");
-            if (StringUtils.hasText(command.barcode()) && medicineRepository.findByTenantIdAndBarcodeIgnoreCase(tenantId, command.barcode()).isPresent()) throw new IllegalArgumentException("Medicine barcode already exists");
-            if (StringUtils.hasText(command.externalCode()) && medicineRepository.findByTenantIdAndExternalCodeIgnoreCase(tenantId, command.externalCode()).isPresent()) throw new IllegalArgumentException("Medicine external code already exists");
-            return;
+        String normalizedName = normalize(command.medicineName());
+        String normalizedType = normalizeType(command.medicineType());
+        String normalizedStrength = normalize(command.strength());
+        boolean duplicate = medicineRepository.findByTenantIdOrderByMedicineNameAsc(tenantId).stream()
+                .filter(medicine -> id == null || !medicine.getId().equals(id))
+                .anyMatch(medicine ->
+                        normalize(medicine.getMedicineName()).equalsIgnoreCase(normalizedName)
+                                && normalizeType(medicine.getMedicineType()).equalsIgnoreCase(normalizedType)
+                                && normalize(medicine.getStrength()).equalsIgnoreCase(normalizedStrength));
+        if (duplicate) {
+            throw new IllegalArgumentException("Medicine already exists with the same name, type, and strength");
         }
-        if (medicineRepository.existsByTenantIdAndMedicineNameIgnoreCaseAndIdNot(tenantId, command.medicineName(), id)) throw new IllegalArgumentException("Medicine already exists");
-        if (StringUtils.hasText(command.barcode()) && medicineRepository.existsByTenantIdAndBarcodeIgnoreCaseAndIdNot(tenantId, command.barcode(), id)) throw new IllegalArgumentException("Medicine barcode already exists");
-        if (StringUtils.hasText(command.externalCode()) && medicineRepository.existsByTenantIdAndExternalCodeIgnoreCaseAndIdNot(tenantId, command.externalCode(), id)) throw new IllegalArgumentException("Medicine external code already exists");
+        if (StringUtils.hasText(command.barcode()) && medicineRepository.findByTenantIdAndBarcodeIgnoreCase(tenantId, normalizeNullable(command.barcode())).filter(medicine -> id == null || !medicine.getId().equals(id)).isPresent()) {
+            throw new IllegalArgumentException("Medicine barcode already exists");
+        }
+        if (StringUtils.hasText(command.externalCode()) && medicineRepository.findByTenantIdAndExternalCodeIgnoreCase(tenantId, normalizeNullable(command.externalCode())).filter(medicine -> id == null || !medicine.getId().equals(id)).isPresent()) {
+            throw new IllegalArgumentException("Medicine external code already exists");
+        }
     }
 
     private boolean isSellableMedicine(String medicineType) {
@@ -708,12 +922,15 @@ public class InventoryServiceImpl implements InventoryService {
     private LocalDate today() { return LocalDate.now(); }
 
     private UUID resolveLocationId(UUID tenantId, UUID requestedLocationId) {
+        return resolveLocation(tenantId, requestedLocationId).getId();
+    }
+
+    private InventoryLocationEntity resolveLocation(UUID tenantId, UUID requestedLocationId) {
         if (requestedLocationId != null) {
             return locationRepository.findByTenantIdAndId(tenantId, requestedLocationId)
-                    .orElseThrow(() -> new IllegalArgumentException("Location not found"))
-                    .getId();
+                    .orElseThrow(() -> new IllegalArgumentException("Location not found"));
         }
-        return ensureDefaultLocation(tenantId).getId();
+        return ensureDefaultLocation(tenantId);
     }
 
     private InventoryLocationEntity ensureDefaultLocation(UUID tenantId) {
@@ -727,6 +944,339 @@ public class InventoryServiceImpl implements InventoryService {
                             return existing;
                         })
                         .orElseGet(() -> locationRepository.save(InventoryLocationEntity.create(tenantId, "Main Pharmacy", "MAIN_PHARMACY", "PHARMACY", true))));
+    }
+
+    private PhysicalCountSessionRecord toRecord(PhysicalCountSessionEntity entity) {
+        if (entity == null) {
+            throw new IllegalArgumentException("physical count session not found");
+        }
+        PhysicalCountSessionRecord persisted = deserializePhysicalCountSession(entity.getSessionJson());
+        return new PhysicalCountSessionRecord(
+                entity.getId(),
+                entity.getTenantId(),
+                persisted.sessionName(),
+                persisted.locationId(),
+                persisted.locationName(),
+                persisted.scope(),
+                persisted.scopeLabel(),
+                persisted.reason(),
+                persisted.status(),
+                persisted.lines(),
+                persisted.audit(),
+                entity.getCreatedAt(),
+                entity.getUpdatedAt()
+        );
+    }
+
+    private PhysicalCountSessionRecord toRecord(UUID tenantId, UUID id, PhysicalCountSessionSaveCommand command, String locationName) {
+        return new PhysicalCountSessionRecord(
+                id,
+                tenantId,
+                normalize(command.sessionName()),
+                command.locationId(),
+                normalize(locationName),
+                normalize(command.scope()).toUpperCase(Locale.ROOT),
+                normalize(command.scopeLabel()),
+                normalize(command.reason()),
+                normalize(command.status()).toUpperCase(Locale.ROOT),
+                command.lines().stream()
+                        .map(this::normalizePhysicalCountLine)
+                        .toList(),
+                normalizePhysicalCountAudit(command.audit()),
+                OffsetDateTime.now(),
+                OffsetDateTime.now()
+        );
+    }
+
+    private PhysicalCountSessionLine normalizePhysicalCountLine(PhysicalCountSessionLine line) {
+        return new PhysicalCountSessionLine(
+                normalize(line.id()),
+                line.medicineId(),
+                normalize(line.medicineName()),
+                normalize(line.batchNumber()),
+                line.locationId(),
+                normalize(line.locationName()),
+                line.stockBatchId(),
+                line.systemQty(),
+                normalizeNullable(line.countedQty()),
+                normalizeNullable(line.reason()),
+                normalizeNullable(line.reviewerRemarks()),
+                line.flagged(),
+                line.reviewed()
+        );
+    }
+
+    private PhysicalCountAuditFields normalizePhysicalCountAudit(PhysicalCountAuditFields audit) {
+        return new PhysicalCountAuditFields(
+                normalizeNullable(audit.createdBy()),
+                normalizeNullable(audit.createdAt()),
+                normalizeNullable(audit.startedBy()),
+                normalizeNullable(audit.startedAt()),
+                normalizeNullable(audit.lastUpdatedAt()),
+                normalizeNullable(audit.submittedBy()),
+                normalizeNullable(audit.submittedAt()),
+                normalizeNullable(audit.reviewedBy()),
+                normalizeNullable(audit.reviewedAt()),
+                normalizeNullable(audit.reviewer()),
+                normalizeNullable(audit.reviewedDate()),
+                normalizeNullable(audit.approvedBy()),
+                normalizeNullable(audit.approvedAt()),
+                normalizeNullable(audit.approvalNotes()),
+                normalizeNullable(audit.rejectedBy()),
+                normalizeNullable(audit.rejectedAt()),
+                normalizeNullable(audit.rejectionReason()),
+                normalizeNullable(audit.returnedBy()),
+                normalizeNullable(audit.returnedAt()),
+                normalizeNullable(audit.returnReason()),
+                normalizeNullable(audit.postedBy()),
+                normalizeNullable(audit.postedAt()),
+                normalizeNullable(audit.sessionDuration()),
+                normalizeNullable(audit.generalNotes()),
+                normalizeNullable(audit.counterNotes()),
+                normalizeNullable(audit.reviewerNotes()),
+                normalizeNullable(audit.auditNotes()),
+                audit.reviewChecklist() == null
+                        ? new PhysicalCountReviewChecklist(false, false, false, false)
+                        : audit.reviewChecklist()
+        );
+    }
+
+    private PhysicalCountSessionRecord deserializePhysicalCountSession(String sessionJson) {
+        if (!StringUtils.hasText(sessionJson)) {
+            return null;
+        }
+        try {
+            return objectMapper.readValue(sessionJson, PhysicalCountSessionRecord.class);
+        } catch (Exception ex) {
+            throw new IllegalArgumentException("Unable to read physical count session payload", ex);
+        }
+    }
+
+    private void validatePhysicalCountSession(PhysicalCountSessionSaveCommand command) {
+        if (command == null) {
+            throw new IllegalArgumentException("command is required");
+        }
+        validateRequiredText(normalizeNullable(command.sessionName()), 256, 1, "sessionName", false, true);
+        requireId(command.locationId(), "locationId");
+        validateRequiredText(normalizeNullable(command.locationName()), 256, 1, "locationName", false, true);
+        validateRequiredText(normalizeNullable(command.scope()), 32, 1, "scope", false, true);
+        validateRequiredText(normalizeNullable(command.scopeLabel()), 128, 1, "scopeLabel", false, true);
+        validateRequiredText(normalizeNullable(command.reason()), 64, 1, "reason", false, true);
+        validateRequiredText(normalizeNullable(command.status()), 24, 1, "status", false, true);
+        if (command.lines() == null || command.lines().isEmpty()) {
+            throw new IllegalArgumentException("lines are required");
+        }
+        String status = normalize(command.status()).toUpperCase(Locale.ROOT);
+        if (!List.of("DRAFT", "IN_PROGRESS", "SUBMITTED", "REVIEWED", "APPROVED", "POSTED", "REJECTED").contains(status)) {
+            throw new IllegalArgumentException("status must be one of DRAFT, IN_PROGRESS, SUBMITTED, REVIEWED, APPROVED, POSTED, REJECTED");
+        }
+        String scope = normalize(command.scope()).toUpperCase(Locale.ROOT);
+        if (!List.of("ENTIRE_INVENTORY", "CATEGORY", "SELECTED_MEDICINES").contains(scope)) {
+            throw new IllegalArgumentException("scope must be one of ENTIRE_INVENTORY, CATEGORY, SELECTED_MEDICINES");
+        }
+        if (List.of("SUBMITTED", "REVIEWED", "APPROVED", "POSTED").contains(status)) {
+            for (PhysicalCountSessionLine line : command.lines()) {
+                if (!StringUtils.hasText(line.countedQty())) {
+                    throw new IllegalArgumentException("counted quantity is required for submitted sessions");
+                }
+                parseCountedQuantity(line.countedQty());
+            }
+        }
+        for (PhysicalCountSessionLine line : command.lines()) {
+            validatePhysicalCountSessionLine(line);
+        }
+        validatePhysicalCountAudit(command.audit());
+    }
+
+    private void validatePhysicalCountSessionLine(PhysicalCountSessionLine line) {
+        if (line == null) {
+            throw new IllegalArgumentException("line is required");
+        }
+        validateRequiredText(normalizeNullable(line.id()), 120, 1, "line.id", false, true);
+        requireId(line.medicineId(), "line.medicineId");
+        validateRequiredText(normalizeNullable(line.medicineName()), 256, 1, "line.medicineName", false, true);
+        validateRequiredText(normalizeNullable(line.batchNumber()), 128, 1, "line.batchNumber", false, true);
+        requireId(line.locationId(), "line.locationId");
+        validateRequiredText(normalizeNullable(line.locationName()), 256, 1, "line.locationName", false, true);
+        requireId(line.stockBatchId(), "line.stockBatchId");
+        if (line.systemQty() < 0) {
+            throw new IllegalArgumentException("line.systemQty must be zero or greater");
+        }
+        if (StringUtils.hasText(line.countedQty())) {
+            parseCountedQuantity(line.countedQty());
+        }
+    }
+
+    private void validatePhysicalCountAudit(PhysicalCountAuditFields audit) {
+        if (audit == null) {
+            throw new IllegalArgumentException("audit is required");
+        }
+        validateOptionalText(audit.createdBy(), 120, null, "audit.createdBy");
+        validateOptionalText(audit.createdAt(), 40, null, "audit.createdAt");
+        validateOptionalText(audit.startedBy(), 120, null, "audit.startedBy");
+        validateOptionalText(audit.startedAt(), 40, null, "audit.startedAt");
+        validateOptionalText(audit.lastUpdatedAt(), 40, null, "audit.lastUpdatedAt");
+        validateOptionalText(audit.submittedBy(), 120, null, "audit.submittedBy");
+        validateOptionalText(audit.submittedAt(), 40, null, "audit.submittedAt");
+        validateOptionalText(audit.reviewedBy(), 120, null, "audit.reviewedBy");
+        validateOptionalText(audit.reviewedAt(), 40, null, "audit.reviewedAt");
+        validateOptionalText(audit.reviewer(), 120, null, "audit.reviewer");
+        validateOptionalText(audit.reviewedDate(), 40, null, "audit.reviewedDate");
+        validateOptionalText(audit.approvedBy(), 120, null, "audit.approvedBy");
+        validateOptionalText(audit.approvedAt(), 40, null, "audit.approvedAt");
+        validateOptionalText(audit.approvalNotes(), 500, null, "audit.approvalNotes");
+        validateOptionalText(audit.rejectedBy(), 120, null, "audit.rejectedBy");
+        validateOptionalText(audit.rejectedAt(), 40, null, "audit.rejectedAt");
+        validateOptionalText(audit.rejectionReason(), 500, null, "audit.rejectionReason");
+        validateOptionalText(audit.returnedBy(), 120, null, "audit.returnedBy");
+        validateOptionalText(audit.returnedAt(), 40, null, "audit.returnedAt");
+        validateOptionalText(audit.returnReason(), 500, null, "audit.returnReason");
+        validateOptionalText(audit.postedBy(), 120, null, "audit.postedBy");
+        validateOptionalText(audit.postedAt(), 40, null, "audit.postedAt");
+        validateOptionalText(audit.sessionDuration(), 120, null, "audit.sessionDuration");
+        validateOptionalText(audit.generalNotes(), 500, null, "audit.generalNotes");
+        validateOptionalText(audit.counterNotes(), 500, null, "audit.counterNotes");
+        validateOptionalText(audit.reviewerNotes(), 500, null, "audit.reviewerNotes");
+        validateOptionalText(audit.auditNotes(), 500, null, "audit.auditNotes");
+    }
+
+    private void validatePhysicalCountSessionTransition(PhysicalCountSessionRecord current, PhysicalCountSessionSaveCommand command, Set<String> actorRoles) {
+        Set<String> roles = normalizeRoles(actorRoles);
+        boolean clinicAdmin = roles.contains("CLINIC_ADMIN");
+        boolean makerRole = clinicAdmin || hasAnyRole(roles, "PHARMACIST", "PHARMA", "PHARMACY");
+        boolean checkerRole = clinicAdmin || hasAnyRole(roles, "PHARMACY_INVENTORY_MANAGER");
+        if (!makerRole && !checkerRole) {
+            throw new IllegalArgumentException("You do not have permission to save physical count sessions.");
+        }
+
+        String nextStatus = normalize(command.status()).toUpperCase(Locale.ROOT);
+        if (current == null) {
+            if (!List.of("DRAFT", "IN_PROGRESS", "SUBMITTED").contains(nextStatus)) {
+                throw new IllegalArgumentException("New physical count sessions must start in DRAFT, IN_PROGRESS, or SUBMITTED state.");
+            }
+            if (!makerRole) {
+                throw new IllegalArgumentException("You do not have permission to create physical count sessions.");
+            }
+            validatePhysicalCountSessionCompletion(command, nextStatus);
+            return;
+        }
+
+        String currentStatus = normalize(current.status()).toUpperCase(Locale.ROOT);
+        if (List.of("POSTED", "REJECTED").contains(currentStatus) && !clinicAdmin) {
+            throw new IllegalArgumentException(capitalize(currentStatus) + " physical count sessions cannot be modified.");
+        }
+
+        if (List.of("DRAFT", "IN_PROGRESS").contains(currentStatus)) {
+            if (!makerRole) {
+                throw new IllegalArgumentException("You do not have permission to edit physical count sessions.");
+            }
+            if (!List.of("DRAFT", "IN_PROGRESS", "SUBMITTED").contains(nextStatus)) {
+                throw new IllegalArgumentException("Draft or in-progress sessions can only be saved as DRAFT, IN_PROGRESS, or SUBMITTED.");
+            }
+            validatePhysicalCountSessionCompletion(command, nextStatus);
+            return;
+        }
+
+        if ("SUBMITTED".equals(currentStatus)) {
+            if (!checkerRole) {
+                throw new IllegalArgumentException("You do not have permission to review physical count sessions.");
+            }
+            if (!List.of("SUBMITTED", "REVIEWED").contains(nextStatus)) {
+                throw new IllegalArgumentException("Submitted sessions can only be saved as SUBMITTED or REVIEWED.");
+            }
+            ensureMakerFieldsUnchanged(current, command);
+            return;
+        }
+
+        if ("REVIEWED".equals(currentStatus)) {
+            if (!checkerRole) {
+                throw new IllegalArgumentException("You do not have permission to continue reviewed physical count sessions.");
+            }
+            if (!List.of("REVIEWED", "APPROVED", "REJECTED", "IN_PROGRESS").contains(nextStatus)) {
+                throw new IllegalArgumentException("Reviewed sessions can only be saved as REVIEWED, APPROVED, REJECTED, or IN_PROGRESS.");
+            }
+            ensureMakerFieldsUnchanged(current, command);
+            return;
+        }
+
+        if ("APPROVED".equals(currentStatus)) {
+            if (!checkerRole) {
+                throw new IllegalArgumentException("You do not have permission to post approved physical count sessions.");
+            }
+            if (!List.of("APPROVED", "POSTED").contains(nextStatus)) {
+                throw new IllegalArgumentException("Approved sessions can only be saved as APPROVED or POSTED.");
+            }
+            ensureMakerFieldsUnchanged(current, command);
+            return;
+        }
+
+        throw new IllegalArgumentException("Unsupported physical count session status transition.");
+    }
+
+    private void validatePhysicalCountSessionCompletion(PhysicalCountSessionSaveCommand command, String nextStatus) {
+        if (!"SUBMITTED".equals(nextStatus)) {
+            return;
+        }
+        for (PhysicalCountSessionLine line : command.lines()) {
+            if (!StringUtils.hasText(line.countedQty())) {
+                throw new IllegalArgumentException("counted quantity is required for submitted sessions");
+            }
+            parseCountedQuantity(line.countedQty());
+        }
+    }
+
+    private void ensureMakerFieldsUnchanged(PhysicalCountSessionRecord current, PhysicalCountSessionSaveCommand command) {
+        if (current.lines() == null || command.lines() == null || current.lines().size() != command.lines().size()) {
+            throw new IllegalArgumentException("Physical count lines cannot be added or removed in the current workflow state.");
+        }
+
+        for (int i = 0; i < current.lines().size(); i++) {
+            PhysicalCountSessionLine existingLine = current.lines().get(i);
+            PhysicalCountSessionLine incomingLine = command.lines().get(i);
+            if (!Objects.equals(normalize(existingLine.id()), normalize(incomingLine.id()))
+                    || !Objects.equals(normalizeNullable(existingLine.countedQty()), normalizeNullable(incomingLine.countedQty()))
+                    || !Objects.equals(normalizeNullable(existingLine.reason()), normalizeNullable(incomingLine.reason()))) {
+                throw new IllegalArgumentException("Counted quantities and maker line details cannot be modified in the current workflow state.");
+            }
+        }
+    }
+
+    private Set<String> normalizeRoles(Set<String> actorRoles) {
+        if (actorRoles == null || actorRoles.isEmpty()) {
+            return Set.of();
+        }
+        return actorRoles.stream()
+                .filter(Objects::nonNull)
+                .map(role -> role.trim().toUpperCase(Locale.ROOT))
+                .collect(Collectors.toCollection(java.util.LinkedHashSet::new));
+    }
+
+    private boolean hasAnyRole(Set<String> roles, String... expectedRoles) {
+        if (roles == null || roles.isEmpty() || expectedRoles == null || expectedRoles.length == 0) {
+            return false;
+        }
+        for (String role : expectedRoles) {
+            if (role != null && roles.contains(role.trim().toUpperCase(Locale.ROOT))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private String capitalize(String value) {
+        if (!StringUtils.hasText(value)) {
+            return "";
+        }
+        String normalized = value.trim().toLowerCase(Locale.ROOT);
+        return Character.toUpperCase(normalized.charAt(0)) + normalized.substring(1);
+    }
+
+    private Integer parseCountedQuantity(String countedQty) {
+        try {
+            return Integer.valueOf(normalize(countedQty));
+        } catch (NumberFormatException ex) {
+            throw new IllegalArgumentException("countedQty must be a whole number", ex);
+        }
     }
 
     private void auditMedicine(UUID tenantId, MedicineEntity entity, String action, UUID actorAppUserId, String message) {

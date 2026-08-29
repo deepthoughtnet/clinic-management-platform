@@ -87,6 +87,68 @@ class VaccineCsvServiceTest {
     }
 
     @Test
+    void rejectsInvalidAgeRangesInCsv() {
+        String csv = String.join("\n",
+                "vaccineName,description,manufacturer,brandName,vaccineGroup,doseNumber,route,administrationSite,storageTemperature,ndcBarcode,scheduleType,ageGroup,minAgeDays,recommendedAgeDays,maxAgeDays,gapDays,boosterGapDays,boosterRules,isRecurring,recurrenceDays,recommendationPolicy,catchUpPolicy,catchUpMaxAgeDays,applicableAgeGroup,clinicalIndications,defaultPrice,active",
+                "Bad Age Range,Description,Acme,Brand,HBV,1,IM,Deltoid,2-8 C,123,ADULT,Adults,365,30,30,30,60,Annual,false,365,ADULT_ROUTINE,NONE,,ADULT,notes,120.50,true"
+        );
+
+        VaccineCsvImportResponse result = service.importCsv(TENANT_ID, csv.getBytes(), ACTOR_ID);
+
+        assertThat(result.totalRows()).isEqualTo(1);
+        assertThat(result.failedCount()).isEqualTo(1);
+        assertThat(result.rows().get(0).message()).contains("recommendedAgeDays");
+    }
+
+    @Test
+    void acceptsClinicalIndicationsUpToBackendLimitInCsv() {
+        when(vaccinationService.createVaccine(eq(TENANT_ID), any(VaccineUpsertCommand.class), eq(ACTOR_ID)))
+                .thenReturn(sampleRecord());
+
+        String longIndications = "a".repeat(1000);
+        String csv = String.join("\n",
+                "vaccineName,description,manufacturer,brandName,vaccineGroup,doseNumber,route,administrationSite,storageTemperature,ndcBarcode,scheduleType,ageGroup,minAgeDays,recommendedAgeDays,maxAgeDays,gapDays,boosterGapDays,boosterRules,isRecurring,recurrenceDays,recommendationPolicy,catchUpPolicy,catchUpMaxAgeDays,applicableAgeGroup,clinicalIndications,defaultPrice,active",
+                "Hepatitis B,First dose,Acme,Brand,HBV,1,IM,Deltoid,2-8 C,123,CLINIC_CUSTOM,Infants,0,30,90,30,60,Annual,false,365,STANDARD_CHILDHOOD,NONE,,INFANT," + longIndications + ",120.50,true"
+        );
+
+        VaccineCsvImportResponse result = service.importCsv(TENANT_ID, csv.getBytes(), ACTOR_ID);
+
+        assertThat(result.failedCount()).isZero();
+        ArgumentCaptor<VaccineUpsertCommand> captor = ArgumentCaptor.forClass(VaccineUpsertCommand.class);
+        verify(vaccinationService, times(1)).createVaccine(eq(TENANT_ID), captor.capture(), eq(ACTOR_ID));
+        assertThat(captor.getValue().clinicalIndications()).hasSize(1000);
+    }
+
+    @Test
+    void rejectsMissingCatchUpMaxAgeWhenPolicyRequiresItInCsv() {
+        String csv = String.join("\n",
+                "vaccineName,description,manufacturer,brandName,vaccineGroup,doseNumber,route,administrationSite,storageTemperature,ndcBarcode,scheduleType,ageGroup,minAgeDays,recommendedAgeDays,maxAgeDays,gapDays,boosterGapDays,boosterRules,isRecurring,recurrenceDays,recommendationPolicy,catchUpPolicy,catchUpMaxAgeDays,applicableAgeGroup,clinicalIndications,defaultPrice,active",
+                "Catch Up,First dose,Acme,Brand,HBV,1,IM,Deltoid,2-8 C,123,CLINIC_CUSTOM,Infants,0,30,90,30,60,Annual,false,365,STANDARD_CHILDHOOD,ALLOWED_UNTIL_AGE,,INFANT,notes,120.50,true"
+        );
+
+        VaccineCsvImportResponse result = service.importCsv(TENANT_ID, csv.getBytes(), ACTOR_ID);
+
+        assertThat(result.failedCount()).isEqualTo(1);
+        assertThat(result.rows().get(0).message()).contains("catchUpMaxAgeDays is required");
+    }
+
+    @Test
+    void allowsOtherCatchUpPoliciesWithoutMaxAgeInCsv() {
+        when(vaccinationService.createVaccine(eq(TENANT_ID), any(VaccineUpsertCommand.class), eq(ACTOR_ID)))
+                .thenReturn(sampleRecord());
+
+        String csv = String.join("\n",
+                "vaccineName,description,manufacturer,brandName,vaccineGroup,doseNumber,route,administrationSite,storageTemperature,ndcBarcode,scheduleType,ageGroup,minAgeDays,recommendedAgeDays,maxAgeDays,gapDays,boosterGapDays,boosterRules,isRecurring,recurrenceDays,recommendationPolicy,catchUpPolicy,catchUpMaxAgeDays,applicableAgeGroup,clinicalIndications,defaultPrice,active",
+                "Catch Up,First dose,Acme,Brand,HBV,1,IM,Deltoid,2-8 C,123,CLINIC_CUSTOM,Infants,0,30,90,30,60,Annual,false,365,STANDARD_CHILDHOOD,NONE,,INFANT,notes,120.50,true"
+        );
+
+        VaccineCsvImportResponse result = service.importCsv(TENANT_ID, csv.getBytes(), ACTOR_ID);
+
+        assertThat(result.failedCount()).isZero();
+        assertThat(result.createdCount()).isEqualTo(1);
+    }
+
+    @Test
     void templateAndExportCsvIncludeExpectedColumns() {
         when(vaccinationService.listVaccines(TENANT_ID)).thenReturn(List.of(sampleRecord()));
 

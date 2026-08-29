@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.deepthoughtnet.clinic.api.inventory.service.PrescriptionDispensingService;
+import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
 import com.deepthoughtnet.clinic.inventory.db.GoodsReceiptEntity;
 import com.deepthoughtnet.clinic.inventory.db.GoodsReceiptRepository;
 import com.deepthoughtnet.clinic.inventory.db.InventoryLocationEntity;
@@ -29,13 +30,17 @@ import com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionCom
 import com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionType;
 import com.deepthoughtnet.clinic.inventory.service.model.StockRecord;
 import com.deepthoughtnet.clinic.inventory.service.model.StockUpsertCommand;
+import com.deepthoughtnet.clinic.identity.service.PlatformTenantManagementService;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
+import com.deepthoughtnet.clinic.notification.service.NotificationHistoryService;
+import com.deepthoughtnet.clinic.notify.NotificationProvider;
 import com.deepthoughtnet.clinic.platform.storage.ObjectStorageService;
 import com.deepthoughtnet.clinic.ocr.spi.OcrProvider;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -79,10 +84,15 @@ class PharmacyOperationsServiceGoodsReceiptTest {
         supplierInvoiceRepository = mock(SupplierInvoiceRepository.class);
         goodsReceiptRepository = mock(GoodsReceiptRepository.class);
         PrescriptionDispensingService dispensingService = mock(PrescriptionDispensingService.class);
+        PlatformTenantManagementService tenantManagementService = mock(PlatformTenantManagementService.class);
+        NotificationHistoryService notificationHistoryService = mock(NotificationHistoryService.class);
+        NotificationProvider notificationProvider = mock(NotificationProvider.class);
         ObjectStorageService storageService = mock(ObjectStorageService.class);
+        ClinicTimeZoneResolver clinicTimeZoneResolver = mock(ClinicTimeZoneResolver.class);
         @SuppressWarnings("unchecked")
         ObjectProvider<OcrProvider> ocrProvider = mock(ObjectProvider.class);
         when(ocrProvider.getIfAvailable()).thenReturn(null);
+        when(clinicTimeZoneResolver.resolve(TENANT_ID)).thenReturn(ZoneId.of("Asia/Kolkata"));
 
         SupplierEntity supplier = mock(SupplierEntity.class);
         when(supplier.getId()).thenReturn(SUPPLIER_ID);
@@ -113,9 +123,13 @@ class PharmacyOperationsServiceGoodsReceiptTest {
                 goodsReceiptRepository,
                 dispensingService,
                 mock(AuditEventPublisher.class),
+                tenantManagementService,
+                notificationHistoryService,
+                notificationProvider,
                 storageService,
                 ocrProvider,
                 new ObjectMapper(),
+                clinicTimeZoneResolver,
                 new NoOpTransactionManager()
         );
     }
@@ -172,6 +186,7 @@ class PharmacyOperationsServiceGoodsReceiptTest {
                 LocalDate.parse("2026-05-20"),
                 LocalDate.parse("2026-05-25"),
                 "[{\"medicineId\":\"%s\",\"medicineName\":\"Paracetamol 500\",\"quantity\":20,\"expectedUnitCost\":1.25,\"unitCost\":1.25,\"taxPercent\":12}]".formatted(MEDICINE_ID),
+                null,
                 ACTOR_ID
         );
         purchaseOrder.review("MATCHED", null, "GENERATED");
@@ -213,6 +228,7 @@ class PharmacyOperationsServiceGoodsReceiptTest {
                 LocalDate.parse("2026-05-20"),
                 LocalDate.parse("2026-05-25"),
                 "[{\"medicineId\":\"%s\",\"medicineName\":\"Paracetamol 500\",\"quantity\":20,\"expectedUnitCost\":1.25,\"unitCost\":1.25,\"taxPercent\":12}]".formatted(MEDICINE_ID),
+                null,
                 ACTOR_ID
         );
         purchaseOrder.review("MATCHED", null, "GENERATED");
@@ -270,6 +286,7 @@ class PharmacyOperationsServiceGoodsReceiptTest {
                 LocalDate.parse("2026-05-20"),
                 LocalDate.parse("2026-05-25"),
                 "[{\"medicineId\":\"%s\",\"medicineName\":\"Paracetamol 500\",\"quantity\":20,\"expectedUnitCost\":1.25,\"unitCost\":1.25,\"taxPercent\":12}]".formatted(MEDICINE_ID),
+                null,
                 ACTOR_ID
         );
         purchaseOrder.review("MATCHED", null, "CANCELLED:supplier request");
@@ -296,6 +313,7 @@ class PharmacyOperationsServiceGoodsReceiptTest {
                                 new BigDecimal("1.75"),
                                 null,
                                 LOCATION_ID,
+                                null,
                                 null
                         )),
                         null
@@ -303,6 +321,96 @@ class PharmacyOperationsServiceGoodsReceiptTest {
                 ACTOR_ID
         )).isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("Cancelled purchase order cannot receive goods");
+    }
+
+    @Test
+    void inwardStockAcceptsSelectedLocationAndFutureExpiryDate() {
+        InventoryLocationEntity location = mock(InventoryLocationEntity.class);
+        when(location.getId()).thenReturn(LOCATION_ID);
+        when(location.getTenantId()).thenReturn(TENANT_ID);
+        when(location.getLocationName()).thenReturn("Main Pharmacy");
+        when(locationRepository.findByTenantIdAndId(TENANT_ID, LOCATION_ID)).thenReturn(Optional.of(location));
+        when(inventoryService.createStock(eq(TENANT_ID), any(StockUpsertCommand.class), eq(ACTOR_ID))).thenReturn(
+                new StockRecord(UUID.randomUUID(), TENANT_ID, MEDICINE_ID, LOCATION_ID, "Main Pharmacy", "Pantoprazole 40 mg Tablet", "TABLET", null, null, null, "PAN-UAT-D01", "DGR-UAT-0001", LocalDate.parse("2028-12-31"), LocalDate.parse("2026-08-28"), null, 50, 0, 15, new BigDecimal("6.00"), new BigDecimal("6.00"), new BigDecimal("8.00"), true, OffsetDateTime.now(), OffsetDateTime.now())
+        );
+        when(inventoryService.findStock(eq(TENANT_ID), any(UUID.class))).thenReturn(Optional.empty());
+
+        StockRecord saved = service.inwardStock(
+                TENANT_ID,
+                new StockInwardRequest(
+                        MEDICINE_ID,
+                        SUPPLIER_ID,
+                        LOCATION_ID,
+                        "DGR-UAT-0001",
+                        "PAN-UAT-D01",
+                        null,
+                        null,
+                        null,
+                        "2028-12-31",
+                        "2026-08-28",
+                        50,
+                        new BigDecimal("6"),
+                        new BigDecimal("8"),
+                        15
+                ),
+                ACTOR_ID
+        );
+
+        ArgumentCaptor<StockUpsertCommand> stockCaptor = ArgumentCaptor.forClass(StockUpsertCommand.class);
+        verify(inventoryService).createStock(eq(TENANT_ID), stockCaptor.capture(), eq(ACTOR_ID));
+        assertThat(stockCaptor.getValue().locationId()).isEqualTo(LOCATION_ID);
+        assertThat(stockCaptor.getValue().expiryDate()).isEqualTo(LocalDate.parse("2028-12-31"));
+        assertThat(saved.id()).isNotNull();
+    }
+
+    @Test
+    void inwardStockRejectsMissingLocation() {
+        assertThatThrownBy(() -> service.inwardStock(
+                TENANT_ID,
+                new StockInwardRequest(
+                        MEDICINE_ID,
+                        null,
+                        null,
+                        "DGR-UAT-0001",
+                        "PAN-UAT-D01",
+                        null,
+                        null,
+                        null,
+                        "2028-12-31",
+                        "2026-08-28",
+                        50,
+                        new BigDecimal("6"),
+                        new BigDecimal("8"),
+                        15
+                ),
+                ACTOR_ID
+        )).isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("Location is required");
+    }
+
+    @Test
+    void inwardStockRejectsFutureReceivedDateAndAllowsFutureExpiryDate() {
+        assertThatThrownBy(() -> service.inwardStock(
+                TENANT_ID,
+                new StockInwardRequest(
+                        MEDICINE_ID,
+                        SUPPLIER_ID,
+                        LOCATION_ID,
+                        "DGR-UAT-0002",
+                        "PAN-UAT-D02",
+                        null,
+                        null,
+                        null,
+                        "2028-12-31",
+                        "2026-09-01",
+                        50,
+                        new BigDecimal("6"),
+                        new BigDecimal("8"),
+                        15
+                ),
+                ACTOR_ID
+        )).isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("Inward date cannot be in the future");
     }
 
     private static final class NoOpTransactionManager implements PlatformTransactionManager {

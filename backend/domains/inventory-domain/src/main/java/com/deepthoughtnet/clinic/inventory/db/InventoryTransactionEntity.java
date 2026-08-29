@@ -57,6 +57,9 @@ public class InventoryTransactionEntity {
     @Column(name = "created_by")
     private UUID createdBy;
 
+    @Column(name = "business_reference", length = 160)
+    private String businessReference;
+
     @Column(name = "reason", columnDefinition = "text")
     private String reason;
 
@@ -85,6 +88,26 @@ public class InventoryTransactionEntity {
             String reason,
             String notes
     ) {
+        return create(tenantId, medicineId, stockBatchId, locationId, targetLocationId, transactionType, quantity, beforeQuantity, afterQuantity, referenceType, referenceId, createdBy, reason, notes, null);
+    }
+
+    public static InventoryTransactionEntity create(
+            UUID tenantId,
+            UUID medicineId,
+            UUID stockBatchId,
+            UUID locationId,
+            UUID targetLocationId,
+            String transactionType,
+            int quantity,
+            Integer beforeQuantity,
+            Integer afterQuantity,
+            String referenceType,
+            UUID referenceId,
+            UUID createdBy,
+            String reason,
+            String notes,
+            String businessReference
+    ) {
         InventoryTransactionEntity entity = new InventoryTransactionEntity();
         entity.id = UUID.randomUUID();
         entity.tenantId = tenantId;
@@ -101,6 +124,7 @@ public class InventoryTransactionEntity {
         entity.createdBy = createdBy;
         entity.reason = reason;
         entity.notes = notes;
+        entity.businessReference = businessReference;
         entity.createdAt = OffsetDateTime.now();
         return entity;
     }
@@ -121,4 +145,5 @@ public class InventoryTransactionEntity {
     public String getReason() { return reason; }
     public String getNotes() { return notes; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
+    public String getBusinessReference() { return businessReference; }
 }
