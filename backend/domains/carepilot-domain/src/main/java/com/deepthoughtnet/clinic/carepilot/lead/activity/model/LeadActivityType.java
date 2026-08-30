@@ -6,6 +6,10 @@ public enum LeadActivityType {
     UPDATED,
     STATUS_CHANGED,
     NOTE_ADDED,
+    WEBINAR_REGISTERED,
+    WEBINAR_ATTENDED,
+    WEBINAR_NO_SHOW,
+    WEBINAR_REGISTRATION_CANCELLED,
     FOLLOW_UP_SCHEDULED,
     FOLLOW_UP_COMPLETED,
     CONVERTED_TO_PATIENT,
@@ -21,8 +25,10 @@ public enum LeadActivityType {
             case CAMPAIGN_LINKED -> 20;
             case UPDATED -> 30;
             case NOTE_ADDED -> 40;
+            case WEBINAR_REGISTERED -> 45;
             case FOLLOW_UP_SCHEDULED -> 50;
             case STATUS_CHANGED, LOST, SPAM_MARKED -> 60;
+            case WEBINAR_ATTENDED, WEBINAR_NO_SHOW, WEBINAR_REGISTRATION_CANCELLED -> 65;
             case FOLLOW_UP_COMPLETED -> 70;
             case APPOINTMENT_BOOKED -> 80;
             case CONVERTED_TO_PATIENT -> 90;

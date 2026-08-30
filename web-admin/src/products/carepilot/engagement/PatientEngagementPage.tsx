@@ -352,6 +352,10 @@ export default function PatientEngagementPage() {
         </Typography>
       </Box>
 
+      <Alert severity="info">
+        Marketing and outreach eligibility use the tenant-level consent policy configured in Notification Settings.
+      </Alert>
+
       {error ? <Alert severity="error">{error}</Alert> : null}
 
       <Stack spacing={1.5}>

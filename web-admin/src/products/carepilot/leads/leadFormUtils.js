@@ -1,6 +1,9 @@
+import { parseCarePilotDateTimeInput } from "../shared/carepilotFormatting.js";
+
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DATETIME_LOCAL_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/;
 const LEAD_PHONE_MESSAGE = "Enter a valid 10-digit mobile number.";
+const ENGAGE_ASSIGNEE_ROLES = new Set(["ENGAGE_EXECUTIVE", "ENGAGE_MANAGER", "CLINIC_ADMIN"]);
 
 function trimmed(value) {
   return typeof value === "string" ? value.trim() : "";
@@ -53,6 +56,22 @@ function normalizeMembershipStatus(value) {
   return typeof value === "string" ? value.trim().toUpperCase() : "";
 }
 
+function normalizeRoleValue(value) {
+  return typeof value === "string" ? value.trim().toUpperCase() : "";
+}
+
+function isEligibleEngageAssignee(user) {
+  if (!user || !user.appUserId) {
+    return false;
+  }
+  const membershipStatus = normalizeMembershipStatus(user.membershipStatus);
+  const userStatus = normalizeRoleValue(user.userStatus || user.status);
+  const membershipRole = normalizeRoleValue(user.membershipRole);
+  return membershipStatus === "ACTIVE"
+    && userStatus === "ACTIVE"
+    && ENGAGE_ASSIGNEE_ROLES.has(membershipRole);
+}
+
 export function toLeadDateTimeInputValue(value) {
   if (!value) {
     return "";
@@ -65,7 +84,7 @@ export function toLeadDateTimeInputValue(value) {
   return local.slice(0, 16);
 }
 
-export function validateLeadDraft(draft, clinicUsers = []) {
+export function validateLeadDraft(draft, clinicUsers = [], clinicTimeZone = "UTC") {
   const fieldErrors = {};
   const normalizedPhone = String(normalizeIndianMobileInput(draft.phone) || "").trim();
   const trimmedNextFollowUpAt = trimmed(draft.nextFollowUpAt);
@@ -85,10 +104,15 @@ export function validateLeadDraft(draft, clinicUsers = []) {
   }
   if (trimmedNextFollowUpAt && !DATETIME_LOCAL_RE.test(trimmedNextFollowUpAt)) {
     fieldErrors.nextFollowUpAt = "Select a valid follow-up date and time.";
+  } else if (trimmedNextFollowUpAt) {
+    const parsed = parseCarePilotDateTimeInput(trimmedNextFollowUpAt, clinicTimeZone);
+    if (!parsed || new Date(parsed).getTime() <= Date.now()) {
+      fieldErrors.nextFollowUpAt = "Follow-up date and time must be in the future.";
+    }
   }
   if (trimmedAssignedToAppUserId) {
-    if (!selectedUser || normalizeMembershipStatus(selectedUser.membershipStatus) !== "ACTIVE") {
-      fieldErrors.assignedToAppUserId = "Select an active assignee.";
+    if (!selectedUser || !isEligibleEngageAssignee(selectedUser)) {
+      fieldErrors.assignedToAppUserId = "Select an active Engage user.";
     }
   }
 
@@ -96,6 +120,34 @@ export function validateLeadDraft(draft, clinicUsers = []) {
     fieldErrors,
     normalizedPhone,
     normalizedNextFollowUpAt: trimmedNextFollowUpAt,
+  };
+}
+
+export function filterEligibleEngageAssignees(clinicUsers = []) {
+  return clinicUsers.filter((user) => isEligibleEngageAssignee(user));
+}
+
+export function validateFollowUpScheduleDraft(draft, clinicTimeZone) {
+  const fieldErrors = {};
+  const date = trimmed(draft?.date);
+  const time = trimmed(draft?.time);
+  if (!date) {
+    fieldErrors.date = "Follow-up date is required.";
+  }
+  if (!time) {
+    fieldErrors.time = "Follow-up time is required.";
+  }
+  if (date && time) {
+    const parsed = parseCarePilotDateTimeInput(`${date}T${time}`, clinicTimeZone);
+    if (!parsed || new Date(parsed).getTime() <= Date.now()) {
+      const message = "Follow-up date and time must be in the future.";
+      fieldErrors.date = message;
+      fieldErrors.time = message;
+    }
+  }
+  return {
+    fieldErrors,
+    nextFollowUpAt: date && time ? parseCarePilotDateTimeInput(`${date}T${time}`, clinicTimeZone) : null,
   };
 }
 
@@ -181,7 +233,7 @@ export function mapLeadApiErrorToFieldErrors(message) {
     } else if (lower.includes("follow up") || lower.includes("follow-up")) {
       fieldErrors.nextFollowUpAt = "Select a valid follow-up date and time.";
     } else if (lower.includes("assignee") || lower.includes("assigned")) {
-      fieldErrors.assignedToAppUserId = "Select an active assignee.";
+      fieldErrors.assignedToAppUserId = "Select an active Engage user.";
     } else if (lower.includes("first name")) {
       fieldErrors.firstName = "First name is required.";
     } else if (lower.includes("source")) {
@@ -221,7 +273,7 @@ function resolveFieldMessage(field, message) {
     return "Select a valid follow-up date and time.";
   }
   if (field === "assignedToAppUserId" || lower.includes("assignee")) {
-    return "Select an active assignee.";
+    return "Select an active Engage user.";
   }
   if (field === "firstName") {
     return "First name is required.";

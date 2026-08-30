@@ -85,8 +85,8 @@ public class WebinarRegistrationService {
         if (!webinar.isRegistrationEnabled()) {
             throw new IllegalArgumentException("registration is disabled for this webinar");
         }
-        if (webinar.getStatus() == WebinarStatus.CANCELLED) {
-            throw new IllegalArgumentException("cancelled webinar does not accept registrations");
+        if (isTerminal(webinar.getStatus())) {
+            throw new IllegalArgumentException("completed or cancelled webinar does not accept registrations");
         }
 
         String email = normalize(command.attendeeEmail());
@@ -152,7 +152,7 @@ public class WebinarRegistrationService {
     }
 
     @Transactional
-    public WebinarRegistrationRecord markAttendance(UUID tenantId, UUID webinarId, UUID registrationId, WebinarAttendanceCommand command) {
+    public WebinarRegistrationRecord markAttendance(UUID tenantId, UUID webinarId, UUID registrationId, WebinarAttendanceCommand command, UUID actorId) {
         CarePilotValidators.requireTenant(tenantId);
         CarePilotValidators.requireId(webinarId, "webinarId");
         CarePilotValidators.requireId(registrationId, "registrationId");
@@ -160,9 +160,30 @@ public class WebinarRegistrationService {
             throw new IllegalArgumentException("registrationStatus is required");
         }
         WebinarEntity webinar = requireWebinar(tenantId, webinarId);
+        if (isTerminal(webinar.getStatus())) {
+            throw new IllegalArgumentException("completed or cancelled webinar registrations are read-only");
+        }
+        if (webinar.getStatus() != WebinarStatus.LIVE) {
+            throw new IllegalArgumentException("attendance can only be recorded while the webinar is live");
+        }
+        if (command.registrationStatus() != WebinarRegistrationStatus.ATTENDED
+                && command.registrationStatus() != WebinarRegistrationStatus.NO_SHOW
+                && command.registrationStatus() != WebinarRegistrationStatus.CANCELLED) {
+            throw new IllegalArgumentException("registrationStatus must be Attended, No-show, or Cancelled");
+        }
         WebinarRegistrationEntity row = registrationRepository.findById(registrationId)
                 .filter(r -> r.getTenantId().equals(tenantId) && r.getWebinarId().equals(webinarId))
                 .orElseThrow(() -> new IllegalArgumentException("registration not found"));
+
+        if (row.getRegistrationStatus() == command.registrationStatus()) {
+            return toRecord(row, webinar, loadLead(row.getTenantId(), row.getLeadId()));
+        }
+        if (row.getRegistrationStatus() != WebinarRegistrationStatus.REGISTERED) {
+            throw new IllegalArgumentException("only registered attendees can be marked attended, no-show, or cancelled");
+        }
+        if (command.registrationStatus() == WebinarRegistrationStatus.REGISTERED) {
+            throw new IllegalArgumentException("registration status cannot be reset to REGISTERED");
+        }
 
         row.setRegistrationStatus(command.registrationStatus());
         row.setNotes(normalize(command.notes()));
@@ -174,7 +195,12 @@ public class WebinarRegistrationService {
             row.setAttendedAt(null);
         }
         row.touch();
-        return toRecord(registrationRepository.save(row), webinar);
+        WebinarRegistrationEntity saved = registrationRepository.save(row);
+        LeadRecord linkedLead = loadLead(saved.getTenantId(), saved.getLeadId());
+        if (linkedLead != null) {
+            recordAttendanceTimelineEvent(tenantId, webinar, saved, actorId, command.registrationStatus(), linkedLead);
+        }
+        return toRecord(saved, webinar, linkedLead);
     }
 
     private WebinarEntity requireWebinar(UUID tenantId, UUID webinarId) {
@@ -271,6 +297,59 @@ public class WebinarRegistrationService {
             );
         }
         return toLeadRecord(lead);
+    }
+
+    private void recordAttendanceTimelineEvent(
+            UUID tenantId,
+            WebinarEntity webinar,
+            WebinarRegistrationEntity row,
+            UUID actorId,
+            WebinarRegistrationStatus registrationStatus,
+            LeadRecord linkedLead
+    ) {
+        if (linkedLead == null) {
+            return;
+        }
+        switch (registrationStatus) {
+            case ATTENDED -> leadActivityService.record(
+                    tenantId,
+                    linkedLead.id(),
+                    LeadActivityType.WEBINAR_ATTENDED,
+                    "Webinar Attended",
+                    "Attended webinar: " + webinar.getTitle(),
+                    null,
+                    null,
+                    "WEBINAR",
+                    row.getWebinarId(),
+                    actorId
+            );
+            case NO_SHOW -> leadActivityService.record(
+                    tenantId,
+                    linkedLead.id(),
+                    LeadActivityType.WEBINAR_NO_SHOW,
+                    "Webinar No-show",
+                    "Marked no-show for webinar: " + webinar.getTitle(),
+                    null,
+                    null,
+                    "WEBINAR",
+                    row.getWebinarId(),
+                    actorId
+            );
+            case CANCELLED -> leadActivityService.record(
+                    tenantId,
+                    linkedLead.id(),
+                    LeadActivityType.WEBINAR_REGISTRATION_CANCELLED,
+                    "Webinar Registration Cancelled",
+                    "Registration cancelled for webinar: " + webinar.getTitle(),
+                    null,
+                    null,
+                    "WEBINAR",
+                    row.getWebinarId(),
+                    actorId
+            );
+            default -> {
+            }
+        }
     }
 
     private WebinarRegistrationRecord toRecord(WebinarRegistrationEntity row, WebinarEntity webinar) {
@@ -404,6 +483,10 @@ public class WebinarRegistrationService {
             }
         }
         return null;
+    }
+
+    private boolean isTerminal(WebinarStatus status) {
+        return status == WebinarStatus.COMPLETED || status == WebinarStatus.CANCELLED;
     }
 
     private NameParts splitName(String fullName) {

@@ -32,6 +32,9 @@ test("engage routes enforce explicit permission gates and user-facing engage lab
   assert.ok(!navSource.includes('{ key: "analytics", label: "Analytics", path: "/carepilot/analytics", requiresTenant: true, rolesAny:'));
   assert.ok(modulesSource.includes('displayName: "Engage"'));
   assert.ok(modulesSource.includes('"/carepilot/ai-operations"'));
+  assert.ok(modulesSource.includes('"/carepilot/ops"'));
+  assert.ok(modulesSource.includes('isEngageWorkspaceOnlyRole(auth) ? "/carepilot/ops" : null'));
   assert.ok(analyticsSource.includes("ENGAGE_ANALYTICS_VIEW"));
   assert.ok(engagementSource.includes("ENGAGE_ANALYTICS_VIEW"));
+  assert.ok(engagementSource.includes("Marketing and outreach eligibility use the tenant-level consent policy configured in Notification Settings."));
 });

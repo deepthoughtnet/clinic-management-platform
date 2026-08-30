@@ -170,7 +170,7 @@ class CarePilotWebinarControllerAuthorizationTest {
         when(registrationService.list(eq(TENANT_ID), eq(WEBINAR_ID), anyInt(), anyInt()))
                 .thenReturn(new PageImpl<>(List.of(registration), PageRequest.of(0, 25), 1));
         when(registrationService.register(eq(TENANT_ID), eq(WEBINAR_ID), any(), eq(ACTOR_ID))).thenReturn(registration);
-        when(registrationService.markAttendance(eq(TENANT_ID), eq(WEBINAR_ID), eq(REGISTRATION_ID), any())).thenReturn(registration);
+        when(registrationService.markAttendance(eq(TENANT_ID), eq(WEBINAR_ID), eq(REGISTRATION_ID), any(), any())).thenReturn(registration);
         when(analyticsService.summary(eq(TENANT_ID))).thenReturn(
                 new com.deepthoughtnet.clinic.carepilot.webinar.analytics.WebinarAnalyticsRecord(
                         1, 1, 0, 1, 1, 0, 100.0, 0.0, 0, java.util.Map.of(), 0

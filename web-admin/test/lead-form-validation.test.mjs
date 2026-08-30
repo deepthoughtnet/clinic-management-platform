@@ -5,8 +5,10 @@ import path from "node:path";
 
 import {
   buildLeadCreatePayload,
+  filterEligibleEngageAssignees,
   mapLeadApiErrorToFieldErrors,
   toLeadDateTimeInputValue,
+  validateFollowUpScheduleDraft,
   validateLeadDraft,
 } from "../src/products/carepilot/leads/leadFormUtils.js";
 
@@ -31,12 +33,15 @@ const baseDraft = {
 };
 
 const activeUsers = [
-  { appUserId: "user-active", membershipStatus: "ACTIVE" },
-  { appUserId: "user-inactive", membershipStatus: "INACTIVE" },
+  { appUserId: "user-executive", membershipStatus: "ACTIVE", userStatus: "ACTIVE", membershipRole: "ENGAGE_EXECUTIVE" },
+  { appUserId: "user-manager", membershipStatus: "ACTIVE", userStatus: "ACTIVE", membershipRole: "ENGAGE_MANAGER" },
+  { appUserId: "user-clinic-admin", membershipStatus: "ACTIVE", userStatus: "ACTIVE", membershipRole: "CLINIC_ADMIN" },
+  { appUserId: "user-inactive", membershipStatus: "INACTIVE", userStatus: "INACTIVE", membershipRole: "ENGAGE_EXECUTIVE" },
+  { appUserId: "user-pharmacy", membershipStatus: "ACTIVE", userStatus: "ACTIVE", membershipRole: "PHARMACIST" },
 ];
 
 test("lead form allows omission of next follow-up", () => {
-  const validation = validateLeadDraft(baseDraft, activeUsers);
+  const validation = validateLeadDraft(baseDraft, activeUsers, "Asia/Kolkata");
   assert.deepEqual(validation.fieldErrors, {});
 
   const payload = buildLeadCreatePayload(baseDraft, validation.normalizedPhone);
@@ -44,34 +49,55 @@ test("lead form allows omission of next follow-up", () => {
 });
 
 test("lead form accepts datetime-local input and round-trips through ISO", () => {
-  const draft = { ...baseDraft, nextFollowUpAt: "2026-08-02T11:00" };
-  const validation = validateLeadDraft(draft, activeUsers);
+  const draft = { ...baseDraft, nextFollowUpAt: "2026-09-02T11:00" };
+  const validation = validateLeadDraft(draft, activeUsers, "Asia/Kolkata");
   assert.deepEqual(validation.fieldErrors, {});
 
   const payload = buildLeadCreatePayload(draft, validation.normalizedPhone);
   assert.match(payload.nextFollowUpAt || "", /^\d{4}-\d{2}-\d{2}T/);
-  assert.equal(toLeadDateTimeInputValue(payload.nextFollowUpAt), "2026-08-02T11:00");
+  assert.equal(toLeadDateTimeInputValue(payload.nextFollowUpAt), "2026-09-02T11:00");
 });
 
 test("lead form rejects malformed follow-up input with a field error", () => {
-  const validation = validateLeadDraft({ ...baseDraft, nextFollowUpAt: "02/08/2026 11:00 AM" }, activeUsers);
+  const validation = validateLeadDraft({ ...baseDraft, nextFollowUpAt: "02/08/2026 11:00 AM" }, activeUsers, "Asia/Kolkata");
   assert.equal(validation.fieldErrors.nextFollowUpAt, "Select a valid follow-up date and time.");
 });
 
+test("lead form rejects past follow-up date time", () => {
+  const validation = validateLeadDraft({ ...baseDraft, nextFollowUpAt: "2026-08-28T18:26" }, activeUsers, "Asia/Kolkata");
+  assert.equal(validation.fieldErrors.nextFollowUpAt, "Follow-up date and time must be in the future.");
+});
+
 test("lead form validates phone and email with field-specific messages", () => {
-  const validation = validateLeadDraft({ ...baseDraft, phone: "12345", email: "bad-email" }, activeUsers);
+  const validation = validateLeadDraft({ ...baseDraft, phone: "12345", email: "bad-email" }, activeUsers, "Asia/Kolkata");
   assert.equal(validation.fieldErrors.phone, "Enter a valid 10-digit mobile number.");
   assert.equal(validation.fieldErrors.email, "Enter a valid email address.");
 });
 
 test("lead form accepts optional campaign, assignee and tags values when empty", () => {
-  const validation = validateLeadDraft({ ...baseDraft, campaignId: "", assignedToAppUserId: "", tags: "" }, activeUsers);
+  const validation = validateLeadDraft({ ...baseDraft, campaignId: "", assignedToAppUserId: "", tags: "" }, activeUsers, "Asia/Kolkata");
   assert.deepEqual(validation.fieldErrors, {});
 });
 
-test("lead form rejects inactive assignee selections", () => {
-  const validation = validateLeadDraft({ ...baseDraft, assignedToAppUserId: "user-inactive" }, activeUsers);
-  assert.equal(validation.fieldErrors.assignedToAppUserId, "Select an active assignee.");
+test("lead form rejects inactive or ineligible assignee selections", () => {
+  const inactiveValidation = validateLeadDraft({ ...baseDraft, assignedToAppUserId: "user-inactive" }, activeUsers, "Asia/Kolkata");
+  const pharmacyValidation = validateLeadDraft({ ...baseDraft, assignedToAppUserId: "user-pharmacy" }, activeUsers, "Asia/Kolkata");
+  assert.equal(inactiveValidation.fieldErrors.assignedToAppUserId, "Select an active Engage user.");
+  assert.equal(pharmacyValidation.fieldErrors.assignedToAppUserId, "Select an active Engage user.");
+});
+
+test("lead form filters assignee options to eligible active Engage users", () => {
+  const filtered = filterEligibleEngageAssignees(activeUsers);
+  assert.deepEqual(filtered.map((user) => user.appUserId), ["user-executive", "user-manager", "user-clinic-admin"]);
+});
+
+test("lead follow-up scheduling rejects past date time and accepts future date time", () => {
+  const past = validateFollowUpScheduleDraft({ date: "2026-08-28", time: "18:26" }, "Asia/Kolkata");
+  const future = validateFollowUpScheduleDraft({ date: "2026-09-01", time: "18:26" }, "Asia/Kolkata");
+  assert.equal(past.fieldErrors.date, "Follow-up date and time must be in the future.");
+  assert.equal(past.fieldErrors.time, "Follow-up date and time must be in the future.");
+  assert.equal(future.nextFollowUpAt, "2026-09-01T12:56:00.000Z");
+  assert.deepEqual(future.fieldErrors, {});
 });
 
 test("backend validation messages map to friendly field errors", () => {
@@ -86,8 +112,10 @@ test("lead form submit path prevents duplicate clicks and shows inline errors", 
   assert.ok(source.includes("saving || saveInFlightRef.current"));
   assert.ok(source.includes("setFieldErrors(validation.fieldErrors)"));
   assert.ok(source.includes("mapLeadApiErrorToFieldErrors(message)"));
-  assert.ok(source.includes("convertedLeadCanSave"));
-  assert.ok(source.includes("disabled={saving || (convertedLead ? !convertedLeadDirty : false)}"));
+  assert.ok(source.includes("canPersistLeadForm ? ("));
   assert.ok(source.includes("error={Boolean(fieldErrors.nextFollowUpAt)}"));
+  assert.ok(source.includes("Follow-up date and time must be in the future."));
+  assert.ok(source.includes("Optional. Assign this lead to an active Engage user."));
   assert.ok(source.includes("clearSaveState()"));
+  assert.ok(source.includes("validateFollowUpScheduleDraft(followUpDraft, clinicTimeZone)"));
 });

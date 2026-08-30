@@ -2,6 +2,8 @@ package com.deepthoughtnet.clinic.carepilot.webinar.service;
 
 import com.deepthoughtnet.clinic.carepilot.campaign.db.CampaignEntity;
 import com.deepthoughtnet.clinic.carepilot.campaign.db.CampaignRepository;
+import com.deepthoughtnet.clinic.carepilot.notificationsettings.service.TenantNotificationSettingsService;
+import com.deepthoughtnet.clinic.carepilot.notificationsettings.service.model.NotificationSettingsRecord;
 import com.deepthoughtnet.clinic.carepilot.shared.util.CarePilotValidators;
 import com.deepthoughtnet.clinic.carepilot.webinar.db.WebinarEntity;
 import com.deepthoughtnet.clinic.carepilot.webinar.db.WebinarRepository;
@@ -29,10 +31,12 @@ import org.springframework.util.StringUtils;
 public class WebinarService {
     private final WebinarRepository repository;
     private final CampaignRepository campaignRepository;
+    private final TenantNotificationSettingsService notificationSettingsService;
 
-    public WebinarService(WebinarRepository repository, CampaignRepository campaignRepository) {
+    public WebinarService(WebinarRepository repository, CampaignRepository campaignRepository, TenantNotificationSettingsService notificationSettingsService) {
         this.repository = repository;
         this.campaignRepository = campaignRepository;
+        this.notificationSettingsService = notificationSettingsService;
     }
 
     @Transactional(readOnly = true)
@@ -57,7 +61,7 @@ public class WebinarService {
         CarePilotValidators.requireTenant(tenantId);
         validate(command);
         WebinarEntity row = WebinarEntity.create(tenantId, actorId);
-        apply(row, command, actorId);
+        apply(row, command, actorId, true);
         return toRecord(repository.save(row));
     }
 
@@ -67,7 +71,13 @@ public class WebinarService {
         CarePilotValidators.requireId(id, "id");
         validate(command);
         WebinarEntity row = require(tenantId, id);
-        apply(row, command, actorId);
+        if (row.getStatus() == WebinarStatus.LIVE) {
+            throw new IllegalArgumentException("Live webinars cannot be edited");
+        }
+        if (isTerminal(row.getStatus())) {
+            throw new IllegalArgumentException("Completed or cancelled webinars cannot be edited");
+        }
+        apply(row, command, actorId, false);
         return toRecord(repository.save(row));
     }
 
@@ -120,21 +130,32 @@ public class WebinarService {
         }
     }
 
-    private void apply(WebinarEntity row, WebinarUpsertCommand command, UUID actorId) {
+    private void apply(WebinarEntity row, WebinarUpsertCommand command, UUID actorId, boolean allowStatusChange) {
         row.setTitle(command.title().trim());
         row.setDescription(normalize(command.description()));
         row.setWebinarType(command.webinarType() == null ? WebinarType.OTHER : command.webinarType());
-        row.setStatus(command.status() == null ? row.getStatus() : command.status());
-        if (command.campaignId() != null && campaignRepository.findByTenantIdAndId(row.getTenantId(), command.campaignId()).isEmpty()) {
-            throw new IllegalArgumentException("campaignId does not belong to tenant");
+        if (allowStatusChange && command.status() != null) {
+            if (command.status() == WebinarStatus.COMPLETED || command.status() == WebinarStatus.CANCELLED) {
+                throw new IllegalArgumentException("Completed or cancelled webinars cannot be created");
+            }
+            row.setStatus(command.status());
         }
-        row.setCampaignId(command.campaignId());
+        if (command.campaignId() != null) {
+            CampaignEntity campaign = campaignRepository.findByTenantIdAndId(row.getTenantId(), command.campaignId())
+                    .orElseThrow(() -> new IllegalArgumentException("campaignId does not belong to tenant"));
+            if (row.getCampaignId() == null || !row.getCampaignId().equals(command.campaignId())) {
+                if (campaign.getStatus() != com.deepthoughtnet.clinic.carepilot.campaign.model.CampaignStatus.ACTIVE) {
+                    throw new IllegalArgumentException("Selected campaign must be active");
+                }
+            }
+            row.setCampaignId(command.campaignId());
+        }
         row.setWebinarUrl(normalize(command.webinarUrl()));
         row.setOrganizerName(normalize(command.organizerName()));
         row.setOrganizerEmail(normalize(command.organizerEmail()));
         row.setScheduledStartAt(command.scheduledStartAt());
         row.setScheduledEndAt(command.scheduledEndAt());
-        row.setTimezone(StringUtils.hasText(command.timezone()) ? command.timezone().trim() : "UTC");
+        row.setTimezone(resolveTimezone(row.getTenantId(), command.timezone()));
         row.setCapacity(command.capacity());
         row.setRegistrationEnabled(command.registrationEnabled() == null || command.registrationEnabled());
         row.setReminderEnabled(command.reminderEnabled() == null || command.reminderEnabled());
@@ -158,6 +179,21 @@ public class WebinarService {
 
     private String normalize(String value) {
         return StringUtils.hasText(value) ? value.trim() : null;
+    }
+
+    private String resolveTimezone(UUID tenantId, String timezone) {
+        if (StringUtils.hasText(timezone)) {
+            return timezone.trim();
+        }
+        return notificationSettingsService.findByTenantId(tenantId)
+                .map(NotificationSettingsRecord::timezone)
+                .filter(StringUtils::hasText)
+                .map(String::trim)
+                .orElse("Asia/Kolkata");
+    }
+
+    private boolean isTerminal(WebinarStatus status) {
+        return status == WebinarStatus.COMPLETED || status == WebinarStatus.CANCELLED;
     }
 
     private Specification<WebinarEntity> spec(UUID tenantId, WebinarSearchCriteria criteria) {

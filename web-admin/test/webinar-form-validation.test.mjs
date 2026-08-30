@@ -142,8 +142,22 @@ test("parse helper rejects invalid datetime-local values", () => {
 
 test("webinar save path blocks API calls until validation passes", () => {
   const source = readSource("products/carepilot/webinars/WebinarsPage.tsx");
+  const api = readSource("api/clinicApi.ts");
   assert.ok(source.includes("const validationErrors = validateWebinarDraft(draft);"));
   assert.ok(source.includes("if (Object.keys(validationErrors).length > 0) {"));
   assert.ok(source.includes("return;"));
   assert.ok(source.includes("await updateCarePilotWebinar(auth.accessToken, auth.tenantId, editing.id, payload);") || source.includes("await createCarePilotWebinar(auth.accessToken, auth.tenantId, payload);"));
+  assert.ok(source.includes('label="Title"'));
+  assert.ok(source.includes('label="Start"'));
+  assert.ok(source.includes('label="End"'));
+  assert.ok(source.includes('label="Timezone"'));
+  assert.ok(source.includes('label="Attendee"'));
+  assert.ok(!source.includes('label="Title *"'));
+  assert.ok(!source.includes('label="Start *"'));
+  assert.ok(!source.includes('label="End *"'));
+  assert.ok(!source.includes('label="Timezone *"'));
+  assert.ok(!source.includes('label="Attendee *"'));
+  assert.ok(api.includes('WEBINAR_ATTENDED'));
+  assert.ok(api.includes('WEBINAR_NO_SHOW'));
+  assert.ok(api.includes('WEBINAR_REGISTRATION_CANCELLED'));
 });

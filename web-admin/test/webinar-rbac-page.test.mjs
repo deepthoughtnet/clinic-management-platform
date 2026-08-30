@@ -29,6 +29,7 @@ test("webinar page uses view permission for the shell, drafts tab, and defers pr
   assert.ok(page.includes('DRAFTS'));
   assert.ok(page.includes('const canViewAnalytics = auth.hasPermission(ENGAGE_WEBINAR_VIEW_ANALYTICS);'));
   assert.ok(page.includes('const canViewCampaigns = auth.hasPermission("engage.campaign.view")'));
+  assert.ok(page.includes('useCarePilotTenantTimezone(auth.accessToken, auth.tenantId)'));
   assert.ok(page.includes('const [pageError, setPageError] = React.useState<string | null>(null);'));
   assert.ok(page.includes('const [pageAccessDenied, setPageAccessDenied] = React.useState(false);'));
   assert.ok(page.includes('if (pageAccessDenied)'));
@@ -39,6 +40,9 @@ test("webinar page uses view permission for the shell, drafts tab, and defers pr
   assert.ok(page.includes('const loadCampaigns = React.useCallback(async () => {'));
   assert.ok(page.includes('if (!auth.accessToken || !auth.tenantId || !canViewCampaigns) return;'));
   assert.ok(page.includes('void loadCampaigns();'));
+  assert.ok(page.includes('const campaignOptions = React.useMemo(() => {'));
+  assert.ok(page.includes('campaign.status === "ACTIVE"'));
+  assert.ok(page.includes('Only active campaigns are selectable for new webinar automation.'));
   assert.ok(page.includes('formatCarePilotDateTimeInput(row.scheduledStartAt, row.timezone)'));
   assert.ok(page.includes('formatCarePilotDateTimeInput(row.scheduledEndAt, row.timezone)'));
   assert.ok(page.includes('const visibleRows = React.useMemo(() => {'));
@@ -55,6 +59,10 @@ test("webinar page uses view permission for the shell, drafts tab, and defers pr
   assert.ok(page.includes('row.status === "DRAFT" ? <Button size="small" onClick={() => void quickStatus(row, "SCHEDULED")}>Publish</Button> : null'));
   assert.ok(page.includes('row.status === "SCHEDULED" ? <Button size="small" onClick={() => void quickStatus(row, "LIVE")}>Start</Button> : null'));
   assert.ok(page.includes('loading ? <Box sx={{ minHeight: 220, display: "grid", placeItems: "center" }}><CircularProgress /></Box> : null'));
+  assert.ok(page.includes('canEdit && canEditWebinarStatus(row.status)'));
+  assert.ok(page.includes('canCancel && !isTerminalWebinarStatus(row.status)'));
+  assert.ok(page.includes('canRecordAttendanceForRegistration(regWebinar?.status, row.registrationStatus)'));
+  assert.ok(page.includes('This webinar is read-only. Registrations and attendance cannot be changed after completion or cancellation.'));
   assert.ok(page.includes('!loading && pageError'));
   assert.ok(page.includes('visibleRows.length === 0'));
   assert.ok(!page.includes('No webinars found for selected filters.'));

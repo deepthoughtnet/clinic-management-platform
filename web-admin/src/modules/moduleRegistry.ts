@@ -294,6 +294,7 @@ export function resolveTenantLandingPage(
     tenantRole === "PHARMACY_POS_USER" ? "/pharmacy/pos" : null,
     isPharmacyPosOnlyRole(auth) ? "/pharmacy/pos" : null,
     hasAnyRole(getActiveRoles(auth), "VACCINE_MASTER_MANAGER") ? "/admin/vaccine-master" : null,
+    isEngageWorkspaceOnlyRole(auth) ? "/carepilot/ops" : null,
     enabled.has("INVENTORY") && (enabled.has("PRESCRIPTION") || enabled.has("BILLING")) && isPharmacyWorkspaceRole(auth) ? "/pharmacy/dashboard" : null,
     enabled.has("LABORATORY") && (isLabWorkspaceRole(auth) || hasLabReceptionAccess(auth)) ? "/lab" : null,
     enabled.has("BILLING") && isBillingWorkspaceRole(auth) ? "/billing" : null,
@@ -362,6 +363,14 @@ export function isBillingWorkspaceRole(
   auth: Pick<AuthContextValue, "tenantRole" | "rolesUpper">,
 ) {
   return hasAnyRole(getActiveRoles(auth), "CLINIC_ADMIN", "BILLING_USER", "AUDITOR", "PLATFORM_ADMIN");
+}
+
+export function isEngageWorkspaceOnlyRole(
+  auth: Pick<AuthContextValue, "tenantRole" | "rolesUpper">,
+) {
+  const activeRoles = getActiveRoles(auth);
+  return hasAnyRole(activeRoles, "ENGAGE_MANAGER", "ENGAGE_EXECUTIVE")
+    && !hasAnyRole(activeRoles, "CLINIC_ADMIN", "TENANT_ADMIN", "ADMIN", "DOCTOR", "RECEPTIONIST", "BILLING_USER", "AUDITOR", "PHARMACIST", "PHARMACY", "PHARMA", "PHARMACY_INVENTORY_MANAGER", "PHARMACY_POS_USER", "LAB_FRONT_DESK", "LAB_TECHNICIAN", "LAB_ASSISTANT", "LAB_APPROVER", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT", "SERVICE_AGENT");
 }
 
 export function isRouteAccessibleForAuth(

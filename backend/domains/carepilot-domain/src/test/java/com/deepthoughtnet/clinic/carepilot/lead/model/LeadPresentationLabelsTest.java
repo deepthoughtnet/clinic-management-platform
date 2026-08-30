@@ -16,6 +16,7 @@ class LeadPresentationLabelsTest {
         assertThat(LeadPresentationLabels.statusLabel(LeadStatus.FOLLOW_UP_REQUIRED)).isEqualTo("Follow-up Required");
         assertThat(LeadPresentationLabels.priorityLabel(LeadPriority.MEDIUM)).isEqualTo("Medium");
         assertThat(LeadPresentationLabels.activityLabel(LeadActivityType.FOLLOW_UP_COMPLETED)).isEqualTo("Follow-up Completed");
+        assertThat(LeadPresentationLabels.activityLabel(LeadActivityType.WEBINAR_ATTENDED)).isEqualTo("Webinar Attended");
         assertThat(LeadPresentationLabels.statusTransitionLabel(LeadStatus.CONTACTED, LeadStatus.CONVERTED)).isEqualTo("Contacted -> Converted");
         assertThat(LeadSource.WALK_IN.name()).isEqualTo("WALK_IN");
         assertThat(LeadStatus.CONVERTED.name()).isEqualTo("CONVERTED");

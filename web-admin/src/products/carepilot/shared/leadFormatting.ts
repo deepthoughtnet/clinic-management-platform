@@ -62,6 +62,10 @@ const ACTIVITY_LABELS: Record<string, string> = {
   UPDATED: "Lead Updated",
   STATUS_CHANGED: "Status Changed",
   NOTE_ADDED: "Note Added",
+  WEBINAR_REGISTERED: "Webinar Registered",
+  WEBINAR_ATTENDED: "Webinar Attended",
+  WEBINAR_NO_SHOW: "Webinar No-show",
+  WEBINAR_REGISTRATION_CANCELLED: "Webinar Registration Cancelled",
   FOLLOW_UP_SCHEDULED: "Follow-up Scheduled",
   FOLLOW_UP_COMPLETED: "Follow-up Completed",
   CONVERTED_TO_PATIENT: "Lead Converted",
@@ -129,6 +133,10 @@ export function formatLeadTimelineDescription(
 
   if (type === "NOTE_ADDED") {
     return description ? `Note: ${description}` : "Note added";
+  }
+
+  if (type === "WEBINAR_REGISTERED" || type === "WEBINAR_ATTENDED" || type === "WEBINAR_NO_SHOW" || type === "WEBINAR_REGISTRATION_CANCELLED") {
+    return description || leadActivityLabel(type);
   }
 
   return description;

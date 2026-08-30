@@ -61,7 +61,6 @@ import {
   lookupCarePilotCampaigns,
   listCarePilotLeadActivities,
   listCarePilotLeads,
-  updateCarePilotConvertedLeadMetadata,
   updateCarePilotLead,
   updateCarePilotLeadStatus,
   type AppointmentPriority,
@@ -93,11 +92,10 @@ import {
 } from "../shared/leadFormatting";
 import { useCarePilotTenantTimezone } from "../shared/useCarePilotTenantTimezone";
 import {
-  buildConvertedLeadMetadataPayload,
   buildLeadCreatePayload,
-  hasConvertedLeadMetadataChanges,
+  filterEligibleEngageAssignees,
   mapLeadApiErrorToFieldErrors,
-  toConvertedLeadMetadataSnapshot,
+  validateFollowUpScheduleDraft,
   toLeadDateTimeInputValue,
   validateLeadDraft,
 } from "./leadFormUtils";
@@ -237,12 +235,12 @@ export default function LeadsPage() {
   const [editorOpen, setEditorOpen] = React.useState(false);
   const [editorLead, setEditorLead] = React.useState<CarePilotLead | null>(null);
   const [draft, setDraft] = React.useState<LeadDraft>(emptyDraft());
+  const [followUpFieldErrors, setFollowUpFieldErrors] = React.useState<Record<string, string>>({});
   const editorContentRef = React.useRef<HTMLDivElement | null>(null);
   const firstNameInputRef = React.useRef<HTMLInputElement | null>(null);
   const phoneInputRef = React.useRef<HTMLInputElement | null>(null);
   const emailInputRef = React.useRef<HTMLInputElement | null>(null);
   const nextFollowUpInputRef = React.useRef<HTMLInputElement | null>(null);
-  const convertedLeadSnapshotRef = React.useRef<ReturnType<typeof toConvertedLeadMetadataSnapshot> | null>(null);
 
   const [activities, setActivities] = React.useState<CarePilotLeadActivity[]>([]);
   const [activityLoading, setActivityLoading] = React.useState(false);
@@ -259,6 +257,7 @@ export default function LeadsPage() {
   const [convertDraft, setConvertDraft] = React.useState<ConvertDraft>(emptyConvertDraft());
   const openedLeadIdRef = React.useRef<string | null>(null);
   const [linkedPatientDetail, setLinkedPatientDetail] = React.useState<PatientDetail | null>(null);
+  const eligibleAssignees = React.useMemo(() => filterEligibleEngageAssignees(users), [users]);
 
   React.useEffect(() => {
     const rawTab = (searchParams.get("tab") || "").trim().toLowerCase();
@@ -275,6 +274,7 @@ export default function LeadsPage() {
   const clearSaveState = () => {
     setSaveError(null);
     setFieldErrors({});
+    setFollowUpFieldErrors({});
     saveInFlightRef.current = false;
   };
 
@@ -296,7 +296,6 @@ export default function LeadsPage() {
       campaignId: lead.campaignId || "",
       assignedToAppUserId: lead.assignedToAppUserId || "",
     });
-    convertedLeadSnapshotRef.current = lead.status === "CONVERTED" ? toConvertedLeadMetadataSnapshot(lead) : null;
     clearSaveState();
     setEditorOpen(true);
   }, []);
@@ -309,6 +308,15 @@ export default function LeadsPage() {
       return next;
     });
     setSaveError(null);
+  };
+
+  const clearFollowUpFieldError = (field: "date" | "time") => {
+    setFollowUpFieldErrors((current) => {
+      if (!current[field]) return current;
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
   };
 
   const focusLeadField = (field: string) => {
@@ -448,7 +456,6 @@ export default function LeadsPage() {
   const openCreate = () => {
     setEditorLead(null);
     setDraft(emptyDraft());
-    convertedLeadSnapshotRef.current = null;
     setActivities([]);
     setLinkedPatientDetail(null);
     clearSaveState();
@@ -462,7 +469,7 @@ export default function LeadsPage() {
 
   const save = async () => {
     if (!auth.accessToken || !auth.tenantId || !canPersistLeadForm || saving || saveInFlightRef.current) return;
-    const validation = validateLeadDraft(draft, users);
+    const validation = validateLeadDraft(draft, eligibleAssignees, clinicTimeZone);
     if (Object.keys(validation.fieldErrors).length > 0) {
       const summary = validationSummaryMessage(Object.keys(validation.fieldErrors).length);
       setFieldErrors(validation.fieldErrors);
@@ -473,33 +480,14 @@ export default function LeadsPage() {
     }
 
     const createPayload = buildLeadCreatePayload(draft, validation.normalizedPhone) as Partial<CarePilotLead>;
-    if (convertedLead && !convertedLeadDirty) {
-      setToast("No converted lead changes to save.");
-      return;
-    }
     setSaving(true);
     saveInFlightRef.current = true;
     setSaveError(null);
     setFieldErrors({});
     try {
       if (editorLead) {
-        if (convertedLead) {
-          if (!convertedLeadDirty) {
-            setToast("No converted lead changes to save.");
-            return;
-          }
-          await updateCarePilotConvertedLeadMetadata(
-            auth.accessToken,
-            auth.tenantId,
-            editorLead.id,
-            buildConvertedLeadMetadataPayload(draft, convertedLeadSnapshotRef.current)
-          );
-          convertedLeadSnapshotRef.current = toConvertedLeadMetadataSnapshot(draft);
-          setToast("Converted lead marketing details saved.");
-        } else {
-          await updateCarePilotLead(auth.accessToken, auth.tenantId, editorLead.id, createPayload);
-          setToast("Lead updated");
-        }
+        await updateCarePilotLead(auth.accessToken, auth.tenantId, editorLead.id, createPayload);
+        setToast("Lead updated");
       } else {
         await createCarePilotLead(auth.accessToken, auth.tenantId, createPayload);
         setToast("Lead created");
@@ -519,7 +507,7 @@ export default function LeadsPage() {
         return;
       }
       setSaveError(null);
-      setToast(convertedLead ? "Unable to save converted lead details." : "Unable to save lead. Please try again.");
+      setToast("Unable to save lead. Please try again.");
     }
     finally {
       setSaving(false);
@@ -540,17 +528,26 @@ export default function LeadsPage() {
   const openFollowUpDialog = (lead: CarePilotLead) => {
     setFollowUpLead(lead);
     setFollowUpDraft({ ...toDateTimeInputParts(lead.nextFollowUpAt), note: "" });
+    setFollowUpFieldErrors({});
     setFollowUpOpen(true);
   };
 
   const scheduleFollowUp = async () => {
     if (!followUpLead || !auth.accessToken || !auth.tenantId || !canFollowUp) return;
-    if (!followUpDraft.date || !followUpDraft.time) {
-      setToast("Date and time are required");
+    const validation = validateFollowUpScheduleDraft(followUpDraft, clinicTimeZone);
+    if (Object.keys(validation.fieldErrors).length > 0) {
+      setFollowUpFieldErrors(validation.fieldErrors);
       return;
     }
     try {
-      const nextFollowUpAt = new Date(`${followUpDraft.date}T${followUpDraft.time}`).toISOString();
+      const nextFollowUpAt = validation.nextFollowUpAt;
+      if (!nextFollowUpAt) {
+        setFollowUpFieldErrors({
+          date: "Follow-up date and time must be in the future.",
+          time: "Follow-up date and time must be in the future.",
+        });
+        return;
+      }
       const followUpComment = followUpDraft.note.trim() || null;
       await updateCarePilotLeadStatus(auth.accessToken, auth.tenantId, followUpLead.id, {
         status: "FOLLOW_UP_REQUIRED",
@@ -564,6 +561,7 @@ export default function LeadsPage() {
       setFollowUpOpen(false);
       setFollowUpLead(null);
       setFollowUpDraft(emptyFollowUpDraft());
+      setFollowUpFieldErrors({});
       setToast("Follow-up scheduled");
       await load();
     } catch (err) {
@@ -665,14 +663,8 @@ export default function LeadsPage() {
   if (!canView) return <Alert severity="error">You do not have access to Jeevanam Engage leads.</Alert>;
 
   const convertedLead = editorLead?.status === "CONVERTED";
-  const canEditConvertedMarketing = !!editorLead && convertedLead && canSaveLead;
-  const canEditConvertedAssignee = !!editorLead && convertedLead && canAssign;
-  const convertedLeadCanSave = !!editorLead && convertedLead ? (canEditConvertedMarketing || canEditConvertedAssignee) : false;
-  const convertedLeadDirty = convertedLead && convertedLeadCanSave && convertedLeadSnapshotRef.current
-    ? hasConvertedLeadMetadataChanges(draft, convertedLeadSnapshotRef.current)
-    : false;
-  const canPersistLeadForm = editorLead ? (convertedLead ? convertedLeadCanSave : canMutate) : canCreate;
-  const canAddLeadNote = editorLead ? (convertedLead ? canSaveLead : canMutate) : canMutate;
+  const canPersistLeadForm = editorLead ? !convertedLead && canMutate : canCreate;
+  const canAddLeadNote = editorLead ? !convertedLead && canMutate : canMutate;
   const conversionActivity = activities.find((activity) => activity.activityType === "CONVERTED_TO_PATIENT") || null;
 
   const userName = (id?: string | null) => formatCarePilotAssigneeLabel(users.find((u) => u.appUserId === id), id);
@@ -906,7 +898,7 @@ export default function LeadsPage() {
             </Card>
           ) : null}
           <Grid container spacing={1.5} sx={{ pt: 0.5, minWidth: 0 }}>
-            <Grid size={{ xs: 12, md: 6 }} sx={{ minWidth: 0 }} data-lead-field="firstName"><TextField fullWidth inputRef={firstNameInputRef} label="First name" value={draft.firstName} onChange={(e) => { clearLeadFieldError("firstName"); setDraft((d) => ({ ...d, firstName: e.target.value })); }} inputProps={{ maxLength: 60, readOnly: convertedLead }} disabled={convertedLead} error={Boolean(fieldErrors.firstName)} helperText={fieldErrors.firstName || (convertedLead ? "Read-only after conversion." : "")} /></Grid>
+            <Grid size={{ xs: 12, md: 6 }} sx={{ minWidth: 0 }} data-lead-field="firstName"><TextField fullWidth inputRef={firstNameInputRef} label={<RequiredLabel text="First name" />} value={draft.firstName} onChange={(e) => { clearLeadFieldError("firstName"); setDraft((d) => ({ ...d, firstName: e.target.value })); }} inputProps={{ maxLength: 60, readOnly: convertedLead }} disabled={convertedLead} error={Boolean(fieldErrors.firstName)} helperText={fieldErrors.firstName || (convertedLead ? "Read-only after conversion." : "")} /></Grid>
             <Grid size={{ xs: 12, md: 6 }} sx={{ minWidth: 0 }} data-lead-field="lastName"><TextField fullWidth label="Last name" value={draft.lastName} onChange={(e) => setDraft((d) => ({ ...d, lastName: e.target.value }))} inputProps={{ maxLength: 60, readOnly: convertedLead }} disabled={convertedLead} helperText={convertedLead ? "Read-only after conversion." : ""} /></Grid>
             <Grid size={{ xs: 12, md: 6 }} sx={{ minWidth: 0 }} data-lead-field="phone">
               <TextField
@@ -957,16 +949,16 @@ export default function LeadsPage() {
                   value={draft.campaignId}
                   onChange={(value) => { clearLeadFieldError("campaignId"); setDraft((d) => ({ ...d, campaignId: value })); }}
                   label="Campaign"
-                  helperText={fieldErrors.campaignId || (convertedLead && !canEditConvertedMarketing ? "Read-only after conversion." : "Optional. Associate this lead with a campaign.")}
+                  helperText={fieldErrors.campaignId || (convertedLead ? "Read-only after conversion." : "Optional. Associate this lead with a campaign.")}
                   error={Boolean(fieldErrors.campaignId)}
-                  disabled={convertedLead && !canEditConvertedMarketing}
+                  disabled={convertedLead}
                 />
               </Grid>
             ) : null}
             {canViewUsers ? (
               <Grid size={{ xs: 12, md: 6, lg: 4 }} sx={{ minWidth: 0 }} data-lead-field="assignedToAppUserId">
-                <FormControl fullWidth error={Boolean(fieldErrors.assignedToAppUserId)} disabled={convertedLead && !canEditConvertedAssignee}>
-                  <InputLabel>Assigned To</InputLabel>
+                <FormControl fullWidth error={Boolean(fieldErrors.assignedToAppUserId)} disabled={convertedLead}>
+                  <InputLabel shrink>Assigned To</InputLabel>
                   <Select
                     value={draft.assignedToAppUserId}
                     label="Assigned To"
@@ -982,44 +974,46 @@ export default function LeadsPage() {
                     MenuProps={LEAD_SELECT_MENU_PROPS}
                   >
                     <MenuItem value="">Unassigned</MenuItem>
-                    {users.map((u) => <MenuItem key={u.appUserId} value={u.appUserId} title={formatCarePilotAssigneeLabel(u, u.appUserId)}>{formatCarePilotAssigneeLabel(u, u.appUserId)}</MenuItem>)}
+                    {eligibleAssignees.map((u) => <MenuItem key={u.appUserId} value={u.appUserId} title={formatCarePilotAssigneeLabel(u, u.appUserId)}>{formatCarePilotAssigneeLabel(u, u.appUserId)}</MenuItem>)}
                   </Select>
-                  <FormHelperText>{fieldErrors.assignedToAppUserId || (convertedLead && !canEditConvertedAssignee ? "Read-only after conversion." : "Optional. Assign this lead to an active Engage user.")}</FormHelperText>
+                  <FormHelperText>{fieldErrors.assignedToAppUserId || (convertedLead ? "Read-only after conversion." : "Optional. Assign this lead to an active Engage user.")}</FormHelperText>
                 </FormControl>
               </Grid>
             ) : null}
-            <Grid size={{ xs: 12, md: 6, lg: 8 }} sx={{ minWidth: 0 }} data-lead-field="sourceDetails"><TextField fullWidth label="Source details" value={draft.sourceDetails} onChange={(e) => { clearLeadFieldError("sourceDetails"); setDraft((d) => ({ ...d, sourceDetails: e.target.value })); }} inputProps={{ maxLength: 120, readOnly: convertedLead && !canEditConvertedMarketing }} disabled={convertedLead && !canEditConvertedMarketing} helperText={convertedLead && !canEditConvertedMarketing ? "Read-only after conversion." : "Example: Google Search, referral name, event name"} /></Grid>
+            <Grid size={{ xs: 12, md: 6, lg: 8 }} sx={{ minWidth: 0 }} data-lead-field="sourceDetails"><TextField fullWidth label="Source details" value={draft.sourceDetails} onChange={(e) => { clearLeadFieldError("sourceDetails"); setDraft((d) => ({ ...d, sourceDetails: e.target.value })); }} inputProps={{ maxLength: 120, readOnly: convertedLead }} disabled={convertedLead} helperText={convertedLead ? "Read-only after conversion." : "Example: Google Search, referral name, event name"} /></Grid>
             <Grid size={{ xs: 12, md: 6 }} sx={{ minWidth: 0 }} data-lead-field="nextFollowUpAt"><TextField fullWidth inputRef={nextFollowUpInputRef} type="datetime-local" label="Next follow-up" value={draft.nextFollowUpAt} onChange={(e) => { clearLeadFieldError("nextFollowUpAt"); setDraft((d) => ({ ...d, nextFollowUpAt: e.target.value })); }} InputLabelProps={{ shrink: true }} disabled={convertedLead} error={Boolean(fieldErrors.nextFollowUpAt)} helperText={fieldErrors.nextFollowUpAt || (convertedLead ? "Read-only after conversion." : `Optional follow-up date and time. Tenant time: ${clinicTimeZone}.`)} /></Grid>
-            <Grid size={{ xs: 12, md: 6 }} sx={{ minWidth: 0 }} data-lead-field="tags"><TextField fullWidth label="Tags" value={draft.tags} onChange={(e) => { clearLeadFieldError("tags"); setDraft((d) => ({ ...d, tags: e.target.value })); }} inputProps={{ maxLength: 120, readOnly: convertedLead && !canEditConvertedMarketing }} disabled={convertedLead && !canEditConvertedMarketing} helperText={convertedLead && !canEditConvertedMarketing ? "Read-only after conversion." : "Add tags separated by commas."} /></Grid>
-            <Grid size={{ xs: 12 }} sx={{ minWidth: 0 }} data-lead-field="notes"><TextField fullWidth multiline minRows={3} label="Notes" value={draft.notes} onChange={(e) => { clearLeadFieldError("notes"); setDraft((d) => ({ ...d, notes: e.target.value })); }} inputProps={{ maxLength: 250, readOnly: convertedLead && !canEditConvertedMarketing }} disabled={convertedLead && !canEditConvertedMarketing} helperText={convertedLead && !canEditConvertedMarketing ? "Read-only after conversion." : ""} /></Grid>
+            <Grid size={{ xs: 12, md: 6 }} sx={{ minWidth: 0 }} data-lead-field="tags"><TextField fullWidth label="Tags" value={draft.tags} onChange={(e) => { clearLeadFieldError("tags"); setDraft((d) => ({ ...d, tags: e.target.value })); }} inputProps={{ maxLength: 120, readOnly: convertedLead }} disabled={convertedLead} helperText={convertedLead ? "Read-only after conversion." : "Add tags separated by commas."} /></Grid>
+            <Grid size={{ xs: 12 }} sx={{ minWidth: 0 }} data-lead-field="notes"><TextField fullWidth multiline minRows={3} label="Notes" value={draft.notes} onChange={(e) => { clearLeadFieldError("notes"); setDraft((d) => ({ ...d, notes: e.target.value })); }} inputProps={{ maxLength: 250, readOnly: convertedLead }} disabled={convertedLead} helperText={convertedLead ? "Read-only after conversion." : ""} /></Grid>
           </Grid>
 
           {editorLead ? (
             <Box sx={{ mt: 2 }}>
               <Typography variant="subtitle1" sx={{ fontWeight: 800, mb: 1 }}>Timeline</Typography>
               {activityLoading ? <CircularProgress size={20} /> : activities.length === 0 ? <Alert severity="info">No activity yet.</Alert> : (
-                <Stack spacing={1}>
-                  {activities.map((a) => (
-                    <Card key={a.id} variant="outlined">
-                      <CardContent sx={{ py: 1.2 }}>
-                        <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between" sx={{ minWidth: 0, gap: 1 }}>
-                          <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0 }}>
-                            <Chip size="small" color={activityColor(a.activityType)} label={leadActivityLabel(a.activityType)} />
-                            <Typography variant="body2" sx={{ fontWeight: 700, minWidth: 0, overflowWrap: "anywhere" }}>{leadActivityLabel(a.activityType)}</Typography>
+                <Box sx={{ maxHeight: 360, overflowY: "auto", pr: 0.75 }}>
+                  <Stack spacing={1}>
+                    {activities.map((a) => (
+                      <Card key={a.id} variant="outlined">
+                        <CardContent sx={{ py: 1.2 }}>
+                          <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between" sx={{ minWidth: 0, gap: 1 }}>
+                            <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0 }}>
+                              <Chip size="small" color={activityColor(a.activityType)} label={leadActivityLabel(a.activityType)} />
+                              <Typography variant="body2" sx={{ fontWeight: 700, minWidth: 0, overflowWrap: "anywhere" }}>{leadActivityLabel(a.activityType)}</Typography>
+                            </Stack>
+                            <Typography component="time" dateTime={a.createdAt} variant="caption" color="text.secondary" sx={{ whiteSpace: "nowrap" }}>
+                              {formatLeadDateTime(a.createdAt)}
+                            </Typography>
                           </Stack>
-                          <Typography component="time" dateTime={a.createdAt} variant="caption" color="text.secondary" sx={{ whiteSpace: "nowrap" }}>
-                            {formatLeadDateTime(a.createdAt)}
-                          </Typography>
-                        </Stack>
-                        {formatLeadTimelineDescription(a, clinicTimeZone) ? (
-                          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, minWidth: 0, overflowWrap: "anywhere" }}>
-                            {formatLeadTimelineDescription(a, clinicTimeZone)}
-                          </Typography>
-                        ) : null}
-                      </CardContent>
-                    </Card>
-                  ))}
-                </Stack>
+                          {formatLeadTimelineDescription(a, clinicTimeZone) ? (
+                            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, minWidth: 0, overflowWrap: "anywhere" }}>
+                              {formatLeadTimelineDescription(a, clinicTimeZone)}
+                            </Typography>
+                          ) : null}
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </Stack>
+                </Box>
               )}
               {canAddLeadNote ? <Stack direction="row" spacing={1} sx={{ mt: 1 }}><TextField size="small" fullWidth label="Add note" value={note} onChange={(e) => setNote(e.target.value)} /><Button variant="contained" onClick={() => void addNote()}>Add</Button></Stack> : null}
             </Box>
@@ -1028,7 +1022,7 @@ export default function LeadsPage() {
         <DialogActions>
           <Button onClick={() => { setEditorOpen(false); clearSaveState(); }}>Close</Button>
           {canPersistLeadForm ? (
-            <Button variant="contained" onClick={() => void save()} disabled={saving || (convertedLead ? !convertedLeadDirty : false)}>
+            <Button variant="contained" onClick={() => void save()} disabled={saving}>
               {saving ? "Saving..." : "Save"}
             </Button>
           ) : null}
@@ -1070,6 +1064,11 @@ export default function LeadsPage() {
         <DialogContent>
           <Stack spacing={1.5} sx={{ pt: 1 }}>
             <Alert severity="info">This will set the lead to follow-up required and schedule the next contact time.</Alert>
+            {Object.keys(followUpFieldErrors).length > 0 ? (
+              <Alert severity="error">
+                Follow-up date and time must be in the future.
+              </Alert>
+            ) : null}
             {followUpLead ? (
               <Card variant="outlined">
                 <CardContent sx={{ py: 1.25 }}>
@@ -1081,22 +1080,34 @@ export default function LeadsPage() {
             <Grid container spacing={1.5}>
               <Grid size={{ xs: 12, sm: 6 }}>
                 <TextField
+                  data-follow-up-field="date"
                   fullWidth
                   type="date"
                   label="Follow-up date"
                   value={followUpDraft.date}
-                  onChange={(e) => setFollowUpDraft((current) => ({ ...current, date: e.target.value }))}
+                  onChange={(e) => {
+                    clearFollowUpFieldError("date");
+                    setFollowUpDraft((current) => ({ ...current, date: e.target.value }));
+                  }}
                   InputLabelProps={{ shrink: true }}
+                  error={Boolean(followUpFieldErrors.date)}
+                  helperText={followUpFieldErrors.date || "Required."}
                 />
               </Grid>
               <Grid size={{ xs: 12, sm: 6 }}>
                 <TextField
+                  data-follow-up-field="time"
                   fullWidth
                   type="time"
                   label="Follow-up time"
                   value={followUpDraft.time}
-                  onChange={(e) => setFollowUpDraft((current) => ({ ...current, time: e.target.value }))}
+                  onChange={(e) => {
+                    clearFollowUpFieldError("time");
+                    setFollowUpDraft((current) => ({ ...current, time: e.target.value }));
+                  }}
                   InputLabelProps={{ shrink: true }}
+                  error={Boolean(followUpFieldErrors.time)}
+                  helperText={followUpFieldErrors.time || "Required."}
                 />
               </Grid>
               <Grid size={{ xs: 12 }}>
@@ -1115,7 +1126,7 @@ export default function LeadsPage() {
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setFollowUpOpen(false)}>Cancel</Button>
+          <Button onClick={() => { setFollowUpOpen(false); setFollowUpFieldErrors({}); }}>Cancel</Button>
           <Button variant="contained" onClick={() => void scheduleFollowUp()}>Schedule</Button>
         </DialogActions>
       </Dialog>

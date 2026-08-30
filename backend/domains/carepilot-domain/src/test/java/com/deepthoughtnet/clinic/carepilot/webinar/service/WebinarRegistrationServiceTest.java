@@ -8,6 +8,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.isNull;
 
 import com.deepthoughtnet.clinic.carepilot.campaign.db.CampaignEntity;
 import com.deepthoughtnet.clinic.carepilot.campaign.db.CampaignRepository;
@@ -31,6 +32,7 @@ import com.deepthoughtnet.clinic.patient.db.PatientEntity;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.patient.service.model.PatientGender;
 import java.time.OffsetDateTime;
+import java.lang.reflect.Field;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -114,12 +116,25 @@ class WebinarRegistrationServiceTest {
         row.setAttendeeName("Attendee");
         row.setLeadId(createdLead.id());
         when(registrationRepository.findById(created.id())).thenReturn(Optional.of(row));
+        webinar.setStatus(WebinarStatus.LIVE);
         LeadEntity savedLead = leadEntity(createdLead);
         when(leadRepository.findByTenantIdAndId(tenantId, createdLead.id())).thenReturn(Optional.of(savedLead));
 
-        var attended = service.markAttendance(tenantId, webinar.getId(), created.id(), new WebinarAttendanceCommand(WebinarRegistrationStatus.ATTENDED, null));
+        var attended = service.markAttendance(tenantId, webinar.getId(), created.id(), new WebinarAttendanceCommand(WebinarRegistrationStatus.ATTENDED, null), actorId);
         assertThat(attended.attended()).isTrue();
         assertThat(attended.registrationStatus()).isEqualTo(WebinarRegistrationStatus.ATTENDED);
+        verify(leadActivityService).record(
+                eq(tenantId),
+                eq(createdLead.id()),
+                eq(com.deepthoughtnet.clinic.carepilot.lead.activity.model.LeadActivityType.WEBINAR_ATTENDED),
+                eq("Webinar Attended"),
+                eq("Attended webinar: Webinar"),
+                isNull(),
+                isNull(),
+                eq("WEBINAR"),
+                eq(webinar.getId()),
+                eq(actorId)
+        );
     }
 
     @Test
@@ -198,6 +213,83 @@ class WebinarRegistrationServiceTest {
     }
 
     @Test
+    void terminalWebinarRejectsRegistrationAndAttendance() {
+        webinar.setStatus(WebinarStatus.COMPLETED);
+
+        assertThatThrownBy(() -> service.register(tenantId, webinar.getId(), new WebinarRegistrationCommand(
+                null, null, "Manual Attendee", "manual@example.com", "9999999999", null, null
+        ), actorId)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("completed or cancelled webinar does not accept registrations");
+
+        WebinarRegistrationEntity row = WebinarRegistrationEntity.create(tenantId, webinar.getId());
+        row.setAttendeeName("Attendee");
+        row.setRegistrationStatus(WebinarRegistrationStatus.REGISTERED);
+        when(registrationRepository.findById(row.getId())).thenReturn(Optional.of(row));
+
+        assertThatThrownBy(() -> service.markAttendance(tenantId, webinar.getId(), row.getId(), new WebinarAttendanceCommand(WebinarRegistrationStatus.ATTENDED, null), actorId))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("completed or cancelled webinar registrations are read-only");
+    }
+
+    @Test
+    void attendanceRequiresLiveWebinarAndRegisteredRow() {
+        webinar.setStatus(WebinarStatus.SCHEDULED);
+        WebinarRegistrationEntity row = WebinarRegistrationEntity.create(tenantId, webinar.getId());
+        row.setAttendeeName("Attendee");
+        row.setRegistrationStatus(WebinarRegistrationStatus.REGISTERED);
+        when(registrationRepository.findById(row.getId())).thenReturn(Optional.of(row));
+
+        assertThatThrownBy(() -> service.markAttendance(tenantId, webinar.getId(), row.getId(), new WebinarAttendanceCommand(WebinarRegistrationStatus.ATTENDED, null), actorId))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("attendance can only be recorded while the webinar is live");
+    }
+
+    @Test
+    void attendanceIsIdempotentForRepeatedTerminalTransition() {
+        webinar.setStatus(WebinarStatus.LIVE);
+        WebinarRegistrationEntity row = WebinarRegistrationEntity.create(tenantId, webinar.getId());
+        row.setAttendeeName("Attendee");
+        row.setLeadId(UUID.randomUUID());
+        row.setRegistrationStatus(WebinarRegistrationStatus.ATTENDED);
+        row.setAttended(true);
+        when(registrationRepository.findById(row.getId())).thenReturn(Optional.of(row));
+        when(leadRepository.findByTenantIdAndId(tenantId, row.getLeadId())).thenReturn(Optional.of(leadEntity(leadRecord(row.getLeadId(), "Att", "End", "9999999999", "att@example.com", webinar.getCampaignId(), LeadSource.WEBINAR))));
+
+        var result = service.markAttendance(tenantId, webinar.getId(), row.getId(), new WebinarAttendanceCommand(WebinarRegistrationStatus.ATTENDED, "ignored"), actorId);
+
+        assertThat(result.registrationStatus()).isEqualTo(WebinarRegistrationStatus.ATTENDED);
+        verify(leadActivityService, never()).record(any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void cancelledAttendanceCreatesLeadTimelineEvent() {
+        webinar.setStatus(WebinarStatus.LIVE);
+        WebinarRegistrationEntity row = WebinarRegistrationEntity.create(tenantId, webinar.getId());
+        row.setAttendeeName("Attendee");
+        row.setLeadId(UUID.randomUUID());
+        row.setRegistrationStatus(WebinarRegistrationStatus.REGISTERED);
+        when(registrationRepository.findById(row.getId())).thenReturn(Optional.of(row));
+        LeadRecord lead = leadRecord(row.getLeadId(), "Att", "End", "9999999999", "att@example.com", webinar.getCampaignId(), LeadSource.WEBINAR);
+        when(leadRepository.findByTenantIdAndId(tenantId, row.getLeadId())).thenReturn(Optional.of(leadEntity(lead)));
+
+        var result = service.markAttendance(tenantId, webinar.getId(), row.getId(), new WebinarAttendanceCommand(WebinarRegistrationStatus.CANCELLED, "cancelled by attendee"), actorId);
+
+        assertThat(result.registrationStatus()).isEqualTo(WebinarRegistrationStatus.CANCELLED);
+        verify(leadActivityService).record(
+                eq(tenantId),
+                eq(row.getLeadId()),
+                eq(com.deepthoughtnet.clinic.carepilot.lead.activity.model.LeadActivityType.WEBINAR_REGISTRATION_CANCELLED),
+                eq("Webinar Registration Cancelled"),
+                eq("Registration cancelled for webinar: Webinar"),
+                isNull(),
+                isNull(),
+                eq("WEBINAR"),
+                eq(webinar.getId()),
+                eq(actorId)
+        );
+    }
+
+    @Test
     void listHidesStalePatientLinksWithoutInventingAReplacement() {
         WebinarRegistrationEntity row = WebinarRegistrationEntity.create(tenantId, webinar.getId());
         row.setPatientId(UUID.randomUUID());
@@ -245,6 +337,7 @@ class WebinarRegistrationServiceTest {
 
     private LeadEntity leadEntity(LeadRecord record) {
         LeadEntity entity = LeadEntity.create(record.tenantId(), actorId);
+        setField(entity, "id", record.id());
         entity.setFirstName(record.firstName());
         entity.setLastName(record.lastName());
         entity.setFullName(record.fullName());
@@ -255,5 +348,15 @@ class WebinarRegistrationServiceTest {
         entity.setStatus(record.status());
         entity.setPriority(record.priority());
         return entity;
+    }
+
+    private void setField(Object target, String fieldName, Object value) {
+        try {
+            Field field = target.getClass().getDeclaredField(fieldName);
+            field.setAccessible(true);
+            field.set(target, value);
+        } catch (ReflectiveOperationException ex) {
+            throw new IllegalStateException(ex);
+        }
     }
 }

@@ -1,11 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 
 import {
   buildConvertedLeadMetadataPayload,
   hasConvertedLeadMetadataChanges,
   toConvertedLeadMetadataSnapshot,
 } from "../src/products/carepilot/leads/leadFormUtils.js";
+
+function readSource(relPath) {
+  return fs.readFileSync(path.join(process.cwd(), "src", ...relPath.split("/")), "utf8");
+}
 
 const baseline = {
   notes: "Old note",
@@ -50,4 +56,17 @@ test("converted lead metadata payload can isolate assignee-only updates", () => 
   );
 
   assert.deepEqual(payload, { assignedToAppUserId: "user-2" });
+});
+
+test("converted lead detail is read-only and no longer exposes a converted edit save path", () => {
+  const page = readSource("products/carepilot/leads/LeadsPage.tsx");
+
+  assert.ok(page.includes('convertedLead ? "Converted Lead Details" : "Lead Detail"'));
+  assert.ok(page.includes('Read-only after conversion.'));
+  assert.ok(page.includes('canPersistLeadForm ? ('));
+  assert.ok(page.includes('canAddLeadNote'));
+  assert.ok(!page.includes("updateCarePilotConvertedLeadMetadata"));
+  assert.ok(!page.includes("buildConvertedLeadMetadataPayload"));
+  assert.ok(!page.includes("convertedLeadDirty"));
+  assert.ok(!page.includes("convertedLeadCanSave"));
 });

@@ -146,10 +146,11 @@ public class CarePilotWebinarController {
     @PreAuthorize("@permissionChecker.hasPermission('engage.webinar.record.attendance')")
     public WebinarRegistrationResponse attendance(@PathVariable UUID id, @RequestBody WebinarAttendanceRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorId = RequestContextHolder.require().appUserId();
         if (request == null || request.registrationId() == null) {
             throw new IllegalArgumentException("registrationId is required");
         }
-        var row = registrationService.markAttendance(tenantId, id, request.registrationId(), new WebinarAttendanceCommand(request.registrationStatus(), request.notes()));
+        var row = registrationService.markAttendance(tenantId, id, request.registrationId(), new WebinarAttendanceCommand(request.registrationStatus(), request.notes()), actorId);
         return new WebinarRegistrationResponse(
                 row.id(), row.tenantId(), row.webinarId(), canExposePatientNavigation(row.tenantId()) ? row.patientId() : null, row.leadId(), row.leadName(), row.campaignId(), row.campaignName(), row.attendeeName(), row.attendeeEmail(), row.attendeePhone(),
                 row.registrationStatus(), row.attended(), row.attendedAt(), row.source(), row.notes(), row.createdAt(), row.updatedAt()

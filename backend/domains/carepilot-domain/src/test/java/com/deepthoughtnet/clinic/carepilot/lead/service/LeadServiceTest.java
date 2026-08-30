@@ -21,11 +21,12 @@ import com.deepthoughtnet.clinic.carepilot.lead.model.LeadSource;
 import com.deepthoughtnet.clinic.carepilot.lead.model.LeadStatus;
 import com.deepthoughtnet.clinic.carepilot.lead.model.LeadStatusUpdateCommand;
 import com.deepthoughtnet.clinic.carepilot.lead.model.LeadUpsertCommand;
-import com.deepthoughtnet.clinic.identity.db.AppUserEntity;
-import com.deepthoughtnet.clinic.identity.db.AppUserRepository;
+import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
+import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.patient.service.model.PatientGender;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -39,7 +40,7 @@ class LeadServiceTest {
     private CampaignRepository campaignRepository;
     private LeadActivityService activityService;
     private PatientRepository patientRepository;
-    private AppUserRepository appUserRepository;
+    private TenantUserManagementService tenantUserManagementService;
     private LeadService service;
 
     @BeforeEach
@@ -48,8 +49,8 @@ class LeadServiceTest {
         campaignRepository = mock(CampaignRepository.class);
         activityService = mock(LeadActivityService.class);
         patientRepository = mock(PatientRepository.class);
-        appUserRepository = mock(AppUserRepository.class);
-        service = new LeadService(repository, campaignRepository, activityService, patientRepository, appUserRepository);
+        tenantUserManagementService = mock(TenantUserManagementService.class);
+        service = new LeadService(repository, campaignRepository, activityService, patientRepository, tenantUserManagementService);
         when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(activityService.latestByLeadIds(any(), any())).thenReturn(java.util.Map.of());
         when(patientRepository.findByTenantIdAndId(any(), any())).thenReturn(Optional.empty());
@@ -84,7 +85,7 @@ class LeadServiceTest {
 
     @Test
     void createLeadPreservesFollowUpInstant() {
-        OffsetDateTime followUpAt = OffsetDateTime.parse("2026-08-02T11:00:00+05:30");
+        OffsetDateTime followUpAt = OffsetDateTime.parse("2026-09-02T11:00:00+05:30");
         var record = service.create(tenantId, new LeadUpsertCommand(
                 "Asha", "Mehta", "9876543210", "asha@example.com", PatientGender.FEMALE, null,
                 LeadSource.WALK_IN, "desk", null, null, LeadStatus.NEW, LeadPriority.MEDIUM,
@@ -92,6 +93,32 @@ class LeadServiceTest {
         ), actorId);
 
         assertThat(record.nextFollowUpAt()).isEqualTo(followUpAt);
+    }
+
+    @Test
+    void createLeadRejectsPastFollowUpInstant() {
+        OffsetDateTime followUpAt = OffsetDateTime.now().minusDays(1);
+        assertThatThrownBy(() -> service.create(tenantId, new LeadUpsertCommand(
+                "Asha", "Mehta", "9876543210", "asha@example.com", PatientGender.FEMALE, null,
+                LeadSource.WALK_IN, "desk", null, null, LeadStatus.NEW, LeadPriority.MEDIUM,
+                "note", "uat", null, followUpAt
+        ), actorId)).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Follow-up date and time must be in the future.");
+    }
+
+    @Test
+    void createLeadAllowsEligibleAssignee() {
+        UUID assigneeId = UUID.randomUUID();
+        when(tenantUserManagementService.list(tenantId)).thenReturn(List.of(
+                userRecord(assigneeId, "ENGAGE_EXECUTIVE", "ACTIVE", "ACTIVE")
+        ));
+
+        var record = service.create(tenantId, new LeadUpsertCommand(
+                "Asha", "Mehta", "9876543210", "asha@example.com", PatientGender.FEMALE, null,
+                LeadSource.WALK_IN, "desk", null, assigneeId, LeadStatus.NEW, LeadPriority.MEDIUM,
+                "note", "uat", null, null
+        ), actorId);
+
+        assertThat(record.assignedToAppUserId()).isEqualTo(assigneeId);
     }
 
     @Test
@@ -112,7 +139,7 @@ class LeadServiceTest {
     }
 
     @Test
-    void convertedLeadAllowsMarketingMetadataUpdatesOnly() {
+    void convertedLeadRejectsGenericUpdates() {
         LeadEntity entity = LeadEntity.create(tenantId, actorId);
         entity.setFirstName("Old");
         entity.setLastName("Name");
@@ -127,25 +154,15 @@ class LeadServiceTest {
         entity.setCampaignId(campaignId);
         entity.setAssignedToAppUserId(assigneeId);
         when(repository.findByTenantIdAndId(tenantId, entity.getId())).thenReturn(Optional.of(entity));
-        when(campaignRepository.findByTenantIdAndId(tenantId, campaignId)).thenReturn(Optional.of(mock(com.deepthoughtnet.clinic.carepilot.campaign.db.CampaignEntity.class)));
-
-        var updated = service.update(tenantId, entity.getId(), new LeadUpsertCommand(
+        assertThatThrownBy(() -> service.update(tenantId, entity.getId(), new LeadUpsertCommand(
                 "Old", "Name", "9876543210", "old@example.com", null, null,
                 LeadSource.MANUAL, "new source", campaignId, assigneeId, LeadStatus.CONVERTED, LeadPriority.MEDIUM,
                 "changed-note", "changed-tags", null, null
-        ), actorId);
-
-        assertThat(updated.firstName()).isEqualTo("Old");
-        assertThat(updated.phone()).isEqualTo("9876543210");
-        assertThat(updated.campaignId()).isEqualTo(campaignId);
-        assertThat(updated.assignedToAppUserId()).isEqualTo(assigneeId);
-        assertThat(updated.sourceDetails()).isEqualTo("new source");
-        assertThat(updated.notes()).isEqualTo("changed-note");
-        assertThat(updated.tags()).isEqualTo("changed-tags");
+        ), actorId)).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Converted leads are read-only");
     }
 
     @Test
-    void convertedMetadataUpdateAllowsPartialMarketingPayloadWithoutImmutableFields() {
+    void convertedMetadataUpdateRejectsReadOnlyLead() {
         LeadEntity entity = LeadEntity.create(tenantId, actorId);
         entity.setFirstName("Old");
         entity.setLastName("Name");
@@ -158,27 +175,13 @@ class LeadServiceTest {
         entity.setPriority(LeadPriority.MEDIUM);
         entity.setLastContactedAt(OffsetDateTime.parse("2026-07-20T09:00:00Z"));
         when(repository.findByTenantIdAndId(tenantId, entity.getId())).thenReturn(Optional.of(entity));
-        UUID campaignId = UUID.randomUUID();
-        UUID assigneeId = UUID.randomUUID();
-        when(campaignRepository.findByTenantIdAndId(tenantId, campaignId)).thenReturn(Optional.of(mock(com.deepthoughtnet.clinic.carepilot.campaign.db.CampaignEntity.class)));
-        AppUserEntity assignee = mock(AppUserEntity.class);
-        when(assignee.getStatus()).thenReturn("ACTIVE");
-        when(appUserRepository.findByTenantIdAndId(tenantId, assigneeId)).thenReturn(Optional.of(assignee));
-
-        var updated = service.updateConvertedMetadata(tenantId, entity.getId(), new LeadConvertedMetadataCommand(
+        assertThatThrownBy(() -> service.updateConvertedMetadata(tenantId, entity.getId(), new LeadConvertedMetadataCommand(
                 "marketing note",
                 "Test, UAT",
                 "webinar follow-up",
-                campaignId,
-                assigneeId
-        ), actorId);
-
-        assertThat(updated.notes()).isEqualTo("marketing note");
-        assertThat(updated.tags()).isEqualTo("Test, UAT");
-        assertThat(updated.sourceDetails()).isEqualTo("webinar follow-up");
-        assertThat(updated.campaignId()).isEqualTo(campaignId);
-        assertThat(updated.assignedToAppUserId()).isEqualTo(assigneeId);
-        assertThat(updated.status()).isEqualTo(LeadStatus.CONVERTED);
+                UUID.randomUUID(),
+                UUID.randomUUID()
+        ), actorId)).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Converted leads are read-only");
     }
 
     @Test
@@ -190,12 +193,9 @@ class LeadServiceTest {
         entity.setStatus(LeadStatus.CONVERTED);
         when(repository.findByTenantIdAndId(tenantId, entity.getId())).thenReturn(Optional.of(entity));
 
-        UUID assigneeId = UUID.randomUUID();
-        when(appUserRepository.findByTenantIdAndId(tenantId, assigneeId)).thenReturn(Optional.empty());
-
         assertThatThrownBy(() -> service.updateConvertedMetadata(tenantId, entity.getId(), new LeadConvertedMetadataCommand(
-                null, null, null, null, assigneeId
-        ), actorId)).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("assignedToAppUserId");
+                null, null, null, null, UUID.randomUUID()
+        ), actorId)).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Converted leads are read-only");
     }
 
     @Test
@@ -214,7 +214,7 @@ class LeadServiceTest {
                 "Changed", "Name", "1234567890", "new@example.com", PatientGender.OTHER, null,
                 LeadSource.GOOGLE_ADS, "x", null, null, LeadStatus.LOST, LeadPriority.LOW,
                 "note", "tags", null, null
-        ), actorId)).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Converted leads cannot change immutable fields");
+        ), actorId)).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Converted leads are read-only");
     }
 
     @Test
@@ -265,5 +265,70 @@ class LeadServiceTest {
         ), actorId);
 
         verify(activityService, never()).record(eq(tenantId), eq(entity.getId()), eq(LeadActivityType.FOLLOW_UP_COMPLETED), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void createLeadRejectsIneligibleAssignee() {
+        UUID assigneeId = UUID.randomUUID();
+        when(tenantUserManagementService.list(tenantId)).thenReturn(List.of(
+                userRecord(assigneeId, "PHARMACIST", "ACTIVE", "ACTIVE")
+        ));
+
+        assertThatThrownBy(() -> service.create(tenantId, new LeadUpsertCommand(
+                "Asha", "Mehta", "9876543210", "asha@example.com", PatientGender.FEMALE, null,
+                LeadSource.WALK_IN, "desk", null, assigneeId, LeadStatus.NEW, LeadPriority.MEDIUM,
+                "note", "uat", null, null
+        ), actorId)).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("active Engage user");
+    }
+
+    @Test
+    void statusUpdateRejectsIneligibleAssignee() {
+        LeadEntity entity = LeadEntity.create(tenantId, actorId);
+        entity.setFirstName("A");
+        entity.setPhone("9876543210");
+        entity.setSource(LeadSource.MANUAL);
+        entity.setStatus(LeadStatus.NEW);
+        when(repository.findByTenantIdAndId(tenantId, entity.getId())).thenReturn(Optional.of(entity));
+        UUID assigneeId = UUID.randomUUID();
+        when(tenantUserManagementService.list(tenantId)).thenReturn(List.of(userRecord(assigneeId, "PHARMACIST", "ACTIVE", "ACTIVE")));
+
+        assertThatThrownBy(() -> service.updateStatus(tenantId, entity.getId(), new LeadStatusUpdateCommand(
+                LeadStatus.CONTACTED, null, assigneeId, null, null, null
+        ), actorId)).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("active Engage user");
+    }
+
+    @Test
+    void statusUpdateRejectsPastFollowUpInstant() {
+        LeadEntity entity = LeadEntity.create(tenantId, actorId);
+        entity.setFirstName("A");
+        entity.setPhone("9876543210");
+        entity.setSource(LeadSource.MANUAL);
+        entity.setStatus(LeadStatus.NEW);
+        when(repository.findByTenantIdAndId(tenantId, entity.getId())).thenReturn(Optional.of(entity));
+
+        assertThatThrownBy(() -> service.updateStatus(tenantId, entity.getId(), new LeadStatusUpdateCommand(
+                LeadStatus.FOLLOW_UP_REQUIRED, null, null, null, OffsetDateTime.now().minusMinutes(5), null
+        ), actorId)).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Follow-up date and time must be in the future.");
+    }
+
+    private TenantUserRecord userRecord(UUID appUserId, String role, String userStatus, String membershipStatus) {
+        return new TenantUserRecord(
+                appUserId,
+                tenantId,
+                null,
+                appUserId + "@example.com",
+                appUserId.toString(),
+                null,
+                role + " User",
+                userStatus,
+                role,
+                membershipStatus,
+                "EMP-" + appUserId.toString().substring(0, 6),
+                "9000000000",
+                null,
+                OffsetDateTime.now(),
+                OffsetDateTime.now(),
+                "ACTIVE"
+        );
     }
 }

@@ -38,28 +38,22 @@ function statusColor(status: CarePilotProviderReadinessStatus) {
 function guidance(channel: CarePilotMessagingProviderStatus["channel"]): string[] {
   if (channel === "EMAIL") {
     return [
-      "CLINIC_ENGAGE_MESSAGING_EMAIL_ENABLED=true",
-      "CLINIC_ENGAGE_MESSAGING_EMAIL_PROVIDER=mock",
-      "CLINIC_ENGAGE_MESSAGING_EMAIL_FROM_ADDRESS=engage@your-clinic.com",
-      "# Real SMTP mode: CLINIC_ENGAGE_MESSAGING_EMAIL_PROVIDER=smtp",
-      "# Real SMTP mode also requires CLINIC_MAIL_PROVIDER=smtp and CLINIC_MAIL_ENABLED=true",
+      "Email test sends require an enabled provider and a configured sender address.",
+      "Use the provider status above to confirm whether EMAIL is READY.",
+      "If EMAIL is not READY, finish tenant messaging setup before testing.",
     ];
   }
   if (channel === "SMS") {
     return [
-      "CLINIC_ENGAGE_MESSAGING_SMS_ENABLED=true",
-      "CLINIC_ENGAGE_MESSAGING_SMS_PROVIDER=mock",
-      "CLINIC_ENGAGE_MESSAGING_SMS_FROM_NUMBER=CLINIC or CLINIC_ENGAGE_MESSAGING_SMS_SENDER_ID=CLINIC",
-      "# Real HTTP mode: CLINIC_ENGAGE_MESSAGING_SMS_PROVIDER=generic-http",
-      "# Real HTTP mode also requires CLINIC_ENGAGE_MESSAGING_SMS_API_URL and ...API_KEY",
+      "SMS test sends require an enabled provider, a sender identity, and a READY status.",
+      "Use the provider status above to confirm whether SMS is READY.",
+      "If SMS is not READY, finish tenant messaging setup before testing.",
     ];
   }
   return [
-    "CLINIC_ENGAGE_MESSAGING_WHATSAPP_ENABLED=true",
-    "CLINIC_ENGAGE_MESSAGING_WHATSAPP_PROVIDER=mock",
-    "CLINIC_ENGAGE_MESSAGING_WHATSAPP_FROM_NUMBER=CLINIC",
-    "# Real Meta mode: CLINIC_ENGAGE_MESSAGING_WHATSAPP_PROVIDER=meta-cloud-api",
-    "# Real Meta mode also requires ...API_URL, ...PHONE_NUMBER_ID, and ...ACCESS_TOKEN",
+    "WhatsApp test sends require an enabled provider and a READY status.",
+    "Use the provider status above to confirm whether WhatsApp is READY.",
+    "If WhatsApp is not READY, finish tenant messaging setup before testing.",
   ];
 }
 
@@ -83,14 +77,29 @@ export default function MessagingPage() {
   const [fieldErrors, setFieldErrors] = React.useState<Record<string, string>>({});
   const selectedProvider = providers.find((provider) => provider.channel === testChannel);
   const selectedProviderDisabled = selectedProvider?.status === "DISABLED";
-
-  const validateRecipient = (value: string) => {
+  const validateRecipient = React.useCallback((value: string) => {
     if (testChannel === "EMAIL") {
       return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim()) ? "" : "Enter a valid email address.";
     }
     const normalized = normalizeIndianMobileInput(value) as string;
     return /^[6-9]\d{9}$/.test(normalized) ? "" : "Enter a valid 10-digit Indian mobile number.";
-  };
+  }, [testChannel]);
+  const testSendValidation = React.useMemo(() => {
+    const parsed = engageMessagingTestSendSchema.safeParse({
+      channel: testChannel,
+      recipient,
+      subject: testChannel === "EMAIL" ? subject : undefined,
+      body,
+    });
+    if (!parsed.success) {
+      return { valid: false, errors: mapZodErrors(parsed.error) };
+    }
+    const recipientError = validateRecipient(recipient);
+    if (recipientError) {
+      return { valid: false, errors: { recipient: recipientError } };
+    }
+    return { valid: true, errors: {} as Record<string, string> };
+  }, [body, recipient, subject, testChannel, validateRecipient]);
 
   const load = React.useCallback(async (isRefresh = false) => {
     if (!auth.accessToken || !auth.tenantId || !canView) {
@@ -118,19 +127,8 @@ export default function MessagingPage() {
 
   async function submitTestSend() {
     if (!auth.accessToken || !auth.tenantId) return;
-    const parsed = engageMessagingTestSendSchema.safeParse({
-      channel: testChannel,
-      recipient,
-      subject: testChannel === "EMAIL" ? subject : undefined,
-      body,
-    });
-    if (!parsed.success) {
-      setFieldErrors(mapZodErrors(parsed.error));
-      return;
-    }
-    const recipientError = validateRecipient(recipient);
-    if (recipientError) {
-      setFieldErrors({ recipient: recipientError });
+    if (!testSendValidation.valid) {
+      setFieldErrors(testSendValidation.errors);
       return;
     }
     try {
@@ -262,6 +260,11 @@ export default function MessagingPage() {
                 helperText={fieldErrors.subject || "Subject must be 60 characters or fewer."}
               />
             ) : null}
+            {Object.keys(testSendValidation.errors).length > 0 ? (
+              <Alert severity="error">
+                {testSendValidation.errors.recipient || testSendValidation.errors.subject || testSendValidation.errors.body || "Please correct the highlighted fields."}
+              </Alert>
+            ) : null}
             <TextField
               label="Body *"
               value={body}
@@ -282,7 +285,7 @@ export default function MessagingPage() {
           <Button
             onClick={() => void submitTestSend()}
             variant="contained"
-            disabled={sending || !recipient.trim() || (testChannel === "EMAIL" && !subject.trim()) || !body.trim() || !canTestSend || selectedProviderDisabled}
+            disabled={sending || !canTestSend || selectedProviderDisabled || !testSendValidation.valid}
           >
             {sending ? "Sending..." : "Send Test"}
           </Button>

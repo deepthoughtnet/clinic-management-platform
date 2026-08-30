@@ -22,7 +22,7 @@ test("notification configuration center groups settings by business domain and p
   assert.ok(page.includes("Weekdays"));
   assert.ok(page.includes("Configuration Ready"));
   assert.ok(page.includes("Not configured"));
-  assert.ok(page.includes("Patient-level preferences override tenant defaults."));
+  assert.ok(page.includes("Campaign eligibility currently uses this tenant-level consent policy as the source of truth."));
   assert.ok(page.includes("Critical alerts bypass quiet hours."));
   assert.ok(page.includes("Current fallback channel is unavailable. Select a configured and enabled channel, or None."));
   assert.ok(page.includes("Template changes affect future notifications only."));

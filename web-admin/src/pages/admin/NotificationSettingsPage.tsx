@@ -763,7 +763,9 @@ export default function NotificationSettingsPage() {
                 <Box>
                   <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>Compliance / Consent</Typography>
                   <Typography variant="body2" color="text.secondary">Tenant defaults for transactional, clinical, and marketing policy.</Typography>
-                  <Typography variant="caption" color="text.secondary">Patient-level preferences override tenant defaults.</Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    Campaign eligibility currently uses this tenant-level consent policy as the source of truth.
+                  </Typography>
                 </Box>
               </Stack>
               <Stack spacing={1.25}>

@@ -16,8 +16,8 @@ import com.deepthoughtnet.clinic.carepilot.lead.model.LeadStatusUpdateCommand;
 import com.deepthoughtnet.clinic.carepilot.lead.model.LeadUpsertCommand;
 import com.deepthoughtnet.clinic.carepilot.shared.util.CarePilotValidators;
 import com.deepthoughtnet.clinic.platform.core.errors.ForbiddenException;
-import com.deepthoughtnet.clinic.identity.db.AppUserEntity;
-import com.deepthoughtnet.clinic.identity.db.AppUserRepository;
+import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
+import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import jakarta.persistence.criteria.Predicate;
 import java.nio.charset.StandardCharsets;
@@ -30,6 +30,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.Set;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -49,19 +50,20 @@ public class LeadService {
             LeadStatus.APPOINTMENT_BOOKED
     );
     private static final List<LeadStatus> FOLLOW_UP_INACTIVE_STATUSES = List.of(LeadStatus.LOST, LeadStatus.SPAM, LeadStatus.CONVERTED);
+    private static final Set<String> ELIGIBLE_ASSIGNEE_ROLES = Set.of("ENGAGE_EXECUTIVE", "ENGAGE_MANAGER", "CLINIC_ADMIN");
 
     private final LeadRepository repository;
     private final CampaignRepository campaignRepository;
     private final LeadActivityService leadActivityService;
     private final PatientRepository patientRepository;
-    private final AppUserRepository appUserRepository;
+    private final TenantUserManagementService tenantUserManagementService;
 
-    public LeadService(LeadRepository repository, CampaignRepository campaignRepository, LeadActivityService leadActivityService, PatientRepository patientRepository, AppUserRepository appUserRepository) {
+    public LeadService(LeadRepository repository, CampaignRepository campaignRepository, LeadActivityService leadActivityService, PatientRepository patientRepository, TenantUserManagementService tenantUserManagementService) {
         this.repository = repository;
         this.campaignRepository = campaignRepository;
         this.leadActivityService = leadActivityService;
         this.patientRepository = patientRepository;
-        this.appUserRepository = appUserRepository;
+        this.tenantUserManagementService = tenantUserManagementService;
     }
 
     @Transactional(readOnly = true)
@@ -137,7 +139,7 @@ public class LeadService {
     @Transactional
     public LeadRecord create(UUID tenantId, LeadUpsertCommand command, UUID actorId) {
         CarePilotValidators.requireTenant(tenantId);
-        validate(command);
+        validate(tenantId, command);
         LeadEntity entity = LeadEntity.create(tenantId, actorId);
         applyUpsert(entity, command, actorId, false);
         LeadEntity saved = repository.save(entity);
@@ -153,15 +155,37 @@ public class LeadService {
     public LeadRecord update(UUID tenantId, UUID id, LeadUpsertCommand command, UUID actorId) {
         CarePilotValidators.requireTenant(tenantId);
         CarePilotValidators.requireId(id, "id");
-        validate(command);
         LeadEntity entity = require(tenantId, id);
+        if (entity.getStatus() == LeadStatus.CONVERTED) {
+            throw new IllegalArgumentException("Converted leads are read-only");
+        }
+        validate(tenantId, command);
         LeadStatus beforeStatus = entity.getStatus();
+        LeadPriority beforePriority = entity.getPriority();
+        UUID beforeAssignee = entity.getAssignedToAppUserId();
         UUID beforeCampaign = entity.getCampaignId();
+        LeadSource beforeSource = entity.getSource();
+        String beforeSourceDetails = entity.getSourceDetails();
+        OffsetDateTime beforeLastContactedAt = entity.getLastContactedAt();
         OffsetDateTime beforeFollowUp = entity.getNextFollowUpAt();
-        boolean converted = entity.getStatus() == LeadStatus.CONVERTED;
-        applyUpsert(entity, command, actorId, converted);
+        applyUpsert(entity, command, actorId, false);
         LeadEntity saved = repository.save(entity);
-        leadActivityService.record(tenantId, saved.getId(), LeadActivityType.UPDATED, "Lead updated", "Profile details updated", null, null, null, null, actorId);
+        String description = describeFieldChanges(
+                tenantId,
+                beforeStatus,
+                beforePriority,
+                beforeAssignee,
+                beforeSource,
+                beforeSourceDetails,
+                beforeLastContactedAt,
+                beforeFollowUp,
+                saved,
+                true,
+                false
+        );
+        if (StringUtils.hasText(description)) {
+            leadActivityService.record(tenantId, saved.getId(), LeadActivityType.UPDATED, "Lead updated", description, null, null, null, null, actorId);
+        }
         if (beforeCampaign == null && saved.getCampaignId() != null) {
             leadActivityService.record(tenantId, saved.getId(), LeadActivityType.CAMPAIGN_LINKED, "Campaign linked", "Linked campaign", null, null, "CAMPAIGN", saved.getCampaignId(), actorId);
         }
@@ -179,43 +203,7 @@ public class LeadService {
         if (command == null) {
             throw new IllegalArgumentException("command is required");
         }
-        LeadEntity entity = require(tenantId, id);
-        if (entity.getStatus() != LeadStatus.CONVERTED) {
-            throw new IllegalArgumentException("Converted lead metadata can only be updated after conversion");
-        }
-        UUID beforeCampaign = entity.getCampaignId();
-        UUID beforeAssignee = entity.getAssignedToAppUserId();
-        String beforeNotes = entity.getNotes();
-        String beforeTags = entity.getTags();
-        String beforeSourceDetails = entity.getSourceDetails();
-
-        if (command.campaignId() != null && campaignRepository.findByTenantIdAndId(entity.getTenantId(), command.campaignId()).isEmpty()) {
-            throw new IllegalArgumentException("campaignId does not belong to tenant");
-        }
-        if (command.assignedToAppUserId() != null) {
-            AppUserEntity assignee = appUserRepository.findByTenantIdAndId(entity.getTenantId(), command.assignedToAppUserId())
-                    .orElseThrow(() -> new IllegalArgumentException("assignedToAppUserId does not belong to tenant"));
-            if (!"ACTIVE".equalsIgnoreCase(assignee.getStatus())) {
-                throw new IllegalArgumentException("assignedToAppUserId must reference an active Engage user");
-            }
-        }
-
-        entity.setNotes(normalizeNullable(command.notes()));
-        entity.setTags(normalizeConvertedTags(command.tags()));
-        entity.setSourceDetails(normalizeNullable(command.sourceDetails()));
-        entity.setCampaignId(command.campaignId());
-        entity.setAssignedToAppUserId(command.assignedToAppUserId());
-        entity.touch(actorId);
-
-        LeadEntity saved = repository.save(entity);
-        if (!Objects.equals(beforeCampaign, saved.getCampaignId())
-                || !Objects.equals(beforeAssignee, saved.getAssignedToAppUserId())
-                || !Objects.equals(beforeNotes, saved.getNotes())
-                || !Objects.equals(beforeTags, saved.getTags())
-                || !Objects.equals(beforeSourceDetails, saved.getSourceDetails())) {
-            leadActivityService.record(tenantId, saved.getId(), LeadActivityType.UPDATED, "Converted lead updated", "Marketing metadata updated", null, null, null, null, actorId);
-        }
-        return toRecord(saved, OffsetDateTime.now());
+        throw new IllegalArgumentException("Converted leads are read-only");
     }
 
     @Transactional
@@ -229,8 +217,14 @@ public class LeadService {
         if (entity.getStatus() == LeadStatus.CONVERTED) {
             throw new IllegalArgumentException("Converted leads cannot be updated through status actions");
         }
+        validateFutureFollowUp(command.nextFollowUpAt());
         LeadStatus oldStatus = entity.getStatus();
         OffsetDateTime oldFollowUp = entity.getNextFollowUpAt();
+        LeadPriority oldPriority = entity.getPriority();
+        UUID oldAssignee = entity.getAssignedToAppUserId();
+        LeadSource oldSource = entity.getSource();
+        String oldSourceDetails = entity.getSourceDetails();
+        OffsetDateTime oldLastContactedAt = entity.getLastContactedAt();
         if (command.status() != null) {
             entity.setStatus(command.status());
         }
@@ -238,6 +232,7 @@ public class LeadService {
             entity.setPriority(command.priority());
         }
         if (command.assignedToAppUserId() != null) {
+            validateAssignee(tenantId, command.assignedToAppUserId());
             entity.setAssignedToAppUserId(command.assignedToAppUserId());
         }
         if (command.lastContactedAt() != null) {
@@ -257,6 +252,22 @@ public class LeadService {
         entity.touch(actorId);
         LeadEntity saved = repository.save(entity);
 
+        String summary = describeFieldChanges(
+                tenantId,
+                oldStatus,
+                oldPriority,
+                oldAssignee,
+                oldSource,
+                oldSourceDetails,
+                oldLastContactedAt,
+                oldFollowUp,
+                saved,
+                false,
+                false
+        );
+        if (StringUtils.hasText(summary)) {
+            leadActivityService.record(tenantId, saved.getId(), LeadActivityType.UPDATED, "Lead updated", summary, null, null, null, null, actorId);
+        }
         if (oldStatus != saved.getStatus()) {
             recordStatusTransition(tenantId, saved.getId(), oldStatus, saved.getStatus(), actorId);
         }
@@ -295,7 +306,7 @@ public class LeadService {
         return repository.findByTenantIdAndId(tenantId, id).orElseThrow(() -> new IllegalArgumentException("Lead not found"));
     }
 
-    private void validate(LeadUpsertCommand command) {
+    private void validate(UUID tenantId, LeadUpsertCommand command) {
         if (command == null) {
             throw new IllegalArgumentException("command is required");
         }
@@ -305,6 +316,97 @@ public class LeadService {
             throw new IllegalArgumentException("source is required");
         }
         normalizeMobile(command.phone(), "phone");
+        validateFutureFollowUp(command.nextFollowUpAt());
+        if (command.assignedToAppUserId() != null) {
+            validateAssignee(tenantId, command.assignedToAppUserId());
+        }
+    }
+
+    private void validateFutureFollowUp(OffsetDateTime nextFollowUpAt) {
+        if (nextFollowUpAt == null) {
+            return;
+        }
+        if (!nextFollowUpAt.isAfter(OffsetDateTime.now(ZoneOffset.UTC))) {
+            throw new IllegalArgumentException("Follow-up date and time must be in the future.");
+        }
+    }
+
+    private void validateAssignee(UUID tenantId, UUID assigneeId) {
+        if (assigneeId == null) {
+            return;
+        }
+        TenantUserRecord user = tenantUserManagementService.list(tenantId).stream()
+                .filter(row -> assigneeId.equals(row.appUserId()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("Select an active Engage user."));
+        String role = normalizeRoleValue(user.membershipRole());
+        if (!"ACTIVE".equals(normalizeRoleValue(user.userStatus()))
+                || !"ACTIVE".equals(normalizeRoleValue(user.membershipStatus()))
+                || !ELIGIBLE_ASSIGNEE_ROLES.contains(role)) {
+            throw new IllegalArgumentException("Select an active Engage user.");
+        }
+    }
+
+    private String describeFieldChanges(
+            UUID tenantId,
+            LeadStatus oldStatus,
+            LeadPriority oldPriority,
+            UUID oldAssignee,
+            LeadSource oldSource,
+            String oldSourceDetails,
+            OffsetDateTime oldLastContactedAt,
+            OffsetDateTime oldFollowUp,
+            LeadEntity after,
+            boolean includeSource,
+            boolean includeStatus
+    ) {
+        List<String> changes = new ArrayList<>();
+        if (includeStatus && oldStatus != after.getStatus()) {
+            changes.add("Status changed: " + LeadPresentationLabels.statusLabel(oldStatus) + " → " + LeadPresentationLabels.statusLabel(after.getStatus()));
+        }
+        if (oldPriority != after.getPriority()) {
+            changes.add("Priority changed: " + LeadPresentationLabels.priorityLabel(oldPriority) + " → " + LeadPresentationLabels.priorityLabel(after.getPriority()));
+        }
+        if (!Objects.equals(oldAssignee, after.getAssignedToAppUserId())) {
+            changes.add("Assigned to: " + assigneeLabel(tenantId, after.getAssignedToAppUserId()));
+        }
+        if (includeSource && !Objects.equals(oldSource, after.getSource())) {
+            changes.add("Source changed: " + LeadPresentationLabels.sourceLabel(oldSource) + " → " + LeadPresentationLabels.sourceLabel(after.getSource()));
+        }
+        if (includeSource && !Objects.equals(oldSourceDetails, after.getSourceDetails())) {
+            changes.add("Source details changed");
+        }
+        if (!Objects.equals(oldLastContactedAt, after.getLastContactedAt()) && after.getLastContactedAt() != null) {
+            changes.add("Last contacted: " + LeadPresentationLabels.formatDateTime(after.getLastContactedAt(), ZoneOffset.UTC));
+        }
+        if (!Objects.equals(oldFollowUp, after.getNextFollowUpAt())) {
+            changes.add(after.getNextFollowUpAt() == null
+                    ? "Next follow-up cleared"
+                    : "Next follow-up: " + LeadPresentationLabels.formatDateTime(after.getNextFollowUpAt(), ZoneOffset.UTC));
+        }
+        return String.join(" • ", changes);
+    }
+
+    private String assigneeLabel(UUID tenantId, UUID assigneeId) {
+        if (assigneeId == null) {
+            return "Unassigned";
+        }
+        return tenantUserManagementService.list(tenantId).stream()
+                .filter(record -> assigneeId.equals(record.appUserId()))
+                .findFirst()
+                .map(record -> {
+                    if (StringUtils.hasText(record.displayName())) {
+                        return record.displayName().trim();
+                    }
+                    if (StringUtils.hasText(record.username())) {
+                        return record.username().trim();
+                    }
+                    if (StringUtils.hasText(record.employeeCode())) {
+                        return record.employeeCode().trim();
+                    }
+                    return "Unavailable user";
+                })
+                .orElse("Unavailable user");
     }
 
     private void applyUpsert(LeadEntity entity, LeadUpsertCommand command, UUID actorId, boolean convertedImmutable) {
@@ -421,6 +523,10 @@ public class LeadService {
 
     private String normalizeNullable(String value) {
         return StringUtils.hasText(value) ? value.trim() : null;
+    }
+
+    private String normalizeRoleValue(String value) {
+        return StringUtils.hasText(value) ? value.trim().toUpperCase() : "";
     }
 
     private String normalizeConvertedTags(String value) {

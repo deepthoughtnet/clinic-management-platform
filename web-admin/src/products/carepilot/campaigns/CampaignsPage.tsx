@@ -730,11 +730,12 @@ export default function CampaignsPage() {
     setCampaignPresetKey(presetKey);
     const preset = CAMPAIGN_PRESETS.find((row) => row.presetKey === presetKey);
     if (!preset) return;
+    const defaults = emptyCampaignForm();
     setCampaignForm((c) => ({
       ...c,
-      campaignType: preset.campaignType,
-      triggerType: preset.triggerType,
-      audienceType: preset.audienceType,
+      campaignType: c.campaignType === defaults.campaignType ? preset.campaignType : c.campaignType,
+      triggerType: c.triggerType === defaults.triggerType ? preset.triggerType : c.triggerType,
+      audienceType: c.audienceType === defaults.audienceType ? preset.audienceType : c.audienceType,
       name: c.name || preset.displayName,
       notes: c.notes || preset.description,
     }));
@@ -2220,6 +2221,7 @@ export default function CampaignsPage() {
                       {selectedCampaignPreset.implementationStatus === "FOUNDATION_ONLY"
                         ? "\nBackend trigger is partially implemented. Executions may not be generated yet."
                         : ""}
+                      {"\n"}Preset defaults only replace trigger/audience values that are still untouched.
                     </Alert>
                     <TextField
                       label="Template Subject"
@@ -2366,7 +2368,7 @@ export default function CampaignsPage() {
                 <Typography variant="body2"><b>Eligible recipients:</b> {triggerPreview.eligibleRecipients}</Typography>
                 <Typography variant="body2"><b>Excluded recipients:</b> {triggerPreview.excludedRecipients}</Typography>
                 <Typography variant="caption" color="text.secondary">
-                  Missing contact {triggerPreview.missingEmailOrPhoneCount} • Invalid destination {triggerPreview.invalidDestinationCount} • Consent/opt-out {triggerPreview.consentOrOptOutCount} • Duplicate {triggerPreview.duplicateRecipientCount} • Inactive {triggerPreview.inactivePatientCount} • Template data {triggerPreview.missingRequiredTemplateDataCount}
+                  Missing contact {triggerPreview.missingEmailOrPhoneCount} • Invalid destination {triggerPreview.invalidDestinationCount} • Tenant consent policy {triggerPreview.consentOrOptOutCount} • Duplicate {triggerPreview.duplicateRecipientCount} • Inactive {triggerPreview.inactivePatientCount} • Template data {triggerPreview.missingRequiredTemplateDataCount}
                 </Typography>
                 <Typography variant="body2">
                   <b>Estimated messages:</b> {triggerPreview.estimatedMessages}

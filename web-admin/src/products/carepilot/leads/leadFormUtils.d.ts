@@ -16,7 +16,12 @@ export type LeadDraftLike = {
 
 export type ClinicUserLike = {
   appUserId: string;
+  displayName?: string | null;
+  username?: string | null;
   membershipStatus?: string | null;
+  userStatus?: string | null;
+  status?: string | null;
+  membershipRole?: string | null;
 };
 
 export type LeadConvertedMetadataLike = {
@@ -28,10 +33,18 @@ export type LeadConvertedMetadataLike = {
 };
 
 export declare function toLeadDateTimeInputValue(value?: string | null): string;
-export declare function validateLeadDraft(draft: LeadDraftLike, clinicUsers?: ClinicUserLike[]): {
+export declare function validateLeadDraft(draft: LeadDraftLike, clinicUsers?: ClinicUserLike[], clinicTimeZone?: string): {
   fieldErrors: Record<string, string>;
   normalizedPhone: string;
   normalizedNextFollowUpAt: string;
+};
+export declare function filterEligibleEngageAssignees(clinicUsers?: ClinicUserLike[]): ClinicUserLike[];
+export declare function validateFollowUpScheduleDraft(
+  draft: { date?: string | null; time?: string | null } | null | undefined,
+  clinicTimeZone?: string | null,
+): {
+  fieldErrors: Record<string, string>;
+  nextFollowUpAt: string | null;
 };
 export declare function buildLeadCreatePayload(draft: LeadDraftLike, normalizedPhone: string): {
   firstName: string;
