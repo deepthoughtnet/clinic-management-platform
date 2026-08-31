@@ -56,6 +56,8 @@ public class CorsConfig {
                 "X-Platform-Op",
                 "X-Correlation-Id",
                 "X-Correlation-ID",
+                "X-Client-Timezone",
+                "x-client-timezone",
                 "Origin"
         ));
         cfg.setExposedHeaders(List.of("WWW-Authenticate", "X-Correlation-ID", "X-Correlation-Id"));

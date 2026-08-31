@@ -1,6 +1,6 @@
 import * as React from "react";
 import { assertValidKeycloakClient, keycloak } from "./keycloakClient";
-import { initKeycloakOnce, resetKeycloakInit } from "./keycloakInit";
+import { initKeycloakOnce } from "./keycloakInit";
 import { decodeJwtPayload, extractRolesUpper, extractTenantIdClaim, extractUsername } from "./tokenUtils";
 import { AuthContext, type AuthContextValue, type SelectedTenant } from "./AuthContext";
 import {
@@ -77,6 +77,8 @@ type ActiveMembership = {
   enabledModules?: Record<string, boolean> | null;
 };
 
+type HttpStatusError = Error & { status?: number };
+
 const SELECTED_TENANT_STORAGE_KEY = "clinic_selected_tenant";
 const SESSION_NOTICE_STORAGE_KEY = "clinic_auth_session_notice";
 const INACTIVITY_ACTIVITY_THROTTLE_MS = 1000;
@@ -105,7 +107,9 @@ async function fetchMe(token: string, tenantId?: string | null, signal?: AbortSi
   });
 
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    const error = new Error(`HTTP ${response.status}: ${response.statusText}`) as HttpStatusError;
+    error.status = response.status;
+    throw error;
   }
 
   return (await response.json()) as MeResponse;
@@ -168,6 +172,20 @@ function storeSessionNotice(notice: string | null): void {
   } catch {
     // Ignore storage failures; auth state must still update.
   }
+}
+
+function getHttpStatus(error: unknown): number | null {
+  if (error && typeof error === "object" && "status" in error) {
+    const status = (error as { status?: unknown }).status;
+    return typeof status === "number" ? status : null;
+  }
+  if (error instanceof Error) {
+    const match = /^HTTP (\d{3}):/.exec(error.message);
+    if (match) {
+      return Number(match[1]);
+    }
+  }
+  return null;
 }
 
 function isSystemTenantValue(value?: string | null): boolean {
@@ -264,13 +282,13 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
   const [initError, setInitError] = React.useState<string | null>(null);
   const [sessionWarning, setSessionWarning] = React.useState<string | null>(null);
   const [sessionNotice, setSessionNotice] = React.useState<string | null>(() => readStoredSessionNotice());
-  const [initVersion, setInitVersion] = React.useState(0);
   const inactivityTimeoutMs = React.useMemo(() => resolveInactivityTimeoutMs(import.meta.env.VITE_WEB_ADMIN_INACTIVITY_TIMEOUT_MINUTES), []);
   const inactivityWarningLeadMs = React.useMemo(() => Math.min(2 * 60_000, Math.max(0, inactivityTimeoutMs - 60_000)), [inactivityTimeoutMs]);
   const lastActivityAtRef = React.useRef<number>(Date.now());
   const lastPersistedActivityAtRef = React.useRef<number>(0);
   const inactivityWarningTimerRef = React.useRef<number | null>(null);
   const inactivityLogoutTimerRef = React.useRef<number | null>(null);
+  const refreshIntervalRef = React.useRef<number | null>(null);
   const sessionInvalidatedRef = React.useRef(false);
 
   const hydrateFromToken = React.useCallback((token: string | null) => {
@@ -300,6 +318,18 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
       inactivityLogoutTimerRef.current = null;
     }
   }, []);
+
+  const clearRefreshTimer = React.useCallback(() => {
+    if (refreshIntervalRef.current !== null) {
+      window.clearInterval(refreshIntervalRef.current);
+      refreshIntervalRef.current = null;
+    }
+  }, []);
+
+  const clearAuthTimers = React.useCallback(() => {
+    clearInactivityTimers();
+    clearRefreshTimer();
+  }, [clearInactivityTimers, clearRefreshTimer]);
 
   const resetAuthState = React.useCallback((notice: string | null, persistNotice: boolean) => {
     storeSelectedTenant(null);
@@ -354,7 +384,7 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
     }
   }, []);
 
-  const terminateKeycloakSession = React.useCallback(async (reason: "explicit" | "inactivity") => {
+  const terminateKeycloakSession = React.useCallback(async (reason: "explicit" | "inactivity" | "expired") => {
     try {
       assertValidKeycloakClient(keycloak);
       console.info("[auth] ending keycloak session", {
@@ -373,30 +403,48 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
     }
   }, []);
 
-  const handleInactivityLogout = React.useCallback((source: "timer" | "storage") => {
+  const beginTerminalAuthTransition = React.useCallback(async (
+    notice: string,
+    broadcastReason: string,
+    logoutReason: "explicit" | "inactivity" | "expired",
+  ) => {
     if (sessionInvalidatedRef.current) {
       return;
     }
     sessionInvalidatedRef.current = true;
-    clearInactivityTimers();
-    console.warn("[auth] session expired due to inactivity", { source });
-    resetAuthState(INACTIVITY_EXPIRED_MESSAGE, true);
-    if (source === "timer") {
-      broadcastLogout("inactivity");
-      void terminateKeycloakSession("inactivity");
+    clearAuthTimers();
+    setInitError(null);
+    resetAuthState(notice, true);
+    broadcastLogout(broadcastReason);
+    await terminateKeycloakSession(logoutReason);
+  }, [broadcastLogout, clearAuthTimers, resetAuthState, terminateKeycloakSession]);
+
+  const handleInactivityLogout = React.useCallback((source: "timer" | "storage") => {
+    if (sessionInvalidatedRef.current) {
+      return;
     }
-  }, [broadcastLogout, clearInactivityTimers, resetAuthState, terminateKeycloakSession]);
+    console.warn("[auth] session expired due to inactivity", { source });
+    if (source === "timer") {
+      void beginTerminalAuthTransition(INACTIVITY_EXPIRED_MESSAGE, "inactivity", "inactivity");
+      return;
+    }
+    sessionInvalidatedRef.current = true;
+    clearAuthTimers();
+    setInitError(null);
+    resetAuthState(INACTIVITY_EXPIRED_MESSAGE, true);
+  }, [beginTerminalAuthTransition, clearAuthTimers, resetAuthState]);
 
   const handleSharedLogout = React.useCallback((reason: string) => {
     if (sessionInvalidatedRef.current) {
       return;
     }
     sessionInvalidatedRef.current = true;
-    clearInactivityTimers();
+    clearAuthTimers();
+    setInitError(null);
     console.warn("[auth] shared logout received", { reason });
     const notice = reason === "inactivity" ? INACTIVITY_EXPIRED_MESSAGE : reason === "explicit" ? null : SESSION_EXPIRED_MESSAGE;
     resetAuthState(notice, Boolean(notice));
-  }, [clearInactivityTimers, resetAuthState]);
+  }, [clearAuthTimers, resetAuthState]);
 
   const syncInactivityFromTimestamp = React.useCallback((timestamp: number, persist = false, force = false) => {
     if (!authenticated || sessionInvalidatedRef.current) {
@@ -436,9 +484,11 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
   }, [authenticated, clearInactivityTimers, handleInactivityLogout, inactivityTimeoutMs, inactivityWarningLeadMs, persistSharedActivity]);
 
   const clearSession = React.useCallback(() => {
-    clearInactivityTimers();
+    sessionInvalidatedRef.current = false;
+    clearAuthTimers();
+    setInitError(null);
     resetAuthState(null, false);
-  }, [clearInactivityTimers, resetAuthState]);
+  }, [clearAuthTimers, resetAuthState]);
 
   const markSessionExpired = React.useCallback((reason: string, error?: unknown) => {
     console.warn("[auth] session expired", {
@@ -448,11 +498,8 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
     if (sessionInvalidatedRef.current) {
       return;
     }
-    sessionInvalidatedRef.current = true;
-    clearInactivityTimers();
-    resetAuthState(SESSION_EXPIRED_MESSAGE, true);
-    broadcastLogout("expired");
-  }, [broadcastLogout, clearInactivityTimers, resetAuthState]);
+    void beginTerminalAuthTransition(SESSION_EXPIRED_MESSAGE, "expired", "expired");
+  }, [beginTerminalAuthTransition]);
 
   const refreshTenantContext = React.useCallback(async (tenant: SelectedTenant | null, tokenOverride?: string | null) => {
     const token = tokenOverride ?? accessToken;
@@ -491,14 +538,19 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
         tenantRole: me.tenantRole || null,
       });
     } catch (err) {
+      const status = getHttpStatus(err);
+      if (status === 401) {
+        console.warn("[auth] tenant context refresh returned 401", err);
+        await beginTerminalAuthTransition(SESSION_EXPIRED_MESSAGE, "expired", "expired");
+        return;
+      }
       console.warn("[auth] tenant context refresh failed", err);
       setInitError(err instanceof Error ? err.message : "Failed to switch tenant context");
     }
-  }, [accessToken]);
+  }, [accessToken, beginTerminalAuthTransition]);
 
   React.useEffect(() => {
     let cancelled = false;
-    let refreshInterval: number | null = null;
     let handleStorageEvent: ((event: StorageEvent) => void) | null = null;
     let handleActivityEvent: (() => void) | null = null;
     let activityEvents: Array<keyof WindowEventMap> = [];
@@ -614,7 +666,12 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
                 if (resolved?.id && (me.tenantId !== resolved.id || !me.appUserId || !me.tenantRole)) {
                   try {
                     effectiveMe = await fetchMe(token, resolved.id);
-                  } catch {
+                  } catch (err) {
+                    const status = getHttpStatus(err);
+                    if (status === 401) {
+                      await beginTerminalAuthTransition(SESSION_EXPIRED_MESSAGE, "expired", "expired");
+                      return;
+                    }
                     effectiveMe = me;
                   }
                 }
@@ -638,9 +695,19 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
             }
           } catch (err) {
             if (!cancelled) {
-              console.warn("[auth] /me request failed", err);
-              setInitError(err instanceof Error ? err.message : "Failed to load /api/me");
+              const status = getHttpStatus(err);
+              if (status === 401) {
+                console.warn("[auth] /me request returned 401 during bootstrap", err);
+                await beginTerminalAuthTransition(SESSION_EXPIRED_MESSAGE, "expired", "expired");
+              } else {
+                console.warn("[auth] /me request failed", err);
+                setInitError(err instanceof Error ? err.message : "Failed to load /api/me");
+              }
             }
+          }
+
+          if (sessionInvalidatedRef.current || cancelled) {
+            return;
           }
 
           const startInactivityWatch = () => {
@@ -681,7 +748,7 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
           window.addEventListener("storage", handleStorageEvent!);
           activityEvents.forEach((eventName) => window.addEventListener(eventName, handleActivityEvent!, { capture: true, passive: true }));
 
-          refreshInterval = window.setInterval(async () => {
+          refreshIntervalRef.current = window.setInterval(async () => {
             try {
               if (!keycloak.authenticated || sessionInvalidatedRef.current) return;
               await keycloak.updateToken(30);
@@ -689,9 +756,14 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
               if (sessionInvalidatedRef.current) return;
               hydrateFromToken(newToken);
               setAuthenticated(!!newToken);
-            } catch {
+            } catch (err) {
               if (!cancelled) {
-                markSessionExpired("refresh-token-update-failed");
+                const status = getHttpStatus(err);
+                if (status === 401) {
+                  await beginTerminalAuthTransition(SESSION_EXPIRED_MESSAGE, "expired", "expired");
+                } else {
+                  markSessionExpired("refresh-token-update-failed", err);
+                }
               }
             }
           }, 10_000);
@@ -709,7 +781,12 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
               })
               .catch((err) => {
                 if (!cancelled) {
-                  markSessionExpired("access-token-expired-refresh-failed", err);
+                  const status = getHttpStatus(err);
+                  if (status === 401) {
+                    void beginTerminalAuthTransition(SESSION_EXPIRED_MESSAGE, "expired", "expired");
+                  } else {
+                    markSessionExpired("access-token-expired-refresh-failed", err);
+                  }
                 }
               });
           };
@@ -733,19 +810,16 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
 
     return () => {
       cancelled = true;
-      if (refreshInterval) {
-        window.clearInterval(refreshInterval);
-      }
       if (handleStorageEvent) {
         window.removeEventListener("storage", handleStorageEvent);
       }
       if (handleActivityEvent) {
         activityEvents.forEach((eventName) => window.removeEventListener(eventName, handleActivityEvent!, true));
       }
-      clearInactivityTimers();
+      clearAuthTimers();
       keycloak.onTokenExpired = undefined;
     };
-  }, [clearInactivityTimers, clearSession, handleSharedLogout, hydrateFromToken, initVersion, markSessionExpired, persistSharedActivity, syncInactivityFromTimestamp]);
+  }, [beginTerminalAuthTransition, clearAuthTimers, clearSession, handleSharedLogout, hydrateFromToken, markSessionExpired, persistSharedActivity, syncInactivityFromTimestamp]);
 
   const value = React.useMemo<AuthContextValue>(
     () => ({
@@ -776,13 +850,9 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
         void refreshTenantContext(tenant);
       },
       retryInit: () => {
-        resetKeycloakInit();
-        sessionInvalidatedRef.current = false;
-        clearInactivityTimers();
-        setInitVersion((v) => v + 1);
-        setSessionWarning(null);
-        setSessionNotice(null);
-        storeSessionNotice(null);
+        if (typeof window !== "undefined") {
+          window.location.reload();
+        }
       },
       clearSession,
       hasPermission: (permission: string) => permissions.includes(permission.trim().toLowerCase()),
@@ -793,8 +863,9 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
       logout: async () => {
         console.info("[auth] user initiated logout");
         sessionInvalidatedRef.current = true;
-        clearInactivityTimers();
-        clearSession();
+        clearAuthTimers();
+        setInitError(null);
+        resetAuthState(null, false);
         broadcastLogout("explicit");
         await terminateKeycloakSession("explicit");
       },

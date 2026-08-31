@@ -320,7 +320,7 @@ public class ClinicalReasoningEngine {
         List<EvidenceItem> supporting = enrichEvidenceList(result.supportingEvidence(), clinicalContext, consultation);
         List<EvidenceItem> contradicting = enrichEvidenceList(result.contradictingEvidence(), clinicalContext, consultation);
         List<MissingInformationItem> missing = result.missingInformation();
-        List<RedFlagItem> redFlags = enrichRedFlags(result.redFlags(), clinicalContext, consultation);
+        List<RedFlagItem> redFlags = normalizeRedFlags(enrichRedFlags(result.redFlags(), clinicalContext, consultation), clinicalContext, consultation);
         List<RecommendedTestItem> recommendedTests = enrichRecommendedTests(result.recommendedTests(), clinicalContext, consultation);
         List<ClinicalSafetyNote> safetyNotes = enrichSafetyNotes(result.safetyNotes(), clinicalContext, consultation);
         return new ClinicalReasoningResult(
@@ -366,6 +366,7 @@ public class ClinicalReasoningEngine {
         List<RedFlagItem> redFlags = hasItems(result.redFlags())
                 ? result.redFlags()
                 : buildFallbackRedFlags(clinicalContext, consultation);
+        redFlags = normalizeRedFlags(redFlags, clinicalContext, consultation);
         List<RecommendedTestItem> recommendedTests = hasItems(result.recommendedTests())
                 ? result.recommendedTests()
                 : buildFallbackRecommendedTests(clinicalContext, consultation);
@@ -474,7 +475,9 @@ public class ClinicalReasoningEngine {
         List<RedFlagItem> items = new ArrayList<>();
         String observedOn = context != null && context.intakeSummary() != null ? context.intakeSummary().recordedAt()
                 : consultation == null || consultation.getCreatedAt() == null ? null : consultation.getCreatedAt().toString();
-        addRedFlag(items, "Diabetes with fever", "Higher risk of dehydration and hyperglycemia during febrile illness", "MEDIUM", "Monitor glucose and hydration", observedOn, "INTAKE", "Clinical Intake", BigDecimal.valueOf(0.9));
+        if (hasRecordedDiabetes(context) && hasFever(context, consultation)) {
+            addRedFlag(items, "Diabetes with fever", "Higher risk of dehydration and hyperglycemia during febrile illness", "MEDIUM", "Monitor glucose and hydration", observedOn, "INTAKE", "Clinical Intake", BigDecimal.valueOf(0.9));
+        }
         addRedFlag(items, "Worsening breathlessness", "Possible lower respiratory progression", "HIGH", "Escalate if symptoms worsen", observedOn, "INTAKE", "Clinical Intake", BigDecimal.valueOf(0.92));
         addRedFlag(items, "SpO2 below 94%", "Hypoxia requires urgent review", "HIGH", "Escalate urgently", observedOn, "INTAKE", "Clinical Intake", BigDecimal.valueOf(0.95));
         addRedFlag(items, "Persistent fever > 5 days", "Prolonged fever needs reassessment", "MEDIUM", "Review in person", observedOn, "CONSULTATION", "Current Consultation", BigDecimal.valueOf(0.86));
@@ -519,7 +522,7 @@ public class ClinicalReasoningEngine {
 
     private List<ClinicalSafetyNote> buildFallbackSafetyNotes(ClinicalContextResponse context, ConsultationEntity consultation) {
         List<ClinicalSafetyNote> items = new ArrayList<>();
-        boolean diabetic = isDiabetic(context);
+        boolean diabetic = hasRecordedDiabetes(context);
         boolean fever = hasFever(context, consultation);
         if (diabetic && fever) {
             addSafety(items, "Monitor glucose more often during fever", "MEDIUM", "Hydrate and check sugars regularly", "Monitor home glucose and oral intake", "INTAKE", "Clinical Intake", "EDUCATE_PATIENT");
@@ -656,22 +659,80 @@ public class ClinicalReasoningEngine {
                 .anyMatch(value -> value.contains(normalizedNeedle));
     }
 
-    private boolean isDiabetic(ClinicalContextResponse context) {
+    private boolean hasRecordedDiabetes(ClinicalContextResponse context) {
         if (context == null) {
             return false;
         }
+        if (context.patientSummary() != null && containsDiabetesTerm(context.patientSummary().chronicConditions())) {
+            return true;
+        }
+        if (context.diagnosisHistory() != null) {
+            if (containsDiabetesTerm(context.diagnosisHistory().lastVisitDiagnosis())) {
+                return true;
+            }
+            if (context.diagnosisHistory().previousDiagnoses() != null && context.diagnosisHistory().previousDiagnoses().stream().anyMatch(this::containsDiabetesTerm)) {
+                return true;
+            }
+        }
         if (context.longitudinalMemory() != null && context.longitudinalMemory().knownConditions() != null) {
             for (ClinicalContextResponse.LongitudinalConcept concept : context.longitudinalMemory().knownConditions()) {
-                if (concept != null && concept.label() != null) {
-                    String label = concept.label().toLowerCase(java.util.Locale.ROOT);
-                    if (label.contains("diabetes") || label.contains("diabetic")) {
-                        return true;
-                    }
+                if (concept != null && (containsDiabetesTerm(concept.label()) || containsDiabetesTerm(concept.valueText()) || containsDiabetesTerm(concept.conceptKey()))) {
+                    return true;
                 }
             }
         }
-        String summary = context.aiSummary();
-        return summary != null && summary.toLowerCase(java.util.Locale.ROOT).contains("diabet");
+        return false;
+    }
+
+    private boolean containsDiabetesTerm(String value) {
+        if (value == null) {
+            return false;
+        }
+        String normalized = value.toLowerCase(java.util.Locale.ROOT);
+        return normalized.contains("diabetes") || normalized.contains("diabetic");
+    }
+
+    private List<RedFlagItem> normalizeRedFlags(List<RedFlagItem> redFlags, ClinicalContextResponse context, ConsultationEntity consultation) {
+        if (redFlags == null || redFlags.isEmpty()) {
+            return List.of();
+        }
+        boolean hasRecordedDiabetes = hasRecordedDiabetes(context);
+        return redFlags.stream().map(item -> normalizeDiabetesRelatedRedFlag(item, hasRecordedDiabetes, context, consultation)).toList();
+    }
+
+    private RedFlagItem normalizeDiabetesRelatedRedFlag(RedFlagItem item,
+                                                        boolean hasRecordedDiabetes,
+                                                        ClinicalContextResponse context,
+                                                        ConsultationEntity consultation) {
+        if (item == null) {
+            return null;
+        }
+        if (hasRecordedDiabetes || !isDiabetesRelatedRedFlag(item)) {
+            return item;
+        }
+        String observedOn = firstNonBlank(
+                item.observationDate(),
+                firstNonBlank(
+                        context == null || context.intakeSummary() == null ? null : context.intakeSummary().recordedAt(),
+                        consultation == null || consultation.getCreatedAt() == null ? null : consultation.getCreatedAt().toString()
+                )
+        );
+        return new RedFlagItem(
+                "If the patient has diabetes, fever can increase dehydration and hyperglycemia risk",
+                "Conditionally relevant only if diabetes is present",
+                item.severity(),
+                "If diabetes is present, monitor glucose and hydration",
+                item.confidence(),
+                item.source(),
+                observedOn,
+                item.sourceType(),
+                item.sourceTitle(),
+                item.verificationStatus()
+        );
+    }
+
+    private boolean isDiabetesRelatedRedFlag(RedFlagItem item) {
+        return item != null && (containsDiabetesTerm(item.name()) || containsDiabetesTerm(item.reason()) || containsDiabetesTerm(item.action()));
     }
 
     private boolean hasFever(ClinicalContextResponse context, ConsultationEntity consultation) {

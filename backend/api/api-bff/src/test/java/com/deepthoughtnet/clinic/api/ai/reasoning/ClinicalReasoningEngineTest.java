@@ -88,6 +88,160 @@ class ClinicalReasoningEngineTest {
     }
 
     @Test
+    void keepsFallbackRedFlagsGenericWhenNoDiabetesIsRecorded() {
+        AiDoctorCopilotService copilotService = mock(AiDoctorCopilotService.class);
+        ClinicalReasoningPromptBuilder promptBuilder = new ClinicalReasoningPromptBuilder();
+        ClinicalReasoningResponseParser parser = new ClinicalReasoningResponseParser(new com.fasterxml.jackson.databind.ObjectMapper());
+        ClinicalReasoningEngine engine = new ClinicalReasoningEngine(copilotService, promptBuilder, parser);
+
+        UUID tenantId = UUID.randomUUID();
+        ConsultationEntity consultation = ConsultationEntity.create(tenantId, UUID.randomUUID(), UUID.randomUUID(), null);
+        consultation.update("Fever, cough and body ache", "Fever and cough for 4 days", null, "CBC normal", null, null, null, null, null, null, null, null, null, null, null);
+        ClinicalContextResponse context = sampleNoDiabetesContext(tenantId, consultation.getPatientId(), consultation.getId());
+        ClinicalReasoningRequest request = new ClinicalReasoningRequest(consultation.getPatientId(), "Fever, cough and body ache", "Fever and cough for 4 days", "CBC normal", "BP 136/86, Pulse 96, Temp 101.2 F, SpO2 96", null, null, null, null, null);
+
+        String sparseJson = "{\"confidence\":\"HIGH\",\"primaryDiagnosis\":{\"name\":\"Viral Upper Respiratory Infection\",\"confidence\":0.82,\"status\":\"SUGGESTED\"},\"supportingEvidence\":[],\"contradictingEvidence\":[],\"missingInformation\":[],\"redFlags\":[],\"recommendedTests\":[],\"reasoningSummary\":\"Likely viral respiratory illness.\",\"safetyNotes\":[],\"followUpAdvice\":[],\"patientExplanation\":\"Likely a viral illness.\",\"sourceContextSummary\":{\"chiefComplaint\":\"Fever\"},\"metadata\":{\"promptVersion\":\"clinic.clinical.reasoning.v1\",\"contextVersion\":\"v1\",\"provider\":\"MOCK\",\"model\":\"mock-model\",\"tokens\":{},\"parseStatus\":\"VALID\"}}";
+        when(copilotService.draft(eq(com.deepthoughtnet.clinic.platform.contracts.ai.AiTaskType.CLINICAL_REASONING), anyString(), anyString(), anyMap(), eq(List.of())))
+                .thenReturn(new AiDraftResponse(
+                        true,
+                        false,
+                        "ok",
+                        "MOCK",
+                        "mock-model",
+                        sparseJson,
+                        mapOf(
+                                "confidence", "HIGH",
+                                "primaryDiagnosis", mapOf("name", "Viral Upper Respiratory Infection", "confidence", 0.82, "status", "SUGGESTED"),
+                                "supportingEvidence", List.of(),
+                                "contradictingEvidence", List.of(),
+                                "missingInformation", List.of(),
+                                "redFlags", List.of(),
+                                "recommendedTests", List.of(),
+                                "reasoningSummary", "Likely viral respiratory illness.",
+                                "safetyNotes", List.of(),
+                                "followUpAdvice", List.of(),
+                                "patientExplanation", "Likely a viral illness.",
+                                "sourceContextSummary", mapOf("chiefComplaint", "Fever"),
+                                "metadata", mapOf("promptVersion", "clinic.clinical.reasoning.v1", "contextVersion", "v1", "provider", "MOCK", "model", "mock-model", "tokens", mapOf(), "parseStatus", "VALID")
+                        ),
+                        BigDecimal.valueOf(0.88),
+                        List.of(),
+                        List.of(),
+                        "STOP",
+                        "COMPLETE",
+                        355,
+                        sparseJson,
+                        "VALID"
+                ));
+
+        ClinicalReasoningResult result = engine.generate(new ClinicalReasoningEngine.UUIDContext(tenantId, "corr-no-diabetes", "corr-no-diabetes"), consultation, request, context);
+
+        assertThat(result.redFlags()).extracting("name").doesNotContain("Diabetes with fever");
+        assertThat(result.redFlags()).extracting("name").contains("Worsening breathlessness", "SpO2 below 94%", "Persistent fever > 5 days", "Confusion or altered sensorium");
+        assertThat(result.safetyNotes()).extracting("message").doesNotContain("Monitor glucose more often during fever");
+    }
+
+    @Test
+    void rephrasesDiabetesRedFlagsConditionallyWhenDiabetesIsNotRecorded() {
+        AiDoctorCopilotService copilotService = mock(AiDoctorCopilotService.class);
+        ClinicalReasoningPromptBuilder promptBuilder = new ClinicalReasoningPromptBuilder();
+        ClinicalReasoningResponseParser parser = new ClinicalReasoningResponseParser(new com.fasterxml.jackson.databind.ObjectMapper());
+        ClinicalReasoningEngine engine = new ClinicalReasoningEngine(copilotService, promptBuilder, parser);
+
+        UUID tenantId = UUID.randomUUID();
+        ConsultationEntity diabeticConsultation = ConsultationEntity.create(tenantId, UUID.randomUUID(), UUID.randomUUID(), null);
+        diabeticConsultation.update("Fever, cough and body ache", "Fever and cough for 4 days", null, "CBC normal", null, null, null, null, null, null, null, null, null, null, null);
+        ClinicalContextResponse diabeticContext = sampleContext(tenantId, diabeticConsultation.getPatientId(), diabeticConsultation.getId());
+        ClinicalReasoningRequest diabeticRequest = new ClinicalReasoningRequest(diabeticConsultation.getPatientId(), "Fever, cough and body ache", "Fever and cough for 4 days", "CBC normal", "BP 136/86, Pulse 96, Temp 101.2 F, SpO2 96", null, null, null, null, null);
+
+        ConsultationEntity nonDiabeticConsultation = ConsultationEntity.create(tenantId, UUID.randomUUID(), UUID.randomUUID(), null);
+        nonDiabeticConsultation.update("Fever, cough and body ache", "Fever and cough for 4 days", null, "CBC normal", null, null, null, null, null, null, null, null, null, null, null);
+        ClinicalContextResponse nonDiabeticContext = sampleNoDiabetesContext(tenantId, nonDiabeticConsultation.getPatientId(), nonDiabeticConsultation.getId());
+        ClinicalReasoningRequest nonDiabeticRequest = new ClinicalReasoningRequest(nonDiabeticConsultation.getPatientId(), "Fever, cough and body ache", "Fever and cough for 4 days", "CBC normal", "BP 136/86, Pulse 96, Temp 101.2 F, SpO2 96", null, null, null, null, null);
+
+        String diabetesJson = "{\"confidence\":\"HIGH\",\"primaryDiagnosis\":{\"name\":\"Viral Upper Respiratory Infection\",\"confidence\":0.82,\"status\":\"SUGGESTED\"},\"redFlags\":[{\"name\":\"Diabetes with fever\",\"reason\":\"Higher risk of dehydration and hyperglycemia during febrile illness\",\"severity\":\"MEDIUM\",\"action\":\"Monitor glucose and hydration\",\"confidence\":0.9,\"source\":\"Reasoning engine\",\"observationDate\":\"2026-08-30T10:30:00Z\",\"sourceType\":\"INTAKE\",\"sourceTitle\":\"Clinical Intake\",\"verificationStatus\":\"DERIVED\"}],\"reasoningSummary\":\"Likely viral respiratory illness.\",\"safetyNotes\":[],\"metadata\":{\"promptVersion\":\"clinic.clinical.reasoning.v1\",\"contextVersion\":\"v1\",\"provider\":\"MOCK\",\"model\":\"mock-model\",\"tokens\":{},\"parseStatus\":\"VALID\"}}";
+        when(copilotService.draft(eq(com.deepthoughtnet.clinic.platform.contracts.ai.AiTaskType.CLINICAL_REASONING), anyString(), anyString(), anyMap(), eq(List.of())))
+                .thenReturn(new AiDraftResponse(
+                        true,
+                        false,
+                        "ok",
+                        "MOCK",
+                        "mock-model",
+                        diabetesJson,
+                        mapOf(
+                                "confidence", "HIGH",
+                                "primaryDiagnosis", mapOf("name", "Viral Upper Respiratory Infection", "confidence", 0.82, "status", "SUGGESTED"),
+                                "redFlags", List.of(mapOf(
+                                        "name", "Diabetes with fever",
+                                        "reason", "Higher risk of dehydration and hyperglycemia during febrile illness",
+                                        "severity", "MEDIUM",
+                                        "action", "Monitor glucose and hydration",
+                                        "confidence", 0.9,
+                                        "source", "Reasoning engine",
+                                        "observationDate", "2026-08-30T10:30:00Z",
+                                        "sourceType", "INTAKE",
+                                        "sourceTitle", "Clinical Intake",
+                                        "verificationStatus", "DERIVED"
+                                )),
+                                "reasoningSummary", "Likely viral respiratory illness.",
+                                "safetyNotes", List.of(),
+                                "metadata", mapOf("promptVersion", "clinic.clinical.reasoning.v1", "contextVersion", "v1", "provider", "MOCK", "model", "mock-model", "tokens", mapOf(), "parseStatus", "VALID")
+                        ),
+                        BigDecimal.valueOf(0.88),
+                        List.of(),
+                        List.of(),
+                        "STOP",
+                        "COMPLETE",
+                        355,
+                        diabetesJson,
+                        "VALID"
+                ))
+                .thenReturn(new AiDraftResponse(
+                        true,
+                        false,
+                        "ok",
+                        "MOCK",
+                        "mock-model",
+                        diabetesJson,
+                        mapOf(
+                                "confidence", "HIGH",
+                                "primaryDiagnosis", mapOf("name", "Viral Upper Respiratory Infection", "confidence", 0.82, "status", "SUGGESTED"),
+                                "redFlags", List.of(mapOf(
+                                        "name", "Diabetes with fever",
+                                        "reason", "Higher risk of dehydration and hyperglycemia during febrile illness",
+                                        "severity", "MEDIUM",
+                                        "action", "Monitor glucose and hydration",
+                                        "confidence", 0.9,
+                                        "source", "Reasoning engine",
+                                        "observationDate", "2026-08-30T10:30:00Z",
+                                        "sourceType", "INTAKE",
+                                        "sourceTitle", "Clinical Intake",
+                                        "verificationStatus", "DERIVED"
+                                )),
+                                "reasoningSummary", "Likely viral respiratory illness.",
+                                "safetyNotes", List.of(),
+                                "metadata", mapOf("promptVersion", "clinic.clinical.reasoning.v1", "contextVersion", "v1", "provider", "MOCK", "model", "mock-model", "tokens", mapOf(), "parseStatus", "VALID")
+                        ),
+                        BigDecimal.valueOf(0.88),
+                        List.of(),
+                        List.of(),
+                        "STOP",
+                        "COMPLETE",
+                        355,
+                        diabetesJson,
+                        "VALID"
+                ));
+
+        ClinicalReasoningResult diabeticResult = engine.generate(new ClinicalReasoningEngine.UUIDContext(tenantId, "corr-diabetic", "corr-diabetic"), diabeticConsultation, diabeticRequest, diabeticContext);
+        ClinicalReasoningResult nonDiabeticResult = engine.generate(new ClinicalReasoningEngine.UUIDContext(tenantId, "corr-non-diabetic", "corr-non-diabetic"), nonDiabeticConsultation, nonDiabeticRequest, nonDiabeticContext);
+
+        assertThat(diabeticResult.redFlags()).extracting("name").contains("Diabetes with fever");
+        assertThat(nonDiabeticResult.redFlags()).extracting("name").contains("If the patient has diabetes, fever can increase dehydration and hyperglycemia risk");
+        assertThat(nonDiabeticResult.redFlags()).extracting("name").doesNotContain("Diabetes with fever");
+        assertThat(nonDiabeticResult.redFlags()).extracting("action").contains("If diabetes is present, monitor glucose and hydration");
+    }
+
+    @Test
     void prefersDeterministicLongitudinalFindingsAndDropsMockImagingNoise() {
         AiDoctorCopilotService copilotService = mock(AiDoctorCopilotService.class);
         ClinicalReasoningPromptBuilder promptBuilder = new ClinicalReasoningPromptBuilder();
@@ -439,6 +593,28 @@ class ClinicalReasoningEngineTest {
                         List.of()
                 ),
                 "Known diabetic with recent report",
+                "Patient snapshot",
+                "{\"patientSummary\":{\"patientName\":\"Rohan Sharma\"}}",
+                OffsetDateTime.now()
+        );
+    }
+
+    private ClinicalContextResponse sampleNoDiabetesContext(UUID tenantId, UUID patientId, UUID consultationId) {
+        return new ClinicalContextResponse(
+                tenantId,
+                patientId,
+                consultationId,
+                new ClinicalContextResponse.PatientSnapshot("Rohan Sharma", 42, "MALE", null, null, List.of("Paracetamol"), "2026-08-20"),
+                List.of(),
+                new ClinicalContextResponse.MedicationSummary(List.of("Paracetamol"), List.of(), List.of(), List.of(), List.of()),
+                new ClinicalContextResponse.DiagnosisSummary("Viral fever", List.of("Viral fever")),
+                new ClinicalContextResponse.IntakeSummary(true, "Fever and cough", null, null, List.of(), null, null, null, null),
+                new ClinicalContextResponse.LabIntelligence("CBC normal", List.of(), List.of(), List.of(), null, null, null, null, null, null, null),
+                new ClinicalContextResponse.DocumentIntelligence(List.of("Viral Fever Lab Report"), List.of(), List.of(), List.of()),
+                new ClinicalContextResponse.TimelineSummary(List.of(), "Recent visit only"),
+                new ClinicalContextResponse.LongitudinalMemory(List.of(), List.of(), null, null, List.of(), null, null, List.of(), List.of(), "No chronic conditions recorded"),
+                null,
+                "No chronic conditions recorded",
                 "Patient snapshot",
                 "{\"patientSummary\":{\"patientName\":\"Rohan Sharma\"}}",
                 OffsetDateTime.now()

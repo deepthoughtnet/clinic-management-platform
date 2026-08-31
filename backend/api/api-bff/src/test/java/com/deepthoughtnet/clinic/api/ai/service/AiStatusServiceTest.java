@@ -182,6 +182,39 @@ class AiStatusServiceTest {
     }
 
     @Test
+    void ignoresProviderStatusFailuresWhenARealProviderIsAvailable() {
+        TenantModuleEntitlementService moduleService = mock(TenantModuleEntitlementService.class);
+        PermissionChecker permissionChecker = mock(PermissionChecker.class);
+        UUID tenantId = UUID.randomUUID();
+
+        when(moduleService.isModuleEnabled(tenantId, ModuleKeys.AI_COPILOT)).thenReturn(true);
+        when(permissionChecker.hasAnyPermission("ai_copilot.run", "ai_copilot.clinic.run")).thenReturn(true);
+        Environment environment = mock(Environment.class);
+        when(environment.getActiveProfiles()).thenReturn(new String[] {"test"});
+
+        AiStatusService service = new AiStatusService(
+                moduleService,
+                permissionChecker,
+                List.of(
+                        new ThrowingProvider("GROQ"),
+                        new StubProvider("GEMINI", AiProviderStatus.AVAILABLE)
+                ),
+                true,
+                "GEMINI",
+                "GEMINI,GROQ,MOCK",
+                true,
+                "test-key",
+                true,
+                "TESSERACT",
+                environment
+        );
+
+        var status = service.status(tenantId);
+        assertThat(status.effectiveStatus()).isEqualTo("READY");
+        assertThat(status.provider()).isEqualTo("GEMINI");
+    }
+
+    @Test
     void requireProviderReadyThrowsFriendlyMessageWhenProviderMissing() {
         TenantModuleEntitlementService moduleService = mock(TenantModuleEntitlementService.class);
         PermissionChecker permissionChecker = mock(PermissionChecker.class);
@@ -238,6 +271,34 @@ class AiStatusServiceTest {
         @Override
         public AiProviderStatus status() {
             return status;
+        }
+    }
+
+    private static final class ThrowingProvider implements AiProvider {
+        private final String providerName;
+
+        private ThrowingProvider(String providerName) {
+            this.providerName = providerName;
+        }
+
+        @Override
+        public String providerName() {
+            return providerName;
+        }
+
+        @Override
+        public boolean supports(AiTaskType taskType) {
+            return true;
+        }
+
+        @Override
+        public AiProviderResponse complete(AiProviderRequest request) {
+            throw new UnsupportedOperationException("Not used in this test");
+        }
+
+        @Override
+        public AiProviderStatus status() {
+            throw new IllegalStateException("No default constructor found");
         }
     }
 }

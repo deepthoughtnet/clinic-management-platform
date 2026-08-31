@@ -96,6 +96,7 @@ import {
   finalizePrescription,
   getConsultation,
   getConsultationAiSummary,
+  getConsultationAiPrescriptionSuggestion,
   getClinicalDocument,
   getClinicalIntake,
   getLabOrders,
@@ -121,6 +122,7 @@ import {
   previewPrescription,
   uploadPatientDocument,
   saveConsultationAiSummary,
+  saveConsultationAiPrescriptionSuggestion,
   acceptConsultationSoapAiDraft,
   repairClinicalMemory as repairClinicalMemoryApi,
   reprocessClinicalDocumentExtraction,
@@ -137,6 +139,8 @@ import {
   type Appointment,
   type Consultation,
   type ConsultationAiSummary,
+  type ConsultationAiPrescriptionSuggestion,
+  type ConsultationAiPrescriptionSuggestionInput,
   type ConsultationSoapNote,
   type ConsultationInput,
   type ConsultationSoapInput,
@@ -169,6 +173,8 @@ import { PatientDocumentUploadDialog } from "../../components/clinical/PatientDo
 import { useClinicalReasoning } from "../../hooks/useClinicalReasoning";
 import { formatRelativeBookingTime } from "../../components/workflow/workflowHelpers";
 import { clinicalIntakeToVitalsSnapshot, mergeConsultationVitalsFromIntake } from "./vitalsHydration";
+import { resolveLabRecommendationMatch } from "./labRecommendationMatcher.js";
+import { LAB_ORDER_NOTES_MAX_LENGTH, buildAiLabOrderNotes } from "./labOrderNotesFormatter.js";
 
 type ConsultationFormState = {
   chiefComplaints: string;
@@ -195,7 +201,7 @@ type ConsultationSoapFormState = {
   plan: string;
 };
 
-type MedicineRow = PrescriptionMedicine & { localId: string; route?: string | null };
+type MedicineRow = PrescriptionMedicine & { localId: string; route?: string | null; aiSuggestionItemId?: string | null };
 type TestRow = PrescriptionTest & { localId: string };
 type AiSuggestionItem = {
   title: string;
@@ -207,13 +213,19 @@ type AiSuggestionItem = {
   rawText: string;
 };
 type AiMedicineSuggestionItem = {
+  itemId: string;
   medicine: string;
   dose: string | null;
   frequency: string | null;
   duration: string | null;
   reason: string | null;
   safetyNote: string | null;
+  draftText: string;
   rawText: string;
+  status: ClinicalAiDraftStatus;
+  reviewedByAppUserId: string | null;
+  reviewedByDisplayName: string | null;
+  reviewedAt: string | null;
 };
 type AiAssistAction = "ask" | "diagnosis" | "notes" | "prescription" | "instructions" | "summary" | "red_flags" | "drug_safety" | "tests";
 type AiAssistEntry = {
@@ -331,8 +343,15 @@ type ClinicalDraftGenerationStepState = {
 };
 type ClinicalReasoningSectionKey = "longitudinalContext" | "primaryDiagnosis" | "differentials" | "evidence" | "missingInformation" | "redFlags" | "recommendedTests" | "safetyNotes" | "debug";
 type InvestigationIntelligenceStatus = "Already Available" | "Recently Completed" | "Pending" | "Recommended" | "Consider" | "Unknown";
+type InvestigationIntelligenceMappingState = "MAPPED" | "AMBIGUOUS" | "UNMAPPED";
 type InvestigationIntelligenceRow = {
   testName: string;
+  sourceRecommendation: string;
+  mappingState: InvestigationIntelligenceMappingState;
+  mappingLabel: string;
+  matchedTests: Array<{ id: string; testName: string; testCode: string | null; matchType: "EXACT" | "ALIAS" }>;
+  matchedCatalogNames: string[];
+  matchedRecommendation: ClinicalReasoningResult["recommendedTests"][number] | null;
   status: InvestigationIntelligenceStatus;
   evidence: string | null;
   doctorNote: string;
@@ -1454,7 +1473,21 @@ function normalizeAiMedicineSuggestionItem(entry: unknown): AiMedicineSuggestion
   if (typeof entry === "string") {
     const medicine = entry.trim();
     if (!medicine || isPromptLeak(medicine)) return null;
-    return { medicine, dose: null, frequency: null, duration: null, reason: null, safetyNote: null, rawText: medicine };
+    return {
+      itemId: crypto.randomUUID(),
+      medicine,
+      dose: null,
+      frequency: null,
+      duration: null,
+      reason: null,
+      safetyNote: null,
+      draftText: medicine,
+      rawText: medicine,
+      status: "DRAFTED",
+      reviewedByAppUserId: null,
+      reviewedByDisplayName: null,
+      reviewedAt: null,
+    };
   }
   if (!entry || typeof entry !== "object") return null;
   const row = entry as Record<string, unknown>;
@@ -1467,13 +1500,36 @@ function normalizeAiMedicineSuggestionItem(entry: unknown): AiMedicineSuggestion
     ""
   ).trim();
   if (!medicine || isPromptLeak(medicine)) return null;
+  const draftText = String(row.draftText ?? row.rawText ?? "").trim() || [
+    medicine,
+    String(row.dose ?? row.strength ?? row.dosage ?? "").trim() ? `Dose: ${String(row.dose ?? row.strength ?? row.dosage ?? "").trim()}` : "",
+    String(row.frequency ?? row.freq ?? "").trim() ? `Frequency: ${String(row.frequency ?? row.freq ?? "").trim()}` : "",
+    String(row.duration ?? row.days ?? row.durationDays ?? "").trim() ? `Duration: ${String(row.duration ?? row.days ?? row.durationDays ?? "").trim()}` : "",
+    String(row.reason ?? row.reasoning ?? row.note ?? row.notes ?? "").trim() ? `Reason: ${String(row.reason ?? row.reasoning ?? row.note ?? row.notes ?? "").trim()}` : "",
+    String(row.safetyNote ?? row.safety ?? row.warning ?? row.warnings ?? "").trim() ? `Safety: ${String(row.safetyNote ?? row.safety ?? row.warning ?? row.warnings ?? "").trim()}` : "",
+  ].filter(Boolean).join("\n");
   const dose = String(row.dose ?? row.strength ?? row.dosage ?? "").trim() || null;
   const frequency = String(row.frequency ?? row.freq ?? "").trim() || null;
   const duration = String(row.duration ?? row.days ?? row.durationDays ?? "").trim() || null;
   const reason = String(row.reason ?? row.reasoning ?? row.note ?? row.notes ?? "").trim() || null;
   const safetyNote = String(row.safetyNote ?? row.safety ?? row.warning ?? row.warnings ?? "").trim() || null;
-  const rawText = [medicine, dose, frequency, duration, reason].filter(Boolean).join(" | ");
-  return { medicine, dose, frequency, duration, reason, safetyNote, rawText };
+  const rawText = String(row.rawText ?? draftText).trim() || [medicine, dose, frequency, duration, reason].filter(Boolean).join(" | ");
+  const status = normalizeAiPrescriptionSuggestionItemStatus(row.status);
+  return {
+    itemId: String(row.itemId ?? row.id ?? crypto.randomUUID()).trim(),
+    medicine,
+    dose,
+    frequency,
+    duration,
+    reason,
+    safetyNote,
+    draftText,
+    rawText,
+    status,
+    reviewedByAppUserId: String(row.reviewedByAppUserId ?? "").trim() || null,
+    reviewedByDisplayName: String(row.reviewedByDisplayName ?? "").trim() || null,
+    reviewedAt: String(row.reviewedAt ?? "").trim() || null,
+  };
 }
 
 function parseAiSuggestionItems(draft: AiDraftResponse): { items: AiSuggestionItem[]; summary: string | null; rawText: string; unstructured: boolean; invalid: boolean } {
@@ -1494,6 +1550,14 @@ function parseAiSuggestionItems(draft: AiDraftResponse): { items: AiSuggestionIt
   return { items, summary, rawText, unstructured, invalid };
 }
 
+function normalizeAiPrescriptionSuggestionItemStatus(value: unknown): ClinicalAiDraftStatus {
+  const normalized = String(value ?? "").trim().toUpperCase();
+  if (normalized === "ACCEPTED" || normalized === "EDITED" || normalized === "REJECTED") {
+    return normalized;
+  }
+  return "DRAFTED";
+}
+
 function parseAiMedicineSuggestionItems(draft: AiDraftResponse): { items: AiMedicineSuggestionItem[]; summary: string | null; rawText: string; unstructured: boolean; invalid: boolean } {
   const structured = parseStructuredObject(draft.structuredData);
   const summary = typeof structured["summary"] === "string" ? structured["summary"].trim() : null;
@@ -1510,6 +1574,58 @@ function parseAiMedicineSuggestionItems(draft: AiDraftResponse): { items: AiMedi
     || (safetyNote || "").toLowerCase().includes("incomplete");
   const unstructured = !items.length && !invalid;
   return { items, summary, rawText, unstructured, invalid };
+}
+
+function mapPersistedAiMedicineSuggestionItem(item: {
+  itemId: string;
+  medicine: string;
+  dose: string | null;
+  frequency: string | null;
+  duration: string | null;
+  reason: string | null;
+  safetyNote: string | null;
+  draftText: string | null;
+  status: string | null;
+  reviewedByAppUserId: string | null;
+  reviewedByDisplayName: string | null;
+  reviewedAt: string | null;
+}): AiMedicineSuggestionItem {
+  const draftText = String(item.draftText ?? "").trim() || [
+    `Medicine: ${item.medicine}`,
+    item.dose ? `Dose: ${item.dose}` : "",
+    item.frequency ? `Frequency: ${item.frequency}` : "",
+    item.duration ? `Duration: ${item.duration}` : "",
+    item.reason ? `Reason: ${item.reason}` : "",
+    item.safetyNote ? `Safety: ${item.safetyNote}` : "",
+  ].filter(Boolean).join("\n");
+  return {
+    itemId: item.itemId,
+    medicine: item.medicine,
+    dose: item.dose,
+    frequency: item.frequency,
+    duration: item.duration,
+    reason: item.reason,
+    safetyNote: item.safetyNote,
+    draftText,
+    rawText: draftText,
+    status: normalizeAiPrescriptionSuggestionItemStatus(item.status),
+    reviewedByAppUserId: item.reviewedByAppUserId,
+    reviewedByDisplayName: item.reviewedByDisplayName,
+    reviewedAt: item.reviewedAt,
+  };
+}
+
+function toPersistedAiPrescriptionSuggestionStatus(status: ClinicalAiDraftStatus): "PENDING" | "ACCEPTED" | "REJECTED" | "EDITED" {
+  switch (status) {
+    case "ACCEPTED":
+      return "ACCEPTED";
+    case "EDITED":
+      return "EDITED";
+    case "REJECTED":
+      return "REJECTED";
+    default:
+      return "PENDING";
+  }
 }
 
 function compactDate(value?: string | null): string {
@@ -2286,6 +2402,9 @@ function QuickChipGroup({
 }
 
 function medicineSuggestionToDraftText(item: AiMedicineSuggestionItem) {
+  if (item.draftText.trim()) {
+    return item.draftText.trim();
+  }
   return [
     `Medicine: ${item.medicine}`,
     item.dose ? `Dose: ${item.dose}` : "",
@@ -2300,26 +2419,25 @@ function PrescriptionSuggestionDraftCard({
   item,
   generatedAt,
   disabled,
-  onAcceptSuggestion,
-  onRejectSuggestion,
+  onSuggestionChange,
 }: {
   item: AiMedicineSuggestionItem;
   generatedAt: string | null;
   disabled: boolean;
-  onAcceptSuggestion: (item: AiMedicineSuggestionItem, draftText: string) => void;
-  onRejectSuggestion: (item: AiMedicineSuggestionItem) => void;
+  onSuggestionChange: (item: AiMedicineSuggestionItem) => void;
 }) {
   const initialDraft = React.useMemo(() => medicineSuggestionToDraftText(item), [item]);
   const [draftText, setDraftText] = React.useState(initialDraft);
-  const [status, setStatus] = React.useState<ClinicalAiDraftStatus>("DRAFTED");
+  const [status, setStatus] = React.useState<ClinicalAiDraftStatus>(item.status);
 
   React.useEffect(() => {
     setDraftText(initialDraft);
-    setStatus("DRAFTED");
-  }, [initialDraft]);
+    setStatus(item.status);
+  }, [initialDraft, item.status]);
 
   const parsed = React.useMemo(() => parseSuggestionDraftText(draftText), [draftText]);
   const viewText = draftText.trim() || initialDraft;
+  const persistedStatus = status !== "DRAFTED";
 
   return (
     <ClinicalAiDraftCard
@@ -2331,21 +2449,41 @@ function PrescriptionSuggestionDraftCard({
       editLabel="Edit"
       rejectLabel="Reject"
       copyLabel="Copy"
-      acceptDisabled={disabled}
+      acceptDisabled={disabled || status === "ACCEPTED"}
       editDisabled={disabled}
-      rejectDisabled={disabled}
+      rejectDisabled={disabled || status === "REJECTED"}
       copyDisabled={!viewText.trim()}
       onAccept={() => {
-        onAcceptSuggestion({ ...item, ...parsed }, viewText);
+        const nextItem: AiMedicineSuggestionItem = {
+          ...item,
+          ...parsed,
+          draftText: viewText,
+          rawText: item.rawText,
+          status: "ACCEPTED",
+        };
         setStatus("ACCEPTED");
+        onSuggestionChange(nextItem);
       }}
       onEdit={(nextText) => {
+        const nextParsed = parseSuggestionDraftText(nextText);
         setDraftText(nextText);
         setStatus("EDITED");
+        onSuggestionChange({
+          ...item,
+          ...nextParsed,
+          draftText: nextText,
+          rawText: item.rawText,
+          status: "EDITED",
+        });
       }}
       onReject={() => {
         setStatus("REJECTED");
-        onRejectSuggestion(item);
+        onSuggestionChange({
+          ...item,
+          draftText: viewText,
+          rawText: item.rawText,
+          status: "REJECTED",
+        });
       }}
       onCopy={() => void navigator.clipboard.writeText(viewText)}
     >
@@ -2355,9 +2493,11 @@ function PrescriptionSuggestionDraftCard({
           {item.frequency ? <Chip size="small" variant="outlined" label={item.frequency} /> : null}
           {item.duration ? <Chip size="small" variant="outlined" label={item.duration} /> : null}
           {item.safetyNote ? <Chip size="small" color="warning" variant="outlined" label="Safety note" /> : null}
+          {item.reviewedByDisplayName ? <Chip size="small" variant="outlined" label={item.reviewedByDisplayName} /> : null}
         </Stack>
         {item.reason ? <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.25 }}>Reason: {item.reason}</Typography> : null}
         {item.safetyNote ? <Typography variant="caption" color="warning.main" sx={{ lineHeight: 1.25 }}>Safety: {item.safetyNote}</Typography> : null}
+        {persistedStatus ? <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.25 }}>State persisted across refresh.</Typography> : null}
       </Stack>
     </ClinicalAiDraftCard>
   );
@@ -2457,11 +2597,13 @@ export default function ConsultationWorkspacePage() {
   const [labOrderReviewOpen, setLabOrderReviewOpen] = React.useState(false);
   const [labOrderTestIds, setLabOrderTestIds] = React.useState<string[]>([]);
   const [labOrderNotes, setLabOrderNotes] = React.useState("");
+  const [labOrderReviewError, setLabOrderReviewError] = React.useState<string | null>(null);
   const [labTestSearch, setLabTestSearch] = React.useState("");
   const [debouncedLabTestSearch, setDebouncedLabTestSearch] = React.useState("");
   const [labTestCategoryFilter, setLabTestCategoryFilter] = React.useState("All");
   const [labOrderAiPreparation, setLabOrderAiPreparation] = React.useState<LabOrderAiPreparation | null>(null);
   const [labOrderSaving, setLabOrderSaving] = React.useState(false);
+  const labOrderSubmissionInFlightRef = React.useRef(false);
   const [selectedLabOrderId, setSelectedLabOrderId] = React.useState<string | null>(null);
   const [clinicalReasoningInvestigationHighlightKey, setClinicalReasoningInvestigationHighlightKey] = React.useState<string | null>(null);
   const [medicineSearch, setMedicineSearch] = React.useState("");
@@ -2518,7 +2660,11 @@ export default function ConsultationWorkspacePage() {
   const [aiPrescriptionItems, setAiPrescriptionItems] = React.useState<AiMedicineSuggestionItem[]>([]);
   const [aiPrescriptionUnstructured, setAiPrescriptionUnstructured] = React.useState(false);
   const [aiPrescriptionProvider, setAiPrescriptionProvider] = React.useState<string | null>(null);
+  const [aiPrescriptionModel, setAiPrescriptionModel] = React.useState<string | null>(null);
+  const [aiPrescriptionRawText, setAiPrescriptionRawText] = React.useState<string | null>(null);
   const [prescriptionSuggestionGeneratedAt, setPrescriptionSuggestionGeneratedAt] = React.useState<string | null>(null);
+  const [aiPrescriptionStale, setAiPrescriptionStale] = React.useState(false);
+  const hasAiPrescriptionSuggestion = Boolean(aiPrescriptionSuggestion || aiPrescriptionItems.length || aiPrescriptionRawText || prescriptionSuggestionGeneratedAt);
   const [prescriptionInstructionsLanguage, setPrescriptionInstructionsLanguage] = React.useState<"ENGLISH" | "HINDI" | "MARATHI">("ENGLISH");
   const [prescriptionInstructionsDraft, setPrescriptionInstructionsDraft] = React.useState<AiDraftResponse | null>(null);
   const [prescriptionInstructionsLoading, setPrescriptionInstructionsLoading] = React.useState(false);
@@ -3201,7 +3347,10 @@ export default function ConsultationWorkspacePage() {
       setAiPrescriptionItems([]);
       setAiPrescriptionUnstructured(false);
       setAiPrescriptionProvider(null);
+      setAiPrescriptionModel(null);
+      setAiPrescriptionRawText(null);
       setPrescriptionSuggestionGeneratedAt(null);
+      setAiPrescriptionStale(false);
       setPrescriptionInstructionsDraft(null);
       setPrescriptionInstructionsLoading(false);
       setPrescriptionInstructionsLanguage("ENGLISH");
@@ -3246,9 +3395,13 @@ export default function ConsultationWorkspacePage() {
         if (cancelled) return;
         setLabTests(labTestRows);
         setLabOrders(labOrderRows);
-        const persistedSummary = await getConsultationAiSummary(auth.accessToken, auth.tenantId, consult.id).catch(() => null);
+        const [persistedSummary, persistedPrescriptionSuggestion] = await Promise.all([
+          getConsultationAiSummary(auth.accessToken, auth.tenantId, consult.id).catch(() => null),
+          getConsultationAiPrescriptionSuggestion(auth.accessToken, auth.tenantId, consult.id).catch(() => null),
+        ]);
         if (!cancelled) {
           setSavedAiSummary(persistedSummary);
+          applyPersistedAiPrescriptionSuggestion(persistedPrescriptionSuggestion);
         }
         const loadedAppointment = consult.appointmentId
           ? await getAppointment(auth.accessToken, auth.tenantId, consult.appointmentId).catch(() => null)
@@ -3718,16 +3871,15 @@ export default function ConsultationWorkspacePage() {
     labOrderWorkflowRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
   const buildLabOrderAiPreparation = React.useCallback((rows: InvestigationIntelligenceRow[]): { selectedTestIds: string[]; preparation: LabOrderAiPreparation } => {
-    const selectedItems = rows.map((row) => {
-      const aliases = investigationAliasesForCanonicalKey(normalizeInvestigationCanonicalKey(row.testName));
-      const matchedTests = labTests.filter((test) => investigationTextMatches(test.testName, aliases) || investigationTextMatches(test.testCode, aliases));
-      const matchedRecommendation = clinicalReasoningResult?.recommendedTests.find((test) => investigationTextMatches(test.name || "", aliases) || investigationTextMatches(test.reason || "", aliases) || investigationTextMatches(test.source || "", aliases)) || null;
-      return { row, aliases, matchedTests, matchedRecommendation };
-    });
+    const selectedItems = rows.map((row) => ({
+      row,
+      matchedTests: row.mappingState === "MAPPED" ? row.matchedTests : [],
+      matchedRecommendation: row.mappingState === "MAPPED" ? row.matchedRecommendation : null,
+    }));
 
     const selectedTestIds = Array.from(new Set(selectedItems.flatMap((item) => item.matchedTests.map((test) => test.id))));
     const investigations = selectedItems.length
-      ? selectedItems.map((item) => item.matchedTests[0]?.testName || item.row.testName)
+      ? selectedItems.map((item) => item.row.testName)
       : rows.map((row) => row.testName);
 
     const priorityRank = (value: string | null | undefined) => {
@@ -3749,7 +3901,7 @@ export default function ConsultationWorkspacePage() {
     const reasonCandidates = [
       clinicalReasoningResult?.primaryDiagnosis?.whyConsidered,
       clinicalReasoningResult?.primaryDiagnosis?.whyLessLikely,
-      ...selectedItems.map((item) => item.matchedRecommendation?.reason || item.row.doctorNote),
+      ...selectedItems.map((item) => item.matchedRecommendation?.reason || (item.row.mappingState === "MAPPED" ? item.row.doctorNote : null)),
     ].filter((value): value is string => Boolean(value && value.trim()));
     const reason = reasonCandidates[0] || "Clinical correlation required.";
 
@@ -3793,17 +3945,15 @@ export default function ConsultationWorkspacePage() {
     const { selectedTestIds, preparation } = buildLabOrderAiPreparation(rows);
     setLabOrderAiPreparation(preparation);
     setLabOrderTestIds(selectedTestIds);
-    setLabOrderNotes(
-      [
-        "Prepared from AI Recommendation",
-        `Generated: ${compactDateTime(preparation.generatedAt)}`,
-        preparation.reason ? `Reason: ${preparation.reason}` : null,
-        preparation.supportingEvidence.length ? `Supporting evidence: ${preparation.supportingEvidence.join(" • ")}` : null,
-        `Suggested priority: ${preparation.suggestedPriority}`,
-        preparation.duplicateWarnings.length ? `Warnings: ${preparation.duplicateWarnings.join(" • ")}` : null,
-        "Doctor review and confirmation are required before any laboratory request is created.",
-      ].filter((line): line is string => Boolean(line && line.trim())).join("\n"),
-    );
+    setLabOrderNotes(buildAiLabOrderNotes({
+      generatedAt: compactDateTime(preparation.generatedAt),
+      reason: preparation.reason,
+      supportingEvidence: preparation.supportingEvidence,
+      suggestedPriority: preparation.suggestedPriority,
+      duplicateWarnings: preparation.duplicateWarnings,
+      maxLength: LAB_ORDER_NOTES_MAX_LENGTH,
+    }));
+    setLabOrderReviewError(null);
     setLabOrderReviewOpen(false);
     setActiveTab(4);
     setLabOrderDialogOpen(true);
@@ -4014,25 +4164,33 @@ export default function ConsultationWorkspacePage() {
 
     const rows = recommendedTests.map((test) => {
       const rawText = [test.name, test.reason, test.source, test.actionType].filter(Boolean).join(" ");
-      const canonicalKey = normalizeInvestigationCanonicalKey(rawText || test.name || test.reason || "");
-      const aliases = investigationAliasesForCanonicalKey(canonicalKey);
+      const mapping = resolveLabRecommendationMatch(rawText || test.name || test.reason || "", labTests);
       const reasonText = normalizeLookupKey(rawText);
       const consider = /\b(consider|optional|if indicated|if exposure|if symptoms persist|if clinically needed)\b/.test(reasonText);
       const recentCutoff = Date.now() - thirtyDaysMs;
-      const structuredMatch = structuredMatches.find((entry) => entry.canonicalKey === canonicalKey || investigationTextMatches(entry.searchText, aliases));
-      const reportMatch = reportRows.find((entry) => entry.canonicalKey === canonicalKey || investigationTextMatches(entry.searchText, aliases));
-      const pendingMatch = Array.from(pendingInvestigationNames).find((pending) => investigationTextMatches(pending, aliases));
+      const aliases = mapping.safeToAutoSelect
+        ? investigationAliasesForCanonicalKey(normalizeInvestigationCanonicalKey(mapping.displayLabel))
+        : [];
+      const structuredMatch = mapping.safeToAutoSelect
+        ? structuredMatches.find((entry) => entry.canonicalKey === normalizeInvestigationCanonicalKey(mapping.displayLabel) || investigationTextMatches(entry.searchText, aliases))
+        : null;
+      const reportMatch = mapping.safeToAutoSelect
+        ? reportRows.find((entry) => entry.canonicalKey === normalizeInvestigationCanonicalKey(mapping.displayLabel) || investigationTextMatches(entry.searchText, aliases))
+        : null;
+      const pendingMatch = mapping.safeToAutoSelect
+        ? Array.from(pendingInvestigationNames).find((pending) => investigationTextMatches(pending, aliases))
+        : null;
       const availableMatch = structuredMatch || reportMatch || null;
-      const duplicateRisk = Boolean(availableMatch || pendingMatch);
+      const duplicateRisk = mapping.safeToAutoSelect ? Boolean(availableMatch || pendingMatch) : false;
       let status: InvestigationIntelligenceStatus;
       if (!sourceAvailable) {
         status = "Unknown";
       } else if (consider && !availableMatch && !pendingMatch) {
         status = "Consider";
-      } else if (availableMatch) {
+      } else if (mapping.safeToAutoSelect && availableMatch) {
         const observedOn = availableMatch.observedOn ? new Date(availableMatch.observedOn).getTime() : null;
         status = observedOn != null && !Number.isNaN(observedOn) && observedOn >= recentCutoff ? "Recently Completed" : "Already Available";
-      } else if (pendingMatch) {
+      } else if (mapping.safeToAutoSelect && pendingMatch) {
         status = "Pending";
       } else if (consider) {
         status = "Consider";
@@ -4040,34 +4198,48 @@ export default function ConsultationWorkspacePage() {
         status = "Recommended";
       }
 
-      const evidence = availableMatch?.evidence
-        || (pendingMatch ? `Pending lab order: ${pendingMatch}` : null)
-        || (test.reason || null)
-        || (test.source || null)
-        || (sourceAvailable ? "No recent matching result found." : "Patient investigation history is not fully available.");
-      const doctorNote = duplicateRisk
-        ? "Recent result or pending order already exists. Avoid repeat unless clinically indicated."
-        : status === "Already Available"
-          ? "Recent result available. Repeat only if clinically indicated."
-          : status === "Recently Completed"
+      const evidence = mapping.safeToAutoSelect
+        ? availableMatch?.evidence
+          || (pendingMatch ? `Pending lab order: ${pendingMatch}` : null)
+          || (test.reason || null)
+          || (test.source || null)
+          || (sourceAvailable ? "No recent matching result found." : "Patient investigation history is not fully available.")
+        : mapping.matchState === "AMBIGUOUS"
+          ? mapping.mappingLabel
+          : "AI recommendation not safely mapped to a catalog test.";
+      const doctorNote = mapping.safeToAutoSelect
+        ? duplicateRisk
+          ? "Recent result or pending order already exists. Avoid repeat unless clinically indicated."
+          : status === "Already Available"
             ? "Recent result available. Repeat only if clinically indicated."
-            : status === "Pending"
-              ? "Pending order exists. Review before creating another request."
-              : status === "Consider"
-                ? "Useful if clinically needed."
-                : status === "Unknown"
-                  ? "Clinical judgement required."
-                  : "No recent matching result found.";
+            : status === "Recently Completed"
+              ? "Recent result available. Repeat only if clinically indicated."
+              : status === "Pending"
+                ? "Pending order exists. Review before creating another request."
+                : status === "Consider"
+                  ? "Useful if clinically needed."
+                  : status === "Unknown"
+                    ? "Clinical judgement required."
+                    : "No recent matching result found."
+        : mapping.matchState === "AMBIGUOUS"
+          ? mapping.mappingLabel
+          : "No safe catalog match. Select a test manually.";
 
       return {
-        testName: test.name || investigationLabelFromCanonicalKey(canonicalKey) || "Recommended investigation",
+        testName: mapping.displayLabel || test.name || investigationLabelFromCanonicalKey(normalizeInvestigationCanonicalKey(rawText || test.name || test.reason || "")) || "Recommended investigation",
+        sourceRecommendation: mapping.sourceRecommendation || rawText || test.name || "",
+        mappingState: mapping.matchState,
+        mappingLabel: mapping.mappingLabel,
+        matchedTests: mapping.safeToAutoSelect ? mapping.matchedTests : [],
+        matchedCatalogNames: mapping.matchedCatalogNames,
+        matchedRecommendation: mapping.safeToAutoSelect ? test : null,
         status,
         evidence,
         doctorNote,
         duplicateRisk,
-        matchedOrderId: pendingMatch ? labOrders.find((order) => order.items.some((item) => investigationTextMatches(item.testName, aliases)))?.id || null : null,
-        matchedReportTitle: reportMatch?.title || null,
-        observedOn: availableMatch?.observedOn || null,
+        matchedOrderId: mapping.safeToAutoSelect && pendingMatch ? labOrders.find((order) => order.items.some((item) => investigationTextMatches(item.testName, aliases)))?.id || null : null,
+        matchedReportTitle: mapping.safeToAutoSelect ? reportMatch?.title || null : null,
+        observedOn: mapping.safeToAutoSelect ? availableMatch?.observedOn || null : null,
       };
     });
 
@@ -4081,7 +4253,7 @@ export default function ConsultationWorkspacePage() {
     };
 
     return { rows, summary };
-  }, [clinicalContext?.labIntelligence, clinicalContext?.longitudinalMemory, clinicalReasoningResult?.recommendedTests, labOrders, reportHistoryRows]);
+  }, [clinicalContext?.labIntelligence, clinicalContext?.longitudinalMemory, clinicalReasoningResult?.recommendedTests, labOrders, labTests, reportHistoryRows]);
   const labOrderPreparationRows = React.useMemo(
     () => clinicalReasoningInvestigationIntelligence.rows.filter((row) => row.status === "Recommended" || row.status === "Consider"),
     [clinicalReasoningInvestigationIntelligence.rows],
@@ -4789,6 +4961,20 @@ export default function ConsultationWorkspacePage() {
 
   const addMedicineFromAiSuggestion = (item: AiMedicineSuggestionItem) => {
     if (prescriptionReadOnly) return;
+    if (prescriptionFormRef.current.medicines.some((row) => row.aiSuggestionItemId === item.itemId)) {
+      return;
+    }
+    const normalizedMedicine = item.medicine.trim().toLowerCase();
+    const normalizedDose = (item.dose || "").trim().toLowerCase();
+    const normalizedFrequency = (item.frequency || "").trim().toLowerCase();
+    const normalizedDuration = (item.duration || "").trim().toLowerCase();
+    const alreadyPresent = prescriptionFormRef.current.medicines.some((row) => (
+      row.medicineName.trim().toLowerCase() === normalizedMedicine
+      && (row.dosage || "").trim().toLowerCase() === normalizedDose
+      && (row.frequency || "").trim().toLowerCase() === normalizedFrequency
+      && (row.duration || "").trim().toLowerCase() === normalizedDuration
+    ));
+    if (alreadyPresent) return;
     const row = {
       ...newMedicineRow(prescriptionForm.medicines.length),
       medicineName: item.medicine,
@@ -4799,6 +4985,7 @@ export default function ConsultationWorkspacePage() {
       duration: item.duration || "",
       timing: null,
       instructions: [item.reason, item.safetyNote].filter(Boolean).join(" • "),
+      aiSuggestionItemId: item.itemId,
     };
     setInvalidMedicineRowIds([]);
     setPrescriptionForm((current) => ({ ...current, medicines: [...current.medicines.filter((med) => med.medicineName.trim()), row] }));
@@ -5274,6 +5461,12 @@ export default function ConsultationWorkspacePage() {
     consultationFormRef.current = nextForm;
     savedConsultationSnapshotRef.current = serializeConsultationForm(nextForm);
     void clinicalReasoning.loadReasoning(merged.id);
+    if (aiPrescriptionSuggestionRef.current || aiPrescriptionItemsRef.current.length) {
+      const persistedSuggestion = await getConsultationAiPrescriptionSuggestion(auth.accessToken, auth.tenantId, merged.id).catch(() => null);
+      if (persistedSuggestion) {
+        applyPersistedAiPrescriptionSuggestion(persistedSuggestion);
+      }
+    }
     if (showInfo) setInfo("Consultation draft saved");
     return saved;
   };
@@ -5876,30 +6069,41 @@ export default function ConsultationWorkspacePage() {
   };
   const closeLabOrderDialog = React.useCallback(() => {
     setLabOrderDialogOpen(false);
+    setLabOrderReviewOpen(false);
     setLabOrderAiPreparation(null);
+    setLabOrderReviewError(null);
+    labOrderSubmissionInFlightRef.current = false;
   }, []);
 
   const openLabOrderReview = () => {
     if (!labOrderTestIds.length) return;
+    setLabOrderReviewError(null);
     setLabOrderReviewOpen(true);
   };
 
   const submitLabOrder = async () => {
+    if (labOrderSubmissionInFlightRef.current) return;
     const accessToken = auth.accessToken;
     const tenantId = auth.tenantId;
     const currentConsultation = consultation;
     if (!accessToken || !tenantId || !currentConsultation) return;
+    const trimmedNotes = labOrderNotes.trim();
+    if (trimmedNotes.length > LAB_ORDER_NOTES_MAX_LENGTH) {
+      setLabOrderReviewError("Notes must be 250 characters or fewer.");
+      return;
+    }
     const parsed = labConsultationOrderCreateSchema.safeParse({
       patientId: currentConsultation.patientId,
       testIds: labOrderTestIds,
-      notes: labOrderNotes.trim() || undefined,
+      notes: trimmedNotes || undefined,
     });
     if (!parsed.success) {
-      setError(firstZodError(parsed.error));
+      setLabOrderReviewError(firstZodError(parsed.error));
       return;
     }
+    labOrderSubmissionInFlightRef.current = true;
     setLabOrderSaving(true);
-    setError(null);
+    setLabOrderReviewError(null);
     try {
       const created = await preserveViewport(() => createConsultationLabOrder(accessToken, tenantId, currentConsultation.id, {
         patientId: parsed.data.patientId,
@@ -5912,10 +6116,12 @@ export default function ConsultationWorkspacePage() {
       setLabOrderTestIds([]);
       setLabOrderNotes("");
       setLabOrderAiPreparation(null);
+      setLabOrderReviewError(null);
       setInfo(`Lab order ${created.orderNumber} created`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create lab order");
+      setLabOrderReviewError(err instanceof Error ? err.message : "Failed to create lab order");
     } finally {
+      labOrderSubmissionInFlightRef.current = false;
       setLabOrderSaving(false);
     }
   };
@@ -7785,6 +7991,89 @@ export default function ConsultationWorkspacePage() {
     );
   }, [consultationCertificateType, consultationDocumentDrafts, consultationDocumentationSaving, consultationReferralDestination, consultationReferralPriority, copyConsultationDocumentDraft, finalizeConsultationDocumentDraft, readOnly, rejectConsultationDocumentDraft, updateConsultationDocumentDraft]);
 
+  const applyPersistedAiPrescriptionSuggestion = React.useCallback((suggestion: ConsultationAiPrescriptionSuggestion | null) => {
+    if (!suggestion) {
+      setAiPrescriptionSuggestion(null);
+      setAiPrescriptionItems([]);
+      setAiPrescriptionUnstructured(false);
+      setAiPrescriptionProvider(null);
+      setAiPrescriptionModel(null);
+      setAiPrescriptionRawText(null);
+      setPrescriptionSuggestionGeneratedAt(null);
+      setAiPrescriptionStale(false);
+      return;
+    }
+    setAiPrescriptionSuggestion(suggestion.summary || suggestion.rawText || null);
+    setAiPrescriptionItems((suggestion.items || []).map((item) => mapPersistedAiMedicineSuggestionItem(item)));
+    setAiPrescriptionUnstructured(Boolean(suggestion.unstructured));
+    setAiPrescriptionProvider(suggestion.provider || null);
+    setAiPrescriptionModel(suggestion.model || null);
+    setAiPrescriptionRawText(suggestion.rawText || null);
+    setPrescriptionSuggestionGeneratedAt(suggestion.generatedAt || null);
+    setAiPrescriptionStale(Boolean(suggestion.stale));
+  }, []);
+
+  async function persistAiPrescriptionSuggestionDraft(
+    nextItems: AiMedicineSuggestionItem[],
+    nextState?: {
+      summary?: string | null;
+      rawText?: string | null;
+      unstructured?: boolean;
+      provider?: string | null;
+      model?: string | null;
+      generatedAt?: string | null;
+    },
+  ): Promise<ConsultationAiPrescriptionSuggestion | null> {
+    if (!auth.accessToken || !auth.tenantId || !consultation) return null;
+    const body: ConsultationAiPrescriptionSuggestionInput = {
+      summary: nextState?.summary ?? aiPrescriptionSuggestion,
+      rawText: nextState?.rawText ?? aiPrescriptionRawText,
+      unstructured: nextState?.unstructured ?? aiPrescriptionUnstructured,
+      provider: nextState?.provider ?? aiPrescriptionProvider,
+      model: nextState?.model ?? aiPrescriptionModel,
+      generatedAt: nextState?.generatedAt ?? prescriptionSuggestionGeneratedAt,
+      items: nextItems.map((item) => ({
+        itemId: item.itemId,
+        medicine: item.medicine,
+        dose: item.dose,
+        frequency: item.frequency,
+        duration: item.duration,
+        reason: item.reason,
+        safetyNote: item.safetyNote,
+        draftText: item.draftText,
+        status: toPersistedAiPrescriptionSuggestionStatus(item.status),
+      })),
+    };
+    const response = await saveConsultationAiPrescriptionSuggestion(auth.accessToken, auth.tenantId, consultation.id, body);
+    applyPersistedAiPrescriptionSuggestion(response);
+    return response;
+  }
+
+  async function clearAiPrescriptionSuggestions() {
+    if (!auth.accessToken || !auth.tenantId || !consultation) return;
+    setAiBusy(true);
+    setError(null);
+    setAiActiveAction("prescription");
+    try {
+      const clearedAt = new Date().toISOString();
+      await persistAiPrescriptionSuggestionDraft([], {
+        summary: null,
+        rawText: null,
+        unstructured: false,
+        provider: aiPrescriptionProvider,
+        model: aiPrescriptionModel,
+        generatedAt: clearedAt,
+      });
+      setInfo("AI prescription suggestions cleared.");
+    } catch (clearError) {
+      console.error("Failed to clear AI prescription suggestions", clearError);
+      setError(clearError instanceof Error ? clearError.message : "Failed to clear AI prescription suggestions");
+    } finally {
+      setAiBusy(false);
+      setAiActiveAction(null);
+    }
+  }
+
   async function applyAiPrescriptionTemplate() {
     if (!auth.accessToken || !auth.tenantId || !consultation || !patient) return;
     const entryId = makeAiAssistEntryId();
@@ -7809,7 +8098,7 @@ export default function ConsultationWorkspacePage() {
           diagnosisChars: consultationForm.diagnosis.trim().length,
           symptomsChars: consultationForm.symptoms.trim().length,
           allergiesChars: (patient.patient.allergies || "").trim().length,
-          currentMedicationsChars: (patient.patient.longTermMedications || "").trim().length,
+          currentMedicationsChars: currentPrescriptionDraftSummary.trim().length,
           doctorNotesChars: consultationForm.clinicalNotes.trim().length,
         });
       }
@@ -7823,7 +8112,7 @@ export default function ConsultationWorkspacePage() {
         diagnosis: consultationForm.diagnosis,
         symptoms: consultationForm.symptoms,
         allergies: patient.patient.allergies,
-        currentMedications: "",
+        currentMedications: currentPrescriptionDraftSummary || null,
         doctorNotes: consultationForm.clinicalNotes,
       });
       if (import.meta.env.DEV) {
@@ -7858,6 +8147,10 @@ export default function ConsultationWorkspacePage() {
         setAiPrescriptionItems([]);
         setAiPrescriptionUnstructured(true);
         setAiPrescriptionProvider(draft.provider || null);
+        setAiPrescriptionModel(draft.model || null);
+        setAiPrescriptionRawText(parsed.rawText);
+        setPrescriptionSuggestionGeneratedAt(null);
+        setAiPrescriptionStale(false);
         updateAiAssistEntry(entryId, {
           status: "success",
           response: draft,
@@ -7866,11 +8159,31 @@ export default function ConsultationWorkspacePage() {
         setError("AI returned an invalid response. Please retry.");
         return;
       }
+      const generatedAt = new Date().toISOString();
       setAiPrescriptionSuggestion(parsed.summary || parsed.rawText || null);
       setAiPrescriptionItems(parsed.items);
-      setAiPrescriptionUnstructured(parsed.invalid);
+      setAiPrescriptionUnstructured(parsed.unstructured || parsed.invalid);
       setAiPrescriptionProvider(draft.provider || null);
-      setPrescriptionSuggestionGeneratedAt(new Date().toISOString());
+      setAiPrescriptionModel(draft.model || null);
+      setAiPrescriptionRawText(parsed.rawText);
+      setPrescriptionSuggestionGeneratedAt(generatedAt);
+      setAiPrescriptionStale(false);
+      try {
+        const persisted = await persistAiPrescriptionSuggestionDraft(parsed.items, {
+          summary: parsed.summary || parsed.rawText || null,
+          rawText: parsed.rawText,
+          unstructured: parsed.unstructured || parsed.invalid,
+          provider: draft.provider || null,
+          model: draft.model || null,
+          generatedAt,
+        });
+        if (persisted) {
+          applyPersistedAiPrescriptionSuggestion(persisted);
+        }
+      } catch (persistError) {
+        console.error("Failed to persist AI prescription suggestion", persistError);
+        setError(persistError instanceof Error ? persistError.message : "Failed to save AI prescription suggestion");
+      }
       updateAiAssistEntry(entryId, { status: "success", response: draft, error: null });
       setInfo("AI prescription suggestion generated. Doctor must verify before use.");
     } catch (err) {
@@ -9591,6 +9904,23 @@ export default function ConsultationWorkspacePage() {
                                                     aria-label={`${getVisibleInvestigationStatusLabel(row.status)} status`}
                                                     sx={{ width: "fit-content", fontWeight: 700 }}
                                                   />
+                                                  <Chip
+                                                    size="small"
+                                                    variant="outlined"
+                                                    color={row.mappingState === "MAPPED" ? "success" : "warning"}
+                                                    label={row.mappingState === "MAPPED" ? "Catalog mapped" : row.mappingState === "AMBIGUOUS" ? "Ambiguous mapping" : "Unmapped recommendation"}
+                                                    sx={{ width: "fit-content", fontWeight: 700 }}
+                                                  />
+                                                  {row.sourceRecommendation && row.sourceRecommendation !== row.testName ? (
+                                                    <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.25 }}>
+                                                      AI recommendation: {row.sourceRecommendation}
+                                                    </Typography>
+                                                  ) : null}
+                                                  {row.mappingState === "AMBIGUOUS" && row.matchedCatalogNames.length ? (
+                                                    <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.25 }}>
+                                                      Potential matches: {row.matchedCatalogNames.join(", ")}
+                                                    </Typography>
+                                                  ) : null}
                                                 </Stack>
                                                 <Stack spacing={0.1} sx={{ minWidth: 0 }}>
                                                   {investigationEvidenceLines(row).map((line, lineIndex) => (
@@ -10665,12 +10995,23 @@ export default function ConsultationWorkspacePage() {
                             </Stack>
                             <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
                               <Chip size="small" variant="outlined" label={aiPrescriptionItems.length ? `${aiPrescriptionItems.length} suggestion${aiPrescriptionItems.length === 1 ? "" : "s"}` : "No suggestions"} />
+                              {aiPrescriptionStale ? <Chip size="small" color="warning" variant="outlined" label="Stale" /> : null}
                               <Button type="button" size="small" variant="outlined" startIcon={<AutoAwesomeRoundedIcon fontSize="small" />} disabled={!aiAssistantEnabled || !consultation || !patient || aiBusy} onClick={() => void applyAiPrescriptionTemplate()}>
                                 Suggest medicines with AIVA
                               </Button>
+                              {hasAiPrescriptionSuggestion ? (
+                                <Button type="button" size="small" variant="text" disabled={!aiAssistantEnabled || !consultation || !patient || aiBusy} onClick={() => void clearAiPrescriptionSuggestions()}>
+                                  Clear suggestions
+                                </Button>
+                              ) : null}
                             </Stack>
                           </Stack>
                           <Alert severity="info">AI medication suggestions are assistive. Doctor must verify before prescribing.</Alert>
+                          {aiPrescriptionStale ? (
+                            <Alert severity="warning">
+                              This suggestion set is stale for the current consultation context. Regenerate before relying on it.
+                            </Alert>
+                          ) : null}
                           {aiPrescriptionUnstructured && !aiPrescriptionItems.length ? (
                             <Alert severity="error">
                               {aiPrescriptionSuggestion || "AI returned an invalid response. Please retry."}
@@ -10683,9 +11024,34 @@ export default function ConsultationWorkspacePage() {
                                   key={`${item.medicine}-${index}`}
                                   item={item}
                                   generatedAt={prescriptionSuggestionGeneratedAt}
-                                  disabled={prescriptionReadOnly}
-                                  onAcceptSuggestion={(nextItem) => addMedicineFromAiSuggestion(nextItem)}
-                                  onRejectSuggestion={() => setInfo(`${item.medicine} suggestion rejected.`)}
+                                  disabled={prescriptionReadOnly || aiBusy}
+                                  onSuggestionChange={(nextItem) => {
+                                    const previous = aiPrescriptionItemsRef.current.find((current) => current.itemId === nextItem.itemId);
+                                    const nextItems = aiPrescriptionItemsRef.current.map((currentItem) => currentItem.itemId === nextItem.itemId ? nextItem : currentItem);
+                                    aiPrescriptionItemsRef.current = nextItems;
+                                    setAiPrescriptionItems(nextItems);
+                                    void (async () => {
+                                      try {
+                                        await persistAiPrescriptionSuggestionDraft(nextItems, {
+                                          summary: aiPrescriptionSuggestion,
+                                          rawText: aiPrescriptionRawText,
+                                          unstructured: aiPrescriptionUnstructured,
+                                          provider: aiPrescriptionProvider,
+                                          model: aiPrescriptionModel,
+                                          generatedAt: prescriptionSuggestionGeneratedAt,
+                                        });
+                                      } catch (persistError) {
+                                        console.error("Failed to persist AI prescription suggestion update", persistError);
+                                        setError(persistError instanceof Error ? persistError.message : "Failed to save AI prescription suggestion");
+                                      }
+                                    })();
+                                    if (nextItem.status === "ACCEPTED" && previous?.status !== "ACCEPTED") {
+                                      addMedicineFromAiSuggestion(nextItem);
+                                    }
+                                    if (nextItem.status === "REJECTED") {
+                                      setInfo(`${nextItem.medicine} suggestion rejected.`);
+                                    }
+                                  }}
                                 />
                               ))}
                             </Stack>
@@ -12782,9 +13148,10 @@ export default function ConsultationWorkspacePage() {
                           label={test}
                           clickable={!readOnly}
                           onClick={() => {
-                            const exactMatch = labTests.find((row) => normalizeLookupKey(row.testName) === normalizeLookupKey(test));
-                            if (exactMatch) {
-                              setLabOrderTestIds((current) => current.includes(exactMatch.id) ? current : [...current, exactMatch.id]);
+                            const mapping = resolveLabRecommendationMatch(test, labTests);
+                            if (mapping.safeToAutoSelect && mapping.matchedTests.length) {
+                              const selectedTest = mapping.matchedTests[0];
+                              setLabOrderTestIds((current) => current.includes(selectedTest.id) ? current : [...current, selectedTest.id]);
                             }
                           }}
                         />
@@ -13538,16 +13905,35 @@ export default function ConsultationWorkspacePage() {
                 </CardContent>
               </Card>
             ) : null}
+            {labOrderReviewError ? (
+              <Alert severity="error" role="alert" sx={{ py: 0.5 }}>
+                <Typography variant="body2" sx={{ fontWeight: 800 }}>
+                  Order not created.
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {labOrderReviewError}
+                </Typography>
+              </Alert>
+            ) : null}
             <TextField
               fullWidth
               size="small"
               label="Clinical Order Notes"
               value={labOrderNotes}
-              onChange={(e) => setLabOrderNotes(e.target.value)}
+              onChange={(e) => {
+                setLabOrderNotes(e.target.value);
+                setLabOrderReviewError(null);
+              }}
               multiline
               minRows={2}
               placeholder="Persistent fever in a diabetic patient."
-              helperText="Editable by the doctor before laboratory request creation."
+              error={Boolean(labOrderReviewError) || labOrderNotes.trim().length > LAB_ORDER_NOTES_MAX_LENGTH}
+              helperText={
+                labOrderReviewError
+                  ? labOrderReviewError
+                  : `${labOrderNotes.trim().length}/${LAB_ORDER_NOTES_MAX_LENGTH} characters. Whitespace is trimmed on save.`
+              }
+              inputProps={{ maxLength: LAB_ORDER_NOTES_MAX_LENGTH }}
             />
             {labOrderTestIds.length ? (
               <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
@@ -13737,7 +14123,11 @@ export default function ConsultationWorkspacePage() {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setLabOrderReviewOpen(false)}>Back</Button>
-          <Button variant="contained" disabled={labOrderSaving || !labOrderTestIds.length} onClick={() => void submitLabOrder()}>
+          <Button
+            variant="contained"
+            disabled={labOrderSaving || !labOrderTestIds.length || labOrderNotes.trim().length > LAB_ORDER_NOTES_MAX_LENGTH}
+            onClick={() => void submitLabOrder()}
+          >
             Create Order
           </Button>
         </DialogActions>

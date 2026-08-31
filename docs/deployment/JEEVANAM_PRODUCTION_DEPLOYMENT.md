@@ -586,7 +586,7 @@ GEMINI_MODEL=gemini-2.5-flash
 
 CLINIC_GROQ_ENABLED=true
 GROQ_API_KEY=<PRODUCTION_SECRET>
-GROQ_MODEL=llama-3.1-8b-instant
+GROQ_MODEL=openai/gpt-oss-20b
 
 VOICE_LLM_PROVIDER_ORDER=gemini,groq
 ```

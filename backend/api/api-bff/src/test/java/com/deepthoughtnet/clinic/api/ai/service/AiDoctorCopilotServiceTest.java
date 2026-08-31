@@ -81,6 +81,185 @@ class AiDoctorCopilotServiceTest {
     }
 
     @Test
+    void explainDiagnosisShortcutUsesBoundedFreeformChatConfiguration() {
+        AiOrchestrationService orchestrationService = mock(AiOrchestrationService.class);
+        ObjectMapper objectMapper = new ObjectMapper();
+        AtomicReference<AiOrchestrationRequest> captured = new AtomicReference<>();
+        when(orchestrationService.complete(any(AiOrchestrationRequest.class))).thenAnswer(invocation -> {
+            AiOrchestrationRequest request = invocation.getArgument(0);
+            captured.set(request);
+            return new AiOrchestrationResponse(
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    AiProductCode.CLINIC,
+                    request.taskType(),
+                    "GEMINI",
+                    "gemini-2.5-flash",
+                    "Working diagnosis explanation.",
+                    "{\"answer\":\"Working diagnosis explanation.\"}",
+                    BigDecimal.valueOf(0.92),
+                    List.of(),
+                    List.of("Review clinically"),
+                    List.of("Advisory only"),
+                    new AiTokenUsage(780L, 140L, 920L, BigDecimal.valueOf(0.02)),
+                    321L,
+                    false,
+                    null,
+                    "STOP",
+                    "COMPLETE",
+                    28,
+                    "Working diagnosis explanation.",
+                    "VALID"
+            );
+        });
+
+        AiDoctorCopilotService service = new AiDoctorCopilotService(orchestrationService, objectMapper, true);
+        RequestContextHolder.set(new RequestContext(TenantId.of(UUID.randomUUID()), UUID.randomUUID(), "sub", java.util.Set.of(), "DOCTOR", "corr"));
+        try {
+            AiDraftResponse response = service.draft(
+                    AiTaskType.GENERIC_COPILOT,
+                    "clinic.consultation.explain-diagnosis.v1",
+                    "consultation.explain-diagnosis",
+                    Map.of(
+                            "prompt", "Explain diagnosis",
+                            "diagnosisExplanationContext", "Working diagnosis: Viral syndrome",
+                            "clinicalContextSummary", "Sample summary"
+                    ),
+                    List.of()
+            );
+
+            assertThat(response.draft()).contains("Working diagnosis explanation");
+            assertThat(captured.get()).isNotNull();
+            assertThat(captured.get().taskType()).isEqualTo(AiTaskType.GENERIC_COPILOT);
+            assertThat(captured.get().promptTemplateCode()).isEqualTo("clinic.consultation.explain-diagnosis.v1");
+            assertThat(captured.get().useCaseCode()).isEqualTo("consultation.explain-diagnosis");
+            assertThat(captured.get().maxTokens()).isEqualTo(1024);
+            assertThat(captured.get().temperature()).isEqualTo(0.1d);
+        } finally {
+            RequestContextHolder.clear();
+        }
+    }
+
+    @Test
+    void historyGapShortcutUsesBoundedFreeformChatConfiguration() {
+        AiOrchestrationService orchestrationService = mock(AiOrchestrationService.class);
+        ObjectMapper objectMapper = new ObjectMapper();
+        AtomicReference<AiOrchestrationRequest> captured = new AtomicReference<>();
+        when(orchestrationService.complete(any(AiOrchestrationRequest.class))).thenAnswer(invocation -> {
+            AiOrchestrationRequest request = invocation.getArgument(0);
+            captured.set(request);
+            return new AiOrchestrationResponse(
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    AiProductCode.CLINIC,
+                    request.taskType(),
+                    "GEMINI",
+                    "gemini-2.5-flash",
+                    "Ask about fever and allergies.",
+                    "{\"answer\":\"Ask about fever and allergies.\"}",
+                    BigDecimal.valueOf(0.92),
+                    List.of(),
+                    List.of("Review clinically"),
+                    List.of("Advisory only"),
+                    new AiTokenUsage(780L, 140L, 920L, BigDecimal.valueOf(0.02)),
+                    321L,
+                    false,
+                    null,
+                    "STOP",
+                    "COMPLETE",
+                    28,
+                    "Ask about fever and allergies.",
+                    "VALID"
+            );
+        });
+
+        AiDoctorCopilotService service = new AiDoctorCopilotService(orchestrationService, objectMapper, true);
+        RequestContextHolder.set(new RequestContext(TenantId.of(UUID.randomUUID()), UUID.randomUUID(), "sub", java.util.Set.of(), "DOCTOR", "corr"));
+        try {
+            AiDraftResponse response = service.draft(
+                    AiTaskType.GENERIC_COPILOT,
+                    "clinic.consultation.history-gaps.v1",
+                    "consultation.history-gaps",
+                    Map.of(
+                            "prompt", "What else should I ask?",
+                            "historyGapContext", "Working diagnosis: Not recorded",
+                            "clinicianReviewContext", "Clinician review: Pending investigations: CBC"
+                    ),
+                    List.of()
+            );
+
+            assertThat(response.draft()).contains("Ask about fever");
+            assertThat(captured.get()).isNotNull();
+            assertThat(captured.get().taskType()).isEqualTo(AiTaskType.GENERIC_COPILOT);
+            assertThat(captured.get().promptTemplateCode()).isEqualTo("clinic.consultation.history-gaps.v1");
+            assertThat(captured.get().useCaseCode()).isEqualTo("consultation.history-gaps");
+            assertThat(captured.get().maxTokens()).isEqualTo(1024);
+            assertThat(captured.get().temperature()).isEqualTo(0.1d);
+        } finally {
+            RequestContextHolder.clear();
+        }
+    }
+
+    @Test
+    void consultationSuggestTestsUsesBoundedFreeformChatConfiguration() {
+        AiOrchestrationService orchestrationService = mock(AiOrchestrationService.class);
+        ObjectMapper objectMapper = new ObjectMapper();
+        AtomicReference<AiOrchestrationRequest> captured = new AtomicReference<>();
+        when(orchestrationService.complete(any(AiOrchestrationRequest.class))).thenAnswer(invocation -> {
+            AiOrchestrationRequest request = invocation.getArgument(0);
+            captured.set(request);
+            return new AiOrchestrationResponse(
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    AiProductCode.CLINIC,
+                    request.taskType(),
+                    "GEMINI",
+                    "gemini-2.5-flash",
+                    "Consider chest x-ray and CBC.",
+                    "{\"answer\":\"Consider chest x-ray and CBC.\"}",
+                    BigDecimal.valueOf(0.92),
+                    List.of(),
+                    List.of("Review clinically"),
+                    List.of("Advisory only"),
+                    new AiTokenUsage(780L, 140L, 920L, BigDecimal.valueOf(0.02)),
+                    321L,
+                    false,
+                    null,
+                    "STOP",
+                    "COMPLETE",
+                    28,
+                    "Consider chest x-ray and CBC.",
+                    "VALID"
+            );
+        });
+
+        AiDoctorCopilotService service = new AiDoctorCopilotService(orchestrationService, objectMapper, true);
+        RequestContextHolder.set(new RequestContext(TenantId.of(UUID.randomUUID()), UUID.randomUUID(), "sub", java.util.Set.of(), "DOCTOR", "corr"));
+        try {
+            AiDraftResponse response = service.draft(
+                    AiTaskType.GENERIC_COPILOT,
+                    "clinic.consultation.suggest-tests.v1",
+                    "consultation.suggest-tests",
+                    Map.of(
+                            "prompt", "Suggest tests",
+                            "investigationSuggestionContext", "Already ordered/pending investigations: CBC pending"
+                    ),
+                    List.of()
+            );
+
+            assertThat(response.draft()).contains("Consider chest x-ray");
+            assertThat(captured.get()).isNotNull();
+            assertThat(captured.get().taskType()).isEqualTo(AiTaskType.GENERIC_COPILOT);
+            assertThat(captured.get().promptTemplateCode()).isEqualTo("clinic.consultation.suggest-tests.v1");
+            assertThat(captured.get().useCaseCode()).isEqualTo("consultation.suggest-tests");
+            assertThat(captured.get().maxTokens()).isEqualTo(1024);
+            assertThat(captured.get().temperature()).isEqualTo(0.1d);
+        } finally {
+            RequestContextHolder.clear();
+        }
+    }
+
+    @Test
     void consultationSoapUsesStrictJsonAndLowercaseStructuredKeys() {
         AiOrchestrationService orchestrationService = mock(AiOrchestrationService.class);
         ObjectMapper objectMapper = new ObjectMapper();

@@ -23,13 +23,18 @@ test("runtime auth files import the explicit keycloak client module", () => {
   assert.equal(keycloakInit.includes("keycloak.js"), false);
   assert.equal(helpClient.includes("keycloak.js"), false);
   assert.equal(graphqlClient.includes("keycloak.js"), false);
+  assert.equal(authProvider.includes("resetKeycloakInit()"), false);
+  assert.ok(authProvider.includes("window.location.reload()"));
+  assert.ok(authProvider.includes('setInitError(null);\n    resetAuthState(null, false);'));
 });
 
 test("keycloak client module contains the real instance and runtime guards", () => {
   const client = read("auth/keycloakClient.ts");
+  const keycloakInit = read("auth/keycloakInit.ts");
   assert.match(client, /new Keycloak\(/);
   assert.match(client, /assertValidKeycloakClient/);
   assert.match(client, /typeof .*\.init/);
   assert.match(client, /typeof .*\.logout/);
+  assert.ok(keycloakInit.includes("Intentionally left blank"));
+  assert.equal(keycloakInit.includes("initPromise = null"), false);
 });
-

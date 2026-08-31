@@ -76,7 +76,9 @@ public class ClinicalReasoningPromptBuilder {
         builder.append("Mention uncertainty and missing information.\n");
         builder.append("Always populate supportingEvidence, missingInformation, redFlags, recommendedTests, and safetyNotes from available context when clinically relevant.\n");
         builder.append("If evidence arrays would otherwise be empty, derive short evidence items from chief complaint, symptoms, vitals, known conditions, and labs.\n");
-        builder.append("For fever with diabetes, include safety notes about glucose monitoring, hydration, worsening fever, breathlessness, SpO2 below 94, and confusion.\n");
+        builder.append("Use only recorded patient/context data for patient-specific red flags.\n");
+        builder.append("Do not present an unsupported condition as a fact about the patient.\n");
+        builder.append("If diabetes is recorded and fever is present, include safety notes about glucose monitoring, hydration, worsening fever, breathlessness, SpO2 below 94, and confusion.\n");
         builder.append("Only recommend repeat tests when clinically justified. If HbA1c is already available, prefer reviewing the existing result. If a pending lab order exists, prefer completing it instead of duplicating the order.\n");
         builder.append("Use short strings only.\n");
         builder.append("If the patient has fever, cough, body ache, weakness, and no chest pain, dyspnea, hypoxia, or severe pain, avoid unsupported ACS, PE, or aortic dissection unless strong supporting red flags exist.\n");
@@ -142,7 +144,9 @@ public class ClinicalReasoningPromptBuilder {
         builder.append("Doctor must verify.\n");
         builder.append("Always populate supportingEvidence, missingInformation, redFlags, recommendedTests, and safetyNotes when possible.\n");
         builder.append("If verified longitudinal facts exist, include them concisely with dates.\n");
-        builder.append("For fever with diabetes, include glucose monitoring, hydration, worsening fever, breathlessness, SpO2 below 94, and confusion.\n");
+        builder.append("Use only recorded patient/context data for patient-specific red flags.\n");
+        builder.append("Do not present an unsupported condition as a fact about the patient.\n");
+        builder.append("If diabetes is recorded and fever is present, include glucose monitoring, hydration, worsening fever, breathlessness, SpO2 below 94, and confusion.\n");
         builder.append("If HbA1c or CBC already exists or is pending, do not duplicate it without justification.\n");
         builder.append("Constraints:\n");
         builder.append("- max 1 primary diagnosis\n");

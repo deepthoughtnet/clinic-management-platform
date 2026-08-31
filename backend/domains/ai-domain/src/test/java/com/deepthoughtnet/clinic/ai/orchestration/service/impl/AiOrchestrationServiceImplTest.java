@@ -772,15 +772,15 @@ class AiOrchestrationServiceImplTest {
                 groqStrictJson.set(request != null && request.strictJsonMode());
                 return new AiProviderResponse(
                         "GROQ",
-                        "llama-3.1-8b-instant",
-                        "{\"confidence\":\"HIGH\",\"primaryDiagnosis\":{\"name\":\"Viral Upper Respiratory Infection\",\"confidence\":0.82,\"status\":\"SUGGESTED\"},\"reasoningSummary\":\"Likely viral respiratory illness.\",\"metadata\":{\"promptVersion\":\"clinic.clinical.reasoning.v1\",\"contextVersion\":\"v1\",\"provider\":\"GROQ\",\"model\":\"llama-3.1-8b-instant\",\"tokens\":{},\"parseStatus\":\"VALID\"}}",
-                        "{\"confidence\":\"HIGH\",\"primaryDiagnosis\":{\"name\":\"Viral Upper Respiratory Infection\",\"confidence\":0.82,\"status\":\"SUGGESTED\"},\"reasoningSummary\":\"Likely viral respiratory illness.\",\"metadata\":{\"promptVersion\":\"clinic.clinical.reasoning.v1\",\"contextVersion\":\"v1\",\"provider\":\"GROQ\",\"model\":\"llama-3.1-8b-instant\",\"tokens\":{},\"parseStatus\":\"VALID\"}}",
+                        "openai/gpt-oss-20b",
+                        "{\"confidence\":\"HIGH\",\"primaryDiagnosis\":{\"name\":\"Viral Upper Respiratory Infection\",\"confidence\":0.82,\"status\":\"SUGGESTED\"},\"reasoningSummary\":\"Likely viral respiratory illness.\",\"metadata\":{\"promptVersion\":\"clinic.clinical.reasoning.v1\",\"contextVersion\":\"v1\",\"provider\":\"GROQ\",\"model\":\"openai/gpt-oss-20b\",\"tokens\":{},\"parseStatus\":\"VALID\"}}",
+                        "{\"confidence\":\"HIGH\",\"primaryDiagnosis\":{\"name\":\"Viral Upper Respiratory Infection\",\"confidence\":0.82,\"status\":\"SUGGESTED\"},\"reasoningSummary\":\"Likely viral respiratory illness.\",\"metadata\":{\"promptVersion\":\"clinic.clinical.reasoning.v1\",\"contextVersion\":\"v1\",\"provider\":\"GROQ\",\"model\":\"openai/gpt-oss-20b\",\"tokens\":{},\"parseStatus\":\"VALID\"}}",
                         BigDecimal.valueOf(0.88),
                         null,
                         "STOP",
                         "COMPLETE",
                         344,
-                        "{\"confidence\":\"HIGH\",\"primaryDiagnosis\":{\"name\":\"Viral Upper Respiratory Infection\",\"confidence\":0.82,\"status\":\"SUGGESTED\"},\"reasoningSummary\":\"Likely viral respiratory illness.\",\"metadata\":{\"promptVersion\":\"clinic.clinical.reasoning.v1\",\"contextVersion\":\"v1\",\"provider\":\"GROQ\",\"model\":\"llama-3.1-8b-instant\",\"tokens\":{},\"parseStatus\":\"VALID\"}}",
+                        "{\"confidence\":\"HIGH\",\"primaryDiagnosis\":{\"name\":\"Viral Upper Respiratory Infection\",\"confidence\":0.82,\"status\":\"SUGGESTED\"},\"reasoningSummary\":\"Likely viral respiratory illness.\",\"metadata\":{\"promptVersion\":\"clinic.clinical.reasoning.v1\",\"contextVersion\":\"v1\",\"provider\":\"GROQ\",\"model\":\"openai/gpt-oss-20b\",\"tokens\":{},\"parseStatus\":\"VALID\"}}",
                         "VALID"
                 );
             }
@@ -801,7 +801,7 @@ class AiOrchestrationServiceImplTest {
         assertEquals(null, groqThinkingBudget.get());
         assertEquals(true, groqStrictJson.get());
         assertTrue(response.outputText().contains("Viral Upper Respiratory Infection"));
-        assertEquals("llama-3.1-8b-instant", response.model());
+        assertEquals("openai/gpt-oss-20b", response.model());
     }
 
     @Test

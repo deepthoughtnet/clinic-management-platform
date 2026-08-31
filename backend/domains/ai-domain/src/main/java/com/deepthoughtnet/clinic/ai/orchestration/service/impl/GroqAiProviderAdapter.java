@@ -9,11 +9,13 @@ import com.deepthoughtnet.clinic.platform.contracts.ai.AiProviderRequest;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiProviderResponse;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiProviderStatus;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiTaskType;
+import org.springframework.beans.BeansException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
+import java.util.UUID;
 
 @Component
 public class GroqAiProviderAdapter implements AiProvider {
@@ -55,10 +57,23 @@ public class GroqAiProviderAdapter implements AiProvider {
     @Override
     public AiProviderResponse complete(AiProviderRequest request) {
         long started = System.currentTimeMillis();
-        LlmClient client = groqClientProvider == null ? null : groqClientProvider.getIfAvailable();
+        LlmClient client = resolveClient(request == null ? null : request.requestId());
         if (client == null) {
             log.warn("Groq provider unavailable. requestId={}", request == null ? null : request.requestId());
             throw new IllegalStateException("Groq provider is not configured");
+        }
+        try {
+            if (!client.isAvailable()) {
+                log.warn("Groq provider unavailable. requestId={}, diagnostic={}",
+                        request == null ? null : request.requestId(),
+                        client.availabilityDiagnostic());
+                throw new IllegalStateException(client.availabilityDiagnostic() == null ? "Groq provider is not available" : client.availabilityDiagnostic());
+            }
+        } catch (RuntimeException ex) {
+            log.warn("Groq provider availability check failed. requestId={}, reason={}",
+                    request == null ? null : request.requestId(),
+                    sanitize(ex.getMessage()), ex);
+            throw new IllegalStateException("Groq provider is not available", ex);
         }
         log.info("Calling Groq provider. requestId={}, chars={}, hasAttachment={}",
                 request == null ? null : request.requestId(),
@@ -108,7 +123,38 @@ public class GroqAiProviderAdapter implements AiProvider {
 
     @Override
     public AiProviderStatus status() {
-        LlmClient client = groqClientProvider == null ? null : groqClientProvider.getIfAvailable();
-        return client == null ? AiProviderStatus.UNAVAILABLE : AiProviderStatus.AVAILABLE;
+        LlmClient client = resolveClient(null);
+        if (client == null) {
+            return AiProviderStatus.UNAVAILABLE;
+        }
+        try {
+            boolean available = client.isAvailable();
+            if (!available) {
+                log.warn("Groq provider unavailable. diagnostic={}", client.availabilityDiagnostic());
+            }
+            return available ? AiProviderStatus.AVAILABLE : AiProviderStatus.UNAVAILABLE;
+        } catch (RuntimeException ex) {
+            log.warn("Groq provider status lookup failed. reason={}", sanitize(ex.getMessage()), ex);
+            return AiProviderStatus.UNAVAILABLE;
+        }
+    }
+
+    private LlmClient resolveClient(UUID requestId) {
+        try {
+            return groqClientProvider == null ? null : groqClientProvider.getIfAvailable();
+        } catch (BeansException | IllegalStateException ex) {
+            log.warn("Groq provider bean resolution failed. requestId={}, reason={}", requestId, sanitize(ex.getMessage()), ex);
+            return null;
+        } catch (RuntimeException ex) {
+            log.warn("Groq provider bean resolution failed. requestId={}, reason={}", requestId, sanitize(ex.getMessage()), ex);
+            return null;
+        }
+    }
+
+    private String sanitize(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.replaceAll("[\\r\\n\\t]+", " ").trim();
     }
 }

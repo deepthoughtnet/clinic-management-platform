@@ -309,7 +309,7 @@ class VoiceOrchestratorServiceTest {
                 AiProductCode.GENERIC,
                 AiTaskType.GENERIC_COPILOT,
                 "GROQ",
-                "llama-3.1-8b-instant",
+                "openai/gpt-oss-20b",
                 "Groq handled the response after Gemini fallback.",
                 null,
                 BigDecimal.valueOf(0.87),

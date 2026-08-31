@@ -7,12 +7,14 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.deepthoughtnet.clinic.api.ai.clinicalcontext.ClinicalContextService;
 import com.deepthoughtnet.clinic.api.ai.dto.AiConsultationNotesRequest;
 import com.deepthoughtnet.clinic.api.ai.dto.AiDraftResponse;
+import com.deepthoughtnet.clinic.api.ai.dto.AiPrescriptionTemplateRequest;
 import com.deepthoughtnet.clinic.api.ai.dto.ClinicalContextResponse;
 import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
 import com.deepthoughtnet.clinic.platform.core.context.TenantId;
@@ -407,6 +409,429 @@ class AiConsultationDraftServiceTest {
         }
     }
 
+    @Test
+    void suggestPrescriptionTemplateUsesOnlyCurrentConsultationContext() {
+        AiDoctorCopilotService copilotService = mock(AiDoctorCopilotService.class);
+        ClinicalContextService clinicalContextService = mock(ClinicalContextService.class);
+        List<Map<String, Object>> capturedInputs = new java.util.ArrayList<>();
+        when(copilotService.draft(any(), anyString(), anyString(), anyMap(), any())).thenAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> input = invocation.getArgument(3);
+            capturedInputs.add(input);
+            return new AiDraftResponse(
+                    true,
+                    false,
+                    "AI draft generated.",
+                    "MOCK",
+                    "mock-model",
+                    "{\"summary\":\"Review symptoms and prescribe only if indicated\",\"suggestions\":[]}",
+                    Map.of(
+                            "summary", "Review symptoms and prescribe only if indicated",
+                            "suggestions", List.of()
+                    ),
+                    BigDecimal.valueOf(0.9),
+                    List.of(),
+                    List.of(),
+                    null,
+                    "VALID",
+                    0,
+                    "{\"summary\":\"Review symptoms and prescribe only if indicated\",\"suggestions\":[]}",
+                    "VALID"
+            );
+        });
+
+        AiConsultationDraftService service = new AiConsultationDraftService(copilotService, clinicalContextService);
+        UUID consultationId = UUID.randomUUID();
+        UUID patientId = UUID.randomUUID();
+        AiPrescriptionTemplateRequest request = new AiPrescriptionTemplateRequest(
+                consultationId,
+                patientId,
+                "30Y / FEMALE",
+                "BP 120/80, Pulse 88, Temp 38.1 C, SpO2 98%",
+                null,
+                "CBC pending",
+                "Viral Upper Respiratory Infection",
+                "Fever, cough, headache",
+                null,
+                null,
+                "Observation and rest"
+        );
+
+        UUID tenantId = UUID.randomUUID();
+        com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder.set(
+                new RequestContext(TenantId.of(tenantId), UUID.randomUUID(), "sub", Set.of(), "DOCTOR", "corr-prescription")
+        );
+        try {
+            AiDraftResponse response = service.suggestPrescriptionTemplate(request);
+
+            assertThat(response.parseStatus()).isEqualTo("VALID");
+            verifyNoInteractions(clinicalContextService);
+            assertThat(capturedInputs).hasSize(1);
+            Map<String, Object> input = capturedInputs.get(0);
+            assertThat(input).containsEntry("consultationId", consultationId);
+            assertThat(input).containsEntry("patientId", patientId);
+            assertThat(input).containsEntry("patientAgeGender", "30Y / FEMALE");
+            assertThat(input).containsEntry("vitals", "BP 120/80, Pulse 88, Temp 38.1 C, SpO2 98%");
+            assertThat(input).containsEntry("diagnosis", "Viral Upper Respiratory Infection");
+            assertThat(input).containsEntry("symptoms", "Fever, cough, headache");
+            assertThat(input).containsEntry("allergies", null);
+            assertThat(input).containsEntry("currentMedications", null);
+            assertThat(input).containsEntry("doctorNotes", "Observation and rest");
+            assertThat(input).containsKey("prescriptionSuggestionContext");
+            assertThat(input).doesNotContainKeys("clinicalContext", "clinicalContextSummary", "clinicalContextJson", "aiPromptContext");
+            assertThat(input.get("prescriptionSuggestionContext").toString()).contains("Consultation diagnosis: Viral Upper Respiratory Infection");
+            assertThat(input.get("prescriptionSuggestionContext").toString()).contains("Current symptoms: Fever, cough, headache");
+            assertThat(input.get("prescriptionSuggestionContext").toString()).contains("Allergies: Not recorded");
+            assertThat(input.get("prescriptionSuggestionContext").toString()).contains("Current medicines: Not recorded");
+            assertThat(input.get("prescriptionSuggestionContext").toString()).doesNotContain("Penicillin");
+            assertThat(input.get("prescriptionSuggestionContext").toString()).doesNotContain("Lisinopril");
+            assertThat(input.get("prescriptionSuggestionContext").toString()).doesNotContain("previous visits");
+            assertThat(input.get("prescriptionSuggestionContext").toString()).doesNotContain("longitudinal");
+        } finally {
+            com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder.clear();
+        }
+    }
+
+    @Test
+    void suggestPrescriptionTemplateKeepsSequentialRequestsIsolated() {
+        AiDoctorCopilotService copilotService = mock(AiDoctorCopilotService.class);
+        ClinicalContextService clinicalContextService = mock(ClinicalContextService.class);
+        List<Map<String, Object>> capturedInputs = new java.util.ArrayList<>();
+        when(copilotService.draft(any(), anyString(), anyString(), anyMap(), any())).thenAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> input = invocation.getArgument(3);
+            capturedInputs.add(input);
+            return new AiDraftResponse(
+                    true,
+                    false,
+                    "AI draft generated.",
+                    "MOCK",
+                    "mock-model",
+                    "{\"summary\":\"Review context carefully\",\"suggestions\":[]}",
+                    Map.of("summary", "Review context carefully", "suggestions", List.of()),
+                    BigDecimal.valueOf(0.9),
+                    List.of(),
+                    List.of(),
+                    null,
+                    "VALID",
+                    0,
+                    "{\"summary\":\"Review context carefully\",\"suggestions\":[]}",
+                    "VALID"
+            );
+        });
+
+        AiConsultationDraftService service = new AiConsultationDraftService(copilotService, clinicalContextService);
+        UUID tenantId = UUID.randomUUID();
+        com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder.set(
+                new RequestContext(TenantId.of(tenantId), UUID.randomUUID(), "sub", Set.of(), "DOCTOR", "corr-seq")
+        );
+        try {
+            AiDraftResponse first = service.suggestPrescriptionTemplate(new AiPrescriptionTemplateRequest(
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    "30Y / FEMALE",
+                    "BP 118/76, Pulse 88",
+                    null,
+                    "CBC pending",
+                    "Viral Upper Respiratory Infection",
+                    "Fever, cough",
+                    null,
+                    "Paracetamol 500 mg as needed",
+                    "Observation"
+            ));
+            AiDraftResponse second = service.suggestPrescriptionTemplate(new AiPrescriptionTemplateRequest(
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    "42Y / MALE",
+                    "BP 130/82, Pulse 76",
+                    "Ibuprofen 400 mg",
+                    "X-ray pending",
+                    "Mechanical Low Back Pain",
+                    "Back pain",
+                    "Penicillin",
+                    "Lisinopril 10 mg",
+                    "Reassessment"
+            ));
+
+            assertThat(first.parseStatus()).isEqualTo("VALID");
+            assertThat(second.parseStatus()).isEqualTo("VALID");
+            assertThat(capturedInputs).hasSize(2);
+            assertThat(capturedInputs.get(0).get("prescriptionSuggestionContext").toString()).contains("Consultation diagnosis: Viral Upper Respiratory Infection");
+            assertThat(capturedInputs.get(0).get("prescriptionSuggestionContext").toString()).doesNotContain("Mechanical Low Back Pain");
+            assertThat(capturedInputs.get(1).get("prescriptionSuggestionContext").toString()).contains("Consultation diagnosis: Mechanical Low Back Pain");
+            assertThat(capturedInputs.get(1).get("prescriptionSuggestionContext").toString()).doesNotContain("Viral Upper Respiratory Infection");
+        } finally {
+            com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder.clear();
+        }
+    }
+
+    @Test
+    void suggestPrescriptionTemplateGroundsUnsupportedAssertionsAndPreservesExplicitContextAcrossSequentialRequests() {
+        AiDoctorCopilotService copilotService = mock(AiDoctorCopilotService.class);
+        ClinicalContextService clinicalContextService = mock(ClinicalContextService.class);
+        when(copilotService.draft(any(), anyString(), anyString(), anyMap(), any())).thenReturn(ungroundedPrescriptionSuggestionResponse());
+
+        AiConsultationDraftService service = new AiConsultationDraftService(copilotService, clinicalContextService);
+        UUID tenantId = UUID.randomUUID();
+        UUID consultationA = UUID.randomUUID();
+        UUID patientA = UUID.randomUUID();
+        UUID consultationB = UUID.randomUUID();
+        UUID patientB = UUID.randomUUID();
+        com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder.set(
+                new RequestContext(TenantId.of(tenantId), UUID.randomUUID(), "sub", Set.of(), "DOCTOR", "corr-grounding")
+        );
+        try {
+            AiDraftResponse first = service.suggestPrescriptionTemplate(new AiPrescriptionTemplateRequest(
+                    consultationA,
+                    patientA,
+                    "30Y / FEMALE",
+                    "BP 118/76, Pulse 88",
+                    null,
+                    "CBC pending",
+                    "Viral Upper Respiratory Infection",
+                    "Fever, cough, headache",
+                    null,
+                    null,
+                    "Observation"
+            ));
+            AiDraftResponse second = service.suggestPrescriptionTemplate(new AiPrescriptionTemplateRequest(
+                    consultationB,
+                    patientB,
+                    "42Y / MALE",
+                    "BP 130/82, Pulse 76",
+                    "Ibuprofen 400 mg",
+                    "X-ray pending",
+                    "Mechanical Low Back Pain",
+                    "Back pain",
+                    "Penicillin",
+                    "Lisinopril 10 mg",
+                    "Reassessment"
+            ));
+            AiDraftResponse third = service.suggestPrescriptionTemplate(new AiPrescriptionTemplateRequest(
+                    consultationA,
+                    patientA,
+                    "30Y / FEMALE",
+                    "BP 118/76, Pulse 88",
+                    null,
+                    "CBC pending",
+                    "Viral Upper Respiratory Infection",
+                    "Fever, cough, headache",
+                    null,
+                    null,
+                    "Observation"
+            ));
+
+            assertThat(first.draft()).contains("No grounded prescription suggestions could be retained from the current consultation context.");
+            assertThat(first.draft()).doesNotContain("Acute lower back pain");
+            assertThat(first.draft()).doesNotContain("Penicillin allergy (rash)");
+            assertThat(first.draft()).doesNotContain("Potential interaction with Lisinopril");
+            assertThat(first.structuredData()).isNotNull();
+            assertThat(first.structuredData().get("summary").toString()).contains("No grounded prescription suggestions could be retained from the current consultation context.");
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> firstSuggestions = (List<Map<String, Object>>) first.structuredData().get("suggestions");
+            assertThat(firstSuggestions).isEmpty();
+
+            assertThat(second.draft()).contains("lower back pain");
+            assertThat(second.draft()).contains("Potential interaction with Lisinopril");
+            assertThat(second.structuredData().get("summary").toString()).contains("lower back pain");
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> secondSuggestions = (List<Map<String, Object>>) second.structuredData().get("suggestions");
+            assertThat(secondSuggestions).isNotEmpty();
+            assertThat(secondSuggestions.get(0).get("reason").toString()).contains("lower back pain");
+            assertThat(secondSuggestions.get(0).get("safetyNote").toString()).contains("Potential interaction with Lisinopril");
+
+            assertThat(third.draft()).contains("No grounded prescription suggestions could be retained from the current consultation context.");
+            assertThat(third.draft()).doesNotContain("Acute lower back pain");
+            assertThat(third.draft()).doesNotContain("Penicillin allergy (rash)");
+            assertThat(third.draft()).doesNotContain("Potential interaction with Lisinopril");
+            assertThat(third.structuredData().get("summary").toString()).contains("No grounded prescription suggestions could be retained from the current consultation context.");
+        } finally {
+            com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder.clear();
+        }
+    }
+
+    @Test
+    void suggestPrescriptionTemplateSuppressesUnsupportedDiseaseSpecificSuggestionsAndKeepsGroundedSymptomSuggestions() {
+        AiDoctorCopilotService copilotService = mock(AiDoctorCopilotService.class);
+        ClinicalContextService clinicalContextService = mock(ClinicalContextService.class);
+        when(copilotService.draft(any(), anyString(), anyString(), anyMap(), any())).thenReturn(mixedDiseaseSpecificSuggestionResponse());
+
+        AiConsultationDraftService service = new AiConsultationDraftService(copilotService, clinicalContextService);
+        UUID tenantId = UUID.randomUUID();
+        com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder.set(
+                new RequestContext(TenantId.of(tenantId), UUID.randomUUID(), "sub", Set.of(), "DOCTOR", "corr-mixed-disease")
+        );
+        try {
+            AiDraftResponse response = service.suggestPrescriptionTemplate(new AiPrescriptionTemplateRequest(
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    "30Y / FEMALE",
+                    "BP 118/76, Pulse 88",
+                    null,
+                    null,
+                    "Viral Upper Respiratory Infection",
+                    "Fever, cough, headache",
+                    null,
+                    null,
+                    "Observation"
+            ));
+
+            assertThat(response.draft()).contains("Paracetamol 500 mg");
+            assertThat(response.draft()).doesNotContain("Amoxicillin 500 mg");
+            assertThat(response.draft()).doesNotContain("Suspected bacterial infection");
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> suggestions = (List<Map<String, Object>>) response.structuredData().get("suggestions");
+            assertThat(suggestions).hasSize(1);
+            assertThat(suggestions.get(0).get("medicine").toString()).contains("Paracetamol 500 mg");
+            assertThat(suggestions.get(0).get("reason").toString()).contains("Fever");
+        } finally {
+            com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder.clear();
+        }
+    }
+
+    @Test
+    void suggestPrescriptionTemplateRetainsDiseaseSpecificSuggestionWhenCurrentConsultationEvidenceSupportsIt() {
+        AiDoctorCopilotService copilotService = mock(AiDoctorCopilotService.class);
+        ClinicalContextService clinicalContextService = mock(ClinicalContextService.class);
+        when(copilotService.draft(any(), anyString(), anyString(), anyMap(), any())).thenReturn(amoxicillinSuggestionResponse());
+
+        AiConsultationDraftService service = new AiConsultationDraftService(copilotService, clinicalContextService);
+        UUID tenantId = UUID.randomUUID();
+        com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder.set(
+                new RequestContext(TenantId.of(tenantId), UUID.randomUUID(), "sub", Set.of(), "DOCTOR", "corr-bacterial")
+        );
+        try {
+            AiDraftResponse response = service.suggestPrescriptionTemplate(new AiPrescriptionTemplateRequest(
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    "30Y / FEMALE",
+                    "BP 118/76, Pulse 88",
+                    null,
+                    null,
+                    "Bacterial Sinusitis",
+                    "Fever, cough, sinus pain",
+                    null,
+                    null,
+                    "Observation"
+            ));
+
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> suggestions = (List<Map<String, Object>>) response.structuredData().get("suggestions");
+            assertThat(suggestions).isNotEmpty();
+            assertThat(suggestions.get(0).get("medicine").toString()).contains("Amoxicillin 500 mg");
+            assertThat(suggestions.get(0).get("reason").toString()).contains("bacterial infection");
+            assertThat(response.draft()).contains("Amoxicillin 500 mg");
+            assertThat(response.draft()).doesNotContain("No grounded prescription suggestions could be retained from the current consultation context.");
+        } finally {
+            com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder.clear();
+        }
+    }
+
+    @Test
+    void suggestPrescriptionTemplatePreservesExplicitPenicillinAndMedicationContext() {
+        AiDoctorCopilotService copilotService = mock(AiDoctorCopilotService.class);
+        ClinicalContextService clinicalContextService = mock(ClinicalContextService.class);
+        when(copilotService.draft(any(), anyString(), anyString(), anyMap(), any())).thenReturn(ungroundedPrescriptionSuggestionResponse());
+
+        AiConsultationDraftService service = new AiConsultationDraftService(copilotService, clinicalContextService);
+        UUID tenantId = UUID.randomUUID();
+        com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder.set(
+                new RequestContext(TenantId.of(tenantId), UUID.randomUUID(), "sub", Set.of(), "DOCTOR", "corr-grounding-explicit")
+        );
+        try {
+            AiDraftResponse response = service.suggestPrescriptionTemplate(new AiPrescriptionTemplateRequest(
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    "42Y / MALE",
+                    "BP 130/82, Pulse 76",
+                    "Ibuprofen 400 mg",
+                    "X-ray pending",
+                    "Mechanical Low Back Pain",
+                    "Back pain",
+                    "Penicillin (rash)",
+                    "Lisinopril 10 mg",
+                    "Reassessment"
+            ));
+
+            assertThat(response.draft()).contains("lower back pain");
+            assertThat(response.draft()).contains("Potential interaction with Lisinopril");
+            assertThat(response.draft()).doesNotContain("Current consultation context does not support this specific indication");
+            assertThat(response.structuredData().get("summary").toString()).contains("lower back pain");
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> suggestions = (List<Map<String, Object>>) response.structuredData().get("suggestions");
+            assertThat(suggestions).isNotEmpty();
+            assertThat(suggestions.get(0).get("reason").toString()).contains("lower back pain");
+            assertThat(suggestions.get(0).get("safetyNote").toString()).contains("Potential interaction with Lisinopril");
+        } finally {
+            com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder.clear();
+        }
+    }
+
+    @Test
+    void suggestPrescriptionTemplateGroundsUnsupportedCurrentMedicationAssertionsAndPreservesSupportedOnes() {
+        AiDoctorCopilotService copilotService = mock(AiDoctorCopilotService.class);
+        ClinicalContextService clinicalContextService = mock(ClinicalContextService.class);
+        when(copilotService.draft(any(), anyString(), anyString(), anyMap(), any())).thenReturn(currentMedicationAssertionResponse("Ibuprofen"));
+
+        AiConsultationDraftService service = new AiConsultationDraftService(copilotService, clinicalContextService);
+        UUID tenantId = UUID.randomUUID();
+        com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder.set(
+                new RequestContext(TenantId.of(tenantId), UUID.randomUUID(), "sub", Set.of(), "DOCTOR", "corr-current-med")
+        );
+        try {
+            AiPrescriptionTemplateRequest unsupportedRequest = new AiPrescriptionTemplateRequest(
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    "42Y / MALE",
+                    "BP 122/80, Pulse 78",
+                    "Paracetamol 500 mg Tablet • Fluticasone Propionate Nasal Spray • Oxymetazoline Nasal Spray",
+                    null,
+                    "Viral Upper Respiratory Infection",
+                    "Fever, cough, headache",
+                    null,
+                    "Paracetamol 500 mg Tablet • Fluticasone Propionate Nasal Spray • Oxymetazoline Nasal Spray",
+                    "Supportive care"
+            );
+            AiDraftResponse unsupported = service.suggestPrescriptionTemplate(unsupportedRequest);
+
+            assertThat(unsupported.draft()).contains("Current medication use is not recorded; if the patient is taking Ibuprofen, review interaction risk before prescribing.");
+            assertThat(unsupported.draft()).contains("Acetaminophen 500 mg");
+            assertThat(unsupported.draft()).doesNotContain("Patient is currently on Ibuprofen.");
+            assertThat(unsupported.structuredData().get("summary").toString()).contains("Supportive care. Current medication use is not recorded; if the patient is taking Ibuprofen, review interaction risk before prescribing.");
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> unsupportedSuggestions = (List<Map<String, Object>>) unsupported.structuredData().get("suggestions");
+            assertThat(unsupportedSuggestions).isNotEmpty();
+
+            when(copilotService.draft(any(), anyString(), anyString(), anyMap(), any())).thenReturn(currentMedicationAssertionResponse("Ibuprofen and Metformin"));
+            AiDraftResponse multipleUnsupported = service.suggestPrescriptionTemplate(unsupportedRequest);
+            assertThat(multipleUnsupported.draft()).contains("Current medication use is not recorded; if the patient is taking Ibuprofen and Metformin, review interaction risk before prescribing.");
+            assertThat(multipleUnsupported.draft()).doesNotContain("No grounded prescription suggestions could be retained from the current consultation context.");
+            assertThat(multipleUnsupported.draft()).doesNotContain("Patient is currently on Ibuprofen and Metformin.");
+
+            AiPrescriptionTemplateRequest supportedRequest = new AiPrescriptionTemplateRequest(
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    "42Y / MALE",
+                    "BP 122/80, Pulse 78",
+                    "Ibuprofen 400 mg Tablet",
+                    null,
+                    "Viral Upper Respiratory Infection",
+                    "Fever, cough, headache",
+                    null,
+                    "Ibuprofen 400 mg Tablet",
+                    "Supportive care"
+            );
+            when(copilotService.draft(any(), anyString(), anyString(), anyMap(), any())).thenReturn(currentMedicationAssertionResponse("Ibuprofen"));
+            AiDraftResponse supported = service.suggestPrescriptionTemplate(supportedRequest);
+
+            assertThat(supported.draft()).contains("Patient is currently on Ibuprofen.");
+            assertThat(supported.draft()).doesNotContain("Current medication use is not recorded; if the patient is taking Ibuprofen, review interaction risk before prescribing.");
+            assertThat(supported.structuredData().get("summary").toString()).contains("Patient is currently on Ibuprofen.");
+        } finally {
+            com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder.clear();
+        }
+    }
+
     private ClinicalContextResponse sampleContext() {
         return new ClinicalContextResponse(
                 UUID.randomUUID(),
@@ -436,6 +861,153 @@ class AiConsultationDraftServiceTest {
                 "Patient snapshot: Sample Patient",
                 "{\"patientSummary\":{\"patientName\":\"Sample Patient\"}}",
                 OffsetDateTime.now()
+        );
+    }
+
+    private AiDraftResponse ungroundedPrescriptionSuggestionResponse() {
+        Map<String, Object> suggestion = new java.util.LinkedHashMap<>();
+        suggestion.put("itemId", "item-1");
+        suggestion.put("medicine", "Ibuprofen 400 mg");
+        suggestion.put("dose", "400 mg");
+        suggestion.put("frequency", "TID");
+        suggestion.put("duration", "5 days");
+        suggestion.put("reason", "Acute lower back pain");
+        suggestion.put("safetyNote", "Potential interaction with Lisinopril");
+        suggestion.put("draftText", "Medicine: Ibuprofen 400 mg\nReason: Acute lower back pain\nSafety: Potential interaction with Lisinopril");
+        suggestion.put("status", "PENDING");
+
+        Map<String, Object> structuredData = new java.util.LinkedHashMap<>();
+        structuredData.put("summary", "Recommend treatment for acute lower back pain");
+        structuredData.put("suggestions", List.of(suggestion));
+        return new AiDraftResponse(
+                true,
+                false,
+                "AI draft generated.",
+                "MOCK",
+                "mock-model",
+                "Medicine: Ibuprofen 400 mg\nReason: Acute lower back pain\nSafety: Potential interaction with Lisinopril\nPenicillin allergy (rash)",
+                structuredData,
+                BigDecimal.valueOf(0.9),
+                List.of("Review before prescribing"),
+                List.of("Potential interaction with Lisinopril"),
+                null,
+                "VALID",
+                0,
+                "Medicine: Ibuprofen 400 mg\nReason: Acute lower back pain\nSafety: Potential interaction with Lisinopril\nPenicillin allergy (rash)",
+                "VALID"
+        );
+    }
+
+    private AiDraftResponse amoxicillinSuggestionResponse() {
+        Map<String, Object> suggestion = new java.util.LinkedHashMap<>();
+        suggestion.put("itemId", "item-amoxicillin");
+        suggestion.put("medicine", "Amoxicillin 500 mg");
+        suggestion.put("dose", "500 mg");
+        suggestion.put("frequency", "TID");
+        suggestion.put("duration", "5 days");
+        suggestion.put("reason", "Suspected bacterial infection");
+        suggestion.put("safetyNote", "Review before prescribing.");
+        suggestion.put("draftText", "Medicine: Amoxicillin 500 mg\nReason: Suspected bacterial infection\nSafety: Review before prescribing.");
+        suggestion.put("status", "PENDING");
+
+        Map<String, Object> structuredData = new java.util.LinkedHashMap<>();
+        structuredData.put("summary", "Suspected bacterial infection.");
+        structuredData.put("suggestions", List.of(suggestion));
+        return new AiDraftResponse(
+                true,
+                false,
+                "AI draft generated.",
+                "MOCK",
+                "mock-model",
+                "Medicine: Amoxicillin 500 mg\nReason: Suspected bacterial infection\nSafety: Review before prescribing.",
+                structuredData,
+                BigDecimal.valueOf(0.9),
+                List.of("Review before prescribing"),
+                List.of("Review before prescribing."),
+                null,
+                "VALID",
+                0,
+                "Medicine: Amoxicillin 500 mg\nReason: Suspected bacterial infection\nSafety: Review before prescribing.",
+                "VALID"
+        );
+    }
+
+    private AiDraftResponse mixedDiseaseSpecificSuggestionResponse() {
+        Map<String, Object> feverSuggestion = new java.util.LinkedHashMap<>();
+        feverSuggestion.put("itemId", "item-paracetamol");
+        feverSuggestion.put("medicine", "Paracetamol 500 mg");
+        feverSuggestion.put("dose", "500 mg");
+        feverSuggestion.put("frequency", "TID");
+        feverSuggestion.put("duration", "3 days");
+        feverSuggestion.put("reason", "Fever");
+        feverSuggestion.put("safetyNote", "Review before prescribing.");
+        feverSuggestion.put("draftText", "Medicine: Paracetamol 500 mg\nReason: Fever\nSafety: Review before prescribing.");
+        feverSuggestion.put("status", "PENDING");
+
+        Map<String, Object> amoxicillinSuggestion = new java.util.LinkedHashMap<>();
+        amoxicillinSuggestion.put("itemId", "item-amoxicillin");
+        amoxicillinSuggestion.put("medicine", "Amoxicillin 500 mg");
+        amoxicillinSuggestion.put("dose", "500 mg");
+        amoxicillinSuggestion.put("frequency", "TID");
+        amoxicillinSuggestion.put("duration", "5 days");
+        amoxicillinSuggestion.put("reason", "Suspected bacterial infection");
+        amoxicillinSuggestion.put("safetyNote", "Review before prescribing.");
+        amoxicillinSuggestion.put("draftText", "Medicine: Amoxicillin 500 mg\nReason: Suspected bacterial infection\nSafety: Review before prescribing.");
+        amoxicillinSuggestion.put("status", "PENDING");
+
+        Map<String, Object> structuredData = new java.util.LinkedHashMap<>();
+        structuredData.put("summary", "Fever and possible bacterial infection.");
+        structuredData.put("suggestions", List.of(feverSuggestion, amoxicillinSuggestion));
+        return new AiDraftResponse(
+                true,
+                false,
+                "AI draft generated.",
+                "MOCK",
+                "mock-model",
+                "Medicine: Paracetamol 500 mg\nReason: Fever\nSafety: Review before prescribing.\nMedicine: Amoxicillin 500 mg\nReason: Suspected bacterial infection\nSafety: Review before prescribing.",
+                structuredData,
+                BigDecimal.valueOf(0.9),
+                List.of("Review before prescribing"),
+                List.of("Review before prescribing."),
+                null,
+                "VALID",
+                0,
+                "Medicine: Paracetamol 500 mg\nReason: Fever\nSafety: Review before prescribing.\nMedicine: Amoxicillin 500 mg\nReason: Suspected bacterial infection\nSafety: Review before prescribing.",
+                "VALID"
+        );
+    }
+
+    private AiDraftResponse currentMedicationAssertionResponse(String assertedMedicationText) {
+        Map<String, Object> suggestion = new java.util.LinkedHashMap<>();
+        suggestion.put("itemId", "item-current-med");
+        suggestion.put("medicine", "Acetaminophen 500 mg");
+        suggestion.put("dose", "500 mg");
+        suggestion.put("frequency", "TID");
+        suggestion.put("duration", "3 days");
+        suggestion.put("reason", "Supportive care");
+        suggestion.put("safetyNote", "Patient is currently on " + assertedMedicationText + ".");
+        suggestion.put("draftText", "Medicine: Acetaminophen 500 mg\nReason: Supportive care\nSafety: Patient is currently on " + assertedMedicationText + ".");
+        suggestion.put("status", "PENDING");
+
+        Map<String, Object> structuredData = new java.util.LinkedHashMap<>();
+        structuredData.put("summary", "Supportive care. Patient is currently on " + assertedMedicationText + ".");
+        structuredData.put("suggestions", List.of(suggestion));
+        return new AiDraftResponse(
+                true,
+                false,
+                "AI draft generated.",
+                "MOCK",
+                "mock-model",
+                "Medicine: Acetaminophen 500 mg\nReason: Supportive care\nSafety: Patient is currently on " + assertedMedicationText + ".",
+                structuredData,
+                BigDecimal.valueOf(0.9),
+                List.of("Review before prescribing"),
+                List.of("Patient is currently on " + assertedMedicationText + "."),
+                null,
+                "VALID",
+                0,
+                "Medicine: Acetaminophen 500 mg\nReason: Supportive care\nSafety: Patient is currently on " + assertedMedicationText + ".",
+                "VALID"
         );
     }
 }

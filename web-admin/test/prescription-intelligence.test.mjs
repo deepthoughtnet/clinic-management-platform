@@ -40,6 +40,7 @@ test("consultation prescription tab exposes prescription intelligence surfaces",
   assert.ok(source.includes("Alternatives"));
   assert.ok(source.includes("No alternative data available."));
   assert.ok(source.includes("AI medication suggestions are assistive. Doctor must verify before prescribing."));
+  assert.ok(source.includes("currentMedications: patient.patient.longTermMedications?.trim() || null"));
   assert.ok(source.includes("English"));
   assert.ok(source.includes("Hindi"));
   assert.ok(source.includes("Marathi"));

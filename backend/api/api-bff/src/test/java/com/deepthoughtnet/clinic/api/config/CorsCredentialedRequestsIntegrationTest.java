@@ -13,6 +13,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.filter.CorsFilter;
 
@@ -22,7 +23,7 @@ class CorsCredentialedRequestsIntegrationTest {
 
     @BeforeEach
     void setUp() {
-        System.setProperty(ALLOWED_ORIGINS_PROPERTY, "https://jeevanam.deepthoughtnet.com");
+        System.setProperty(ALLOWED_ORIGINS_PROPERTY, "https://jeevanam.deepthoughtnet.com,https://health.jeevanam.deepthoughtnet.com");
         CorsConfig corsConfig = new CorsConfig();
         mockMvc = MockMvcBuilders.standaloneSetup(new CredentialedApiController())
                 .addFilters(new CorsFilter(corsConfig.corsConfigurationSource()))
@@ -43,6 +44,20 @@ class CorsCredentialedRequestsIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, "https://jeevanam.deepthoughtnet.com"))
                 .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS, "true"));
+    }
+
+    @Test
+    void doctorAvailabilityPreflightAllowsClientTimezoneHeaderForAllowedOrigin() throws Exception {
+        mockMvc.perform(options("/api/doctors/test/slots")
+                        .queryParam("date", "2026-08-31")
+                        .header(HttpHeaders.ORIGIN, "https://health.jeevanam.deepthoughtnet.com")
+                        .header(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD, "GET")
+                        .header(HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS, "authorization,content-type,x-client-timezone"))
+                .andExpect(status().isOk())
+                .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, "https://health.jeevanam.deepthoughtnet.com"))
+                .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS, "true"))
+                .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_METHODS, org.hamcrest.Matchers.containsString("GET")))
+                .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_HEADERS, org.hamcrest.Matchers.containsStringIgnoringCase("x-client-timezone")));
     }
 
     @Test
@@ -85,6 +100,11 @@ class CorsCredentialedRequestsIntegrationTest {
         @GetMapping("/api/provider/me")
         ResponseEntity<String> providerMe() {
             return ResponseEntity.ok("provider");
+        }
+
+        @GetMapping("/api/doctors/{doctorId}/slots")
+        ResponseEntity<String> doctorAvailabilitySlots(@PathVariable String doctorId) {
+            return ResponseEntity.ok("slots:" + doctorId);
         }
 
         @GetMapping("/api/patient-portal/dashboard")

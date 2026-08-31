@@ -27,6 +27,12 @@ public class AiDoctorCopilotService {
     private static final String SAFETY_NOTICE = "This is an AI-generated draft. Doctor must verify before use.";
     private static final String CONSULTATION_ASK_TEMPLATE_CODE = "clinic.consultation.ask.v1";
     private static final String CONSULTATION_ASK_USE_CASE = "consultation.ask";
+    private static final String CONSULTATION_EXPLAIN_DIAGNOSIS_TEMPLATE_CODE = "clinic.consultation.explain-diagnosis.v1";
+    private static final String CONSULTATION_EXPLAIN_DIAGNOSIS_USE_CASE = "consultation.explain-diagnosis";
+    private static final String CONSULTATION_HISTORY_GAP_TEMPLATE_CODE = "clinic.consultation.history-gaps.v1";
+    private static final String CONSULTATION_HISTORY_GAP_USE_CASE = "consultation.history-gaps";
+    private static final String CONSULTATION_SUGGEST_TESTS_TEMPLATE_CODE = "clinic.consultation.suggest-tests.v1";
+    private static final String CONSULTATION_SUGGEST_TESTS_USE_CASE = "consultation.suggest-tests";
     private static final Integer CONSULTATION_ASK_MAX_OUTPUT_TOKENS = 1024;
 
     private final AiOrchestrationService aiOrchestrationService;
@@ -203,7 +209,13 @@ public class AiDoctorCopilotService {
 
     private boolean isConsultationAsk(String promptTemplateCode, String useCaseCode) {
         return CONSULTATION_ASK_TEMPLATE_CODE.equalsIgnoreCase(normalize(promptTemplateCode))
-                || CONSULTATION_ASK_USE_CASE.equalsIgnoreCase(normalize(useCaseCode));
+                || CONSULTATION_ASK_USE_CASE.equalsIgnoreCase(normalize(useCaseCode))
+                || CONSULTATION_EXPLAIN_DIAGNOSIS_TEMPLATE_CODE.equalsIgnoreCase(normalize(promptTemplateCode))
+                || CONSULTATION_EXPLAIN_DIAGNOSIS_USE_CASE.equalsIgnoreCase(normalize(useCaseCode))
+                || CONSULTATION_HISTORY_GAP_TEMPLATE_CODE.equalsIgnoreCase(normalize(promptTemplateCode))
+                || CONSULTATION_HISTORY_GAP_USE_CASE.equalsIgnoreCase(normalize(useCaseCode))
+                || CONSULTATION_SUGGEST_TESTS_TEMPLATE_CODE.equalsIgnoreCase(normalize(promptTemplateCode))
+                || CONSULTATION_SUGGEST_TESTS_USE_CASE.equalsIgnoreCase(normalize(useCaseCode));
     }
 
     private String normalize(String value) {

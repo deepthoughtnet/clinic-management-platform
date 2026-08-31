@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.api.lab;
 
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -107,6 +108,64 @@ class LabControllerRouteTest {
                         ))))
                 .andExpect(status().isCreated())
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON));
+    }
+
+    @Test
+    void createConsultationOrderAcceptsNotesAtMaximumLength() throws Exception {
+        UUID tenantId = UUID.randomUUID();
+        UUID actorId = UUID.randomUUID();
+        UUID consultationId = UUID.randomUUID();
+        UUID patientId = UUID.randomUUID();
+        UUID testId = UUID.randomUUID();
+        LabService labService = mock(LabService.class);
+        when(labService.createOrderFromConsultation(
+                org.mockito.ArgumentMatchers.eq(tenantId),
+                org.mockito.ArgumentMatchers.eq(consultationId),
+                org.mockito.ArgumentMatchers.any(LabOrderCreateCommand.class),
+                org.mockito.ArgumentMatchers.eq(actorId)
+        )).thenReturn(sampleOrderRecord(tenantId, consultationId, patientId, UUID.randomUUID()));
+        RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), actorId, "sub", Set.of("DOCTOR"), "DOCTOR", "cid"));
+        MockMvc mockMvc = MockMvcBuilders
+                .standaloneSetup(controller(labService, mock(LabCsvService.class), mock(LabCatalogueConfigService.class)))
+                .setControllerAdvice(new GlobalRestExceptionHandler())
+                .build();
+
+        mockMvc.perform(post("/api/lab/consultations/{consultationId}/orders", consultationId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(new ObjectMapper().writeValueAsString(Map.of(
+                                "patientId", patientId,
+                                "testIds", List.of(testId),
+                                "notes", "A".repeat(250)
+                        ))))
+                .andExpect(status().isCreated())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON));
+    }
+
+    @Test
+    void createConsultationOrderRejectsNotesAboveMaximumLength() throws Exception {
+        UUID tenantId = UUID.randomUUID();
+        UUID actorId = UUID.randomUUID();
+        UUID consultationId = UUID.randomUUID();
+        UUID patientId = UUID.randomUUID();
+        UUID testId = UUID.randomUUID();
+        LabService labService = mock(LabService.class);
+        RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), actorId, "sub", Set.of("DOCTOR"), "DOCTOR", "cid"));
+        MockMvc mockMvc = MockMvcBuilders
+                .standaloneSetup(controller(labService, mock(LabCsvService.class), mock(LabCatalogueConfigService.class)))
+                .setControllerAdvice(new GlobalRestExceptionHandler())
+                .build();
+
+        mockMvc.perform(post("/api/lab/consultations/{consultationId}/orders", consultationId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(new ObjectMapper().writeValueAsString(Map.of(
+                                "patientId", patientId,
+                                "testIds", List.of(testId),
+                                "notes", "A".repeat(251)
+                        ))))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("Notes must be 250 characters or fewer")));
+
+        verifyNoInteractions(labService);
     }
 
     @Test

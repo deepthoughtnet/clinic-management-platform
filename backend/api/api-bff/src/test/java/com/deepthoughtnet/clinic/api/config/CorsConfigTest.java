@@ -47,7 +47,8 @@ class CorsConfigTest {
                 "X-Requested-With",
                 "X-Tenant-Id",
                 "X-Patient-Session",
-                "X-Platform-Op"
+                "X-Platform-Op",
+                "X-Client-Timezone"
         );
         assertThat(configuration.getAllowedMethods()).contains("OPTIONS", "POST");
         assertThat(configuration.getAllowCredentials()).isTrue();

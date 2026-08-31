@@ -88,6 +88,16 @@ public class PrescriptionService {
     private static final float HEADER_ACCENT_BAR_HEIGHT = 10f;
     private static final float HEADER_ACCENT_GAP = 14f;
     private static final float HEADER_BOTTOM_PADDING = 14f;
+    private static final float FOOTER_BOTTOM_Y = 50f;
+    private static final float FOOTER_PAGE_NUMBER_Y = 18f;
+    private static final float FOOTER_REGION_GAP = 10f;
+    private static final float FOOTER_INNER_PADDING = 10f;
+    private static final float FOOTER_TITLE_HEIGHT = 12f;
+    private static final float FOOTER_LINE_SPACING = 11f;
+    private static final float FOOTER_MIN_HEIGHT = 76f;
+    private static final float FOOTER_MEDICINE_RESERVE = 96f;
+    private static final float QR_PANEL_WIDTH = 115f;
+    private static final float QR_IMAGE_SIZE = 54f;
     private static final Color DEFAULT_PLACEHOLDER_FILL = new Color(244, 248, 247);
     private static final Color DEFAULT_PLACEHOLDER_BORDER = new Color(16, 109, 103);
     private static final Color DEFAULT_PLACEHOLDER_ACCENT = new Color(25, 130, 121);
@@ -713,6 +723,9 @@ public class PrescriptionService {
                 state.y = drawSectionHeader(state, "Visit Summary", contentWidth);
                 state.y = drawVisitSummary(state, vm, contentWidth);
 
+                if (shouldStartMedicineAndAdviceOnNextPage(state, vm, contentWidth)) {
+                    state.startPage();
+                }
                 state.y = drawSectionHeader(state, "Prescription Medicines", contentWidth);
                 state.y = drawMedicineTable(state, vm.medicines(), contentWidth);
 
@@ -737,6 +750,9 @@ public class PrescriptionService {
                     state.y = drawBullets(state, vm.emergencyWarnings(), contentWidth);
                 }
 
+                if (shouldStartFooterOnNextPage(state, template, vm, vm.signatureLine(), vm.doctorName(), contentWidth)) {
+                    state.startPage();
+                }
                 drawFooter(state, contentWidth, template, vm, vm.signatureLine(), vm.doctorName());
             } finally {
                 state.close();
@@ -1070,16 +1086,11 @@ public class PrescriptionService {
     }
 
     private float drawVisitSummary(PdfRenderState state, PrescriptionPdfViewModel vm, float width) throws IOException {
-        writeWrapped(state, "Chief Complaint:", 9.2f, state.margin, width, true);
-        drawBullets(state, vm.chiefComplaint().isEmpty() ? List.of("Not recorded.") : vm.chiefComplaint(), width);
-        writeWrapped(state, "Symptoms:", 9.2f, state.margin, width, true);
-        drawBullets(state, vm.symptoms().isEmpty() ? List.of("Not recorded.") : vm.symptoms(), width);
-        writeWrapped(state, "Vitals:", 9.2f, state.margin, width, true);
-        drawBullets(state, vm.vitals().isEmpty() ? List.of("No vitals recorded.") : vm.vitals(), width);
-        writeWrapped(state, "Diagnosis:", 9.2f, state.margin, width, true);
-        drawBullets(state, vm.diagnoses().isEmpty() ? List.of("Not recorded.") : vm.diagnoses(), width);
-        writeWrapped(state, "Clinical Notes:", 9.2f, state.margin, width, true);
-        drawBullets(state, vm.clinicalNotes().isEmpty() ? List.of("No clinical notes recorded.") : vm.clinicalNotes(), width);
+        writeLabeledWrapped(state, "Chief Complaint:", narrativeText(vm.chiefComplaint(), "Not recorded."), 9.2f, state.margin, width);
+        writeLabeledWrapped(state, "Symptoms:", summaryFieldText(vm.symptoms(), "Not recorded"), 9.2f, state.margin, width);
+        writeLabeledWrapped(state, "Vitals:", summaryFieldText(vm.vitals(), "Not recorded"), 9.2f, state.margin, width);
+        writeLabeledWrapped(state, "Diagnosis:", summaryFieldText(vm.diagnoses(), "Not recorded"), 9.2f, state.margin, width);
+        writeLabeledWrapped(state, "Clinical Notes:", summaryFieldText(vm.clinicalNotes(), "Not recorded"), 9.2f, state.margin, width);
         state.y -= 4;
         return state.y;
     }
@@ -1120,12 +1131,6 @@ public class PrescriptionService {
                 y -= headerHeight;
             }
 
-            if (i % 2 == 1) {
-                state.content.setNonStrokingColor(state.accent[0], state.accent[1], state.accent[2]);
-                state.content.addRect(state.margin, y - rowHeight, width, rowHeight);
-                state.content.fill();
-                state.content.setNonStrokingColor(0, 0, 0);
-            }
             drawRowBorders(state, columns, width, y, rowHeight);
             float cx = state.margin;
             for (int col = 0; col < cells.size(); col++) {
@@ -1140,6 +1145,130 @@ public class PrescriptionService {
             state.y = y;
         }
         return y - 4;
+    }
+
+    private boolean shouldStartMedicineAndAdviceOnNextPage(PdfRenderState state, PrescriptionPdfViewModel vm, float width) throws IOException {
+        if (vm == null || vm.medicines() == null || vm.medicines().isEmpty()) {
+            return false;
+        }
+        float estimatedHeight = estimateMedicineAndAdviceHeight(vm, width);
+        return state.y - estimatedHeight < FOOTER_MEDICINE_RESERVE;
+    }
+
+    private float estimateMedicineTableHeight(List<PrescriptionMedicineRecord> medicines, float width) throws IOException {
+        float[] columns = new float[]{0.28f, 0.14f, 0.2f, 0.25f, 0.13f};
+        float total = 18f + 4f;
+        for (PrescriptionMedicineRecord medicine : medicines) {
+            List<List<String>> cells = List.of(
+                    wrap(cleanText(mergeWithSpace(medicine.medicineName(), medicine.strength())), new PDType1Font(Standard14Fonts.FontName.HELVETICA), 8.8f, width * columns[0] - 10),
+                    wrap(cleanText(medicine.dosage()), new PDType1Font(Standard14Fonts.FontName.HELVETICA), 8.8f, width * columns[1] - 10),
+                    wrap(cleanText(mergeWithPipe(medicine.frequency(), medicine.timing() == null ? null : medicine.timing().name().replace('_', ' '))), new PDType1Font(Standard14Fonts.FontName.HELVETICA), 8.8f, width * columns[2] - 10),
+                    wrap(cleanText(medicine.instructions()), new PDType1Font(Standard14Fonts.FontName.HELVETICA), 8.8f, width * columns[3] - 10),
+                    wrap(cleanText(medicine.duration()), new PDType1Font(Standard14Fonts.FontName.HELVETICA), 8.8f, width * columns[4] - 10)
+            );
+            int lines = cells.stream().mapToInt(List::size).max().orElse(1);
+            float rowHeight = Math.max(20f, 8f + (lines * 10f));
+            total += rowHeight + 2f;
+        }
+        return total;
+    }
+
+    private float estimateMedicineAndAdviceHeight(PrescriptionPdfViewModel vm, float width) throws IOException {
+        float total = estimateMedicineTableHeight(vm.medicines(), width);
+        total += 22f;
+        total += estimateAdviceBlockHeight(vm.adviceItems(), vm.followUpDate(), vm.emergencyWarnings(), width);
+        return total;
+    }
+
+    private boolean shouldStartFooterOnNextPage(PdfRenderState state, PrescriptionTemplateConfig template, PrescriptionPdfViewModel vm, String signatureText, String doctorName, float width) throws IOException {
+        float footerHeight = estimateFooterHeight(template, vm, signatureText, doctorName, width);
+        float footerTopY = FOOTER_BOTTOM_Y + footerHeight;
+        return state.y < footerTopY + FOOTER_REGION_GAP;
+    }
+
+    private float estimateFooterHeight(PrescriptionTemplateConfig template, PrescriptionPdfViewModel vm, String signatureText, String doctorName, float width) throws IOException {
+        float qrWidth = template.showQrCode() ? QR_PANEL_WIDTH : 0f;
+        float signatureWidth = template.showQrCode() ? width - QR_PANEL_WIDTH - 18f : width;
+        float signatureHeight = estimateSignatureFooterHeight(template, vm, signatureText, doctorName, signatureWidth);
+        float qrHeight = template.showQrCode() ? estimateQrFooterHeight() : 0f;
+        return Math.max(Math.max(signatureHeight, qrHeight), FOOTER_MIN_HEIGHT);
+    }
+
+    private float estimateSignatureFooterHeight(PrescriptionTemplateConfig template, PrescriptionPdfViewModel vm, String signatureText, String doctorName, float width) throws IOException {
+        float total = FOOTER_TITLE_HEIGHT + FOOTER_INNER_PADDING;
+        String distinctSignatureText = distinctSignatureText(signatureText, doctorName);
+        if (StringUtils.hasText(distinctSignatureText)) {
+            total += estimateWrappedLinesHeight(List.of(distinctSignatureText), 9.2f, width - 20f, true);
+        }
+        if (shouldRenderDoctorNameLine(signatureText, doctorName)) {
+            total += estimateWrappedLinesHeight(List.of("Dr. " + cleanText(doctorName)), 8.8f, width - 20f, false);
+        }
+        String registration = cleanText(vm == null ? null : vm.clinicRegistrationNumber());
+        if (StringUtils.hasText(registration)) {
+            total += estimateWrappedLinesHeight(List.of("Reg No: " + registration), 7.8f, width - 20f, false);
+        }
+        if (StringUtils.hasText(template.footerText())) {
+            total += estimateWrappedLinesHeight(List.of(cleanText(template.footerText())), 7.6f, width - 20f, false);
+        }
+        if (StringUtils.hasText(template.disclaimer())) {
+            total += estimateWrappedLinesHeight(List.of(cleanText(template.disclaimer())), 7.2f, width - 20f, false);
+        }
+        total += FOOTER_INNER_PADDING;
+        return Math.max(total, FOOTER_MIN_HEIGHT);
+    }
+
+    private float estimateQrFooterHeight() throws IOException {
+        float total = FOOTER_TITLE_HEIGHT + FOOTER_INNER_PADDING;
+        total += QR_IMAGE_SIZE + 6f;
+        total += estimateWrappedLinesHeight(List.of("Display verification QR code in prescription footer."), 7f, QR_PANEL_WIDTH - 14f, false);
+        total += FOOTER_INNER_PADDING;
+        return Math.max(total, FOOTER_MIN_HEIGHT);
+    }
+
+    private float estimateAdviceBlockHeight(List<String> adviceItems, String followUpDate, List<String> emergencyWarnings, float width) throws IOException {
+        float total = 0f;
+        total += estimateWrappedLinesHeight(List.of("Advice:"), 9.2f, marginAwareWidth(width), true);
+        List<String> safeAdvice = (adviceItems == null || adviceItems.isEmpty()) ? List.of("No additional advice recorded.") : adviceItems;
+        total += estimateBulletsHeight(safeAdvice, width);
+        if (StringUtils.hasText(followUpDate)) {
+            total += estimateWrappedLinesHeight(List.of("Follow-up:"), 9.2f, marginAwareWidth(width), true);
+            total += estimateBulletsHeight(List.of(followUpDate), width);
+        }
+        if (emergencyWarnings != null && !emergencyWarnings.isEmpty()) {
+            total += estimateWrappedLinesHeight(List.of("Emergency warning:"), 9.2f, marginAwareWidth(width), true);
+            total += estimateBulletsHeight(emergencyWarnings, width);
+        }
+        return total;
+    }
+
+    private float estimateWrappedLinesHeight(List<String> lines, float fontSize, float width, boolean bold) throws IOException {
+        if (lines == null || lines.isEmpty()) {
+            return 0f;
+        }
+        PDFont font = bold
+                ? new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD)
+                : new PDType1Font(Standard14Fonts.FontName.HELVETICA);
+        float total = 0f;
+        for (String line : lines) {
+            total += Math.max(1, wrap(cleanText(line), font, fontSize, width).size()) * (fontSize + 3f);
+        }
+        return total;
+    }
+
+    private float estimateBulletsHeight(List<String> lines, float width) throws IOException {
+        if (lines == null || lines.isEmpty()) {
+            return 0f;
+        }
+        float total = 0f;
+        PDFont font = new PDType1Font(Standard14Fonts.FontName.HELVETICA);
+        for (String line : lines) {
+            total += Math.max(1, wrap("• " + cleanText(line), font, 9f, width - 10).size()) * 12f;
+        }
+        return total;
+    }
+
+    private float marginAwareWidth(float width) {
+        return Math.max(0f, width);
     }
 
     private void drawMedicineTableHeader(PdfRenderState state, String[] headers, float[] columns, float width, float y, float rowHeight) throws IOException {
@@ -1211,7 +1340,7 @@ public class PrescriptionService {
                 record.appointmentId() == null ? "" : trimId(record.appointmentId()),
                 trimId(record.consultationId()),
                 historySummaryLines(record, data, previousConsultation),
-                splitToList(consultation == null ? null : consultation.chiefComplaints()),
+                narrativeList(consultation == null ? null : consultation.chiefComplaints()),
                 splitToList(consultation == null ? null : consultation.symptoms()),
                 vitalsList(consultation),
                 splitToList(consultation == null ? record.diagnosisSnapshot() : consultation.diagnosis()),
@@ -1220,7 +1349,7 @@ public class PrescriptionService {
                 investigations,
                 splitToList(record.advice()),
                 record.followUpDate() == null ? "" : record.followUpDate().toString(),
-                List.of("Seek immediate care for severe dehydration, high fever, blood in vomit/stool, or severe abdominal pain."),
+                deriveEmergencyWarnings(record.advice()),
                 signatureText(template, record)
         );
     }
@@ -1245,40 +1374,181 @@ public class PrescriptionService {
     }
 
     private void drawFooter(PdfRenderState state, float width, PrescriptionTemplateConfig template, PrescriptionPdfViewModel vm, String signatureText, String doctorName) throws IOException {
-        float footerY = 58f;
+        float footerBottomY = FOOTER_BOTTOM_Y;
         float contentRight = state.margin + width;
-        float qrWidth = template.showQrCode() ? 115f : 0f;
+        float qrWidth = template.showQrCode() ? QR_PANEL_WIDTH : 0f;
         float signatureX = template.showQrCode() ? state.margin + qrWidth + 18f : state.margin;
         float signatureWidth = template.showQrCode() ? width - qrWidth - 18f : width;
+        float footerHeight = estimateFooterHeight(template, vm, signatureText, doctorName, width);
+        float footerTopY = footerBottomY + footerHeight;
+        float signatureTextY = footerTopY - 24f;
+        float doctorNameY = footerTopY - 36f;
+        float registrationY = footerTopY - 48f;
+        float footerTextY = footerTopY - 60f;
 
         if (template.showQrCode()) {
-            drawFooterPanel(state, "Prescription Verification QR", state.margin, footerY, qrWidth, 58f, false);
+            drawFooterPanel(state, "Prescription Verification QR", state.margin, footerBottomY, qrWidth, footerHeight, false);
             float qrX = state.margin + 22f;
-            float qrY = footerY + 10f;
+            float qrY = footerBottomY + 14f;
             drawQrPlaceholder(state.content, qrX, qrY);
-            writeLine(state.content, "Display verification QR code in prescription footer.", 7f, state.margin + 6f, footerY + 4f, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+            drawWrappedTextInBox(state.content, "Display verification QR code in prescription footer.", 7f, new PDType1Font(Standard14Fonts.FontName.HELVETICA), state.margin + 6f, footerBottomY + 10f, footerBottomY + 16f, qrWidth - 12f, FOOTER_LINE_SPACING);
         }
 
-        drawFooterPanel(state, "Doctor Signature", signatureX, footerY, signatureWidth, 58f, true);
-        writeLine(state.content, cleanText(signatureText), 9.2f, signatureX + 10f, footerY + 33f, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
-        if (StringUtils.hasText(doctorName)) {
-            writeLine(state.content, "Dr. " + doctorName, 8.8f, signatureX + 10f, footerY + 20f, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+        drawFooterPanel(state, "Doctor Signature", signatureX, footerBottomY, signatureWidth, footerHeight, true);
+        String distinctSignatureText = distinctSignatureText(signatureText, doctorName);
+        if (StringUtils.hasText(distinctSignatureText)) {
+            drawWrappedTextInBox(state.content, distinctSignatureText, 9.2f, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD), signatureX + 10f, signatureTextY, footerBottomY + 16f, signatureWidth - 20f, FOOTER_LINE_SPACING);
+        }
+        if (shouldRenderDoctorNameLine(signatureText, doctorName)) {
+            drawWrappedTextInBox(state.content, "Dr. " + cleanText(doctorName), 8.8f, new PDType1Font(Standard14Fonts.FontName.HELVETICA), signatureX + 10f, doctorNameY, footerBottomY + 16f, signatureWidth - 20f, FOOTER_LINE_SPACING);
         }
         String registration = cleanText(vm.clinicRegistrationNumber());
         if (StringUtils.hasText(registration)) {
-            writeLine(state.content, "Reg No: " + registration, 7.8f, signatureX + 10f, footerY + 8f, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+            drawWrappedTextInBox(state.content, "Reg No: " + registration, 7.8f, new PDType1Font(Standard14Fonts.FontName.HELVETICA), signatureX + 10f, registrationY, footerBottomY + 16f, signatureWidth - 20f, FOOTER_LINE_SPACING);
         }
         if (StringUtils.hasText(template.footerText())) {
-            writeLine(state.content, cleanText(template.footerText()), 7.6f, signatureX + 10f, footerY - 2f, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+            drawWrappedTextInBox(state.content, cleanText(template.footerText()), 7.6f, new PDType1Font(Standard14Fonts.FontName.HELVETICA), signatureX + 10f, footerTextY, footerBottomY + 16f, signatureWidth - 20f, FOOTER_LINE_SPACING);
         }
 
         if (StringUtils.hasText(template.disclaimer())) {
-            state.y = footerY - 8f;
-            writeWrapped(state, cleanText(template.disclaimer()), 7.2f, state.margin, width, false);
+            drawWrappedTextInBox(state.content, cleanText(template.disclaimer()), 7.2f, new PDType1Font(Standard14Fonts.FontName.HELVETICA), state.margin, footerBottomY + 10f, FOOTER_PAGE_NUMBER_Y + 6f, width, FOOTER_LINE_SPACING);
         }
 
-        float bottomY = footerY - 20f;
-        writeLine(state.content, "Page " + state.pageNumber, 7.6f, contentRight - 36f, bottomY, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+        writeLine(state.content, "Page " + state.pageNumber, 7.6f, contentRight - 36f, FOOTER_PAGE_NUMBER_Y, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+    }
+
+    private float writeLabeledWrapped(PdfRenderState state, String label, String value, float fontSize, float x, float maxWidth) throws IOException {
+        if (!StringUtils.hasText(label) && !StringUtils.hasText(value)) {
+            return state.y;
+        }
+        PDFont labelFont = new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD);
+        PDFont valueFont = new PDType1Font(Standard14Fonts.FontName.HELVETICA);
+        String safeLabel = cleanText(label);
+        String safeValue = cleanText(value);
+        float labelWidth = StringUtils.hasText(safeLabel) ? textWidth(labelFont, fontSize, safeLabel + " ") : 0f;
+        List<String> wrappedValues = wrapValueWithFirstLineOffset(safeValue, valueFont, fontSize, maxWidth, Math.max(0f, maxWidth - labelWidth));
+        String firstLineValue = wrappedValues.isEmpty() ? "" : wrappedValues.get(0);
+        state.ensureSpace(fontSize + 4f);
+        if (StringUtils.hasText(safeLabel)) {
+            writeLine(state.content, safeLabel, fontSize, x, state.y, labelFont);
+        }
+        if (StringUtils.hasText(firstLineValue)) {
+            writeLine(state.content, firstLineValue, fontSize, x + labelWidth, state.y, valueFont);
+        }
+        state.y -= fontSize + 3f;
+        for (int i = 1; i < wrappedValues.size(); i++) {
+            state.ensureSpace(fontSize + 4f);
+            writeLine(state.content, wrappedValues.get(i), fontSize, x, state.y, valueFont);
+            state.y -= fontSize + 3f;
+        }
+        return state.y;
+    }
+
+    private List<String> wrapValueWithFirstLineOffset(String text, PDFont font, float fontSize, float fullWidth, float firstLineWidth) throws IOException {
+        if (!StringUtils.hasText(text)) {
+            return List.of();
+        }
+        List<String> lines = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        float currentWidth = 0f;
+        float currentLimit = Math.max(1f, firstLineWidth);
+        for (String word : text.split("\\s+")) {
+            float wordWidth = textWidth(font, fontSize, word);
+            if (wordWidth > currentLimit && current.length() == 0) {
+                List<String> split = splitLongWord(word, font, fontSize, currentLimit);
+                if (!split.isEmpty()) {
+                    lines.addAll(split);
+                    currentLimit = fullWidth;
+                }
+                continue;
+            }
+            String candidate = current.length() == 0 ? word : current + " " + word;
+            float candidateWidth = textWidth(font, fontSize, candidate);
+            if (candidateWidth <= currentLimit) {
+                current.setLength(0);
+                current.append(candidate);
+                currentWidth = candidateWidth;
+                continue;
+            }
+            if (current.length() > 0) {
+                lines.add(current.toString());
+                current.setLength(0);
+                currentLimit = fullWidth;
+                currentWidth = 0f;
+            }
+            if (wordWidth > currentLimit) {
+                List<String> split = splitLongWord(word, font, fontSize, currentLimit);
+                lines.addAll(split);
+            } else {
+                current.append(word);
+                currentWidth = wordWidth;
+            }
+        }
+        if (current.length() > 0 || currentWidth > 0f) {
+            lines.add(current.toString());
+        }
+        return lines;
+    }
+
+    private boolean shouldRenderDoctorNameLine(String signatureText, String doctorName) {
+        return StringUtils.hasText(cleanText(doctorName));
+    }
+
+    private String distinctSignatureText(String signatureText, String doctorName) {
+        String cleanedSignature = cleanText(signatureText);
+        if (!StringUtils.hasText(cleanedSignature)) {
+            return "";
+        }
+        String cleanedDoctorName = cleanText(doctorName);
+        if (!StringUtils.hasText(cleanedDoctorName)) {
+            return cleanedSignature;
+        }
+        return normalizeComparableIdentity(cleanedSignature).equals(normalizeComparableIdentity(cleanedDoctorName)) ? "" : cleanedSignature;
+    }
+
+    private String normalizeComparableIdentity(String value) {
+        String cleaned = cleanText(value).toLowerCase();
+        cleaned = cleaned.replaceFirst("^dr\\.?\\s+", "");
+        cleaned = cleaned.replaceAll("[^a-z0-9]+", " ").trim();
+        return cleaned;
+    }
+
+    private void drawWrappedTextInBox(PDPageContentStream content, String text, float fontSize, PDFont font, float x, float startY, float minY, float maxWidth, float lineSpacing) throws IOException {
+        if (!StringUtils.hasText(text)) {
+            return;
+        }
+        List<String> lines = wrap(cleanText(text), font, fontSize, maxWidth);
+        float y = startY;
+        for (int i = 0; i < lines.size(); i++) {
+            if (y < minY) {
+                break;
+            }
+            String line = lines.get(i);
+            if (i == lines.size() - 1 && y - lineSpacing < minY) {
+                line = truncateToWidth(line, font, fontSize, maxWidth);
+            }
+            writeLine(content, line, fontSize, x, y, font);
+            y -= lineSpacing;
+        }
+    }
+
+    private String truncateToWidth(String text, PDFont font, float fontSize, float maxWidth) throws IOException {
+        String safe = cleanText(text);
+        if (!StringUtils.hasText(safe)) {
+            return "";
+        }
+        if (textWidth(font, fontSize, safe) <= maxWidth) {
+            return safe;
+        }
+        String ellipsis = "...";
+        if (textWidth(font, fontSize, ellipsis) >= maxWidth) {
+            return "";
+        }
+        StringBuilder builder = new StringBuilder(safe);
+        while (builder.length() > 0 && textWidth(font, fontSize, builder + ellipsis) > maxWidth) {
+            builder.setLength(builder.length() - 1);
+        }
+        return builder + ellipsis;
     }
 
     private void drawQrPlaceholder(PDPageContentStream content, float x, float y) throws IOException {
@@ -1444,6 +1714,72 @@ public class PrescriptionService {
                 .map(String::trim)
                 .filter(StringUtils::hasText)
                 .toList();
+    }
+
+    private List<String> narrativeList(String value) {
+        String cleaned = normalizeNarrativeText(value);
+        if (!StringUtils.hasText(cleaned)) {
+            return List.of();
+        }
+        return List.of(cleaned);
+    }
+
+    private String narrativeText(List<String> lines, String fallback) {
+        if (lines == null || lines.isEmpty()) {
+            return fallback;
+        }
+        String joined = lines.stream()
+                .map(this::normalizeNarrativeText)
+                .filter(StringUtils::hasText)
+                .collect(Collectors.joining(" "));
+        return StringUtils.hasText(joined) ? joined : fallback;
+    }
+
+    private String normalizeNarrativeText(String value) {
+        String cleaned = cleanText(value);
+        if (!StringUtils.hasText(cleaned)) {
+            return "";
+        }
+        return cleaned.replaceAll("\\s+", " ").trim();
+    }
+
+    private String summaryFieldText(List<String> lines, String fallback) {
+        if (lines == null || lines.isEmpty()) {
+            return fallback;
+        }
+        String joined = lines.stream()
+                .map(this::normalizeNarrativeText)
+                .filter(StringUtils::hasText)
+                .collect(Collectors.joining("; "));
+        return StringUtils.hasText(joined) ? joined : fallback;
+    }
+
+    private List<String> deriveEmergencyWarnings(String advice) {
+        String cleaned = cleanText(advice);
+        if (!StringUtils.hasText(cleaned)) {
+            return List.of();
+        }
+        return containsEmergencyWarning(cleaned) ? List.of(cleaned) : List.of();
+    }
+
+    private boolean containsEmergencyWarning(String value) {
+        if (!StringUtils.hasText(value)) {
+            return false;
+        }
+        String normalized = value.toLowerCase();
+        return normalized.contains("seek immediate care")
+                || normalized.contains("seek urgent care")
+                || normalized.contains("urgent reassessment")
+                || normalized.contains("go to emergency")
+                || normalized.contains("go to the emergency")
+                || normalized.contains("go to hospital")
+                || normalized.contains("call emergency")
+                || normalized.contains("blood in vomit")
+                || normalized.contains("blood in stool")
+                || normalized.contains("severe abdominal pain")
+                || normalized.contains("severe dehydration")
+                || normalized.contains("warning signs")
+                || normalized.contains("red flag");
     }
 
     private List<String> vitalsList(ConsultationRecord consultation) {

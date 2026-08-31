@@ -81,7 +81,8 @@ class ClinicalReasoningPromptBuilderTest {
         assertThat(input.get("reasoningPrompt").toString()).contains("Structured longitudinal context");
         assertThat(input.get("reasoningPrompt").toString()).contains("include a compact longitudinalContext section");
         assertThat(input.get("reasoningPrompt").toString()).contains("Always populate supportingEvidence");
-        assertThat(input.get("reasoningPrompt").toString()).contains("For fever with diabetes");
+        assertThat(input.get("reasoningPrompt").toString()).contains("If diabetes is recorded and fever is present");
+        assertThat(input.get("reasoningPrompt").toString()).contains("Do not present an unsupported condition as a fact about the patient");
         assertThat(input.get("reasoningPrompt").toString()).doesNotContain("\"patientId\"");
         assertThat(input.get("chiefComplaint")).isEqualTo("Fever, cough and body ache");
         assertThat(input.get("symptoms")).isEqualTo("Fever and cough");
@@ -89,6 +90,52 @@ class ClinicalReasoningPromptBuilderTest {
         assertThat(vitals).contains("INTAKE").contains("BP 136/86");
         assertThat((List<String>) input.get("knownConditions")).contains("Diabetes Mellitus");
         assertThat((List<String>) input.get("recentReports")).contains("Diabetes Follow-up Lab Report");
+    }
+
+    @Test
+    void buildInputLeavesKnownConditionsEmptyWhenNoDiabetesIsRecorded() {
+        ClinicalReasoningPromptBuilder builder = new ClinicalReasoningPromptBuilder();
+        ConsultationEntity consultation = ConsultationEntity.create(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), null);
+        consultation.update("Fever and cough", "Fever for 4 days", null, "CBC normal", null, null, null, null, null, null, null, null, null, null, null);
+
+        ClinicalContextResponse context = new ClinicalContextResponse(
+                UUID.randomUUID(),
+                consultation.getPatientId(),
+                consultation.getId(),
+                new ClinicalContextResponse.PatientSnapshot("Rohan Sharma", 42, PatientGender.MALE.name(), null, null, List.of(), "2026-01-08"),
+                List.of(),
+                new ClinicalContextResponse.MedicationSummary(List.of(), List.of(), List.of(), List.of(), List.of()),
+                new ClinicalContextResponse.DiagnosisSummary("Viral fever", List.of("Viral fever")),
+                new ClinicalContextResponse.IntakeSummary(true, "Fever and cough", null, null, List.of(), null, null, null, null),
+                new ClinicalContextResponse.LabIntelligence("CBC normal", List.of(), List.of(), List.of(), null, null, null, null, null, null, null),
+                new ClinicalContextResponse.DocumentIntelligence(List.of("Viral Fever Lab Report"), List.of(), List.of(), List.of()),
+                new ClinicalContextResponse.TimelineSummary(List.of(), "Recent visit only"),
+                new ClinicalContextResponse.LongitudinalMemory(List.of(), List.of(), null, null, List.of(), null, null, List.of(), List.of(), null),
+                null,
+                "No chronic conditions recorded",
+                "Patient snapshot",
+                "{\"patientSummary\":{\"patientName\":\"Rohan Sharma\"}}",
+                OffsetDateTime.now()
+        );
+
+        ClinicalReasoningRequest request = new ClinicalReasoningRequest(
+                consultation.getPatientId(),
+                "Fever and cough",
+                "Fever for 4 days",
+                "CBC normal",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+        );
+
+        var input = builder.buildInput(context.tenantId(), consultation, context, request, false, null);
+
+        assertThat((List<String>) input.get("knownConditions")).isEmpty();
+        assertThat(input.get("reasoningPrompt").toString()).doesNotContain("For fever with diabetes");
+        assertThat(input.get("reasoningPrompt").toString()).contains("Use only recorded patient/context data for patient-specific red flags");
     }
 
     @Test

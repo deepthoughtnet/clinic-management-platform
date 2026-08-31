@@ -45,6 +45,51 @@ class AiTaskGenerationConfigServiceTest {
     }
 
     @Test
+    void consultationExplainDiagnosisUsesFreeformBoundedChatConfig() {
+        AiTaskGenerationConfigService service = new AiTaskGenerationConfigService(null, "gemini-2.5-flash", 0, true, 2048, 4096);
+
+        AiTaskGenerationConfigService.GenerationConfig config = service.resolve(
+                AiTaskType.GENERIC_COPILOT,
+                "clinic.consultation.explain-diagnosis.v1",
+                "consultation.explain-diagnosis"
+        );
+
+        assertEquals(1024, config.maxOutputTokens());
+        assertEquals(0, config.thinkingBudget());
+        assertFalse(config.strictJsonMode());
+    }
+
+    @Test
+    void consultationHistoryGapUsesFreeformBoundedChatConfig() {
+        AiTaskGenerationConfigService service = new AiTaskGenerationConfigService(null, "gemini-2.5-flash", 0, true, 2048, 4096);
+
+        AiTaskGenerationConfigService.GenerationConfig config = service.resolve(
+                AiTaskType.GENERIC_COPILOT,
+                "clinic.consultation.history-gaps.v1",
+                "consultation.history-gaps"
+        );
+
+        assertEquals(1024, config.maxOutputTokens());
+        assertEquals(0, config.thinkingBudget());
+        assertFalse(config.strictJsonMode());
+    }
+
+    @Test
+    void consultationSuggestTestsUsesFreeformBoundedChatConfig() {
+        AiTaskGenerationConfigService service = new AiTaskGenerationConfigService(null, "gemini-2.5-flash", 0, true, 2048, 4096);
+
+        AiTaskGenerationConfigService.GenerationConfig config = service.resolve(
+                AiTaskType.GENERIC_COPILOT,
+                "clinic.consultation.suggest-tests.v1",
+                "consultation.suggest-tests"
+        );
+
+        assertEquals(1024, config.maxOutputTokens());
+        assertEquals(0, config.thinkingBudget());
+        assertFalse(config.strictJsonMode());
+    }
+
+    @Test
     void consultationSoapUsesExpandedOutputBudget() {
         AiTaskGenerationConfigService service = new AiTaskGenerationConfigService(null, "gemini-2.5-flash", 0, true, 2048, 4096);
 

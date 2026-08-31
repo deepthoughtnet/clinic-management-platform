@@ -14,9 +14,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.http.MediaType;
@@ -43,23 +45,42 @@ public class GroqLlmClient implements LlmClient {
     private final Double defaultTemperature;
     private final Integer defaultMaxOutputTokens;
     private final int timeoutSeconds;
+    private final AtomicReference<AvailabilitySnapshot> availabilityState = new AtomicReference<>(AvailabilitySnapshot.unknown());
 
+    @Autowired
     public GroqLlmClient(
             ObjectMapper objectMapper,
+            RestClient.Builder restClientBuilder,
             @Value("${clinic.ai.groq.base-url:${groq.baseUrl:https://api.groq.com/openai/v1}}") String baseUrl,
             @Value("${clinic.ai.groq.api-key:${groq.apiKey:}}") String apiKey,
-            @Value("${clinic.ai.groq.model:${groq.model:llama-3.1-8b-instant}}") String model,
+            @Value("${clinic.ai.groq.model:${groq.model:openai/gpt-oss-20b}}") String model,
             @Value("${clinic.ai.groq.temperature:${groq.temperature:0.1}}") Double defaultTemperature,
             @Value("${clinic.ai.groq.max-output-tokens:${groq.maxOutputTokens:2048}}") Integer defaultMaxOutputTokens,
             @Value("${clinic.ai.groq.timeout-seconds:${clinic.ai.request-timeout-seconds:60}}") int timeoutSeconds
     ) {
-        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
-        int timeoutMillis = Math.max(1, timeoutSeconds) * 1000;
-        requestFactory.setConnectTimeout(timeoutMillis);
-        requestFactory.setReadTimeout(timeoutMillis);
-        this.restClient = RestClient.builder()
-                .requestFactory(requestFactory)
-                .build();
+        this(
+                objectMapper,
+                buildRestClient(restClientBuilder, timeoutSeconds),
+                baseUrl,
+                apiKey,
+                model,
+                defaultTemperature,
+                defaultMaxOutputTokens,
+                timeoutSeconds
+        );
+    }
+
+    GroqLlmClient(
+            ObjectMapper objectMapper,
+            RestClient restClient,
+            String baseUrl,
+            String apiKey,
+            String model,
+            Double defaultTemperature,
+            Integer defaultMaxOutputTokens,
+            int timeoutSeconds
+    ) {
+        this.restClient = restClient;
         this.objectMapper = objectMapper;
         this.baseUrl = trimTrailingSlash(baseUrl);
         this.apiKey = apiKey;
@@ -67,6 +88,39 @@ public class GroqLlmClient implements LlmClient {
         this.defaultTemperature = defaultTemperature;
         this.defaultMaxOutputTokens = defaultMaxOutputTokens;
         this.timeoutSeconds = timeoutSeconds;
+    }
+
+    private static RestClient buildRestClient(RestClient.Builder restClientBuilder, int timeoutSeconds) {
+        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
+        int timeoutMillis = Math.max(1, timeoutSeconds) * 1000;
+        requestFactory.setConnectTimeout(timeoutMillis);
+        requestFactory.setReadTimeout(timeoutMillis);
+        return restClientBuilder.requestFactory(requestFactory).build();
+    }
+
+    @Override
+    public boolean isAvailable() {
+        AvailabilitySnapshot state = availabilityState.get();
+        if (state == AvailabilitySnapshot.UNKNOWN) {
+            synchronized (availabilityState) {
+                state = availabilityState.get();
+                if (state == AvailabilitySnapshot.UNKNOWN) {
+                    state = validateConfiguredModel();
+                    availabilityState.set(state);
+                }
+            }
+        }
+        return state.available();
+    }
+
+    @Override
+    public String availabilityDiagnostic() {
+        AvailabilitySnapshot state = availabilityState.get();
+        if (state == AvailabilitySnapshot.UNKNOWN) {
+            isAvailable();
+            state = availabilityState.get();
+        }
+        return state.diagnostic();
     }
 
     @Override
@@ -93,6 +147,16 @@ public class GroqLlmClient implements LlmClient {
         }
         if (request.userPrompt() == null || request.userPrompt().isBlank()) {
             throw new IllegalArgumentException("userPrompt is required");
+        }
+        if (!isAvailable()) {
+            throw AiProviderException.fatal(
+                    availabilityDiagnostic() == null ? "Groq model is not available" : availabilityDiagnostic(),
+                    null,
+                    providerName(),
+                    model,
+                    "/models",
+                    null
+            );
         }
 
         Map<String, Object> payload = buildPayload(request);
@@ -245,6 +309,68 @@ public class GroqLlmClient implements LlmClient {
         return payload;
     }
 
+    private AvailabilitySnapshot validateConfiguredModel() {
+        if (apiKey == null || apiKey.isBlank()) {
+            String diagnostic = "Groq model unavailable. provider=GROQ model=" + model + " reason=API key is not configured";
+            log.warn(diagnostic);
+            return AvailabilitySnapshot.unavailable(diagnostic);
+        }
+        try {
+            String responseBody = restClient.get()
+                    .uri(baseUrl + "/models")
+                    .header("Authorization", "Bearer " + apiKey)
+                    .accept(MediaType.APPLICATION_JSON)
+                    .retrieve()
+                    .body(String.class);
+
+            boolean modelFound = modelAvailableInCatalog(responseBody);
+            if (modelFound) {
+                String diagnostic = "Groq model configuration validated. provider=GROQ model=" + model + " endpointPath=/models";
+                log.info(diagnostic);
+                return AvailabilitySnapshot.available(diagnostic);
+            }
+            String diagnostic = "Groq model unavailable. provider=GROQ model=" + model + " endpointPath=/models reason=model_not_found";
+            log.error(diagnostic);
+            return AvailabilitySnapshot.unavailable(diagnostic);
+        } catch (RestClientResponseException ex) {
+            String bodyPreview = sanitizePreview(ex.getResponseBodyAsString(), 300);
+            String diagnostic = switch (ex.getRawStatusCode()) {
+                case 401, 403 -> "Groq model validation failed. provider=GROQ model=" + model + " endpointPath=/models reason=authorization_failed status=" + ex.getRawStatusCode();
+                case 404 -> "Groq model validation failed. provider=GROQ model=" + model + " endpointPath=/models reason=model_not_found status=404";
+                default -> "Groq model validation failed. provider=GROQ model=" + model + " endpointPath=/models status=" + ex.getRawStatusCode();
+            };
+            log.error("{} bodyPreview=\"{}\"", diagnostic, bodyPreview);
+            return AvailabilitySnapshot.unavailable(diagnostic);
+        } catch (Exception ex) {
+            String diagnostic = "Groq model validation failed. provider=GROQ model=" + model + " endpointPath=/models reason=" + sanitize(ex.getMessage());
+            log.error(diagnostic);
+            return AvailabilitySnapshot.unavailable(diagnostic);
+        }
+    }
+
+    private boolean modelAvailableInCatalog(String responseBody) {
+        if (responseBody == null || responseBody.isBlank()) {
+            return false;
+        }
+        try {
+            JsonNode root = objectMapper.readTree(responseBody);
+            JsonNode data = root.path("data");
+            if (!data.isArray()) {
+                return false;
+            }
+            for (JsonNode node : data) {
+                String candidate = node.path("id").asText(null);
+                if (candidate != null && candidate.trim().equalsIgnoreCase(model)) {
+                    return true;
+                }
+            }
+            return false;
+        } catch (Exception ex) {
+            log.warn("Groq model catalog parse failure. provider=GROQ model={} reason={}", model, sanitize(ex.getMessage()));
+            return false;
+        }
+    }
+
     private ParsedGroqResponse extractResponse(String responseBody) {
         if (responseBody == null || responseBody.isBlank()) {
             log.warn("Groq returned empty response body.");
@@ -375,5 +501,21 @@ public class GroqLlmClient implements LlmClient {
     }
 
     private record ParsedGroqResponse(String text, int responseChars, String finishReason, AiTokenUsage tokenUsage) {
+    }
+
+    private record AvailabilitySnapshot(boolean available, String diagnostic) {
+        private static final AvailabilitySnapshot UNKNOWN = new AvailabilitySnapshot(false, null);
+
+        static AvailabilitySnapshot available(String diagnostic) {
+            return new AvailabilitySnapshot(true, diagnostic);
+        }
+
+        static AvailabilitySnapshot unavailable(String diagnostic) {
+            return new AvailabilitySnapshot(false, diagnostic);
+        }
+
+        static AvailabilitySnapshot unknown() {
+            return UNKNOWN;
+        }
     }
 }

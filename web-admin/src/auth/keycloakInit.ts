@@ -19,9 +19,6 @@ export function initKeycloakOnce(timeoutMs = 5000) {
         .then((authenticated) => resolve(authenticated === true))
         .catch(reject)
         .finally(() => window.clearTimeout(timeout));
-    }).catch((err) => {
-      initPromise = null;
-      throw err;
     });
   }
 
@@ -29,5 +26,6 @@ export function initKeycloakOnce(timeoutMs = 5000) {
 }
 
 export function resetKeycloakInit() {
-  initPromise = null;
+  // Intentionally left blank. The singleton Keycloak client is initialized once per
+  // JavaScript runtime; recovery should happen through a fresh browser/runtime load.
 }

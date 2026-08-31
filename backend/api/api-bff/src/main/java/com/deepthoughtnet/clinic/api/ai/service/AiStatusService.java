@@ -13,9 +13,12 @@ import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Service;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @Service
 public class AiStatusService {
+    private static final Logger log = LoggerFactory.getLogger(AiStatusService.class);
     private final TenantModuleEntitlementService tenantModuleEntitlementService;
     private final PermissionChecker permissionChecker;
     private final List<AiProvider> providers;
@@ -57,14 +60,14 @@ public class AiStatusService {
     @PostConstruct
     void logConfig() {
         List<String> providerStates = providers.stream()
-                .map(provider -> normalize(provider.providerName(), "UNKNOWN") + ":" + provider.status())
+                .map(provider -> normalize(provider.providerName(), "UNKNOWN") + ":" + safeProviderStatus(provider))
                 .toList();
         List<String> clinicalReasoningOrder = parseProviderChain().stream()
                 .map(provider -> provider + ":" + providerStatus(provider))
                 .toList();
         boolean geminiKeyPresent = geminiApiKey != null && !geminiApiKey.isBlank();
         String geminiKeyPrefix = geminiKeyPresent ? geminiApiKey.substring(0, Math.min(4, geminiApiKey.length())) : "-";
-        org.slf4j.LoggerFactory.getLogger(AiStatusService.class).info(
+        log.info(
                 "AI config activeProfiles={} runtimeEnabled={} activeProvider={} providerChain={} geminiEnabled={} geminiKeyPresent={} keyPrefix={} providerBeans={}",
                 String.join(",", environment.getActiveProfiles()),
                 clinicAiEnabled,
@@ -75,7 +78,7 @@ public class AiStatusService {
                 geminiKeyPrefix,
                 providerStates
         );
-        org.slf4j.LoggerFactory.getLogger(AiStatusService.class).info(
+        log.info(
                 "AI provider order for CLINICAL_REASONING = {}",
                 clinicalReasoningOrder.isEmpty() ? "NONE" : String.join(" > ", clinicalReasoningOrder)
         );
@@ -139,15 +142,13 @@ public class AiStatusService {
     }
 
     private boolean providerAvailable(String providerName) {
-        return providers.stream()
-                .filter(provider -> providerName.equalsIgnoreCase(normalize(provider.providerName(), "")))
-                .anyMatch(provider -> provider.status() != AiProviderStatus.UNAVAILABLE);
+        return providerStatus(providerName) != AiProviderStatus.UNAVAILABLE;
     }
 
     private AiProviderStatus providerStatus(String providerName) {
         return providers.stream()
                 .filter(provider -> providerName.equalsIgnoreCase(normalize(provider.providerName(), "")))
-                .map(AiProvider::status)
+                .map(this::safeProviderStatus)
                 .findFirst()
                 .orElse(AiProviderStatus.UNAVAILABLE);
     }
@@ -192,5 +193,27 @@ public class AiStatusService {
             return fallback;
         }
         return value.trim().toUpperCase(Locale.ROOT);
+    }
+
+    private AiProviderStatus safeProviderStatus(AiProvider provider) {
+        if (provider == null) {
+            return AiProviderStatus.UNAVAILABLE;
+        }
+        try {
+            return provider.status();
+        } catch (RuntimeException ex) {
+            log.warn("AI provider status lookup failed. provider={} reason={}",
+                    normalize(provider.providerName(), "UNKNOWN"),
+                    sanitize(ex.getMessage()),
+                    ex);
+            return AiProviderStatus.UNAVAILABLE;
+        }
+    }
+
+    private String sanitize(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.replaceAll("[\\r\\n\\t]+", " ").trim();
     }
 }

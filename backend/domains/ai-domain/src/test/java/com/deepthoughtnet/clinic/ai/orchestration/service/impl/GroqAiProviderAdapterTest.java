@@ -23,6 +23,7 @@ class GroqAiProviderAdapterTest {
         ObjectProvider<LlmClient> provider = mock(ObjectProvider.class);
         LlmClient client = mock(LlmClient.class);
         when(provider.getIfAvailable()).thenReturn(client);
+        when(client.isAvailable()).thenReturn(true);
         when(client.generate(org.mockito.ArgumentMatchers.any(LlmRequest.class))).thenReturn(
                 new LlmResponse("GROQ", "llama", "Structured response",
                         new AiTokenUsage(11L, 7L, 18L, BigDecimal.valueOf(0.09)), null)
@@ -54,6 +55,17 @@ class GroqAiProviderAdapterTest {
 
         assertEquals(AiProviderStatus.UNAVAILABLE, adapter.status());
         assertNull(provider.getIfAvailable());
+    }
+
+    @Test
+    void returnsUnavailableWhenGroqClientInstantiationFails() {
+        @SuppressWarnings("unchecked")
+        ObjectProvider<LlmClient> provider = mock(ObjectProvider.class);
+        when(provider.getIfAvailable()).thenThrow(new IllegalStateException("No default constructor found"));
+
+        GroqAiProviderAdapter adapter = new GroqAiProviderAdapter(provider);
+
+        assertEquals(AiProviderStatus.UNAVAILABLE, adapter.status());
     }
 
     @Test

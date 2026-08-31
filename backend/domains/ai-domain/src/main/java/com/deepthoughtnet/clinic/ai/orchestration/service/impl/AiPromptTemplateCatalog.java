@@ -103,6 +103,93 @@ public class AiPromptTemplateCatalog {
             Return plain text only. Do not include JSON, markdown, or code fences.
             """;
 
+    private static final String CONSULTATION_EXPLAIN_DIAGNOSIS_USER_PROMPT = """
+            Product: {{productCode}}
+            Task: {{taskType}}
+            Use case: {{useCaseCode}}
+            Prompt template: {{promptTemplateCode}}
+            Tenant: {{tenantId}}
+            Actor: {{actorUserId}}
+            Correlation: {{correlationId}}
+
+            User question:
+            {{input.prompt}}
+
+            Diagnosis explanation context:
+            {{input.diagnosisExplanationContext}}
+
+            Canonical consultation summary:
+            {{input.clinicalContextSummary}}
+
+            Explain the doctor's recorded diagnosis as a working diagnosis, not a confirmed fact.
+            Ground the explanation in the recorded symptoms, findings, vitals, history, allergies, medications, and pending investigations supplied above.
+            Mention important alternative diagnoses only when the context supports them.
+            Explain what makes alternatives more or less likely without inventing facts.
+            If key information is missing, say so explicitly.
+            Mention pending investigations only when they materially affect certainty.
+            State when the diagnosis should be reassessed or red flags should prompt urgent review.
+            Do not restate the full patient context, visit logistics, lab-order details, or payment details.
+            If no diagnosis is recorded, say that clearly instead of inventing one.
+            Be concise and clinically useful.
+            Return plain text only. Do not include JSON, markdown, or code fences.
+            """;
+
+    private static final String CONSULTATION_HISTORY_GAP_USER_PROMPT = """
+            Product: {{productCode}}
+            Task: {{taskType}}
+            Use case: {{useCaseCode}}
+            Prompt template: {{promptTemplateCode}}
+            Tenant: {{tenantId}}
+            Actor: {{actorUserId}}
+            Correlation: {{correlationId}}
+
+            User question:
+            {{input.prompt}}
+
+            Clinical history gap context:
+            {{input.historyGapContext}}
+
+            Clinician review context:
+            {{input.clinicianReviewContext}}
+
+            Identify the most important questions the doctor should ask the patient to fill missing clinical history.
+            Prioritize symptom duration, progression, severity, associated symptoms, respiratory red flags, fever pattern, allergies, current medicines, recent treatment, chronic conditions, relevant past history, travel, exposure, sick contacts, and any needed vitals or examination findings.
+            If investigations matter, place them under a separate clinician-review section and do not ask the patient about billing, payment, prompt fragments, internal AI metadata, or implementation details.
+            Do not fabricate missing facts.
+            If the record is already complete, keep the response concise and say that only minor clarifications or review items remain.
+            Return plain text only. Do not include JSON, markdown, or code fences.
+            """;
+
+    private static final String CONSULTATION_SUGGEST_TESTS_USER_PROMPT = """
+            Product: {{productCode}}
+            Task: {{taskType}}
+            Use case: {{useCaseCode}}
+            Prompt template: {{promptTemplateCode}}
+            Tenant: {{tenantId}}
+            Actor: {{actorUserId}}
+            Correlation: {{correlationId}}
+
+            User question:
+            {{input.prompt}}
+
+            Investigation suggestion context:
+            {{input.investigationSuggestionContext}}
+
+            Suggest the most clinically justified investigations for the doctor to consider.
+            Use the current symptoms, diagnosis, red flags, history, and missing data to decide whether additional investigations are justified.
+            First identify investigations already ordered, pending, or recently available and avoid recommending duplicates unless there is a clear clinical reason.
+            Separate the response into exactly these sections:
+            Already ordered/pending
+            Consider if indicated
+            Not currently necessary / insufficient information
+            For every suggested test include a brief rationale.
+            If evidence is insufficient to recommend a specific test, say so rather than inventing one.
+            Do not include billing, payment, lab-order logistics, truncated source text, internal AI metadata, prompt fragments, action codes, or implementation details.
+            Do not automatically create, select, or map a catalog test.
+            Be concise and clinically useful.
+            Return plain text only. Do not include JSON, markdown, or code fences.
+            """;
+
     private final Map<String, AiPromptTemplateDefinition> defaults = Map.ofEntries(
             entry("clinic.clinic.extraction.v1", AiProductCode.CLINIC, AiTaskType.CLINIC_EXTRACTION,
                     "Extract clinic details from the supplied document context. Return structured JSON when possible.",
@@ -317,9 +404,11 @@ public class AiPromptTemplateCatalog {
                     List.of("Review red flags and urgent exclusions", "Use diagnostics to confirm before final diagnosis"),
                     List.of("This is an AI-generated draft. Doctor must verify before use.")),
             entry("clinic.prescription.suggest-template.v1", AiProductCode.CLINIC, AiTaskType.PRESCRIPTION_TEMPLATE_SUGGESTION,
+                    SYSTEM_PROMPT,
                     """
-                    Suggest a prescription template using diagnosis, allergies, and current medications.
-                    Use the supplied clinical context summary and JSON as the primary source of truth.
+                    Suggest a prescription template using only the current consultation context below.
+                    Do not use previous consultations, longitudinal memory, example text, cached output, or fallback clinical indications as though they belong to the current encounter.
+                    Use the supplied current consultation summary as the primary source of truth.
                     Return ONLY valid JSON. No markdown. No extra text.
                     Use exactly this shape:
                     {
@@ -337,10 +426,20 @@ public class AiPromptTemplateCatalog {
                     }
                     Constraints:
                     - max 5 suggestions
-                    - highlight allergies or interaction concerns when relevant
+                    - highlight allergies or interaction concerns only when the current structured context supports them
+                    - if allergy history is not recorded, do not invent an allergy; keep the wording conditional or say it is not recorded
+                    - if current medicines are not recorded, do not invent a patient-specific interaction statement
+                    - any patient-specific current medication assertion must be grounded in the supplied current consultation context
+                    - if a current medication assertion is not supported, rewrite it conditionally or omit it
+                    - if the current context is insufficient, return no suggestion rather than substituting an unrelated indication
+                    - do not introduce a new diagnosis or condition such as bacterial infection, pneumonia, sinusitis, UTI, muscle spasm, hypertension, or diabetes unless the current consultation evidence supports it
+                    - if a disease-specific indication is not supported by the current consultation evidence, suppress the suggestion rather than making it actionable
                     - do not auto-prescribe or finalize anything
                     - do not return a top-level array
+                    Current consultation context:
+                    {{input.prescriptionSuggestionContext}}
                     """,
+                    "Grounded prescription template suggestions using the current consultation context.",
                     List.of("Check contraindications and interactions", "Adjust dose and duration based on patient profile"),
                     List.of("This is an AI-generated draft. Doctor must verify before use.")),
             entry("clinic.patient.instructions.v1", AiProductCode.CLINIC, AiTaskType.PATIENT_INSTRUCTIONS_DRAFT,
@@ -382,7 +481,25 @@ public class AiPromptTemplateCatalog {
                     CONSULTATION_ASK_USER_PROMPT,
                     "Clinical chat answer using canonical consultation context.",
                     List.of("Explain the answer clearly", "Summarize relevant longitudinal trends", "Do not mutate workflow state"),
-                    List.of("Consultation chat output is advisory only"))
+                    List.of("Consultation chat output is advisory only")),
+            entry("clinic.consultation.explain-diagnosis.v1", AiProductCode.CLINIC, AiTaskType.GENERIC_COPILOT,
+                    "Act as a consultation chat assistant that explains the doctor-recorded working diagnosis using grounded consultation context.",
+                    CONSULTATION_EXPLAIN_DIAGNOSIS_USER_PROMPT,
+                    "Clinical diagnosis explanation using grounded consultation context.",
+                    List.of("Explain the recorded diagnosis as a working diagnosis", "Ground the explanation in recorded findings", "Mention missing information and relevant alternatives only when supported"),
+                    List.of("Consultation diagnosis explanation output is advisory only")),
+            entry("clinic.consultation.history-gaps.v1", AiProductCode.CLINIC, AiTaskType.GENERIC_COPILOT,
+                    "Act as a consultation chat assistant that identifies missing clinical history gaps for the doctor to ask the patient about using only grounded consultation context.",
+                    CONSULTATION_HISTORY_GAP_USER_PROMPT,
+                    "Clinical history-gap identification using grounded consultation context.",
+                    List.of("Prioritize missing history questions", "Separate clinician-review items from patient questions", "Do not ask about billing or internal AI metadata"),
+                    List.of("Consultation history-gap output is advisory only")),
+            entry("clinic.consultation.suggest-tests.v1", AiProductCode.CLINIC, AiTaskType.GENERIC_COPILOT,
+                    "Act as a consultation chat assistant that suggests clinically grounded investigations using the supplied consultation context and already ordered tests.",
+                    CONSULTATION_SUGGEST_TESTS_USER_PROMPT,
+                    "Clinical investigation suggestions using grounded consultation context.",
+                    List.of("Review already ordered and pending investigations first", "Explain each suggestion briefly", "Do not recommend duplicates or auto-map tests"),
+                    List.of("Consultation investigation suggestion output is advisory only"))
     );
 
     public AiPromptTemplateDefinition defaultDefinition(AiTaskType taskType, String templateCode) {

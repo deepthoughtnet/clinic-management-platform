@@ -1745,6 +1745,61 @@ export type ConsultationAiSummaryInput = {
   generatedAt: string | null;
 };
 
+export type ConsultationAiPrescriptionSuggestionStatus = "CURRENT" | "SUPERSEDED";
+export type ConsultationAiPrescriptionSuggestionItemStatus = "PENDING" | "ACCEPTED" | "REJECTED" | "EDITED";
+export type ConsultationAiPrescriptionSuggestionInput = {
+  summary: string | null;
+  rawText: string | null;
+  unstructured: boolean;
+  provider: string | null;
+  model: string | null;
+  generatedAt: string | null;
+  items: Array<{
+    itemId: string;
+    medicine: string;
+    dose: string | null;
+    frequency: string | null;
+    duration: string | null;
+    reason: string | null;
+    safetyNote: string | null;
+    draftText: string | null;
+    status: ConsultationAiPrescriptionSuggestionItemStatus;
+  }>;
+};
+export type ConsultationAiPrescriptionSuggestion = {
+  id: string | null;
+  consultationId: string | null;
+  versionNumber: number;
+  status: ConsultationAiPrescriptionSuggestionStatus | string | null;
+  sourceHash: string | null;
+  currentSourceHash: string | null;
+  stale: boolean;
+  summary: string | null;
+  rawText: string | null;
+  unstructured: boolean;
+  provider: string | null;
+  model: string | null;
+  generatedByAppUserId: string | null;
+  generatedByDisplayName: string | null;
+  generatedAt: string | null;
+  items: Array<{
+    itemId: string;
+    medicine: string;
+    dose: string | null;
+    frequency: string | null;
+    duration: string | null;
+    reason: string | null;
+    safetyNote: string | null;
+    draftText: string | null;
+    status: ConsultationAiPrescriptionSuggestionItemStatus | string | null;
+    reviewedByAppUserId: string | null;
+    reviewedByDisplayName: string | null;
+    reviewedAt: string | null;
+  }>;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
 export type ConsultationSoapInput = {
   subjective: string | null;
   objective: string | null;
@@ -4187,6 +4242,14 @@ export async function getConsultationAiSummary(token: string, tenantId: string, 
 
 export async function saveConsultationAiSummary(token: string, tenantId: string, id: string, body: ConsultationAiSummaryInput) {
   return httpPatch<ConsultationAiSummary>(`/api/consultations/${id}/ai-summary`, body, { token, tenantId });
+}
+
+export async function getConsultationAiPrescriptionSuggestion(token: string, tenantId: string, id: string) {
+  return httpGet<ConsultationAiPrescriptionSuggestion>(`/api/consultations/${id}/ai-prescription-suggestion`, { token, tenantId });
+}
+
+export async function saveConsultationAiPrescriptionSuggestion(token: string, tenantId: string, id: string, body: ConsultationAiPrescriptionSuggestionInput) {
+  return httpPatch<ConsultationAiPrescriptionSuggestion>(`/api/consultations/${id}/ai-prescription-suggestion`, body, { token, tenantId });
 }
 
 export async function getConsultationSoap(token: string, tenantId: string, id: string) {

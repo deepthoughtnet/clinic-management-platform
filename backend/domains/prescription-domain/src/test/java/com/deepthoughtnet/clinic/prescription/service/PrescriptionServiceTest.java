@@ -53,13 +53,17 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Predicate;
+import java.io.IOException;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.cos.COSName;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDResources;
 import org.apache.pdfbox.pdmodel.graphics.PDXObject;
 import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
+import org.apache.pdfbox.rendering.PDFRenderer;
 import org.apache.pdfbox.text.PDFTextStripper;
+import org.apache.pdfbox.text.TextPosition;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -532,6 +536,65 @@ class PrescriptionServiceTest {
     }
 
     @Test
+    void generatedTemplatePreviewOmitsEmergencyWarningWhenAdviceHasNoExplicitWarning() throws Exception {
+        PrescriptionEntity entity = PrescriptionEntity.create(TENANT_ID, PATIENT_ID, DOCTOR_ID, CONSULTATION_ID, APPOINTMENT_ID, "RX-PREVIEW-WARN");
+        entity.update("Viral Upper Respiratory Infection", "Hydration, rest, and follow-up if symptoms worsen.", LocalDate.now().plusDays(2));
+        prescriptions.put(entity.getId(), entity);
+        when(consultationService.listByPatient(TENANT_ID, PATIENT_ID)).thenReturn(List.of(
+                consultation(),
+                new ConsultationRecord(
+                        UUID.randomUUID(),
+                        TENANT_ID,
+                        PATIENT_ID,
+                        "PAT-001",
+                        "Anita Patel",
+                        DOCTOR_ID,
+                        "Doctor One",
+                        APPOINTMENT_ID,
+                        "Abdominal pain",
+                        "Nausea",
+                        "Acute gastroenteritis",
+                        "Maintain hydration",
+                        "No emergency warning recorded",
+                        LocalDate.now().plusDays(4),
+                        ConsultationStatus.COMPLETED,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        OffsetDateTime.now().minusDays(5),
+                        OffsetDateTime.now().minusDays(5),
+                        OffsetDateTime.now().minusDays(5)
+                )
+        ));
+
+        byte[] preview = service.generateTemplatePreviewPdf(TENANT_ID, entity.getId(), ACTOR_ID, brandingWithLogo(new PrescriptionLogoAsset(pngBytes(), "image/png", "clinic-logo.png"))).content();
+        String text = extractPdfText(preview);
+
+        assertThat(text).doesNotContain("Emergency warning:");
+        assertThat(text).doesNotContain("blood in vomit/stool");
+        assertThat(text).doesNotContain("severe abdominal pain");
+    }
+
+    @Test
+    void generatedPdfIncludesEmergencyWarningWhenExplicitDoctorAdviceContainsIt() throws Exception {
+        PrescriptionEntity entity = PrescriptionEntity.create(TENANT_ID, PATIENT_ID, DOCTOR_ID, CONSULTATION_ID, APPOINTMENT_ID, "RX-EXPLICIT-WARN");
+        entity.update("Viral Upper Respiratory Infection", "Seek immediate care for severe dehydration, high fever, blood in vomit/stool, or severe abdominal pain.", LocalDate.now().plusDays(2));
+        prescriptions.put(entity.getId(), entity);
+
+        byte[] pdf = service.generatePdf(TENANT_ID, entity.getId(), ACTOR_ID, brandingWithLogo(new PrescriptionLogoAsset(pngBytes(), "image/png", "clinic-logo.png"))).content();
+        String text = extractPdfText(pdf);
+
+        assertThat(text).contains("Emergency warning:");
+        assertThat(text).contains("Seek immediate care for severe dehydration, high fever, blood in vomit/stool, or severe abdominal pain.");
+    }
+
+    @Test
     void headerHandlesLongClinicNameAndContactDetails() throws Exception {
         PrescriptionEntity entity = PrescriptionEntity.create(TENANT_ID, PATIENT_ID, DOCTOR_ID, CONSULTATION_ID, APPOINTMENT_ID, "RX-LONG-HEADER");
         entity.update("Dx", "Advice", LocalDate.now().plusDays(2));
@@ -716,6 +779,399 @@ class PrescriptionServiceTest {
     }
 
     @Test
+    void generatedPdfRendersChiefComplaintAsNarrativeParagraphWithoutBulletFragments() throws Exception {
+        ConsultationRecord narrativeConsultation = consultation(
+                "Doctor One",
+                "A 39-year-old male presents with a chief complaint of fever, cough and headache,\nwith blood samples collected on August 23, 2026 and pending results.",
+                "Fever; Cough; Headache",
+                "Viral Upper Respiratory Infection",
+                "No additional notes",
+                "Rest and hydration"
+        );
+        when(consultationService.findById(TENANT_ID, CONSULTATION_ID)).thenReturn(Optional.of(narrativeConsultation));
+
+        PrescriptionEntity entity = PrescriptionEntity.create(TENANT_ID, PATIENT_ID, DOCTOR_ID, CONSULTATION_ID, APPOINTMENT_ID, "RX-NARRATIVE-CC");
+        entity.update("Viral Upper Respiratory Infection", "Hydration, rest, and follow-up if symptoms worsen.", LocalDate.now().plusDays(2));
+        prescriptions.put(entity.getId(), entity);
+        medicines.put(entity.getId(), List.of(PrescriptionMedicineEntity.create(
+                TENANT_ID, entity.getId(), "Paracetamol", MedicineType.TABLET, "500 mg", "1 tablet", "Twice daily", "3 days", Timing.AFTER_FOOD, "Take after food", 1
+        )));
+        tests.put(entity.getId(), List.of());
+
+        byte[] pdf = service.generatePdf(TENANT_ID, entity.getId(), ACTOR_ID).content();
+
+        String firstPage = extractPdfTextNormalized(pdf, 1);
+        assertThat(firstPage).contains("Chief Complaint: A 39-year-old male presents with a chief complaint of fever, cough and headache, with blood samples collected on August 23, 2026 and pending results.");
+
+        List<PdfLine> lines = extractPdfLines(pdf, 1);
+        int chiefIndex = indexOfLineContaining(lines, "Chief Complaint:");
+        int symptomsIndex = indexOfLineContaining(lines, "Symptoms:");
+        assertThat(chiefIndex).isGreaterThanOrEqualTo(0);
+        assertThat(symptomsIndex).isGreaterThan(chiefIndex);
+
+        List<PdfLine> chiefRegion = lines.subList(chiefIndex, symptomsIndex);
+        assertThat(chiefRegion).noneMatch(line -> line.text().startsWith("•"));
+        assertThat(chiefRegion.stream().map(PdfLine::text).collect(java.util.stream.Collectors.joining(" ")))
+                .contains("fever, cough and headache")
+                .contains("August 23, 2026")
+                .contains("pending results");
+        assertThat(chiefRegion.size()).isGreaterThan(1);
+        assertThat(firstPage).contains("Symptoms: Fever; Cough; Headache");
+        assertThat(firstPage).contains("Vitals: Not recorded");
+        assertThat(firstPage).contains("Diagnosis: Viral Upper Respiratory Infection");
+        assertThat(firstPage).contains("Clinical Notes: No additional notes");
+    }
+
+    @Test
+    void generatedPdfRendersVisitSummaryAsOneCompactGroupedSection() throws Exception {
+        ConsultationRecord structuredSummaryConsultation = consultation(
+                "Doctor One",
+                "Fever, cough and body ache",
+                "Fever; Cough; Headache",
+                "Viral Upper Respiratory Infection",
+                "Hydration advised; CBC pending review",
+                "Rest and hydration"
+        );
+        when(consultationService.findById(TENANT_ID, CONSULTATION_ID)).thenReturn(Optional.of(structuredSummaryConsultation));
+
+        PrescriptionEntity entity = PrescriptionEntity.create(TENANT_ID, PATIENT_ID, DOCTOR_ID, CONSULTATION_ID, APPOINTMENT_ID, "RX-VISIT-SUMMARY-BLOCK");
+        entity.update("Viral Upper Respiratory Infection", "Hydration, rest, and follow-up if symptoms worsen.", LocalDate.now().plusDays(2));
+        prescriptions.put(entity.getId(), entity);
+        medicines.put(entity.getId(), List.of(PrescriptionMedicineEntity.create(
+                TENANT_ID, entity.getId(), "Paracetamol", MedicineType.TABLET, "500 mg", "1 tablet", "Twice daily", "3 days", Timing.AFTER_FOOD, "Take after food", 1
+        )));
+        tests.put(entity.getId(), List.of());
+
+        byte[] pdf = service.generatePdf(TENANT_ID, entity.getId(), ACTOR_ID).content();
+        String firstPage = extractPdfTextNormalized(pdf, 1);
+        assertThat(firstPage).contains("Visit Summary");
+        assertThat(firstPage).contains("Chief Complaint: Fever, cough and body ache");
+        assertThat(firstPage).contains("Symptoms: Fever; Cough; Headache");
+        assertThat(firstPage).contains("Vitals: Not recorded");
+        assertThat(firstPage).contains("Diagnosis: Viral Upper Respiratory Infection");
+        assertThat(firstPage).contains("Clinical Notes: Hydration advised; CBC pending review");
+
+        List<PdfLine> lines = extractPdfLines(pdf, 1);
+        int visitSummaryIndex = indexOfLineContaining(lines, "Visit Summary");
+        int symptomsIndex = indexOfLineContaining(lines, "Symptoms:");
+        int medicinesIndex = indexOfLineContaining(lines, "Prescription Medicines");
+        assertThat(visitSummaryIndex).isGreaterThanOrEqualTo(0);
+        assertThat(symptomsIndex).isGreaterThan(visitSummaryIndex);
+        assertThat(medicinesIndex).isGreaterThan(symptomsIndex);
+
+        List<PdfLine> visitSummaryRegion = lines.subList(visitSummaryIndex, medicinesIndex);
+        assertThat(visitSummaryRegion).noneMatch(line -> line.text().startsWith("•"));
+        assertThat(visitSummaryRegion.stream().map(PdfLine::text).filter(text -> text.contains(":")).count()).isGreaterThanOrEqualTo(5L);
+    }
+
+    @Test
+    void generatedPdfRendersVisitSummaryLabelsInBoldWhileValuesRemainRegular() throws Exception {
+        ConsultationRecord structuredSummaryConsultation = consultation(
+                "Doctor One",
+                "Fever, cough and body ache",
+                "Fever; Cough; Headache",
+                "Viral Upper Respiratory Infection",
+                "Hydration advised; CBC pending review",
+                "Rest and hydration"
+        );
+        when(consultationService.findById(TENANT_ID, CONSULTATION_ID)).thenReturn(Optional.of(structuredSummaryConsultation));
+
+        PrescriptionEntity entity = PrescriptionEntity.create(TENANT_ID, PATIENT_ID, DOCTOR_ID, CONSULTATION_ID, APPOINTMENT_ID, "RX-VISIT-SUMMARY-FONTS");
+        entity.update("Viral Upper Respiratory Infection", "Hydration, rest, and follow-up if symptoms worsen.", LocalDate.now().plusDays(2));
+        prescriptions.put(entity.getId(), entity);
+        medicines.put(entity.getId(), List.of(PrescriptionMedicineEntity.create(
+                TENANT_ID, entity.getId(), "Paracetamol", MedicineType.TABLET, "500 mg", "1 tablet", "Twice daily", "3 days", Timing.AFTER_FOOD, "Take after food", 1
+        )));
+        tests.put(entity.getId(), List.of());
+
+        byte[] pdf = service.generatePdf(TENANT_ID, entity.getId(), ACTOR_ID).content();
+        List<PdfLine> lines = extractPdfLines(pdf, 1);
+
+        PdfLine chiefLabel = findLine(lines, "Chief Complaint:");
+        PdfLine chiefValue = findLine(lines, "Fever, cough and body ache");
+        PdfLine symptomsLabel = findLine(lines, "Symptoms:");
+        PdfLine symptomsValue = findLine(lines, "Fever; Cough; Headache");
+
+        assertThat(chiefLabel.fontName()).containsIgnoringCase("Bold");
+        assertThat(chiefValue.fontName()).doesNotContainIgnoringCase("Bold");
+        assertThat(symptomsLabel.fontName()).containsIgnoringCase("Bold");
+        assertThat(symptomsValue.fontName()).doesNotContainIgnoringCase("Bold");
+    }
+
+    @Test
+    void generatedPdfUsesWhiteBackgroundForMedicineDataRows() throws Exception {
+        PrescriptionEntity entity = PrescriptionEntity.create(TENANT_ID, PATIENT_ID, DOCTOR_ID, CONSULTATION_ID, APPOINTMENT_ID, "RX-WHITE-ROWS");
+        entity.update("Viral Upper Respiratory Infection", "Hydration, rest, and follow-up if symptoms worsen.", LocalDate.now().plusDays(2));
+        prescriptions.put(entity.getId(), entity);
+        medicines.put(entity.getId(), List.of(
+                PrescriptionMedicineEntity.create(TENANT_ID, entity.getId(), "Paracetamol", MedicineType.TABLET, "500 mg", "1 tablet", "Twice daily", "", Timing.AFTER_FOOD, "", 1),
+                PrescriptionMedicineEntity.create(TENANT_ID, entity.getId(), "Cetirizine", MedicineType.TABLET, "10 mg", "1 tablet", "At night", "", Timing.ANYTIME, "", 2)
+        ));
+        tests.put(entity.getId(), List.of());
+
+        byte[] pdf = service.generatePdf(TENANT_ID, entity.getId(), ACTOR_ID).content();
+        PdfLine secondMedicineLine = findLine(extractPdfLines(pdf, 1), "Cetirizine 10 mg");
+        java.awt.Color sampledColor = sampleRenderedPageColor(pdf, 1, secondMedicineLine.y(), 470);
+
+        assertThat(sampledColor.getRed()).isGreaterThanOrEqualTo(245);
+        assertThat(sampledColor.getGreen()).isGreaterThanOrEqualTo(245);
+        assertThat(sampledColor.getBlue()).isGreaterThanOrEqualTo(245);
+    }
+
+    @Test
+    void generatedPdfKeepsSingleMedicineOnOnePageWithFooterSections() throws Exception {
+        PrescriptionEntity entity = PrescriptionEntity.create(TENANT_ID, PATIENT_ID, DOCTOR_ID, CONSULTATION_ID, APPOINTMENT_ID, "RX-SINGLE-MED");
+        entity.update("Viral Upper Respiratory Infection", "Hydration, rest, and follow-up if symptoms worsen.", LocalDate.now().plusDays(2));
+        prescriptions.put(entity.getId(), entity);
+        medicines.put(entity.getId(), List.of(PrescriptionMedicineEntity.create(
+                TENANT_ID, entity.getId(), "Paracetamol", MedicineType.TABLET, "500 mg", "1 tablet", "Twice daily", "3 days", Timing.AFTER_FOOD, "Take after food", 1
+        )));
+        tests.put(entity.getId(), List.of());
+
+        byte[] pdf = service.generatePdf(TENANT_ID, entity.getId(), ACTOR_ID).content();
+
+        int pages = pageCount(pdf);
+        assertThat(pages).isGreaterThanOrEqualTo(1);
+        String firstPage = extractPdfTextNormalized(pdf, 1);
+        assertThat(firstPage).contains("Paracetamol 500 mg");
+        assertThat(firstPage).contains("Advice & Follow-up");
+        assertThat(firstPage).contains("Doctor Signature");
+        assertThat(firstPage).contains("Prescription Verification QR");
+    }
+
+    @Test
+    void generatedPdfKeepsThreeMedicinesTogetherWithoutOrphaningTheLastRow() throws Exception {
+        PrescriptionEntity entity = PrescriptionEntity.create(TENANT_ID, PATIENT_ID, DOCTOR_ID, CONSULTATION_ID, APPOINTMENT_ID, "RX-THREE-MEDS");
+        entity.update("Viral Upper Respiratory Infection", "Hydration, rest, and follow-up if symptoms worsen.", LocalDate.now().plusDays(2));
+        prescriptions.put(entity.getId(), entity);
+        medicines.put(entity.getId(), List.of(
+                PrescriptionMedicineEntity.create(TENANT_ID, entity.getId(), "Paracetamol", MedicineType.TABLET, "500 mg", "1 tablet", "Twice daily", "3 days", Timing.AFTER_FOOD, "Take after food", 1),
+                PrescriptionMedicineEntity.create(TENANT_ID, entity.getId(), "Fluticasone Propionate Nasal Spray", MedicineType.OTHER, "50 mcg", "1 spray", "Once daily", "5 days", Timing.ANYTIME, "Use as directed", 2),
+                PrescriptionMedicineEntity.create(TENANT_ID, entity.getId(), "Oxymetazoline Nasal Spray", MedicineType.OTHER, "0.05%", "1 spray", "Twice daily", "2 days", Timing.ANYTIME, "Short course only", 3)
+        ));
+        tests.put(entity.getId(), List.of());
+
+        byte[] pdf = service.generatePdf(TENANT_ID, entity.getId(), ACTOR_ID).content();
+
+        int pages = pageCount(pdf);
+        assertThat(pages).isGreaterThanOrEqualTo(1);
+        String firstPage = extractPdfTextNormalized(pdf, 1);
+        assertThat(firstPage).contains("Prescription Medicines");
+        assertThat(firstPage).contains("Paracetamol 500 mg");
+        assertThat(firstPage).contains("Fluticasone Propionate Nasal Spray 50 mcg");
+        assertThat(firstPage).contains("Oxymetazoline Nasal Spray 0.05%");
+        assertThat(firstPage).contains("Advice & Follow-up");
+        if (pages > 1) {
+            String secondPage = extractPdfTextNormalized(pdf, 2);
+            assertThat(secondPage).contains("Doctor Signature");
+        }
+        int footerPage = findPageContainingText(pdf, "Doctor Signature");
+        List<PdfLine> footerLines = extractPdfLines(pdf, footerPage);
+        double signatureY = lineY(footerLines, line -> line.text().contains("Doctor Signature"));
+        double qrY = lineY(footerLines, line -> line.text().contains("Prescription Verification QR"));
+        double pageY = lineY(footerLines, line -> line.text().startsWith("Page "));
+        assertThat(signatureY).isGreaterThan(0d);
+        assertThat(qrY).isGreaterThan(0d);
+        assertThat(pageY).isGreaterThan(signatureY);
+        assertThat(pageY).isGreaterThan(qrY);
+        assertThat(pageY - signatureY).isGreaterThan(10d);
+        assertThat(pageY - qrY).isGreaterThan(10d);
+    }
+
+    @Test
+    void generatedPdfWrapsLongDoctorMetadataInsideFooterWithoutOverlappingThePageNumber() throws Exception {
+        PrescriptionEntity entity = PrescriptionEntity.create(TENANT_ID, PATIENT_ID, DOCTOR_ID, CONSULTATION_ID, APPOINTMENT_ID, "RX-LONG-FOOTER");
+        entity.update("Viral Upper Respiratory Infection", "Hydration, rest, and follow-up if symptoms worsen.", LocalDate.now().plusDays(5));
+        prescriptions.put(entity.getId(), entity);
+        medicines.put(entity.getId(), List.of(PrescriptionMedicineEntity.create(
+                TENANT_ID, entity.getId(), "Paracetamol", MedicineType.TABLET, "500 mg", "1 tablet", "Twice daily", "3 days", Timing.AFTER_FOOD, "Take after food", 1
+        )));
+        tests.put(entity.getId(), List.of());
+
+        ConsultationRecord longConsultation = consultation(
+                "Alexandra Verma, MD, DM, Consultant Physician and Endocrinologist",
+                "Cough",
+                "Fever",
+                "Acute bronchitis",
+                "Rest and hydration",
+                "Take medicines with food"
+        );
+        lenient().when(consultationService.findById(TENANT_ID, CONSULTATION_ID)).thenReturn(Optional.of(longConsultation));
+        lenient().when(consultationService.listByPatient(TENANT_ID, PATIENT_ID)).thenReturn(List.of(longConsultation));
+        lenient().when(clinicProfileService.findByTenantId(TENANT_ID)).thenReturn(Optional.of(new ClinicProfileRecord(
+                UUID.randomUUID(),
+                TENANT_ID,
+                "Jeevanam Clinic",
+                "Jeevanam Clinic UAT",
+                "9999999999",
+                "clinic@example.com",
+                "123 Main Street",
+                "Block A",
+                "Bengaluru",
+                "Karnataka",
+                "India",
+                "560001",
+                "CLINIC-REG-2026-EXTENDED-1234567890",
+                "GST-123",
+                null,
+                true,
+                true,
+                "jeevanam-clinic",
+                OffsetDateTime.now(),
+                OffsetDateTime.now()
+        )));
+
+        PrescriptionBrandingDocument branding = new PrescriptionBrandingDocument(
+                "Clinic heading",
+                "Footer safety and support text that is intentionally quite long so the signature panel must wrap it safely.",
+                "#0f766e",
+                "#14b8a6",
+                "Please seek care if symptoms worsen significantly or new red flags appear.",
+                "Authorized by Dr. Alexandra Verma, MD, DM, Consultant Physician and Endocrinologist",
+                true,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+        );
+
+        byte[] pdf = service.generatePdf(TENANT_ID, entity.getId(), ACTOR_ID, branding).content();
+
+        int footerPage = findPageContainingText(pdf, "Doctor Signature");
+        List<PdfLine> footerLines = extractPdfLines(pdf, footerPage);
+        double signatureY = lineY(footerLines, line -> line.text().contains("Doctor Signature"));
+        double qrY = lineY(footerLines, line -> line.text().contains("Prescription Verification QR"));
+        double doctorY = lineY(footerLines, line -> line.text().contains("Dr. Alexandra Verma"));
+        double registrationY = lineY(footerLines, line -> line.text().contains("Reg No: CLINIC-REG"));
+        double pageY = lineY(footerLines, line -> line.text().startsWith("Page "));
+        assertThat(signatureY).isGreaterThan(0d);
+        assertThat(qrY).isGreaterThan(0d);
+        assertThat(doctorY).isGreaterThan(0d);
+        assertThat(registrationY).isGreaterThan(0d);
+        assertThat(pageY).isGreaterThan(signatureY);
+        assertThat(pageY).isGreaterThan(doctorY);
+        assertThat(pageY).isGreaterThan(registrationY);
+        assertThat(normalizeWhitespace(extractPdfTextNormalized(pdf, footerPage))).contains("Footer safety and support text");
+    }
+
+    @Test
+    void generatedPdfDoesNotRepeatDoctorNameInSignatureBlock() throws Exception {
+        when(tenantUserManagementService.list(TENANT_ID)).thenReturn(List.of(new TenantUserRecord(
+                DOCTOR_ID,
+                TENANT_ID,
+                "doctor-sub",
+                "doctor@clinic.local",
+                "Doc UAT Automation Doctor",
+                "ACTIVE",
+                "DOCTOR",
+                "ACTIVE",
+                OffsetDateTime.now(),
+                OffsetDateTime.now(),
+                "SYNCED"
+        )));
+        ConsultationRecord consultation = consultation(
+                "Doc UAT Automation Doctor",
+                "Cough",
+                "Fever",
+                "Viral Upper Respiratory Infection",
+                "No additional notes",
+                "Rest and hydration"
+        );
+        when(consultationService.findById(TENANT_ID, CONSULTATION_ID)).thenReturn(Optional.of(consultation));
+        when(consultationService.listByPatient(TENANT_ID, PATIENT_ID)).thenReturn(List.of(consultation));
+        when(clinicProfileService.findByTenantId(TENANT_ID)).thenReturn(Optional.of(clinicProfile(
+                "Jeevanam Automation Lab",
+                "Jeevanam Automation Lab",
+                "123 Main Street",
+                "clinic@example.com"
+        )));
+
+        PrescriptionEntity entity = PrescriptionEntity.create(TENANT_ID, PATIENT_ID, DOCTOR_ID, CONSULTATION_ID, APPOINTMENT_ID, "RX-SIGNATURE-DEDUPE");
+        entity.update("Viral Upper Respiratory Infection", "Hydration, rest, and follow-up if symptoms worsen.", LocalDate.now().plusDays(2));
+        prescriptions.put(entity.getId(), entity);
+        medicines.put(entity.getId(), List.of(PrescriptionMedicineEntity.create(
+                TENANT_ID, entity.getId(), "Paracetamol", MedicineType.TABLET, "500 mg", "1 tablet", "Twice daily", "3 days", Timing.AFTER_FOOD, "Take after food", 1
+        )));
+        tests.put(entity.getId(), List.of());
+
+        byte[] pdf = service.generatePdf(TENANT_ID, entity.getId(), ACTOR_ID).content();
+        int footerPage = findPageContainingText(pdf, "Doctor Signature");
+        List<PdfLine> footerLines = extractPdfLines(pdf, footerPage);
+        double signatureY = lineY(footerLines, line -> line.text().contains("Doctor Signature"));
+        long doctorNameLines = footerLines.stream()
+                .filter(line -> line.y() >= signatureY)
+                .filter(line -> line.text() != null && line.text().contains("Doc UAT Automation Doctor"))
+                .count();
+        String text = extractPdfTextNormalized(pdf, footerPage);
+
+        assertThat(doctorNameLines).isEqualTo(1L);
+        assertThat(text).contains("Reg No: REG-12345");
+    }
+
+    @Test
+    void generatedPdfKeepsFooterCompleteWhenSpaceIsTight() throws Exception {
+        PrescriptionEntity entity = PrescriptionEntity.create(TENANT_ID, PATIENT_ID, DOCTOR_ID, CONSULTATION_ID, APPOINTMENT_ID, "RX-FOOTER-NEXT-PAGE");
+        entity.update(
+                "Viral Upper Respiratory Infection",
+                "Hydration, rest, and follow-up if symptoms worsen. Continue steam inhalation, saline gargles, temperature monitoring, nasal saline, and return urgently if breathing worsens or dehydration develops.",
+                LocalDate.now().plusDays(5)
+        );
+        prescriptions.put(entity.getId(), entity);
+        medicines.put(entity.getId(), List.of(PrescriptionMedicineEntity.create(
+                TENANT_ID, entity.getId(), "Paracetamol", MedicineType.TABLET, "500 mg", "1 tablet", "Twice daily", "3 days", Timing.AFTER_FOOD, "Take after food", 1
+        )));
+        tests.put(entity.getId(), List.of());
+
+        byte[] pdf = service.generatePdf(TENANT_ID, entity.getId(), ACTOR_ID).content();
+
+        assertThat(pageCount(pdf)).isGreaterThanOrEqualTo(1);
+        int footerPage = findPageContainingText(pdf, "Doctor Signature");
+        List<PdfLine> footerLines = extractPdfLines(pdf, footerPage);
+        double signatureY = lineY(footerLines, line -> line.text().contains("Doctor Signature"));
+        double qrY = lineY(footerLines, line -> line.text().contains("Prescription Verification QR"));
+        double pageY = lineY(footerLines, line -> line.text().startsWith("Page "));
+        assertThat(signatureY).isGreaterThan(0d);
+        assertThat(qrY).isGreaterThan(0d);
+        assertThat(pageY).isGreaterThan(signatureY);
+        assertThat(pageY).isGreaterThan(qrY);
+        assertThat(pageY - signatureY).isGreaterThan(10d);
+        assertThat(pageY - qrY).isGreaterThan(10d);
+    }
+
+    @Test
+    void generatedPdfRepeatsMedicineTableHeaderOnContinuationPageForLongerLists() throws Exception {
+        PrescriptionEntity entity = PrescriptionEntity.create(TENANT_ID, PATIENT_ID, DOCTOR_ID, CONSULTATION_ID, APPOINTMENT_ID, "RX-SIX-MEDS");
+        entity.update("Acute gastritis", "Take medicines after food and hydrate well.", LocalDate.now().plusDays(4));
+        prescriptions.put(entity.getId(), entity);
+        List<PrescriptionMedicineEntity> manyMeds = new ArrayList<>();
+        for (int i = 1; i <= 6; i++) {
+            manyMeds.add(PrescriptionMedicineEntity.create(
+                    TENANT_ID,
+                    entity.getId(),
+                    "Medicine-" + i,
+                    MedicineType.TABLET,
+                    "500 mg",
+                    "1 tablet",
+                    "1-0-1",
+                    "5 days",
+                    Timing.AFTER_FOOD,
+                    "Long instruction text for medicine " + i + " to verify wrapping and row expansion in PDF table layout.",
+                    i
+            ));
+        }
+        medicines.put(entity.getId(), manyMeds);
+        tests.put(entity.getId(), List.of());
+
+        byte[] pdf = service.generatePdf(TENANT_ID, entity.getId(), ACTOR_ID).content();
+
+        assertThat(pageCount(pdf)).isGreaterThan(1);
+        assertThat(extractPdfTextNormalized(pdf, 2)).contains("Prescription Medicines");
+        assertThat(extractPdfTextNormalized(pdf, 2)).contains("Medicine-");
+    }
+
+    @Test
     void generatedPdfHandlesManyMedicinesAcrossPages() throws Exception {
         PrescriptionEntity entity = PrescriptionEntity.create(TENANT_ID, PATIENT_ID, DOCTOR_ID, CONSULTATION_ID, APPOINTMENT_ID, "RX-MANY-MEDS");
         entity.update("Acute gastritis", "Take medicines after food and hydrate well.", LocalDate.now().plusDays(4));
@@ -780,6 +1236,10 @@ class PrescriptionServiceTest {
     }
 
     private ConsultationRecord consultation() {
+        return consultation("Doctor One", "Cough", "Fever", "Acute bronchitis", "Rest and hydration", "Take medicines with food");
+    }
+
+    private ConsultationRecord consultation(String doctorName, String chiefComplaint, String symptoms, String diagnosis, String clinicalNotes, String advice) {
         return new ConsultationRecord(
                 CONSULTATION_ID,
                 TENANT_ID,
@@ -787,13 +1247,13 @@ class PrescriptionServiceTest {
                 "PAT-001",
                 "Anita Patel",
                 DOCTOR_ID,
-                "Doctor One",
+                doctorName,
                 APPOINTMENT_ID,
-                "Cough",
-                "Fever",
-                "Acute bronchitis",
-                "Rest and hydration",
-                "Take medicines with food",
+                chiefComplaint,
+                symptoms,
+                diagnosis,
+                clinicalNotes,
+                advice,
                 LocalDate.now().plusDays(7),
                 ConsultationStatus.COMPLETED,
                 null,
@@ -843,6 +1303,48 @@ class PrescriptionServiceTest {
         }
     }
 
+    private String extractPdfText(byte[] pdfBytes, int pageNumber) throws Exception {
+        try (PDDocument doc = Loader.loadPDF(pdfBytes)) {
+            PDFTextStripper stripper = new PDFTextStripper();
+            stripper.setStartPage(pageNumber);
+            stripper.setEndPage(pageNumber);
+            return stripper.getText(doc);
+        }
+    }
+
+    private String extractPdfTextNormalized(byte[] pdfBytes, int pageNumber) throws Exception {
+        return normalizeWhitespace(extractPdfText(pdfBytes, pageNumber));
+    }
+
+    private List<PdfLine> extractPdfLines(byte[] pdfBytes, int pageNumber) throws Exception {
+        try (PDDocument doc = Loader.loadPDF(pdfBytes)) {
+            PositionedPdfTextStripper stripper = new PositionedPdfTextStripper();
+            stripper.setStartPage(pageNumber);
+            stripper.setEndPage(pageNumber);
+            stripper.getText(doc);
+            return stripper.lines();
+        }
+    }
+
+    private int indexOfLineContaining(List<PdfLine> lines, String expected) {
+        for (int i = 0; i < lines.size(); i++) {
+            if (lines.get(i).text() != null && lines.get(i).text().contains(expected)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private int pageCount(byte[] pdfBytes) throws Exception {
+        try (PDDocument doc = Loader.loadPDF(pdfBytes)) {
+            return doc.getNumberOfPages();
+        }
+    }
+
+    private String normalizeWhitespace(String value) {
+        return value == null ? "" : value.replaceAll("\\s+", " ").trim();
+    }
+
     private boolean pageHasImage(byte[] pdfBytes) throws Exception {
         try (PDDocument doc = Loader.loadPDF(pdfBytes)) {
             PDResources resources = doc.getPage(0).getResources();
@@ -856,6 +1358,71 @@ class PrescriptionServiceTest {
                 }
             }
             return false;
+        }
+    }
+
+    private int findPageContainingText(byte[] pdfBytes, String expected) throws Exception {
+        int pages = pageCount(pdfBytes);
+        for (int page = 1; page <= pages; page++) {
+            String text = extractPdfTextNormalized(pdfBytes, page);
+            if (text.contains(expected)) {
+                return page;
+            }
+        }
+        throw new IllegalStateException("Unable to find text: " + expected);
+    }
+
+    private double lineY(List<PdfLine> lines, Predicate<PdfLine> predicate) {
+        return lines.stream()
+                .filter(predicate)
+                .mapToDouble(PdfLine::y)
+                .findFirst()
+                .orElseThrow();
+    }
+
+    private PdfLine findLine(List<PdfLine> lines, String expected) {
+        return lines.stream()
+                .filter(line -> line.text() != null && line.text().contains(expected))
+                .findFirst()
+                .orElseThrow();
+    }
+
+    private java.awt.Color sampleRenderedPageColor(byte[] pdfBytes, int pageNumber, double pdfY, int pdfX) throws Exception {
+        try (PDDocument doc = Loader.loadPDF(pdfBytes)) {
+            PDFRenderer renderer = new PDFRenderer(doc);
+            BufferedImage image = renderer.renderImageWithDPI(pageNumber - 1, 144);
+            float scale = 144f / 72f;
+            int imageX = Math.max(0, Math.min(image.getWidth() - 1, Math.round(pdfX * scale)));
+            int imageY = Math.max(0, Math.min(image.getHeight() - 1, Math.round((float) pdfY * scale)));
+            return new java.awt.Color(image.getRGB(imageX, imageY), true);
+        }
+    }
+
+    private record PdfLine(String text, double y, double x, String fontName) {}
+
+    private static final class PositionedPdfTextStripper extends PDFTextStripper {
+        private final List<PdfLine> lines = new ArrayList<>();
+
+        PositionedPdfTextStripper() throws IOException {
+            setSortByPosition(true);
+        }
+
+        @Override
+        protected void writeString(String text, List<TextPosition> textPositions) {
+            if (text == null || text.isBlank() || textPositions == null || textPositions.isEmpty()) {
+                return;
+            }
+            TextPosition first = textPositions.get(0);
+            lines.add(new PdfLine(
+                    text,
+                    first.getY(),
+                    first.getX(),
+                    first.getFont() == null ? "" : first.getFont().getName()
+            ));
+        }
+
+        List<PdfLine> lines() {
+            return List.copyOf(lines);
         }
     }
 
