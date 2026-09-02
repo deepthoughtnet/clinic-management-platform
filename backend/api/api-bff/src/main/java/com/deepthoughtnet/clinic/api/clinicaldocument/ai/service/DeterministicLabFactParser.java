@@ -22,19 +22,25 @@ public class DeterministicLabFactParser {
         List<String> candidateLines = candidateLines(ocrText, detectedLabLines);
         LinkedHashMap<String, Map<String, Object>> results = new LinkedHashMap<>();
 
-        addFact(results, parseLine(documentId, candidateLines, "hba1c", "HbA1c", "HbA1c", "Hb A1c", "Hb A1C", "A1c", "Glycated Hemoglobin", "Glycosylated Hemoglobin"));
+        addFact(results, parseLine(documentId, candidateLines, "hba1c", "HbA1c", "HbA1c", "Hb A1c", "Hb A1C", "Hemoglobin A1c", "A1c", "Glycated Hemoglobin", "Glycosylated Hemoglobin"));
         addFact(results, parseLine(documentId, candidateLines, "estimated_average_glucose", "Estimated Average Glucose", "Estimated Average Glucose", "Average Glucose", "EAG"));
-        addFact(results, parseLine(documentId, candidateLines, "blood_sugar", "Random Blood Sugar", "Random Blood Sugar", "Blood Sugar", "RBS"));
+        addFact(results, parseLine(documentId, candidateLines, "blood_sugar", "Blood Sugar", "Random Blood Sugar", "Fasting Glucose", "Fasting Blood Sugar", "Blood Sugar", "Glucose", "FBS", "RBS"));
         addFact(results, parseLine(documentId, candidateLines, "cholesterol", "Total Cholesterol", "Total Cholesterol", "Cholesterol"));
         addFact(results, parseLine(documentId, candidateLines, "ldl", "LDL Cholesterol", "LDL Cholesterol", "LDL"));
         addFact(results, parseLine(documentId, candidateLines, "hdl", "HDL Cholesterol", "HDL Cholesterol", "HDL"));
         addFact(results, parseLine(documentId, candidateLines, "triglycerides", "Triglycerides", "Triglycerides"));
         addFact(results, parseLine(documentId, candidateLines, "hemoglobin", "Hemoglobin", "Hemoglobin"));
+        addFact(results, parseLine(documentId, candidateLines, "rbc", "RBC", "Red Blood Cell Count", "Red Blood Cells Count", "RBC Count", "Red Blood Cells", "RBC"));
+        addFact(results, parseLine(documentId, candidateLines, "wbc", "WBC", "White Blood Cell Count", "White Blood Cells Count", "Total WBC Count", "WBC Count", "White Blood Cells", "WBC"));
+        addFact(results, parseLine(documentId, candidateLines, "platelets", "Platelets", "Platelets", "Platelet Count"));
+        addFact(results, parseLine(documentId, candidateLines, "neutrophils", "Neutrophils", "Neutrophils", "Neutrophil"));
+        addFact(results, parseLine(documentId, candidateLines, "lymphocytes", "Lymphocytes", "Lymphocytes", "Lymphocyte"));
         addFact(results, parseLine(documentId, candidateLines, "creatinine", "Creatinine", "Creatinine", "Serum Creatinine"));
         addFact(results, parseLine(documentId, candidateLines, "egfr", "eGFR", "eGFR", "Estimated Glomerular Filtration Rate", "Estimated GFR"));
         addFact(results, parseLine(documentId, candidateLines, "crp", "CRP", "CRP", "C-Reactive Protein", "C Reactive Protein"));
         addFact(results, parseLine(documentId, candidateLines, "alt", "ALT", "ALT", "SGPT", "Alanine Aminotransferase"));
         addFact(results, parseLine(documentId, candidateLines, "ast", "AST", "AST", "SGOT", "Aspartate Aminotransferase"));
+        addGenericFacts(documentId, candidateLines, results);
 
         log.info("[AI-LAB-FACT-PARSER] documentId={} labLineCount={} parsedCount={} hba1c={} bloodSugar={} cholesterol={} ldl={} hdl={} triglycerides={}",
                 documentId,
@@ -63,7 +69,7 @@ public class DeterministicLabFactParser {
     private Map<String, Object> parseLine(UUID documentId,
                                           List<String> candidateLines,
                                           String canonicalKey,
-                                          String testName,
+                                          String defaultTestName,
                                           String... labels) {
         String line = findMatchingLine(candidateLines, labels);
         if (!hasText(line)) {
@@ -72,8 +78,9 @@ public class DeterministicLabFactParser {
         if (isNarrativeLine(line)) {
             return null;
         }
-        String labelPattern = quotedAlternation(labels);
-        Pattern pattern = Pattern.compile("(?i)\\b(?:" + labelPattern + ")\\b\\s*(?:[:=\\-]|\\|)?\\s*([<>]?\\s*\\d+(?:\\.\\d+)?)\\s*(%|mg/dL|g/dL|U/L|mg/L|mL/min/1\\.73m2|mL/min/1\\.73m²|ml/min/1\\.73m2|ml/min/1\\.73m²)?\\s*(.*)$");
+        String matchedLabel = resolveMatchingLabel(line, labels);
+        String labelPattern = quotedAlternation(matchedLabel);
+        Pattern pattern = Pattern.compile("(?i)\\b(?:" + labelPattern + ")\\b\\s*(?:[:=\\-]|\\|)?\\s*([<>]?\\s*\\d+(?:\\.\\d+)?)\\s*([%A-Za-z0-9/\\.\\^µ²×\\-]+)?\\s*(.*)$");
         Matcher matcher = pattern.matcher(line.trim());
         if (!matcher.find()) {
             return null;
@@ -83,6 +90,10 @@ public class DeterministicLabFactParser {
         String tail = matcher.group(3) == null ? "" : matcher.group(3).trim();
         String flag = normalizeFlag(tail, canonicalKey, value);
         String referenceRange = stripFlag(tail, flag);
+        String testName = resolveDetectedTestName(line, defaultTestName, labels);
+        if ("hemoglobin".equals(canonicalKey) && containsAny(line.toLowerCase(Locale.ROOT), "hba1c", "hb a1c", "a1c", "glycated hemoglobin", "glycosylated hemoglobin")) {
+            return null;
+        }
 
         if (!isPlausible(canonicalKey, value, line)) {
             log.info("[AI-DOC-PIPELINE-TRACE] documentId={} stage=DETERMINISTIC_PARSER conceptKey={} proposedValue={} evidenceText={} accepted={} rejectionReason={}",
@@ -104,6 +115,81 @@ public class DeterministicLabFactParser {
         return fact;
     }
 
+    private void addGenericFacts(UUID documentId, List<String> candidateLines, Map<String, Map<String, Object>> results) {
+        if (candidateLines == null) {
+            return;
+        }
+        for (String line : candidateLines) {
+            Map<String, Object> fact = parseGenericLine(documentId, line);
+            addFact(results, fact);
+        }
+    }
+
+    private Map<String, Object> parseGenericLine(UUID documentId, String line) {
+        if (!hasText(line) || isNarrativeLine(line) || !looksLikeGenericLabLine(line)) {
+            return null;
+        }
+        if (hasText(canonicalKeyForLabel(line))) {
+            return null;
+        }
+        String trimmedLine = line.trim();
+        String[] tokens = trimmedLine.split("\\s+");
+        int valueIndex = -1;
+        for (int i = 1; i < tokens.length; i++) {
+            if (looksLikeNumericResultToken(tokens[i])) {
+                valueIndex = i;
+                break;
+            }
+        }
+        if (valueIndex <= 0) {
+            return null;
+        }
+        String testName = String.join(" ", java.util.Arrays.copyOfRange(tokens, 0, valueIndex)).trim();
+        if (!hasText(testName) || looksLikeAdministrativeLabel(testName)) {
+            return null;
+        }
+        String rawValueToken = tokens[valueIndex];
+        String rawUnitToken = valueIndex + 1 < tokens.length && looksLikeUnitToken(tokens[valueIndex + 1]) ? tokens[valueIndex + 1] : null;
+        int tailStartIndex = rawUnitToken == null ? valueIndex + 1 : valueIndex + 2;
+        String tail = tailStartIndex >= tokens.length ? "" : String.join(" ", java.util.Arrays.copyOfRange(tokens, tailStartIndex, tokens.length)).trim();
+        String canonicalKey = firstHasText(canonicalKeyForLabel(testName), "unmapped_" + slug(testName));
+        String value = normalizeNumeric(rawValueToken);
+        String unit = normalizeUnit(rawUnitToken);
+        String flag = normalizeFlag(tail, canonicalKey, value);
+        String referenceRange = stripFlag(tail, flag);
+        if ("hemoglobin".equals(canonicalKey) && containsAny(line.toLowerCase(Locale.ROOT), "hba1c", "hb a1c", "a1c", "glycated hemoglobin", "glycosylated hemoglobin", "hemoglobin a1c")) {
+            return null;
+        }
+        if (!isPlausible(canonicalKey, value, line)) {
+            log.info("[AI-DOC-PIPELINE-TRACE] documentId={} stage=DETERMINISTIC_PARSER conceptKey={} proposedValue={} evidenceText={} accepted={} rejectionReason={}",
+                    documentId, canonicalKey, value, summarize(line), false, "IMPLAUSIBLE_VALUE");
+            return null;
+        }
+        Map<String, Object> fact = new LinkedHashMap<>();
+        fact.put("testName", testName);
+        fact.put("canonicalKey", canonicalKey);
+        fact.put("value", value);
+        fact.put("unit", firstHasText(unit, defaultUnit(canonicalKey)));
+        fact.put("referenceRange", referenceRange);
+        fact.put("flag", flag);
+        fact.put("evidenceText", line.trim());
+        fact.put("sourcePath", "ocr.labLines");
+        fact.put("mapped", !canonicalKey.startsWith("unmapped_"));
+        return fact;
+    }
+
+    private boolean looksLikeNumericResultToken(String token) {
+        return hasText(token) && token.trim().matches("[<>]?\\d+(?:\\.\\d+)?");
+    }
+
+    private boolean looksLikeUnitToken(String token) {
+        return hasText(token) && token.trim().matches("[%A-Za-z][A-Za-z0-9/\\.\\^µ²×\\-]*");
+    }
+
+    private String resolveDetectedTestName(String line, String defaultTestName, String... labels) {
+        return firstHasText(resolveMatchingLabel(line, labels), defaultTestName);
+    }
+
     private List<String> candidateLines(String ocrText, List<String> detectedLabLines) {
         LinkedHashSet<String> lines = new LinkedHashSet<>();
         if (detectedLabLines != null) {
@@ -115,7 +201,8 @@ public class DeterministicLabFactParser {
                     continue;
                 }
                 String normalized = line.toLowerCase(Locale.ROOT);
-                if (containsAny(normalized, "hba1c", "hb a1c", "a1c", "glycated hemoglobin", "glycosylated hemoglobin", "estimated average glucose", "random blood sugar", "blood sugar", "cholesterol", "ldl", "hdl", "triglycerides", "hemoglobin", "creatinine", "egfr", "estimated gfr", "c-reactive protein", "crp", "alt", "ast", "sgpt", "sgot", "alanine aminotransferase", "aspartate aminotransferase")) {
+                if (containsAny(normalized, "hba1c", "hb a1c", "a1c", "hemoglobin a1c", "glycated hemoglobin", "glycosylated hemoglobin", "estimated average glucose", "fasting glucose", "fasting blood sugar", "random blood sugar", "blood sugar", "glucose", "cholesterol", "ldl", "hdl", "triglycerides", "hemoglobin", "rbc", "rbc count", "red blood cells", "red blood cell count", "wbc", "wbc count", "white blood cells", "white blood cell count", "platelets", "platelet count", "neutrophils", "lymphocytes", "creatinine", "egfr", "estimated gfr", "c-reactive protein", "crp", "alt", "ast", "sgpt", "sgot", "alanine aminotransferase", "aspartate aminotransferase")
+                        || looksLikeGenericLabLine(line)) {
                     lines.add(line.trim());
                 }
             }
@@ -132,12 +219,23 @@ public class DeterministicLabFactParser {
                 continue;
             }
             for (String line : lines) {
-                if (line.toLowerCase(Locale.ROOT).contains(label.toLowerCase(Locale.ROOT))) {
+                if (line.toLowerCase(Locale.ROOT).contains(label.toLowerCase(Locale.ROOT))
+                        && hasNumericResultAfterLabel(line, label)) {
                     return line;
                 }
             }
         }
         return null;
+    }
+
+    private boolean hasNumericResultAfterLabel(String line, String label) {
+        if (!hasText(line) || !hasText(label)) {
+            return false;
+        }
+        Pattern resultPattern = Pattern.compile(
+                "(?i)\\b" + Pattern.quote(label.trim()) + "\\b\\s*(?:[:=|\\-])?\\s*[<>]?\\s*\\d+(?:\\.\\d+)?"
+        );
+        return resultPattern.matcher(line).find();
     }
 
     private boolean isNarrativeLine(String line) {
@@ -152,6 +250,46 @@ public class DeterministicLabFactParser {
                 || normalized.startsWith("possible abnormal finding detected");
     }
 
+    private boolean looksLikeGenericLabLine(String line) {
+        if (!hasText(line)) {
+            return false;
+        }
+        String normalized = line.trim().toLowerCase(Locale.ROOT);
+        if (looksLikeAdministrativeLabel(normalized)) {
+            return false;
+        }
+        if (!normalized.matches(".*\\d+(?:\\.\\d+)? .*")) {
+            return false;
+        }
+        return normalized.contains("%")
+                || normalized.contains("mg/dl")
+                || normalized.contains("g/dl")
+                || normalized.contains("mg/l")
+                || normalized.contains("u/l")
+                || normalized.contains("10^")
+                || normalized.contains("normal")
+                || normalized.contains("high")
+                || normalized.contains("low")
+                || normalized.contains("<")
+                || normalized.contains(">")
+                || normalized.matches(".*\\d+(?:\\.\\d+)?\\s*-\\s*\\d+(?:\\.\\d+)? .*");
+    }
+
+    private boolean looksLikeAdministrativeLabel(String value) {
+        if (!hasText(value)) {
+            return false;
+        }
+        String normalized = value.trim().toLowerCase(Locale.ROOT);
+        return normalized.startsWith("report date")
+                || normalized.startsWith("collected")
+                || normalized.startsWith("sample")
+                || normalized.startsWith("patient")
+                || normalized.startsWith("name")
+                || normalized.startsWith("age")
+                || normalized.startsWith("sex")
+                || normalized.startsWith("gender");
+    }
+
     private boolean isPlausible(String canonicalKey, String value, String line) {
         BigDecimal numeric = parseNumber(value);
         if (numeric == null) {
@@ -159,9 +297,9 @@ public class DeterministicLabFactParser {
         }
         String normalizedLine = line == null ? "" : line.toLowerCase(Locale.ROOT);
         return switch (canonicalKey) {
-            case "hba1c" -> normalizedLine.contains("hba1c") || normalizedLine.contains("hb a1c") || normalizedLine.contains("a1c") || normalizedLine.contains("glycated hemoglobin") || normalizedLine.contains("glycosylated hemoglobin");
+            case "hba1c" -> normalizedLine.contains("hba1c") || normalizedLine.contains("hb a1c") || normalizedLine.contains("a1c") || normalizedLine.contains("hemoglobin a1c") || normalizedLine.contains("glycated hemoglobin") || normalizedLine.contains("glycosylated hemoglobin");
             case "blood_sugar" -> numeric.compareTo(new BigDecimal("20")) >= 0 && numeric.compareTo(new BigDecimal("1000")) <= 0;
-            case "estimated_average_glucose", "cholesterol", "ldl", "hdl", "triglycerides", "hemoglobin", "creatinine", "egfr", "crp", "alt", "ast" ->
+            case "estimated_average_glucose", "cholesterol", "ldl", "hdl", "triglycerides", "hemoglobin", "rbc", "wbc", "platelets", "neutrophils", "lymphocytes", "creatinine", "egfr", "crp", "alt", "ast" ->
                     numeric.compareTo(BigDecimal.ZERO) >= 0 && numeric.compareTo(new BigDecimal("2000")) <= 0;
             default -> true;
         };
@@ -190,6 +328,7 @@ public class DeterministicLabFactParser {
             case "ldl" -> numeric.compareTo(new BigDecimal("100")) >= 0 ? "HIGH" : "UNKNOWN";
             case "hdl" -> numeric.compareTo(new BigDecimal("40")) < 0 ? "LOW" : "UNKNOWN";
             case "triglycerides" -> numeric.compareTo(new BigDecimal("150")) >= 0 ? "HIGH" : "UNKNOWN";
+            case "neutrophils", "lymphocytes", "rbc", "wbc", "platelets" -> "UNKNOWN";
             case "creatinine" -> numeric.compareTo(new BigDecimal("1.3")) > 0 ? "HIGH" : "UNKNOWN";
             case "egfr" -> numeric.compareTo(new BigDecimal("60")) < 0 ? "LOW" : "UNKNOWN";
             case "crp", "alt", "ast" -> "UNKNOWN";
@@ -212,10 +351,13 @@ public class DeterministicLabFactParser {
         return switch (canonicalKey) {
             case "hba1c" -> "%";
             case "hemoglobin" -> "g/dL";
+            case "rbc" -> "10^6/uL";
+            case "wbc", "platelets" -> "10^3/uL";
+            case "neutrophils", "lymphocytes" -> "%";
             case "egfr" -> "mL/min/1.73m2";
             case "crp" -> "mg/L";
             case "alt", "ast" -> "U/L";
-            default -> "mg/dL";
+            default -> null;
         };
     }
 
@@ -229,6 +371,60 @@ public class DeterministicLabFactParser {
             }
         }
         return String.join("|", quoted);
+    }
+
+    private String resolveMatchingLabel(String line, String... labels) {
+        if (!hasText(line) || labels == null) {
+            return null;
+        }
+        String normalizedLine = line.toLowerCase(Locale.ROOT);
+        String best = null;
+        for (String label : labels) {
+            if (!hasText(label)) {
+                continue;
+            }
+            if (normalizedLine.contains(label.toLowerCase(Locale.ROOT))
+                    && (best == null || label.trim().length() > best.length())) {
+                best = label.trim();
+            }
+        }
+        return best;
+    }
+
+    private String canonicalKeyForLabel(String label) {
+        if (!hasText(label)) {
+            return null;
+        }
+        String normalized = slug(label);
+        if (containsAny(normalized, "hba1c", "a1c", "hemoglobin_a1c", "glycated_hemoglobin", "glycosylated_hemoglobin")) return "hba1c";
+        if (containsAny(normalized, "estimated_average_glucose", "eag")) return "estimated_average_glucose";
+        if (containsAny(normalized, "random_blood_sugar", "fasting_blood_sugar", "fasting_glucose", "blood_sugar", "glucose", "fbs", "rbs")) return "blood_sugar";
+        if (containsAny(normalized, "hemoglobin")) return "hemoglobin";
+        if (containsAny(normalized, "red_blood_cell_count", "red_blood_cells_count", "red_blood_cell", "red_blood_cells", "rbc_count", "rbc")) return "rbc";
+        if (containsAny(normalized, "white_blood_cell_count", "white_blood_cells_count", "white_blood_cell", "white_blood_cells", "total_wbc_count", "wbc_count", "wbc")) return "wbc";
+        if (containsAny(normalized, "platelet")) return "platelets";
+        if (containsAny(normalized, "neutrophil")) return "neutrophils";
+        if (containsAny(normalized, "lymphocyte")) return "lymphocytes";
+        if (containsAny(normalized, "creatinine", "serum_creatinine")) return "creatinine";
+        if (containsAny(normalized, "egfr", "estimated_gfr", "estimated_glomerular_filtration_rate")) return "egfr";
+        if (containsAny(normalized, "crp", "c_reactive_protein")) return "crp";
+        if (containsAny(normalized, "alt", "sgpt", "alanine_aminotransferase")) return "alt";
+        if (containsAny(normalized, "ast", "sgot", "aspartate_aminotransferase")) return "ast";
+        if (containsAny(normalized, "ldl")) return "ldl";
+        if (containsAny(normalized, "hdl")) return "hdl";
+        if (containsAny(normalized, "triglycerides", "triglyceride")) return "triglycerides";
+        if (containsAny(normalized, "total_cholesterol", "cholesterol")) return "cholesterol";
+        return null;
+    }
+
+    private String slug(String value) {
+        if (!hasText(value)) {
+            return null;
+        }
+        return value.trim()
+                .toLowerCase(Locale.ROOT)
+                .replaceAll("[^a-z0-9]+", "_")
+                .replaceAll("^_+|_+$", "");
     }
 
     private String normalizeNumeric(String value) {
@@ -249,6 +445,12 @@ public class DeterministicLabFactParser {
         }
         if (normalized.contains("g/dl")) {
             return "g/dL";
+        }
+        if (normalized.contains("10^6/ul") || normalized.contains("10^6/µl") || normalized.contains("million/ul")) {
+            return "10^6/uL";
+        }
+        if (normalized.contains("10^3/ul") || normalized.contains("10^3/µl") || normalized.contains("thousand/ul") || normalized.contains("lakh")) {
+            return "10^3/uL";
         }
         if (normalized.contains("ml/min/1.73m2")) {
             return "mL/min/1.73m2";

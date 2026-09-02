@@ -50,6 +50,7 @@ import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 class ClinicalDocumentAiExtractionServiceTest {
     private static final UUID TENANT_ID = UUID.randomUUID();
@@ -217,6 +218,7 @@ class ClinicalDocumentAiExtractionServiceTest {
                 """
                         Known diabetic
                         HbA1c 8.4 % < 5.7 normal; > 6.5 diabetic High
+                        Estimated Average Glucose 194 mg/dL High
                         Random Blood Sugar 198 mg/dL 70 - 140 High
                         Total Cholesterol 228 mg/dL < 200 High
                         LDL Cholesterol 152 mg/dL < 100 High
@@ -533,6 +535,348 @@ class ClinicalDocumentAiExtractionServiceTest {
         assertThat(document.getAiExtractionStructuredJson()).contains("\"value\":\"163\"");
         assertThat(document.getAiExtractionStructuredJson()).contains("\"unit\":\"mg/dL\"");
         verify(longitudinalMemoryService, atLeastOnce()).ingestPendingConcepts(eq(document), anyString(), anyString(), eq(BigDecimal.valueOf(0.91)), anyString());
+    }
+
+    @Test
+    void processPrefersNestedAnswerLabResultsOverNarrativeJsonBlob() {
+        ClinicalAiJobRepository jobRepository = mock(ClinicalAiJobRepository.class);
+        ClinicalDocumentRepository documentRepository = mock(ClinicalDocumentRepository.class);
+        ClinicalDocumentService documentService = mock(ClinicalDocumentService.class);
+        PatientLongitudinalMemoryService longitudinalMemoryService = mock(PatientLongitudinalMemoryService.class);
+        AppUserRepository appUserRepository = mock(AppUserRepository.class);
+        ClinicalDocumentTextExtractionService textExtractionService = mock(ClinicalDocumentTextExtractionService.class);
+        AiDoctorCopilotService aiDoctorCopilotService = mock(AiDoctorCopilotService.class);
+        ObjectStorageService storageService = mock(ObjectStorageService.class);
+        AuditEventPublisher auditEventPublisher = mock(AuditEventPublisher.class);
+        AgentExecutionLogService agentExecutionLogService = mock(AgentExecutionLogService.class);
+        PatientService patientService = mock(PatientService.class);
+        TenantNotificationSettingsService notificationSettingsService = mock(TenantNotificationSettingsService.class);
+        ClinicalDocumentAiExtractionService service = new ClinicalDocumentAiExtractionService(
+                jobRepository, documentRepository, documentService, longitudinalMemoryService, appUserRepository,
+                textExtractionService, aiDoctorCopilotService, storageService, auditEventPublisher,
+                agentExecutionLogService, patientService, notificationSettingsService, new ObjectMapper(), 1000L, 3
+        );
+
+        ClinicalDocumentEntity document = document();
+        ClinicalAiJobEntity job = ClinicalAiJobEntity.queued(
+                TENANT_ID, ClinicalAiJobType.DOCUMENT_EXTRACTION, "PATIENT_CLINICAL_DOCUMENT",
+                DOCUMENT_ID, DOCUMENT_ID, PATIENT_ID, null, REVIEWER_ID, "{\"documentId\":\"doc\"}"
+        );
+        when(jobRepository.findById(eq(job.getId()))).thenReturn(Optional.of(job));
+        when(documentRepository.findByTenantIdAndId(eq(TENANT_ID), eq(DOCUMENT_ID))).thenReturn(Optional.of(document));
+        when(documentRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(jobRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(storageService.getObjectBytes(anyString())).thenReturn("fake-bytes".getBytes());
+        when(textExtractionService.extract(any(), any())).thenReturn(new ClinicalDocumentTextExtractionResult(
+                "TESSERACT", "COMPLETED",
+                """
+                        Lipid Profile & HbA1c Report Date: 18 Mar 2025
+                        HbA1c 5.7 % 4.0 - 5.6 High
+                        Fasting Glucose 102 mg/dL 70 - 99 High
+                        Total Cholesterol 206 mg/dL < 200 High
+                        LDL Cholesterol 132 mg/dL < 100 High
+                        HDL Cholesterol 46 mg/dL > 40 Normal
+                        Triglycerides 139 mg/dL < 150 Normal
+                        """
+        ));
+        when(patientService.findById(eq(TENANT_ID), eq(PATIENT_ID))).thenReturn(Optional.of(patientRecord()));
+        when(aiDoctorCopilotService.draft(any(), anyString(), anyString(), any(), any())).thenReturn(
+                new AiDraftResponse(
+                        true,
+                        false,
+                        "Clinical extraction complete.",
+                        "GEMINI",
+                        "gemini-1.5-flash",
+                        "AI draft generated.",
+                        Map.of(
+                                "answer", Map.of(
+                                        "labResults", List.of(
+                                                Map.of(
+                                                        "testName", "HbA1c",
+                                                        "result", "5.7",
+                                                        "unit", "%",
+                                                        "referenceRange", "4.0 - 5.6",
+                                                        "flag", "High",
+                                                        "evidenceText", "HbA1c 5.7 % 4.0 - 5.6 High"
+                                                )
+                                        )
+                                )
+                        ),
+                        BigDecimal.valueOf(0.91),
+                        List.of(),
+                        List.of(),
+                        "STOP",
+                        "COMPLETE",
+                        320,
+                        "{\"labResults\":[{\"testName\":\"HbA1c\",\"result\":\"5.7\",\"unit\":\"%\",\"referenceRange\":\"4.0 - 5.6\",\"flag\":\"High\"}]}",
+                        "VALID"
+                )
+        );
+
+        service.process(job.getId());
+
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"canonicalKey\":\"hba1c\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"value\":\"5.7\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"unit\":\"%\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"referenceRange\":\"4.0 - 5.6\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"flag\":\"HIGH\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"evidenceText\":\"HbA1c 5.7 % 4.0 - 5.6 High\"");
+        assertThat(document.getAiExtractionStructuredJson()).doesNotContain("\"evidenceText\":\"{");
+        assertThat(document.getAiExtractionStructuredJson()).doesNotContain("Some detected lab rows were not extracted into structured results: hba1c");
+    }
+
+    @Test
+    void processIgnoresSerializedJsonBlobWhenNoStructuredProviderLabRowsArePresent() {
+        ClinicalAiJobRepository jobRepository = mock(ClinicalAiJobRepository.class);
+        ClinicalDocumentRepository documentRepository = mock(ClinicalDocumentRepository.class);
+        ClinicalDocumentService documentService = mock(ClinicalDocumentService.class);
+        PatientLongitudinalMemoryService longitudinalMemoryService = mock(PatientLongitudinalMemoryService.class);
+        AppUserRepository appUserRepository = mock(AppUserRepository.class);
+        ClinicalDocumentTextExtractionService textExtractionService = mock(ClinicalDocumentTextExtractionService.class);
+        AiDoctorCopilotService aiDoctorCopilotService = mock(AiDoctorCopilotService.class);
+        ObjectStorageService storageService = mock(ObjectStorageService.class);
+        AuditEventPublisher auditEventPublisher = mock(AuditEventPublisher.class);
+        AgentExecutionLogService agentExecutionLogService = mock(AgentExecutionLogService.class);
+        PatientService patientService = mock(PatientService.class);
+        TenantNotificationSettingsService notificationSettingsService = mock(TenantNotificationSettingsService.class);
+        ClinicalDocumentAiExtractionService service = new ClinicalDocumentAiExtractionService(
+                jobRepository, documentRepository, documentService, longitudinalMemoryService, appUserRepository,
+                textExtractionService, aiDoctorCopilotService, storageService, auditEventPublisher,
+                agentExecutionLogService, patientService, notificationSettingsService, new ObjectMapper(), 1000L, 3
+        );
+
+        ClinicalDocumentEntity document = document();
+        ClinicalAiJobEntity job = ClinicalAiJobEntity.queued(
+                TENANT_ID, ClinicalAiJobType.DOCUMENT_EXTRACTION, "PATIENT_CLINICAL_DOCUMENT",
+                DOCUMENT_ID, DOCUMENT_ID, PATIENT_ID, null, REVIEWER_ID, "{\"documentId\":\"doc\"}"
+        );
+        when(jobRepository.findById(eq(job.getId()))).thenReturn(Optional.of(job));
+        when(documentRepository.findByTenantIdAndId(eq(TENANT_ID), eq(DOCUMENT_ID))).thenReturn(Optional.of(document));
+        when(documentRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(jobRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(storageService.getObjectBytes(anyString())).thenReturn("fake-bytes".getBytes());
+        when(textExtractionService.extract(any(), any())).thenReturn(new ClinicalDocumentTextExtractionResult(
+                "TESSERACT", "COMPLETED",
+                """
+                        Fasting Glucose 102 mg/dL 70 - 99 High
+                        Total Cholesterol 206 mg/dL < 200 High
+                        LDL Cholesterol 132 mg/dL < 100 High
+                        HDL Cholesterol 46 mg/dL > 40 Normal
+                        Triglycerides 139 mg/dL < 150 Normal
+                        """
+        ));
+        when(patientService.findById(eq(TENANT_ID), eq(PATIENT_ID))).thenReturn(Optional.of(patientRecord()));
+        when(aiDoctorCopilotService.draft(any(), anyString(), anyString(), any(), any())).thenReturn(
+                new AiDraftResponse(
+                        true,
+                        false,
+                        "Clinical extraction complete.",
+                        "GEMINI",
+                        "gemini-1.5-flash",
+                        "AI draft generated.",
+                        Map.of(
+                                "summary", "Narrative only",
+                                "answer", "{\"labResults\":[{\"testName\":\"HbA1c\",\"result\":\"5.7\",\"unit\":\"%\",\"referenceRange\":\"4.0 - 5.6\",\"flag\":\"High\",\"evidenceText\":\"HbA1c 5.7 % 4.0 - 5.6 High\"}]}"
+                        ),
+                        BigDecimal.valueOf(0.91),
+                        List.of(),
+                        List.of(),
+                        "STOP",
+                        "COMPLETE",
+                        320,
+                        "{\"labResults\":[{\"testName\":\"HbA1c\",\"result\":\"5.7\",\"unit\":\"%\",\"referenceRange\":\"4.0 - 5.6\",\"flag\":\"High\",\"evidenceText\":\"HbA1c 5.7 % 4.0 - 5.6 High\"}]}",
+                        "VALID"
+                )
+        );
+
+        service.process(job.getId());
+
+        assertThat(document.getAiExtractionStructuredJson()).doesNotContain("\"canonicalKey\":\"hba1c\",\"value\":\"5.7\"");
+        assertThat(document.getAiExtractionStructuredJson()).doesNotContain("\"referenceRange\":\"4.0 - 5.6\",\"flag\":\"UNKNOWN\"");
+        assertThat(document.getAiExtractionStructuredJson()).doesNotContain("\"evidenceText\":\"{");
+    }
+
+    @Test
+    void processResolvesAnswerExtractedClinicalDataLabResults() {
+        ClinicalAiJobRepository jobRepository = mock(ClinicalAiJobRepository.class);
+        ClinicalDocumentRepository documentRepository = mock(ClinicalDocumentRepository.class);
+        ClinicalDocumentService documentService = mock(ClinicalDocumentService.class);
+        PatientLongitudinalMemoryService longitudinalMemoryService = mock(PatientLongitudinalMemoryService.class);
+        AppUserRepository appUserRepository = mock(AppUserRepository.class);
+        ClinicalDocumentTextExtractionService textExtractionService = mock(ClinicalDocumentTextExtractionService.class);
+        AiDoctorCopilotService aiDoctorCopilotService = mock(AiDoctorCopilotService.class);
+        ObjectStorageService storageService = mock(ObjectStorageService.class);
+        AuditEventPublisher auditEventPublisher = mock(AuditEventPublisher.class);
+        AgentExecutionLogService agentExecutionLogService = mock(AgentExecutionLogService.class);
+        PatientService patientService = mock(PatientService.class);
+        TenantNotificationSettingsService notificationSettingsService = mock(TenantNotificationSettingsService.class);
+        ClinicalDocumentAiExtractionService service = new ClinicalDocumentAiExtractionService(
+                jobRepository, documentRepository, documentService, longitudinalMemoryService, appUserRepository,
+                textExtractionService, aiDoctorCopilotService, storageService, auditEventPublisher,
+                agentExecutionLogService, patientService, notificationSettingsService, new ObjectMapper(), 1000L, 3
+        );
+
+        ClinicalDocumentEntity document = document();
+        ClinicalAiJobEntity job = ClinicalAiJobEntity.queued(
+                TENANT_ID, ClinicalAiJobType.DOCUMENT_EXTRACTION, "PATIENT_CLINICAL_DOCUMENT",
+                DOCUMENT_ID, DOCUMENT_ID, PATIENT_ID, null, REVIEWER_ID, "{\"documentId\":\"doc\"}"
+        );
+        when(jobRepository.findById(eq(job.getId()))).thenReturn(Optional.of(job));
+        when(documentRepository.findByTenantIdAndId(eq(TENANT_ID), eq(DOCUMENT_ID))).thenReturn(Optional.of(document));
+        when(documentRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(jobRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(storageService.getObjectBytes(anyString())).thenReturn("fake-bytes".getBytes());
+        when(textExtractionService.extract(any(), any())).thenReturn(new ClinicalDocumentTextExtractionResult(
+                "TESSERACT", "COMPLETED",
+                """
+                        Lipid Profile & HbA1c Report Date: 18 Mar 2025
+                        HbA1c 5.7 % 4.0 - 5.6 High
+                        Fasting Glucose 102 mg/dL 70 - 99 High
+                        Total Cholesterol 206 mg/dL < 200 High
+                        LDL Cholesterol 132 mg/dL < 100 High
+                        HDL Cholesterol 46 mg/dL > 40 Normal
+                        Triglycerides 139 mg/dL < 150 Normal
+                        """
+        ));
+        when(patientService.findById(eq(TENANT_ID), eq(PATIENT_ID))).thenReturn(Optional.of(patientRecord()));
+        when(aiDoctorCopilotService.draft(any(), anyString(), anyString(), any(), any())).thenReturn(
+                new AiDraftResponse(
+                        true,
+                        false,
+                        "Clinical extraction complete.",
+                        "GEMINI",
+                        "gemini-1.5-flash",
+                        "AI draft generated.",
+                        Map.of(
+                                "answer", Map.of(
+                                        "extractedClinicalData", Map.of(
+                                                "labResults", List.of(
+                                                        Map.of(
+                                                                "testName", "HbA1c",
+                                                                "result", "5.7",
+                                                                "unit", "%",
+                                                                "referenceRange", "4.0 - 5.6",
+                                                                "flag", "High",
+                                                                "evidenceText", "HbA1c 5.7 % 4.0 - 5.6 High"
+                                                        ),
+                                                        Map.of("testName", "Fasting Glucose", "result", "102", "unit", "mg/dL", "referenceRange", "70 - 99", "flag", "High"),
+                                                        Map.of("testName", "Total Cholesterol", "result", "206", "unit", "mg/dL", "referenceRange", "< 200", "flag", "High"),
+                                                        Map.of("testName", "LDL Cholesterol", "result", "132", "unit", "mg/dL", "referenceRange", "< 100", "flag", "High"),
+                                                        Map.of("testName", "HDL Cholesterol", "result", "46", "unit", "mg/dL", "referenceRange", "> 40", "flag", "Normal"),
+                                                        Map.of("testName", "Triglycerides", "result", "139", "unit", "mg/dL", "referenceRange", "< 150", "flag", "Normal")
+                                                )
+                                        )
+                                )
+                        ),
+                        BigDecimal.valueOf(0.91),
+                        List.of(),
+                        List.of(),
+                        "STOP",
+                        "COMPLETE",
+                        320,
+                        "{\"answer\":{\"extractedClinicalData\":{\"labResults\":[{\"testName\":\"HbA1c\",\"result\":\"5.7\",\"unit\":\"%\",\"referenceRange\":\"4.0 - 5.6\",\"flag\":\"High\"}]}}}",
+                        "VALID"
+                )
+        );
+
+        service.process(job.getId());
+
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"canonicalKey\":\"hba1c\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"value\":\"5.7\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"unit\":\"%\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"referenceRange\":\"4.0 - 5.6\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"flag\":\"HIGH\"");
+        assertThat(document.getAiExtractionStructuredJson()).doesNotContain("Some detected lab rows were not extracted into structured results: hba1c");
+    }
+
+    @Test
+    void processResolvesExtractedClinicalDataLabResultsAtRoot() {
+        ClinicalAiJobRepository jobRepository = mock(ClinicalAiJobRepository.class);
+        ClinicalDocumentRepository documentRepository = mock(ClinicalDocumentRepository.class);
+        ClinicalDocumentService documentService = mock(ClinicalDocumentService.class);
+        PatientLongitudinalMemoryService longitudinalMemoryService = mock(PatientLongitudinalMemoryService.class);
+        AppUserRepository appUserRepository = mock(AppUserRepository.class);
+        ClinicalDocumentTextExtractionService textExtractionService = mock(ClinicalDocumentTextExtractionService.class);
+        AiDoctorCopilotService aiDoctorCopilotService = mock(AiDoctorCopilotService.class);
+        ObjectStorageService storageService = mock(ObjectStorageService.class);
+        AuditEventPublisher auditEventPublisher = mock(AuditEventPublisher.class);
+        AgentExecutionLogService agentExecutionLogService = mock(AgentExecutionLogService.class);
+        PatientService patientService = mock(PatientService.class);
+        TenantNotificationSettingsService notificationSettingsService = mock(TenantNotificationSettingsService.class);
+        ClinicalDocumentAiExtractionService service = new ClinicalDocumentAiExtractionService(
+                jobRepository, documentRepository, documentService, longitudinalMemoryService, appUserRepository,
+                textExtractionService, aiDoctorCopilotService, storageService, auditEventPublisher,
+                agentExecutionLogService, patientService, notificationSettingsService, new ObjectMapper(), 1000L, 3
+        );
+
+        ClinicalDocumentEntity document = document();
+        ClinicalAiJobEntity job = ClinicalAiJobEntity.queued(
+                TENANT_ID, ClinicalAiJobType.DOCUMENT_EXTRACTION, "PATIENT_CLINICAL_DOCUMENT",
+                DOCUMENT_ID, DOCUMENT_ID, PATIENT_ID, null, REVIEWER_ID, "{\"documentId\":\"doc\"}"
+        );
+        when(jobRepository.findById(eq(job.getId()))).thenReturn(Optional.of(job));
+        when(documentRepository.findByTenantIdAndId(eq(TENANT_ID), eq(DOCUMENT_ID))).thenReturn(Optional.of(document));
+        when(documentRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(jobRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(storageService.getObjectBytes(anyString())).thenReturn("fake-bytes".getBytes());
+        when(textExtractionService.extract(any(), any())).thenReturn(new ClinicalDocumentTextExtractionResult(
+                "TESSERACT", "COMPLETED",
+                """
+                        HbA1c 5.7 % 4.0 - 5.6 High
+                        Fasting Glucose 102 mg/dL 70 - 99 High
+                        Total Cholesterol 206 mg/dL < 200 High
+                        LDL Cholesterol 132 mg/dL < 100 High
+                        HDL Cholesterol 46 mg/dL > 40 Normal
+                        Triglycerides 139 mg/dL < 150 Normal
+                        """
+        ));
+        when(patientService.findById(eq(TENANT_ID), eq(PATIENT_ID))).thenReturn(Optional.of(patientRecord()));
+        when(aiDoctorCopilotService.draft(any(), anyString(), anyString(), any(), any())).thenReturn(
+                new AiDraftResponse(
+                        true,
+                        false,
+                        "Clinical extraction complete.",
+                        "GEMINI",
+                        "gemini-1.5-flash",
+                        "AI draft generated.",
+                        Map.of(
+                                "extractedClinicalData", Map.of(
+                                        "labResults", List.of(
+                                                Map.of(
+                                                        "testName", "HbA1c",
+                                                        "result", "5.7",
+                                                        "unit", "%",
+                                                        "referenceRange", "4.0 - 5.6",
+                                                        "flag", "High",
+                                                        "evidenceText", "HbA1c 5.7 % 4.0 - 5.6 High"
+                                                ),
+                                                Map.of("testName", "Fasting Glucose", "result", "102", "unit", "mg/dL", "referenceRange", "70 - 99", "flag", "High"),
+                                                Map.of("testName", "Total Cholesterol", "result", "206", "unit", "mg/dL", "referenceRange", "< 200", "flag", "High"),
+                                                Map.of("testName", "LDL Cholesterol", "result", "132", "unit", "mg/dL", "referenceRange", "< 100", "flag", "High"),
+                                                Map.of("testName", "HDL Cholesterol", "result", "46", "unit", "mg/dL", "referenceRange", "> 40", "flag", "Normal"),
+                                                Map.of("testName", "Triglycerides", "result", "139", "unit", "mg/dL", "referenceRange", "< 150", "flag", "Normal")
+                                        )
+                                )
+                        ),
+                        BigDecimal.valueOf(0.91),
+                        List.of(),
+                        List.of(),
+                        "STOP",
+                        "COMPLETE",
+                        320,
+                        "{\"extractedClinicalData\":{\"labResults\":[{\"testName\":\"HbA1c\",\"result\":\"5.7\",\"unit\":\"%\",\"referenceRange\":\"4.0 - 5.6\",\"flag\":\"High\"}]}}",
+                        "VALID"
+                )
+        );
+
+        service.process(job.getId());
+
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"canonicalKey\":\"hba1c\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"value\":\"5.7\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"unit\":\"%\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"referenceRange\":\"4.0 - 5.6\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"flag\":\"HIGH\"");
+        assertThat(document.getAiExtractionStructuredJson()).doesNotContain("Some detected lab rows were not extracted into structured results: hba1c");
     }
 
     @Test
@@ -984,6 +1328,19 @@ class ClinicalDocumentAiExtractionServiceTest {
                 OffsetDateTime.now(),
                 OffsetDateTime.now()
         ));
+        when(longitudinalMemoryService.repairPendingConcepts(any(), anyString(), anyString(), any(), anyString(), any()))
+                .thenReturn(new com.deepthoughtnet.clinic.api.clinicaldocument.ai.dto.ClinicalMemoryRepairResult(
+                        DOCUMENT_ID,
+                        "SUCCESS",
+                        OffsetDateTime.now(),
+                        REVIEWER_ID,
+                        1,
+                        1,
+                        0,
+                        List.of(),
+                        0,
+                        "Repair completed"
+                ));
 
         service.repairClinicalMemory(TENANT_ID, DOCUMENT_ID, REVIEWER_ID);
 
@@ -1377,6 +1734,890 @@ class ClinicalDocumentAiExtractionServiceTest {
 
         assertThat(invocationIndex.get()).isEqualTo(2);
         assertThat(RequestContextHolder.get()).isNull();
+    }
+
+    @Test
+    void processMarksTruncatedExtractionIncompleteAndSkipsLongitudinalMemoryIngestion() {
+        ClinicalAiJobRepository jobRepository = mock(ClinicalAiJobRepository.class);
+        ClinicalDocumentRepository documentRepository = mock(ClinicalDocumentRepository.class);
+        ClinicalDocumentService documentService = mock(ClinicalDocumentService.class);
+        PatientLongitudinalMemoryService longitudinalMemoryService = mock(PatientLongitudinalMemoryService.class);
+        AppUserRepository appUserRepository = mock(AppUserRepository.class);
+        ClinicalDocumentTextExtractionService textExtractionService = mock(ClinicalDocumentTextExtractionService.class);
+        AiDoctorCopilotService aiDoctorCopilotService = mock(AiDoctorCopilotService.class);
+        ObjectStorageService storageService = mock(ObjectStorageService.class);
+        AuditEventPublisher auditEventPublisher = mock(AuditEventPublisher.class);
+        AgentExecutionLogService agentExecutionLogService = mock(AgentExecutionLogService.class);
+        PatientService patientService = mock(PatientService.class);
+        TenantNotificationSettingsService notificationSettingsService = mock(TenantNotificationSettingsService.class);
+        ClinicalDocumentAiExtractionService service = new ClinicalDocumentAiExtractionService(
+                jobRepository, documentRepository, documentService, longitudinalMemoryService, appUserRepository,
+                textExtractionService, aiDoctorCopilotService, storageService, auditEventPublisher,
+                agentExecutionLogService, patientService, notificationSettingsService, new ObjectMapper(), 1000L, 3
+        );
+
+        ClinicalDocumentEntity document = document();
+        ClinicalAiJobEntity job = queuedJob(TENANT_ID, DOCUMENT_ID, PATIENT_ID, REVIEWER_ID, "corr-truncated");
+        when(jobRepository.findById(eq(job.getId()))).thenReturn(Optional.of(job));
+        when(documentRepository.findByTenantIdAndId(eq(TENANT_ID), eq(DOCUMENT_ID))).thenReturn(Optional.of(document));
+        when(documentRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(jobRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(storageService.getObjectBytes(anyString())).thenReturn("fake-bytes".getBytes());
+        when(textExtractionService.extract(any(), any())).thenReturn(new ClinicalDocumentTextExtractionResult(
+                "TESSERACT", "COMPLETED",
+                """
+                        HbA1c 5.7 % 4.0 - 5.6 High
+                        Fasting Glucose 102 mg/dL 70 - 99 High
+                        Total Cholesterol 206 mg/dL < 200 High
+                        LDL Cholesterol 132 mg/dL < 100 High
+                        HDL Cholesterol 46 mg/dL > 40 Normal
+                        Triglycerides 139 mg/dL < 150 Normal
+                        """
+        ));
+        when(patientService.findById(eq(TENANT_ID), eq(PATIENT_ID))).thenReturn(Optional.of(patientRecord()));
+        when(aiDoctorCopilotService.draft(any(), anyString(), anyString(), any(), any())).thenReturn(
+                new AiDraftResponse(
+                        true,
+                        false,
+                        "AI response was truncated. Please retry.",
+                        "GEMINI",
+                        "gemini-1.5-flash",
+                        "AI response was truncated. Please retry.",
+                        Map.of(
+                                "factualFindings", Map.of(
+                                        "labResults", List.of(
+                                                Map.of("testName", "Total Cholesterol", "canonicalKey", "cholesterol", "value", "206", "unit", "mg/dL", "flag", "HIGH", "evidenceText", "Total Cholesterol 206 mg/dL < 200 High"),
+                                                Map.of("testName", "LDL Cholesterol", "canonicalKey", "ldl", "value", "132", "unit", "mg/dL", "flag", "HIGH", "evidenceText", "LDL Cholesterol 132 mg/dL < 100 High"),
+                                                Map.of("testName", "HDL Cholesterol", "canonicalKey", "hdl", "value", "46", "unit", "mg/dL", "flag", "NORMAL", "evidenceText", "HDL Cholesterol 46 mg/dL > 40 Normal"),
+                                                Map.of("testName", "Triglycerides", "canonicalKey", "triglycerides", "value", "139", "unit", "mg/dL", "flag", "NORMAL", "evidenceText", "Triglycerides 139 mg/dL < 150 Normal")
+                                        )
+                                ),
+                                "confidence", "HIGH"
+                        ),
+                        BigDecimal.valueOf(0.91),
+                        List.of(),
+                        List.of(),
+                        "MAX_TOKENS",
+                        "TRUNCATED",
+                        120,
+                        "{\"partial\":true}",
+                        "TRUNCATED"
+                )
+        );
+
+        service.process(job.getId());
+
+        assertThat(document.getAiExtractionConfidence()).isEqualByComparingTo("0.35");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"extractionStatus\":\"INCOMPLETE\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"confidence\":\"LOW\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"canonicalKey\":\"hba1c\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"canonicalKey\":\"blood_sugar\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("AI response was truncated. Review required.");
+        verify(longitudinalMemoryService, never()).ingestPendingConcepts(any(), anyString(), anyString(), any(), anyString());
+    }
+
+    @Test
+    void processPersistsCompleteNormalCbcRowsWithoutFalseAbnormalFindings() {
+        ClinicalAiJobRepository jobRepository = mock(ClinicalAiJobRepository.class);
+        ClinicalDocumentRepository documentRepository = mock(ClinicalDocumentRepository.class);
+        ClinicalDocumentService documentService = mock(ClinicalDocumentService.class);
+        PatientLongitudinalMemoryService longitudinalMemoryService = mock(PatientLongitudinalMemoryService.class);
+        AppUserRepository appUserRepository = mock(AppUserRepository.class);
+        ClinicalDocumentTextExtractionService textExtractionService = mock(ClinicalDocumentTextExtractionService.class);
+        AiDoctorCopilotService aiDoctorCopilotService = mock(AiDoctorCopilotService.class);
+        ObjectStorageService storageService = mock(ObjectStorageService.class);
+        AuditEventPublisher auditEventPublisher = mock(AuditEventPublisher.class);
+        AgentExecutionLogService agentExecutionLogService = mock(AgentExecutionLogService.class);
+        PatientService patientService = mock(PatientService.class);
+        TenantNotificationSettingsService notificationSettingsService = mock(TenantNotificationSettingsService.class);
+        ClinicalDocumentAiExtractionService service = new ClinicalDocumentAiExtractionService(
+                jobRepository, documentRepository, documentService, longitudinalMemoryService, appUserRepository,
+                textExtractionService, aiDoctorCopilotService, storageService, auditEventPublisher,
+                agentExecutionLogService, patientService, notificationSettingsService, new ObjectMapper(), 1000L, 3
+        );
+
+        ClinicalDocumentEntity document = document();
+        ClinicalAiJobEntity job = queuedJob(TENANT_ID, DOCUMENT_ID, PATIENT_ID, REVIEWER_ID, "corr-cbc");
+        when(jobRepository.findById(eq(job.getId()))).thenReturn(Optional.of(job));
+        when(documentRepository.findByTenantIdAndId(eq(TENANT_ID), eq(DOCUMENT_ID))).thenReturn(Optional.of(document));
+        when(documentRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(jobRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(storageService.getObjectBytes(anyString())).thenReturn("fake-bytes".getBytes());
+        when(textExtractionService.extract(any(), any())).thenReturn(new ClinicalDocumentTextExtractionResult(
+                "TESSERACT", "COMPLETED",
+                """
+                        Hemoglobin 14.1 g/dL 13.0 - 17.0 Normal
+                        RBC 4.82 10^6/uL 4.5 - 5.9 Normal
+                        WBC 6.8 10^3/uL 4.0 - 11.0 Normal
+                        Platelets 248 10^3/uL 150 - 450 Normal
+                        Neutrophils 58 % 40 - 70 Normal
+                        Lymphocytes 33 % 20 - 40 Normal
+                        """
+        ));
+        when(patientService.findById(eq(TENANT_ID), eq(PATIENT_ID))).thenReturn(Optional.of(patientRecord()));
+        when(aiDoctorCopilotService.draft(any(), anyString(), anyString(), any(), any())).thenReturn(
+                new AiDraftResponse(
+                        true,
+                        false,
+                        "CBC summary recognized.",
+                        "GEMINI",
+                        "gemini-1.5-flash",
+                        "CBC summary recognized.",
+                        Map.of("summary", "CBC summary recognized.", "confidence", "HIGH"),
+                        BigDecimal.valueOf(0.82),
+                        List.of(),
+                        List.of(),
+                        "STOP",
+                        "COMPLETE",
+                        240,
+                        "{\"summary\":\"CBC\"}",
+                        "VALID"
+                )
+        );
+
+        service.process(job.getId());
+
+        assertThat(document.getAiExtractionConfidence()).isEqualByComparingTo("0.82");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"extractionStatus\":\"COMPLETE\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"confidence\":\"HIGH\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"canonicalKey\":\"hemoglobin\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"canonicalKey\":\"rbc\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"canonicalKey\":\"wbc\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"canonicalKey\":\"platelets\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"canonicalKey\":\"neutrophils\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"canonicalKey\":\"lymphocytes\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"possibleAbnormalFindings\":[]");
+        verify(longitudinalMemoryService).ingestPendingConcepts(eq(document), anyString(), anyString(), eq(BigDecimal.valueOf(0.82)), anyString());
+    }
+
+    @Test
+    void processPersistsCbcCountAliasesFromProviderAndOcrWithoutDroppingRows() {
+        ClinicalAiJobRepository jobRepository = mock(ClinicalAiJobRepository.class);
+        ClinicalDocumentRepository documentRepository = mock(ClinicalDocumentRepository.class);
+        ClinicalDocumentService documentService = mock(ClinicalDocumentService.class);
+        PatientLongitudinalMemoryService longitudinalMemoryService = mock(PatientLongitudinalMemoryService.class);
+        AppUserRepository appUserRepository = mock(AppUserRepository.class);
+        ClinicalDocumentTextExtractionService textExtractionService = mock(ClinicalDocumentTextExtractionService.class);
+        AiDoctorCopilotService aiDoctorCopilotService = mock(AiDoctorCopilotService.class);
+        ObjectStorageService storageService = mock(ObjectStorageService.class);
+        AuditEventPublisher auditEventPublisher = mock(AuditEventPublisher.class);
+        AgentExecutionLogService agentExecutionLogService = mock(AgentExecutionLogService.class);
+        PatientService patientService = mock(PatientService.class);
+        TenantNotificationSettingsService notificationSettingsService = mock(TenantNotificationSettingsService.class);
+        ClinicalDocumentAiExtractionService service = new ClinicalDocumentAiExtractionService(
+                jobRepository, documentRepository, documentService, longitudinalMemoryService, appUserRepository,
+                textExtractionService, aiDoctorCopilotService, storageService, auditEventPublisher,
+                agentExecutionLogService, patientService, notificationSettingsService, new ObjectMapper(), 1000L, 3
+        );
+
+        ClinicalDocumentEntity document = document();
+        ClinicalAiJobEntity job = queuedJob(TENANT_ID, DOCUMENT_ID, PATIENT_ID, REVIEWER_ID, "corr-cbc-count");
+        when(jobRepository.findById(eq(job.getId()))).thenReturn(Optional.of(job));
+        when(documentRepository.findByTenantIdAndId(eq(TENANT_ID), eq(DOCUMENT_ID))).thenReturn(Optional.of(document));
+        when(documentRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(jobRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(storageService.getObjectBytes(anyString())).thenReturn("fake-bytes".getBytes());
+        when(textExtractionService.extract(any(), any())).thenReturn(new ClinicalDocumentTextExtractionResult(
+                "TESSERACT", "COMPLETED",
+                """
+                        Hemoglobin 14.1 g/dL 13.0 - 17.0 Normal
+                        RBC Count 4.82 10^6/uL 4.5 - 5.9 Normal
+                        WBC Count 6.8 10^3/uL 4.0 - 11.0 Normal
+                        Platelets 248 10^3/uL 150 - 450 Normal
+                        Neutrophils 58 % 40 - 70 Normal
+                        Lymphocytes 33 % 20 - 40 Normal
+                        """
+        ));
+        when(patientService.findById(eq(TENANT_ID), eq(PATIENT_ID))).thenReturn(Optional.of(patientRecord()));
+        when(aiDoctorCopilotService.draft(any(), anyString(), anyString(), any(), any())).thenReturn(
+                new AiDraftResponse(
+                        true,
+                        false,
+                        "CBC summary recognized.",
+                        "GEMINI",
+                        "gemini-1.5-flash",
+                        "CBC summary recognized.",
+                        Map.of(
+                                "factualFindings", Map.of(
+                                        "labResults", List.of(
+                                                Map.of("test", "Hemoglobin", "value", "14.1", "unit", "g/dL", "referenceRange", "13.0 - 17.0", "flag", "NORMAL", "evidenceText", "Hemoglobin 14.1 g/dL 13.0 - 17.0 Normal"),
+                                                Map.of("test", "RBC Count", "value", "4.82", "unit", "10^6/uL", "referenceRange", "4.5 - 5.9", "flag", "NORMAL", "evidenceText", "RBC Count 4.82 10^6/uL 4.5 - 5.9 Normal"),
+                                                Map.of("test", "WBC Count", "value", "6.8", "unit", "10^3/uL", "referenceRange", "4.0 - 11.0", "flag", "NORMAL", "evidenceText", "WBC Count 6.8 10^3/uL 4.0 - 11.0 Normal"),
+                                                Map.of("test", "Platelets", "value", "248", "unit", "10^3/uL", "referenceRange", "150 - 450", "flag", "NORMAL", "evidenceText", "Platelets 248 10^3/uL 150 - 450 Normal"),
+                                                Map.of("test", "Neutrophils", "value", "58", "unit", "%", "referenceRange", "40 - 70", "flag", "NORMAL", "evidenceText", "Neutrophils 58 % 40 - 70 Normal"),
+                                                Map.of("test", "Lymphocytes", "value", "33", "unit", "%", "referenceRange", "20 - 40", "flag", "NORMAL", "evidenceText", "Lymphocytes 33 % 20 - 40 Normal")
+                                        )
+                                ),
+                                "summary", "CBC summary recognized.",
+                                "confidence", "HIGH"
+                        ),
+                        BigDecimal.valueOf(0.82),
+                        List.of(),
+                        List.of(),
+                        "STOP",
+                        "COMPLETE",
+                        240,
+                        "{\"summary\":\"CBC\"}",
+                        "VALID"
+                )
+        );
+
+        service.process(job.getId());
+
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"canonicalKey\":\"rbc\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"canonicalKey\":\"wbc\"");
+        assertThat(document.getAiExtractionStructuredJson()).doesNotContain("Some detected lab rows were not extracted into structured results");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"extractionStatus\":\"COMPLETE\"");
+    }
+
+    @Test
+    void processPreservesHbA1cProviderRowWhenProviderUsesTestFieldAndReportAlsoContainsHemoglobin() {
+        ClinicalAiJobRepository jobRepository = mock(ClinicalAiJobRepository.class);
+        ClinicalDocumentRepository documentRepository = mock(ClinicalDocumentRepository.class);
+        ClinicalDocumentService documentService = mock(ClinicalDocumentService.class);
+        PatientLongitudinalMemoryService longitudinalMemoryService = mock(PatientLongitudinalMemoryService.class);
+        AppUserRepository appUserRepository = mock(AppUserRepository.class);
+        ClinicalDocumentTextExtractionService textExtractionService = mock(ClinicalDocumentTextExtractionService.class);
+        AiDoctorCopilotService aiDoctorCopilotService = mock(AiDoctorCopilotService.class);
+        ObjectStorageService storageService = mock(ObjectStorageService.class);
+        AuditEventPublisher auditEventPublisher = mock(AuditEventPublisher.class);
+        AgentExecutionLogService agentExecutionLogService = mock(AgentExecutionLogService.class);
+        PatientService patientService = mock(PatientService.class);
+        TenantNotificationSettingsService notificationSettingsService = mock(TenantNotificationSettingsService.class);
+        ClinicalDocumentAiExtractionService service = new ClinicalDocumentAiExtractionService(
+                jobRepository, documentRepository, documentService, longitudinalMemoryService, appUserRepository,
+                textExtractionService, aiDoctorCopilotService, storageService, auditEventPublisher,
+                agentExecutionLogService, patientService, notificationSettingsService, new ObjectMapper(), 1000L, 3
+        );
+
+        ClinicalDocumentEntity document = document();
+        ClinicalAiJobEntity job = queuedJob(TENANT_ID, DOCUMENT_ID, PATIENT_ID, REVIEWER_ID, "corr-hba1c");
+        when(jobRepository.findById(eq(job.getId()))).thenReturn(Optional.of(job));
+        when(documentRepository.findByTenantIdAndId(eq(TENANT_ID), eq(DOCUMENT_ID))).thenReturn(Optional.of(document));
+        when(documentRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(jobRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(storageService.getObjectBytes(anyString())).thenReturn("fake-bytes".getBytes());
+        when(textExtractionService.extract(any(), any())).thenReturn(new ClinicalDocumentTextExtractionResult(
+                "TESSERACT", "COMPLETED",
+                """
+                        HbA1c 5.7 % 4.0 - 5.6 High
+                        Fasting Glucose 102 mg/dL 70 - 99 High
+                        Total Cholesterol 206 mg/dL < 200 High
+                        LDL Cholesterol 132 mg/dL < 100 High
+                        HDL Cholesterol 46 mg/dL > 40 Normal
+                        Triglycerides 139 mg/dL < 150 Normal
+                        Hemoglobin 14.1 g/dL 13.0 - 17.0 Normal
+                        """
+        ));
+        when(patientService.findById(eq(TENANT_ID), eq(PATIENT_ID))).thenReturn(Optional.of(patientRecord()));
+        when(aiDoctorCopilotService.draft(any(), anyString(), anyString(), any(), any())).thenReturn(
+                new AiDraftResponse(
+                        true,
+                        false,
+                        "Lipid and HbA1c extraction complete.",
+                        "GEMINI",
+                        "gemini-1.5-flash",
+                        "Lipid and HbA1c extraction complete.",
+                        Map.of(
+                                "factualFindings", Map.of(
+                                        "labResults", List.of(
+                                                Map.of("test", "HbA1c", "value", "5.7", "unit", "%", "referenceRange", "4.0 - 5.6", "flag", "HIGH", "evidenceText", "HbA1c 5.7 % 4.0 - 5.6 High"),
+                                                Map.of("test", "Fasting Glucose", "value", "102", "unit", "mg/dL", "referenceRange", "70 - 99", "flag", "HIGH", "evidenceText", "Fasting Glucose 102 mg/dL 70 - 99 High"),
+                                                Map.of("test", "Total Cholesterol", "value", "206", "unit", "mg/dL", "referenceRange", "< 200", "flag", "HIGH", "evidenceText", "Total Cholesterol 206 mg/dL < 200 High"),
+                                                Map.of("test", "LDL Cholesterol", "value", "132", "unit", "mg/dL", "referenceRange", "< 100", "flag", "HIGH", "evidenceText", "LDL Cholesterol 132 mg/dL < 100 High"),
+                                                Map.of("test", "HDL Cholesterol", "value", "46", "unit", "mg/dL", "referenceRange", "> 40", "flag", "NORMAL", "evidenceText", "HDL Cholesterol 46 mg/dL > 40 Normal"),
+                                                Map.of("test", "Triglycerides", "value", "139", "unit", "mg/dL", "referenceRange", "< 150", "flag", "NORMAL", "evidenceText", "Triglycerides 139 mg/dL < 150 Normal"),
+                                                Map.of("test", "Hemoglobin", "value", "14.1", "unit", "g/dL", "referenceRange", "13.0 - 17.0", "flag", "NORMAL", "evidenceText", "Hemoglobin 14.1 g/dL 13.0 - 17.0 Normal")
+                                        )
+                                )
+                        ),
+                        BigDecimal.valueOf(0.9),
+                        List.of(),
+                        List.of(),
+                        "STOP",
+                        "COMPLETE",
+                        320,
+                        "{\"ok\":true}",
+                        "VALID"
+                )
+        );
+
+        service.process(job.getId());
+
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"canonicalKey\":\"hba1c\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"testName\":\"HbA1c\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"value\":\"5.7\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"canonicalKey\":\"hemoglobin\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"value\":\"14.1\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"extractionStatus\":\"COMPLETE\"");
+        assertThat(document.getAiExtractionStructuredJson()).doesNotContain("Some detected lab rows were not extracted into structured results: hba1c");
+    }
+
+    @Test
+    void processPreservesExactLiveHbA1cProviderRowWithoutExplicitEvidenceText() {
+        ClinicalAiJobRepository jobRepository = mock(ClinicalAiJobRepository.class);
+        ClinicalDocumentRepository documentRepository = mock(ClinicalDocumentRepository.class);
+        ClinicalDocumentService documentService = mock(ClinicalDocumentService.class);
+        PatientLongitudinalMemoryService longitudinalMemoryService = mock(PatientLongitudinalMemoryService.class);
+        AppUserRepository appUserRepository = mock(AppUserRepository.class);
+        ClinicalDocumentTextExtractionService textExtractionService = mock(ClinicalDocumentTextExtractionService.class);
+        AiDoctorCopilotService aiDoctorCopilotService = mock(AiDoctorCopilotService.class);
+        ObjectStorageService storageService = mock(ObjectStorageService.class);
+        AuditEventPublisher auditEventPublisher = mock(AuditEventPublisher.class);
+        AgentExecutionLogService agentExecutionLogService = mock(AgentExecutionLogService.class);
+        PatientService patientService = mock(PatientService.class);
+        TenantNotificationSettingsService notificationSettingsService = mock(TenantNotificationSettingsService.class);
+        ClinicalDocumentAiExtractionService service = new ClinicalDocumentAiExtractionService(
+                jobRepository, documentRepository, documentService, longitudinalMemoryService, appUserRepository,
+                textExtractionService, aiDoctorCopilotService, storageService, auditEventPublisher,
+                agentExecutionLogService, patientService, notificationSettingsService, new ObjectMapper(), 1000L, 3
+        );
+
+        ClinicalDocumentEntity document = document();
+        ClinicalAiJobEntity job = queuedJob(TENANT_ID, DOCUMENT_ID, PATIENT_ID, REVIEWER_ID, "corr-hba1c-live-row");
+        when(jobRepository.findById(eq(job.getId()))).thenReturn(Optional.of(job));
+        when(documentRepository.findByTenantIdAndId(eq(TENANT_ID), eq(DOCUMENT_ID))).thenReturn(Optional.of(document));
+        when(documentRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(jobRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(storageService.getObjectBytes(anyString())).thenReturn("fake-bytes".getBytes());
+        when(textExtractionService.extract(any(), any())).thenReturn(new ClinicalDocumentTextExtractionResult(
+                "TESSERACT", "COMPLETED",
+                """
+                        HbA1c 5.7 % 4.0 - 5.6 High
+                        Fasting Glucose 102 mg/dL 70 - 99 High
+                        Total Cholesterol 206 mg/dL < 200 High
+                        LDL Cholesterol 132 mg/dL < 100 High
+                        HDL Cholesterol 46 mg/dL > 40 Normal
+                        Triglycerides 139 mg/dL < 150 Normal
+                        """
+        ));
+        when(patientService.findById(eq(TENANT_ID), eq(PATIENT_ID))).thenReturn(Optional.of(patientRecord()));
+        when(aiDoctorCopilotService.draft(any(), anyString(), anyString(), any(), any())).thenReturn(
+                new AiDraftResponse(
+                        true,
+                        false,
+                        "Lipid and HbA1c extraction complete.",
+                        "GEMINI",
+                        "gemini-1.5-flash",
+                        "Lipid and HbA1c extraction complete.",
+                        Map.of(
+                                "factualFindings", Map.of(
+                                        "labResults", List.of(
+                                                Map.of("testName", "HbA1c", "result", "5.7", "unit", "%", "referenceRange", "4.0 - 5.6", "flag", "High"),
+                                                Map.of("testName", "Fasting Glucose", "result", "102", "unit", "mg/dL", "referenceRange", "70 - 99", "flag", "High"),
+                                                Map.of("testName", "Total Cholesterol", "result", "206", "unit", "mg/dL", "referenceRange", "< 200", "flag", "High"),
+                                                Map.of("testName", "LDL Cholesterol", "result", "132", "unit", "mg/dL", "referenceRange", "< 100", "flag", "High"),
+                                                Map.of("testName", "HDL Cholesterol", "result", "46", "unit", "mg/dL", "referenceRange", "> 40", "flag", "Normal"),
+                                                Map.of("testName", "Triglycerides", "result", "139", "unit", "mg/dL", "referenceRange", "< 150", "flag", "Normal")
+                                        )
+                                )
+                        ),
+                        BigDecimal.valueOf(0.9),
+                        List.of(),
+                        List.of(),
+                        "STOP",
+                        "COMPLETE",
+                        320,
+                        "{\"ok\":true}",
+                        "VALID"
+                )
+        );
+
+        service.process(job.getId());
+
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"canonicalKey\":\"hba1c\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"testName\":\"HbA1c\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"value\":\"5.7\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"unit\":\"%\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"referenceRange\":\"4.0 - 5.6\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"flag\":\"HIGH\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"mapped\":true");
+        assertThat(document.getAiExtractionStructuredJson()).doesNotContain("Some detected lab rows were not extracted into structured results: hba1c");
+        assertThat(document.getAiExtractionStructuredJson()).doesNotContain("\"canonicalKey\":\"diabetes_risk\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"extractionStatus\":\"COMPLETE\"");
+    }
+
+    @Test
+    void canonicalLabKeyPreservesHbA1cDigitsAndAliases() {
+        ClinicalDocumentAiExtractionService service = new ClinicalDocumentAiExtractionService(
+                mock(ClinicalAiJobRepository.class),
+                mock(ClinicalDocumentRepository.class),
+                mock(ClinicalDocumentService.class),
+                mock(PatientLongitudinalMemoryService.class),
+                mock(AppUserRepository.class),
+                mock(ClinicalDocumentTextExtractionService.class),
+                mock(AiDoctorCopilotService.class),
+                mock(ObjectStorageService.class),
+                mock(AuditEventPublisher.class),
+                mock(AgentExecutionLogService.class),
+                mock(PatientService.class),
+                mock(TenantNotificationSettingsService.class),
+                new ObjectMapper(),
+                1000L,
+                3
+        );
+
+        assertThat((String) ReflectionTestUtils.invokeMethod(service, "slug", "HbA1c")).isEqualTo("hba1c");
+        assertThat((String) ReflectionTestUtils.invokeMethod(service, "canonicalLabKey", "HbA1c")).isEqualTo("hba1c");
+        assertThat((String) ReflectionTestUtils.invokeMethod(service, "canonicalLabKey", "HBA1C")).isEqualTo("hba1c");
+        assertThat((String) ReflectionTestUtils.invokeMethod(service, "canonicalLabKey", "Hb A1c")).isEqualTo("hba1c");
+        assertThat((String) ReflectionTestUtils.invokeMethod(service, "canonicalLabKey", "Hemoglobin A1c")).isEqualTo("hba1c");
+        assertThat((String) ReflectionTestUtils.invokeMethod(service, "canonicalLabKey", "Glycated Hemoglobin")).isEqualTo("hba1c");
+        assertThat((String) ReflectionTestUtils.invokeMethod(service, "canonicalLabKey", "Glycosylated Hemoglobin")).isEqualTo("hba1c");
+    }
+
+    @Test
+    void processPreservesHbA1cProviderRowsAcrossSupportedNameFieldsAndAliases() {
+        ClinicalAiJobRepository jobRepository = mock(ClinicalAiJobRepository.class);
+        ClinicalDocumentRepository documentRepository = mock(ClinicalDocumentRepository.class);
+        ClinicalDocumentService documentService = mock(ClinicalDocumentService.class);
+        PatientLongitudinalMemoryService longitudinalMemoryService = mock(PatientLongitudinalMemoryService.class);
+        AppUserRepository appUserRepository = mock(AppUserRepository.class);
+        ClinicalDocumentTextExtractionService textExtractionService = mock(ClinicalDocumentTextExtractionService.class);
+        AiDoctorCopilotService aiDoctorCopilotService = mock(AiDoctorCopilotService.class);
+        ObjectStorageService storageService = mock(ObjectStorageService.class);
+        AuditEventPublisher auditEventPublisher = mock(AuditEventPublisher.class);
+        AgentExecutionLogService agentExecutionLogService = mock(AgentExecutionLogService.class);
+        PatientService patientService = mock(PatientService.class);
+        TenantNotificationSettingsService notificationSettingsService = mock(TenantNotificationSettingsService.class);
+        ClinicalDocumentAiExtractionService service = new ClinicalDocumentAiExtractionService(
+                jobRepository, documentRepository, documentService, longitudinalMemoryService, appUserRepository,
+                textExtractionService, aiDoctorCopilotService, storageService, auditEventPublisher,
+                agentExecutionLogService, patientService, notificationSettingsService, new ObjectMapper(), 1000L, 3
+        );
+
+        ClinicalDocumentEntity document = document();
+        ClinicalAiJobEntity job = queuedJob(TENANT_ID, DOCUMENT_ID, PATIENT_ID, REVIEWER_ID, "corr-hba1c-fields");
+        when(jobRepository.findById(eq(job.getId()))).thenReturn(Optional.of(job));
+        when(documentRepository.findByTenantIdAndId(eq(TENANT_ID), eq(DOCUMENT_ID))).thenReturn(Optional.of(document));
+        when(documentRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(jobRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(storageService.getObjectBytes(anyString())).thenReturn("fake-bytes".getBytes());
+        when(textExtractionService.extract(any(), any())).thenReturn(new ClinicalDocumentTextExtractionResult(
+                "TESSERACT", "COMPLETED",
+                """
+                        HbA1c 5.7 % 4.0 - 5.6 High
+                        Fasting Glucose 102 mg/dL 70 - 99 High
+                        Total Cholesterol 206 mg/dL < 200 High
+                        LDL Cholesterol 132 mg/dL < 100 High
+                        HDL Cholesterol 46 mg/dL > 40 Normal
+                        Triglycerides 139 mg/dL < 150 Normal
+                        Hemoglobin 14.1 g/dL 13.0 - 17.0 Normal
+                        """
+        ));
+        when(patientService.findById(eq(TENANT_ID), eq(PATIENT_ID))).thenReturn(Optional.of(patientRecord()));
+        when(aiDoctorCopilotService.draft(any(), anyString(), anyString(), any(), any())).thenReturn(
+                new AiDraftResponse(
+                        true,
+                        false,
+                        "Lipid and HbA1c extraction complete.",
+                        "GEMINI",
+                        "gemini-1.5-flash",
+                        "Lipid and HbA1c extraction complete.",
+                        Map.of(
+                                "factualFindings", Map.of(
+                                        "labResults", List.of(
+                                                Map.of("testName", "Hemoglobin A1c", "value", "5.7", "unit", "%", "referenceRange", "4.0 - 5.6", "flag", "HIGH", "evidenceText", "HbA1c 5.7 % 4.0 - 5.6 High"),
+                                                Map.of("label", "Fasting Glucose", "value", "102", "unit", "mg/dL", "referenceRange", "70 - 99", "flag", "HIGH", "evidenceText", "Fasting Glucose 102 mg/dL 70 - 99 High"),
+                                                Map.of("test", "Total Cholesterol", "value", "206", "unit", "mg/dL", "referenceRange", "< 200", "flag", "HIGH", "evidenceText", "Total Cholesterol 206 mg/dL < 200 High"),
+                                                Map.of("test", "LDL Cholesterol", "value", "132", "unit", "mg/dL", "referenceRange", "< 100", "flag", "HIGH", "evidenceText", "LDL Cholesterol 132 mg/dL < 100 High"),
+                                                Map.of("test", "HDL Cholesterol", "value", "46", "unit", "mg/dL", "referenceRange", "> 40", "flag", "NORMAL", "evidenceText", "HDL Cholesterol 46 mg/dL > 40 Normal"),
+                                                Map.of("test", "Triglycerides", "value", "139", "unit", "mg/dL", "referenceRange", "< 150", "flag", "NORMAL", "evidenceText", "Triglycerides 139 mg/dL < 150 Normal"),
+                                                Map.of("testName", "Hemoglobin", "value", "14.1", "unit", "g/dL", "referenceRange", "13.0 - 17.0", "flag", "NORMAL", "evidenceText", "Hemoglobin 14.1 g/dL 13.0 - 17.0 Normal")
+                                        )
+                                )
+                        ),
+                        BigDecimal.valueOf(0.9),
+                        List.of(),
+                        List.of(),
+                        "STOP",
+                        "COMPLETE",
+                        320,
+                        "{\"ok\":true}",
+                        "VALID"
+                )
+        );
+
+        service.process(job.getId());
+
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"canonicalKey\":\"hba1c\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"testName\":\"HbA1c\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"value\":\"5.7\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"unit\":\"%\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"canonicalKey\":\"hemoglobin\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"extractionStatus\":\"COMPLETE\"");
+        assertThat(document.getAiExtractionStructuredJson()).doesNotContain("Some detected lab rows were not extracted into structured results: hba1c");
+    }
+
+    @Test
+    void processPreservesHbA1cProviderRowsAcrossNameAnalyteAndParameterFields() {
+        ClinicalAiJobRepository jobRepository = mock(ClinicalAiJobRepository.class);
+        ClinicalDocumentRepository documentRepository = mock(ClinicalDocumentRepository.class);
+        ClinicalDocumentService documentService = mock(ClinicalDocumentService.class);
+        PatientLongitudinalMemoryService longitudinalMemoryService = mock(PatientLongitudinalMemoryService.class);
+        AppUserRepository appUserRepository = mock(AppUserRepository.class);
+        ClinicalDocumentTextExtractionService textExtractionService = mock(ClinicalDocumentTextExtractionService.class);
+        AiDoctorCopilotService aiDoctorCopilotService = mock(AiDoctorCopilotService.class);
+        ObjectStorageService storageService = mock(ObjectStorageService.class);
+        AuditEventPublisher auditEventPublisher = mock(AuditEventPublisher.class);
+        AgentExecutionLogService agentExecutionLogService = mock(AgentExecutionLogService.class);
+        PatientService patientService = mock(PatientService.class);
+        TenantNotificationSettingsService notificationSettingsService = mock(TenantNotificationSettingsService.class);
+        ClinicalDocumentAiExtractionService service = new ClinicalDocumentAiExtractionService(
+                jobRepository, documentRepository, documentService, longitudinalMemoryService, appUserRepository,
+                textExtractionService, aiDoctorCopilotService, storageService, auditEventPublisher,
+                agentExecutionLogService, patientService, notificationSettingsService, new ObjectMapper(), 1000L, 3
+        );
+
+        ClinicalDocumentEntity document = document();
+        ClinicalAiJobEntity job = queuedJob(TENANT_ID, DOCUMENT_ID, PATIENT_ID, REVIEWER_ID, "corr-hba1c-name-variants");
+        when(jobRepository.findById(eq(job.getId()))).thenReturn(Optional.of(job));
+        when(documentRepository.findByTenantIdAndId(eq(TENANT_ID), eq(DOCUMENT_ID))).thenReturn(Optional.of(document));
+        when(documentRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(jobRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(storageService.getObjectBytes(anyString())).thenReturn("fake-bytes".getBytes());
+        when(textExtractionService.extract(any(), any())).thenReturn(new ClinicalDocumentTextExtractionResult(
+                "TESSERACT", "COMPLETED",
+                """
+                        HbA1c 5.7 % 4.0 - 5.6 High
+                        Fasting Glucose 102 mg/dL 70 - 99 High
+                        Total Cholesterol 206 mg/dL < 200 High
+                        LDL Cholesterol 132 mg/dL < 100 High
+                        HDL Cholesterol 46 mg/dL > 40 Normal
+                        Triglycerides 139 mg/dL < 150 Normal
+                        """
+        ));
+        when(patientService.findById(eq(TENANT_ID), eq(PATIENT_ID))).thenReturn(Optional.of(patientRecord()));
+        when(aiDoctorCopilotService.draft(any(), anyString(), anyString(), any(), any())).thenReturn(
+                new AiDraftResponse(
+                        true,
+                        false,
+                        "Lipid and HbA1c extraction complete.",
+                        "GEMINI",
+                        "gemini-1.5-flash",
+                        "Lipid and HbA1c extraction complete.",
+                        Map.of(
+                                "factualFindings", Map.of(
+                                        "labResults", List.of(
+                                                Map.of("name", "Hemoglobin A1c", "result", "5.7", "unit", "%", "referenceRange", "4.0 - 5.6", "flag", "High"),
+                                                Map.of("analyte", "Fasting Glucose", "result", "102", "unit", "mg/dL", "referenceRange", "70 - 99", "flag", "High"),
+                                                Map.of("parameter", "Total Cholesterol", "result", "206", "unit", "mg/dL", "referenceRange", "< 200", "flag", "High"),
+                                                Map.of("name", "LDL Cholesterol", "result", "132", "unit", "mg/dL", "referenceRange", "< 100", "flag", "High"),
+                                                Map.of("analyte", "HDL Cholesterol", "result", "46", "unit", "mg/dL", "referenceRange", "> 40", "flag", "Normal"),
+                                                Map.of("parameter", "Triglycerides", "result", "139", "unit", "mg/dL", "referenceRange", "< 150", "flag", "Normal")
+                                        )
+                                )
+                        ),
+                        BigDecimal.valueOf(0.9),
+                        List.of(),
+                        List.of(),
+                        "STOP",
+                        "COMPLETE",
+                        320,
+                        "{\"ok\":true}",
+                        "VALID"
+                )
+        );
+
+        service.process(job.getId());
+
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"canonicalKey\":\"hba1c\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"testName\":\"HbA1c\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"value\":\"5.7\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"flag\":\"HIGH\"");
+        assertThat(document.getAiExtractionStructuredJson()).doesNotContain("Some detected lab rows were not extracted into structured results: hba1c");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"extractionStatus\":\"COMPLETE\"");
+    }
+
+    @Test
+    void processPreservesHbA1cAliasesAcrossLabelTextCaseVariants() {
+        ClinicalAiJobRepository jobRepository = mock(ClinicalAiJobRepository.class);
+        ClinicalDocumentRepository documentRepository = mock(ClinicalDocumentRepository.class);
+        ClinicalDocumentService documentService = mock(ClinicalDocumentService.class);
+        PatientLongitudinalMemoryService longitudinalMemoryService = mock(PatientLongitudinalMemoryService.class);
+        AppUserRepository appUserRepository = mock(AppUserRepository.class);
+        ClinicalDocumentTextExtractionService textExtractionService = mock(ClinicalDocumentTextExtractionService.class);
+        AiDoctorCopilotService aiDoctorCopilotService = mock(AiDoctorCopilotService.class);
+        ObjectStorageService storageService = mock(ObjectStorageService.class);
+        AuditEventPublisher auditEventPublisher = mock(AuditEventPublisher.class);
+        AgentExecutionLogService agentExecutionLogService = mock(AgentExecutionLogService.class);
+        PatientService patientService = mock(PatientService.class);
+        TenantNotificationSettingsService notificationSettingsService = mock(TenantNotificationSettingsService.class);
+        ClinicalDocumentAiExtractionService service = new ClinicalDocumentAiExtractionService(
+                jobRepository, documentRepository, documentService, longitudinalMemoryService, appUserRepository,
+                textExtractionService, aiDoctorCopilotService, storageService, auditEventPublisher,
+                agentExecutionLogService, patientService, notificationSettingsService, new ObjectMapper(), 1000L, 3
+        );
+
+        ClinicalDocumentEntity document = document();
+        ClinicalAiJobEntity job = queuedJob(TENANT_ID, DOCUMENT_ID, PATIENT_ID, REVIEWER_ID, "corr-hba1c-label-case");
+        when(jobRepository.findById(eq(job.getId()))).thenReturn(Optional.of(job));
+        when(documentRepository.findByTenantIdAndId(eq(TENANT_ID), eq(DOCUMENT_ID))).thenReturn(Optional.of(document));
+        when(documentRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(jobRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(storageService.getObjectBytes(anyString())).thenReturn("fake-bytes".getBytes());
+        when(textExtractionService.extract(any(), any())).thenReturn(new ClinicalDocumentTextExtractionResult(
+                "TESSERACT", "COMPLETED",
+                """
+                        HbA1c 5.7 % 4.0 - 5.6 High
+                        Fasting Glucose 102 mg/dL 70 - 99 High
+                        Total Cholesterol 206 mg/dL < 200 High
+                        LDL Cholesterol 132 mg/dL < 100 High
+                        HDL Cholesterol 46 mg/dL > 40 Normal
+                        Triglycerides 139 mg/dL < 150 Normal
+                        """
+        ));
+        when(patientService.findById(eq(TENANT_ID), eq(PATIENT_ID))).thenReturn(Optional.of(patientRecord()));
+        when(aiDoctorCopilotService.draft(any(), anyString(), anyString(), any(), any())).thenReturn(
+                new AiDraftResponse(
+                        true,
+                        false,
+                        "Lipid and HbA1c extraction complete.",
+                        "GEMINI",
+                        "gemini-1.5-flash",
+                        "Lipid and HbA1c extraction complete.",
+                        Map.of(
+                                "factualFindings", Map.of(
+                                        "labResults", List.of(
+                                                Map.of("label", "HBA1C", "result", "5.7", "unit", "%", "referenceRange", "4.0 - 5.6", "flag", "high"),
+                                                Map.of("label", "fasting glucose", "result", "102", "unit", "mg/dL", "referenceRange", "70 - 99", "flag", "HIGH"),
+                                                Map.of("label", "TOTAL CHOLESTEROL", "result", "206", "unit", "mg/dL", "referenceRange", "< 200", "flag", "High"),
+                                                Map.of("label", "ldl cholesterol", "result", "132", "unit", "mg/dL", "referenceRange", "< 100", "flag", "HIGH"),
+                                                Map.of("label", "HDL CHOLESTEROL", "result", "46", "unit", "mg/dL", "referenceRange", "> 40", "flag", "normal"),
+                                                Map.of("label", "Triglycerides", "result", "139", "unit", "mg/dL", "referenceRange", "< 150", "flag", "Normal")
+                                        )
+                                )
+                        ),
+                        BigDecimal.valueOf(0.9),
+                        List.of(),
+                        List.of(),
+                        "STOP",
+                        "COMPLETE",
+                        320,
+                        "{\"ok\":true}",
+                        "VALID"
+                )
+        );
+
+        service.process(job.getId());
+
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"canonicalKey\":\"hba1c\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"testName\":\"HbA1c\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"flag\":\"HIGH\"");
+        assertThat(document.getAiExtractionStructuredJson()).doesNotContain("Some detected lab rows were not extracted into structured results: hba1c");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"extractionStatus\":\"COMPLETE\"");
+    }
+
+    @Test
+    void processPreservesHbA1cAliasesFromLabelField() {
+        ClinicalAiJobRepository jobRepository = mock(ClinicalAiJobRepository.class);
+        ClinicalDocumentRepository documentRepository = mock(ClinicalDocumentRepository.class);
+        ClinicalDocumentService documentService = mock(ClinicalDocumentService.class);
+        PatientLongitudinalMemoryService longitudinalMemoryService = mock(PatientLongitudinalMemoryService.class);
+        AppUserRepository appUserRepository = mock(AppUserRepository.class);
+        ClinicalDocumentTextExtractionService textExtractionService = mock(ClinicalDocumentTextExtractionService.class);
+        AiDoctorCopilotService aiDoctorCopilotService = mock(AiDoctorCopilotService.class);
+        ObjectStorageService storageService = mock(ObjectStorageService.class);
+        AuditEventPublisher auditEventPublisher = mock(AuditEventPublisher.class);
+        AgentExecutionLogService agentExecutionLogService = mock(AgentExecutionLogService.class);
+        PatientService patientService = mock(PatientService.class);
+        TenantNotificationSettingsService notificationSettingsService = mock(TenantNotificationSettingsService.class);
+        ClinicalDocumentAiExtractionService service = new ClinicalDocumentAiExtractionService(
+                jobRepository, documentRepository, documentService, longitudinalMemoryService, appUserRepository,
+                textExtractionService, aiDoctorCopilotService, storageService, auditEventPublisher,
+                agentExecutionLogService, patientService, notificationSettingsService, new ObjectMapper(), 1000L, 3
+        );
+
+        ClinicalDocumentEntity document = document();
+        ClinicalAiJobEntity job = queuedJob(TENANT_ID, DOCUMENT_ID, PATIENT_ID, REVIEWER_ID, "corr-hba1c-aliases");
+        when(jobRepository.findById(eq(job.getId()))).thenReturn(Optional.of(job));
+        when(documentRepository.findByTenantIdAndId(eq(TENANT_ID), eq(DOCUMENT_ID))).thenReturn(Optional.of(document));
+        when(documentRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(jobRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(storageService.getObjectBytes(anyString())).thenReturn("fake-bytes".getBytes());
+        when(textExtractionService.extract(any(), any())).thenReturn(new ClinicalDocumentTextExtractionResult(
+                "TESSERACT", "COMPLETED",
+                """
+                        Glycated Hemoglobin 5.7 % 4.0 - 5.6 High
+                        Fasting Glucose 102 mg/dL 70 - 99 High
+                        Total Cholesterol 206 mg/dL < 200 High
+                        LDL Cholesterol 132 mg/dL < 100 High
+                        HDL Cholesterol 46 mg/dL > 40 Normal
+                        Triglycerides 139 mg/dL < 150 Normal
+                        """
+        ));
+        when(patientService.findById(eq(TENANT_ID), eq(PATIENT_ID))).thenReturn(Optional.of(patientRecord()));
+        when(aiDoctorCopilotService.draft(any(), anyString(), anyString(), any(), any())).thenReturn(
+                new AiDraftResponse(
+                        true,
+                        false,
+                        "Lipid and HbA1c extraction complete.",
+                        "GEMINI",
+                        "gemini-1.5-flash",
+                        "Lipid and HbA1c extraction complete.",
+                        Map.of(
+                                "factualFindings", Map.of(
+                                        "labResults", List.of(
+                                                Map.of("label", "Glycated Hemoglobin", "value", "5.7", "unit", "%", "referenceRange", "4.0 - 5.6", "flag", "HIGH", "evidenceText", "Glycated Hemoglobin 5.7 % 4.0 - 5.6 High"),
+                                                Map.of("label", "Fasting Glucose", "value", "102", "unit", "mg/dL", "referenceRange", "70 - 99", "flag", "HIGH", "evidenceText", "Fasting Glucose 102 mg/dL 70 - 99 High"),
+                                                Map.of("label", "Total Cholesterol", "value", "206", "unit", "mg/dL", "referenceRange", "< 200", "flag", "HIGH", "evidenceText", "Total Cholesterol 206 mg/dL < 200 High"),
+                                                Map.of("label", "LDL Cholesterol", "value", "132", "unit", "mg/dL", "referenceRange", "< 100", "flag", "HIGH", "evidenceText", "LDL Cholesterol 132 mg/dL < 100 High"),
+                                                Map.of("label", "HDL Cholesterol", "value", "46", "unit", "mg/dL", "referenceRange", "> 40", "flag", "NORMAL", "evidenceText", "HDL Cholesterol 46 mg/dL > 40 Normal"),
+                                                Map.of("label", "Triglycerides", "value", "139", "unit", "mg/dL", "referenceRange", "< 150", "flag", "NORMAL", "evidenceText", "Triglycerides 139 mg/dL < 150 Normal")
+                                        )
+                                )
+                        ),
+                        BigDecimal.valueOf(0.9),
+                        List.of(),
+                        List.of(),
+                        "STOP",
+                        "COMPLETE",
+                        320,
+                        "{\"ok\":true}",
+                        "VALID"
+                )
+        );
+
+        service.process(job.getId());
+
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"canonicalKey\":\"hba1c\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"testName\":\"Glycated Hemoglobin\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"extractionStatus\":\"COMPLETE\"");
+        assertThat(document.getAiExtractionStructuredJson()).doesNotContain("Some detected lab rows were not extracted into structured results: hba1c");
+    }
+
+    @Test
+    void processRecoversHbA1cFromNarrativeProviderSummaryWhenStructuredLabArrayIsMissing() {
+        ClinicalAiJobRepository jobRepository = mock(ClinicalAiJobRepository.class);
+        ClinicalDocumentRepository documentRepository = mock(ClinicalDocumentRepository.class);
+        ClinicalDocumentService documentService = mock(ClinicalDocumentService.class);
+        PatientLongitudinalMemoryService longitudinalMemoryService = mock(PatientLongitudinalMemoryService.class);
+        AppUserRepository appUserRepository = mock(AppUserRepository.class);
+        ClinicalDocumentTextExtractionService textExtractionService = mock(ClinicalDocumentTextExtractionService.class);
+        AiDoctorCopilotService aiDoctorCopilotService = mock(AiDoctorCopilotService.class);
+        ObjectStorageService storageService = mock(ObjectStorageService.class);
+        AuditEventPublisher auditEventPublisher = mock(AuditEventPublisher.class);
+        AgentExecutionLogService agentExecutionLogService = mock(AgentExecutionLogService.class);
+        PatientService patientService = mock(PatientService.class);
+        TenantNotificationSettingsService notificationSettingsService = mock(TenantNotificationSettingsService.class);
+        ClinicalDocumentAiExtractionService service = new ClinicalDocumentAiExtractionService(
+                jobRepository, documentRepository, documentService, longitudinalMemoryService, appUserRepository,
+                textExtractionService, aiDoctorCopilotService, storageService, auditEventPublisher,
+                agentExecutionLogService, patientService, notificationSettingsService, new ObjectMapper(), 1000L, 3
+        );
+
+        ClinicalDocumentEntity document = document();
+        ClinicalAiJobEntity job = queuedJob(TENANT_ID, DOCUMENT_ID, PATIENT_ID, REVIEWER_ID, "corr-hba1c-narrative");
+        when(jobRepository.findById(eq(job.getId()))).thenReturn(Optional.of(job));
+        when(documentRepository.findByTenantIdAndId(eq(TENANT_ID), eq(DOCUMENT_ID))).thenReturn(Optional.of(document));
+        when(documentRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(jobRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(storageService.getObjectBytes(anyString())).thenReturn("fake-bytes".getBytes());
+        when(textExtractionService.extract(any(), any())).thenReturn(new ClinicalDocumentTextExtractionResult(
+                "TESSERACT", "COMPLETED",
+                """
+                        Fasting Glucose 102 mg/dL 70 - 99 High
+                        Total Cholesterol 206 mg/dL < 200 High
+                        LDL Cholesterol 132 mg/dL < 100 High
+                        HDL Cholesterol 46 mg/dL > 40 Normal
+                        Triglycerides 139 mg/dL < 150 Normal
+                        """
+        ));
+        when(patientService.findById(eq(TENANT_ID), eq(PATIENT_ID))).thenReturn(Optional.of(patientRecord()));
+        when(aiDoctorCopilotService.draft(any(), anyString(), anyString(), any(), any())).thenReturn(
+                new AiDraftResponse(
+                        true,
+                        false,
+                        "HbA1c: 5.7% (High, reference range 4.0 - 5.6%)",
+                        "GEMINI",
+                        "gemini-1.5-flash",
+                        "HbA1c: 5.7% (High, reference range 4.0 - 5.6%)",
+                        Map.of("summary", "HbA1c: 5.7% (High, reference range 4.0 - 5.6%)", "confidence", "HIGH"),
+                        BigDecimal.valueOf(0.82),
+                        List.of(),
+                        List.of(),
+                        "STOP",
+                        "COMPLETE",
+                        240,
+                        "HbA1c: 5.7% (High, reference range 4.0 - 5.6%)",
+                        "VALID"
+                )
+        );
+
+        service.process(job.getId());
+
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"canonicalKey\":\"hba1c\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"testName\":\"HbA1c\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"value\":\"5.7\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"unit\":\"%\"");
+        assertThat(document.getAiExtractionStructuredJson()).doesNotContain("Some detected lab rows were not extracted into structured results: hba1c");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"extractionStatus\":\"COMPLETE\"");
+    }
+
+    @Test
+    void processPreservesUnknownButValidProviderLabRowsAsUnmappedFacts() {
+        ClinicalAiJobRepository jobRepository = mock(ClinicalAiJobRepository.class);
+        ClinicalDocumentRepository documentRepository = mock(ClinicalDocumentRepository.class);
+        ClinicalDocumentService documentService = mock(ClinicalDocumentService.class);
+        PatientLongitudinalMemoryService longitudinalMemoryService = mock(PatientLongitudinalMemoryService.class);
+        AppUserRepository appUserRepository = mock(AppUserRepository.class);
+        ClinicalDocumentTextExtractionService textExtractionService = mock(ClinicalDocumentTextExtractionService.class);
+        AiDoctorCopilotService aiDoctorCopilotService = mock(AiDoctorCopilotService.class);
+        ObjectStorageService storageService = mock(ObjectStorageService.class);
+        AuditEventPublisher auditEventPublisher = mock(AuditEventPublisher.class);
+        AgentExecutionLogService agentExecutionLogService = mock(AgentExecutionLogService.class);
+        PatientService patientService = mock(PatientService.class);
+        TenantNotificationSettingsService notificationSettingsService = mock(TenantNotificationSettingsService.class);
+        ClinicalDocumentAiExtractionService service = new ClinicalDocumentAiExtractionService(
+                jobRepository, documentRepository, documentService, longitudinalMemoryService, appUserRepository,
+                textExtractionService, aiDoctorCopilotService, storageService, auditEventPublisher,
+                agentExecutionLogService, patientService, notificationSettingsService, new ObjectMapper(), 1000L, 3
+        );
+
+        ClinicalDocumentEntity document = document();
+        ClinicalAiJobEntity job = queuedJob(TENANT_ID, DOCUMENT_ID, PATIENT_ID, REVIEWER_ID, "corr-unmapped");
+        when(jobRepository.findById(eq(job.getId()))).thenReturn(Optional.of(job));
+        when(documentRepository.findByTenantIdAndId(eq(TENANT_ID), eq(DOCUMENT_ID))).thenReturn(Optional.of(document));
+        when(documentRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(jobRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(storageService.getObjectBytes(anyString())).thenReturn("fake-bytes".getBytes());
+        when(textExtractionService.extract(any(), any())).thenReturn(new ClinicalDocumentTextExtractionResult(
+                "TESSERACT", "COMPLETED",
+                "Vitamin XYZ Marker 7.8 ng/mL 5.0 - 10.0 Normal"
+        ));
+        when(patientService.findById(eq(TENANT_ID), eq(PATIENT_ID))).thenReturn(Optional.of(patientRecord()));
+        when(aiDoctorCopilotService.draft(any(), anyString(), anyString(), any(), any())).thenReturn(
+                new AiDraftResponse(
+                        true,
+                        false,
+                        "Structured extraction complete.",
+                        "GEMINI",
+                        "gemini-1.5-flash",
+                        "Structured extraction complete.",
+                        Map.of(
+                                "factualFindings", Map.of(
+                                        "labResults", List.of(
+                                                Map.of("test", "Vitamin XYZ Marker", "value", "7.8", "unit", "ng/mL", "referenceRange", "5.0 - 10.0", "flag", "NORMAL", "evidenceText", "Vitamin XYZ Marker 7.8 ng/mL 5.0 - 10.0 Normal")
+                                        )
+                                ),
+                                "confidence", "HIGH"
+                        ),
+                        BigDecimal.valueOf(0.8),
+                        List.of(),
+                        List.of(),
+                        "STOP",
+                        "COMPLETE",
+                        120,
+                        "{\"summary\":\"ok\"}",
+                        "VALID"
+                )
+        );
+
+        service.process(job.getId());
+
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"canonicalKey\":\"unmapped_vitamin_xyz_marker\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"testName\":\"Vitamin XYZ Marker\"");
+        assertThat(document.getAiExtractionStructuredJson()).contains("\"mapped\":false");
     }
 
     private ClinicalDocumentEntity document() {

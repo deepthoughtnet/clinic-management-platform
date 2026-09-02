@@ -236,8 +236,9 @@ public class AiPromptTemplateCatalog {
                     Extract structured clinical findings from the supplied OCR text and document context.
                     Return ONLY strict JSON. No markdown. No prose outside JSON.
                     Keep factual findings separate from summary or recommendations.
-                    Do not return an answer wrapper.
-                    Do not return a classification wrapper.
+                    Do not return an answer wrapper or classification wrapper.
+                    The preferred provider contract is the exact top-level shape below; put lab rows in
+                    factualFindings.labResults, not under any provider-specific wrapper.
                     Use exactly this shape:
                     {
                       "documentType": "EXTERNAL_LAB_REPORT",
@@ -276,7 +277,7 @@ public class AiPromptTemplateCatalog {
                     }
                     Map only direct factual findings from the source.
                     If the document contains lab values, populate factualFindings.labResults directly at the top level.
-                    Do not nest lab values under answer.classification or any other wrapper.
+                    Do not nest lab values under answer, data, extractedData, extractedClinicalData, or any other wrapper.
                     Do not put recommendations, suggested actions, follow-up advice, or narrative plan text inside factualFindings.
                     For every lab result, ensure evidenceText contains the same test label and value.
                     Do not diagnose; only extract and summarize what the source shows.
