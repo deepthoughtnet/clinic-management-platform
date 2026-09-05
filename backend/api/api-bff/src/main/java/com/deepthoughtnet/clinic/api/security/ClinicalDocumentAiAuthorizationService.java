@@ -43,6 +43,10 @@ public class ClinicalDocumentAiAuthorizationService {
         requireAccess("REPAIR_MEMORY", tenantId, documentId, false);
     }
 
+    public void requireFindingReviewAccess(UUID tenantId, UUID documentId) {
+        requireAccess("REVIEW_FINDINGS", tenantId, documentId, false);
+    }
+
     private void requireAccess(String action, UUID tenantId, UUID documentId, boolean receptionistAllowed) {
         RequestContext context = RequestContextHolder.require();
         String username = username(context);
@@ -156,6 +160,7 @@ public class ClinicalDocumentAiAuthorizationService {
         return switch (action) {
             case "REPAIR_MEMORY" -> "repair";
             case "REPROCESS_AI" -> "reprocess";
+            case "REVIEW_FINDINGS" -> "review findings";
             default -> action.toLowerCase(Locale.ROOT);
         };
     }

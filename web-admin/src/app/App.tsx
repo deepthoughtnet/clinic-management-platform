@@ -20,6 +20,7 @@ import HelpCmsPage from "../pages/admin/HelpCmsPage";
 import RealtimeAiPage from "../pages/admin/RealtimeAiPage";
 import VoiceTestPage from "../pages/ai/VoiceTestPage";
 import DoctorDetailPage from "../pages/doctors/DoctorDetailPage";
+import DoctorProfilePage from "../pages/doctors/DoctorProfilePage";
 import DoctorAvailabilityPage from "../pages/doctors/DoctorAvailabilityPage";
 import PatientsPage from "../pages/patients/PatientsPage";
 import PatientFormPage from "../pages/patients/PatientFormPage";
@@ -29,6 +30,7 @@ import DayBoardPage from "../pages/appointments/DayBoardPage";
 import QueuePage from "../pages/appointments/QueuePage";
 import ConsultationsPage from "../pages/consultations/ConsultationsPage";
 import ConsultationWorkspacePage from "../pages/consultations/ConsultationWorkspacePage";
+import ClinicalDocumentFindingReviewPage from "../pages/consultations/ClinicalDocumentFindingReviewPage";
 import PrescriptionsPage from "../pages/prescriptions/PrescriptionsPage";
 import BillsPage from "../pages/billing/BillsPage";
 import CashCounterPage from "../pages/finance/CashCounterPage";
@@ -492,6 +494,18 @@ function AuthedApp() {
             </PathnameKeyedRoute>
           }
         />
+        <Route
+          path="/consultations/:id/ai-findings-review"
+          element={
+            <PathnameKeyedRoute>
+              <FeatureGate featureId="consultations">
+                <TenantRoleGate rolesAny={["DOCTOR"]}>
+                  <ClinicalDocumentFindingReviewPage />
+                </TenantRoleGate>
+              </FeatureGate>
+            </PathnameKeyedRoute>
+          }
+        />
         <Route path="/prescriptions" element={<PathnameKeyedRoute><FeatureGate featureId="prescriptions"><PrescriptionsPage /></FeatureGate></PathnameKeyedRoute>} />
         <Route path="/billing" element={<PathnameKeyedRoute><RouteAccessGate><FeatureGate featureId="billing"><BillsPage /></FeatureGate></RouteAccessGate></PathnameKeyedRoute>} />
         <Route path="/finance/cash-counter" element={<PathnameKeyedRoute><RouteAccessGate><FeatureGate featureId="cash-counter"><CashCounterPage /></FeatureGate></RouteAccessGate></PathnameKeyedRoute>} />
@@ -695,6 +709,7 @@ function AuthedApp() {
         <Route path="/ai/voice-test" element={<PathnameKeyedRoute><PlatformAdminGate><Navigate to="/platform/voice-test" replace /></PlatformAdminGate></PathnameKeyedRoute>} />
         <Route path="/doctors/availability" element={<FeatureGate featureId="doctor-availability"><DoctorAvailabilityPage /></FeatureGate>} />
         <Route path="/doctors/:id" element={<FeatureGate featureId="appointments"><DoctorDetailPage /></FeatureGate>} />
+        <Route path="/doctors/:id/profile" element={<FeatureGate featureId="appointments"><DoctorProfilePage /></FeatureGate>} />
         <Route path="*" element={<Navigate to={resolveTenantLandingPage(auth)} replace />} />
           </Routes>
         </RouteErrorBoundary>

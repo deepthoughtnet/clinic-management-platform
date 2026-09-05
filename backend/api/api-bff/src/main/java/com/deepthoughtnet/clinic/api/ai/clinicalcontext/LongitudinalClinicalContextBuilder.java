@@ -187,6 +187,9 @@ final class LongitudinalClinicalContextBuilder {
 
             double change = newer.numericValue() - older.numericValue();
             String direction = trendDirection(definition, change);
+            if ("egfr".equals(definition.key()) && isMinorNormalRangeEgfrChange(older, newer, change)) {
+                direction = "STABLE";
+            }
             String interpretation = clinicalInterpretation(definition, direction);
             trends.add(new ClinicalContextResponse.LabTrend(
                     definition.key(),
@@ -526,8 +529,7 @@ final class LongitudinalClinicalContextBuilder {
         }
         String haystack = joinSegments(
                 firstNonBlank(document.getTitle(), ""),
-                firstNonBlank(document.getDescription(), ""),
-                firstNonBlank(extractDocumentSummary(document), "")
+                firstNonBlank(document.getDescription(), "")
         );
         return IMAGING_ALIASES.stream().anyMatch(alias -> containsAny(haystack, alias));
     }
@@ -535,10 +537,18 @@ final class LongitudinalClinicalContextBuilder {
     private boolean isChestImagingDocument(ClinicalDocumentEntity document) {
         String haystack = joinSegments(
                 firstNonBlank(document == null ? null : document.getTitle(), ""),
-                firstNonBlank(document == null ? null : document.getDescription(), ""),
-                firstNonBlank(extractDocumentSummary(document), "")
+                firstNonBlank(document == null ? null : document.getDescription(), "")
         );
         return CHEST_ALIASES.stream().anyMatch(alias -> containsAny(haystack, alias));
+    }
+
+    private boolean isMinorNormalRangeEgfrChange(Observation older, Observation newer, double change) {
+        if (older == null || newer == null) {
+            return false;
+        }
+        return older.numericValue() >= 60d
+                && newer.numericValue() >= 60d
+                && Math.abs(change) < 5d;
     }
 
     private boolean hasRenalDocument(List<ClinicalDocumentEntity> documents) {

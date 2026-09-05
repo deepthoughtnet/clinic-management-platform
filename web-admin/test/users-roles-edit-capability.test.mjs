@@ -22,3 +22,20 @@ test("users roles page exposes edit modal for staff details", () => {
   assert.ok(source.includes("You can view users, but user management is restricted."));
   assert.ok(source.includes("canEditUser"));
 });
+
+test("users roles page keeps the staff table inside its own horizontal scroll container", () => {
+  const source = readWebAdminSource("pages/settings/UsersRolesPage.tsx");
+  assert.ok(source.includes("TableContainer"));
+  assert.ok(source.includes('overflowX: "auto"'));
+  assert.ok(source.includes('maxWidth: "100%"'));
+  assert.ok(source.includes('minWidth: 0'));
+  assert.ok(source.includes("minWidth: 1180"));
+});
+
+test("users roles page sanitizes mobile input to ten digits with numeric keyboard hints", () => {
+  const source = readWebAdminSource("pages/settings/UsersRolesPage.tsx");
+  assert.ok(source.includes("sanitizeIndianMobileInput(e.target.value)"));
+  assert.ok(source.includes('inputMode: "numeric"'));
+  assert.ok(source.includes("maxLength: 10"));
+  assert.ok(source.includes("normalizeIndianMobileInput"));
+});

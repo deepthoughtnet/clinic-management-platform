@@ -2167,6 +2167,33 @@ class ClinicalDocumentAiExtractionServiceTest {
     }
 
     @Test
+    void canonicalLabKeyDoesNotCollapseCompoundAnalytes() {
+        ClinicalDocumentAiExtractionService service = new ClinicalDocumentAiExtractionService(
+                mock(ClinicalAiJobRepository.class),
+                mock(ClinicalDocumentRepository.class),
+                mock(ClinicalDocumentService.class),
+                mock(PatientLongitudinalMemoryService.class),
+                mock(AppUserRepository.class),
+                mock(ClinicalDocumentTextExtractionService.class),
+                mock(AiDoctorCopilotService.class),
+                mock(ObjectStorageService.class),
+                mock(AuditEventPublisher.class),
+                mock(AgentExecutionLogService.class),
+                mock(PatientService.class),
+                mock(TenantNotificationSettingsService.class),
+                new ObjectMapper(),
+                1000L,
+                3
+        );
+
+        assertThat((String) ReflectionTestUtils.invokeMethod(service, "canonicalLabKey", "Hemoglobin")).isEqualTo("hemoglobin");
+        assertThat((String) ReflectionTestUtils.invokeMethod(service, "canonicalLabKey", "Reticulocyte Hemoglobin Equivalent (RET-He)")).isNull();
+        assertThat((String) ReflectionTestUtils.invokeMethod(service, "canonicalLabKey", "Platelets")).isEqualTo("platelets");
+        assertThat((String) ReflectionTestUtils.invokeMethod(service, "canonicalLabKey", "Immature Platelet Fraction (IPF)")).isNull();
+        assertThat((String) ReflectionTestUtils.invokeMethod(service, "canonicalLabKey", "Glucose-6-Phosphate")).isNull();
+    }
+
+    @Test
     void processPreservesHbA1cProviderRowsAcrossSupportedNameFieldsAndAliases() {
         ClinicalAiJobRepository jobRepository = mock(ClinicalAiJobRepository.class);
         ClinicalDocumentRepository documentRepository = mock(ClinicalDocumentRepository.class);

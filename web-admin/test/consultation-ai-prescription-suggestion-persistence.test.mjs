@@ -20,6 +20,7 @@ test("consultation prescription suggestions persist across refresh and autosave 
   assert.ok(source.includes("aiPrescriptionModel"));
   assert.ok(source.includes("aiPrescriptionStale"));
   assert.ok(source.includes("Clear suggestions"));
+  assert.ok(source.includes("draft.message || parsed.summary || \"AI returned an invalid response. Please retry.\""));
   assert.ok(source.includes("setAiPrescriptionSuggestion(null);"));
   assert.ok(source.includes("setAiPrescriptionItems([]);"));
   assert.ok(source.includes("This suggestion set is stale for the current consultation context. Regenerate before relying on it."));

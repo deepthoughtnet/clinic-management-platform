@@ -1,6 +1,7 @@
 import * as React from "react";
 import { Box, Typography } from "@mui/material";
 import { alpha } from "@mui/material/styles";
+import { Link as RouterLink, useLocation } from "react-router-dom";
 
 import DoctorAvatar from "./DoctorAvatar";
 
@@ -28,6 +29,12 @@ export interface DoctorIdentityCardProps {
   variant?: "avatar" | "compact" | "full";
   avatarSize?: number;
   loading?: boolean;
+  profileReturnTo?: {
+    pathname: string;
+    search?: string;
+    hash?: string;
+    state?: unknown;
+  } | null;
 }
 
 function doctorDisplayName(name: string | null | undefined, fallback = "Doctor") {
@@ -59,13 +66,21 @@ export default function DoctorIdentityCard({
   variant = "full",
   avatarSize = 88,
   loading = false,
+  profileReturnTo,
 }: DoctorIdentityCardProps) {
+  const location = useLocation();
   const placeholder = isAllDoctors(doctor);
   const resolvedName = doctor?.fullName?.trim() || (placeholder ? "All Doctors" : doctorId || "Doctor");
   const resolvedAvatarSize = variant === "avatar" ? avatarSize : Math.max(80, avatarSize);
   const containerPadding = variant === "avatar" ? 0 : 1.5;
+  const profileTo = doctorId && !placeholder ? `/doctors/${doctorId}/profile` : null;
+  const returnTo = profileReturnTo || {
+    pathname: location.pathname,
+    search: location.search,
+    hash: location.hash,
+  };
 
-  return (
+  const card = (
     <Box
       sx={{
         display: "flex",
@@ -121,4 +136,26 @@ export default function DoctorIdentityCard({
       )}
     </Box>
   );
+
+  return profileTo ? (
+    <Box
+      component={RouterLink}
+      to={profileTo}
+      state={{ returnTo }}
+      aria-label={`View profile for ${doctorDisplayName(resolvedName, "Doctor")}`}
+      title={`View profile for ${doctorDisplayName(resolvedName, "Doctor")}`}
+      sx={{
+        textDecoration: "none",
+        color: "inherit",
+        display: "inline-flex",
+        cursor: "pointer",
+        "&:focus-visible": {
+          outline: (theme) => `2px solid ${theme.palette.primary.main}`,
+          outlineOffset: 2,
+        },
+      }}
+    >
+      {card}
+    </Box>
+  ) : card;
 }

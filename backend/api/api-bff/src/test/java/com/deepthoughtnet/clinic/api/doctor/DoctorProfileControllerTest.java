@@ -68,7 +68,7 @@ class DoctorProfileControllerTest {
                 "DOCTOR",
                 "ACTIVE",
                 "DOC-001",
-                "9999999999",
+                "8888888888",
                 null,
                 OffsetDateTime.parse("2026-07-06T04:00:00Z"),
                 OffsetDateTime.parse("2026-07-06T04:00:00Z"),
@@ -87,8 +87,18 @@ class DoctorProfileControllerTest {
 
         mockMvc.perform(get("/api/doctors/{doctorUserId}/profile", doctorUserId))
                 .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("\"mobile\":\"9999999999\"")))
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("\"photoUrl\":\"/api/doctors/" + doctorUserId + "/photo?v=1751774400000\"")))
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("\"photoSizeBytes\":2048")));
+    }
+
+    @Test
+    void getProfileFallsBackToTenantUserMobileWhenProfileIsMissing() throws Exception {
+        when(doctorProfileService.findByDoctorUserIdWithPhotoRepair(tenantId, doctorUserId)).thenReturn(java.util.Optional.empty());
+
+        mockMvc.perform(get("/api/doctors/{doctorUserId}/profile", doctorUserId))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("\"mobile\":\"8888888888\"")));
     }
 
     @Test

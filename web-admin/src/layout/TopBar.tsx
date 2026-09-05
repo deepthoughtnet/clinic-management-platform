@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { Link as RouterLink, useLocation, useNavigate } from "react-router-dom";
 import { alpha } from "@mui/material/styles";
 import {
   Alert,
@@ -514,6 +514,7 @@ export default function TopBar({ onToggleSidebar, drawerWidth, isMobile }: { onT
   const location = useLocation();
   const helpContext = React.useContext(HelpContext);
   const isPlatformAdmin = auth.rolesUpper.includes("PLATFORM_ADMIN");
+  const isDoctor = auth.rolesUpper.includes("DOCTOR") || (auth.tenantRole || "").toUpperCase() === "DOCTOR";
   const primaryRole = friendlyRoleLabel(auth);
   const [platformTenantOptions, setPlatformTenantOptions] = React.useState<Array<{ tenantId: string; tenantCode?: string | null; tenantName?: string | null }>>([]);
   const tenantOptions = (isPlatformAdmin && platformTenantOptions.length > 0 ? platformTenantOptions : auth.activeTenantMemberships)
@@ -545,6 +546,12 @@ export default function TopBar({ onToggleSidebar, drawerWidth, isMobile }: { onT
       cancelled = true;
     };
   }, [auth.accessToken, isPlatformAdmin]);
+  const doctorProfileReturnTo = React.useMemo(() => ({
+    pathname: location.pathname,
+    search: location.search,
+    hash: location.hash,
+  }), [location.hash, location.pathname, location.search]);
+  const doctorProfilePath = isDoctor && auth.appUserId ? `/doctors/${auth.appUserId}/profile` : null;
 
   return (
     <AppBar
@@ -679,22 +686,68 @@ export default function TopBar({ onToggleSidebar, drawerWidth, isMobile }: { onT
           >
             Help
           </Button>
-          <Box
-            sx={{
-              width: 30,
-              height: 30,
-              borderRadius: "50%",
-              display: "grid",
-              placeItems: "center",
-              bgcolor: alpha("#0f766e", 0.1),
-              color: "primary.main",
-              fontWeight: 900,
-              fontSize: 13,
-            }}
-          >
-            {(auth.username || "U").slice(0, 1).toUpperCase()}
-          </Box>
-          <Typography variant="body2">{auth.username}</Typography>
+          {doctorProfilePath ? (
+            <Box
+              component={RouterLink}
+              to={doctorProfilePath}
+              state={{ returnTo: doctorProfileReturnTo }}
+              aria-label="View my doctor profile"
+              title="View my doctor profile"
+              sx={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 1,
+                textDecoration: "none",
+                color: "inherit",
+                cursor: "pointer",
+                borderRadius: 999,
+                px: 0.75,
+                py: 0.25,
+                "&:focus-visible": {
+                  outline: (theme) => `2px solid ${theme.palette.primary.main}`,
+                  outlineOffset: 2,
+                },
+              }}
+            >
+              <Box
+                sx={{
+                  width: 30,
+                  height: 30,
+                  borderRadius: "50%",
+                  display: "grid",
+                  placeItems: "center",
+                  bgcolor: alpha("#0f766e", 0.1),
+                  color: "primary.main",
+                  fontWeight: 900,
+                  fontSize: 13,
+                }}
+              >
+                {(auth.username || "U").slice(0, 1).toUpperCase()}
+              </Box>
+              <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                {auth.username}
+              </Typography>
+            </Box>
+          ) : (
+            <>
+              <Box
+                sx={{
+                  width: 30,
+                  height: 30,
+                  borderRadius: "50%",
+                  display: "grid",
+                  placeItems: "center",
+                  bgcolor: alpha("#0f766e", 0.1),
+                  color: "primary.main",
+                  fontWeight: 900,
+                  fontSize: 13,
+                }}
+              >
+                {(auth.username || "U").slice(0, 1).toUpperCase()}
+              </Box>
+              <Typography variant="body2">{auth.username}</Typography>
+            </>
+          )}
           <Button color="inherit" onClick={() => auth.logout()}>
             Logout
           </Button>

@@ -28,7 +28,7 @@ import {
 } from "@mui/material";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import { alpha, type Theme } from "@mui/material/styles";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { doctorAvailabilitySchema, doctorUnavailabilitySchema, firstZodError, mapZodErrors } from "@deepthoughtnet/form-validation-kit";
 import { useAuth } from "../../auth/useAuth";
 import { CompactEmptyState, WorkflowStrip } from "../../components/compact/CompactUi";
@@ -91,6 +91,12 @@ type DoctorOption = {
 };
 
 type DoctorIdentityOption = DoctorOption & DoctorIdentityCardDoctor;
+
+type DoctorProfileReturnContext = {
+  doctorUserId?: string;
+  date?: string;
+  viewMode?: ViewMode;
+};
 
 type CalendarSlotRow = {
   date: string;
@@ -414,15 +420,24 @@ function quickChipLabel(count: number, label: string) {
 
 export default function DoctorAvailabilityPage() {
   const auth = useAuth();
+  const location = useLocation();
   const navigate = useNavigate();
   const role = (auth.tenantRole || "").toUpperCase();
   const isDoctor = role === "DOCTOR";
   const canOpenConsultationWorkspace = isDoctor && auth.hasPermission("consultation.read");
+  const restoreContext = React.useMemo(() => {
+    const state = location.state as { doctorProfileContext?: DoctorProfileReturnContext } | null | undefined;
+    const context = state?.doctorProfileContext || null;
+    if (!context) {
+      return null;
+    }
+    return context;
+  }, [location.state]);
 
   const [users, setUsers] = React.useState<ClinicUser[]>([]);
-  const [selectedDoctorId, setSelectedDoctorId] = React.useState("");
-  const [viewMode, setViewMode] = React.useState<ViewMode>("day");
-  const [date, setDate] = React.useState(() => getClinicDateKey("Asia/Kolkata"));
+  const [selectedDoctorId, setSelectedDoctorId] = React.useState(() => restoreContext?.doctorUserId || "");
+  const [viewMode, setViewMode] = React.useState<ViewMode>(() => restoreContext?.viewMode || "day");
+  const [date, setDate] = React.useState(() => restoreContext?.date || getClinicDateKey("Asia/Kolkata"));
 
   const [availabilityRows, setAvailabilityRows] = React.useState<DoctorAvailability[]>([]);
   const [slotsByKey, setSlotsByKey] = React.useState<Record<string, DoctorAvailabilitySlot[]>>({});
@@ -1377,7 +1392,23 @@ export default function DoctorAvailabilityPage() {
                         ml: "auto",
                       }}
                     >
-                      <DoctorIdentityCard doctorId={selectedDoctorIdentity.id} doctor={selectedDoctorIdentity} variant="avatar" />
+                      <DoctorIdentityCard
+                        doctorId={selectedDoctorIdentity.id}
+                        doctor={selectedDoctorIdentity}
+                        variant="avatar"
+                        profileReturnTo={{
+                          pathname: location.pathname,
+                          search: location.search,
+                          hash: location.hash,
+                          state: {
+                            doctorProfileContext: {
+                              doctorUserId: isDoctor ? auth.appUserId || "" : selectedDoctorId,
+                              date,
+                              viewMode,
+                            },
+                          },
+                        }}
+                      />
                     </Box>
                   </Box>
 

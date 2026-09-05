@@ -17,10 +17,13 @@ import com.deepthoughtnet.clinic.platform.storage.ObjectStorageService;
 import com.deepthoughtnet.clinic.identity.db.AppUserRepository;
 import java.time.LocalDate;
 import java.lang.reflect.Field;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.server.ResponseStatusException;
+
+import static org.assertj.core.api.Assertions.assertThat;
 
 class ClinicalDocumentServiceTest {
     @Test
@@ -260,6 +263,181 @@ class ClinicalDocumentServiceTest {
         org.assertj.core.api.Assertions.assertThat(document.getSizeBytes()).isEqualTo(8L);
     }
 
+    @Test
+    void uploadRepairsRadiologyHintedDocumentsToRadiologyReport() {
+        ClinicalDocumentRepository repository = mock(ClinicalDocumentRepository.class);
+        ObjectStorageService storageService = mock(ObjectStorageService.class);
+        AppUserRepository appUserRepository = mock(AppUserRepository.class);
+        AuditEventPublisher auditEventPublisher = mock(AuditEventPublisher.class);
+        ClinicalDocumentService service = new ClinicalDocumentService(repository, storageService, appUserRepository, auditEventPublisher, "clinic-documents");
+
+        UUID tenantId = UUID.randomUUID();
+        UUID patientId = UUID.randomUUID();
+        UUID consultationId = UUID.randomUUID();
+        UUID actorId = UUID.randomUUID();
+        when(appUserRepository.findByTenantIdAndId(any(), any())).thenReturn(Optional.empty());
+        when(repository.existsByTenantIdAndStorageObjectKey(any(), anyString())).thenReturn(false);
+        when(repository.save(any(ClinicalDocumentEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(storageService.buildPatientDocumentStorageKey(any(), any(), any(), anyString())).thenReturn("tenant/patients/documents/chest-xray.pdf");
+
+        var record = service.upload(new ClinicalDocumentUploadCommand(
+                tenantId,
+                patientId,
+                consultationId,
+                actorId,
+                ClinicalDocumentType.EXTERNAL_LAB_REPORT,
+                "Chest X-ray report",
+                LocalDate.parse("2026-06-11"),
+                "DOCTOR",
+                "CONSULTATION",
+                consultationId.toString(),
+                "INTERNAL_ONLY",
+                "2026-06-11_Chest_XRay.pdf",
+                "application/pdf",
+                new byte[] {1, 2, 3, 4},
+                null
+        ));
+
+        assertThat(record.documentType()).isEqualTo(ClinicalDocumentType.RADIOLOGY_REPORT);
+        assertThat(record.title()).isEqualTo("Chest X-ray report");
+        assertThat(record.originalFilename()).isEqualTo("2026-06-11_Chest_XRay.pdf");
+    }
+
+    @Test
+    void getRepairsRadiologyHintedExistingDocumentTypeOnRead() {
+        ClinicalDocumentRepository repository = mock(ClinicalDocumentRepository.class);
+        ObjectStorageService storageService = mock(ObjectStorageService.class);
+        AppUserRepository appUserRepository = mock(AppUserRepository.class);
+        AuditEventPublisher auditEventPublisher = mock(AuditEventPublisher.class);
+        ClinicalDocumentService service = new ClinicalDocumentService(repository, storageService, appUserRepository, auditEventPublisher, "clinic-documents");
+
+        UUID tenantId = UUID.randomUUID();
+        UUID patientId = UUID.randomUUID();
+        UUID documentId = UUID.randomUUID();
+        ClinicalDocumentEntity document = ClinicalDocumentEntity.create(
+                documentId,
+                tenantId,
+                patientId,
+                UUID.randomUUID(),
+                null,
+                UUID.randomUUID(),
+                ClinicalDocumentType.EXTERNAL_LAB_REPORT,
+                "Chest X-ray report",
+                "Chest X-ray of the chest",
+                LocalDate.parse("2026-06-11"),
+                "Doctor One",
+                "DOCTOR",
+                "2026-06-11_Chest_XRay.pdf",
+                "application/pdf",
+                2048L,
+                "clinic-documents",
+                "tenant/patients/documents/chest-xray.pdf",
+                "checksum",
+                "INTERNAL_ONLY",
+                "UNVERIFIED",
+                "COMPLETED",
+                "COMPLETED",
+                "CONSULTATION",
+                UUID.randomUUID().toString(),
+                UUID.randomUUID(),
+                UUID.randomUUID()
+        );
+        when(repository.findByTenantIdAndIdAndActiveTrue(tenantId, documentId)).thenReturn(Optional.of(document));
+        when(repository.save(any(ClinicalDocumentEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        var record = service.get(tenantId, documentId);
+
+        assertThat(record.documentType()).isEqualTo(ClinicalDocumentType.RADIOLOGY_REPORT);
+        verify(repository).save(document);
+    }
+
+    @Test
+    void listByPatientRepairsRadiologyHintedDocumentsBeforeDocumentTypeFiltering() {
+        ClinicalDocumentRepository repository = mock(ClinicalDocumentRepository.class);
+        ObjectStorageService storageService = mock(ObjectStorageService.class);
+        AppUserRepository appUserRepository = mock(AppUserRepository.class);
+        AuditEventPublisher auditEventPublisher = mock(AuditEventPublisher.class);
+        ClinicalDocumentService service = new ClinicalDocumentService(repository, storageService, appUserRepository, auditEventPublisher, "clinic-documents");
+
+        UUID tenantId = UUID.randomUUID();
+        UUID patientId = UUID.randomUUID();
+        UUID documentId = UUID.randomUUID();
+        ClinicalDocumentEntity document = ClinicalDocumentEntity.create(
+                documentId,
+                tenantId,
+                patientId,
+                UUID.randomUUID(),
+                null,
+                UUID.randomUUID(),
+                ClinicalDocumentType.EXTERNAL_LAB_REPORT,
+                "Chest X-ray report",
+                "Chest X-ray of the chest",
+                LocalDate.parse("2026-06-11"),
+                "Doctor One",
+                "DOCTOR",
+                "2026-06-11_Chest_XRay.pdf",
+                "application/pdf",
+                2048L,
+                "clinic-documents",
+                "tenant/patients/documents/chest-xray.pdf",
+                "checksum",
+                "INTERNAL_ONLY",
+                "UNVERIFIED",
+                "COMPLETED",
+                "COMPLETED",
+                "CONSULTATION",
+                UUID.randomUUID().toString(),
+                UUID.randomUUID(),
+                UUID.randomUUID()
+        );
+        when(repository.findByTenantIdAndPatientIdAndActiveTrueOrderByCreatedAtDesc(tenantId, patientId)).thenReturn(List.of(document));
+        when(repository.save(any(ClinicalDocumentEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        List<ClinicalDocumentRecord> radiology = service.listByPatient(tenantId, patientId, ClinicalDocumentType.RADIOLOGY_REPORT, null, null, null, null, null);
+
+        assertThat(radiology).hasSize(1);
+        assertThat(radiology.getFirst().documentType()).isEqualTo(ClinicalDocumentType.RADIOLOGY_REPORT);
+        verify(repository).save(document);
+    }
+
+    @Test
+    void uploadKeepsActualLabDocumentAsExternalLabReport() {
+        ClinicalDocumentRepository repository = mock(ClinicalDocumentRepository.class);
+        ObjectStorageService storageService = mock(ObjectStorageService.class);
+        AppUserRepository appUserRepository = mock(AppUserRepository.class);
+        AuditEventPublisher auditEventPublisher = mock(AuditEventPublisher.class);
+        ClinicalDocumentService service = new ClinicalDocumentService(repository, storageService, appUserRepository, auditEventPublisher, "clinic-documents");
+
+        UUID tenantId = UUID.randomUUID();
+        UUID patientId = UUID.randomUUID();
+        UUID consultationId = UUID.randomUUID();
+        UUID actorId = UUID.randomUUID();
+        when(appUserRepository.findByTenantIdAndId(any(), any())).thenReturn(Optional.empty());
+        when(repository.existsByTenantIdAndStorageObjectKey(any(), anyString())).thenReturn(false);
+        when(repository.save(any(ClinicalDocumentEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(storageService.buildPatientDocumentStorageKey(any(), any(), any(), anyString())).thenReturn("tenant/patients/documents/cbc-crp.pdf");
+
+        var record = service.upload(new ClinicalDocumentUploadCommand(
+                tenantId,
+                patientId,
+                consultationId,
+                actorId,
+                ClinicalDocumentType.EXTERNAL_LAB_REPORT,
+                "2026-08-23_CBC_CRP",
+                LocalDate.parse("2026-08-23"),
+                "LABORATORY",
+                "LAB",
+                consultationId.toString(),
+                "PATIENT_VISIBLE",
+                "2026-08-23_CBC_CRP.pdf",
+                "application/pdf",
+                new byte[] {1, 2, 3, 4},
+                null
+        ));
+
+        assertThat(record.documentType()).isEqualTo(ClinicalDocumentType.EXTERNAL_LAB_REPORT);
+    }
+
     private static void setField(Object target, String fieldName, Object value) {
         try {
             Field field = target.getClass().getDeclaredField(fieldName);
@@ -269,4 +447,5 @@ class ClinicalDocumentServiceTest {
             throw new IllegalStateException("Failed to set test field " + fieldName, ex);
         }
     }
+
 }

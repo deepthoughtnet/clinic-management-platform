@@ -58,6 +58,27 @@ public class PatientLongitudinalConceptEntity {
     @Column(name = "value_unit", length = 64)
     private String valueUnit;
 
+    @Column(name = "original_value_text", columnDefinition = "text")
+    private String originalValueText;
+
+    @Column(name = "original_value_unit", length = 64)
+    private String originalValueUnit;
+
+    @Column(name = "original_reference_range", columnDefinition = "text")
+    private String originalReferenceRange;
+
+    @Column(name = "original_flag", length = 32)
+    private String originalFlag;
+
+    @Column(name = "reviewed_reference_range", columnDefinition = "text")
+    private String reviewedReferenceRange;
+
+    @Column(name = "reviewed_flag", length = 32)
+    private String reviewedFlag;
+
+    @Column(name = "review_decision", length = 32)
+    private String reviewDecision;
+
     @Column(name = "evidence_text", columnDefinition = "text")
     private String evidenceText;
 
@@ -124,6 +145,8 @@ public class PatientLongitudinalConceptEntity {
         entity.conceptLabel = conceptLabel;
         entity.valueText = valueText;
         entity.valueUnit = valueUnit;
+        entity.originalValueText = valueText;
+        entity.originalValueUnit = valueUnit;
         entity.evidenceText = evidenceText;
         entity.sourceSummary = sourceSummary;
         entity.verificationStatus = verificationStatus;
@@ -146,6 +169,13 @@ public class PatientLongitudinalConceptEntity {
     public String getConceptLabel() { return conceptLabel; }
     public String getValueText() { return valueText; }
     public String getValueUnit() { return valueUnit; }
+    public String getOriginalValueText() { return originalValueText; }
+    public String getOriginalValueUnit() { return originalValueUnit; }
+    public String getOriginalReferenceRange() { return originalReferenceRange; }
+    public String getOriginalFlag() { return originalFlag; }
+    public String getReviewedReferenceRange() { return reviewedReferenceRange; }
+    public String getReviewedFlag() { return reviewedFlag; }
+    public String getReviewDecision() { return reviewDecision; }
     public String getEvidenceText() { return evidenceText; }
     public String getSourceSummary() { return sourceSummary; }
     public String getVerificationStatus() { return verificationStatus; }
@@ -165,5 +195,37 @@ public class PatientLongitudinalConceptEntity {
         this.overrideReason = overrideReason;
         this.reviewedAt = OffsetDateTime.now();
         this.updatedAt = this.reviewedAt;
+    }
+
+    public void initializeReviewMetadata(String referenceRange, String flag) {
+        if (this.originalReferenceRange == null) {
+            this.originalReferenceRange = referenceRange;
+        }
+        if (this.originalFlag == null) {
+            this.originalFlag = flag;
+        }
+    }
+
+    public void applyFindingReview(String decision,
+                                   String valueText,
+                                   String valueUnit,
+                                   String referenceRange,
+                                   String flag,
+                                   UUID reviewerAppUserId,
+                                   String reviewNotes) {
+        this.valueText = valueText;
+        this.valueUnit = valueUnit;
+        this.reviewedReferenceRange = referenceRange;
+        this.reviewedFlag = flag;
+        this.reviewDecision = decision;
+        this.reviewedByAppUserId = reviewerAppUserId;
+        this.reviewNotes = reviewNotes;
+        this.reviewedAt = OffsetDateTime.now();
+        this.updatedAt = this.reviewedAt;
+    }
+
+    public void finalizeVerificationStatus(String verificationStatus) {
+        this.verificationStatus = verificationStatus;
+        this.updatedAt = OffsetDateTime.now();
     }
 }

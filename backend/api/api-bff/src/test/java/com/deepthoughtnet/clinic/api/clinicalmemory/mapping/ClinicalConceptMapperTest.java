@@ -15,6 +15,29 @@ import org.junit.jupiter.api.Test;
 class ClinicalConceptMapperTest {
 
     @Test
+    void preservesUnmappedCompoundAnalytesInsteadOfPromotingThem() {
+        ClinicalConceptMapper mapper = new ClinicalConceptMapper();
+        ClinicalDocumentEntity document = clinicalDocument("Mixed laboratory report", LocalDate.of(2026, 1, 8));
+
+        List<ClinicalConceptMapper.MappedConcept> concepts = mapper.map(document, Map.of(
+                "factualFindings", Map.of("labResults", List.of(
+                        Map.of("testName", "Hemoglobin", "canonicalKey", "hemoglobin", "value", "14.1", "unit", "g/dL", "evidenceText", "Hemoglobin 14.1 g/dL"),
+                        Map.of("testName", "Reticulocyte Hemoglobin Equivalent (RET-He)", "canonicalKey", "unmapped_reticulocyte_hemoglobin_equivalent_ret_he", "value", "31.4", "unit", "pg", "evidenceText", "Reticulocyte Hemoglobin Equivalent (RET-He) 31.4 pg"),
+                        Map.of("testName", "Platelets", "canonicalKey", "platelets", "value", "248", "unit", "10^3/uL", "evidenceText", "Platelets 248 10^3/uL"),
+                        Map.of("testName", "Immature Platelet Fraction (IPF)", "canonicalKey", "unmapped_immature_platelet_fraction_ipf", "value", "3.8", "unit", "%", "evidenceText", "Immature Platelet Fraction (IPF) 3.8 %")
+                ))
+        ), "", new java.math.BigDecimal("0.5"));
+
+        assertThat(concepts).filteredOn(c -> "LAB_RESULT".equals(c.family()))
+                .extracting(ClinicalConceptMapper.MappedConcept::key)
+                .containsExactlyInAnyOrder(
+                        "hemoglobin",
+                        "unmapped_reticulocyte_hemoglobin_equivalent_ret_he",
+                        "platelets",
+                        "unmapped_immature_platelet_fraction_ipf");
+    }
+
+    @Test
     void mapsDiabetesFollowUpLabValuesIntoNormalizedLongitudinalConcepts() {
         ClinicalDocumentEntity document = clinicalDocument(
                 "Diabetes Follow-up Lab Report Retest 1",

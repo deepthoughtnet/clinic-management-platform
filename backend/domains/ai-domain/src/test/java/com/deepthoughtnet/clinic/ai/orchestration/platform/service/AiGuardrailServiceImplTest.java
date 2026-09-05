@@ -172,4 +172,23 @@ class AiGuardrailServiceImplTest {
         assertThat(settings.effectiveMaxTokens()).isEqualTo(4096);
         assertThat(settings.compactMode()).isFalse();
     }
+
+    @Test
+    void clinicalDocumentExtractionKeepsRequestedOutputBudgetForLargePrompts() {
+        AiGuardrailProfileRepository repository = mock(AiGuardrailProfileRepository.class);
+        UUID tenantId = UUID.randomUUID();
+        when(repository.findByTenantIdAndProfileKey(tenantId, "default")).thenReturn(Optional.empty());
+        AiGuardrailServiceImpl service = new AiGuardrailServiceImpl(repository, 2048);
+        AiOrchestrationRequest request = new AiOrchestrationRequest(
+                AiProductCode.CLINIC, tenantId, UUID.randomUUID(), AiTaskType.CLINICAL_DOCUMENT_EXTRACTION,
+                "clinic.clinical.document-extraction.v1", Map.of(), List.of(), 4096, 0.1d,
+                "corr-4", "clinical_document_extraction");
+
+        AiGuardrailService.ExecutionSettings settings = service.resolveExecutionSettings(
+                tenantId, "x".repeat(9000), request, null);
+
+        assertThat(settings.guardrailLimit()).isEqualTo(4096);
+        assertThat(settings.effectiveMaxTokens()).isEqualTo(4096);
+        assertThat(settings.compactMode()).isTrue();
+    }
 }

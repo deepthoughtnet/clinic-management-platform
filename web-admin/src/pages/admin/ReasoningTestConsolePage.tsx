@@ -22,6 +22,7 @@ import {
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth";
+import { humanizeClinicalReasoningActionType } from "../consultations/clinicalReasoningActionLabel";
 import {
   generateClinicalReasoning,
   getClinicalContext,
@@ -414,13 +415,31 @@ export default function ReasoningTestConsolePage() {
                   <Box>
                     <Typography variant="caption" color="text.secondary">Recommended tests</Typography>
                     <Stack spacing={0.5} sx={{ mt: 0.5 }}>
-                      {reasoningResult.recommendedTests.length ? reasoningResult.recommendedTests.map((item, index) => <Typography key={`test-${index}`} variant="body2">• {item.name || item.reason || "-"}{item.actionType ? ` · ${item.actionType.replaceAll("_", " ")}` : ""}{sourceLabel(item)}</Typography>) : <Typography variant="body2" color="text.secondary">No test suggestions returned.</Typography>}
+                      {reasoningResult.recommendedTests.length ? reasoningResult.recommendedTests.map((item, index) => {
+                        const actionLabel = humanizeClinicalReasoningActionType(item.actionType);
+                        return (
+                          <Typography key={`test-${index}`} variant="body2">
+                            • {item.name || item.reason || "-"}
+                            {actionLabel ? ` · ${actionLabel}` : ""}
+                            {sourceLabel(item)}
+                          </Typography>
+                        );
+                      }) : <Typography variant="body2" color="text.secondary">No test suggestions returned.</Typography>}
                     </Stack>
                   </Box>
                   <Box>
                     <Typography variant="caption" color="text.secondary">Safety notes</Typography>
                     <Stack spacing={0.5} sx={{ mt: 0.5 }}>
-                      {reasoningResult.safetyNotes.length ? reasoningResult.safetyNotes.map((item, index) => <Typography key={`note-${index}`} variant="body2">• {item.message || item.action || "-"}{item.actionType ? ` · ${item.actionType.replaceAll("_", " ")}` : ""}{sourceLabel(item)}</Typography>) : <Typography variant="body2" color="text.secondary">No safety notes returned.</Typography>}
+                      {reasoningResult.safetyNotes.length ? reasoningResult.safetyNotes.map((item, index) => {
+                        const actionLabel = humanizeClinicalReasoningActionType(item.actionType);
+                        return (
+                          <Typography key={`note-${index}`} variant="body2">
+                            • {item.message || item.action || "-"}
+                            {actionLabel ? ` · ${actionLabel}` : ""}
+                            {sourceLabel(item)}
+                          </Typography>
+                        );
+                      }) : <Typography variant="body2" color="text.secondary">No safety notes returned.</Typography>}
                     </Stack>
                   </Box>
                 </Stack>

@@ -11,7 +11,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.deepthoughtnet.clinic.api.clinicaldocument.db.ClinicalDocumentEntity;
+import com.deepthoughtnet.clinic.api.clinicaldocument.db.ClinicalDocumentRepository;
 import com.deepthoughtnet.clinic.api.clinicaldocument.db.ClinicalDocumentType;
+import com.deepthoughtnet.clinic.api.clinicaldocument.ai.service.DeterministicLabFactParser;
 import com.deepthoughtnet.clinic.api.clinicalmemory.db.PatientLongitudinalConceptEntity;
 import com.deepthoughtnet.clinic.api.clinicalmemory.db.PatientLongitudinalConceptRepository;
 import com.deepthoughtnet.clinic.api.clinicalmemory.mapping.ClinicalConceptMapper;
@@ -144,6 +146,61 @@ class PatientLongitudinalMemoryServiceTest {
         assertThat(saved.get().getFirst().getSourceDocumentTitle()).hasSizeGreaterThan(256);
         assertThat(saved.get().stream().map(PatientLongitudinalConceptEntity::getSourceSummary).anyMatch(text -> text != null && text.length() > 256)).isTrue();
         assertThat(saved.get().stream().map(PatientLongitudinalConceptEntity::getConceptLabel).allMatch(label -> label != null && label.length() <= 256)).isTrue();
+    }
+
+    @Test
+    void buildProfileIncludesOnlyExplicitLongTermMedicationConcepts() {
+        PatientLongitudinalConceptRepository repository = mock(PatientLongitudinalConceptRepository.class);
+        PatientLongitudinalMemoryService service = new PatientLongitudinalMemoryService(repository, new ClinicalConceptMapper(), new ObjectMapper());
+
+        UUID tenantId = UUID.randomUUID();
+        UUID patientId = UUID.randomUUID();
+        ClinicalDocumentEntity document = document(tenantId, patientId, "Medication history", LocalDate.of(2026, 8, 23));
+
+        PatientLongitudinalConceptEntity shortCourseMedication = PatientLongitudinalConceptEntity.create(
+                tenantId,
+                patientId,
+                document.getId(),
+                document.getDocumentType().name(),
+                document.getTitle(),
+                document.getReportDate(),
+                "MEDICATION",
+                "paracetamol",
+                "Paracetamol",
+                "Paracetamol 500 mg",
+                null,
+                "Paracetamol 500 mg for 5 days",
+                "Clinical extraction",
+                "ACCEPTED",
+                new BigDecimal("0.92"),
+                document.getReportDate().atStartOfDay().atOffset(ZoneOffset.UTC)
+        );
+        PatientLongitudinalConceptEntity chronicMedication = PatientLongitudinalConceptEntity.create(
+                tenantId,
+                patientId,
+                document.getId(),
+                document.getDocumentType().name(),
+                document.getTitle(),
+                document.getReportDate(),
+                "MEDICATION",
+                "metformin",
+                "Metformin",
+                "Metformin 500 mg",
+                null,
+                "Long-term medication history: Metformin 500 mg daily",
+                "Long-term medications",
+                "ACCEPTED",
+                new BigDecimal("0.95"),
+                document.getReportDate().atStartOfDay().atOffset(ZoneOffset.UTC)
+        );
+
+        when(repository.findByTenantIdAndPatientIdOrderByObservedAtDescCreatedAtDesc(tenantId, patientId))
+                .thenReturn(List.of(chronicMedication, shortCourseMedication));
+
+        PatientLongitudinalMemoryProfile profile = service.buildProfile(tenantId, patientId);
+
+        assertThat(profile.longTermMedications()).extracting(LongitudinalConceptSnapshot::label).containsExactly("Metformin");
+        assertThat(profile.longTermMedications()).extracting(LongitudinalConceptSnapshot::valueText).containsExactly("Metformin 500 mg");
     }
 
     @Test
@@ -293,7 +350,7 @@ class PatientLongitudinalMemoryServiceTest {
 
         assertThat(result.status()).isEqualTo("SUCCESS");
         assertThat(saved.get()).extracting(PatientLongitudinalConceptEntity::getConceptKey)
-                .containsExactlyInAnyOrder("hba1c", "hemoglobin", "estimated_average_glucose", "diabetes_risk");
+                .containsExactlyInAnyOrder("hba1c", "hemoglobin", "estimated_average_glucose", "blood_sugar", "diabetes_risk");
         assertThat(saved.get()).filteredOn(concept -> "LAB_RESULT".equals(concept.getConceptFamily()) && "hba1c".equals(concept.getConceptKey()))
                 .extracting(PatientLongitudinalConceptEntity::getValueText, PatientLongitudinalConceptEntity::getValueUnit)
                 .containsExactly(org.assertj.core.groups.Tuple.tuple("7.3", "%"));
@@ -345,8 +402,8 @@ class PatientLongitudinalMemoryServiceTest {
         service.repairPendingConcepts(document, structuredJson, sourceText, new BigDecimal("0.91"), "AI draft generated.", UUID.randomUUID());
 
         assertThat(persisted).extracting(PatientLongitudinalConceptEntity::getConceptKey)
-                .containsExactlyInAnyOrder("hba1c", "estimated_average_glucose", "diabetes_risk");
-        assertThat(persisted).hasSize(3);
+                .containsExactlyInAnyOrder("hba1c", "estimated_average_glucose", "blood_sugar", "diabetes_risk");
+        assertThat(persisted).hasSize(4);
     }
 
     @Test
@@ -712,15 +769,19 @@ class PatientLongitudinalMemoryServiceTest {
     }
 
     @Test
-    void buildProfileSurfacesPendingConceptsWithoutDiscardingLabs() {
+    void buildProfileExcludesAcceptedReviewFindingsUntilTheSourceDocumentIsCompleted() {
         PatientLongitudinalConceptRepository repository = mock(PatientLongitudinalConceptRepository.class);
-        PatientLongitudinalMemoryService service = new PatientLongitudinalMemoryService(repository, new ClinicalConceptMapper(), new ObjectMapper());
+        ClinicalDocumentRepository documents = mock(ClinicalDocumentRepository.class);
+        PatientLongitudinalMemoryService service = new PatientLongitudinalMemoryService(repository, new ClinicalConceptMapper(), new DeterministicLabFactParser(), new ObjectMapper(), documents);
 
         UUID tenantId = UUID.randomUUID();
         UUID patientId = UUID.randomUUID();
         ClinicalDocumentEntity document = document(tenantId, patientId, "Diabetes Follow-up Lab Report", LocalDate.of(2026, 1, 8));
+        ClinicalDocumentEntity storedDocument = mock(ClinicalDocumentEntity.class);
+        when(storedDocument.getAiExtractionReviewedAt()).thenReturn(null);
+        when(documents.findByTenantIdAndId(tenantId, document.getId())).thenReturn(java.util.Optional.of(storedDocument));
 
-        PatientLongitudinalConceptEntity pendingCondition = PatientLongitudinalConceptEntity.create(
+        PatientLongitudinalConceptEntity acceptedCondition = PatientLongitudinalConceptEntity.create(
                 tenantId,
                 patientId,
                 document.getId(),
@@ -734,11 +795,11 @@ class PatientLongitudinalMemoryServiceTest {
                 null,
                 "Known diabetic",
                 "Clinical extraction",
-                "PENDING_REVIEW",
+                "ACCEPTED",
                 new BigDecimal("0.96"),
                 document.getReportDate().atStartOfDay().atOffset(ZoneOffset.UTC)
         );
-        PatientLongitudinalConceptEntity pendingHbA1c = PatientLongitudinalConceptEntity.create(
+        PatientLongitudinalConceptEntity acceptedHbA1c = PatientLongitudinalConceptEntity.create(
                 tenantId,
                 patientId,
                 document.getId(),
@@ -752,11 +813,11 @@ class PatientLongitudinalMemoryServiceTest {
                 "%",
                 "HbA1c 8.4",
                 "Clinical extraction",
-                "PENDING_REVIEW",
+                "ACCEPTED",
                 new BigDecimal("0.96"),
                 document.getReportDate().atStartOfDay().atOffset(ZoneOffset.UTC)
         );
-        PatientLongitudinalConceptEntity pendingBloodSugar = PatientLongitudinalConceptEntity.create(
+        PatientLongitudinalConceptEntity acceptedBloodSugar = PatientLongitudinalConceptEntity.create(
                 tenantId,
                 patientId,
                 document.getId(),
@@ -770,11 +831,11 @@ class PatientLongitudinalMemoryServiceTest {
                 "mg/dL",
                 "Random Blood Sugar 198",
                 "Clinical extraction",
-                "PENDING_REVIEW",
+                "ACCEPTED",
                 new BigDecimal("0.96"),
                 document.getReportDate().atStartOfDay().atOffset(ZoneOffset.UTC)
         );
-        PatientLongitudinalConceptEntity pendingLdl = PatientLongitudinalConceptEntity.create(
+        PatientLongitudinalConceptEntity acceptedLdl = PatientLongitudinalConceptEntity.create(
                 tenantId,
                 patientId,
                 document.getId(),
@@ -788,11 +849,11 @@ class PatientLongitudinalMemoryServiceTest {
                 "mg/dL",
                 "LDL 152",
                 "Clinical extraction",
-                "PENDING_REVIEW",
+                "ACCEPTED",
                 new BigDecimal("0.96"),
                 document.getReportDate().atStartOfDay().atOffset(ZoneOffset.UTC)
         );
-        PatientLongitudinalConceptEntity pendingRisk = PatientLongitudinalConceptEntity.create(
+        PatientLongitudinalConceptEntity acceptedRisk = PatientLongitudinalConceptEntity.create(
                 tenantId,
                 patientId,
                 document.getId(),
@@ -806,30 +867,29 @@ class PatientLongitudinalMemoryServiceTest {
                 null,
                 "Known diabetic",
                 "Clinical extraction",
-                "PENDING_REVIEW",
+                "ACCEPTED",
                 new BigDecimal("0.96"),
                 document.getReportDate().atStartOfDay().atOffset(ZoneOffset.UTC)
         );
 
         when(repository.findByTenantIdAndPatientIdOrderByObservedAtDescCreatedAtDesc(tenantId, patientId)).thenReturn(List.of(
-                pendingRisk,
-                pendingLdl,
-                pendingBloodSugar,
-                pendingHbA1c,
-                pendingCondition
+                acceptedRisk,
+                acceptedLdl,
+                acceptedBloodSugar,
+                acceptedHbA1c,
+                acceptedCondition
         ));
 
         PatientLongitudinalMemoryProfile profile = service.buildProfile(tenantId, patientId);
 
-        assertThat(profile.knownConditions()).extracting(concept -> concept.verificationStatus()).containsExactly("PENDING_REVIEW");
-        assertThat(profile.latestHbA1c()).isNotNull();
-        assertThat(profile.latestHbA1c().valueText()).isEqualTo("8.4");
-        assertThat(profile.latestHbA1c().verificationStatus()).isEqualTo("PENDING_REVIEW");
-        assertThat(profile.latestBloodSugar()).isNotNull();
-        assertThat(profile.latestBloodSugar().valueText()).isEqualTo("198");
-        assertThat(profile.latestLipidSummary()).extracting(LongitudinalConceptSnapshot::conceptKey).contains("ldl");
-        assertThat(profile.riskFlags()).extracting(LongitudinalConceptSnapshot::label).contains("Diabetes");
-        assertThat(profile.history()).hasSize(5);
+        assertThat(profile.knownConditions()).isEmpty();
+        assertThat(profile.latestHbA1c()).isNull();
+        assertThat(profile.latestBloodSugar()).isNull();
+        assertThat(profile.latestLipidSummary()).isEmpty();
+        assertThat(profile.riskFlags()).isEmpty();
+        assertThat(profile.history()).isEmpty();
+        assertThat(profile.pendingReviewHistory()).extracting(LongitudinalConceptSnapshot::label)
+                .containsExactlyInAnyOrder("Diabetes", "LDL", "Blood Sugar", "HbA1c", "Diabetes Mellitus");
     }
 
     @Test
@@ -950,12 +1010,9 @@ class PatientLongitudinalMemoryServiceTest {
 
         PatientLongitudinalMemoryProfile profile = service.buildProfile(tenantId, patientId);
 
-        assertThat(profile.latestHbA1c()).isNotNull();
-        assertThat(profile.latestHbA1c().valueText()).isEqualTo("8.4");
-        assertThat(profile.latestHbA1c().sourceDocumentTitle()).isEqualTo("Diabetes Follow-up Lab Report Retest 5");
-        assertThat(profile.latestBloodSugar()).isNotNull();
-        assertThat(profile.latestBloodSugar().valueText()).isEqualTo("198");
-        assertThat(profile.latestBloodSugar().sourceDocumentTitle()).isEqualTo("Diabetes Follow-up Lab Report Retest 5");
+        assertThat(profile.latestHbA1c()).isNull();
+        assertThat(profile.latestBloodSugar()).isNull();
+        assertThat(profile.history()).isEmpty();
     }
 
     private ClinicalDocumentEntity document(String title, LocalDate reportDate) {

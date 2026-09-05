@@ -12,6 +12,33 @@ public record PatientLongitudinalMemoryProfile(
         LongitudinalConceptSnapshot latestBmi,
         List<LongitudinalConceptSnapshot> riskFlags,
         List<LongitudinalConceptSnapshot> history,
-        String mostRecentLaboratorySummary
+        String mostRecentLaboratorySummary,
+        List<LongitudinalConceptSnapshot> pendingReviewHistory
 ) {
+    public PatientLongitudinalMemoryProfile(
+            List<LongitudinalConceptSnapshot> knownConditions,
+            List<LongitudinalConceptSnapshot> longTermMedications,
+            LongitudinalConceptSnapshot latestHbA1c,
+            LongitudinalConceptSnapshot latestBloodSugar,
+            List<LongitudinalConceptSnapshot> latestLipidSummary,
+            LongitudinalConceptSnapshot latestBloodPressure,
+            LongitudinalConceptSnapshot latestBmi,
+            List<LongitudinalConceptSnapshot> riskFlags,
+            List<LongitudinalConceptSnapshot> history,
+            String mostRecentLaboratorySummary
+    ) {
+        this(
+                knownConditions,
+                longTermMedications,
+                latestHbA1c,
+                latestBloodSugar,
+                latestLipidSummary,
+                latestBloodPressure,
+                latestBmi,
+                riskFlags,
+                history,
+                mostRecentLaboratorySummary,
+                List.of()
+        );
+    }
 }

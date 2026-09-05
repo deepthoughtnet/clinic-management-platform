@@ -208,6 +208,35 @@ export type ClinicalDocument = {
   updatedAt: string;
 };
 
+export type ClinicalDocumentFindingReview = {
+  documentId: string;
+  documentTitle: string;
+  reportDate: string | null;
+  mediaType: string;
+  reviewCompleted: boolean;
+  reviewedBy: string | null;
+  reviewedByDisplayName: string | null;
+  reviewedAt: string | null;
+  findings: Array<{
+    id: string;
+    conceptKey: string;
+    findingName: string;
+    originalValue: string | null;
+    originalUnit: string | null;
+    originalReferenceRange: string | null;
+    value: string | null;
+    unit: string | null;
+    referenceRange: string | null;
+    flag: string | null;
+    evidenceText: string | null;
+    verificationStatus: string;
+    decision: string | null;
+    reviewedBy: string | null;
+    reviewedAt: string | null;
+  }>;
+  pendingCount: number;
+};
+
 export type ClinicalMemoryRepairResult = {
   documentId: string | null;
   status: "SUCCESS" | "FAILED" | string;
@@ -288,6 +317,7 @@ export type ClinicalContextResponse = {
       confidence: number | null;
       verificationStatus: string | null;
       evidenceText: string | null;
+      interpretation?: string | null;
     }>;
     longTermMedications: Array<{
       conceptFamily: string;
@@ -302,6 +332,7 @@ export type ClinicalContextResponse = {
       confidence: number | null;
       verificationStatus: string | null;
       evidenceText: string | null;
+      interpretation?: string | null;
     }>;
     latestHbA1c: {
       conceptFamily: string;
@@ -316,6 +347,7 @@ export type ClinicalContextResponse = {
       confidence: number | null;
       verificationStatus: string | null;
       evidenceText: string | null;
+      interpretation?: string | null;
     } | null;
     latestBloodSugar: {
       conceptFamily: string;
@@ -330,6 +362,7 @@ export type ClinicalContextResponse = {
       confidence: number | null;
       verificationStatus: string | null;
       evidenceText: string | null;
+      interpretation?: string | null;
     } | null;
     latestLipidSummary: Array<{
       conceptFamily: string;
@@ -344,6 +377,7 @@ export type ClinicalContextResponse = {
       confidence: number | null;
       verificationStatus: string | null;
       evidenceText: string | null;
+      interpretation?: string | null;
     }>;
     latestBloodPressure: {
       conceptFamily: string;
@@ -358,6 +392,7 @@ export type ClinicalContextResponse = {
       confidence: number | null;
       verificationStatus: string | null;
       evidenceText: string | null;
+      interpretation?: string | null;
     } | null;
     latestBmi: {
       conceptFamily: string;
@@ -372,6 +407,7 @@ export type ClinicalContextResponse = {
       confidence: number | null;
       verificationStatus: string | null;
       evidenceText: string | null;
+      interpretation?: string | null;
     } | null;
     riskFlags: Array<{
       conceptFamily: string;
@@ -386,6 +422,7 @@ export type ClinicalContextResponse = {
       confidence: number | null;
       verificationStatus: string | null;
       evidenceText: string | null;
+      interpretation?: string | null;
     }>;
     history: Array<{
       conceptFamily: string;
@@ -400,8 +437,24 @@ export type ClinicalContextResponse = {
       confidence: number | null;
       verificationStatus: string | null;
       evidenceText: string | null;
+      interpretation?: string | null;
     }>;
     mostRecentLaboratorySummary: string | null;
+    pendingReviewHistory: Array<{
+      conceptFamily: string;
+      conceptKey: string;
+      label: string;
+      valueText: string | null;
+      valueUnit: string | null;
+      sourceDocumentTitle: string | null;
+      sourceDocumentType: string | null;
+      sourceDocumentId: string | null;
+      observedOn: string | null;
+      confidence: number | null;
+      verificationStatus: string | null;
+      evidenceText: string | null;
+      interpretation?: string | null;
+    }>;
   };
   longitudinalClinicalContext?: {
     labTrends: Array<{
@@ -435,7 +488,7 @@ export type ClinicalContextResponse = {
       creatinineDate: string | null;
       egfr: string | null;
       egfrDate: string | null;
-      interpretation: string | null;
+      interpretation?: string | null;
       stalenessDays: number | null;
       verificationStatus: string | null;
       sourceDocumentIds: string[];
@@ -7236,6 +7289,25 @@ export async function getPatientDocuments(token: string, tenantId: string, patie
 
 export async function getClinicalDocument(token: string, tenantId: string, documentId: string) {
   return httpGet<ClinicalDocument>(`/api/patient-documents/${documentId}`, { token, tenantId });
+}
+
+export async function getClinicalDocumentFindingReview(token: string, tenantId: string, documentId: string) {
+  return httpGet<ClinicalDocumentFindingReview>(`/api/clinical-documents/${documentId}/finding-review`, { token, tenantId });
+}
+
+export async function decideClinicalDocumentFinding(token: string, tenantId: string, documentId: string, conceptId: string, body: {
+  decision: "CONFIRMED" | "EDITED" | "REJECTED";
+  value?: string | null;
+  unit?: string | null;
+  referenceRange?: string | null;
+  flag?: string | null;
+  reviewNotes?: string | null;
+}) {
+  return httpPost<ClinicalDocumentFindingReview>(`/api/clinical-documents/${documentId}/finding-review/${conceptId}`, body, { token, tenantId });
+}
+
+export async function completeClinicalDocumentFindingReview(token: string, tenantId: string, documentId: string) {
+  return httpPost<ClinicalDocumentFindingReview>(`/api/clinical-documents/${documentId}/finding-review/complete`, undefined, { token, tenantId });
 }
 
 export async function uploadPatientDocument(token: string, tenantId: string, patientId: string, body: {

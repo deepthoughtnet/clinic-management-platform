@@ -289,6 +289,59 @@ class LongitudinalClinicalContextBuilderTest {
     }
 
     @Test
+    void doesNotClassifyLaboratoryReportsAsImagingWhenOnlyTheSummaryMentionsImagingTerms() {
+        PatientLongitudinalMemoryProfile profile = new PatientLongitudinalMemoryProfile(
+                List.of(),
+                List.of(),
+                null,
+                null,
+                List.of(),
+                null,
+                null,
+                List.of(),
+                List.of(),
+                null
+        );
+
+        ClinicalDocumentEntity labReport = document("2026-08-23_CBC_CRP", ClinicalDocumentType.EXTERNAL_LAB_REPORT, LocalDate.of(2026, 8, 23), null, "PENDING_REVIEW");
+        setField(labReport, "description", "CBC/CRP laboratory report");
+        setField(labReport, "aiExtractionSummary", "Chest X-ray follow-up report with no acute imaging findings.");
+
+        ClinicalContextResponse.LongitudinalClinicalContext context = builder.build(profile, List.of(labReport));
+
+        assertThat(context.imagingHistory()).isEmpty();
+        assertThat(context.importantHistoricalFindings()).isEmpty();
+        assertThat(context.dataQualityWarnings()).isEmpty();
+    }
+
+    @Test
+    void treatsSmallNormalRangeEgfrDecreaseAsStableInsteadOfWorsening() {
+        UUID documentId = UUID.randomUUID();
+        PatientLongitudinalMemoryProfile profile = new PatientLongitudinalMemoryProfile(
+                List.of(),
+                List.of(),
+                null,
+                null,
+                List.of(),
+                null,
+                null,
+                List.of(),
+                List.of(
+                        new LongitudinalConceptSnapshot("LAB_RESULT", "egfr", "eGFR", "104", "mL/min/1.73m2", "Kidney function", "EXTERNAL_LAB_REPORT", documentId, LocalDate.of(2026, 1, 15), BigDecimal.valueOf(0.95), "VERIFIED", "eGFR 104 mL/min/1.73m2"),
+                        new LongitudinalConceptSnapshot("LAB_RESULT", "egfr", "eGFR", "101", "mL/min/1.73m2", "Kidney function", "EXTERNAL_LAB_REPORT", documentId, LocalDate.of(2026, 7, 8), BigDecimal.valueOf(0.95), "PENDING_REVIEW", "eGFR 101 mL/min/1.73m2")
+                ),
+                null
+        );
+
+        ClinicalContextResponse.LongitudinalClinicalContext context = builder.build(profile, List.of());
+
+        assertThat(context.labTrends()).hasSize(1);
+        assertThat(context.labTrends().getFirst().analyteCode()).isEqualTo("egfr");
+        assertThat(context.labTrends().getFirst().direction()).isEqualTo("STABLE");
+        assertThat(context.labTrends().getFirst().clinicalInterpretation()).contains("Renal trends");
+    }
+
+    @Test
     void buildsRenalContextFromPendingReviewKidneyFunctionMemory() {
         UUID documentId = UUID.randomUUID();
         PatientLongitudinalMemoryProfile profile = new PatientLongitudinalMemoryProfile(

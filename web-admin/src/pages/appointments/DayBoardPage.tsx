@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import {
   Alert,
   Autocomplete,
@@ -118,6 +118,11 @@ type SchedulerSectionDefinition = {
   rangeLabel: string;
   startMinute: number;
   endMinute: number;
+};
+
+type DoctorProfileReturnContext = {
+  doctorUserId?: string;
+  date?: string;
 };
 
 type SchedulerSectionSummary = {
@@ -604,12 +609,21 @@ function consultationFeeSummary(appointment: Appointment, bills: Bill[]) {
 
 export default function DayBoardPage() {
   const auth = useAuth();
+  const location = useLocation();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const doctorUserIdFromQuery = searchParams.get("doctorUserId") || "";
+  const restoreContext = React.useMemo(() => {
+    const state = location.state as { doctorProfileContext?: DoctorProfileReturnContext } | null | undefined;
+    const context = state?.doctorProfileContext || null;
+    if (!context) {
+      return null;
+    }
+    return context;
+  }, [location.state]);
   const [users, setUsers] = React.useState<ClinicUser[]>([]);
-  const [doctorUserId, setDoctorUserId] = React.useState(doctorUserIdFromQuery);
-  const [date, setDate] = React.useState(() => getClinicDateKey("Asia/Kolkata"));
+  const [doctorUserId, setDoctorUserId] = React.useState(() => doctorUserIdFromQuery || restoreContext?.doctorUserId || "");
+  const [date, setDate] = React.useState(() => restoreContext?.date || getClinicDateKey("Asia/Kolkata"));
   const [filters, setFilters] = React.useState<Record<SlotFilterKey, boolean>>(() => Object.fromEntries(STATUS_FILTERS.map((f) => [f, true])) as Record<SlotFilterKey, boolean>);
   const [patientSearch, setPatientSearch] = React.useState("");
   const [patientResults, setPatientResults] = React.useState<Patient[]>([]);
@@ -982,7 +996,9 @@ export default function DayBoardPage() {
 
   React.useEffect(() => {
     if (!isDoctor) {
-      setDoctorUserId(doctorUserIdFromQuery);
+      if (doctorUserIdFromQuery) {
+        setDoctorUserId(doctorUserIdFromQuery);
+      }
     }
   }, [doctorUserIdFromQuery, isDoctor]);
 
@@ -1385,6 +1401,17 @@ export default function DayBoardPage() {
                       doctorId={selectedDoctorIdentity?.id}
                       doctor={selectedDoctorIdentity}
                       variant="avatar"
+                      profileReturnTo={{
+                        pathname: location.pathname,
+                        search: location.search,
+                        hash: location.hash,
+                        state: {
+                          doctorProfileContext: {
+                            doctorUserId: isDoctor ? auth.appUserId || "" : doctorUserId,
+                            date,
+                          },
+                        },
+                      }}
                     />
                   </Box>
                 </Box>

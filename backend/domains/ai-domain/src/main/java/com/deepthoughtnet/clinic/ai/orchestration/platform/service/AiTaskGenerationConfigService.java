@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.ai.orchestration.platform.service;
 
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiTaskType;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -19,14 +20,19 @@ public class AiTaskGenerationConfigService {
     private final Integer clinicalReasoningThinkingBudget;
     private final boolean clinicalReasoningStrictJson;
     private final Integer clinicalReasoningMaxOutputTokens;
+    private final Integer clinicalDocumentExtractionThinkingBudget;
+    private final Integer clinicalDocumentExtractionMaxOutputTokens;
     private final Integer consultationSoapMaxOutputTokens;
 
+    @Autowired
     public AiTaskGenerationConfigService(
             @Value("${clinic.ai.gemini.clinical-reasoning-model:${CLINIC_GEMINI_REASONING_MODEL:}}") String clinicalReasoningModelOverride,
             @Value("${clinic.ai.gemini.model:${CLINIC_GEMINI_MODEL:}}") String geminiDefaultModel,
             @Value("${clinic.ai.gemini.clinical-reasoning-thinking-budget:0}") Integer clinicalReasoningThinkingBudget,
             @Value("${clinic.ai.clinical-reasoning.strict-json:true}") boolean clinicalReasoningStrictJson,
             @Value("${clinic.ai.clinical-reasoning.max-output-tokens:2048}") Integer clinicalReasoningMaxOutputTokens,
+            @Value("${clinic.ai.gemini.clinical-document-extraction-thinking-budget:0}") Integer clinicalDocumentExtractionThinkingBudget,
+            @Value("${clinic.ai.clinical-document-extraction.max-output-tokens:4096}") Integer clinicalDocumentExtractionMaxOutputTokens,
             @Value("${clinic.ai.soap-note.max-output-tokens:${CLINIC_SOAP_NOTE_MAX_OUTPUT_TOKENS:4096}}") Integer consultationSoapMaxOutputTokens
     ) {
         this.clinicalReasoningModelOverride = normalizeModel(clinicalReasoningModelOverride);
@@ -34,7 +40,22 @@ public class AiTaskGenerationConfigService {
         this.clinicalReasoningThinkingBudget = clinicalReasoningThinkingBudget == null ? 0 : Math.max(0, clinicalReasoningThinkingBudget);
         this.clinicalReasoningStrictJson = clinicalReasoningStrictJson;
         this.clinicalReasoningMaxOutputTokens = clinicalReasoningMaxOutputTokens == null ? null : Math.max(256, clinicalReasoningMaxOutputTokens);
+        this.clinicalDocumentExtractionThinkingBudget = clinicalDocumentExtractionThinkingBudget == null ? 0 : Math.max(0, clinicalDocumentExtractionThinkingBudget);
+        this.clinicalDocumentExtractionMaxOutputTokens = clinicalDocumentExtractionMaxOutputTokens == null ? 4096 : Math.max(1024, clinicalDocumentExtractionMaxOutputTokens);
         this.consultationSoapMaxOutputTokens = consultationSoapMaxOutputTokens == null ? 4096 : Math.max(512, consultationSoapMaxOutputTokens);
+    }
+
+    public AiTaskGenerationConfigService(
+            String clinicalReasoningModelOverride,
+            String geminiDefaultModel,
+            Integer clinicalReasoningThinkingBudget,
+            boolean clinicalReasoningStrictJson,
+            Integer clinicalReasoningMaxOutputTokens,
+            Integer consultationSoapMaxOutputTokens
+    ) {
+        this(clinicalReasoningModelOverride, geminiDefaultModel, clinicalReasoningThinkingBudget,
+                clinicalReasoningStrictJson, clinicalReasoningMaxOutputTokens, 0, 4096,
+                consultationSoapMaxOutputTokens);
     }
 
     public GenerationConfig resolve(AiTaskType taskType) {
@@ -56,6 +77,14 @@ public class AiTaskGenerationConfigService {
                     clinicalReasoningThinkingBudget,
                     clinicalReasoningStrictJson,
                     clinicalReasoningMaxOutputTokens
+            );
+        }
+        if (taskType == AiTaskType.CLINICAL_DOCUMENT_EXTRACTION) {
+            return new GenerationConfig(
+                    null,
+                    clinicalDocumentExtractionThinkingBudget,
+                    true,
+                    clinicalDocumentExtractionMaxOutputTokens
             );
         }
         if (taskType == AiTaskType.CONSULTATION_NOTE_STRUCTURING) {

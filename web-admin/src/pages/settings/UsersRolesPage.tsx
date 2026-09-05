@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { firstZodError, mapZodErrors, userCreateSchema, userUpdateSchema } from "@deepthoughtnet/form-validation-kit";
 import {
   Alert,
@@ -25,12 +25,14 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableContainer,
   TableHead,
   TableRow,
   TextField,
   Typography,
 } from "@mui/material";
 
+import { normalizeIndianMobileInput } from "@deepthoughtnet/form-validation-kit";
 import { useAuth } from "../../auth/useAuth";
 import AutocompleteTextInput from "../../components/forms/AutocompleteTextInput";
 import RequiredLabel from "../../components/forms/RequiredLabel";
@@ -202,8 +204,14 @@ function isInvalidSelectedClinic(tenant: { id: string; code: string; name: strin
   return values.some((value) => value.startsWith("DEFAULT-ROLES") || value.includes("DEFAULT-ROLES-"));
 }
 
+function sanitizeIndianMobileInput(value: string): string {
+  const normalized = normalizeIndianMobileInput(value);
+  return typeof normalized === "string" ? normalized.slice(0, 10) : "";
+}
+
 export default function UsersRolesPage() {
   const auth = useAuth();
+  const location = useLocation();
   const navigate = useNavigate();
   const canManageUsers = auth.hasPermission("user.manage") || auth.hasPermission("tenant.users.manage");
   const canAssignRoles = auth.hasPermission("tenant.users.role.assign") || canManageUsers;
@@ -490,61 +498,74 @@ export default function UsersRolesPage() {
               users.length === 0 ? (
                 <Alert severity="info">No clinic users were found for this tenant.</Alert>
               ) : (
-                <Table size="small">
-                  <TableHead>
-                    <TableRow>
-                      <TableCell>Name</TableCell>
-                      <TableCell>Email / Login ID</TableCell>
-                      <TableCell>Role</TableCell>
-                      <TableCell>Status</TableCell>
-                      <TableCell>Department</TableCell>
-                      <TableCell>Employee Code</TableCell>
-                      <TableCell>Mobile</TableCell>
-                      <TableCell>Last Login</TableCell>
-                      <TableCell>Created</TableCell>
-                      <TableCell align="right">Actions</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {users.map((user) => {
-                      const active = (user.membershipStatus || "ACTIVE").toUpperCase() === "ACTIVE";
-                      return (
-                        <TableRow key={user.appUserId}>
-                          <TableCell sx={{ fontWeight: 700 }}>{user.displayName || user.email || user.appUserId}</TableCell>
-                          <TableCell>{user.username || user.email || user.keycloakSub || "-"}</TableCell>
-                          <TableCell><Chip size="small" label={roleLabel(user.membershipRole || "Unassigned")} /></TableCell>
-                          <TableCell>
-                            <Chip size="small" color={active ? "success" : "default"} label={active ? "ACTIVE" : "DISABLED"} />
-                          </TableCell>
-                          <TableCell>{user.department || "-"}</TableCell>
-                          <TableCell>{user.employeeCode || "-"}</TableCell>
-                          <TableCell>{user.mobile || "-"}</TableCell>
-                          <TableCell>{formatLocalDateTime(user.lastLoginAt)}</TableCell>
-                          <TableCell>{new Date(user.createdAt).toLocaleString()}</TableCell>
-                          <TableCell align="right">
-                            <Stack direction="row" spacing={1} justifyContent="flex-end" alignItems="center">
-                              {canEditUser(user) ? (
-                                <Button size="small" variant="contained" disabled={savingUserId === user.appUserId} onClick={() => openEditDialog(user)}>
-                                  Edit
-                                </Button>
-                              ) : null}
-                              {canResetPasswords ? (
-                                <Button size="small" variant="outlined" disabled={savingUserId === user.appUserId} onClick={() => void resetPassword(user)}>
-                                  Reset Password
-                                </Button>
-                              ) : null}
-                              {(user.membershipRole || "").toUpperCase() === "DOCTOR" ? (
-                                <Button size="small" onClick={() => navigate(`/doctors/${user.appUserId}`)}>
-                                  Doctor Details
-                                </Button>
-                              ) : null}
-                            </Stack>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
+                <TableContainer sx={{ width: "100%", maxWidth: "100%", minWidth: 0, overflowX: "auto" }}>
+                  <Table size="small" sx={{ minWidth: 1180 }}>
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Name</TableCell>
+                        <TableCell>Email / Login ID</TableCell>
+                        <TableCell>Role</TableCell>
+                        <TableCell>Status</TableCell>
+                        <TableCell>Department</TableCell>
+                        <TableCell>Employee Code</TableCell>
+                        <TableCell>Mobile</TableCell>
+                        <TableCell>Last Login</TableCell>
+                        <TableCell>Created</TableCell>
+                        <TableCell align="right">Actions</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {users.map((user) => {
+                        const active = (user.membershipStatus || "ACTIVE").toUpperCase() === "ACTIVE";
+                        return (
+                          <TableRow key={user.appUserId}>
+                            <TableCell sx={{ fontWeight: 700 }}>{user.displayName || user.email || user.appUserId}</TableCell>
+                            <TableCell>{user.username || user.email || user.keycloakSub || "-"}</TableCell>
+                            <TableCell><Chip size="small" label={roleLabel(user.membershipRole || "Unassigned")} /></TableCell>
+                            <TableCell>
+                              <Chip size="small" color={active ? "success" : "default"} label={active ? "ACTIVE" : "DISABLED"} />
+                            </TableCell>
+                            <TableCell>{user.department || "-"}</TableCell>
+                            <TableCell>{user.employeeCode || "-"}</TableCell>
+                            <TableCell>{user.mobile || "-"}</TableCell>
+                            <TableCell>{formatLocalDateTime(user.lastLoginAt)}</TableCell>
+                            <TableCell>{new Date(user.createdAt).toLocaleString()}</TableCell>
+                            <TableCell align="right">
+                              <Stack direction="row" spacing={1} justifyContent="flex-end" alignItems="center">
+                                {canEditUser(user) ? (
+                                  <Button size="small" variant="contained" disabled={savingUserId === user.appUserId} onClick={() => openEditDialog(user)}>
+                                    Edit
+                                  </Button>
+                                ) : null}
+                                {canResetPasswords ? (
+                                  <Button size="small" variant="outlined" disabled={savingUserId === user.appUserId} onClick={() => void resetPassword(user)}>
+                                    Reset Password
+                                  </Button>
+                                ) : null}
+                                {(user.membershipRole || "").toUpperCase() === "DOCTOR" ? (
+                                  <Button
+                                    size="small"
+                                    onClick={() => navigate(`/doctors/${user.appUserId}/profile`, {
+                                      state: {
+                                        returnTo: {
+                                          pathname: location.pathname,
+                                          search: location.search,
+                                          hash: location.hash,
+                                        },
+                                      },
+                                    })}
+                                  >
+                                    Doctor Details
+                                  </Button>
+                                ) : null}
+                              </Stack>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
               )
             ) : (
               <RolesPermissionsPanel roles={roles} />
@@ -626,11 +647,12 @@ export default function UsersRolesPage() {
               id="create-user-mobile"
               label="Mobile Number"
               value={createForm.mobile}
-              onChange={(e) => setCreateForm((s) => ({ ...s, mobile: e.target.value }))}
+              onChange={(e) => setCreateForm((s) => ({ ...s, mobile: sanitizeIndianMobileInput(e.target.value) }))}
               placeholder="9876543210"
               fullWidth
               error={Boolean(createFieldErrors.mobile)}
               helperText={createFieldErrors.mobile || "Optional staff mobile number."}
+              inputProps={{ inputMode: "numeric", maxLength: 10 }}
             />
             <AutocompleteTextInput
               id="create-user-department"
@@ -713,10 +735,11 @@ export default function UsersRolesPage() {
               id="edit-user-mobile"
               label="Mobile Number"
               value={editForm.mobile}
-              onChange={(e) => setEditForm((current) => ({ ...current, mobile: e.target.value }))}
+              onChange={(e) => setEditForm((current) => ({ ...current, mobile: sanitizeIndianMobileInput(e.target.value) }))}
               error={Boolean(editFieldErrors.mobile)}
               helperText={editFieldErrors.mobile || "Enter a valid 10-digit mobile number."}
               fullWidth
+              inputProps={{ inputMode: "numeric", maxLength: 10 }}
             />
             <AutocompleteTextInput
               id="edit-user-department"

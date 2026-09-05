@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Pattern;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -33,6 +34,10 @@ public class ClinicalDocumentService {
     private static final Set<String> ALLOWED_EXTENSIONS = Set.of("pdf", "jpg", "jpeg", "png", "webp");
     private static final Set<String> BLOCKED_EXTENSIONS = Set.of(
             "exe", "dll", "bat", "cmd", "com", "msi", "ps1", "vbs", "js", "jar", "sh", "php", "pl", "scr", "hta", "apk", "bin"
+    );
+    private static final Pattern RADIOLOGY_HINT_PATTERN = Pattern.compile(
+            "\\b(?:x\\s*ray|xray|cxr|ct|mri|ultrasound|usg|radiograph(?:y)?|radiology|mammogram(?:s)?|echocardiograph(?:y)?|echo)\\b",
+            Pattern.CASE_INSENSITIVE
     );
 
     private final ClinicalDocumentRepository repository;
@@ -75,6 +80,7 @@ public class ClinicalDocumentService {
         String uploadSourceFilter = normalizeNullable(uploadSource);
 
         return repository.findByTenantIdAndPatientIdAndActiveTrueOrderByCreatedAtDesc(tenantId, patientId).stream()
+                .map(entity -> repairDocumentIfNeeded(tenantId, entity))
                 .filter(entity -> documentType == null || entity.getDocumentType() == documentType)
                 .filter(entity -> consultationId == null || consultationId.equals(entity.getConsultationId()))
                 .filter(entity -> uploadSourceFilter == null || uploadSourceFilter.equalsIgnoreCase(entity.getUploadSource()))
@@ -89,19 +95,24 @@ public class ClinicalDocumentService {
 
     @Transactional
     public ClinicalDocumentRecord get(UUID tenantId, UUID id) {
-        return toRecord(repairPublishedLabDocumentIfNeeded(tenantId, findTenantDocument(tenantId, id)));
+        return toRecord(repairDocumentIfNeeded(tenantId, findTenantDocument(tenantId, id)));
+    }
+
+    @Transactional(readOnly = true)
+    public String resolveUserDisplayName(UUID tenantId, UUID appUserId) {
+        return resolveUploadedByName(tenantId, appUserId);
     }
 
     @Transactional
     public String downloadUrl(UUID tenantId, UUID id, Duration ttl) {
-        ClinicalDocumentEntity document = repairPublishedLabDocumentIfNeeded(tenantId, findTenantDocument(tenantId, id));
+        ClinicalDocumentEntity document = repairDocumentIfNeeded(tenantId, findTenantDocument(tenantId, id));
         String storageKey = requireStorageKey(document.getStorageObjectKey(), "download");
         return storageService.generatePresignedDownloadUrl(storageKey, ttl);
     }
 
     @Transactional
     public byte[] downloadBytes(UUID tenantId, UUID id) {
-        ClinicalDocumentEntity document = repairPublishedLabDocumentIfNeeded(tenantId, findTenantDocument(tenantId, id));
+        ClinicalDocumentEntity document = repairDocumentIfNeeded(tenantId, findTenantDocument(tenantId, id));
         String storageKey = requireStorageKey(resolveStorageKey(document, tenantId), "download");
         byte[] bytes = storageService.getObjectBytes(storageKey);
         if (bytes == null || bytes.length == 0) {
@@ -152,6 +163,7 @@ public class ClinicalDocumentService {
         String sourceModule = normalizeNullable(command.sourceModule());
         String sourceEntityId = normalizeNullable(command.sourceEntityId());
         String description = normalizeNullable(command.notes());
+        ClinicalDocumentType canonicalDocumentType = resolveCanonicalDocumentType(command.documentType(), title, description, fileName);
         String storageKey = resolvePatientDocumentStorageKey(command.tenantId(), command.patientId(), documentId, fileName);
         if (repository.existsByTenantIdAndStorageObjectKey(command.tenantId(), storageKey)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Document storage key already exists");
@@ -166,7 +178,7 @@ public class ClinicalDocumentService {
                     command.consultationId(),
                     null,
                     command.uploadedByAppUserId(),
-                    command.documentType(),
+                    canonicalDocumentType,
                     title,
                     description,
                     command.reportDate(),
@@ -195,7 +207,7 @@ public class ClinicalDocumentService {
                     command.uploadedByAppUserId(),
                     OffsetDateTime.now(ZoneOffset.UTC),
                     "Uploaded patient document",
-                    "{\"patientId\":\"%s\",\"documentType\":\"%s\",\"uploadSource\":\"%s\"}".formatted(command.patientId(), command.documentType(), uploadSource)
+                    "{\"patientId\":\"%s\",\"documentType\":\"%s\",\"uploadSource\":\"%s\"}".formatted(command.patientId(), canonicalDocumentType, uploadSource)
             ));
             return toRecord(saved);
         } catch (RuntimeException ex) {
@@ -347,7 +359,7 @@ public class ClinicalDocumentService {
         ClinicalDocumentEntity document = findTenantDocument(tenantId, id);
         String title = normalizeRequired(command.title(), "Title is required");
         document.updateMetadata(
-                command.documentType() == null ? document.getDocumentType() : command.documentType(),
+                resolveCanonicalDocumentType(command.documentType() == null ? document.getDocumentType() : command.documentType(), title, normalizeNullable(command.description()), document.getFileName()),
                 title,
                 normalizeNullable(command.description()),
                 command.reportDate(),
@@ -599,6 +611,41 @@ public class ClinicalDocumentService {
         return repository.save(document);
     }
 
+    private ClinicalDocumentEntity repairDocumentIfNeeded(UUID tenantId, ClinicalDocumentEntity document) {
+        if (document == null) {
+            return null;
+        }
+        ClinicalDocumentEntity repairedDocument = repairRadiologyDocumentIfNeeded(tenantId, document);
+        return repairPublishedLabDocumentIfNeeded(tenantId, repairedDocument);
+    }
+
+    private ClinicalDocumentEntity repairRadiologyDocumentIfNeeded(UUID tenantId, ClinicalDocumentEntity document) {
+        if (document == null || document.getDocumentType() == null || isRadiologyDocument(document)) {
+            return document;
+        }
+        ClinicalDocumentType canonicalType = resolveCanonicalDocumentType(
+                document.getDocumentType(),
+                document.getTitle(),
+                document.getDescription(),
+                document.getFileName()
+        );
+        if (canonicalType == document.getDocumentType()) {
+            return document;
+        }
+        document.updateMetadata(
+                canonicalType,
+                document.getTitle(),
+                document.getDescription(),
+                document.getReportDate(),
+                document.getVisibility(),
+                document.getVerificationStatus(),
+                document.getUploadedByName(),
+                document.getUploadSource(),
+                document.getUpdatedBy()
+        );
+        return repository.save(document);
+    }
+
     private String resolveStorageKey(ClinicalDocumentEntity document, UUID tenantId) {
         String storageKey = normalizeNullable(document.getStorageKey());
         if (isValidStorageKey(storageKey)) {
@@ -633,6 +680,49 @@ public class ClinicalDocumentService {
     private String normalizeVerificationStatus(String value) {
         String normalized = normalizeNullable(value);
         return normalized == null ? "UNVERIFIED" : normalized.toUpperCase(Locale.ROOT);
+    }
+
+    private ClinicalDocumentType resolveCanonicalDocumentType(ClinicalDocumentType requestedType, String title, String description, String fileName) {
+        ClinicalDocumentType normalizedRequestedType = requestedType == null ? ClinicalDocumentType.OTHER : requestedType;
+        if (isRadiologyHint(title, description, fileName)) {
+            if (normalizedRequestedType == ClinicalDocumentType.RADIOLOGY_REPORT
+                    || normalizedRequestedType == ClinicalDocumentType.X_RAY
+                    || normalizedRequestedType == ClinicalDocumentType.MRI_CT) {
+                return normalizedRequestedType;
+            }
+            return ClinicalDocumentType.RADIOLOGY_REPORT;
+        }
+        return normalizedRequestedType;
+    }
+
+    private boolean isRadiologyDocument(ClinicalDocumentEntity document) {
+        if (document == null || document.getDocumentType() == null) {
+            return false;
+        }
+        ClinicalDocumentType type = document.getDocumentType();
+        return type == ClinicalDocumentType.RADIOLOGY_REPORT
+                || type == ClinicalDocumentType.X_RAY
+                || type == ClinicalDocumentType.MRI_CT;
+    }
+
+    private boolean isRadiologyHint(String... values) {
+        StringBuilder haystack = new StringBuilder();
+        if (values != null) {
+            for (String value : values) {
+                String normalized = normalizeNullable(value);
+                if (normalized != null) {
+                    if (haystack.length() > 0) {
+                        haystack.append(' ');
+                    }
+                    haystack.append(normalized);
+                }
+            }
+        }
+        if (haystack.length() == 0) {
+            return false;
+        }
+        String normalized = haystack.toString().toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", " ");
+        return RADIOLOGY_HINT_PATTERN.matcher(normalized).find();
     }
 
     private String normalizeStatus(String sourceModule, String defaultValue) {

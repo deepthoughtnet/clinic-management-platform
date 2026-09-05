@@ -32,6 +32,6 @@ test("consultation workspace freeze keeps AI surfaces compact and reviewable", (
   assert.ok(!source.includes("clinicalDraftStats"));
   assert.ok(!source.includes("pendingAiDraftCount"));
   assert.ok(!source.includes("aivaDraftsExpanded"));
-  assert.ok(cardSource.includes("No uploaded reports available."));
+  assert.ok(cardSource.includes("No uploaded documents."));
   assert.ok(cardSource.includes("No previous consultations available."));
 });

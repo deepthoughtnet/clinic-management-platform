@@ -74,8 +74,16 @@ import CompareArrowsRoundedIcon from "@mui/icons-material/CompareArrowsRounded";
 
 import { consultationSchema, firstZodError, labConsultationOrderCreateSchema } from "@deepthoughtnet/form-validation-kit";
 import { useAuth } from "../../auth/useAuth";
+import { hasTenantModule } from "../../auth/moduleEntitlements";
 import { ConfirmationDialog } from "../../components/clinical/ConfirmationDialog";
 import { ClinicalAiDraftCard, type ClinicalAiDraftStatus } from "../../components/clinical/ClinicalAiDraftCard";
+import {
+  buildConsultationHistoryEntries,
+  getConsultationHistorySectionTitle,
+  getConsultationHistoryToggleLabel,
+  getVisibleConsultationHistoryItems,
+  shouldShowConsultationHistoryToggle,
+} from "../../components/clinical/patientIntelligenceConsultationHistory";
 import { documentBusinessStatusLabel, documentTypeLabel, isPublishedLabDocument } from "../../components/clinical/documentTypeOptions";
 import { AppointmentTokenChip, WorkflowStatusBadge } from "../../components/workflow/WorkflowUx";
 import {
@@ -171,10 +179,12 @@ import { ClinicalDocumentViewer } from "../../components/clinical/ClinicalDocume
 import { PatientIntelligenceCard } from "../../components/clinical/PatientIntelligenceCard";
 import { PatientDocumentUploadDialog } from "../../components/clinical/PatientDocumentUploadDialog";
 import { useClinicalReasoning } from "../../hooks/useClinicalReasoning";
+import { useDoctorAiAssistPreference } from "../../hooks/useDoctorAiAssistPreference";
 import { formatRelativeBookingTime } from "../../components/workflow/workflowHelpers";
 import { clinicalIntakeToVitalsSnapshot, mergeConsultationVitalsFromIntake } from "./vitalsHydration";
 import { resolveLabRecommendationMatch } from "./labRecommendationMatcher.js";
 import { LAB_ORDER_NOTES_MAX_LENGTH, buildAiLabOrderNotes } from "./labOrderNotesFormatter.js";
+import { sanitizeClinicalReasoningNarrative } from "./clinicalReasoningActionLabel.js";
 
 type ConsultationFormState = {
   chiefComplaints: string;
@@ -883,13 +893,13 @@ function emptyPrescriptionForm(record?: Prescription | null, consultation?: Cons
   };
 }
 
-function consultationTabIndexToKey(tabIndex: number): string {
-  return CONSULTATION_TAB_KEYS[tabIndex] || "consultation";
+function consultationTabIndexToKey(tabIndex: number, consultationTabKeys: readonly string[] = CONSULTATION_TAB_KEYS): string {
+  return consultationTabKeys[tabIndex] || consultationTabKeys[0] || "consultation";
 }
 
-function consultationTabKeyToIndex(tabKey: string | null | undefined): number {
+function consultationTabKeyToIndex(tabKey: string | null | undefined, consultationTabKeys: readonly string[] = CONSULTATION_TAB_KEYS): number {
   const normalized = (tabKey || "").trim().toLowerCase();
-  const index = CONSULTATION_TAB_KEYS.indexOf(normalized as (typeof CONSULTATION_TAB_KEYS)[number]);
+  const index = consultationTabKeys.indexOf(normalized as (typeof CONSULTATION_TAB_KEYS)[number]);
   return index >= 0 ? index : 0;
 }
 
@@ -2608,7 +2618,12 @@ export default function ConsultationWorkspacePage() {
   const [clinicalReasoningInvestigationHighlightKey, setClinicalReasoningInvestigationHighlightKey] = React.useState<string | null>(null);
   const [medicineSearch, setMedicineSearch] = React.useState("");
   const [correctionReason, setCorrectionReason] = React.useState("Same-day correction");
-  const [activeTab, setActiveTab] = React.useState(() => consultationTabKeyToIndex(searchParams.get("tab")));
+  const tenantHasAiCopilot = hasTenantModule(auth, "aiCopilot");
+  const consultationTabKeys = React.useMemo(
+    () => (tenantHasAiCopilot ? CONSULTATION_TAB_KEYS : CONSULTATION_TAB_KEYS.filter((key) => key !== "ai-assist")) as readonly (typeof CONSULTATION_TAB_KEYS)[number][],
+    [tenantHasAiCopilot],
+  );
+  const [activeTab, setActiveTab] = React.useState(() => consultationTabKeyToIndex(searchParams.get("tab"), consultationTabKeys));
   const historyView = normalizeHistoryViewKey(searchParams.get("historyView"));
   const [historyTimelineFilter, setHistoryTimelineFilter] = React.useState<HistoryTimelineFilterKey>("ALL");
   const [expanded, setExpanded] = React.useState<Record<string, boolean>>({
@@ -2621,6 +2636,7 @@ export default function ConsultationWorkspacePage() {
     history: false,
     "patient-history-summary": false,
   });
+  const [historyAtAGlanceExpanded, setHistoryAtAGlanceExpanded] = React.useState(false);
   const [historyTimelineLimit, setHistoryTimelineLimit] = React.useState(6);
   const [historyConsultationLimit, setHistoryConsultationLimit] = React.useState(3);
   const [historyPrescriptionLimit, setHistoryPrescriptionLimit] = React.useState(3);
@@ -2648,7 +2664,12 @@ export default function ConsultationWorkspacePage() {
     }));
   }, []);
   const [aiAssistEntries, setAiAssistEntries] = React.useState<AiAssistEntry[]>([]);
-  const [aiAvailable, setAiAvailable] = React.useState(true);
+  const [doctorAiAssistEnabled, setDoctorAiAssistEnabled] = useDoctorAiAssistPreference({
+    tenantId: auth.tenantId,
+    appUserId: auth.appUserId,
+    username: auth.username,
+  });
+  const [aiAvailable, setAiAvailable] = React.useState<boolean>(tenantHasAiCopilot);
   const [aiStatusMessage, setAiStatusMessage] = React.useState<string | null>(null);
   const [clinicalSummary, setClinicalSummary] = React.useState<AiDraftResponse | null>(null);
   const [aiDiagnosisSuggestion, setAiDiagnosisSuggestion] = React.useState<string | null>(null);
@@ -3165,8 +3186,8 @@ export default function ConsultationWorkspacePage() {
   }, [aiPrescriptionItems]);
 
   React.useEffect(() => {
-    setActiveTab(consultationTabKeyToIndex(searchParams.get("tab")));
-  }, [searchParams]);
+    setActiveTab(consultationTabKeyToIndex(searchParams.get("tab"), consultationTabKeys));
+  }, [consultationTabKeys, searchParams]);
 
   React.useEffect(() => {
     setHistoryTimelineFilter("ALL");
@@ -3174,6 +3195,7 @@ export default function ConsultationWorkspacePage() {
     setHistoryConsultationLimit(3);
     setHistoryPrescriptionLimit(3);
     setHistoryDocumentLimit(6);
+    setHistoryAtAGlanceExpanded(false);
     setDocumentFilter("ALL");
     setDocumentReviewFilter("ALL");
   }, [consultationId]);
@@ -3498,6 +3520,13 @@ export default function ConsultationWorkspacePage() {
     let cancelled = false;
     async function loadAiStatus() {
       if (!auth.accessToken || !auth.tenantId) return;
+      if (!tenantHasAiCopilot) {
+        if (!cancelled) {
+          setAiAvailable(false);
+          setAiStatusMessage(null);
+        }
+        return;
+      }
       const canRunAi = auth.hasPermission("ai_copilot.run") || auth.hasPermission("ai_copilot.clinic.run");
       if (!canRunAi) {
         if (!cancelled) {
@@ -3523,7 +3552,7 @@ export default function ConsultationWorkspacePage() {
     return () => {
       cancelled = true;
     };
-  }, [auth, auth.accessToken, auth.tenantId]);
+  }, [auth, auth.accessToken, auth.tenantId, tenantHasAiCopilot]);
 
   React.useEffect(() => {
     if (saving) {
@@ -3693,8 +3722,9 @@ export default function ConsultationWorkspacePage() {
       && aivaClinicalQuestion.trim()
       && !aiBusy,
   );
-  const canGenerateClinicalDraft = Boolean(auth.accessToken && auth.tenantId && consultation && patient && aiAvailable && !aiBusy);
-  const aiAssistantEnabled = Boolean(aiAvailable && canRunAi);
+  const canGenerateClinicalDraft = Boolean(auth.accessToken && auth.tenantId && consultation && patient && tenantHasAiCopilot && aiAvailable && doctorAiAssistEnabled && !aiBusy);
+  const aiAssistantEnabled = Boolean(tenantHasAiCopilot && aiAvailable && canRunAi && doctorAiAssistEnabled);
+  const aiAssistantVisible = tenantHasAiCopilot;
   const patientSnapshotFallback = React.useMemo(() => {
     const patientName = [patientRow?.firstName, patientRow?.lastName].filter(Boolean).join(" ").trim() || patientRow?.patientNumber || consultation?.patientName || null;
     return {
@@ -4014,6 +4044,18 @@ export default function ConsultationWorkspacePage() {
       </Stack>
     </Alert>
   );
+  const aiAssistOffStateCard = (
+    <Alert severity="info" role="status" icon={<InfoOutlinedIcon fontSize="inherit" />} sx={{ alignItems: "flex-start" }}>
+      <Stack spacing={0.45}>
+        <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>
+          AI assistance is turned off
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          Manual consultation, prescription, investigation, and completion workflows remain available. Re-enable AI assistance from the workspace footer when you want suggestions again.
+        </Typography>
+      </Stack>
+    </Alert>
+  );
   const selectedLabOrder = React.useMemo(
     () => (selectedLabOrderId ? labOrders.find((order) => order.id === selectedLabOrderId) || null : null),
     [labOrders, selectedLabOrderId],
@@ -4163,7 +4205,7 @@ export default function ConsultationWorkspacePage() {
     }));
 
     const rows = recommendedTests.map((test) => {
-      const rawText = [test.name, test.reason, test.source, test.actionType].filter(Boolean).join(" ");
+      const rawText = sanitizeClinicalReasoningNarrative([test.name, test.reason, test.source].filter(Boolean).join(" "));
       const mapping = resolveLabRecommendationMatch(rawText || test.name || test.reason || "", labTests);
       const reasonText = normalizeLookupKey(rawText);
       const consider = /\b(consider|optional|if indicated|if exposure|if symptoms persist|if clinically needed)\b/.test(reasonText);
@@ -4227,7 +4269,7 @@ export default function ConsultationWorkspacePage() {
 
       return {
         testName: mapping.displayLabel || test.name || investigationLabelFromCanonicalKey(normalizeInvestigationCanonicalKey(rawText || test.name || test.reason || "")) || "Recommended investigation",
-        sourceRecommendation: mapping.sourceRecommendation || rawText || test.name || "",
+        sourceRecommendation: sanitizeClinicalReasoningNarrative(mapping.sourceRecommendation || rawText || test.name || ""),
         mappingState: mapping.matchState,
         mappingLabel: mapping.mappingLabel,
         matchedTests: mapping.safeToAutoSelect ? mapping.matchedTests : [],
@@ -4537,7 +4579,7 @@ export default function ConsultationWorkspacePage() {
     : patientRow?.existingConditions || "Not recorded";
   const clinicalSnapshotMedications = verifiedLongTermMedications.length
     ? verifiedLongTermMedications.map((concept) => longitudinalSnapshotLabel(concept) || concept.label).join(", ")
-    : patientRow?.longTermMedications || "Not recorded";
+    : "Not recorded";
   const currentMedicineRows = prescriptionForm.medicines.filter((row) => medicineRowHasAnyContent(row));
   const latestPreviousPrescription = previousPrescriptions[0] || null;
   const latestPreviousMedicineRows = latestPreviousPrescription?.medicines || [];
@@ -4551,6 +4593,16 @@ export default function ConsultationWorkspacePage() {
       .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
     return consultations;
   }, [consultation?.id, patient?.previousConsultations]);
+  const historyAtAGlanceEntries = React.useMemo(
+    () => buildConsultationHistoryEntries(patient?.previousConsultations || [], consultation || null, consultation?.id || null),
+    [consultation, patient?.previousConsultations],
+  );
+  const historyAtAGlanceVisibleRows = React.useMemo(
+    () => getVisibleConsultationHistoryItems(historyAtAGlanceEntries, historyAtAGlanceExpanded, 5),
+    [historyAtAGlanceEntries, historyAtAGlanceExpanded],
+  );
+  const historyAtAGlanceHasToggle = shouldShowConsultationHistoryToggle(historyAtAGlanceEntries.length, 5);
+  const historyAtAGlanceSectionTitle = getConsultationHistorySectionTitle(historyAtAGlanceEntries.length);
   const historyOverviewConsultations = React.useMemo(() => {
     const consultations = historyConsultationEntries;
     return consultations.slice(0, 3);
@@ -4926,7 +4978,7 @@ export default function ConsultationWorkspacePage() {
   const openHistoryTab = () => {
     setActiveTab(2);
     const nextParams = new URLSearchParams(searchParams);
-    nextParams.set("tab", consultationTabIndexToKey(2));
+    nextParams.set("tab", consultationTabIndexToKey(2, consultationTabKeys));
     nextParams.set("historyView", "timeline");
     setSearchParams(nextParams, { replace: true });
   };
@@ -4934,10 +4986,10 @@ export default function ConsultationWorkspacePage() {
   const setHistoryView = React.useCallback((nextView: HistoryViewKey) => {
     setActiveTab(2);
     const nextParams = new URLSearchParams(searchParams);
-    nextParams.set("tab", consultationTabIndexToKey(2));
+    nextParams.set("tab", consultationTabIndexToKey(2, consultationTabKeys));
     nextParams.set("historyView", nextView);
     setSearchParams(nextParams, { replace: true });
-  }, [searchParams, setSearchParams]);
+  }, [consultationTabKeys, searchParams, setSearchParams]);
 
   const toggleSection = (id: string) => setExpanded((current) => ({ ...current, [id]: !current[id] }));
 
@@ -8143,7 +8195,8 @@ export default function ConsultationWorkspacePage() {
       }
       const parsed = parseAiMedicineSuggestionItems(draft);
       if (parsed.invalid) {
-        setAiPrescriptionSuggestion(parsed.summary || "AI returned an invalid response. Please retry.");
+        const invalidMessage = draft.message || parsed.summary || "AI returned an invalid response. Please retry.";
+        setAiPrescriptionSuggestion(invalidMessage);
         setAiPrescriptionItems([]);
         setAiPrescriptionUnstructured(true);
         setAiPrescriptionProvider(draft.provider || null);
@@ -8154,9 +8207,9 @@ export default function ConsultationWorkspacePage() {
         updateAiAssistEntry(entryId, {
           status: "success",
           response: draft,
-          error: "AI returned an invalid response. Please retry.",
+          error: invalidMessage,
         });
-        setError("AI returned an invalid response. Please retry.");
+        setError(invalidMessage);
         return;
       }
       const generatedAt = new Date().toISOString();
@@ -8716,7 +8769,7 @@ export default function ConsultationWorkspacePage() {
               <Button type="button" size="small" variant="outlined" onClick={() => void backToQueue()}>Back to Queue</Button>
               {canEditConsultation && !readOnly ? <Button type="button" size="small" disabled={saving} onClick={() => void manualSaveDraft()}>Save Draft</Button> : null}
               {aiAssistantEnabled ? <Button type="button" size="small" variant="contained" title="Generate reviewable AI drafts for multiple consultation sections." startIcon={<AutoAwesomeRoundedIcon fontSize="small" />} disabled={!canGenerateClinicalDraft} onClick={() => void generateConsultationDraft(false)}>Generate AI Consultation Draft</Button> : null}
-              {canRunAi && Object.values(clinicalAiDrafts).some((draft) => draft.status === "ACCEPTED" || draft.status === "EDITED") ? (
+              {aiAssistantEnabled && Object.values(clinicalAiDrafts).some((draft) => draft.status === "ACCEPTED" || draft.status === "EDITED") ? (
                 <Button
                   type="button"
                   size="small"
@@ -8993,7 +9046,7 @@ export default function ConsultationWorkspacePage() {
             onChange={(_, value) => {
               setActiveTab(value);
               const nextParams = new URLSearchParams(searchParams);
-              nextParams.set("tab", consultationTabIndexToKey(value));
+              nextParams.set("tab", consultationTabIndexToKey(value, consultationTabKeys));
               if (value === 2) {
                 nextParams.set("historyView", "timeline");
               } else {
@@ -9041,12 +9094,14 @@ export default function ConsultationWorkspacePage() {
               iconPosition="start"
               sx={workspaceTabSx}
             />
-            <Tab
-              label="AI Assist"
-              icon={<AutoAwesomeRoundedIcon fontSize="small" />}
-              iconPosition="start"
-              sx={workspaceTabSx}
-            />
+            {tenantHasAiCopilot ? (
+              <Tab
+                label="AI Assist"
+                icon={<AutoAwesomeRoundedIcon fontSize="small" />}
+                iconPosition="start"
+                sx={workspaceTabSx}
+              />
+            ) : null}
           </Tabs>
         </CardContent>
       </Card>
@@ -10229,10 +10284,14 @@ export default function ConsultationWorkspacePage() {
                     error={clinicalContextError}
                     highlightLabLabel={clinicalReasoningInvestigationHighlightKey}
                     aiEnabled={aiAssistantEnabled}
+                    currentConsultation={consultation}
+                    previousConsultations={patient?.previousConsultations || []}
                     patientSnapshotFallback={patientSnapshotFallback}
                     onViewSourceDocument={(documentId) => void openClinicalDocumentById(documentId)}
+                    onReviewFindings={(documentId) => navigate(`/consultations/${consultationId}/ai-findings-review?documentId=${encodeURIComponent(documentId)}`)}
                   />
                   </Box>
+                  {aiAssistantVisible ? (
                   <Card variant="outlined" sx={{ boxShadow: "none", overflow: "visible", height: "auto", minHeight: "auto" }}>
                     <CardContent sx={{ p: 0.95, "&:last-child": { pb: 0.95 } }}>
                         <Stack spacing={0.85}>
@@ -10404,10 +10463,11 @@ export default function ConsultationWorkspacePage() {
                           </CardContent>
                         </Card>
                           </>
-                        ) : aiUnavailableCard}
+                        ) : (doctorAiAssistEnabled ? aiUnavailableCard : aiAssistOffStateCard)}
                       </Stack>
                     </CardContent>
                   </Card>
+                  ) : null}
 
                   <SectionCard
                     id="followup"
@@ -10684,9 +10744,9 @@ export default function ConsultationWorkspacePage() {
                           <HistoryRoundedIcon fontSize="small" />
                         </Box>
                         <Box sx={{ minWidth: 0 }}>
-                          <Typography variant="subtitle1" sx={{ fontWeight: 900, lineHeight: 1.15 }}>History at a glance</Typography>
+                          <Typography variant="subtitle1" sx={{ fontWeight: 900, lineHeight: 1.15 }}>{historyAtAGlanceSectionTitle}</Typography>
                           <Typography variant="caption" color="text.secondary" sx={{ display: "block", lineHeight: 1.1 }}>
-                            {activeTimeline.length ? `${activeTimeline.length} previous consultation${activeTimeline.length === 1 ? "" : "s"}` : "No previous history"}
+                            {historyAtAGlanceEntries.length ? "Consultation records only" : "No previous consultations"}
                           </Typography>
                         </Box>
                       </Box>
@@ -10698,27 +10758,22 @@ export default function ConsultationWorkspacePage() {
                     </Box>
                     <Collapse in={expanded.history} timeout={200} easing={{ enter: "ease-in-out", exit: "ease-in-out" }} unmountOnExit>
                     <Stack spacing={1}>
-                      {!activeTimeline.length ? (
+                      {!historyAtAGlanceEntries.length ? (
                         <Alert severity="info" sx={{ py: 0.5 }}>No previous clinical history recorded.</Alert>
                       ) : (
                         <Stack spacing={0.75}>
-                          {activeTimeline.slice(0, 6).map((item) => (
+                          {historyAtAGlanceVisibleRows.map((item) => (
                             <Card
-                              key={item.id}
+                              key={item.consultationId}
                               variant="outlined"
                               sx={{
                                 boxShadow: "none",
-                                cursor: item.itemType === "DOCUMENT" || item.consultationId || item.prescriptionId ? "pointer" : "default",
+                                cursor: item.consultationId ? "pointer" : "default",
                                 borderRadius: 1.5,
                                 transition: "transform 120ms ease, box-shadow 120ms ease",
                                 "&:hover": { boxShadow: 1, transform: "translateY(-1px)" },
                               }}
                               onClick={() => {
-                                if (item.itemType === "DOCUMENT" && item.documentId) {
-                                  const document = clinicalDocuments.find((row) => row.id === item.documentId);
-                                  if (document) void openClinicalDocument(document);
-                                  return;
-                                }
                                 if (item.consultationId && item.consultationId !== consultation.id) {
                                   navigate(`/consultations/${item.consultationId}`);
                                 }
@@ -10727,24 +10782,46 @@ export default function ConsultationWorkspacePage() {
                               <CardContent sx={{ p: 1 }}>
                                 <Stack direction="row" spacing={1} alignItems="flex-start">
                                   <Box sx={{ width: 28, height: 28, borderRadius: "50%", display: "grid", placeItems: "center", bgcolor: "primary.50", color: "primary.main", flexShrink: 0 }}>
-                                    {item.itemType === "PRESCRIPTION" ? <MedicationRoundedIcon fontSize="small" /> : item.itemType === "LAB_ORDER" || item.itemType === "DOCUMENT" ? <ScienceRoundedIcon fontSize="small" /> : item.itemType === "INVESTIGATION" ? <BiotechRoundedIcon fontSize="small" /> : <HistoryRoundedIcon fontSize="small" />}
+                                    <HistoryRoundedIcon fontSize="small" />
                                   </Box>
                                   <Stack spacing={0.25} sx={{ minWidth: 0, flex: 1 }}>
                                     <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" alignItems="center">
-                                      <Chip size="small" label={timelineTypeLabel(item.itemType)} color={timelineColor(item.itemType)} variant="outlined" sx={{ height: 22 }} />
-                                      {item.consultationId === consultation.id ? <Chip size="small" color="primary" label="Current" sx={{ height: 22 }} /> : null}
+                                      <Chip size="small" label="Consultation" color="primary" variant="outlined" sx={{ height: 22 }} />
+                                      {item.isCurrent ? <Chip size="small" color="primary" label="Current" sx={{ height: 22 }} /> : null}
                                     </Stack>
                                     <Typography variant="body2" sx={{ fontWeight: 800, lineHeight: 1.25 }} noWrap>
-                                      {item.title}
+                                      {item.primaryText || "Consultation"}
                                     </Typography>
                                     <Typography variant="caption" color="text.secondary" noWrap>
-                                      {compactDateTime(item.occurredAt)}{item.subtitle ? ` • ${compactText(item.subtitle, 42)}` : ""}
+                                      {item.consultationDate ? compactDate(item.consultationDate) : "Not recorded"}
+                                      {item.status ? ` • ${item.status.replaceAll("_", " ")}` : ""}
+                                      {item.doctor ? ` • ${item.doctor}` : ""}
                                     </Typography>
+                                    {item.followUp ? (
+                                      <Typography variant="caption" color="text.secondary" noWrap>
+                                        Follow-up: {item.followUp}
+                                      </Typography>
+                                    ) : null}
+                                    {item.detail ? (
+                                      <Typography variant="caption" color="text.secondary" noWrap>
+                                        {compactText(item.detail, 72)}
+                                      </Typography>
+                                    ) : null}
                                   </Stack>
                                 </Stack>
                               </CardContent>
                             </Card>
                           ))}
+                          {historyAtAGlanceHasToggle ? (
+                            <Button
+                              type="button"
+                              size="small"
+                              variant="text"
+                              onClick={() => setHistoryAtAGlanceExpanded((current) => !current)}
+                            >
+                              {getConsultationHistoryToggleLabel(historyAtAGlanceExpanded)}
+                            </Button>
+                          ) : null}
                         </Stack>
                       )}
                     </Stack>
@@ -13450,7 +13527,7 @@ export default function ConsultationWorkspacePage() {
         </Stack>
       ) : null}
 
-      {activeTab === 5 ? (
+      {tenantHasAiCopilot && activeTab === 5 ? (
         <Grid container spacing={1.5} alignItems="stretch">
           <Grid size={{ xs: 12 }}>
             <WorkflowStrip text="Review Context → Ask AI → Review Draft → Accept" />

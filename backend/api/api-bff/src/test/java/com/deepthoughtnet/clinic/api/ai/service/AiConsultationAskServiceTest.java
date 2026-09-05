@@ -356,6 +356,8 @@ class AiConsultationAskServiceTest {
             assertThat(investigationSuggestionContext).contains("Pending investigations: CBC");
             assertThat(investigationSuggestionContext).contains("Available investigation evidence");
             assertThat(investigationSuggestionContext).contains("Latest lab report");
+            assertThat(investigationSuggestionContext).contains("Prefer 2-5 focused suggestions at most");
+            assertThat(investigationSuggestionContext).contains("Do not return broad, vague, or administrative recommendations");
             assertThat(investigationSuggestionContext).contains("Do not automatically create, select, or map a catalog test");
             assertThat(investigationSuggestionContext).contains("Do not include billing, payment, internal AI metadata");
             assertThat(investigationSuggestionContext).contains("Consider if indicated");

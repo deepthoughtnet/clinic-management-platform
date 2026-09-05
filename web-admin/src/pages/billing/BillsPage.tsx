@@ -38,7 +38,7 @@ import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
 import MoreVertRoundedIcon from "@mui/icons-material/MoreVertRounded";
 import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
 
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import {
   consultationFeeSchema,
 } from "@deepthoughtnet/form-validation-kit";
@@ -564,6 +564,7 @@ type ReceiptPreviewState = ReceiptPrintData | null;
 
 export default function BillsPage() {
   const auth = useAuth();
+  const location = useLocation();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const consultationAppointmentId = searchParams.get("appointmentId") || "";
@@ -2068,7 +2069,20 @@ export default function BillsPage() {
                   <Alert severity="warning">Doctor consultation fee is not configured. Open the doctor profile to configure the fee before collecting payment.</Alert>
                 )}
                 {consultationDoctorUserProfileId ? (
-                  <Button variant="text" onClick={() => navigate(`/doctors/${consultationDoctorUserProfileId}`)}>Open doctor profile</Button>
+                  <Button
+                    variant="text"
+                    onClick={() => navigate(`/doctors/${consultationDoctorUserProfileId}/profile`, {
+                      state: {
+                        returnTo: {
+                          pathname: location.pathname,
+                          search: location.search,
+                          hash: location.hash,
+                        },
+                      },
+                    })}
+                  >
+                    Open doctor profile
+                  </Button>
                 ) : null}
               </Stack>
             </CardContent>

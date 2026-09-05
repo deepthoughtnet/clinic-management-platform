@@ -101,16 +101,23 @@ public class ClinicalConceptMapper {
             if (!(item instanceof Map<?, ?> fact)) {
                 continue;
             }
-            String canonicalKey = canonicalLabKey(normalizeText(firstNonNull(
+            String rawKey = normalizeText(firstNonNull(
                     fact.get("canonicalKey"),
                     fact.get("conceptKey"),
                     fact.get("key"),
                     fact.get("testName"),
                     fact.get("label")
-            )));
+            ));
+            String canonicalKey = rawKey != null && rawKey.startsWith("unmapped_")
+                    ? normalizeKey(rawKey)
+                    : canonicalLabKey(rawKey);
             if (canonicalKey == null) {
                 continue;
             }
+            String rawTestName = normalizeText(firstNonNull(fact.get("testName"), fact.get("label")));
+            String[] evidenceLabels = canonicalKey.startsWith("unmapped_") && hasText(rawTestName)
+                    ? new String[]{rawTestName}
+                    : evidenceLabelsFor(canonicalKey);
             String evidenceText = normalizeText(firstNonNull(fact.get("evidenceText"), fact.get("evidence"), fact.get("sourceText")));
             String rawValue = normalizeText(firstNonNull(fact.get("value"), fact.get("result"), fact.get("valueText")));
             if (!hasText(evidenceText)) {
@@ -124,7 +131,7 @@ public class ClinicalConceptMapper {
                     summarizeEvidence(evidenceText));
             String valueText = normalizeLabValue(canonicalKey, rawValue, evidenceText);
             String unit = normalizeUnit(canonicalKey, normalizeText(firstNonNull(fact.get("unit"), fact.get("valueUnit"))), evidenceText);
-            if (!hasText(valueText) || !isSafeLabEvidenceText(evidenceText, evidenceLabelsFor(canonicalKey)) || !isPlausibleStructuredLabValue(canonicalKey, valueText)) {
+            if (!hasText(valueText) || !isSafeLabEvidenceText(evidenceText, evidenceLabels) || !isPlausibleStructuredLabValue(canonicalKey, valueText)) {
                 log.info("[AI-DOC-PIPELINE-TRACE] documentId={} conceptKey={} proposedValue={} unit={} sourceField={} evidenceText={} accepted={} rejectionReason={}",
                         document.getId(), canonicalKey, valueText, unit, "factualFindings.labResults", summarizeEvidence(evidenceText), false, "INVALID_STRUCTURED_LAB_FACT");
                 continue;
@@ -135,7 +142,7 @@ public class ClinicalConceptMapper {
                     document,
                     "LAB_RESULT",
                     canonicalKey,
-                    displayLabelForLabKey(canonicalKey),
+                    canonicalKey.startsWith("unmapped_") && hasText(rawTestName) ? rawTestName : displayLabelForLabKey(canonicalKey),
                     valueText,
                     unit,
                     observedOn,
@@ -708,20 +715,29 @@ public class ClinicalConceptMapper {
 
     private String canonicalLabKey(String rawKey) {
         String normalized = normalizeKey(rawKey);
-        if (containsAny(normalized, "hba1c", "hb_a1c", "a1c", "glycated_hemoglobin", "glycosylated_hemoglobin")) return "hba1c";
-        if (containsAny(normalized, "estimated_average_glucose", "eag")) return "estimated_average_glucose";
-        if (containsAny(normalized, "blood_sugar", "random_blood_sugar", "glucose", "rbs")) return "blood_sugar";
-        if (containsAny(normalized, "hemoglobin")) return "hemoglobin";
-        if (containsAny(normalized, "creatinine", "serum_creatinine")) return "creatinine";
-        if (containsAny(normalized, "egfr", "estimated_gfr", "estimated_glomerular_filtration_rate")) return "egfr";
-        if (containsAny(normalized, "crp", "c_reactive_protein")) return "crp";
-        if (containsAny(normalized, "alt", "sgpt", "alanine_aminotransferase")) return "alt";
-        if (containsAny(normalized, "ast", "sgot", "aspartate_aminotransferase")) return "ast";
-        if (containsAny(normalized, "ldl")) return "ldl";
-        if (containsAny(normalized, "hdl")) return "hdl";
-        if (containsAny(normalized, "triglycerides", "triglyceride")) return "triglycerides";
-        if (containsAny(normalized, "total_cholesterol", "cholesterol")) return "cholesterol";
+        if (exactAlias(normalized, "hba1c", "hb_a1c", "a1c", "hemoglobin_a1c", "glycated_hemoglobin", "glycosylated_hemoglobin")) return "hba1c";
+        if (exactAlias(normalized, "estimated_average_glucose", "eag")) return "estimated_average_glucose";
+        if (exactAlias(normalized, "blood_sugar", "random_blood_sugar", "fasting_blood_sugar", "fasting_glucose", "glucose", "fbs", "rbs")) return "blood_sugar";
+        if (exactAlias(normalized, "hemoglobin", "hb")) return "hemoglobin";
+        if (exactAlias(normalized, "rbc", "rbc_count", "red_blood_cell", "red_blood_cells", "red_blood_cell_count", "red_blood_cells_count")) return "rbc";
+        if (exactAlias(normalized, "wbc", "wbc_count", "white_blood_cell", "white_blood_cells", "white_blood_cell_count", "white_blood_cells_count", "total_wbc_count")) return "wbc";
+        if (exactAlias(normalized, "platelet", "platelets", "platelet_count")) return "platelets";
+        if (exactAlias(normalized, "neutrophil", "neutrophils")) return "neutrophils";
+        if (exactAlias(normalized, "lymphocyte", "lymphocytes")) return "lymphocytes";
+        if (exactAlias(normalized, "creatinine", "serum_creatinine")) return "creatinine";
+        if (exactAlias(normalized, "egfr", "estimated_gfr", "estimated_glomerular_filtration_rate")) return "egfr";
+        if (exactAlias(normalized, "crp", "c_reactive_protein")) return "crp";
+        if (exactAlias(normalized, "alt", "sgpt", "alanine_aminotransferase", "alt_sgpt")) return "alt";
+        if (exactAlias(normalized, "ast", "sgot", "aspartate_aminotransferase", "ast_sgot")) return "ast";
+        if (exactAlias(normalized, "ldl_cholesterol", "ldl")) return "ldl";
+        if (exactAlias(normalized, "hdl_cholesterol", "hdl")) return "hdl";
+        if (exactAlias(normalized, "triglycerides", "triglyceride")) return "triglycerides";
+        if (exactAlias(normalized, "total_cholesterol", "cholesterol")) return "cholesterol";
         return null;
+    }
+
+    private boolean exactAlias(String value, String... aliases) {
+        return value != null && aliases != null && Set.of(aliases).contains(value);
     }
 
     private String[] evidenceLabelsFor(String canonicalKey) {

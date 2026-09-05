@@ -34,6 +34,8 @@ clinic:
     provider: ${CLINIC_AI_PROVIDER:DISABLED}
     provider-chain: ${AI_PROVIDER_CHAIN:GEMINI,GROQ,MOCK}
     request-timeout-seconds: ${CLINIC_AI_REQUEST_TIMEOUT_SECONDS:60}
+    clinical-document-extraction:
+      max-output-tokens: ${CLINIC_AI_CLINICAL_DOCUMENT_EXTRACTION_MAX_OUTPUT_TOKENS:4096}
     gemini:
       enabled: ${CLINIC_GEMINI_ENABLED:false}
       api-key: ${GEMINI_API_KEY:}
@@ -41,6 +43,7 @@ clinic:
       base-url: ${GEMINI_BASE_URL:https://generativelanguage.googleapis.com/v1beta}
       temperature: ${GEMINI_TEMPERATURE:0.1}
       max-output-tokens: ${GEMINI_MAX_OUTPUT_TOKENS:2048}
+      clinical-document-extraction-thinking-budget: ${CLINIC_AI_CLINICAL_DOCUMENT_EXTRACTION_THINKING_BUDGET:0}
       timeout-seconds: ${GEMINI_TIMEOUT_SECONDS:${CLINIC_AI_REQUEST_TIMEOUT_SECONDS:60}}
     groq:
       enabled: ${CLINIC_GROQ_ENABLED:true}

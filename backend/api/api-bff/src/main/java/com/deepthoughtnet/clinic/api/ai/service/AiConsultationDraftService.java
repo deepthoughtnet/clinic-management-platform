@@ -7,6 +7,7 @@ import com.deepthoughtnet.clinic.api.ai.dto.AiPrescriptionTemplateRequest;
 import com.deepthoughtnet.clinic.api.ai.dto.ClinicalContextResponse;
 import com.deepthoughtnet.clinic.api.ai.clinicalcontext.ClinicalContextService;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiTaskType;
+import com.deepthoughtnet.clinic.platform.contracts.ai.AiFinishReasonNormalizer;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -32,6 +33,7 @@ public class AiConsultationDraftService {
     private static final String PRESCRIPTION_TEMPLATE_CONDITIONAL_ALLERGY_MESSAGE = "Allergy history is not recorded; if the patient has a penicillin allergy, verify before prescribing.";
     private static final String PRESCRIPTION_TEMPLATE_CONDITIONAL_INTERACTION_MESSAGE = "Current medicines are not recorded; if the patient is taking lisinopril or another ACE inhibitor, verify interaction risk before prescribing.";
     private static final String PRESCRIPTION_TEMPLATE_NO_GROUNDED_SUGGESTIONS_MESSAGE = "No grounded prescription suggestions could be retained from the current consultation context.";
+    private static final String PRESCRIPTION_TEMPLATE_INCOMPLETE_MESSAGE = "AI response was incomplete and was not applied. Please retry or continue the prescription manually.";
     private static final Pattern CURRENT_MEDICATION_ASSERTION_PATTERN = Pattern.compile(
             "(?i)(^|[.!?;:\\n]\\s*)(?:patient\\s+is\\s+currently\\s+(?:on|taking|using)|patient\\s+is\\s+(?:on|taking|using)|patient\\s+currently\\s+(?:takes|uses)|current(?:\\s+medications?|\\s+medicines?|\\s+meds?)\\s+(?:include|includes|is|are))\\s+([^\\n.;]+)"
     );
@@ -237,6 +239,10 @@ public class AiConsultationDraftService {
                 input,
                 java.util.List.of()
         );
+        AiDraftResponse validatedResponse = validatePrescriptionTemplateResponse(response);
+        if (validatedResponse != response) {
+            return validatedResponse;
+        }
         response = groundPrescriptionTemplateResponse(request, response);
         log.debug("AI_DOCTOR_COPILOT_RESPONSE taskType={} provider={} model={} rawTextLength={} parsedSuggestionsCount={} structuredKeys={}",
                 AiTaskType.PRESCRIPTION_TEMPLATE_SUGGESTION,
@@ -246,6 +252,84 @@ public class AiConsultationDraftService {
                 suggestionCount(response),
                 response.structuredData() == null ? "[]" : response.structuredData().keySet());
         return response;
+    }
+
+    private AiDraftResponse validatePrescriptionTemplateResponse(AiDraftResponse response) {
+        if (response == null) {
+            return invalidPrescriptionResponse(null, "NO_PROVIDER_RESPONSE");
+        }
+        if (isTruncatedPrescriptionResponse(response)) {
+            return invalidPrescriptionResponse(response, "RESPONSE_TRUNCATED");
+        }
+        if (!hasCompletePrescriptionSuggestionStructure(response)) {
+            return invalidPrescriptionResponse(response, "INCOMPLETE_SUGGESTION_STRUCTURE");
+        }
+        return response;
+    }
+
+    private boolean isTruncatedPrescriptionResponse(AiDraftResponse response) {
+        String finishReason = response == null ? null : response.finishReason();
+        String normalizedFinishReason = response == null ? null : response.normalizedFinishReason();
+        String parseStatus = response == null ? null : response.parseStatus();
+        return AiFinishReasonNormalizer.isTruncated(normalizedFinishReason)
+                || "TRUNCATED".equalsIgnoreCase(parseStatus)
+                || "FAILED".equalsIgnoreCase(parseStatus)
+                || "MAX_TOKENS".equalsIgnoreCase(finishReason);
+    }
+
+    private boolean hasCompletePrescriptionSuggestionStructure(AiDraftResponse response) {
+        if (response == null || response.structuredData() == null || response.structuredData().isEmpty()) {
+            return false;
+        }
+        Object suggestionsValue = response.structuredData().get("suggestions");
+        if (suggestionsValue == null) {
+            return true;
+        }
+        if (!(suggestionsValue instanceof List<?> suggestions)) {
+            return false;
+        }
+        if (suggestions.isEmpty()) {
+            return true;
+        }
+        for (Object suggestion : suggestions) {
+            if (!(suggestion instanceof Map<?, ?> map)) {
+                return false;
+            }
+            if (!hasText(map.get("medicine"))
+                    || !hasText(map.get("dose"))
+                    || !hasText(map.get("frequency"))
+                    || !hasText(map.get("duration"))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private AiDraftResponse invalidPrescriptionResponse(AiDraftResponse response, String reasonCode) {
+        String provider = response == null ? null : response.provider();
+        String model = response == null ? null : response.model();
+        BigDecimal confidence = response == null ? null : response.confidence();
+        String finishReason = response == null ? null : response.finishReason();
+        String normalizedFinishReason = response == null ? null : response.normalizedFinishReason();
+        Integer responseChars = response == null ? null : response.responseChars();
+        String rawText = PRESCRIPTION_TEMPLATE_INCOMPLETE_MESSAGE;
+        return new AiDraftResponse(
+                true,
+                response != null && response.fallbackUsed(),
+                PRESCRIPTION_TEMPLATE_INCOMPLETE_MESSAGE,
+                provider,
+                model,
+                PRESCRIPTION_TEMPLATE_INCOMPLETE_MESSAGE,
+                Map.of(),
+                confidence,
+                List.of(),
+                List.of(PRESCRIPTION_TEMPLATE_INCOMPLETE_MESSAGE),
+                finishReason,
+                normalizedFinishReason,
+                responseChars,
+                rawText,
+                reasonCode
+        );
     }
 
     private AiDraftResponse groundPrescriptionTemplateResponse(AiPrescriptionTemplateRequest request, AiDraftResponse response) {
@@ -654,6 +738,13 @@ public class AiConsultationDraftService {
             }
         }
         return false;
+    }
+
+    private boolean hasText(Object value) {
+        if (value == null) {
+            return false;
+        }
+        return String.valueOf(value).trim().length() > 0;
     }
 
     private List<?> extractSuggestionList(Map<String, Object> structuredData) {

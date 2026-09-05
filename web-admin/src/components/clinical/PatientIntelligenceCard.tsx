@@ -18,7 +18,22 @@ import TimelineRoundedIcon from "@mui/icons-material/TimelineRounded";
 import ScienceRoundedIcon from "@mui/icons-material/ScienceRounded";
 import DescriptionRoundedIcon from "@mui/icons-material/DescriptionRounded";
 import HealingRoundedIcon from "@mui/icons-material/HealingRounded";
-import { type ClinicalContextResponse } from "../../api/clinicApi";
+import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
+import { type ClinicalContextResponse, type Consultation } from "../../api/clinicApi";
+import { buildLatestTrustedLabProjection } from "./patientIntelligenceLatestLabs";
+import { resolveTrustedLabStatus } from "./patientIntelligenceLabStatus.js";
+import {
+  buildConsultationHistoryEntries,
+  getConsultationHistoryToggleLabel,
+  getVisibleConsultationHistoryItems,
+  shouldShowConsultationHistoryToggle,
+} from "./patientIntelligenceConsultationHistory";
+import {
+  getSectionCountLabel,
+  getSectionToggleLabel,
+  getVisibleSectionItems,
+  shouldShowSectionToggle,
+} from "./patientIntelligenceSectionVisibility";
 
 type LongitudinalConcept = ClinicalContextResponse["longitudinalMemory"]["knownConditions"][number];
 type StructuredLabTrend = NonNullable<NonNullable<ClinicalContextResponse["longitudinalClinicalContext"]>["labTrends"]>[number];
@@ -248,6 +263,47 @@ function normalizeRiskLabel(label: string | null | undefined) {
   return label?.trim() || "";
 }
 
+function normalizedVerificationStatus(value: string | null | undefined) {
+  return (value || "").trim().toUpperCase();
+}
+
+function isReviewedLongitudinalConcept(concept: LongitudinalConcept | null | undefined) {
+  const status = normalizedVerificationStatus(concept?.verificationStatus);
+  return Boolean(status && status !== "PENDING_REVIEW" && status !== "REJECTED");
+}
+
+function isPendingLongitudinalConcept(concept: LongitudinalConcept | null | undefined) {
+  return normalizedVerificationStatus(concept?.verificationStatus) === "PENDING_REVIEW";
+}
+
+function latestClinicalHighlightCandidate(concepts: LongitudinalConcept[]) {
+  const available = concepts.filter((concept) => Boolean(concept?.sourceDocumentTitle || concept?.sourceDocumentId || concept?.observedOn || concept?.confidence != null));
+  if (!available.length) {
+    return null;
+  }
+  return available.reduce<LongitudinalConcept | null>((winner, candidate) => {
+    if (!winner) {
+      return candidate;
+    }
+    const winnerDate = winner.observedOn ? Date.parse(winner.observedOn) : Number.NaN;
+    const candidateDate = candidate.observedOn ? Date.parse(candidate.observedOn) : Number.NaN;
+    if (!Number.isNaN(candidateDate) && Number.isNaN(winnerDate)) {
+      return candidate;
+    }
+    if (Number.isNaN(candidateDate) && !Number.isNaN(winnerDate)) {
+      return winner;
+    }
+    if (!Number.isNaN(candidateDate) && !Number.isNaN(winnerDate) && candidateDate !== winnerDate) {
+      return candidateDate > winnerDate ? candidate : winner;
+    }
+    return winner;
+  }, null);
+}
+
+function selectLatestClinicalHighlightSource(trustedConcepts: LongitudinalConcept[], pendingConcepts: LongitudinalConcept[]) {
+  return latestClinicalHighlightCandidate(trustedConcepts) || latestClinicalHighlightCandidate(pendingConcepts) || null;
+}
+
 function dedupeConcepts(items: LongitudinalConcept[], labelMapper: (label: string | null | undefined) => string) {
   const seen = new Set<string>();
   return items.filter((item) => {
@@ -261,39 +317,7 @@ function dedupeConcepts(items: LongitudinalConcept[], labelMapper: (label: strin
 }
 
 function classifyLabStatus(concept: LongitudinalConcept) {
-  const label = normalizeLabLabel(concept.label);
-  const valueText = (concept.valueText || "").trim().toLowerCase();
-  const explicitHigh = valueText.includes("high");
-  const explicitLow = valueText.includes("low");
-  const explicitNormal = valueText.includes("normal");
-  const numericValue = Number.parseFloat((concept.valueText || "").replace(/[^0-9.]+/g, ""));
-
-  if (explicitHigh) return { label: "HIGH", tone: "error" as const };
-  if (explicitLow) return { label: "LOW", tone: "warning" as const };
-  if (explicitNormal) return { label: "NORMAL", tone: "success" as const };
-
-  if (!Number.isNaN(numericValue)) {
-    if (label === "HDL Cholesterol") {
-      return numericValue < 40 ? { label: "LOW", tone: "warning" as const } : { label: "NORMAL", tone: "success" as const };
-    }
-    if (label === "HbA1c") {
-      return numericValue >= 5.7 ? { label: "HIGH", tone: "error" as const } : { label: "NORMAL", tone: "success" as const };
-    }
-    if (label === "Blood Sugar") {
-      return numericValue >= 140 ? { label: "HIGH", tone: "error" as const } : { label: "NORMAL", tone: "success" as const };
-    }
-    if (label === "Total Cholesterol") {
-      return numericValue >= 200 ? { label: "HIGH", tone: "error" as const } : { label: "NORMAL", tone: "success" as const };
-    }
-    if (label === "LDL Cholesterol") {
-      return numericValue >= 130 ? { label: "HIGH", tone: "error" as const } : { label: "NORMAL", tone: "success" as const };
-    }
-    if (label === "Triglycerides") {
-      return numericValue >= 150 ? { label: "HIGH", tone: "error" as const } : { label: "NORMAL", tone: "success" as const };
-    }
-  }
-
-  return { label: "UNKNOWN", tone: "default" as const };
+  return resolveTrustedLabStatus(concept);
 }
 
 function conceptKey(concept: LongitudinalConcept) {
@@ -422,6 +446,63 @@ function TimelineLine({
   );
 }
 
+function ConsultationHistoryRow({
+  entry,
+}: {
+  entry: {
+    consultationId: string;
+    consultationDate: string | null;
+    status: string | null;
+    doctor: string | null;
+    primaryText: string | null;
+    followUp: string | null;
+    detail: string | null;
+    isCurrent: boolean;
+  };
+}) {
+  const statusLabel = (entry.status || "").trim();
+  return (
+    <Box
+      sx={{
+        px: 0.75,
+        py: 0.55,
+        borderRadius: 1.25,
+        border: 1,
+        borderColor: entry.isCurrent ? "primary.light" : "divider",
+        bgcolor: entry.isCurrent ? "primary.50" : "background.paper",
+      }}
+    >
+      <Stack spacing={0.25}>
+        <Stack direction="row" spacing={0.5} alignItems="center" justifyContent="space-between" useFlexGap flexWrap="wrap">
+          <Stack direction="row" spacing={0.4} alignItems="center" useFlexGap flexWrap="wrap">
+            <Chip size="small" variant="outlined" label={formatDisplayDate(entry.consultationDate) || "Not recorded"} sx={{ height: 18, "& .MuiChip-label": { px: 0.6, fontSize: 10.5 } }} />
+            {entry.isCurrent ? <Chip size="small" color="primary" variant="filled" label="Current" sx={{ height: 18, "& .MuiChip-label": { px: 0.6, fontSize: 10.5 } }} /> : null}
+            {statusLabel ? <Chip size="small" variant="outlined" label={statusLabel} sx={{ height: 18, "& .MuiChip-label": { px: 0.6, fontSize: 10.5 } }} /> : null}
+          </Stack>
+          {entry.doctor ? (
+            <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.2 }}>
+              Dr. {entry.doctor}
+            </Typography>
+          ) : null}
+        </Stack>
+        <Typography variant="body2" sx={{ fontWeight: 900, lineHeight: 1.2 }} noWrap title={entry.primaryText || "Consultation"}>
+          {entry.primaryText || "Consultation"}
+        </Typography>
+        {entry.detail ? (
+          <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.2 }}>
+            {entry.detail}
+          </Typography>
+        ) : null}
+        {entry.followUp ? (
+          <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.2 }}>
+            Follow-up {formatDisplayDate(entry.followUp) || entry.followUp}
+          </Typography>
+        ) : null}
+      </Stack>
+    </Box>
+  );
+}
+
 function SummaryField({
   label,
   value,
@@ -447,15 +528,17 @@ function ClinicalCardSection({
   title,
   icon,
   action,
+  id,
   children,
 }: {
   title: string;
   icon: React.ReactNode;
   action?: React.ReactNode;
+  id?: string;
   children: React.ReactNode;
 }) {
   return (
-    <Box sx={{ p: 0.85, border: 1, borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
+    <Box id={id} sx={{ p: 0.85, border: 1, borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
       <Stack spacing={0.65}>
         <SectionHeader title={title} icon={icon} action={action} />
         {children}
@@ -477,6 +560,10 @@ function LabFindingRow({ concept, highlight }: { concept: LongitudinalConcept; h
   const value = formatConceptValue(concept);
   const label = normalizeLabLabel(concept.label) || concept.label;
   const status = classifyLabStatus(concept);
+  const meta = [
+    concept.sourceDocumentTitle ? `Source ${concept.sourceDocumentTitle}` : null,
+    concept.observedOn ? `Observed ${formatObservedOn(concept.observedOn)}` : null,
+  ].filter((part): part is string => Boolean(part)).join(" • ");
   return (
     <Box
       sx={{
@@ -505,6 +592,52 @@ function LabFindingRow({ concept, highlight }: { concept: LongitudinalConcept; h
       <Box sx={{ display: "flex", justifyContent: { xs: "flex-start", sm: "flex-end" } }}>
         <LabBadge tone={status.tone} />
       </Box>
+      {meta ? (
+        <Typography variant="caption" color="text.secondary" sx={{ gridColumn: { xs: "1", sm: "1 / span 3" }, lineHeight: 1.2 }}>
+          {meta}
+        </Typography>
+      ) : null}
+    </Box>
+  );
+}
+
+function TrustedFindingRow({ concept }: { concept: LongitudinalConcept }) {
+  const label = concept.conceptFamily === "LAB_RESULT"
+    ? (normalizeLabLabel(concept.label) || concept.label || "Finding")
+    : (concept.label?.trim() || "Finding");
+  const value = formatConceptValue(concept);
+  const meta = [
+    concept.sourceDocumentTitle ? `Source ${concept.sourceDocumentTitle}` : null,
+    concept.observedOn ? `Observed ${formatObservedOn(concept.observedOn)}` : null,
+  ].filter((part): part is string => Boolean(part)).join(" • ");
+
+  return (
+    <Box
+      sx={{
+        px: 0.75,
+        py: 0.55,
+        borderRadius: 1.25,
+        border: 1,
+        borderColor: "success.light",
+        bgcolor: "success.50",
+      }}
+    >
+      <Stack spacing={0.25}>
+        <Stack direction="row" spacing={0.5} alignItems="center" justifyContent="space-between" useFlexGap flexWrap="wrap">
+          <Typography variant="body2" sx={{ fontWeight: 900, lineHeight: 1.2 }} noWrap title={label}>
+            {label}
+          </Typography>
+          <Chip size="small" color="success" variant="outlined" label="Verified" sx={{ height: 18, "& .MuiChip-label": { px: 0.6, fontSize: 10.5 } }} />
+        </Stack>
+        <Typography variant="body2" sx={{ fontWeight: 800, lineHeight: 1.2 }} noWrap title={value || "Not recorded"}>
+          {value || "Not recorded"}
+        </Typography>
+        {meta ? (
+          <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.2 }}>
+            {meta}
+          </Typography>
+        ) : null}
+      </Stack>
     </Box>
   );
 }
@@ -560,7 +693,10 @@ export function PatientIntelligenceCard({
   onViewSourceDocument,
   highlightLabLabel = null,
   aiEnabled = true,
+  currentConsultation = null,
+  previousConsultations = null,
   patientSnapshotFallback = null,
+  onReviewFindings,
 }: {
   context: ClinicalContextResponse | null;
   loading?: boolean;
@@ -568,6 +704,8 @@ export function PatientIntelligenceCard({
   onViewSourceDocument?: (documentId: string) => void;
   highlightLabLabel?: string | null;
   aiEnabled?: boolean;
+  currentConsultation?: Consultation | null;
+  previousConsultations?: Consultation[] | null;
   patientSnapshotFallback?: {
     patientName?: string | null;
     ageYears?: number | null;
@@ -578,13 +716,26 @@ export function PatientIntelligenceCard({
     longTermMedications?: string | null;
     lastConsultationDate?: string | null;
   } | null;
+  onReviewFindings?: (documentId: string) => void;
 }) {
   const [detailsOpen, setDetailsOpen] = React.useState(false);
+  const [latestLabsExpanded, setLatestLabsExpanded] = React.useState(false);
+  const [verifiedFindingsExpanded, setVerifiedFindingsExpanded] = React.useState(false);
+  const [reportTrendsExpanded, setReportTrendsExpanded] = React.useState(false);
+  const [consultationHistoryExpanded, setConsultationHistoryExpanded] = React.useState(false);
+  const [drawerConsultationHistoryExpanded, setDrawerConsultationHistoryExpanded] = React.useState(false);
+  const [drawerDocumentsExpanded, setDrawerDocumentsExpanded] = React.useState(false);
 
   const snapshot = context?.patientSummary;
   const intakeSummary = context?.intakeSummary;
   const timelineEvents = context?.timelineSummary.events || [];
   const longitudinalMemory = context?.longitudinalMemory;
+  const trustedMemoryConcepts = longitudinalMemory?.history || [];
+  const pendingMemoryConcepts = longitudinalMemory?.pendingReviewHistory || [];
+  const verifiedHistoryConcepts = React.useMemo(
+    () => trustedMemoryConcepts.filter((concept) => Boolean(concept?.conceptKey || concept?.label || concept?.valueText)),
+    [trustedMemoryConcepts],
+  );
   const allergies = splitCompactList(snapshot?.allergies);
   const chronicConditions = splitCompactList(snapshot?.chronicConditions);
   const currentMedications = snapshot?.currentMedications || [];
@@ -608,13 +759,12 @@ export function PatientIntelligenceCard({
   );
   const labItems = React.useMemo(
     () =>
-      [longitudinalMemory?.latestHbA1c || null, longitudinalMemory?.latestBloodSugar || null, ...(longitudinalMemory?.latestLipidSummary || [])]
-        .filter((concept): concept is LongitudinalConcept => Boolean(concept))
+      buildLatestTrustedLabProjection(longitudinalMemory?.history || [])
         .map((concept) => ({
           ...concept,
           label: normalizeLabLabel(concept.label),
         })),
-    [longitudinalMemory?.latestBloodSugar, longitudinalMemory?.latestHbA1c, longitudinalMemory?.latestLipidSummary],
+    [longitudinalMemory?.history],
   );
   const riskFlags = React.useMemo(
     () =>
@@ -624,32 +774,96 @@ export function PatientIntelligenceCard({
       })),
     [longitudinalMemory?.riskFlags],
   );
-
-  const sourceConcept = React.useMemo(() => {
-    const candidates = [
-      longitudinalMemory?.latestHbA1c,
-      longitudinalMemory?.latestBloodSugar,
-      ...(longitudinalMemory?.latestLipidSummary || []),
-      ...(conditions as LongitudinalConcept[]),
-      ...(riskFlags as LongitudinalConcept[]),
-    ].filter((concept): concept is LongitudinalConcept => Boolean(concept));
-    return candidates.find((concept) => Boolean(concept.sourceDocumentTitle || concept.sourceDocumentId || concept.observedOn || concept.confidence != null)) || null;
-  }, [conditions, longitudinalMemory?.latestBloodSugar, longitudinalMemory?.latestHbA1c, longitudinalMemory?.latestLipidSummary, riskFlags]);
-
-  const hasPendingReview = React.useMemo(
-    () =>
-      [...conditions, ...labItems, ...riskFlags].some((concept) => concept.verificationStatus === "PENDING_REVIEW"),
-    [conditions, labItems, riskFlags],
+  const consultationHistoryEntries = React.useMemo(
+    () => buildConsultationHistoryEntries(previousConsultations || context?.previousVisits || [], currentConsultation || null, context?.consultationId || null),
+    [context?.consultationId, context?.previousVisits, previousConsultations, currentConsultation],
   );
+  const visibleLatestLabs = React.useMemo(
+    () => getVisibleSectionItems(labItems, latestLabsExpanded, 6),
+    [labItems, latestLabsExpanded],
+  );
+  const visibleVerifiedFindings = React.useMemo(
+    () => getVisibleSectionItems(verifiedHistoryConcepts, verifiedFindingsExpanded, 5),
+    [verifiedHistoryConcepts, verifiedFindingsExpanded],
+  );
+  const visibleReportTrends = React.useMemo(
+    () => getVisibleSectionItems(structuredLabTrends, reportTrendsExpanded, 3),
+    [reportTrendsExpanded, structuredLabTrends],
+  );
+  const visibleConsultationHistory = React.useMemo(
+    () => getVisibleConsultationHistoryItems(consultationHistoryEntries, consultationHistoryExpanded, 5),
+    [consultationHistoryEntries, consultationHistoryExpanded],
+  );
+  const drawerConsultationHistory = React.useMemo(
+    () => getVisibleConsultationHistoryItems(consultationHistoryEntries, drawerConsultationHistoryExpanded, 3),
+    [consultationHistoryEntries, drawerConsultationHistoryExpanded],
+  );
+  const drawerDocumentItems = React.useMemo(
+    () => [
+      ...recentReports.map((title) => ({ title, category: "Recent report" })),
+      ...radiologyReports.map((title) => ({ title, category: "Radiology" })),
+      ...referrals.map((title) => ({ title, category: "Referral" })),
+      ...dischargeSummaries.map((title) => ({ title, category: "Discharge" })),
+    ].filter((item) => item.title.trim()),
+    [dischargeSummaries, radiologyReports, recentReports, referrals],
+  );
+  const drawerVisibleDocumentItems = React.useMemo(
+    () => (drawerDocumentsExpanded ? drawerDocumentItems : drawerDocumentItems.slice(0, 3)),
+    [drawerDocumentItems, drawerDocumentsExpanded],
+  );
+
+  const sourceConcept = React.useMemo(
+    () => selectLatestClinicalHighlightSource(trustedMemoryConcepts, pendingMemoryConcepts),
+    [pendingMemoryConcepts, trustedMemoryConcepts],
+  );
+
+  const sourceConceptStatus = normalizedVerificationStatus(sourceConcept?.verificationStatus);
+  const sourceConceptLabel = sourceConcept
+    ? (sourceConceptStatus === "PENDING_REVIEW" ? "Pending Review" : "Verified")
+    : "Not recorded";
+  const sourceConceptTone: "default" | "success" | "warning" = sourceConcept
+    ? (sourceConceptStatus === "PENDING_REVIEW" ? "warning" : "success")
+    : "default";
+  const sourceConceptIsPending = sourceConceptStatus === "PENDING_REVIEW";
 
   const intakeLabel = intakeSummary?.complete ? "Complete" : intakeSummary ? "Pending" : "Not recorded";
   const confidence = confidenceBand(sourceConcept?.confidence);
-  const sourceDocumentTitle = sourceConcept?.sourceDocumentTitle || recentReports[0] || null;
+  const sourceDocumentTitle = sourceConcept?.sourceDocumentTitle || null;
   const sourceDocumentId = sourceConcept?.sourceDocumentId || null;
   const sourceDocumentAction = sourceDocumentId && onViewSourceDocument
     ? () => onViewSourceDocument(sourceDocumentId)
     : undefined;
-  const hasData = React.useMemo(() => hasLongitudinalData(conditions, labItems, riskFlags), [conditions, labItems, riskFlags]);
+  const pendingSourceDocumentId = React.useMemo(() => {
+    const pending = latestClinicalHighlightCandidate(pendingMemoryConcepts);
+    return pending?.sourceDocumentId || null;
+  }, [pendingMemoryConcepts]);
+  const pendingFindingCount = React.useMemo(
+    () => pendingMemoryConcepts.length,
+    [pendingMemoryConcepts],
+  );
+  const pendingSources = React.useMemo(() => {
+    const all = pendingMemoryConcepts
+      .filter((concept) => concept.sourceDocumentId)
+      .map((concept) => ({ id: concept.sourceDocumentId as string, title: concept.sourceDocumentTitle || concept.sourceDocumentId as string }));
+    const counts = new Map<string, { id: string; title: string; count: number }>();
+    all.forEach((source) => {
+      const current = counts.get(source.id);
+      counts.set(source.id, current ? { ...current, count: current.count + 1 } : { ...source, count: 1 });
+    });
+    return Array.from(counts.values());
+  }, [pendingMemoryConcepts]);
+  const pendingReportCount = pendingSources.length;
+  const latestLabCount = labItems.length;
+  const verifiedFindingCount = verifiedHistoryConcepts.length;
+  const reportTrendCount = structuredLabTrends.length;
+  const consultationHistoryCount = consultationHistoryEntries.length;
+  const latestReportCount = recentReports.length;
+  const pendingInvestigationCount = context?.labIntelligence.pendingInvestigations.length || 0;
+  const abnormalVerifiedResultCount = context?.labIntelligence.abnormalValues.length || 0;
+  const hasData = React.useMemo(
+    () => hasLongitudinalData(conditions, labItems, riskFlags) || verifiedHistoryConcepts.length > 0,
+    [conditions, labItems, riskFlags, verifiedHistoryConcepts.length],
+  );
   const emptyLongitudinalMessage = aiEnabled
     ? "No longitudinal findings yet. Upload a report or complete intake to build patient intelligence."
     : "Patient intelligence becomes available after clinical documents or investigation results are added. AI-assisted summaries are currently unavailable.";
@@ -666,6 +880,13 @@ export function PatientIntelligenceCard({
     : splitCompactList(patientSnapshotFallback?.longTermMedications);
   const snapshotLastVisitDate = formatDisplayDate(snapshot?.lastConsultationDate || patientSnapshotFallback?.lastConsultationDate || null);
   const snapshotBloodGroup = patientSnapshotFallback?.bloodGroup || null;
+  const scrollToMainSection = React.useCallback((sectionId: string, expand?: () => void) => {
+    expand?.();
+    setDetailsOpen(false);
+    window.setTimeout(() => {
+      document.getElementById(sectionId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 0);
+  }, []);
 
   const highlightSections = (
     <>
@@ -684,7 +905,7 @@ export function PatientIntelligenceCard({
               <SummaryField label="Source" value={<Typography variant="body2" sx={{ fontWeight: 800 }} noWrap title={sourceDocumentTitle || "Not recorded"}>{sourceDocumentTitle || "Not recorded"}</Typography>} />
               <SummaryField
                 label="AI Status"
-                value={<StatusBadge label={hasPendingReview ? "Pending Review" : "Verified"} tone={hasPendingReview ? "warning" : "success"} />}
+                value={<StatusBadge label={sourceConceptLabel} tone={sourceConceptTone} />}
               />
               <SummaryField
                 label="Observation Date"
@@ -706,7 +927,7 @@ export function PatientIntelligenceCard({
             </Box>
           </ClinicalCardSection>
 
-          {hasPendingReview ? (
+          {sourceConceptIsPending ? (
             <Alert severity="info" sx={{ py: 0.45, "& .MuiAlert-message": { py: 0.1 } }}>
               <Typography variant="body2" sx={{ fontWeight: 800, lineHeight: 1.35 }}>
                 AI extracted information
@@ -733,12 +954,18 @@ export function PatientIntelligenceCard({
       </ClinicalCardSection>
 
       <ClinicalCardSection
-        title="Latest Labs"
+        title={getSectionCountLabel("Latest Labs", latestLabCount)}
         icon={<ScienceRoundedIcon fontSize="inherit" />}
+        id="patient-intelligence-latest-labs"
+        action={shouldShowSectionToggle(latestLabCount, 6) ? (
+          <Button type="button" size="small" variant="text" onClick={() => setLatestLabsExpanded((current) => !current)}>
+            {getSectionToggleLabel(latestLabsExpanded)}
+          </Button>
+        ) : null}
       >
         <Stack spacing={0.45}>
-          {labItems.length ? (
-            labItems.map((concept) => {
+          {visibleLatestLabs.length ? (
+            visibleLatestLabs.map((concept) => {
               const conceptLabel = normalizeLabLabel(concept.label) || concept.label;
               return <LabFindingRow key={conceptKey(concept)} concept={concept} highlight={highlightLabelMatches(conceptLabel, highlightLabLabel)} />;
             })
@@ -762,9 +989,50 @@ export function PatientIntelligenceCard({
           onViewSource={onViewSourceDocument}
         />
       </ClinicalCardSection>
+
+      {verifiedHistoryConcepts.length ? (
+        <ClinicalCardSection
+          title={getSectionCountLabel("Verified Findings", verifiedFindingCount)}
+          icon={<CheckCircleRoundedIcon fontSize="inherit" />}
+          id="patient-intelligence-verified-findings"
+          action={shouldShowSectionToggle(verifiedFindingCount, 5) ? (
+            <Button type="button" size="small" variant="text" onClick={() => setVerifiedFindingsExpanded((current) => !current)}>
+              {getSectionToggleLabel(verifiedFindingsExpanded)}
+            </Button>
+          ) : null}
+        >
+          <Stack spacing={0.5}>
+            {visibleVerifiedFindings.map((concept) => (
+              <TrustedFindingRow key={conceptKey(concept)} concept={concept} />
+            ))}
+          </Stack>
+        </ClinicalCardSection>
+      ) : null}
+
+      {visibleReportTrends.length ? (
+        <ClinicalCardSection
+          title={getSectionCountLabel("Report Trends", reportTrendCount)}
+          icon={<TimelineRoundedIcon fontSize="inherit" />}
+          id="patient-intelligence-report-trends"
+          action={shouldShowSectionToggle(reportTrendCount, 3) ? (
+            <Button type="button" size="small" variant="text" onClick={() => setReportTrendsExpanded((current) => !current)}>
+              {getSectionToggleLabel(reportTrendsExpanded)}
+            </Button>
+          ) : null}
+        >
+          <Stack spacing={0.45}>
+            {visibleReportTrends.map((trend) => (
+              <StructuredTrendLine
+                key={`${trend.analyteCode || trend.analyteName || "trend"}-${trend.olderDate || "older"}-${trend.newerDate || "newer"}-${trend.olderValue || "old"}-${trend.newerValue || "new"}`}
+                trend={trend}
+                onViewSourceDocument={onViewSourceDocument}
+              />
+            ))}
+          </Stack>
+        </ClinicalCardSection>
+      ) : null}
     </>
   );
-
   return (
     <>
       <Card variant="outlined" sx={{ boxShadow: "none", overflow: "visible", height: "auto" }}>
@@ -789,6 +1057,30 @@ export function PatientIntelligenceCard({
             </Stack>
 
             {error ? <Alert severity="warning" sx={{ py: 0.45 }}>{error}</Alert> : null}
+
+            {pendingFindingCount > 0 && pendingSourceDocumentId && onReviewFindings ? (
+              <Card variant="outlined" sx={{ boxShadow: "none", borderColor: "warning.light", bgcolor: "warning.50" }}>
+                <CardContent sx={{ p: 0.8, "&:last-child": { pb: 0.8 } }}>
+                  <Stack direction={{ xs: "column", sm: "row" }} spacing={0.8} alignItems={{ xs: "stretch", sm: "center" }} justifyContent="space-between">
+                    <Box sx={{ minWidth: 0 }}>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>AI-extracted findings</Typography>
+                      <Typography variant="caption" color="text.secondary" display="block">
+                        {pendingFindingCount} findings pending verification
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary" display="block">
+                        Across {pendingReportCount} reports
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary" display="block">
+                        Doctor verification required before becoming permanent patient history.
+                      </Typography>
+                    </Box>
+                    <Button size="small" variant="contained" color="warning" onClick={() => onReviewFindings(pendingSourceDocumentId)}>
+                      Review
+                    </Button>
+                  </Stack>
+                </CardContent>
+              </Card>
+            ) : null}
 
             <SectionBox title="Clinical Highlights" icon={<TimelineRoundedIcon fontSize="inherit" />}>
               <Stack spacing={0.55}>
@@ -820,7 +1112,10 @@ export function PatientIntelligenceCard({
                   </Stack>
                 </Stack>
                 <CompactRow label="Allergies" value={compactText(allergies.slice(0, 3).join(", "), 72) || compactText(snapshotAllergies.slice(0, 3).join(", "), 72)} />
-                <CompactRow label="Long-term Medications" value={compactText(currentMedications.slice(0, 3).join(", "), 72) || compactText(medications.map((item) => item.label).join(", "), 72) || compactText(snapshotCurrentMedications.slice(0, 3).join(", "), 72)} />
+                <CompactRow
+                  label="Long-term Medications"
+                  value={compactText(medications.map((item) => item.label).join(", "), 72) || "Not recorded"}
+                />
                 <CompactRow label="Last visit" value={snapshotLastVisitDate} />
                 <CompactRow label="Intake status" value={intakeLabel} />
               </Box>
@@ -835,10 +1130,10 @@ export function PatientIntelligenceCard({
             <Stack direction="row" spacing={1} alignItems="flex-start" justifyContent="space-between">
               <Box sx={{ minWidth: 0 }}>
                 <Typography variant="h6" sx={{ fontWeight: 950 }}>
-                  Patient Intelligence
+                  Patient Context
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
-                  Expanded longitudinal context and supporting details.
+                  Quick patient context and operational details.
                 </Typography>
               </Box>
               <IconButton aria-label="Close patient intelligence drawer" onClick={() => setDetailsOpen(false)} size="small">
@@ -847,16 +1142,6 @@ export function PatientIntelligenceCard({
             </Stack>
 
             {error ? <Alert severity="warning">{error}</Alert> : null}
-
-            <SectionBox title="Clinical Highlights" icon={<TimelineRoundedIcon fontSize="inherit" />}>
-              <Stack spacing={0.55}>
-                {hasData ? highlightSections : (
-                  <Alert severity="info" sx={{ py: 0.45 }}>
-                    {emptyLongitudinalMessage}
-                  </Alert>
-                )}
-              </Stack>
-            </SectionBox>
 
             <SectionBox title="Patient Snapshot" icon={<HealingRoundedIcon fontSize="inherit" />}>
               <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))" }, gap: 0.7 }}>
@@ -913,21 +1198,22 @@ export function PatientIntelligenceCard({
               </Stack>
             </SectionBox>
 
-            <SectionBox title="Timeline summary" icon={<TimelineRoundedIcon fontSize="inherit" />}>
-              <Stack spacing={0.45}>
-                {context?.timelineSummary.recentImportantEvents ? (
-                  <Typography variant="caption" color="text.secondary">
-                    {context.timelineSummary.recentImportantEvents}
-                  </Typography>
-                ) : null}
-                {timelineEvents.length ? (
+            <SectionBox
+              title="Recent Consultations"
+              icon={<CheckCircleRoundedIcon fontSize="inherit" />}
+              action={shouldShowConsultationHistoryToggle(consultationHistoryCount, 3) ? (
+                <Button type="button" size="small" variant="text" onClick={() => setConsultationHistoryExpanded((current) => !current)}>
+                  {getConsultationHistoryToggleLabel(consultationHistoryExpanded)}
+                </Button>
+              ) : null}
+            >
+              <Stack spacing={0.35}>
+                {drawerConsultationHistory.length ? (
                   <Stack spacing={0.45}>
-                    {timelineEvents.slice(0, 6).map((event) => (
-                      <TimelineLine
-                        key={`${event.occurredOn || "unknown"}-${event.title}-${event.type}`}
-                        date={event.occurredOn || "-"}
-                        title={event.title}
-                        detail={event.detail ? compactText(event.detail, 72) : null}
+                    {drawerConsultationHistory.map((entry) => (
+                      <ConsultationHistoryRow
+                        key={`${entry.consultationId}-${entry.consultationDate || "unknown"}-${entry.isCurrent ? "current" : "history"}`}
+                        entry={entry}
                       />
                     ))}
                   </Stack>
@@ -943,66 +1229,46 @@ export function PatientIntelligenceCard({
 
             <SectionBox title="Uploaded documents" icon={<DescriptionRoundedIcon fontSize="inherit" />}>
               <Stack spacing={0.45}>
-                <CompactChipRow items={recentReports.slice(0, 6)} color="default" limit={3} emptyLabel="No uploaded reports available." />
-                <CompactChipRow items={radiologyReports.slice(0, 6)} color="secondary" limit={3} emptyLabel="No radiology reports available." />
-                <CompactChipRow items={referrals.slice(0, 6)} color="primary" limit={3} emptyLabel="No referral letters available." />
-                <CompactChipRow items={dischargeSummaries.slice(0, 6)} color="default" limit={3} emptyLabel="No discharge summaries available." />
+                {drawerVisibleDocumentItems.length ? (
+                  <>
+                    {drawerVisibleDocumentItems.map((item) => (
+                      <Box key={`${item.category}-${item.title}`} sx={{ px: 0.75, py: 0.55, borderRadius: 1.25, border: 1, borderColor: "divider", bgcolor: "background.paper" }}>
+                        <Stack direction="row" spacing={0.6} alignItems="center" useFlexGap flexWrap="wrap">
+                          <Chip size="small" variant="outlined" label={item.category} sx={{ height: 18, "& .MuiChip-label": { px: 0.6, fontSize: 10.5 } }} />
+                          <Typography variant="body2" sx={{ fontWeight: 800, lineHeight: 1.2 }} noWrap title={item.title}>
+                            {item.title}
+                          </Typography>
+                        </Stack>
+                      </Box>
+                    ))}
+                    {drawerDocumentItems.length > 3 ? (
+                      <Button type="button" size="small" variant="text" onClick={() => setDrawerDocumentsExpanded((current) => !current)}>
+                        {drawerDocumentsExpanded ? "Show less" : "View more"}
+                      </Button>
+                    ) : null}
+                  </>
+                ) : (
+                  <Typography variant="caption" color="text.secondary">
+                    No uploaded documents.
+                  </Typography>
+                )}
               </Stack>
             </SectionBox>
 
-            {aiEnabled ? (
-              <SectionBox title="Lab intelligence" icon={<ScienceRoundedIcon fontSize="inherit" />}>
-                <Stack spacing={0.45}>
-                  {context?.labIntelligence.latestLabReport ? (
-                    <Typography variant="body2" sx={{ fontWeight: 800 }}>
-                      {context.labIntelligence.latestLabReport}
-                    </Typography>
-                  ) : (
-                    <Typography variant="caption" color="text.secondary">
-                      No recent lab report found. Order investigations or upload a report to track trends.
-                    </Typography>
-                  )}
-                  <CompactChipRow items={context?.labIntelligence.abnormalValues?.slice(0, 6).map((item) => compactText(item, 42)) || []} color="warning" limit={3} emptyLabel="No abnormal values detected yet." />
-                  <CompactChipRow
-                    items={[
-                      context?.labIntelligence.lastHbA1c ? `HbA1c ${compactText(context.labIntelligence.lastHbA1c, 24)}` : null,
-                      context?.labIntelligence.lastCbc ? `CBC ${compactText(context.labIntelligence.lastCbc, 24)}` : null,
-                      context?.labIntelligence.lastCreatinine ? `Creatinine ${compactText(context.labIntelligence.lastCreatinine, 24)}` : null,
-                      context?.labIntelligence.latestBloodSugar ? `Blood sugar ${compactText(context.labIntelligence.latestBloodSugar, 24)}` : null,
-                      context?.labIntelligence.latestLipidSummary ? `Lipids ${compactText(context.labIntelligence.latestLipidSummary, 24)}` : null,
-                    ].filter((item): item is string => Boolean(item))}
-                    color="primary"
-                    limit={5}
-                    emptyLabel="No recent trend markers."
-                  />
-                  {structuredLabTrends.length ? (
-                    <Stack spacing={0.45}>
-                      <Typography variant="caption" color="text.secondary" sx={{ textTransform: "uppercase", letterSpacing: 0.4 }}>
-                        Trends
-                      </Typography>
-                      <Stack spacing={0.45}>
-                        {structuredLabTrends.map((trend, index) => (
-                          <StructuredTrendLine
-                            key={`${trend.analyteCode || trend.analyteName || "trend"}-${trend.newerDate || trend.olderDate || index}`}
-                            trend={trend}
-                            onViewSourceDocument={onViewSourceDocument}
-                          />
-                        ))}
-                      </Stack>
-                    </Stack>
-                  ) : context?.labIntelligence.previousTrends?.length ? (
-                    <Typography variant="caption" color="text.secondary">
-                      Trends: {context.labIntelligence.previousTrends.slice(0, 3).join(" • ")}
-                    </Typography>
-                  ) : null}
-                  {context?.labIntelligence.pendingInvestigations?.length ? (
-                    <Typography variant="caption" color="text.secondary">
-                      Pending: {context.labIntelligence.pendingInvestigations.slice(0, 3).join(", ")}
-                    </Typography>
-                  ) : null}
-                </Stack>
-              </SectionBox>
-            ) : null}
+            <SectionBox title="Lab Intelligence" icon={<ScienceRoundedIcon fontSize="inherit" />}>
+              <Stack spacing={0.45}>
+                <CompactRow label="Pending results" value={String(pendingInvestigationCount)} />
+                <CompactRow label="Abnormal verified results" value={String(abnormalVerifiedResultCount)} />
+                {context?.labIntelligence.latestLabReport ? (
+                  <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.25 }}>
+                    Latest report: {compactText(context.labIntelligence.latestLabReport, 72)}
+                  </Typography>
+                ) : null}
+                <Button type="button" size="small" variant="text" onClick={() => scrollToMainSection("patient-intelligence-latest-labs", () => setLatestLabsExpanded(true))}>
+                  View lab details
+                </Button>
+              </Stack>
+            </SectionBox>
           </Stack>
         </Box>
       </Drawer>

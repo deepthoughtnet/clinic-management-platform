@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.api.clinicalmemory.service;
 
 import com.deepthoughtnet.clinic.api.clinicaldocument.db.ClinicalDocumentEntity;
+import com.deepthoughtnet.clinic.api.clinicaldocument.db.ClinicalDocumentRepository;
 import com.deepthoughtnet.clinic.api.clinicaldocument.dto.ClinicalMemoryRepairCorrectedValue;
 import com.deepthoughtnet.clinic.api.clinicaldocument.ai.dto.ClinicalMemoryRepairResult;
 import com.deepthoughtnet.clinic.api.clinicaldocument.ai.service.DeterministicLabFactParser;
@@ -24,6 +25,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Locale;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
@@ -57,22 +59,32 @@ public class PatientLongitudinalMemoryService {
     private final ClinicalConceptMapper mapper;
     private final DeterministicLabFactParser deterministicLabFactParser;
     private final ObjectMapper objectMapper;
+    private final ClinicalDocumentRepository documentRepository;
 
     public PatientLongitudinalMemoryService(PatientLongitudinalConceptRepository repository,
                                             ClinicalConceptMapper mapper,
                                             ObjectMapper objectMapper) {
-        this(repository, mapper, new DeterministicLabFactParser(), objectMapper);
+        this(repository, mapper, new DeterministicLabFactParser(), objectMapper, null);
+    }
+
+    public PatientLongitudinalMemoryService(PatientLongitudinalConceptRepository repository,
+                                            ClinicalConceptMapper mapper,
+                                            DeterministicLabFactParser deterministicLabFactParser,
+                                            ObjectMapper objectMapper) {
+        this(repository, mapper, deterministicLabFactParser, objectMapper, null);
     }
 
     @Autowired
     public PatientLongitudinalMemoryService(PatientLongitudinalConceptRepository repository,
                                             ClinicalConceptMapper mapper,
                                             DeterministicLabFactParser deterministicLabFactParser,
-                                            ObjectMapper objectMapper) {
+                                            ObjectMapper objectMapper,
+                                            ClinicalDocumentRepository documentRepository) {
         this.repository = repository;
         this.mapper = mapper;
         this.deterministicLabFactParser = deterministicLabFactParser;
         this.objectMapper = objectMapper;
+        this.documentRepository = documentRepository;
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -178,7 +190,9 @@ public class PatientLongitudinalMemoryService {
             if (previous != null && !java.util.Objects.equals(previous.getValueText(), concept.valueText())) {
                 correctedValues.add(new ClinicalMemoryRepairCorrectedValue(concept.key(), previous.getValueText(), concept.valueText(), concept.valueUnit()));
             }
-            toSave.add(toEntity(document, concept, PENDING_REVIEW, repairedByAppUserId, null, null, sourceSummary));
+            PatientLongitudinalConceptEntity entity = toEntity(document, concept, PENDING_REVIEW, repairedByAppUserId, null, null, sourceSummary);
+            initializeReviewMetadata(entity, extracted, concept);
+            toSave.add(entity);
         }
         log.info("[AI-DOC-PIPELINE-TRACE] tenantId={} patientId={} documentId={} deletePendingCount={} insertCount={} hba1cCandidate={} bloodSugarCandidate={} pollutedRejectedCount={}",
                 document.getTenantId(),
@@ -251,15 +265,21 @@ public class PatientLongitudinalMemoryService {
     public PatientLongitudinalMemoryProfile buildProfile(UUID tenantId, UUID patientId) {
         List<PatientLongitudinalConceptEntity> rawConcepts = repository.findByTenantIdAndPatientIdOrderByObservedAtDescCreatedAtDesc(tenantId, patientId);
         List<PatientLongitudinalConceptEntity> visibleConcepts = rawConcepts.stream()
-                .filter(concept -> !REJECTED.equals(concept.getVerificationStatus()))
+                .filter(this::isTrustedProjectionConcept)
                 .filter(this::isClinicalFactConcept)
                 .filter(this::isSelectableConcept)
                 .toList();
+        List<PatientLongitudinalConceptEntity> pendingReviewConcepts = rawConcepts.stream()
+                .filter(this::isPendingReviewSourceConcept)
+                .filter(this::isClinicalFactConcept)
+                .toList();
         List<PatientLongitudinalConceptEntity> dedupedConcepts = dedupeVisibleConcepts(visibleConcepts);
+        List<PatientLongitudinalConceptEntity> dedupedPendingReviewConcepts = dedupeVisibleConcepts(pendingReviewConcepts);
         Map<String, List<PatientLongitudinalConceptEntity>> grouped = dedupedConcepts.stream()
                 .collect(Collectors.groupingBy(PatientLongitudinalConceptEntity::getConceptKey, LinkedHashMap::new, Collectors.toList()));
 
         List<LongitudinalConceptSnapshot> history = dedupedConcepts.stream().map(this::toSnapshot).toList();
+        List<LongitudinalConceptSnapshot> pendingReviewHistory = dedupedPendingReviewConcepts.stream().map(this::toSnapshot).toList();
         List<LongitudinalConceptSnapshot> conditions = latestByFamily(grouped, "CONDITION");
         List<LongitudinalConceptSnapshot> medications = latestByFamily(grouped, "MEDICATION");
         LongitudinalConceptSnapshot hbA1c = latestByKey(grouped, "hba1c");
@@ -282,15 +302,16 @@ public class PatientLongitudinalMemoryService {
                 bmi,
                 riskFlags,
                 history,
-                labSummary
+                labSummary,
+                pendingReviewHistory
         );
     }
 
     @Transactional(readOnly = true)
     public List<ClinicalContextResponse.TimelineEvent> buildTimelineEvents(UUID tenantId, UUID patientId, int limit) {
         List<PatientLongitudinalConceptEntity> concepts = dedupeVisibleConcepts(repository.findByTenantIdAndPatientIdOrderByObservedAtDescCreatedAtDesc(tenantId, patientId).stream()
-                .filter(concept -> (ACCEPTED.equals(concept.getVerificationStatus()) || PENDING_REVIEW.equals(concept.getVerificationStatus()))
-                        && isClinicalFactConcept(concept))
+                .filter(this::isTrustedProjectionConcept)
+                .filter(this::isClinicalFactConcept)
                 .toList());
         return concepts.stream()
                 .sorted(Comparator.comparing(PatientLongitudinalConceptEntity::getObservedAt, Comparator.nullsLast(Comparator.naturalOrder())).reversed())
@@ -312,7 +333,8 @@ public class PatientLongitudinalMemoryService {
                 concept.getSourceDocumentDate(),
                 concept.getConfidence(),
                 concept.getVerificationStatus(),
-                concept.getEvidenceText()
+                concept.getEvidenceText(),
+                firstNonBlank(concept.getReviewedFlag(), concept.getOriginalFlag())
         );
     }
 
@@ -524,16 +546,40 @@ public class PatientLongitudinalMemoryService {
         if (concept == null) {
             return false;
         }
-        if (ACCEPTED.equals(concept.getVerificationStatus())) {
-            return true;
-        }
         if ("LAB_RESULT".equalsIgnoreCase(concept.getConceptFamily())) {
             return isReliableLabEntity(concept);
+        }
+        if ("MEDICATION".equalsIgnoreCase(concept.getConceptFamily())) {
+            return isLongTermMedicationConcept(concept);
+        }
+        if (ACCEPTED.equals(concept.getVerificationStatus())) {
+            return true;
         }
         if ("RISK_FLAG".equalsIgnoreCase(concept.getConceptFamily())) {
             return !isNarrativeEvidence(concept.getEvidenceText());
         }
         return true;
+    }
+
+    private boolean isTrustedProjectionConcept(PatientLongitudinalConceptEntity concept) {
+        if (concept == null || !ACCEPTED.equals(concept.getVerificationStatus())) {
+            return false;
+        }
+        if (documentRepository == null || concept.getSourceDocumentId() == null) {
+            return true;
+        }
+        return documentRepository.findByTenantIdAndId(concept.getTenantId(), concept.getSourceDocumentId())
+                .map(document -> document.getAiExtractionReviewedAt() != null)
+                .orElse(false);
+    }
+
+    private boolean isPendingReviewSourceConcept(PatientLongitudinalConceptEntity concept) {
+        if (concept == null || concept.getSourceDocumentId() == null || documentRepository == null) {
+            return false;
+        }
+        return documentRepository.findByTenantIdAndId(concept.getTenantId(), concept.getSourceDocumentId())
+                .map(document -> document.getAiExtractionReviewedAt() == null)
+                .orElse(false);
     }
 
     private boolean isConditionLabel(String label, String valueText) {
@@ -587,15 +633,68 @@ public class PatientLongitudinalMemoryService {
                                    List<LongitudinalConceptSnapshot> lipids) {
         List<String> parts = new ArrayList<>();
         if (hbA1c != null) {
-            parts.add("HbA1c " + hbA1c.valueText());
+            parts.add(formatLabSummaryPart("HbA1c", hbA1c));
         }
         if (bloodSugar != null) {
-            parts.add("Blood Sugar " + bloodSugar.valueText());
+            parts.add(formatLabSummaryPart("Blood Sugar", bloodSugar));
         }
         if (!lipids.isEmpty()) {
-            parts.add("Lipid profile " + lipids.stream().map(LongitudinalConceptSnapshot::label).distinct().collect(Collectors.joining(", ")));
+            parts.add("Lipid profile " + lipids.stream().map(snapshot -> formatLabSummaryPart(snapshot.label(), snapshot)).distinct().collect(Collectors.joining(", ")));
         }
         return parts.isEmpty() ? null : String.join(" • ", parts);
+    }
+
+    private String formatLabSummaryPart(String label, LongitudinalConceptSnapshot concept) {
+        if (concept == null) {
+            return label;
+        }
+        String value = concept.valueText();
+        if (!hasText(value)) {
+            return label;
+        }
+        StringBuilder builder = new StringBuilder(label).append(' ').append(value);
+        if (hasText(concept.valueUnit())) {
+            builder.append(' ').append(concept.valueUnit());
+        }
+        String interpretation = humanizeInterpretation(concept.interpretation());
+        if (interpretation != null) {
+            builder.append(" (").append(interpretation).append(")");
+        }
+        return builder.toString();
+    }
+
+    private String humanizeInterpretation(String interpretation) {
+        if (!hasText(interpretation)) {
+            return null;
+        }
+        String normalized = interpretation.trim().toUpperCase(java.util.Locale.ROOT);
+        return switch (normalized) {
+            case "HIGH" -> "High";
+            case "LOW" -> "Low";
+            case "NORMAL" -> "Normal";
+            default -> interpretation.trim();
+        };
+    }
+
+    private boolean isLongTermMedicationConcept(PatientLongitudinalConceptEntity concept) {
+        if (concept == null) {
+            return false;
+        }
+        String text = java.util.stream.Stream.of(
+                        concept.getSourceSummary(),
+                        concept.getEvidenceText(),
+                        concept.getSourceDocumentTitle(),
+                        concept.getConceptLabel(),
+                        concept.getValueText(),
+                        concept.getReviewNotes(),
+                        concept.getOverrideReason())
+                .filter(this::hasText)
+                .collect(java.util.stream.Collectors.joining(" "));
+        if (!hasText(text)) {
+            return false;
+        }
+        String normalized = text.toLowerCase(java.util.Locale.ROOT);
+        return normalized.matches(".*\\b(chronic|ongoing|long[- ]?term|maintenance|lifelong|indefinite|regular medication|ongoing medication|maintenance therapy)\\b.*");
     }
 
     private void tracePersistBatch(String label, ClinicalDocumentEntity document, String status, List<MappedConcept> concepts) {
@@ -1097,6 +1196,49 @@ public class PatientLongitudinalMemoryService {
             entity.markVerified(verificationStatus, reviewerAppUserId, reviewNotes, overrideReason);
         }
         return entity;
+    }
+
+    @SuppressWarnings("unchecked")
+    private void initializeReviewMetadata(PatientLongitudinalConceptEntity entity,
+                                          Map<String, Object> extracted,
+                                          MappedConcept concept) {
+        if (entity == null || concept == null || extracted == null) {
+            return;
+        }
+        Object factual = extracted.get("factualFindings");
+        if (!(factual instanceof Map<?, ?> factualMap) || !(factualMap.get("labResults") instanceof Iterable<?> rows)) {
+            return;
+        }
+        for (Object row : rows) {
+            if (!(row instanceof Map<?, ?> fact)) {
+                continue;
+            }
+            Object rawKey = firstNonNull(fact.get("canonicalKey"), fact.get("conceptKey"), fact.get("key"), fact.get("testName"), fact.get("label"));
+            if (rawKey != null && normalizeReviewKey(String.valueOf(rawKey)).equals(normalizeReviewKey(concept.key()))) {
+                entity.initializeReviewMetadata(
+                        firstText(fact, "referenceRange", "reference", "range"),
+                        firstText(fact, "flag", "status", "interpretation"));
+                return;
+            }
+        }
+    }
+
+    private String normalizeReviewKey(String value) {
+        return value == null ? "" : value.replaceAll("[^A-Za-z0-9]+", "_").replaceAll("_+", "_").replaceAll("^_|_$", "").toLowerCase(Locale.ROOT);
+    }
+
+    private String firstText(Map<?, ?> values, String... keys) {
+        for (String key : keys) {
+            Object value = values.get(key);
+            if (value != null && !String.valueOf(value).isBlank()) {
+                return String.valueOf(value).trim();
+            }
+        }
+        return null;
+    }
+
+    private String firstNonBlank(String left, String right) {
+        return StringUtils.hasText(left) ? left : StringUtils.hasText(right) ? right : null;
     }
 
     private Map<String, Object> parseStructuredJson(String structuredJson) {

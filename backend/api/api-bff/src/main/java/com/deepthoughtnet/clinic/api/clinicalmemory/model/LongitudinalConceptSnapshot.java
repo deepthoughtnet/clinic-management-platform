@@ -16,6 +16,23 @@ public record LongitudinalConceptSnapshot(
         LocalDate observedOn,
         BigDecimal confidence,
         String verificationStatus,
-        String evidenceText
+        String evidenceText,
+        String interpretation
 ) {
+    public LongitudinalConceptSnapshot(
+            String conceptFamily,
+            String conceptKey,
+            String label,
+            String valueText,
+            String valueUnit,
+            String sourceDocumentTitle,
+            String sourceDocumentType,
+            UUID sourceDocumentId,
+            LocalDate observedOn,
+            BigDecimal confidence,
+            String verificationStatus,
+            String evidenceText
+    ) {
+        this(conceptFamily, conceptKey, label, valueText, valueUnit, sourceDocumentTitle, sourceDocumentType, sourceDocumentId, observedOn, confidence, verificationStatus, evidenceText, null);
+    }
 }

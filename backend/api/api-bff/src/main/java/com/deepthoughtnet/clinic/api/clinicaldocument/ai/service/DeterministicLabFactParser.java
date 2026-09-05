@@ -7,6 +7,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -56,6 +57,27 @@ public class DeterministicLabFactParser {
         return new ArrayList<>(results.values());
     }
 
+    /** Returns stable identities for structurally valid source rows, including unknown analytes. */
+    public List<String> detectedLabRowKeys(String ocrText, List<String> detectedLabLines) {
+        LinkedHashSet<String> keys = new LinkedHashSet<>();
+        for (String line : candidateLines(ocrText, detectedLabLines)) {
+            if (!hasText(line) || isNarrativeLine(line) || looksLikeAdministrativeLabel(line)) {
+                continue;
+            }
+            Matcher matcher = Pattern.compile("^\\s*(.*?)\\s+(?:[<>]?\\s*\\d+(?:\\.\\d+)?)\\b").matcher(line);
+            if (!matcher.find()) {
+                continue;
+            }
+            String label = matcher.group(1).replaceAll("[|:=]+$", "").trim();
+            if (!hasText(label)) {
+                continue;
+            }
+            String canonicalKey = firstHasText(canonicalKeyForGenericLabel(label), "unmapped_" + slug(label));
+            keys.add(canonicalKey);
+        }
+        return new ArrayList<>(keys);
+    }
+
     private void addFact(Map<String, Map<String, Object>> results, Map<String, Object> fact) {
         if (fact == null) {
             return;
@@ -80,7 +102,7 @@ public class DeterministicLabFactParser {
         }
         String matchedLabel = resolveMatchingLabel(line, labels);
         String labelPattern = quotedAlternation(matchedLabel);
-        Pattern pattern = Pattern.compile("(?i)\\b(?:" + labelPattern + ")\\b\\s*(?:[:=\\-]|\\|)?\\s*([<>]?\\s*\\d+(?:\\.\\d+)?)\\s*([%A-Za-z0-9/\\.\\^µ²×\\-]+)?\\s*(.*)$");
+        Pattern pattern = Pattern.compile("(?i)\\b(?:" + labelPattern + ")\\b\\s*(?:\\([^)]*\\))?\\s*(?:[:=\\-]|\\|)?\\s*([<>]?\\s*\\d+(?:\\.\\d+)?)\\s*([%A-Za-z0-9/\\.\\^µ²×\\-]+)?\\s*(.*)$");
         Matcher matcher = pattern.matcher(line.trim());
         if (!matcher.find()) {
             return null;
@@ -129,9 +151,6 @@ public class DeterministicLabFactParser {
         if (!hasText(line) || isNarrativeLine(line) || !looksLikeGenericLabLine(line)) {
             return null;
         }
-        if (hasText(canonicalKeyForLabel(line))) {
-            return null;
-        }
         String trimmedLine = line.trim();
         String[] tokens = trimmedLine.split("\\s+");
         int valueIndex = -1;
@@ -152,7 +171,7 @@ public class DeterministicLabFactParser {
         String rawUnitToken = valueIndex + 1 < tokens.length && looksLikeUnitToken(tokens[valueIndex + 1]) ? tokens[valueIndex + 1] : null;
         int tailStartIndex = rawUnitToken == null ? valueIndex + 1 : valueIndex + 2;
         String tail = tailStartIndex >= tokens.length ? "" : String.join(" ", java.util.Arrays.copyOfRange(tokens, tailStartIndex, tokens.length)).trim();
-        String canonicalKey = firstHasText(canonicalKeyForLabel(testName), "unmapped_" + slug(testName));
+        String canonicalKey = firstHasText(canonicalKeyForGenericLabel(testName), "unmapped_" + slug(testName));
         String value = normalizeNumeric(rawValueToken);
         String unit = normalizeUnit(rawUnitToken);
         String flag = normalizeFlag(tail, canonicalKey, value);
@@ -184,6 +203,18 @@ public class DeterministicLabFactParser {
 
     private boolean looksLikeUnitToken(String token) {
         return hasText(token) && token.trim().matches("[%A-Za-z][A-Za-z0-9/\\.\\^µ²×\\-]*");
+    }
+
+    private String canonicalKeyForGenericLabel(String label) {
+        String canonicalKey = canonicalKeyForLabel(label);
+        if ("hemoglobin".equals(canonicalKey) && !"hemoglobin".equals(slug(label))) {
+            return null;
+        }
+        if ("platelets".equals(canonicalKey)
+                && !List.of("platelet", "platelets", "platelet_count").contains(slug(label))) {
+            return null;
+        }
+        return canonicalKey;
     }
 
     private String resolveDetectedTestName(String line, String defaultTestName, String... labels) {
@@ -233,7 +264,7 @@ public class DeterministicLabFactParser {
             return false;
         }
         Pattern resultPattern = Pattern.compile(
-                "(?i)\\b" + Pattern.quote(label.trim()) + "\\b\\s*(?:[:=|\\-])?\\s*[<>]?\\s*\\d+(?:\\.\\d+)?"
+                "(?i)\\b" + Pattern.quote(label.trim()) + "\\b\\s*(?:\\([^)]*\\))?\\s*(?:[:=|\\-])?\\s*[<>]?\\s*\\d+(?:\\.\\d+)?"
         );
         return resultPattern.matcher(line).find();
     }
@@ -280,7 +311,7 @@ public class DeterministicLabFactParser {
             return false;
         }
         String normalized = value.trim().toLowerCase(Locale.ROOT);
-        return normalized.startsWith("report date")
+        return normalized.contains("report date")
                 || normalized.startsWith("collected")
                 || normalized.startsWith("sample")
                 || normalized.startsWith("patient")
@@ -396,25 +427,29 @@ public class DeterministicLabFactParser {
             return null;
         }
         String normalized = slug(label);
-        if (containsAny(normalized, "hba1c", "a1c", "hemoglobin_a1c", "glycated_hemoglobin", "glycosylated_hemoglobin")) return "hba1c";
-        if (containsAny(normalized, "estimated_average_glucose", "eag")) return "estimated_average_glucose";
-        if (containsAny(normalized, "random_blood_sugar", "fasting_blood_sugar", "fasting_glucose", "blood_sugar", "glucose", "fbs", "rbs")) return "blood_sugar";
-        if (containsAny(normalized, "hemoglobin")) return "hemoglobin";
-        if (containsAny(normalized, "red_blood_cell_count", "red_blood_cells_count", "red_blood_cell", "red_blood_cells", "rbc_count", "rbc")) return "rbc";
-        if (containsAny(normalized, "white_blood_cell_count", "white_blood_cells_count", "white_blood_cell", "white_blood_cells", "total_wbc_count", "wbc_count", "wbc")) return "wbc";
-        if (containsAny(normalized, "platelet")) return "platelets";
-        if (containsAny(normalized, "neutrophil")) return "neutrophils";
-        if (containsAny(normalized, "lymphocyte")) return "lymphocytes";
-        if (containsAny(normalized, "creatinine", "serum_creatinine")) return "creatinine";
-        if (containsAny(normalized, "egfr", "estimated_gfr", "estimated_glomerular_filtration_rate")) return "egfr";
-        if (containsAny(normalized, "crp", "c_reactive_protein")) return "crp";
-        if (containsAny(normalized, "alt", "sgpt", "alanine_aminotransferase")) return "alt";
-        if (containsAny(normalized, "ast", "sgot", "aspartate_aminotransferase")) return "ast";
-        if (containsAny(normalized, "ldl")) return "ldl";
-        if (containsAny(normalized, "hdl")) return "hdl";
-        if (containsAny(normalized, "triglycerides", "triglyceride")) return "triglycerides";
-        if (containsAny(normalized, "total_cholesterol", "cholesterol")) return "cholesterol";
+        if (matchesExact(normalized, "hba1c", "hb_a1c", "a1c", "hemoglobin_a1c", "glycated_hemoglobin", "glycosylated_hemoglobin")) return "hba1c";
+        if (matchesExact(normalized, "estimated_average_glucose", "eag")) return "estimated_average_glucose";
+        if (matchesExact(normalized, "random_blood_sugar", "fasting_blood_sugar", "fasting_glucose", "blood_sugar", "glucose", "fbs", "rbs")) return "blood_sugar";
+        if (matchesExact(normalized, "hemoglobin", "hb")) return "hemoglobin";
+        if (matchesExact(normalized, "red_blood_cell_count", "red_blood_cells_count", "red_blood_cell", "red_blood_cells", "rbc_count", "rbc")) return "rbc";
+        if (matchesExact(normalized, "white_blood_cell_count", "white_blood_cells_count", "white_blood_cell", "white_blood_cells", "total_wbc_count", "wbc_count", "wbc")) return "wbc";
+        if (matchesExact(normalized, "platelet", "platelets", "platelet_count")) return "platelets";
+        if (matchesExact(normalized, "neutrophil", "neutrophils")) return "neutrophils";
+        if (matchesExact(normalized, "lymphocyte", "lymphocytes")) return "lymphocytes";
+        if (matchesExact(normalized, "creatinine", "serum_creatinine")) return "creatinine";
+        if (matchesExact(normalized, "egfr", "estimated_gfr", "estimated_glomerular_filtration_rate")) return "egfr";
+        if (matchesExact(normalized, "crp", "c_reactive_protein")) return "crp";
+        if (matchesExact(normalized, "alt", "sgpt", "alanine_aminotransferase", "alt_sgpt")) return "alt";
+        if (matchesExact(normalized, "ast", "sgot", "aspartate_aminotransferase", "ast_sgot")) return "ast";
+        if (matchesExact(normalized, "ldl_cholesterol", "ldl")) return "ldl";
+        if (matchesExact(normalized, "hdl_cholesterol", "hdl")) return "hdl";
+        if (matchesExact(normalized, "triglycerides", "triglyceride")) return "triglycerides";
+        if (matchesExact(normalized, "total_cholesterol", "cholesterol")) return "cholesterol";
         return null;
+    }
+
+    private boolean matchesExact(String value, String... aliases) {
+        return value != null && aliases != null && Set.of(aliases).contains(value);
     }
 
     private String slug(String value) {

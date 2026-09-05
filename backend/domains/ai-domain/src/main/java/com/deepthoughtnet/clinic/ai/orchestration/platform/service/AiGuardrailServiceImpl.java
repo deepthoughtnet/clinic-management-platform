@@ -50,7 +50,8 @@ public class AiGuardrailServiceImpl implements AiGuardrailService {
                 ? defaultMaxOutputTokens
                 : Math.max(1, profile.getMaxOutputTokens());
         Integer requested = request == null ? null : request.maxTokens();
-        if (request != null && request.taskType() == AiTaskType.CONSULTATION_NOTE_STRUCTURING && requested != null) {
+        if (request != null && (request.taskType() == AiTaskType.CONSULTATION_NOTE_STRUCTURING
+                || request.taskType() == AiTaskType.CLINICAL_DOCUMENT_EXTRACTION) && requested != null) {
             limit = Math.max(limit, requested);
         }
         int promptChars = renderedPrompt.length();
@@ -63,7 +64,9 @@ public class AiGuardrailServiceImpl implements AiGuardrailService {
             effective = Math.min(effective, clinicalReasoningCap);
         }
         if (compactMode) {
-            if (request == null || (request.taskType() != AiTaskType.CLINICAL_REASONING && request.taskType() != AiTaskType.CONSULTATION_NOTE_STRUCTURING)) {
+            if (request == null || (request.taskType() != AiTaskType.CLINICAL_REASONING
+                    && request.taskType() != AiTaskType.CONSULTATION_NOTE_STRUCTURING
+                    && request.taskType() != AiTaskType.CLINICAL_DOCUMENT_EXTRACTION)) {
                 effective = Math.min(effective, Math.max(256, limit / 2));
             }
         }

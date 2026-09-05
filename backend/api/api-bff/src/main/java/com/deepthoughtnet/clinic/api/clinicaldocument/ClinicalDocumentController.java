@@ -2,14 +2,18 @@ package com.deepthoughtnet.clinic.api.clinicaldocument;
 
 import com.deepthoughtnet.clinic.api.clinicaldocument.ai.service.ClinicalDocumentAiExtractionService;
 import com.deepthoughtnet.clinic.api.clinicaldocument.db.ClinicalDocumentType;
+import com.deepthoughtnet.clinic.api.clinicaldocument.db.ClinicalDocumentEntity;
 import com.deepthoughtnet.clinic.api.clinicaldocument.dto.AiExtractionReviewRequest;
 import com.deepthoughtnet.clinic.api.clinicaldocument.ai.dto.ClinicalMemoryRepairResult;
 import com.deepthoughtnet.clinic.api.clinicaldocument.dto.ClinicalDocumentResponse;
+import com.deepthoughtnet.clinic.api.clinicaldocument.dto.ClinicalDocumentFindingReviewDecisionRequest;
+import com.deepthoughtnet.clinic.api.clinicaldocument.dto.ClinicalDocumentFindingReviewResponse;
 import com.deepthoughtnet.clinic.api.clinicaldocument.dto.DocumentDownloadUrlResponse;
 import com.deepthoughtnet.clinic.api.clinicaldocument.dto.PatientTimelineItemResponse;
 import com.deepthoughtnet.clinic.api.clinicaldocument.service.ClinicalDocumentPatchCommand;
 import com.deepthoughtnet.clinic.api.clinicaldocument.service.ClinicalDocumentRecord;
 import com.deepthoughtnet.clinic.api.clinicaldocument.service.ClinicalDocumentService;
+import com.deepthoughtnet.clinic.api.clinicalmemory.service.ClinicalDocumentFindingReviewService;
 import com.deepthoughtnet.clinic.api.clinicaldocument.service.ClinicalDocumentUploadCommand;
 import com.deepthoughtnet.clinic.api.security.ClinicalDocumentAiAuthorizationService;
 import com.deepthoughtnet.clinic.api.security.DoctorAssignmentSecurityService;
@@ -48,6 +52,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 import jakarta.validation.Valid;
+import org.springframework.beans.factory.annotation.Autowired;
 
 @RestController
 @Validated
@@ -64,7 +69,32 @@ public class ClinicalDocumentController {
     private final VaccinationService vaccinationService;
     private final DoctorAssignmentSecurityService doctorAssignmentSecurityService;
     private final ClinicalDocumentAiAuthorizationService clinicalDocumentAiAuthorizationService;
+    private final ClinicalDocumentFindingReviewService findingReviewService;
 
+    @Autowired
+    public ClinicalDocumentController(
+            ClinicalDocumentService documentService,
+            ClinicalDocumentAiExtractionService aiExtractionService,
+            PatientService patientService,
+            ConsultationService consultationService,
+            PrescriptionService prescriptionService,
+            VaccinationService vaccinationService,
+            DoctorAssignmentSecurityService doctorAssignmentSecurityService,
+            ClinicalDocumentAiAuthorizationService clinicalDocumentAiAuthorizationService,
+            ClinicalDocumentFindingReviewService findingReviewService
+    ) {
+        this.documentService = documentService;
+        this.aiExtractionService = aiExtractionService;
+        this.patientService = patientService;
+        this.consultationService = consultationService;
+        this.prescriptionService = prescriptionService;
+        this.vaccinationService = vaccinationService;
+        this.doctorAssignmentSecurityService = doctorAssignmentSecurityService;
+        this.clinicalDocumentAiAuthorizationService = clinicalDocumentAiAuthorizationService;
+        this.findingReviewService = findingReviewService;
+    }
+
+    /** Compatibility constructor for focused controller unit tests that do not exercise finding review. */
     public ClinicalDocumentController(
             ClinicalDocumentService documentService,
             ClinicalDocumentAiExtractionService aiExtractionService,
@@ -75,14 +105,8 @@ public class ClinicalDocumentController {
             DoctorAssignmentSecurityService doctorAssignmentSecurityService,
             ClinicalDocumentAiAuthorizationService clinicalDocumentAiAuthorizationService
     ) {
-        this.documentService = documentService;
-        this.aiExtractionService = aiExtractionService;
-        this.patientService = patientService;
-        this.consultationService = consultationService;
-        this.prescriptionService = prescriptionService;
-        this.vaccinationService = vaccinationService;
-        this.doctorAssignmentSecurityService = doctorAssignmentSecurityService;
-        this.clinicalDocumentAiAuthorizationService = clinicalDocumentAiAuthorizationService;
+        this(documentService, aiExtractionService, patientService, consultationService, prescriptionService,
+                vaccinationService, doctorAssignmentSecurityService, clinicalDocumentAiAuthorizationService, null);
     }
 
     @GetMapping("/patients/{patientId}/documents")
@@ -216,6 +240,38 @@ public class ClinicalDocumentController {
                 request.editedSummary()
         );
         return toResponse(record);
+    }
+
+    @GetMapping("/clinical-documents/{documentId}/finding-review")
+    public ClinicalDocumentFindingReviewResponse findingReview(@PathVariable UUID documentId) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        clinicalDocumentAiAuthorizationService.requireFindingReviewAccess(tenantId, documentId);
+        ClinicalDocumentRecord document = documentService.get(tenantId, documentId);
+        List<ClinicalDocumentFindingReviewService.FindingReviewRecord> findings = findingReviewService.list(tenantId, documentId);
+        return findingReviewResponse(document, findings);
+    }
+
+    @PostMapping("/clinical-documents/{documentId}/finding-review/{conceptId}")
+    public ClinicalDocumentFindingReviewResponse decideFinding(@PathVariable UUID documentId,
+                                                               @PathVariable UUID conceptId,
+                                                               @RequestBody ClinicalDocumentFindingReviewDecisionRequest request) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actor = RequestContextHolder.require().appUserId();
+        clinicalDocumentAiAuthorizationService.requireFindingReviewAccess(tenantId, documentId);
+        findingReviewService.decide(tenantId, documentId, conceptId, request.decision(), request.value(), request.unit(), request.referenceRange(), request.flag(), request.reviewNotes(), actor);
+        return findingReviewResponse(documentService.get(tenantId, documentId), findingReviewService.list(tenantId, documentId));
+    }
+
+    @PostMapping("/clinical-documents/{documentId}/finding-review/complete")
+    public ClinicalDocumentFindingReviewResponse completeFindingReview(@PathVariable UUID documentId) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        clinicalDocumentAiAuthorizationService.requireFindingReviewAccess(tenantId, documentId);
+        ClinicalDocumentRecord document = documentService.get(tenantId, documentId);
+        ClinicalDocumentFindingReviewService.ReviewCompletion completion = findingReviewService.complete(tenantId, documentId, RequestContextHolder.require().appUserId());
+        if (!completion.completed()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, completion.pendingCount() + " findings still require review.");
+        }
+        return findingReviewResponse(document, completion.findings());
     }
 
     @PostMapping("/patient-documents/{documentId}/ai-extraction/reprocess")
@@ -611,6 +667,26 @@ public class ClinicalDocumentController {
                 record.createdAt().toString(),
                 record.updatedAt().toString()
         );
+    }
+
+    private ClinicalDocumentFindingReviewResponse findingReviewResponse(
+            ClinicalDocumentRecord document,
+        List<ClinicalDocumentFindingReviewService.FindingReviewRecord> findings) {
+        List<ClinicalDocumentFindingReviewResponse.Finding> rows = findings.stream()
+                .map(finding -> new ClinicalDocumentFindingReviewResponse.Finding(
+                        finding.id(), finding.conceptKey(), finding.findingName(),
+                        finding.originalValue(), finding.originalUnit(), finding.originalReferenceRange(),
+                        finding.value(), finding.unit(), finding.referenceRange(), finding.flag(),
+                        finding.evidenceText(), finding.verificationStatus(), finding.decision(),
+                        finding.reviewedBy(), finding.reviewedAt()))
+                .toList();
+        boolean reviewCompleted = document.aiExtractionReviewedAt() != null;
+        String reviewedBy = document.aiExtractionReviewedByAppUserId() == null ? null : document.aiExtractionReviewedByAppUserId().toString();
+        String reviewedByDisplayName = document.aiExtractionReviewedByAppUserId() == null ? null : documentService.resolveUserDisplayName(document.tenantId(), document.aiExtractionReviewedByAppUserId());
+        return new ClinicalDocumentFindingReviewResponse(
+                document.id().toString(), document.title(), document.reportDate() == null ? null : document.reportDate().toString(), document.mediaType(),
+                reviewCompleted, reviewedBy, reviewedByDisplayName, document.aiExtractionReviewedAt(), rows,
+                (int) rows.stream().filter(row -> row.decision() == null || row.decision().isBlank()).count());
     }
 
     public record ClinicalDocumentPatchRequest(

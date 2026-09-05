@@ -125,8 +125,36 @@ public record ClinicalContextResponse(
             LongitudinalConcept latestBmi,
             List<LongitudinalConcept> riskFlags,
             List<LongitudinalConcept> history,
-            String mostRecentLaboratorySummary
-    ) {}
+            String mostRecentLaboratorySummary,
+            List<LongitudinalConcept> pendingReviewHistory
+    ) {
+        public LongitudinalMemory(
+                List<LongitudinalConcept> knownConditions,
+                List<LongitudinalConcept> longTermMedications,
+                LongitudinalConcept latestHbA1c,
+                LongitudinalConcept latestBloodSugar,
+                List<LongitudinalConcept> latestLipidSummary,
+                LongitudinalConcept latestBloodPressure,
+                LongitudinalConcept latestBmi,
+                List<LongitudinalConcept> riskFlags,
+                List<LongitudinalConcept> history,
+                String mostRecentLaboratorySummary
+        ) {
+            this(
+                    knownConditions,
+                    longTermMedications,
+                    latestHbA1c,
+                    latestBloodSugar,
+                    latestLipidSummary,
+                    latestBloodPressure,
+                    latestBmi,
+                    riskFlags,
+                    history,
+                    mostRecentLaboratorySummary,
+                    List.of()
+            );
+        }
+    }
 
     public record LongitudinalClinicalContext(
             List<LabTrend> labTrends,
@@ -200,6 +228,24 @@ public record ClinicalContextResponse(
             String observedOn,
             java.math.BigDecimal confidence,
             String verificationStatus,
-            String evidenceText
-    ) {}
+            String evidenceText,
+            String interpretation
+    ) {
+        public LongitudinalConcept(
+                String conceptFamily,
+                String conceptKey,
+                String label,
+                String valueText,
+                String valueUnit,
+                String sourceDocumentTitle,
+                String sourceDocumentType,
+                String sourceDocumentId,
+                String observedOn,
+                java.math.BigDecimal confidence,
+                String verificationStatus,
+                String evidenceText
+        ) {
+            this(conceptFamily, conceptKey, label, valueText, valueUnit, sourceDocumentTitle, sourceDocumentType, sourceDocumentId, observedOn, confidence, verificationStatus, evidenceText, null);
+        }
+    }
 }

@@ -21,6 +21,18 @@ class AiTaskGenerationConfigServiceTest {
     }
 
     @Test
+    void clinicalDocumentExtractionUsesDedicatedMinimalThinkingAndExpandedOutputConfig() {
+        AiTaskGenerationConfigService service = new AiTaskGenerationConfigService(
+                null, "gemini-2.5-flash", 0, true, 2048, 0, 4096, 4096);
+
+        AiTaskGenerationConfigService.GenerationConfig config = service.resolve(AiTaskType.CLINICAL_DOCUMENT_EXTRACTION);
+
+        assertEquals(0, config.thinkingBudget());
+        assertTrue(config.strictJsonMode());
+        assertEquals(4096, config.maxOutputTokens());
+    }
+
+    @Test
     void clinicalReasoningOverrideBeatsDefaultGeminiModel() {
         AiTaskGenerationConfigService service = new AiTaskGenerationConfigService("gemini-2.5-flash-lite", "gemini-2.5-flash", 0, true, 2048, 4096);
 

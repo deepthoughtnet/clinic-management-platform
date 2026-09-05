@@ -82,6 +82,8 @@ class AiPromptTemplateCatalogTest {
         assertThat(userPromptTemplate).contains("{{input.investigationSuggestionContext}}");
         assertThat(userPromptTemplate).contains("already ordered, pending, or recently available");
         assertThat(userPromptTemplate).contains("Use the current symptoms, diagnosis, red flags, history, and missing data");
+        assertThat(userPromptTemplate).contains("Prefer 2-5 focused suggestions");
+        assertThat(userPromptTemplate).contains("Do not return generic filler such as \"consider investigations as needed\"");
         assertThat(userPromptTemplate).contains("Already ordered/pending");
         assertThat(userPromptTemplate).contains("Consider if indicated");
         assertThat(userPromptTemplate).contains("Not currently necessary / insufficient information");

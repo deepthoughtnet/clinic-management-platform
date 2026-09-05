@@ -2,7 +2,7 @@ import * as React from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Alert, Autocomplete, Box, Button, Card, CardContent, Chip, CircularProgress, FormControlLabel, Grid, Stack, Switch, TextField, Typography } from "@mui/material";
 
-import { doctorUpdateSchema, firstZodError, mapZodErrors } from "@deepthoughtnet/form-validation-kit";
+import { doctorUpdateSchema, firstZodError, mapZodErrors, normalizeIndianMobileInput } from "@deepthoughtnet/form-validation-kit";
 import { useAuth } from "../../auth/useAuth";
 import { getDoctorProfile, updateDoctorProfile, updateDoctorProfileWithPhoto, type DoctorProfile, type DoctorProfileInput } from "../../api/clinicApi";
 import DoctorAvatar from "../../components/doctor/DoctorAvatar";
@@ -13,7 +13,8 @@ type FormState = {
   mobile: string;
   specializations: string[];
   specializationsInput: string;
-  qualification: string;
+  qualifications: string[];
+  qualificationOther: string;
   registrationNumber: string;
   consultationRoom: string;
   consultationFee: string;
@@ -27,9 +28,72 @@ type FormState = {
   slug: string;
 };
 
+const SPECIALIZATION_OPTIONS = [
+  "General Medicine",
+  "Pediatrics",
+  "Gynecology",
+  "Orthopedics",
+  "Dermatology",
+  "ENT",
+  "Ophthalmology",
+  "Cardiology",
+  "Neurology",
+  "Psychiatry",
+  "General Surgery",
+  "Anesthesiology",
+  "Radiology",
+  "Pathology",
+  "Gastroenterology",
+  "Pulmonology",
+  "Nephrology",
+  "Endocrinology",
+  "Urology",
+  "Oncology",
+  "Other",
+] as const;
+
+const QUALIFICATION_OPTIONS = [
+  "MBBS",
+  "MD",
+  "MS",
+  "DNB",
+  "DM",
+  "MCh",
+  "Diploma",
+  "BDS",
+  "MDS",
+  "BAMS",
+  "BHMS",
+  "Other",
+] as const;
+
+const OTHER_OPTION = "Other";
+
 function normalizeText(value: string): string | null {
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function sanitizeIndianMobileInput(value: string): string {
+  const normalized = normalizeIndianMobileInput(value);
+  return typeof normalized === "string" ? normalized.slice(0, 10) : "";
+}
+
+function sanitizeMoneyInput(value: string): string {
+  const stripped = value.replace(/[^\d.]/g, "");
+  if (!stripped) {
+    return "";
+  }
+  const firstDotIndex = stripped.indexOf(".");
+  if (firstDotIndex < 0) {
+    return stripped.replace(/^0+(?=\d)/, "") || stripped;
+  }
+  const wholePart = stripped.slice(0, firstDotIndex).replace(/^0+(?=\d)/, "") || "0";
+  const decimalPart = stripped
+    .slice(firstDotIndex + 1)
+    .replace(/\./g, "")
+    .slice(0, 2);
+  return `${wholePart}.${decimalPart}`;
 }
 
 function normalizeNumber(value: string): number | null {
@@ -43,11 +107,79 @@ function normalizeNumber(value: string): number | null {
 
 function normalizeSpecializations(values: string[], draft: string): string[] {
   const committed = values.map((value) => value.trim()).filter(Boolean);
-  if (committed.length > 0) {
-    return committed;
+  const deduped: string[] = [];
+  const seen = new Set<string>();
+  for (const value of committed) {
+    const normalized = value.toLowerCase();
+    if (seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    deduped.push(value);
   }
-  const trimmedDraft = draft.trim();
-  return trimmedDraft ? [trimmedDraft] : [];
+  const otherIndex = deduped.findIndex((value) => value.toLowerCase() === OTHER_OPTION.toLowerCase());
+  if (otherIndex >= 0) {
+    const trimmedDraft = draft.trim();
+    if (trimmedDraft) {
+      deduped.splice(otherIndex, 1, trimmedDraft);
+    }
+  }
+  return deduped.filter(Boolean);
+}
+
+function parseQualificationValues(value: string | null | undefined): { qualifications: string[]; qualificationOther: string } {
+  const raw = value || "";
+  const parts = raw.split(",").map((item) => item.trim()).filter(Boolean);
+  if (!parts.length) {
+    return { qualifications: [], qualificationOther: "" };
+  }
+  const qualifications: string[] = [];
+  const unknownParts: string[] = [];
+  const seen = new Set<string>();
+  for (const part of parts) {
+    const normalized = part.toLowerCase();
+    if (seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    if (QUALIFICATION_OPTIONS.some((option) => option.toLowerCase() === normalized && option.toLowerCase() !== OTHER_OPTION.toLowerCase())) {
+      qualifications.push(part);
+    } else if (normalized !== OTHER_OPTION.toLowerCase()) {
+      unknownParts.push(part);
+    }
+  }
+  if (unknownParts.length > 0) {
+    qualifications.push(OTHER_OPTION);
+  }
+  return {
+    qualifications,
+    qualificationOther: unknownParts.join(", "),
+  };
+}
+
+function normalizeQualificationValues(values: string[], otherDraft: string): string {
+  const deduped: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const normalized = trimmed.toLowerCase();
+    if (seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    if (normalized === OTHER_OPTION.toLowerCase()) {
+      const custom = otherDraft.trim();
+      if (custom) {
+        deduped.push(custom);
+      }
+      continue;
+    }
+    deduped.push(trimmed);
+  }
+  return deduped.join(", ");
 }
 
 function calculateAge(dateOfBirth: string): number | null {
@@ -73,11 +205,13 @@ function toForm(profile: DoctorProfile): FormState {
     ? profile.specializations
     : (profile.specialization ? [profile.specialization] : []);
   const opdFee = profile.opdFee ?? profile.consultationFee;
+  const qualification = parseQualificationValues(profile.qualification);
   return {
     mobile: profile.mobile || "",
     specializations,
     specializationsInput: "",
-    qualification: profile.qualification || "",
+    qualifications: qualification.qualifications,
+    qualificationOther: qualification.qualificationOther,
     registrationNumber: profile.registrationNumber || "",
     consultationRoom: profile.consultationRoom || "",
     consultationFee: opdFee == null ? "" : String(opdFee),
@@ -193,12 +327,25 @@ export default function DoctorDetailPage() {
 
   const save = async () => {
     if (!auth.accessToken || !auth.tenantId) return;
+    const hasOtherSpecialization = form.specializations.some((value) => value.trim().toLowerCase() === OTHER_OPTION.toLowerCase());
+    if (hasOtherSpecialization && !form.specializationsInput.trim()) {
+      setFieldErrors((current) => ({ ...current, specializations: "Enter a specialization for Other." }));
+      setError("Enter a specialization for Other.");
+      return;
+    }
     const specializations = normalizeSpecializations(form.specializations, form.specializationsInput);
+    const hasOtherQualification = form.qualifications.some((value) => value.trim().toLowerCase() === OTHER_OPTION.toLowerCase());
+    if (hasOtherQualification && !form.qualificationOther.trim()) {
+      setFieldErrors((current) => ({ ...current, qualifications: "Enter a qualification for Other." }));
+      setError("Enter a qualification for Other.");
+      return;
+    }
+    const qualification = normalizeQualificationValues(form.qualifications, form.qualificationOther);
     const payload: DoctorProfileInput = {
       mobile: normalizeText(form.mobile),
       specialization: specializations[0] || null,
       specializations,
-      qualification: normalizeText(form.qualification),
+      qualification,
       registrationNumber: normalizeText(form.registrationNumber),
       consultationRoom: normalizeText(form.consultationRoom),
       consultationFee: normalizeNumber(form.opdFee),
@@ -315,69 +462,117 @@ export default function DoctorDetailPage() {
             <Grid size={{ xs: 12, md: 6 }}>
               <TextField
                 fullWidth
-                label={<RequiredLabel text="Mobile" required />}
+                label={<RequiredLabel text="Mobile" />}
                 value={form.mobile}
                 disabled={formReadOnly}
                 onChange={(e) => {
                   clearFieldError("mobile");
-                  setForm((c) => c ? { ...c, mobile: e.target.value } : c);
+                  setForm((c) => c ? { ...c, mobile: sanitizeIndianMobileInput(e.target.value) } : c);
                 }}
                 error={Boolean(fieldErrors.mobile)}
                 helperText={fieldErrors.mobile || "Enter a valid 10-digit mobile number."}
-                required
-                inputProps={{ inputMode: "tel", "aria-required": true }}
+                inputProps={{ inputMode: "numeric", maxLength: 10, "aria-required": true }}
               />
             </Grid>
             <Grid size={{ xs: 12, md: 6 }}>
               <Autocomplete
                 multiple
-                freeSolo
-                options={[] as string[]}
+                options={[...SPECIALIZATION_OPTIONS]}
                 value={form.specializations}
-                inputValue={form.specializationsInput}
-                onInputChange={(_, value) => {
-                  clearFieldError("specializations");
-                  setForm((c) => c ? { ...c, specializationsInput: value } : c);
-                }}
                 onChange={(_, value) => {
                   clearFieldError("specializations");
                   setForm((c) => c ? {
                     ...c,
                     specializations: value.map((item) => String(item).trim()).filter(Boolean),
-                    specializationsInput: "",
+                    specializationsInput: value.some((item) => String(item).trim().toLowerCase() === OTHER_OPTION.toLowerCase())
+                      ? (c.specializationsInput || "")
+                      : "",
                   } : c);
                 }}
+                isOptionEqualToValue={(option, value) => option === value}
+                renderTags={(value, getTagProps) => value.map((option, index) => (
+                  <Chip size="small" variant="outlined" label={option} {...getTagProps({ index })} key={option} />
+                ))}
                 renderInput={(params) => (
                   <TextField
                     {...params}
-                    label={<RequiredLabel text="Specialization" required />}
-                    helperText={fieldErrors.specializations || "Select at least one specialization."}
+                    label={<RequiredLabel text="Specialization" />}
+                    helperText={fieldErrors.specializations || "Select at least one specialization. Choose Other to enter a custom specialization below."}
                     error={Boolean(fieldErrors.specializations)}
                     disabled={formReadOnly}
-                    required
+                    inputProps={{ ...params.inputProps, "aria-required": true }}
                   />
                 )}
               />
+              {form.specializations.some((value) => value.trim().toLowerCase() === OTHER_OPTION.toLowerCase()) ? (
+                <TextField
+                  sx={{ mt: 1.5 }}
+                  fullWidth
+                  label={<RequiredLabel text="Other specialization" />}
+                  value={form.specializationsInput}
+                  disabled={formReadOnly}
+                  onChange={(e) => {
+                    clearFieldError("specializations");
+                    setForm((c) => c ? { ...c, specializationsInput: e.target.value } : c);
+                  }}
+                  error={Boolean(fieldErrors.specializations)}
+                  helperText={fieldErrors.specializations || "Required when Other is selected."}
+                  inputProps={{ maxLength: 128, "aria-required": true }}
+                />
+              ) : null}
+            </Grid>
+            <Grid size={{ xs: 12, md: 6 }}>
+              <Stack spacing={1.5}>
+                <Autocomplete
+                  multiple
+                  options={[...QUALIFICATION_OPTIONS]}
+                  value={form.qualifications}
+                  onChange={(_, value) => {
+                    clearFieldError("qualifications");
+                    setForm((c) => c ? {
+                      ...c,
+                      qualifications: value.map((item) => String(item).trim()).filter(Boolean),
+                      qualificationOther: value.some((item) => String(item).trim().toLowerCase() === OTHER_OPTION.toLowerCase())
+                        ? (c.qualificationOther || "")
+                        : "",
+                    } : c);
+                  }}
+                  isOptionEqualToValue={(option, value) => option === value}
+                  renderTags={(value, getTagProps) => value.map((option, index) => (
+                    <Chip size="small" variant="outlined" label={option} {...getTagProps({ index })} key={option} />
+                  ))}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label={<RequiredLabel text="Qualification" />}
+                      error={Boolean(fieldErrors.qualifications)}
+                      helperText={fieldErrors.qualifications || "Choose one or more qualifications. Select Other for a custom qualification below."}
+                      disabled={formReadOnly || receptionistReadOnlyFields}
+                      inputProps={{ ...params.inputProps, "aria-required": true }}
+                    />
+                  )}
+                />
+                {form.qualifications.some((value) => value.trim().toLowerCase() === OTHER_OPTION.toLowerCase()) ? (
+                  <TextField
+                    fullWidth
+                    label={<RequiredLabel text="Other qualification" />}
+                    value={form.qualificationOther}
+                    disabled={formReadOnly || receptionistReadOnlyFields}
+                    onChange={(e) => {
+                      clearFieldError("qualifications");
+                      setForm((c) => c ? { ...c, qualificationOther: e.target.value } : c);
+                    }}
+                    error={Boolean(fieldErrors.qualifications)}
+                    helperText={fieldErrors.qualifications || "Required when Other is selected."}
+                    inputProps={{ maxLength: 256, "aria-required": true }}
+                  />
+                ) : null}
+              </Stack>
             </Grid>
             <Grid size={{ xs: 12, md: 6 }}>
               <TextField
                 fullWidth
-                label={<RequiredLabel text="Qualification" required />}
-                value={form.qualification}
-                disabled={formReadOnly || receptionistReadOnlyFields}
-                onChange={(e) => {
-                  clearFieldError("qualification");
-                  setForm((c) => c ? { ...c, qualification: e.target.value } : c);
-                }}
-                error={Boolean(fieldErrors.qualification)}
-                helperText={fieldErrors.qualification || "Required."}
-                required
-              />
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField
-                fullWidth
-                label={<RequiredLabel text="Registration Number" required />}
+                label={<RequiredLabel text="Registration Number" />}
                 value={form.registrationNumber}
                 disabled={formReadOnly || receptionistReadOnlyFields}
                 onChange={(e) => {
@@ -386,7 +581,7 @@ export default function DoctorDetailPage() {
                 }}
                 error={Boolean(fieldErrors.registrationNumber)}
                 helperText={fieldErrors.registrationNumber || "Required."}
-                required
+                inputProps={{ "aria-required": true }}
               />
             </Grid>
             <Grid size={{ xs: 12, md: 6 }}>
@@ -406,59 +601,56 @@ export default function DoctorDetailPage() {
             <Grid size={{ xs: 12, md: 4 }}>
               <TextField
                 fullWidth
-                type="number"
-                label={<RequiredLabel text="OPD Fee" required />}
+                type="text"
+                label={<RequiredLabel text="OPD Fee" />}
                 value={form.opdFee}
                 disabled={formReadOnly}
                 onChange={(e) => {
                   clearFieldError("opdFee");
-                  setForm((c) => c ? { ...c, opdFee: e.target.value, consultationFee: e.target.value } : c);
+                  setForm((c) => c ? { ...c, opdFee: sanitizeMoneyInput(e.target.value), consultationFee: sanitizeMoneyInput(e.target.value) } : c);
                 }}
-                inputProps={{ min: 0, step: "0.01", "aria-required": true }}
+                inputProps={{ inputMode: "decimal", "aria-required": true }}
                 error={Boolean(fieldErrors.opdFee)}
                 helperText={fieldErrors.opdFee || "Required."}
-                required
               />
             </Grid>
             <Grid size={{ xs: 12, md: 4 }}>
               <TextField
                 fullWidth
-                type="number"
-                label={<RequiredLabel text="Follow-up Fee" required />}
+                type="text"
+                label={<RequiredLabel text="Follow-up Fee" />}
                 value={form.followUpFee}
                 disabled={formReadOnly}
                 onChange={(e) => {
                   clearFieldError("followUpFee");
-                  setForm((c) => c ? { ...c, followUpFee: e.target.value } : c);
+                  setForm((c) => c ? { ...c, followUpFee: sanitizeMoneyInput(e.target.value) } : c);
                 }}
-                inputProps={{ min: 0, step: "0.01", "aria-required": true }}
+                inputProps={{ inputMode: "decimal", "aria-required": true }}
                 error={Boolean(fieldErrors.followUpFee)}
                 helperText={fieldErrors.followUpFee || "Required."}
-                required
               />
             </Grid>
             <Grid size={{ xs: 12, md: 4 }}>
               <TextField
                 fullWidth
-                type="number"
-                label={<RequiredLabel text="Emergency Fee" required />}
+                type="text"
+                label={<RequiredLabel text="Emergency Fee" />}
                 value={form.emergencyFee}
                 disabled={formReadOnly}
                 onChange={(e) => {
                   clearFieldError("emergencyFee");
-                  setForm((c) => c ? { ...c, emergencyFee: e.target.value } : c);
+                  setForm((c) => c ? { ...c, emergencyFee: sanitizeMoneyInput(e.target.value) } : c);
                 }}
-                inputProps={{ min: 0, step: "0.01", "aria-required": true }}
+                inputProps={{ inputMode: "decimal", "aria-required": true }}
                 error={Boolean(fieldErrors.emergencyFee)}
                 helperText={fieldErrors.emergencyFee || "Required."}
-                required
               />
             </Grid>
             <Grid size={{ xs: 12, md: 4 }}>
               <TextField
                 fullWidth
                 type="number"
-                label={<RequiredLabel text="Years of Experience" required />}
+                label={<RequiredLabel text="Years of Experience" />}
                 value={form.yearsOfExperience}
                 disabled={formReadOnly}
                 onChange={(e) => {
@@ -468,14 +660,13 @@ export default function DoctorDetailPage() {
                 inputProps={{ min: 0, step: 1, "aria-required": true }}
                 error={Boolean(fieldErrors.yearsOfExperience)}
                 helperText={fieldErrors.yearsOfExperience || "Required whole number."}
-                required
               />
             </Grid>
             <Grid size={{ xs: 12, md: 4 }}>
               <TextField
                 fullWidth
                 type="date"
-                label={<RequiredLabel text="Date of Birth" required />}
+                label={<RequiredLabel text="Date of Birth" />}
                 value={form.dateOfBirth}
                 disabled={formReadOnly}
                 onChange={(e) => {
@@ -486,7 +677,6 @@ export default function DoctorDetailPage() {
                 InputLabelProps={{ shrink: true }}
                 error={Boolean(fieldErrors.dateOfBirth)}
                 helperText={fieldErrors.dateOfBirth || "Required. Use a past date."}
-                required
               />
             </Grid>
             <Grid size={{ xs: 12, md: 4 }}>

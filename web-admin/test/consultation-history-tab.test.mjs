@@ -31,5 +31,10 @@ test("consultation history tab uses compact overview cards and query-driven subv
   assert.ok(source.includes("documentReviewFilter"));
   assert.ok(source.includes("Review extraction"));
   assert.ok(source.includes("View all"));
+  assert.ok(source.includes("historyAtAGlanceSectionTitle"));
+  assert.ok(source.includes("getVisibleConsultationHistoryItems(historyAtAGlanceEntries, historyAtAGlanceExpanded, 5)"));
+  assert.ok(source.includes("historyAtAGlanceHasToggle"));
+  assert.ok(source.includes("getConsultationHistoryToggleLabel(historyAtAGlanceExpanded)"));
+  assert.ok(source.includes("Consultation records only"));
   assert.ok(source.includes("history-prescription-"));
 });

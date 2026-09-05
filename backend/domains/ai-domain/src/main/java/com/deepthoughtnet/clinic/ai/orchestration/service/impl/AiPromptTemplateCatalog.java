@@ -177,7 +177,9 @@ public class AiPromptTemplateCatalog {
 
             Suggest the most clinically justified investigations for the doctor to consider.
             Use the current symptoms, diagnosis, red flags, history, and missing data to decide whether additional investigations are justified.
+            Prefer 2-5 focused suggestions at most. Avoid broad, vague, or administrative recommendations.
             First identify investigations already ordered, pending, or recently available and avoid recommending duplicates unless there is a clear clinical reason.
+            Do not return generic filler such as "consider investigations as needed". Every suggestion must be specific to the current encounter.
             Separate the response into exactly these sections:
             Already ordered/pending
             Consider if indicated

@@ -304,4 +304,73 @@ class DeterministicLabFactParserTest {
             }
         });
     }
+
+    @Test
+    void preservesMixedPanelRowsWithParentheticalAndUnmappedAnalytes() {
+        List<Map<String, Object>> facts = parser.parse(UUID.randomUUID(), """
+                ALT (SGPT) 29 U/L 0 - 45 Normal
+                Reticulocyte Hemoglobin Equivalent (RET-He) 31.4 pg 28.0 - 35.0 Normal
+                Immature Platelet Fraction (IPF) 3.8 % 1.0 - 7.0 Normal
+                """, null);
+
+        assertThat(facts).extracting(row -> row.get("canonicalKey"))
+                .contains("alt", "unmapped_reticulocyte_hemoglobin_equivalent_ret_he", "unmapped_immature_platelet_fraction_ipf");
+        assertThat(facts).allSatisfy(row -> assertThat(row.get("value")).isNotNull());
+    }
+
+    @Test
+    void doesNotCollapseCompoundAnalytesIntoOrdinaryKnownAnalytes() {
+        List<Map<String, Object>> facts = parser.parse(UUID.randomUUID(), """
+                Hemoglobin 14.1 g/dL 13.0 - 17.0 Normal
+                Reticulocyte Hemoglobin Equivalent (RET-He) 31.4 pg 28.0 - 35.0 Normal
+                Platelets 248 10^3/uL 150 - 450 Normal
+                Immature Platelet Fraction (IPF) 3.8 % 1.0 - 7.0 Normal
+                """, null);
+
+        assertThat(facts).extracting(row -> row.get("canonicalKey"))
+                .containsExactlyInAnyOrder(
+                        "hemoglobin", "unmapped_reticulocyte_hemoglobin_equivalent_ret_he",
+                        "platelets", "unmapped_immature_platelet_fraction_ipf");
+    }
+
+    @Test
+    void doesNotCollapseKnownTokensInsideOtherAnalyteNames() {
+        List<Map<String, Object>> facts = parser.parse(UUID.randomUUID(), """
+                Glucose-6-Phosphate 4.2 mmol/L 3.0 - 6.0 Normal
+                Cholesterol Ester Transfer Protein 2.0 mg/L 1.0 - 3.0 Normal
+                Plateletcrit 0.22 % 0.15 - 0.35 Normal
+                Reticulocyte Hemoglobin Equivalent (RET-He) 31.4 pg 28.0 - 35.0 Normal
+                """, null);
+
+        assertThat(facts).extracting(row -> row.get("canonicalKey"))
+                .contains("unmapped_glucose_6_phosphate", "unmapped_cholesterol_ester_transfer_protein",
+                        "unmapped_plateletcrit", "unmapped_reticulocyte_hemoglobin_equivalent_ret_he")
+                .doesNotContain("blood_sugar", "cholesterol", "platelets", "hemoglobin");
+    }
+
+    @Test
+    void preservesAllRowsInLargeMixedPanel() {
+        List<Map<String, Object>> facts = parser.parse(UUID.randomUUID(), """
+                Hemoglobin 14.1 g/dL 13.0 - 17.0 Normal
+                WBC Count 6.8 10^3/uL 4.0 - 11.0 Normal
+                Platelets 248 10^3/uL 150 - 450 Normal
+                HbA1c 5.7 % 4.0 - 5.6 High
+                Fasting Glucose 102 mg/dL 70 - 99 High
+                Creatinine 1.0 mg/dL 0.7 - 1.3 Normal
+                ALT (SGPT) 29 U/L 0 - 45 Normal
+                TSH 2.1 mIU/L 0.4 - 4.0 Normal
+                Apolipoprotein B 92 mg/dL 60 - 120 Normal
+                Lipoprotein(a) 18 mg/dL 0 - 30 Normal
+                Cystatin C 0.9 mg/L 0.6 - 1.0 Normal
+                Homocysteine 11 umol/L 5 - 15 Normal
+                Reticulocyte Hemoglobin Equivalent (RET-He) 31.4 pg 28.0 - 35.0 Normal
+                Immature Platelet Fraction (IPF) 3.8 % 1.0 - 7.0 Normal
+                Soluble Transferrin Receptor 2.4 mg/L 1.8 - 3.5 Normal
+                """, null);
+
+        assertThat(facts).hasSize(15);
+        assertThat(facts).extracting(row -> row.get("canonicalKey"))
+                .contains("hba1c", "alt", "unmapped_reticulocyte_hemoglobin_equivalent_ret_he",
+                        "unmapped_immature_platelet_fraction_ipf", "unmapped_tsh");
+    }
 }

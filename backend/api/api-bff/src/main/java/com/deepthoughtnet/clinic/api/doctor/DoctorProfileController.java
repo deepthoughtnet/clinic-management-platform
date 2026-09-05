@@ -150,12 +150,15 @@ public class DoctorProfileController {
     }
 
     private DoctorProfileResponse toResponse(TenantUserRecord doctor, DoctorProfileRecord profile) {
+        String mobile = profile == null || profile.mobile() == null || profile.mobile().isBlank()
+                ? doctor.mobile()
+                : profile.mobile();
         return new DoctorProfileResponse(
                 doctor.appUserId() == null ? null : doctor.appUserId().toString(),
                 doctor.displayName(),
                 doctor.email(),
                 doctor.membershipRole(),
-                profile == null ? null : profile.mobile(),
+                mobile,
                 profile == null ? null : profile.specialization(),
                 profile == null ? List.of() : profile.specializations(),
                 profile == null ? null : profile.qualification(),

@@ -1,5 +1,6 @@
 import * as React from "react";
 import {
+  Alert,
   Button,
   Dialog,
   DialogActions,
@@ -11,10 +12,12 @@ import {
   Select,
   Stack,
   TextField,
+  Typography,
 } from "@mui/material";
 import { documentUploadSchema, firstZodError } from "@deepthoughtnet/form-validation-kit";
 import type { ClinicalDocumentType, ClinicalDocumentUploadSource, ClinicalDocumentVisibility } from "../../api/clinicApi";
 import { buildDocumentTypeOptions } from "./documentTypeOptions";
+import RequiredLabel from "../forms/RequiredLabel";
 
 type Props = {
   open: boolean;
@@ -64,12 +67,28 @@ export function PatientDocumentUploadDialog({ open, onClose, onSubmit, defaultUp
   }, [defaultUploadSource, open]);
 
   const submit = async () => {
+    if (!documentType) {
+      setError("Document type is required");
+      return;
+    }
     if (!file) {
       setError("File is required");
       return;
     }
+    if (!reportDate.trim()) {
+      setError("Report date is required");
+      return;
+    }
     if (!documentTitle.trim()) {
       setError("Title is required");
+      return;
+    }
+    if (!uploadSource) {
+      setError("Upload source is required");
+      return;
+    }
+    if (!visibility) {
+      setError("Visibility is required");
       return;
     }
 
@@ -111,15 +130,15 @@ export function PatientDocumentUploadDialog({ open, onClose, onSubmit, defaultUp
       <DialogContent>
         <Stack spacing={1.5} sx={{ mt: 0.5 }}>
           <FormControl size="small" fullWidth>
-            <InputLabel>Document type</InputLabel>
+            <InputLabel><RequiredLabel text="Document type" required /></InputLabel>
             <Select label="Document type" value={documentType} onChange={(event) => setDocumentType(event.target.value as ClinicalDocumentType)}>
               {documentTypes.map((item) => <MenuItem key={item.value} value={item.value}>{item.label}</MenuItem>)}
             </Select>
           </FormControl>
-          <TextField size="small" fullWidth label="Title" value={documentTitle} onChange={(event) => setDocumentTitle(event.target.value)} />
-          <TextField size="small" fullWidth label="Report date" type="date" value={reportDate} onChange={(event) => setReportDate(event.target.value)} InputLabelProps={{ shrink: true }} />
+          <TextField size="small" fullWidth label={<RequiredLabel text="Title" required />} value={documentTitle} onChange={(event) => setDocumentTitle(event.target.value)} />
+          <TextField size="small" fullWidth label={<RequiredLabel text="Report date" required />} type="date" value={reportDate} onChange={(event) => setReportDate(event.target.value)} InputLabelProps={{ shrink: true }} />
           <FormControl size="small" fullWidth>
-            <InputLabel>Upload source</InputLabel>
+            <InputLabel><RequiredLabel text="Upload source" required /></InputLabel>
             <Select label="Upload source" value={uploadSource} onChange={(event) => setUploadSource(event.target.value as ClinicalDocumentUploadSource)}>
               <MenuItem value="RECEPTION">Reception</MenuItem>
               <MenuItem value="DOCTOR">Doctor</MenuItem>
@@ -130,18 +149,23 @@ export function PatientDocumentUploadDialog({ open, onClose, onSubmit, defaultUp
             </Select>
           </FormControl>
           <FormControl size="small" fullWidth>
-            <InputLabel>Visibility</InputLabel>
+            <InputLabel><RequiredLabel text="Visibility" required /></InputLabel>
             <Select label="Visibility" value={visibility} onChange={(event) => setVisibility(event.target.value as ClinicalDocumentVisibility)}>
               <MenuItem value="INTERNAL_ONLY">Internal only</MenuItem>
               <MenuItem value="PATIENT_VISIBLE">Patient visible</MenuItem>
             </Select>
           </FormControl>
           <TextField size="small" fullWidth multiline minRows={3} label="Notes" value={notes} onChange={(event) => setNotes(event.target.value)} />
-          <Button component="label" variant="outlined" disabled={busy}>
-            {file ? file.name : "Select file"}
-            <input hidden type="file" accept="application/pdf,image/png,image/jpeg,.pdf,.png,.jpg,.jpeg" onChange={(event) => setFile(event.target.files?.[0] || null)} />
-          </Button>
-          {error ? <div style={{ color: "#b00020" }}>{error}</div> : null}
+          <Stack spacing={0.5}>
+            <Typography variant="body2" sx={{ fontWeight: 700 }}>
+              <RequiredLabel text="File" required />
+            </Typography>
+            <Button component="label" variant="outlined" disabled={busy}>
+              {file ? file.name : "Select file"}
+              <input hidden type="file" accept="application/pdf,image/png,image/jpeg,.pdf,.png,.jpg,.jpeg" onChange={(event) => setFile(event.target.files?.[0] || null)} />
+            </Button>
+          </Stack>
+          {error ? <Alert severity="error">{error}</Alert> : null}
         </Stack>
       </DialogContent>
       <DialogActions>

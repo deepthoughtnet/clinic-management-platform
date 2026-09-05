@@ -832,6 +832,78 @@ class AiConsultationDraftServiceTest {
         }
     }
 
+    @Test
+    void suggestPrescriptionTemplateRejectsTruncatedStructuredOutputBeforeGrounding() {
+        AiDoctorCopilotService copilotService = mock(AiDoctorCopilotService.class);
+        ClinicalContextService clinicalContextService = mock(ClinicalContextService.class);
+        when(copilotService.draft(any(), anyString(), anyString(), anyMap(), any())).thenReturn(truncatedPrescriptionSuggestionResponse());
+
+        AiConsultationDraftService service = new AiConsultationDraftService(copilotService, clinicalContextService);
+        UUID tenantId = UUID.randomUUID();
+        com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder.set(
+                new RequestContext(TenantId.of(tenantId), UUID.randomUUID(), "sub", Set.of(), "DOCTOR", "corr-truncated-rx")
+        );
+        try {
+            AiDraftResponse response = service.suggestPrescriptionTemplate(new AiPrescriptionTemplateRequest(
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    "42Y / FEMALE",
+                    "BP 118/76, Pulse 78",
+                    "Paracetamol 500 mg Tablet",
+                    null,
+                    "Viral Upper Respiratory Infection",
+                    "Fever, cough, headache",
+                    null,
+                    "Paracetamol 500 mg Tablet",
+                    "Supportive care"
+            ));
+
+            assertThat(response.message()).contains("AI response was incomplete and was not applied");
+            assertThat(response.draft()).contains("AI response was incomplete and was not applied");
+            assertThat(response.draft()).doesNotContain("Paracetamol 500 mg");
+            assertThat(response.draft()).doesNotContain("MAX_TOKENS");
+            assertThat(response.structuredData()).isEmpty();
+            assertThat(response.parseStatus()).isEqualTo("RESPONSE_TRUNCATED");
+        } finally {
+            com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder.clear();
+        }
+    }
+
+    @Test
+    void suggestPrescriptionTemplateRejectsStructurallyIncompleteSuggestionPayload() {
+        AiDoctorCopilotService copilotService = mock(AiDoctorCopilotService.class);
+        ClinicalContextService clinicalContextService = mock(ClinicalContextService.class);
+        when(copilotService.draft(any(), anyString(), anyString(), anyMap(), any())).thenReturn(incompletePrescriptionSuggestionResponse());
+
+        AiConsultationDraftService service = new AiConsultationDraftService(copilotService, clinicalContextService);
+        UUID tenantId = UUID.randomUUID();
+        com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder.set(
+                new RequestContext(TenantId.of(tenantId), UUID.randomUUID(), "sub", Set.of(), "DOCTOR", "corr-incomplete-rx")
+        );
+        try {
+            AiDraftResponse response = service.suggestPrescriptionTemplate(new AiPrescriptionTemplateRequest(
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    "42Y / FEMALE",
+                    "BP 118/76, Pulse 78",
+                    "Paracetamol 500 mg Tablet",
+                    null,
+                    "Viral Upper Respiratory Infection",
+                    "Fever, cough, headache",
+                    null,
+                    "Paracetamol 500 mg Tablet",
+                    "Supportive care"
+            ));
+
+            assertThat(response.message()).contains("AI response was incomplete and was not applied");
+            assertThat(response.draft()).contains("AI response was incomplete and was not applied");
+            assertThat(response.structuredData()).isEmpty();
+            assertThat(response.parseStatus()).isEqualTo("INCOMPLETE_SUGGESTION_STRUCTURE");
+        } finally {
+            com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder.clear();
+        }
+    }
+
     private ClinicalContextResponse sampleContext() {
         return new ClinicalContextResponse(
                 UUID.randomUUID(),
@@ -1007,6 +1079,74 @@ class AiConsultationDraftServiceTest {
                 "VALID",
                 0,
                 "Medicine: Acetaminophen 500 mg\nReason: Supportive care\nSafety: Patient is currently on " + assertedMedicationText + ".",
+                "VALID"
+        );
+    }
+
+    private AiDraftResponse truncatedPrescriptionSuggestionResponse() {
+        Map<String, Object> suggestion = new java.util.LinkedHashMap<>();
+        suggestion.put("itemId", "item-truncated");
+        suggestion.put("medicine", "Paracetamol 500 mg");
+        suggestion.put("dose", "500 mg");
+        suggestion.put("frequency", "TID");
+        suggestion.put("duration", "3 days");
+        suggestion.put("reason", "Fever");
+        suggestion.put("safetyNote", "Review before prescribing.");
+        suggestion.put("draftText", "Medicine: Paracetamol 500 mg\nDose: 500 mg\nFrequency: TID\nDuration: 3 days");
+        suggestion.put("status", "PENDING");
+
+        Map<String, Object> structuredData = new java.util.LinkedHashMap<>();
+        structuredData.put("summary", "Fever management");
+        structuredData.put("suggestions", List.of(suggestion));
+        return new AiDraftResponse(
+                true,
+                false,
+                "AI response was truncated. Please retry.",
+                "GEMINI",
+                "gemini-2.5-flash",
+                "Medicine: Paracetamol 500 mg\nDose: 500 mg\nFrequency: TID\nDuration: 3 days",
+                structuredData,
+                BigDecimal.valueOf(0.9),
+                List.of("Review before prescribing"),
+                List.of("Review before prescribing."),
+                "MAX_TOKENS",
+                "TRUNCATED",
+                64,
+                "Medicine: Paracetamol 500 mg\nDose: 500 mg\nFrequency: TID\nDuration: 3 days",
+                "TRUNCATED"
+        );
+    }
+
+    private AiDraftResponse incompletePrescriptionSuggestionResponse() {
+        Map<String, Object> suggestion = new java.util.LinkedHashMap<>();
+        suggestion.put("itemId", "item-incomplete");
+        suggestion.put("medicine", "Paracetamol 500 mg");
+        suggestion.put("dose", null);
+        suggestion.put("frequency", "TID");
+        suggestion.put("duration", "3 days");
+        suggestion.put("reason", "Fever");
+        suggestion.put("safetyNote", "Review before prescribing.");
+        suggestion.put("draftText", "Medicine: Paracetamol 500 mg\nFrequency: TID\nDuration: 3 days");
+        suggestion.put("status", "PENDING");
+
+        Map<String, Object> structuredData = new java.util.LinkedHashMap<>();
+        structuredData.put("summary", "Fever management");
+        structuredData.put("suggestions", List.of(suggestion));
+        return new AiDraftResponse(
+                true,
+                false,
+                "AI draft generated.",
+                "GEMINI",
+                "gemini-2.5-flash",
+                "Medicine: Paracetamol 500 mg\nFrequency: TID\nDuration: 3 days",
+                structuredData,
+                BigDecimal.valueOf(0.9),
+                List.of("Review before prescribing"),
+                List.of("Review before prescribing."),
+                "STOP",
+                "COMPLETE",
+                64,
+                "Medicine: Paracetamol 500 mg\nFrequency: TID\nDuration: 3 days",
                 "VALID"
         );
     }

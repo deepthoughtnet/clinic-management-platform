@@ -814,7 +814,7 @@ public class ClinicalContextService {
 
     private ClinicalContextResponse.LongitudinalMemory toLongitudinalMemory(PatientLongitudinalMemoryProfile profile) {
         if (profile == null) {
-            return new ClinicalContextResponse.LongitudinalMemory(List.of(), List.of(), null, null, List.of(), null, null, List.of(), List.of(), null);
+            return new ClinicalContextResponse.LongitudinalMemory(List.of(), List.of(), null, null, List.of(), null, null, List.of(), List.of(), null, List.of());
         }
         return new ClinicalContextResponse.LongitudinalMemory(
                 toConceptDtos(profile.knownConditions()),
@@ -826,7 +826,8 @@ public class ClinicalContextService {
                 toConceptDto(profile.latestBmi()),
                 toConceptDtos(profile.riskFlags()),
                 toConceptDtos(profile.history()),
-                profile.mostRecentLaboratorySummary()
+                profile.mostRecentLaboratorySummary(),
+                toConceptDtos(profile.pendingReviewHistory())
         );
     }
 
@@ -1054,7 +1055,8 @@ public class ClinicalContextService {
                 concept.observedOn() == null ? null : concept.observedOn().toString(),
                 concept.confidence(),
                 concept.verificationStatus(),
-                concept.evidenceText()
+                concept.evidenceText(),
+                concept.interpretation()
         );
     }
 
@@ -1180,10 +1182,35 @@ public class ClinicalContextService {
         if (concept == null) {
             return null;
         }
-        String value = joinSegments(segments(concept.label(), concept.valueText() == null ? null : concept.valueText() + (hasText(concept.valueUnit()) ? " " + concept.valueUnit() : "")));
+        StringBuilder valueBuilder = new StringBuilder();
+        if (hasText(concept.valueText())) {
+            valueBuilder.append(concept.valueText());
+            if (hasText(concept.valueUnit())) {
+                valueBuilder.append(' ').append(concept.valueUnit());
+            }
+            String interpretation = humanizeInterpretation(concept.interpretation());
+            if (interpretation != null) {
+                valueBuilder.append(" (").append(interpretation).append(")");
+            }
+        }
+        String value = joinSegments(segments(concept.label(), valueBuilder.length() == 0 ? null : valueBuilder.toString()));
         String source = hasText(concept.sourceDocumentTitle()) ? "Source: " + concept.sourceDocumentTitle() : null;
         String date = concept.observedOn() == null ? null : concept.observedOn().toString();
         return joinSegments(segments(value, date, source));
+    }
+
+    private String humanizeInterpretation(String interpretation) {
+        if (!hasText(interpretation)) {
+            return null;
+        }
+        String normalized = interpretation.trim().toLowerCase(Locale.ROOT);
+        return switch (normalized) {
+            case "high" -> "High";
+            case "low" -> "Low";
+            case "normal" -> "Normal";
+            case "unknown" -> null;
+            default -> interpretation.trim();
+        };
     }
 
     private List<String> buildAbnormalValues(List<LabOrderResultEntity> allResults, PatientLongitudinalMemoryProfile profile) {

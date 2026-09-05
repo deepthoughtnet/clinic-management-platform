@@ -701,40 +701,52 @@ public class ClinicalDocumentAiExtractionService {
         }
         Object factualFindings = structuredData == null ? null : structuredData.get("factualFindings");
         int labCount = countTraceItems(factualFindings instanceof Map<?, ?> map ? map.get("labResults") : null);
-        int detectedLabRowCount = extractDetectedLabLines(textResult == null ? null : textResult.text()).size();
+        List<String> sourceLabRowKeys = sourceLabRowKeys(textResult == null ? null : textResult.text());
+        int detectedLabRowCount = sourceLabRowKeys.size();
         int structuredProviderLabRowCount = extraction == null ? 0 : extraction.labResults().size();
+        Set<String> mergedLabKeys = extractLabResults(structuredData).stream()
+                .map(row -> stringValue(row.get("canonicalKey")))
+                .filter(this::hasText)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        List<String> missingLabRows = sourceLabRowKeys.stream().filter(key -> !mergedLabKeys.contains(key)).toList();
         int conditionCount = countTraceItems(factualFindings instanceof Map<?, ?> map ? map.get("conditions") : null);
         int riskFlagCount = countTraceItems(factualFindings instanceof Map<?, ?> map ? map.get("riskFlags") : null);
         int recommendationCount = countTraceItems(structuredData == null ? null : structuredData.get("recommendations"));
-        log.info("[AI-DOC-EXTRACTION-SCHEMA] documentId={} hasFactualFindings={} detectedLabRowCount={} structuredProviderLabRowCount={} mergedLabRowCount={} conditionCount={} riskFlagCount={} recommendationCount={} summaryPresent={}",
+        log.info("[AI-DOC-EXTRACTION-SCHEMA] documentId={} hasFactualFindings={} sourceLabRowCount={} detectedLabRowCount={} structuredProviderLabRowCount={} mergedLabRowCount={} missingLabRows={} conditionCount={} riskFlagCount={} recommendationCount={} summaryPresent={}",
                 document.getId(),
                 factualFindings instanceof Map<?, ?>,
                 detectedLabRowCount,
+                detectedLabRowCount,
                 structuredProviderLabRowCount,
                 labCount,
+                missingLabRows,
                 conditionCount,
                 riskFlagCount,
                 recommendationCount,
                 structuredData != null && hasText(stringValue(structuredData.get("summary"))));
-        log.info("[AI-DOC-PIPELINE-TRACE] documentId={} stage=AI_NORMALIZED sourceUsed={} keysPresent={} detectedLabRowCount={} structuredProviderLabRowCount={} mergedLabRowCount={} conditionCount={} riskFlagCount={}",
+        log.info("[AI-DOC-PIPELINE-TRACE] documentId={} stage=AI_NORMALIZED sourceUsed={} keysPresent={} sourceLabRowCount={} detectedLabRowCount={} structuredProviderLabRowCount={} mergedLabRowCount={} missingLabRows={} conditionCount={} riskFlagCount={}",
                 document.getId(),
                 factualFindings instanceof Map<?, ?> ? "STRUCTURED_LABS" : "LEGACY_FIELDS",
                 structuredData == null ? List.of() : new ArrayList<>(structuredData.keySet()),
                 detectedLabRowCount,
+                detectedLabRowCount,
                 structuredProviderLabRowCount,
                 labCount,
+                missingLabRows,
                 conditionCount,
                 riskFlagCount);
         log.info(
-                "[JEEV-LONG-MEM-TRACE] parsed-extraction tenantId={} patientId={} consultationId={} documentId={} extractedJsonKeys={} detectedLabRowCount={} structuredProviderLabRowCount={} mergedLabRowCount={} extractedConditionCount={} extractedRiskFlagCount={}",
+                "[JEEV-LONG-MEM-TRACE] parsed-extraction tenantId={} patientId={} consultationId={} documentId={} extractedJsonKeys={} sourceLabRowCount={} detectedLabRowCount={} structuredProviderLabRowCount={} mergedLabRowCount={} missingLabRows={} extractedConditionCount={} extractedRiskFlagCount={}",
                 job.getTenantId(),
                 job.getPatientId(),
                 document.getConsultationId(),
                 document.getId(),
                 structuredData == null ? List.of() : new ArrayList<>(structuredData.keySet()),
                 detectedLabRowCount,
+                detectedLabRowCount,
                 structuredProviderLabRowCount,
                 labCount,
+                missingLabRows,
                 conditionCount,
                 riskFlagCount
         );
@@ -1374,7 +1386,9 @@ public class ClinicalDocumentAiExtractionService {
                 fallbackKey,
                 rawLabel
         );
-        String canonicalKey = firstHasText(canonicalLabKey(sourceKey), hasText(rawLabel) ? "unmapped_" + slug(rawLabel) : null);
+        String canonicalKey = sourceKey != null && sourceKey.startsWith("unmapped_")
+                ? sourceKey
+                : firstHasText(canonicalLabKey(sourceKey), hasText(rawLabel) ? "unmapped_" + slug(rawLabel) : null);
         boolean mapped = isKnownLabCanonicalKey(canonicalKey);
         String testName = displayTestName(canonicalKey, rawLabel);
         String rawValue = firstHasText(
@@ -1767,25 +1781,29 @@ public class ClinicalDocumentAiExtractionService {
             return null;
         }
         String normalized = slug(raw);
-        if (containsAny(normalized, "hba1c", "a1c", "hemoglobin_a1c", "glycated_hemoglobin", "glycosylated_hemoglobin")) return "hba1c";
-        if (containsAny(normalized, "estimated_average_glucose", "eag")) return "estimated_average_glucose";
-        if (containsAny(normalized, "random_blood_sugar", "fasting_blood_sugar", "fasting_glucose", "blood_sugar", "glucose", "fbs", "rbs")) return "blood_sugar";
-        if (containsAny(normalized, "hemoglobin")) return "hemoglobin";
-        if (containsAny(normalized, "red_blood_cell_count", "red_blood_cells_count", "red_blood_cell", "red_blood_cells", "rbc_count", "rbc")) return "rbc";
-        if (containsAny(normalized, "white_blood_cell_count", "white_blood_cells_count", "white_blood_cell", "white_blood_cells", "total_wbc_count", "wbc_count", "wbc")) return "wbc";
-        if (containsAny(normalized, "platelet")) return "platelets";
-        if (containsAny(normalized, "neutrophil")) return "neutrophils";
-        if (containsAny(normalized, "lymphocyte")) return "lymphocytes";
-        if (containsAny(normalized, "creatinine", "serum_creatinine")) return "creatinine";
-        if (containsAny(normalized, "egfr", "estimated_gfr", "estimated_glomerular_filtration_rate")) return "egfr";
-        if (containsAny(normalized, "crp", "c_reactive_protein")) return "crp";
-        if (containsAny(normalized, "alt", "sgpt", "alanine_aminotransferase")) return "alt";
-        if (containsAny(normalized, "ast", "sgot", "aspartate_aminotransferase")) return "ast";
-        if (containsAny(normalized, "ldl")) return "ldl";
-        if (containsAny(normalized, "hdl")) return "hdl";
-        if (containsAny(normalized, "triglycerides", "triglyceride")) return "triglycerides";
-        if (containsAny(normalized, "total_cholesterol", "cholesterol")) return "cholesterol";
+        if (exactAlias(normalized, "hba1c", "hb_a1c", "a1c", "hemoglobin_a1c", "glycated_hemoglobin", "glycosylated_hemoglobin")) return "hba1c";
+        if (exactAlias(normalized, "estimated_average_glucose", "eag")) return "estimated_average_glucose";
+        if (exactAlias(normalized, "random_blood_sugar", "fasting_blood_sugar", "fasting_glucose", "blood_sugar", "glucose", "fbs", "rbs")) return "blood_sugar";
+        if (exactAlias(normalized, "hemoglobin", "hb")) return "hemoglobin";
+        if (exactAlias(normalized, "red_blood_cell_count", "red_blood_cells_count", "red_blood_cell", "red_blood_cells", "rbc_count", "rbc")) return "rbc";
+        if (exactAlias(normalized, "white_blood_cell_count", "white_blood_cells_count", "white_blood_cell", "white_blood_cells", "total_wbc_count", "wbc_count", "wbc")) return "wbc";
+        if (exactAlias(normalized, "platelet", "platelets", "platelet_count")) return "platelets";
+        if (exactAlias(normalized, "neutrophil", "neutrophils")) return "neutrophils";
+        if (exactAlias(normalized, "lymphocyte", "lymphocytes")) return "lymphocytes";
+        if (exactAlias(normalized, "creatinine", "serum_creatinine")) return "creatinine";
+        if (exactAlias(normalized, "egfr", "estimated_gfr", "estimated_glomerular_filtration_rate")) return "egfr";
+        if (exactAlias(normalized, "crp", "c_reactive_protein")) return "crp";
+        if (exactAlias(normalized, "alt", "sgpt", "alanine_aminotransferase", "alt_sgpt")) return "alt";
+        if (exactAlias(normalized, "ast", "sgot", "aspartate_aminotransferase", "ast_sgot")) return "ast";
+        if (exactAlias(normalized, "ldl_cholesterol", "ldl")) return "ldl";
+        if (exactAlias(normalized, "hdl_cholesterol", "hdl")) return "hdl";
+        if (exactAlias(normalized, "triglycerides", "triglyceride")) return "triglycerides";
+        if (exactAlias(normalized, "total_cholesterol", "cholesterol")) return "cholesterol";
         return null;
+    }
+
+    private boolean exactAlias(String value, String... aliases) {
+        return value != null && aliases != null && Set.of(aliases).contains(value);
     }
 
     private String[] evidenceLabelsFor(String canonicalKey) {
@@ -2127,7 +2145,7 @@ public class ClinicalDocumentAiExtractionService {
         List<Map<String, Object>> labResults = extractLabResults(structuredData);
         Set<String> expectedLabKeys = expectedLabKeysFromOcr(textResult == null ? null : textResult.text());
         Set<String> actualLabKeys = labResults.stream()
-                .map(row -> canonicalLabKey(stringValue(row.get("canonicalKey"))))
+                .map(row -> stringValue(row.get("canonicalKey")))
                 .filter(this::hasText)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
         List<String> missingExpectedLabKeys = expectedLabKeys.stream()
@@ -2172,20 +2190,11 @@ public class ClinicalDocumentAiExtractionService {
     }
 
     private Set<String> expectedLabKeysFromOcr(String ocrText) {
-        if (!hasText(ocrText)) {
-            return Set.of();
-        }
-        LinkedHashSet<String> keys = new LinkedHashSet<>();
-        for (String line : ocrText.split("\\R")) {
-            if (!hasText(line) || isBlockedNarrativeLabSource(line) || numberFrom(line) == null) {
-                continue;
-            }
-            String key = canonicalLabKey(line);
-            if (hasText(key)) {
-                keys.add(key);
-            }
-        }
-        return keys;
+        return new LinkedHashSet<>(sourceLabRowKeys(ocrText));
+    }
+
+    private List<String> sourceLabRowKeys(String ocrText) {
+        return deterministicLabFactParser.detectedLabRowKeys(ocrText, extractDetectedLabLines(ocrText));
     }
 
     private boolean isKnownLabCanonicalKey(String canonicalKey) {

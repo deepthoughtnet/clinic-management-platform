@@ -167,13 +167,13 @@ class ClinicalContextServiceTest {
         when(longitudinalMemoryService.buildProfile(tenantId, patientId)).thenReturn(new PatientLongitudinalMemoryProfile(
                 List.of(new LongitudinalConceptSnapshot("CONDITION", "diabetes_mellitus", "Diabetes Mellitus", "Diabetes Mellitus", null, "Diabetes Follow-up Lab Report", "EXTERNAL_LAB_REPORT", document.getId(), java.time.LocalDate.of(2026, 1, 8), new java.math.BigDecimal("0.96"), "PENDING_REVIEW", "HbA1c 8.4")),
                 List.of(),
-                new LongitudinalConceptSnapshot("LAB_RESULT", "hba1c", "HbA1c", "8.4", "%", "Diabetes Follow-up Lab Report", "EXTERNAL_LAB_REPORT", document.getId(), java.time.LocalDate.of(2026, 1, 8), new java.math.BigDecimal("0.96"), "PENDING_REVIEW", "HbA1c 8.4"),
+                new LongitudinalConceptSnapshot("LAB_RESULT", "hba1c", "HbA1c", "8.4", "%", "Diabetes Follow-up Lab Report", "EXTERNAL_LAB_REPORT", document.getId(), java.time.LocalDate.of(2026, 1, 8), new java.math.BigDecimal("0.96"), "PENDING_REVIEW", "HbA1c 8.4", "HIGH"),
                 new LongitudinalConceptSnapshot("LAB_RESULT", "blood_sugar", "Blood Sugar", "198", "mg/dL", "Diabetes Follow-up Lab Report", "EXTERNAL_LAB_REPORT", document.getId(), java.time.LocalDate.of(2026, 1, 8), new java.math.BigDecimal("0.96"), "PENDING_REVIEW", "Random Blood Sugar 198 mg/dL"),
                 List.of(
-                        new LongitudinalConceptSnapshot("LAB_RESULT", "cholesterol", "Total Cholesterol", "228", "mg/dL", "Diabetes Follow-up Lab Report", "EXTERNAL_LAB_REPORT", document.getId(), java.time.LocalDate.of(2026, 1, 8), new java.math.BigDecimal("0.96"), "PENDING_REVIEW", "Total Cholesterol 228 mg/dL"),
-                        new LongitudinalConceptSnapshot("LAB_RESULT", "ldl", "LDL Cholesterol", "152", "mg/dL", "Diabetes Follow-up Lab Report", "EXTERNAL_LAB_REPORT", document.getId(), java.time.LocalDate.of(2026, 1, 8), new java.math.BigDecimal("0.96"), "PENDING_REVIEW", "LDL 152 mg/dL"),
-                        new LongitudinalConceptSnapshot("LAB_RESULT", "triglycerides", "Triglycerides", "238", "mg/dL", "Diabetes Follow-up Lab Report", "EXTERNAL_LAB_REPORT", document.getId(), java.time.LocalDate.of(2026, 1, 8), new java.math.BigDecimal("0.96"), "PENDING_REVIEW", "Triglycerides 238 mg/dL"),
-                        new LongitudinalConceptSnapshot("LAB_RESULT", "hdl", "HDL Cholesterol", "39", "mg/dL", "Diabetes Follow-up Lab Report", "EXTERNAL_LAB_REPORT", document.getId(), java.time.LocalDate.of(2026, 1, 8), new java.math.BigDecimal("0.96"), "PENDING_REVIEW", "HDL 39 mg/dL")
+                        new LongitudinalConceptSnapshot("LAB_RESULT", "cholesterol", "Total Cholesterol", "228", "mg/dL", "Diabetes Follow-up Lab Report", "EXTERNAL_LAB_REPORT", document.getId(), java.time.LocalDate.of(2026, 1, 8), new java.math.BigDecimal("0.96"), "PENDING_REVIEW", "Total Cholesterol 228 mg/dL", "HIGH"),
+                        new LongitudinalConceptSnapshot("LAB_RESULT", "ldl", "LDL Cholesterol", "152", "mg/dL", "Diabetes Follow-up Lab Report", "EXTERNAL_LAB_REPORT", document.getId(), java.time.LocalDate.of(2026, 1, 8), new java.math.BigDecimal("0.96"), "PENDING_REVIEW", "LDL 152 mg/dL", "HIGH"),
+                        new LongitudinalConceptSnapshot("LAB_RESULT", "triglycerides", "Triglycerides", "238", "mg/dL", "Diabetes Follow-up Lab Report", "EXTERNAL_LAB_REPORT", document.getId(), java.time.LocalDate.of(2026, 1, 8), new java.math.BigDecimal("0.96"), "PENDING_REVIEW", "Triglycerides 238 mg/dL", "HIGH"),
+                        new LongitudinalConceptSnapshot("LAB_RESULT", "hdl", "HDL Cholesterol", "39", "mg/dL", "Diabetes Follow-up Lab Report", "EXTERNAL_LAB_REPORT", document.getId(), java.time.LocalDate.of(2026, 1, 8), new java.math.BigDecimal("0.96"), "PENDING_REVIEW", "HDL 39 mg/dL", "LOW")
                 ),
                 null,
                 null,
@@ -230,6 +230,7 @@ class ClinicalContextServiceTest {
         assertThat(context.labIntelligence().lastHbA1c()).contains("8.4");
         assertThat(context.labIntelligence().latestBloodSugar()).contains("198");
         assertThat(context.labIntelligence().latestLipidSummary()).contains("Total Cholesterol", "LDL Cholesterol", "Triglycerides", "HDL Cholesterol");
+        assertThat(context.labIntelligence().latestLipidSummary()).contains("(High)", "(Low)");
         assertThat(context.documentIntelligence().radiology()).hasSize(1);
         assertThat(context.timelineSummary().events()).isNotEmpty();
         assertThat(context.longitudinalMemory()).isNotNull();
@@ -237,6 +238,7 @@ class ClinicalContextServiceTest {
         assertThat(context.patientSummary().chronicConditions()).contains("Diabetes Mellitus");
         assertThat(context.longitudinalMemory().latestHbA1c()).isNotNull();
         assertThat(context.longitudinalMemory().latestHbA1c().verificationStatus()).isEqualTo("PENDING_REVIEW");
+        assertThat(context.longitudinalMemory().latestHbA1c().interpretation()).isEqualTo("HIGH");
         assertThat(context.longitudinalMemory().riskFlags()).extracting(ClinicalContextResponse.LongitudinalConcept::label).contains("Diabetes", "Dyslipidemia");
         assertThat(context.longitudinalClinicalContext()).isNotNull();
         assertThat(context.longitudinalClinicalContext().labTrends()).hasSize(1);

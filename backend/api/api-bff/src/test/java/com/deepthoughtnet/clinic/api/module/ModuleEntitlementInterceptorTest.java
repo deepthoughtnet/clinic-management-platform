@@ -97,7 +97,7 @@ class ModuleEntitlementInterceptorTest {
     }
 
     @Test
-    void allowsDeterministicAiStatusReadWithoutModuleCheck() {
+    void requiresAiCopilotModuleForAiStatusRead() {
         TenantRuntimeEntitlementProvider tenantRuntimeEntitlementProvider = mock(TenantRuntimeEntitlementProvider.class);
         ModuleRouteRegistry registry = new ModuleRouteRegistry();
         ModuleEntitlementInterceptor interceptor = new ModuleEntitlementInterceptor(tenantRuntimeEntitlementProvider, registry);
@@ -112,11 +112,12 @@ class ModuleEntitlementInterceptorTest {
         interceptor.preHandle(request, response, new Object());
 
         verify(tenantRuntimeEntitlementProvider).requireTenantActive(tenantId);
+        verify(tenantRuntimeEntitlementProvider).requireModuleEnabled(tenantId, "AI_COPILOT");
         verifyNoMoreInteractions(tenantRuntimeEntitlementProvider);
     }
 
     @Test
-    void allowsDeterministicClinicalContextReadWithoutModuleCheck() {
+    void requiresAiCopilotModuleForClinicalContextRead() {
         TenantRuntimeEntitlementProvider tenantRuntimeEntitlementProvider = mock(TenantRuntimeEntitlementProvider.class);
         ModuleRouteRegistry registry = new ModuleRouteRegistry();
         ModuleEntitlementInterceptor interceptor = new ModuleEntitlementInterceptor(tenantRuntimeEntitlementProvider, registry);
@@ -131,6 +132,7 @@ class ModuleEntitlementInterceptorTest {
         interceptor.preHandle(request, response, new Object());
 
         verify(tenantRuntimeEntitlementProvider).requireTenantActive(tenantId);
+        verify(tenantRuntimeEntitlementProvider).requireModuleEnabled(tenantId, "AI_COPILOT");
         verifyNoMoreInteractions(tenantRuntimeEntitlementProvider);
     }
 }
