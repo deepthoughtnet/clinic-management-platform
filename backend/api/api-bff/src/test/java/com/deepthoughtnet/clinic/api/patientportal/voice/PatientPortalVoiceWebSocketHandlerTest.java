@@ -186,6 +186,32 @@ class PatientPortalVoiceWebSocketHandlerTest {
         );
     }
 
+    @Test
+    void assistantFailuresAreSanitizedBeforeReachingThePatientClient() throws Exception {
+        PatientPortalVoiceAssistantService assistantService = mock(PatientPortalVoiceAssistantService.class);
+        CareAiConversationPersistenceService persistenceService = mock(CareAiConversationPersistenceService.class);
+        when(assistantService.processAudioTurn(any(), any(), any(), any()))
+                .thenThrow(new IllegalStateException("ElevenLabs synthesis failed: http://internal.example/token=secret"));
+
+        PatientPortalVoiceWebSocketHandler handler = new PatientPortalVoiceWebSocketHandler(
+                new ObjectMapper(),
+                assistantService,
+                new VoiceTestProperties(),
+                persistenceService
+        );
+        SessionFixture fixture = new SessionFixture(TENANT_ID, PATIENT_ID, APP_USER_ID, Set.of("PATIENT"), "patient-session-5");
+        String audioBase64 = Base64.getEncoder().encodeToString("voice".getBytes(StandardCharsets.UTF_8));
+
+        handler.afterConnectionEstablished(fixture.session);
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"session.start\",\"language\":\"auto\"}"));
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.chunk\",\"sequence\":1,\"totalChunks\":1,\"filename\":\"patient-careai.webm\",\"audioBase64Chunk\":\"" + audioBase64 + "\",\"contentType\":\"audio/webm\"}"));
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.end\",\"filename\":\"patient-careai.webm\",\"contentType\":\"audio/webm\",\"totalChunks\":1}"));
+
+        assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"error\"") && payload.contains("Voice playback unavailable."));
+        assertThat(fixture.payloads()).noneMatch(payload -> payload.contains("secret"));
+        assertThat(fixture.payloads()).noneMatch(payload -> payload.contains("ElevenLabs synthesis failed"));
+    }
+
     private static final class SessionFixture {
         private final List<String> payloads = new ArrayList<>();
         private final WebSocketSession session;

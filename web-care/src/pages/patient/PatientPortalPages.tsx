@@ -5517,6 +5517,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
   const voiceLastSpeechAtRef = useRef<number | null>(null);
   const voiceSessionStartedAtRef = useRef<number | null>(null);
   const voiceLastTranscriptOrResponseAtRef = useRef<number | null>(null);
+  const voiceMutedRef = useRef(false);
   const voiceAudioContextRef = useRef<AudioContext | null>(null);
   const voiceAnalyserRef = useRef<AnalyserNode | null>(null);
   const voiceSourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
@@ -5704,6 +5705,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
     if (
       !voiceAutoResumeRef.current
       || voiceEndedByUserRef.current
+      || voiceMutedRef.current
       || !voiceSocketRef.current
       || voiceSocketRef.current.readyState !== WebSocket.OPEN
     ) {
@@ -5715,6 +5717,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
       if (
         !voiceAutoResumeRef.current
         || voiceEndedByUserRef.current
+        || voiceMutedRef.current
         || !voiceSocketRef.current
         || voiceSocketRef.current.readyState !== WebSocket.OPEN
       ) {
@@ -5827,6 +5830,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
     setVoiceSilenceDetected(false);
     setShowVoiceTechnicalDetails(false);
     setVoiceInactivityWarning(null);
+    setVoiceMuted(false);
     if (voiceAudioUrl) {
       URL.revokeObjectURL(voiceAudioUrl);
       setVoiceAudioUrl(null);
@@ -5855,10 +5859,8 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
   }, [voiceConfig]);
 
   useEffect(() => {
-    if (voiceAudioElementRef.current) {
-      voiceAudioElementRef.current.muted = voiceMuted;
-    }
-  }, [voiceMuted, voiceAudioUrl]);
+    voiceMutedRef.current = voiceMuted;
+  }, [voiceMuted]);
 
   useEffect(() => {
     if (!voiceAudioUrl || !voicePendingAutoPlayRef.current) {
@@ -5906,7 +5908,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
         audioElement.removeAttribute("src");
         audioElement.load();
       }
-      audioElement.muted = previousMuted || voiceMuted;
+      audioElement.muted = previousMuted;
     }
   }
 
@@ -6293,6 +6295,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
     if (
       !portalSession ||
       voiceStartingMicRef.current ||
+      voiceMutedRef.current ||
       voiceStatusRef.current === "listening" ||
       voiceStatusRef.current === "speech_detected" ||
       voiceStatusRef.current === "processing" ||
@@ -6303,6 +6306,10 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
       voiceAssistantAudioReadyRef.current ||
       voiceAssistantAudioPlayingRef.current
     ) {
+      if (voiceMutedRef.current) {
+        setVoiceInfo("Microphone is muted. Unmute to speak.");
+        appendVoiceEvent("MIC_MUTED_START_BLOCKED");
+      }
       return;
     }
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -6434,6 +6441,9 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
       if (socket.readyState === WebSocket.OPEN) {
         appendVoiceEvent("SOCKET_OPEN");
       }
+      if (voiceMutedRef.current) {
+        setVoiceInfo("Voice session connected. Microphone is muted.");
+      }
     } catch {
       updateVoiceStatus("error");
       setVoiceError("Voice connection failed. Open technical details for the websocket target and close status.");
@@ -6446,6 +6456,11 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
       return;
     }
     voiceEndedByUserRef.current = false;
+    if (voiceMutedRef.current) {
+      setVoiceInfo("Microphone is muted. Unmute to speak.");
+      appendVoiceEvent("MIC_MUTED_START_BLOCKED");
+      return;
+    }
     try {
       await startVoiceMic();
     } catch {
@@ -6465,7 +6480,30 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
     }
     stopVoiceStream();
     updateVoiceStatus("session_started");
-    setVoiceInfo("Session is ready. Start a turn when you want to speak.");
+    setVoiceInfo(voiceMutedRef.current ? "Microphone is muted. Unmute to speak." : "Session is ready. Start a turn when you want to speak.");
+  }
+
+  function handleVoiceToggleMute() {
+    if (voiceStatus === "idle" || voiceStatus === "ended" || voiceStatus === "error") {
+      return;
+    }
+    const nextMuted = !voiceMuted;
+    setVoiceMuted(nextMuted);
+    voiceMutedRef.current = nextMuted;
+    if (nextMuted) {
+      voiceDiscardRecordingRef.current = true;
+      if (voiceRecorderRef.current && voiceRecorderRef.current.state !== "inactive") {
+        appendVoiceEvent("MIC_MUTED_STOPPING_RECORDING");
+        voiceRecorderRef.current.stop();
+      } else {
+        stopVoiceStream();
+      }
+      updateVoiceStatus("session_started");
+      setVoiceInfo("Microphone muted. Voice session remains connected.");
+      return;
+    }
+    appendVoiceEvent("MIC_UNMUTED");
+    setVoiceInfo("Microphone unmuted. Start a turn when you are ready.");
   }
 
   function handleVoiceEndSession() {
@@ -6486,6 +6524,8 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
     updateVoiceStatus("idle");
     setVoiceError(null);
     setVoiceInfo(null);
+    setVoiceMuted(false);
+    voiceMutedRef.current = false;
     persistVoiceResumeSessionId(null);
     setVoiceInactivityWarning(null);
     setVoiceReplyReadyToPlay(false);
@@ -6715,7 +6755,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
                 <strong>Voice Session</strong>
                 <span className={`patient-voice-status patient-voice-status-${voiceStatus}`}>
                   {voiceMuted && voiceStatus !== "idle" && voiceStatus !== "ended" && voiceStatus !== "error"
-                    ? "Muted"
+                    ? "Mic muted"
                     : patientVoiceStatusLabel(voiceStatus)}
                 </span>
               </div>
@@ -6746,12 +6786,12 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
                   className="voice-control-button voice-control-button-mute"
                   type="button"
                   disabled={voiceStatus === "idle" || voiceStatus === "ended"}
-                  onClick={() => setVoiceMuted((current) => !current)}
+                  onClick={handleVoiceToggleMute}
                 >
                   <span className="voice-control-icon" aria-hidden="true">
                     <MicOffRoundedIcon fontSize="small" />
                   </span>
-                  <span className="voice-control-label">{voiceMuted ? "Unmute" : "Mute"}</span>
+                  <span className="voice-control-label">{voiceMuted ? "Unmute mic" : "Mute mic"}</span>
                 </button>
               </div>
               <span className="patient-inline-note">
@@ -6831,9 +6871,9 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
                     </span>
                   </div>
                 </div>
-                {voiceAudioUrl ? (
-                  <audio className="patient-careai-audio-technical" controls src={voiceAudioUrl} muted={voiceMuted} />
-                ) : null}
+                  {voiceAudioUrl ? (
+                    <audio className="patient-careai-audio-technical" controls src={voiceAudioUrl} />
+                  ) : null}
                 {voiceEvents.length > 0 ? (
                   <div className="patient-careai-voice-events">
                     <strong>Live events</strong>

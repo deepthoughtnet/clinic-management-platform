@@ -247,7 +247,7 @@ voice:
       model: ${DEEPGRAM_MODEL:nova-2}
       base-url: ${DEEPGRAM_BASE_URL:https://api.deepgram.com/v1/listen}
   tts:
-    provider-order: ${VOICE_TTS_PROVIDER_ORDER:sarvam,piper,mock}
+    provider-order: ${VOICE_TTS_PROVIDER_ORDER:elevenlabs,sarvam,piper,mock}
     piper:
       base-url: ${PIPER_TTS_BASE_URL:http://piper-tts:8001}
       voice: ${PIPER_DEFAULT_VOICE:${PIPER_VOICE:en_US-lessac-medium}}

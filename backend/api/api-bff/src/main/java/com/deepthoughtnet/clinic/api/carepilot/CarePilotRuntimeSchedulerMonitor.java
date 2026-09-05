@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 @Service
 public class CarePilotRuntimeSchedulerMonitor {
     private final Map<UUID, OffsetDateTime> lastReminderScanByTenant = new ConcurrentHashMap<>();
+    private volatile OffsetDateTime lastGlobalReminderScanAt;
     private final boolean reminderSchedulerEnabled;
 
     public CarePilotRuntimeSchedulerMonitor(@Value("${carepilot.reminders.enabled:false}") boolean reminderSchedulerEnabled) {
@@ -25,11 +26,25 @@ public class CarePilotRuntimeSchedulerMonitor {
             return;
         }
         lastReminderScanByTenant.put(tenantId, scannedAt);
+        markGlobalReminderScan(scannedAt);
+    }
+
+    /** Records the latest reminder scheduler heartbeat across all tenants. */
+    public void markGlobalReminderScan(OffsetDateTime scannedAt) {
+        if (scannedAt == null) {
+            return;
+        }
+        lastGlobalReminderScanAt = scannedAt;
     }
 
     /** Returns the most recent reminder scheduler scan timestamp for one tenant. */
     public OffsetDateTime lastReminderScanAt(UUID tenantId) {
         return tenantId == null ? null : lastReminderScanByTenant.get(tenantId);
+    }
+
+    /** Returns the latest reminder scheduler scan timestamp across all tenants. */
+    public OffsetDateTime lastGlobalReminderScanAt() {
+        return lastGlobalReminderScanAt;
     }
 
     /** Returns scheduler status string for dashboard consumption. */

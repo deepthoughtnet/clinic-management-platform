@@ -18,6 +18,9 @@ public interface ClinicalDocumentRepository extends JpaRepository<ClinicalDocume
     );
     List<ClinicalDocumentEntity> findByTenantIdAndPatientIdAndActiveTrueOrderByCreatedAtDesc(UUID tenantId, UUID patientId);
     boolean existsByTenantIdAndStorageObjectKey(UUID tenantId, String storageObjectKey);
+    List<ClinicalDocumentEntity> findByCreatedAtBetween(java.time.OffsetDateTime from, java.time.OffsetDateTime to);
+    List<ClinicalDocumentEntity> findTop200ByOrderByCreatedAtDesc();
+    long countByAiExtractionStatusAndCreatedAtBetween(String aiExtractionStatus, java.time.OffsetDateTime from, java.time.OffsetDateTime to);
 
     @Query("""
             select count(d)

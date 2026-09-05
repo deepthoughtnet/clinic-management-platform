@@ -1570,9 +1570,44 @@ input {
   max-width: var(--container-narrow);
 }
 
-.patient-lab-page {
+.patient-content-grid.patient-lab-page {
   padding-top: 3rem;
   padding-bottom: 4.5rem;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.patient-content-grid.patient-lab-page > * {
+  min-width: 0;
+}
+
+.patient-lab-page .portal-dashboard-grid,
+.patient-lab-page .portal-section-grid {
+  width: 100%;
+}
+
+.patient-lab-page .portal-list-card {
+  min-width: 0;
+}
+
+.patient-lab-page .portal-list-card-header strong {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+
+.patient-lab-page .status-pill {
+  white-space: nowrap;
+}
+
+.patient-lab-page .portal-list-meta span,
+.patient-lab-page .portal-inline-list li strong,
+.patient-lab-page .portal-inline-list li span {
+  word-break: normal;
+  overflow-wrap: break-word;
 }
 
 .patient-lab-shell {
@@ -1714,7 +1749,9 @@ input {
 }
 
 .portal-list-card-header strong {
-  overflow-wrap: anywhere;
+  min-width: 0;
+  word-break: normal;
+  overflow-wrap: break-word;
 }
 
 .portal-list-meta {
@@ -1727,7 +1764,8 @@ input {
 }
 
 .portal-list-meta span {
-  overflow-wrap: anywhere;
+  word-break: normal;
+  overflow-wrap: break-word;
 }
 
 .patient-notifications-page .portal-dashboard-grid {
@@ -1769,11 +1807,15 @@ input {
 
 .portal-inline-list li strong {
   font-size: 0.94rem;
+  word-break: normal;
+  overflow-wrap: break-word;
 }
 
 .portal-inline-list li span {
   color: var(--muted);
   line-height: 1.45;
+  word-break: normal;
+  overflow-wrap: break-word;
 }
 
 .portal-help-text {

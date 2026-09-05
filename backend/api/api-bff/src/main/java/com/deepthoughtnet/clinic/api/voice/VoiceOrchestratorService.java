@@ -33,6 +33,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Stream;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.slf4j.Logger;
@@ -48,6 +49,8 @@ public class VoiceOrchestratorService {
     private static final String VOICE_TEST_ENTITY_TYPE = "VOICE_TEST";
     private static final String VOICE_TEST_SUCCESS = "VOICE_TEST_COMPLETED";
     private static final String VOICE_TEST_FAILED = "VOICE_TEST_FAILED";
+    private static final String ELEVENLABS_TEST_TEXT = "Hello, this is the Jeevanam voice test.";
+    private static final String ELEVENLABS_SAFE_FAILURE_MESSAGE = "ElevenLabs request failed: invalid voice/model/authentication/quota";
     private static final Pattern JSON_ANSWER_PATTERN = Pattern.compile("\"answer\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\"");
 
     private final List<SpeechToTextProvider> sttProviders;
@@ -57,9 +60,11 @@ public class VoiceOrchestratorService {
     private final VoiceTestProperties properties;
     private final ObjectMapper objectMapper;
     private final FasterWhisperSpeechToTextProvider fasterWhisperSpeechToTextProvider;
+    private final ElevenLabsTextToSpeechProvider elevenLabsTextToSpeechProvider;
     private final PiperTextToSpeechProvider piperTextToSpeechProvider;
     private final VoiceAppointmentWorkflowService voiceAppointmentWorkflowService;
     private final VoiceTextNormalizer voiceTextNormalizer = new VoiceTextNormalizer();
+    private final AtomicReference<VoiceTtsDiagnosticResponse> elevenLabsLastTest = new AtomicReference<>();
 
     public VoiceOrchestratorService(List<SpeechToTextProvider> sttProviders,
                                     List<TextToSpeechProvider> ttsProviders,
@@ -70,7 +75,20 @@ public class VoiceOrchestratorService {
                                     FasterWhisperSpeechToTextProvider fasterWhisperSpeechToTextProvider,
                                     PiperTextToSpeechProvider piperTextToSpeechProvider) {
         this(sttProviders, ttsProviders, aiOrchestrationService, auditEventPublisher, properties, objectMapper,
-                fasterWhisperSpeechToTextProvider, piperTextToSpeechProvider, null);
+                fasterWhisperSpeechToTextProvider, null, piperTextToSpeechProvider, null);
+    }
+
+    public VoiceOrchestratorService(List<SpeechToTextProvider> sttProviders,
+                                    List<TextToSpeechProvider> ttsProviders,
+                                    AiOrchestrationService aiOrchestrationService,
+                                    AuditEventPublisher auditEventPublisher,
+                                    VoiceTestProperties properties,
+                                    ObjectMapper objectMapper,
+                                    FasterWhisperSpeechToTextProvider fasterWhisperSpeechToTextProvider,
+                                    ElevenLabsTextToSpeechProvider elevenLabsTextToSpeechProvider,
+                                    PiperTextToSpeechProvider piperTextToSpeechProvider) {
+        this(sttProviders, ttsProviders, aiOrchestrationService, auditEventPublisher, properties, objectMapper,
+                fasterWhisperSpeechToTextProvider, elevenLabsTextToSpeechProvider, piperTextToSpeechProvider, null);
     }
 
     @Autowired
@@ -81,6 +99,7 @@ public class VoiceOrchestratorService {
                                     VoiceTestProperties properties,
                                     ObjectMapper objectMapper,
                                     FasterWhisperSpeechToTextProvider fasterWhisperSpeechToTextProvider,
+                                    ElevenLabsTextToSpeechProvider elevenLabsTextToSpeechProvider,
                                     PiperTextToSpeechProvider piperTextToSpeechProvider,
                                     VoiceAppointmentWorkflowService voiceAppointmentWorkflowService) {
         this.sttProviders = sttProviders;
@@ -90,6 +109,7 @@ public class VoiceOrchestratorService {
         this.properties = properties;
         this.objectMapper = objectMapper;
         this.fasterWhisperSpeechToTextProvider = fasterWhisperSpeechToTextProvider;
+        this.elevenLabsTextToSpeechProvider = elevenLabsTextToSpeechProvider;
         this.piperTextToSpeechProvider = piperTextToSpeechProvider;
         this.voiceAppointmentWorkflowService = voiceAppointmentWorkflowService;
         log.info("voice.stt.providers.available={}", sttProviderRegistry().keySet().stream().toList());
@@ -382,24 +402,314 @@ public class VoiceOrchestratorService {
         return synthesize(new VoiceSynthesisRequest(tenantId, ttsAssistantText, normalizedLanguage));
     }
 
+    public VoiceTtsDiagnosticResponse testElevenLabsTts() {
+        VoiceTtsDiagnosticResponse diagnostic = diagnoseElevenLabs(true, true);
+        if (diagnostic != null) {
+            elevenLabsLastTest.set(diagnostic);
+        }
+        return diagnostic;
+    }
+
     public VoiceStatusResponse status(boolean warmup) {
         VoiceServiceStatus sttStatus = fasterWhisperSpeechToTextProvider.status(warmup);
-        VoiceServiceStatus ttsStatus = piperTextToSpeechProvider.status(warmup);
+        String selectedSttProvider = selectedSttProviderName();
+        String selectedTtsProvider = selectedTtsProviderName();
+        VoiceTtsDiagnosticResponse elevenLabsDiagnostic = elevenLabsStatusForResponse(selectedTtsProvider, warmup);
+        VoiceServiceStatus ttsStatus = selectedTtsStatus(selectedTtsProvider, warmup, elevenLabsDiagnostic);
         return new VoiceStatusResponse(
                 properties.isEnabled(),
                 sttStatus,
                 ttsStatus,
                 new VoiceProviderTrace(
-                        firstProvider(properties.getStt().getProviderOrder(), "mock"),
+                        selectedSttProvider,
                         firstProvider(properties.getLlm().getProviderOrder(), "mock"),
-                        firstProvider(properties.getTts().getProviderOrder(), "mock")
+                        selectedTtsProvider
                 ),
                 properties.getStt().getFasterWhisper().getLanguage(),
                 properties.getTts().getPiper().getVoice(),
                 java.util.Map.copyOf(piperTextToSpeechProvider.configuredVoices()),
                 piperTextToSpeechProvider.isLanguageVoiceConfigured("hi"),
-                piperTextToSpeechProvider.isFallbackVoiceAllowed()
+                piperTextToSpeechProvider.isFallbackVoiceAllowed(),
+                new VoiceTtsProviderStatus(
+                        properties.getTts().getElevenlabs() != null
+                                && StringUtils.hasText(properties.getTts().getElevenlabs().getApiKey())
+                                && StringUtils.hasText(properties.getTts().getElevenlabs().getVoiceId()),
+                        properties.getTts().getProviderOrder() != null
+                                && properties.getTts().getProviderOrder().stream().anyMatch(name -> "elevenlabs".equalsIgnoreCase(name))
+                                && StringUtils.hasText(properties.getTts().getElevenlabs().getApiKey())
+                                && StringUtils.hasText(properties.getTts().getElevenlabs().getVoiceId()),
+                        "elevenlabs".equalsIgnoreCase(selectedTtsProvider),
+                        properties.getTts().getProviderOrder() != null
+                                && properties.getTts().getProviderOrder().stream().anyMatch(name -> "elevenlabs".equalsIgnoreCase(name)),
+                        elevenLabsDiagnostic == null ? false : elevenLabsDiagnostic.reachable(),
+                        properties.getTts().getElevenlabs().getModel(),
+                        StringUtils.hasText(properties.getTts().getElevenlabs().getVoiceId()),
+                        elevenLabsDiagnostic
+                )
         );
+    }
+
+    private String selectedSttProviderName() {
+        List<SpeechToTextProvider> orderedProviders = orderedSttProviders(properties.getStt().getProviderOrder());
+        for (SpeechToTextProvider provider : orderedProviders) {
+            if (provider != null && provider.isReady()) {
+                return provider.providerName();
+            }
+        }
+        return firstProvider(properties.getStt().getProviderOrder(), "mock");
+    }
+
+    private String selectedTtsProviderName() {
+        List<TextToSpeechProvider> orderedProviders = orderedTtsProviders(properties.getTts().getProviderOrder());
+        for (TextToSpeechProvider provider : orderedProviders) {
+            if (provider != null && provider.isReady()) {
+                return provider.providerName();
+            }
+        }
+        return firstProvider(properties.getTts().getProviderOrder(), "mock");
+    }
+
+    private VoiceServiceStatus selectedTtsStatus(String selectedTtsProvider, boolean warmup, VoiceTtsDiagnosticResponse elevenLabsDiagnostic) {
+        if ("elevenlabs".equalsIgnoreCase(selectedTtsProvider)) {
+            if (elevenLabsDiagnostic != null) {
+                return new VoiceServiceStatus(
+                        "ELEVENLABS",
+                        elevenLabsDiagnostic.reachable(),
+                        elevenLabsDiagnostic.success(),
+                        elevenLabsDiagnostic.message()
+                );
+            }
+            return new VoiceServiceStatus("ELEVENLABS", false, false, "ElevenLabs TTS is not configured.");
+        }
+        if ("piper".equalsIgnoreCase(selectedTtsProvider)) {
+            return piperTextToSpeechProvider.status(warmup);
+        }
+        if ("mock".equalsIgnoreCase(selectedTtsProvider)) {
+            return new VoiceServiceStatus("MOCK", true, true, warmup ? "Mock TTS warmup complete." : "Mock TTS selected.");
+        }
+        return new VoiceServiceStatus(
+                StringUtils.hasText(selectedTtsProvider) ? selectedTtsProvider.toUpperCase(Locale.ROOT) : "NONE",
+                false,
+                false,
+                "No TTS provider is available."
+        );
+    }
+
+    private VoiceTtsDiagnosticResponse elevenLabsStatusForResponse(String selectedTtsProvider, boolean warmup) {
+        boolean inProviderOrder = properties.getTts().getProviderOrder() != null
+                && properties.getTts().getProviderOrder().stream().anyMatch(name -> "elevenlabs".equalsIgnoreCase(name));
+        boolean configured = elevenLabsConfigured();
+        boolean enabled = configured && inProviderOrder;
+        boolean selected = "elevenlabs".equalsIgnoreCase(selectedTtsProvider);
+        VoiceTtsDiagnosticResponse lastTest = elevenLabsLastTest.get();
+        if (warmup && enabled) {
+            lastTest = diagnoseElevenLabs(true, true);
+            if (lastTest != null) {
+                elevenLabsLastTest.set(lastTest);
+            }
+        }
+        if (lastTest != null) {
+            return new VoiceTtsDiagnosticResponse(
+                    lastTest.requestId(),
+                    lastTest.provider(),
+                    lastTest.testedAt(),
+                    configured,
+                    enabled,
+                    selected,
+                    inProviderOrder,
+                    lastTest.success(),
+                    lastTest.reachable(),
+                    lastTest.model(),
+                    lastTest.voiceIdPresent(),
+                    lastTest.latencyMs(),
+                    lastTest.audioContentType(),
+                    lastTest.audioBytes(),
+                    lastTest.message()
+            );
+        }
+        return new VoiceTtsDiagnosticResponse(
+                UUID.randomUUID().toString(),
+                "elevenlabs",
+                Instant.now().toString(),
+                configured,
+                enabled,
+                selected,
+                inProviderOrder,
+                false,
+                false,
+                properties.getTts().getElevenlabs().getModel(),
+                StringUtils.hasText(properties.getTts().getElevenlabs().getVoiceId()),
+                null,
+                null,
+                null,
+                configured ? "ElevenLabs has not been tested yet." : "ElevenLabs is not configured."
+        );
+    }
+
+    private VoiceTtsDiagnosticResponse diagnoseElevenLabs(boolean updateCache, boolean allowWarmupTest) {
+        boolean configured = elevenLabsConfigured();
+        boolean inProviderOrder = properties.getTts().getProviderOrder() != null
+                && properties.getTts().getProviderOrder().stream().anyMatch(name -> "elevenlabs".equalsIgnoreCase(name));
+        boolean enabled = configured && inProviderOrder;
+        boolean selected = "elevenlabs".equalsIgnoreCase(selectedTtsProviderName());
+        String testedAt = Instant.now().toString();
+        String requestId = UUID.randomUUID().toString();
+        if (!configured) {
+            return new VoiceTtsDiagnosticResponse(
+                    requestId,
+                    "elevenlabs",
+                    testedAt,
+                    false,
+                    enabled,
+                    selected,
+                    inProviderOrder,
+                    false,
+                    false,
+                    properties.getTts().getElevenlabs().getModel(),
+                    false,
+                    null,
+                    null,
+                    null,
+                    "ElevenLabs is not configured."
+            );
+        }
+        if (!allowWarmupTest) {
+            return new VoiceTtsDiagnosticResponse(
+                    requestId,
+                    "elevenlabs",
+                    testedAt,
+                    configured,
+                    enabled,
+                    selected,
+                    inProviderOrder,
+                    false,
+                    false,
+                    properties.getTts().getElevenlabs().getModel(),
+                    true,
+                    null,
+                    null,
+                    null,
+                    "ElevenLabs has not been tested yet."
+            );
+        }
+        Instant started = Instant.now();
+        try {
+            UUID tenantId = RequestContextHolder.get() == null ? null : RequestContextHolder.requireTenantId();
+            VoiceSynthesisResult synthesis = elevenLabsTextToSpeechProvider.synthesize(
+                    new VoiceSynthesisRequest(tenantId, ELEVENLABS_TEST_TEXT, "en")
+            );
+            long latencyMs = Duration.between(started, Instant.now()).toMillis();
+            boolean success = synthesis != null
+                    && synthesis.audioBytes() != null
+                    && synthesis.audioBytes().length > 0
+                    && isAudioContentType(synthesis.contentType());
+            boolean reachable = success;
+            VoiceTtsDiagnosticResponse response = new VoiceTtsDiagnosticResponse(
+                    requestId,
+                    "elevenlabs",
+                    testedAt,
+                    configured,
+                    enabled,
+                    selected,
+                    inProviderOrder,
+                    success,
+                    reachable,
+                    properties.getTts().getElevenlabs().getModel(),
+                    true,
+                    latencyMs,
+                    synthesis == null ? null : synthesis.contentType(),
+                    synthesis == null || synthesis.audioBytes() == null ? 0L : (long) synthesis.audioBytes().length,
+                    success ? "ElevenLabs synthesis completed." : ELEVENLABS_SAFE_FAILURE_MESSAGE
+            );
+            if (updateCache) {
+                elevenLabsLastTest.set(response);
+            }
+            return response;
+        } catch (ElevenLabsTextToSpeechProvider.ElevenLabsTtsException ex) {
+            long latencyMs = Duration.between(started, Instant.now()).toMillis();
+            log.warn("voice.tts.elevenlabs.test.failed requestId={} category={} status={} contentType={} bytes={} latencyMs={}",
+                    requestId,
+                    ex.category(),
+                    ex.statusCode(),
+                    ex.contentType(),
+                    ex.responseBytes(),
+                    ex.latencyMs() > 0 ? ex.latencyMs() : latencyMs);
+            VoiceTtsDiagnosticResponse response = new VoiceTtsDiagnosticResponse(
+                    requestId,
+                    "elevenlabs",
+                    testedAt,
+                    configured,
+                    enabled,
+                    selected,
+                    inProviderOrder,
+                    false,
+                    false,
+                    properties.getTts().getElevenlabs().getModel(),
+                    true,
+                    ex.latencyMs() > 0 ? ex.latencyMs() : latencyMs,
+                    ex.contentType(),
+                    ex.responseBytes() > 0 ? (long) ex.responseBytes() : null,
+                    elevenLabsSafeFailureMessage(ex.category())
+            );
+            if (updateCache) {
+                elevenLabsLastTest.set(response);
+            }
+            return response;
+        } catch (RuntimeException ex) {
+            long latencyMs = Duration.between(started, Instant.now()).toMillis();
+            log.warn("voice.tts.elevenlabs.test.failed requestId={} category=UNKNOWN status={} contentType={} bytes={} latencyMs={}",
+                    requestId,
+                    null,
+                    null,
+                    null,
+                    latencyMs);
+            VoiceTtsDiagnosticResponse response = new VoiceTtsDiagnosticResponse(
+                    requestId,
+                    "elevenlabs",
+                    testedAt,
+                    configured,
+                    enabled,
+                    selected,
+                    inProviderOrder,
+                    false,
+                    false,
+                    properties.getTts().getElevenlabs().getModel(),
+                    true,
+                    latencyMs,
+                    null,
+                    null,
+                    ELEVENLABS_SAFE_FAILURE_MESSAGE
+            );
+            if (updateCache) {
+                elevenLabsLastTest.set(response);
+            }
+            return response;
+        }
+    }
+
+    private String elevenLabsSafeFailureMessage(String category) {
+        return switch (category == null ? "UNKNOWN" : category) {
+            case "AUTHENTICATION_FAILED", "AUTHENTICATION" -> "Authentication failed";
+            case "VOICE_NOT_FOUND" -> "Voice ID not found or not accessible";
+            case "QUOTA" -> "ElevenLabs quota exceeded";
+            case "INVALID_REQUEST" -> "Invalid model or request";
+            case "RATE_LIMIT" -> "Rate limit reached";
+            default -> ELEVENLABS_SAFE_FAILURE_MESSAGE;
+        };
+    }
+
+    private boolean elevenLabsConfigured() {
+        return elevenLabsTextToSpeechProvider != null
+                && properties.getTts().getElevenlabs() != null
+                && StringUtils.hasText(properties.getTts().getElevenlabs().getApiKey())
+                && StringUtils.hasText(properties.getTts().getElevenlabs().getVoiceId())
+                && StringUtils.hasText(properties.getTts().getElevenlabs().getModel())
+                && StringUtils.hasText(properties.getTts().getElevenlabs().getBaseUrl());
+    }
+
+    private boolean isAudioContentType(String contentType) {
+        return StringUtils.hasText(contentType)
+                && contentType.toLowerCase(Locale.ROOT).startsWith("audio/");
     }
 
     public VoiceLiveStatusResponse liveStatus() {

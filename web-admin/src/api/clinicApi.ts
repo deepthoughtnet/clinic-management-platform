@@ -1300,6 +1300,35 @@ export type VoiceServiceStatus = {
   message: string | null;
 };
 
+export type VoiceTtsDiagnosticResponse = {
+  requestId: string;
+  provider: string;
+  testedAt: string;
+  configured: boolean;
+  enabled: boolean;
+  selected: boolean;
+  inProviderOrder: boolean;
+  success: boolean;
+  reachable: boolean;
+  model: string | null;
+  voiceIdPresent: boolean;
+  latencyMs: number | null;
+  audioContentType: string | null;
+  audioBytes: number | null;
+  message: string | null;
+};
+
+export type VoiceTtsProviderStatus = {
+  configured: boolean;
+  enabled: boolean;
+  selected: boolean;
+  inProviderOrder: boolean;
+  reachable: boolean;
+  model: string | null;
+  voiceIdPresent: boolean;
+  lastTest: VoiceTtsDiagnosticResponse | null;
+};
+
 export type VoiceStatusResponse = {
   enabled: boolean;
   stt: VoiceServiceStatus;
@@ -1310,6 +1339,7 @@ export type VoiceStatusResponse = {
   ttsConfiguredVoices: Record<string, string> | null;
   ttsHindiConfigured: boolean;
   ttsFallbackVoiceEnabled: boolean;
+  elevenlabs: VoiceTtsProviderStatus | null;
 };
 
 export type VoiceLiveStatusResponse = {
@@ -5467,6 +5497,10 @@ export async function runVoiceSttDebug(
   return httpPostForm<VoiceSttDebugResponse>("/api/voice/debug/stt", formData, { token, tenantId });
 }
 
+export async function runVoiceElevenLabsTest(token: string, tenantId: string) {
+  return httpPost<VoiceTtsDiagnosticResponse>("/api/voice/tts/elevenlabs/test", {}, { token, tenantId });
+}
+
 function normalizeVoiceUploadFilename(audio: File): string {
   const originalName = audio.name?.trim() || "voice-test";
   const lowerName = originalName.toLowerCase();
@@ -9046,6 +9080,85 @@ export async function getAdminIntegrationsStatus(token: string, tenantId: string
 
 export type PlatformHealthStatus = "HEALTHY" | "DEGRADED" | "WARNING" | "CRITICAL";
 export type IntegrationReadinessStatus = "READY" | "DISABLED" | "NOT_CONFIGURED" | "ERROR" | "FUTURE";
+export type PlatformComponentHealthStatus = "HEALTHY" | "WARNING" | "CRITICAL" | "UNKNOWN";
+
+export type PlatformOperationsOverviewSummary = {
+  overallStatus: PlatformComponentHealthStatus;
+  healthyCount: number;
+  warningCount: number;
+  criticalCount: number;
+  unknownCount: number;
+  lastCheckedAt: string;
+};
+
+export type PlatformOperationsRelease = {
+  releaseTag: string | null;
+  gitCommit: string | null;
+  environment: string | null;
+  buildTimestamp: string | null;
+  deploymentTimestamp: string | null;
+  apiVersion: string | null;
+};
+
+export type PlatformOperationsAiSummary = {
+  totalCalls: number;
+  successfulCalls: number;
+  failedCalls: number;
+  lastActivityAt: string | null;
+  callsByProvider: Record<string, number>;
+  callsByStatus: Record<string, number>;
+};
+
+export type PlatformOperationsRuntime = {
+  applicationUp: boolean;
+  applicationStatus: string;
+  uptimeMs: number;
+  startTime: string;
+  lastCheckedAt: string;
+};
+
+export type PlatformOperationsComponentHealth = {
+  component: string;
+  status: PlatformComponentHealthStatus;
+  reason: string;
+  lastCheckedAt: string;
+  lastSuccessAt: string | null;
+  lastFailureAt: string | null;
+  latencyMs: number | null;
+  details: Record<string, unknown>;
+};
+
+export type PlatformOperationsDiagnosticStatus = "HEALTHY" | "WARNING" | "CRITICAL" | "UNKNOWN";
+
+export type PlatformOperationsDiagnosticComponent =
+  | "api"
+  | "database"
+  | "redis"
+  | "keycloak"
+  | "minio"
+  | "gemini"
+  | "groq"
+  | "document-ai"
+  | "scheduler"
+  | "backups";
+
+export type PlatformOperationsDiagnosticResponse = {
+  component: string;
+  success: boolean;
+  status: PlatformOperationsDiagnosticStatus;
+  message: string;
+  latencyMs: number | null;
+  testedAt: string;
+  details: Record<string, unknown>;
+};
+
+export type PlatformOperationsOverview = {
+  summary: PlatformOperationsOverviewSummary;
+  healthMatrix: PlatformOperationsComponentHealth[];
+  aiSummary: PlatformOperationsAiSummary;
+  release: PlatformOperationsRelease;
+  runtime: PlatformOperationsRuntime;
+};
 
 export type PlatformSchedulerStatus = {
   schedulerName: string;
@@ -9193,6 +9306,14 @@ export type DeadLetterRow = {
 
 export async function getPlatformHealth(token: string, tenantId: string) {
   return httpGet<PlatformHealthResponse>("/api/ops/platform-health", { token, tenantId });
+}
+
+export async function getPlatformOperationsOverview(token: string) {
+  return httpGet<PlatformOperationsOverview>("/api/platform/operations/overview", { token, platformOperation: true, requireTenant: false });
+}
+
+export async function testPlatformOperationComponent(token: string, component: PlatformOperationsDiagnosticComponent) {
+  return httpPost<PlatformOperationsDiagnosticResponse>(`/api/platform/operations/health/${component}/test`, {}, { token, platformOperation: true, requireTenant: false });
 }
 
 export async function getPlatformSchedulers(token: string, tenantId: string) {

@@ -26,7 +26,22 @@ import SendRoundedIcon from "@mui/icons-material/SendRounded";
 import AutorenewRoundedIcon from "@mui/icons-material/AutorenewRounded";
 import LinkRoundedIcon from "@mui/icons-material/LinkRounded";
 import LinkOffRoundedIcon from "@mui/icons-material/LinkOffRounded";
-import { getVoiceLiveStatus, getVoiceTestStatus, runVoiceSttDebug, runVoiceTest, type VoiceDebugTraceEntry, type VoiceLiveStatusResponse, type VoiceProviderTrace, type VoiceStatusResponse, type VoiceSttDebugResponse, type VoiceTestResponse, type VoiceWorkflowMode, type VoiceWorkflowSummary } from "../../api/clinicApi";
+import {
+  getVoiceLiveStatus,
+  getVoiceTestStatus,
+  runVoiceElevenLabsTest,
+  runVoiceSttDebug,
+  runVoiceTest,
+  type VoiceDebugTraceEntry,
+  type VoiceLiveStatusResponse,
+  type VoiceProviderTrace,
+  type VoiceStatusResponse,
+  type VoiceSttDebugResponse,
+  type VoiceTestResponse,
+  type VoiceTtsDiagnosticResponse,
+  type VoiceWorkflowMode,
+  type VoiceWorkflowSummary,
+} from "../../api/clinicApi";
 import { ApiClientError } from "../../api/restClient";
 import { useAuth } from "../../auth/useAuth";
 
@@ -474,6 +489,9 @@ export default function VoiceTestPage() {
   const [statusLoading, setStatusLoading] = useState(false);
   const [processingStage, setProcessingStage] = useState<string | null>(null);
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatusResponse | null>(null);
+  const [elevenLabsTestResult, setElevenLabsTestResult] = useState<VoiceTtsDiagnosticResponse | null>(null);
+  const [elevenLabsTestLoading, setElevenLabsTestLoading] = useState(false);
+  const [elevenLabsTestError, setElevenLabsTestError] = useState<string | null>(null);
   const [liveStatusInfo, setLiveStatusInfo] = useState<VoiceLiveStatusResponse | null>(null);
   const [audioInputDevices, setAudioInputDevices] = useState<AudioInputDevice[]>([]);
   const [selectedAudioInputId, setSelectedAudioInputId] = useState("");
@@ -1130,6 +1148,7 @@ export default function VoiceTestPage() {
     setSelectedFile(null);
     setFileResult(null);
     setSttDebugResult(null);
+    setElevenLabsTestResult(null);
     setFileError(null);
     setFileInfo(null);
     setFileCaptureInfo(null);
@@ -1143,9 +1162,11 @@ export default function VoiceTestPage() {
     if (!accessToken || !tenantId) return;
     setStatusLoading(true);
     setFileError(null);
+    setElevenLabsTestError(null);
     try {
       const response = await getVoiceTestStatus(accessToken, tenantId, warmup);
       setVoiceStatus(response);
+      setElevenLabsTestResult(response.elevenlabs?.lastTest ?? null);
       if (warmup) {
         setFileInfo("Local voice services checked. First request should now be faster if models were still loading.");
       }
@@ -1153,6 +1174,34 @@ export default function VoiceTestPage() {
       setFileError(toVoiceError(err));
     } finally {
       setStatusLoading(false);
+    }
+  }
+
+  async function runElevenLabsDiagnosticTest() {
+    if (!accessToken || !tenantId) return;
+    setElevenLabsTestLoading(true);
+    setElevenLabsTestError(null);
+    try {
+      const response = await runVoiceElevenLabsTest(accessToken, tenantId);
+      setElevenLabsTestResult(response);
+      setVoiceStatus((current) =>
+        current
+          ? {
+              ...current,
+              elevenlabs: current.elevenlabs
+                ? {
+                    ...current.elevenlabs,
+                    lastTest: response,
+                  }
+                : current.elevenlabs,
+            }
+          : current,
+      );
+      setFileInfo(response.success ? "ElevenLabs TTS diagnostic completed." : "ElevenLabs TTS diagnostic returned an error.");
+    } catch (err) {
+      setElevenLabsTestError(toVoiceError(err));
+    } finally {
+      setElevenLabsTestLoading(false);
     }
   }
 
@@ -1739,9 +1788,9 @@ export default function VoiceTestPage() {
         <Stack direction="row" spacing={1} flexWrap="wrap">
           <Chip size="small" color="primary" label="AI Copilot" />
           <Chip size="small" variant="outlined" label={`Mode: ${selectedWorkflowLabel()}`} />
-          <Chip size="small" variant="outlined" label={`STT: ${formatProvider(voiceStatus?.providerTrace?.sttProvider || "faster-whisper")} / Mock`} />
-          <Chip size="small" variant="outlined" label={`LLM: ${formatProvider(voiceStatus?.providerTrace?.llmProvider || "gemini")} / Groq / Mock`} />
-          <Chip size="small" variant="outlined" label={`TTS: ${formatProvider(voiceStatus?.providerTrace?.ttsProvider || "piper")} / Mock`} />
+          <Chip size="small" variant="outlined" label={`STT: ${formatProvider(voiceStatus?.providerTrace?.sttProvider || "faster-whisper")}`} />
+          <Chip size="small" variant="outlined" label={`LLM: ${formatProvider(voiceStatus?.providerTrace?.llmProvider || "gemini")}`} />
+          <Chip size="small" variant="outlined" label={`TTS: ${formatProvider(voiceStatus?.providerTrace?.ttsProvider || "piper")}`} />
           <Chip size="small" variant="outlined" label={`Live: ${liveStatusLabel(liveStatus)}`} color={liveStatusTone(liveStatus)} />
         </Stack>
       </Stack>
@@ -1932,22 +1981,62 @@ export default function VoiceTestPage() {
                       <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} justifyContent="space-between" alignItems={{ xs: "flex-start", sm: "center" }}>
                         <Box>
                           <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5 }}>
-                            Local voice services
+                            Patient/Voice Test Provider Health
                           </Typography>
                           <Typography variant="body2" color="text.secondary">
-                            STT: {voiceStatus?.stt?.message || "Status not loaded"} | TTS: {voiceStatus?.tts?.message || "Status not loaded"}
+                            STT: {formatProvider(voiceStatus?.providerTrace?.sttProvider || "faster-whisper")} • {voiceStatus?.stt?.message || "Status not loaded"}
                           </Typography>
+                          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                            TTS: {formatProvider(voiceStatus?.providerTrace?.ttsProvider || "piper")} • {voiceStatus?.tts?.message || "Status not loaded"}
+                          </Typography>
+                          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                            ElevenLabs: {voiceStatus?.elevenlabs
+                              ? `${voiceStatus.elevenlabs.configured ? "configured" : "not configured"} • ${voiceStatus.elevenlabs.enabled ? "enabled" : "disabled"} • ${voiceStatus.elevenlabs.selected ? "selected" : "fallback"} • ${voiceStatus.elevenlabs.inProviderOrder ? "in order" : "not in order"} • ${voiceStatus.elevenlabs.reachable ? "reachable" : "not yet tested"}`
+                              : "Status not loaded"}
+                          </Typography>
+                          {voiceStatus?.elevenlabs ? (
+                            <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block" }}>
+                              Model: {voiceStatus.elevenlabs.model || "unknown"} • Voice ID: {voiceStatus.elevenlabs.voiceIdPresent ? "present" : "missing"}
+                            </Typography>
+                          ) : null}
+                          {voiceStatus?.elevenlabs?.lastTest ? (
+                            <Typography variant="caption" color={voiceStatus.elevenlabs.lastTest.success ? "success.main" : "warning.main"} sx={{ mt: 0.5, display: "block" }}>
+                              Last ElevenLabs test: {voiceStatus.elevenlabs.lastTest.success ? "success" : "failed"} • {voiceStatus.elevenlabs.lastTest.latencyMs ?? 0} ms • {voiceStatus.elevenlabs.lastTest.audioContentType || "no audio"}
+                            </Typography>
+                          ) : null}
                         </Box>
-                        <Button
-                          variant="outlined"
-                          size="small"
-                          startIcon={statusLoading ? <CircularProgress size={14} color="inherit" /> : <AutorenewRoundedIcon />}
-                          disabled={statusLoading || fileLoading}
-                          onClick={() => void refreshVoiceStatus(true)}
-                        >
-                          {statusLoading ? "Warming..." : "Warm up local voice services"}
-                        </Button>
+                        <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                          <Button
+                            variant="outlined"
+                            size="small"
+                            startIcon={statusLoading ? <CircularProgress size={14} color="inherit" /> : <AutorenewRoundedIcon />}
+                            disabled={statusLoading || fileLoading || elevenLabsTestLoading}
+                            onClick={() => void refreshVoiceStatus(true)}
+                          >
+                            {statusLoading ? "Warming..." : "Warm up voice services"}
+                          </Button>
+                          <Button
+                            variant="contained"
+                            size="small"
+                            disabled={!accessToken || !tenantId || statusLoading || fileLoading || elevenLabsTestLoading}
+                            onClick={() => void runElevenLabsDiagnosticTest()}
+                          >
+                            {elevenLabsTestLoading ? "Testing..." : "Test ElevenLabs TTS"}
+                          </Button>
+                        </Stack>
                       </Stack>
+                      {elevenLabsTestError ? (
+                        <Alert severity="error" sx={{ mt: 1.25 }}>
+                          {elevenLabsTestError}
+                        </Alert>
+                      ) : null}
+                      {elevenLabsTestResult ? (
+                        <Alert severity={elevenLabsTestResult.success ? "success" : "warning"} sx={{ mt: 1.25 }}>
+                          ElevenLabs {elevenLabsTestResult.success ? "returned playable audio" : "did not return playable audio"}.
+                          {elevenLabsTestResult.latencyMs != null ? ` Latency ${elevenLabsTestResult.latencyMs} ms.` : ""}
+                          {elevenLabsTestResult.audioContentType ? ` Output ${elevenLabsTestResult.audioContentType}.` : ""}
+                        </Alert>
+                      ) : null}
                     </Paper>
 
                     <Stack direction="row" spacing={1}>

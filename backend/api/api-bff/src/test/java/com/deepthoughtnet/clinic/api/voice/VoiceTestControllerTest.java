@@ -80,4 +80,31 @@ class VoiceTestControllerTest {
 
         verify(service).debugStt(file, "en");
     }
+
+    @Test
+    void elevenLabsTestEndpointDelegatesToService() {
+        VoiceOrchestratorService service = mock(VoiceOrchestratorService.class);
+        VoiceTestController controller = new VoiceTestController(service);
+        when(service.testElevenLabsTts()).thenReturn(new VoiceTtsDiagnosticResponse(
+                "req-3",
+                "elevenlabs",
+                "2026-09-05T00:00:00Z",
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                "eleven_multilingual_v2",
+                true,
+                120L,
+                "audio/mpeg",
+                2048L,
+                "ElevenLabs synthesis completed."
+        ));
+
+        controller.testElevenLabsTts();
+
+        verify(service).testElevenLabsTts();
+    }
 }

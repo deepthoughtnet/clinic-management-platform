@@ -368,7 +368,13 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
                     response.ttsProvider(),
                     response.ttsFallbackReason());
         } catch (Exception ex) {
-            sendError(session, ex.getMessage() == null ? "Patient AIVA voice processing failed." : ex.getMessage());
+            log.warn("patient.voice.turn.failed sessionId={} turnIndex={} exception={} reason={}",
+                    state.sessionId,
+                    turnIndex,
+                    ex.getClass().getSimpleName(),
+                    ex.getMessage(),
+                    ex);
+            sendError(session, safePatientVoiceErrorMessage(ex));
         } finally {
             RequestContextHolder.clear();
             state.turnInProgress = false;
@@ -425,6 +431,23 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
                 "type", "error",
                 "message", message
         ));
+    }
+
+    private String safePatientVoiceErrorMessage(Exception ex) {
+        String message = ex.getMessage() == null ? "" : ex.getMessage().toLowerCase();
+        if (message.contains("transcrib") || message.contains("speech recognition") || message.contains("stt")) {
+            return "Speech recognition unavailable.";
+        }
+        if (message.contains("synth") || message.contains("tts") || message.contains("audio")) {
+            return "Voice playback unavailable.";
+        }
+        if (message.contains("ai") || message.contains("llm") || message.contains("careai")) {
+            return "AI service unavailable.";
+        }
+        if (message.contains("connect") || message.contains("socket") || message.contains("websocket")) {
+            return "Connection interrupted.";
+        }
+        return "Voice service temporarily unavailable.";
     }
 
     private boolean enforceSessionPolicies(WebSocketSession session, SessionState state) throws IOException {

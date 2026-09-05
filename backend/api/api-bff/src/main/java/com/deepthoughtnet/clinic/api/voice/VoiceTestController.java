@@ -48,4 +48,10 @@ public class VoiceTestController {
     ) {
         return voiceOrchestratorService.debugStt(audio, language);
     }
+
+    @PostMapping("/tts/elevenlabs/test")
+    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN')")
+    public VoiceTtsDiagnosticResponse testElevenLabsTts() {
+        return voiceOrchestratorService.testElevenLabsTts();
+    }
 }

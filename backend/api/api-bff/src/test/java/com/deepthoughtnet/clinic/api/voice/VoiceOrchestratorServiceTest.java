@@ -7,6 +7,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.when;
 
 import com.deepthoughtnet.clinic.ai.orchestration.service.AiOrchestrationService;
@@ -21,6 +22,7 @@ import com.deepthoughtnet.clinic.api.voice.spi.VoiceSynthesisRequest;
 import com.deepthoughtnet.clinic.api.voice.spi.VoiceSynthesisResult;
 import com.deepthoughtnet.clinic.api.voice.spi.VoiceTranscriptionRequest;
 import com.deepthoughtnet.clinic.api.voice.spi.VoiceTranscriptionResult;
+import com.deepthoughtnet.clinic.api.voice.ElevenLabsTextToSpeechProvider;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiOrchestrationResponse;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiOrchestrationRequest;
@@ -280,6 +282,147 @@ class VoiceOrchestratorServiceTest {
                 properties,
                 new ObjectMapper(),
                 mock(FasterWhisperSpeechToTextProvider.class),
+                mock(PiperTextToSpeechProvider.class)
+        );
+
+        VoiceTestResponse response = service.processAudio(
+                new MockMultipartFile("audio", "sample.wav", "audio/wav", "voice".getBytes()),
+                null,
+                null
+        );
+
+        assertThat(response.audioBase64()).isNotNull();
+        assertThat(response.providerTrace().ttsProvider()).isEqualTo("piper");
+    }
+
+    @Test
+    void elevenLabsTtsDiagnosticReturnsSummaryAndCachesLastTest() {
+        UUID tenantId = UUID.randomUUID();
+        UUID actorId = UUID.randomUUID();
+        RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), actorId, "sub", Set.of("PLATFORM_ADMIN"), "PLATFORM_ADMIN", "cid-elevenlabs"));
+
+        VoiceTestProperties properties = new VoiceTestProperties();
+        properties.getTts().setProviderOrder(List.of("elevenlabs", "piper", "mock"));
+        properties.getTts().getElevenlabs().setApiKey("test-api-key");
+        properties.getTts().getElevenlabs().setVoiceId("voice-id");
+
+        ElevenLabsTextToSpeechProvider elevenLabsProvider = mock(ElevenLabsTextToSpeechProvider.class);
+        when(elevenLabsProvider.providerName()).thenReturn("elevenlabs");
+        when(elevenLabsProvider.isReady()).thenReturn(true);
+        when(elevenLabsProvider.synthesize(any())).thenReturn(new VoiceSynthesisResult("audio".getBytes(), "audio/mpeg", "elevenlabs", null));
+
+        PiperTextToSpeechProvider piper = mock(PiperTextToSpeechProvider.class);
+        when(piper.providerName()).thenReturn("piper");
+        when(piper.isReady()).thenReturn(true);
+        when(piper.status(true)).thenReturn(new VoiceServiceStatus("PIPER", true, true, "ready"));
+
+        VoiceOrchestratorService service = new VoiceOrchestratorService(
+                List.of(new MockVoiceSpeechToTextProvider()),
+                List.of(elevenLabsProvider, piper),
+                mock(AiOrchestrationService.class),
+                mock(AuditEventPublisher.class),
+                properties,
+                new ObjectMapper(),
+                mock(FasterWhisperSpeechToTextProvider.class),
+                elevenLabsProvider,
+                piper
+        );
+
+        VoiceTtsDiagnosticResponse diagnostic = service.testElevenLabsTts();
+        VoiceStatusResponse status = service.status(true);
+        ArgumentCaptor<VoiceSynthesisRequest> requestCaptor = ArgumentCaptor.forClass(VoiceSynthesisRequest.class);
+
+        verify(elevenLabsProvider, times(2)).synthesize(requestCaptor.capture());
+        assertThat(requestCaptor.getAllValues())
+                .extracting(VoiceSynthesisRequest::text)
+                .containsOnly("Hello, this is the Jeevanam voice test.");
+        assertThat(diagnostic.success()).isTrue();
+        assertThat(diagnostic.reachable()).isTrue();
+        assertThat(diagnostic.audioContentType()).isEqualTo("audio/mpeg");
+        assertThat(diagnostic.audioBytes()).isGreaterThan(0L);
+        assertThat(status.providerTrace().ttsProvider()).isEqualTo("elevenlabs");
+        assertThat(status.elevenlabs()).isNotNull();
+        assertThat(status.elevenlabs().configured()).isTrue();
+        assertThat(status.elevenlabs().selected()).isTrue();
+        assertThat(status.elevenlabs().reachable()).isTrue();
+        assertThat(status.elevenlabs().lastTest()).isNotNull();
+        assertThat(status.elevenlabs().lastTest().success()).isTrue();
+    }
+
+    @Test
+    void elevenLabsTtsDiagnosticHandlesMissingConfigGracefully() {
+        VoiceTestProperties properties = new VoiceTestProperties();
+        properties.getTts().setProviderOrder(List.of("elevenlabs", "piper", "mock"));
+
+        ElevenLabsTextToSpeechProvider elevenLabsProvider = mock(ElevenLabsTextToSpeechProvider.class);
+        when(elevenLabsProvider.providerName()).thenReturn("elevenlabs");
+        when(elevenLabsProvider.isReady()).thenReturn(false);
+
+        VoiceOrchestratorService service = new VoiceOrchestratorService(
+                List.of(new MockVoiceSpeechToTextProvider()),
+                List.of(elevenLabsProvider, new MockVoiceTextToSpeechProvider()),
+                mock(AiOrchestrationService.class),
+                mock(AuditEventPublisher.class),
+                properties,
+                new ObjectMapper(),
+                mock(FasterWhisperSpeechToTextProvider.class),
+                elevenLabsProvider,
+                mock(PiperTextToSpeechProvider.class)
+        );
+
+        VoiceTtsDiagnosticResponse diagnostic = service.testElevenLabsTts();
+
+        assertThat(diagnostic.success()).isFalse();
+        assertThat(diagnostic.configured()).isFalse();
+        assertThat(diagnostic.message()).isEqualTo("ElevenLabs is not configured.");
+    }
+
+    @Test
+    void processAudioFallsBackFromElevenLabsToPiperWhenTtsFails() {
+        UUID tenantId = UUID.randomUUID();
+        UUID actorId = UUID.randomUUID();
+        RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), actorId, "sub", Set.of("CLINIC_ADMIN"), "CLINIC_ADMIN", "cid-elevenlabs-fallback"));
+
+        VoiceTestProperties properties = new VoiceTestProperties();
+        properties.getStt().setProviderOrder(List.of("mock"));
+        properties.getTts().setProviderOrder(List.of("elevenlabs", "piper", "mock"));
+        AiOrchestrationService aiOrchestrationService = mock(AiOrchestrationService.class);
+        when(aiOrchestrationService.complete(any())).thenReturn(new AiOrchestrationResponse(
+                UUID.randomUUID(), UUID.randomUUID(), AiProductCode.GENERIC, AiTaskType.GENERIC_COPILOT,
+                "gemini", "gemini", "Fallback answer", null, BigDecimal.ONE, List.of(), List.of(), List.of(), null, 10L, false, null, null
+        ));
+
+        ElevenLabsTextToSpeechProvider elevenLabsProvider = mock(ElevenLabsTextToSpeechProvider.class);
+        when(elevenLabsProvider.providerName()).thenReturn("elevenlabs");
+        when(elevenLabsProvider.isReady()).thenReturn(true);
+        when(elevenLabsProvider.synthesize(any())).thenThrow(new IllegalStateException("elevenlabs failed"));
+
+        TextToSpeechProvider piperFallback = new TextToSpeechProvider() {
+            @Override
+            public String providerName() {
+                return "piper";
+            }
+
+            @Override
+            public boolean isReady() {
+                return true;
+            }
+
+            @Override
+            public VoiceSynthesisResult synthesize(com.deepthoughtnet.clinic.api.voice.spi.VoiceSynthesisRequest request) {
+                return new VoiceSynthesisResult("audio".getBytes(), "audio/wav", "piper", null);
+            }
+        };
+
+        VoiceOrchestratorService service = new VoiceOrchestratorService(
+                List.of(new MockVoiceSpeechToTextProvider()),
+                List.of(elevenLabsProvider, piperFallback),
+                aiOrchestrationService,
+                mock(AuditEventPublisher.class),
+                properties,
+                new ObjectMapper(),
+                mock(FasterWhisperSpeechToTextProvider.class),
+                elevenLabsProvider,
                 mock(PiperTextToSpeechProvider.class)
         );
 
@@ -688,6 +831,7 @@ class VoiceOrchestratorServiceTest {
                 properties,
                 new ObjectMapper(),
                 mock(FasterWhisperSpeechToTextProvider.class),
+                null,
                 mock(PiperTextToSpeechProvider.class),
                 new VoiceAppointmentWorkflowService(appointmentService, patientService, mock(TenantUserManagementService.class), zoneResolver())
         );
@@ -731,6 +875,7 @@ class VoiceOrchestratorServiceTest {
                 properties,
                 new ObjectMapper(),
                 mock(FasterWhisperSpeechToTextProvider.class),
+                null,
                 mock(PiperTextToSpeechProvider.class),
                 new VoiceAppointmentWorkflowService(mock(AppointmentService.class), mock(PatientService.class), mock(TenantUserManagementService.class), zoneResolver())
         );

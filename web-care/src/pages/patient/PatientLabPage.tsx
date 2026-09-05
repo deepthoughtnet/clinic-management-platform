@@ -166,7 +166,7 @@ export default function PatientLabPage({
                   {orders.map((order) => (
                     <article className="portal-list-card" key={order.orderNumber}>
                       <div className="portal-list-card-header">
-                        <strong>{order.orderNumber}</strong>
+                        <strong title={order.orderNumber}>{order.orderNumber}</strong>
                         <span className={`status-pill status-${statusTone(order.status)}`}>{statusLabel(order.status)}</span>
                       </div>
                       <div className="portal-list-meta">
@@ -211,7 +211,7 @@ export default function PatientLabPage({
                   {reports.map((order) => (
                     <article className="portal-list-card" key={order.orderNumber}>
                       <div className="portal-list-card-header">
-                        <strong>{order.orderNumber}</strong>
+                        <strong title={order.orderNumber}>{order.orderNumber}</strong>
                         <span className={`status-pill status-${statusTone(order.status)}`}>{statusLabel(order.status)}</span>
                       </div>
                       <div className="portal-list-meta">

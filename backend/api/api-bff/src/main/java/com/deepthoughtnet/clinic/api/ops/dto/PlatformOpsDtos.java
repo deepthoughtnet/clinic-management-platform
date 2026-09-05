@@ -3,6 +3,7 @@ package com.deepthoughtnet.clinic.api.ops.dto;
 import com.deepthoughtnet.clinic.api.admin.dto.AdminIntegrationsDtos.IntegrationStatus;
 import com.deepthoughtnet.clinic.api.ops.db.PlatformAlertRuleEntity.ThresholdType;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
@@ -14,6 +15,65 @@ public final class PlatformOpsDtos {
     }
 
     public enum HealthStatus { HEALTHY, DEGRADED, WARNING, CRITICAL }
+    public enum ComponentHealthStatus { HEALTHY, WARNING, CRITICAL, UNKNOWN }
+    public enum PlatformOperationsDiagnosticComponent {
+        API("api", "API"),
+        DATABASE("database", "DB"),
+        REDIS("redis", "Redis"),
+        KEYCLOAK("keycloak", "Keycloak"),
+        MINIO("minio", "MinIO"),
+        GEMINI("gemini", "Gemini"),
+        GROQ("groq", "Groq"),
+        DOCUMENT_AI("document-ai", "Document AI"),
+        SCHEDULER("scheduler", "Scheduler"),
+        BACKUPS("backups", "Backups");
+
+        private final String pathValue;
+        private final String displayName;
+
+        PlatformOperationsDiagnosticComponent(String pathValue, String displayName) {
+            this.pathValue = pathValue;
+            this.displayName = displayName;
+        }
+
+        public String pathValue() {
+            return pathValue;
+        }
+
+        public String displayName() {
+            return displayName;
+        }
+
+        public static PlatformOperationsDiagnosticComponent fromPathValue(String value) {
+            if (value == null || value.isBlank()) {
+                return null;
+            }
+            String normalized = value.trim().toLowerCase(java.util.Locale.ROOT);
+            for (PlatformOperationsDiagnosticComponent component : values()) {
+                if (component.pathValue.equals(normalized)) {
+                    return component;
+                }
+            }
+            return null;
+        }
+
+        public static PlatformOperationsDiagnosticComponent fromAny(String value) {
+            if (value == null || value.isBlank()) {
+                return null;
+            }
+            PlatformOperationsDiagnosticComponent byPath = fromPathValue(value);
+            if (byPath != null) {
+                return byPath;
+            }
+            String normalized = value.trim().toLowerCase(java.util.Locale.ROOT);
+            for (PlatformOperationsDiagnosticComponent component : values()) {
+                if (component.displayName.toLowerCase(java.util.Locale.ROOT).equals(normalized)) {
+                    return component;
+                }
+            }
+            return null;
+        }
+    }
     public enum AlertSeverity { WARNING, CRITICAL }
 
     public record PlatformHealthResponse(HealthStatus overallStatus, List<String> degradedServices,
@@ -79,6 +139,43 @@ public final class PlatformOpsDtos {
     public record RuntimeSummaryResponse(long recentFailures, long retryStormSignals,
                                          long repeatedProviderFailures, long staleExecutions,
                                          List<String> notes) {}
+
+    public record ComponentHealthResponse(String component, ComponentHealthStatus status, String reason,
+                                          Instant lastCheckedAt, Instant lastSuccessAt, Instant lastFailureAt,
+                                          Long latencyMs, Map<String, Object> details) {}
+
+    public record PlatformOperationsOverviewSummaryResponse(ComponentHealthStatus overallStatus,
+                                                            long healthyCount, long warningCount,
+                                                            long criticalCount, long unknownCount,
+                                                            Instant lastCheckedAt) {}
+
+    public record PlatformOperationsAiSummaryResponse(long totalCalls,
+                                                      long successfulCalls,
+                                                      long failedCalls,
+                                                      Instant lastActivityAt,
+                                                      Map<String, Long> callsByProvider,
+                                                      Map<String, Long> callsByStatus) {}
+
+    public record PlatformOperationsReleaseResponse(String releaseTag, String gitCommit, String environment,
+                                                    Instant buildTimestamp, Instant deploymentTimestamp,
+                                                    String apiVersion) {}
+
+    public record PlatformOperationsRuntimeResponse(boolean applicationUp, String applicationStatus,
+                                                    long uptimeMs, Instant startTime, Instant lastCheckedAt) {}
+
+    public record PlatformOperationsOverviewResponse(PlatformOperationsOverviewSummaryResponse summary,
+                                                     List<ComponentHealthResponse> healthMatrix,
+                                                     PlatformOperationsAiSummaryResponse aiSummary,
+                                                     PlatformOperationsReleaseResponse release,
+                                                     PlatformOperationsRuntimeResponse runtime) {}
+
+    public record PlatformOperationsDiagnosticResponse(String component,
+                                                       boolean success,
+                                                       ComponentHealthStatus status,
+                                                       String message,
+                                                       Long latencyMs,
+                                                       Instant testedAt,
+                                                       Map<String, Object> details) {}
 
     public record DeadLetterRow(UUID id, UUID tenantId, String sourceType, UUID sourceExecutionId,
                                 String failureReason, String payloadSummary, int retryCount,

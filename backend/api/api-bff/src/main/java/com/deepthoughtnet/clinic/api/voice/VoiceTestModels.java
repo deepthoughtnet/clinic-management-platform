@@ -47,7 +47,52 @@ record VoiceStatusResponse(
         String ttsConfiguredVoice,
         java.util.Map<String, String> ttsConfiguredVoices,
         boolean ttsHindiConfigured,
-        boolean ttsFallbackVoiceEnabled
+        boolean ttsFallbackVoiceEnabled,
+        VoiceTtsProviderStatus elevenlabs
+) {
+    VoiceStatusResponse(
+            boolean enabled,
+            VoiceServiceStatus stt,
+            VoiceServiceStatus tts,
+            VoiceProviderTrace providerTrace,
+            String sttConfiguredLanguage,
+            String ttsConfiguredVoice,
+            java.util.Map<String, String> ttsConfiguredVoices,
+            boolean ttsHindiConfigured,
+            boolean ttsFallbackVoiceEnabled
+    ) {
+        this(enabled, stt, tts, providerTrace, sttConfiguredLanguage, ttsConfiguredVoice, ttsConfiguredVoices, ttsHindiConfigured, ttsFallbackVoiceEnabled, null);
+    }
+}
+
+record VoiceTtsProviderStatus(
+        boolean configured,
+        boolean enabled,
+        boolean selected,
+        boolean inProviderOrder,
+        boolean reachable,
+        String model,
+        boolean voiceIdPresent,
+        VoiceTtsDiagnosticResponse lastTest
+) {
+}
+
+record VoiceTtsDiagnosticResponse(
+        String requestId,
+        String provider,
+        String testedAt,
+        boolean configured,
+        boolean enabled,
+        boolean selected,
+        boolean inProviderOrder,
+        boolean success,
+        boolean reachable,
+        String model,
+        boolean voiceIdPresent,
+        Long latencyMs,
+        String audioContentType,
+        Long audioBytes,
+        String message
 ) {
 }
 

@@ -10,6 +10,9 @@ import org.springframework.data.repository.query.Param;
 public interface AiInvocationLogRepository extends JpaRepository<AiInvocationLogEntity, UUID> {
     java.util.List<AiInvocationLogEntity> findByTenantIdAndCreatedAtBetween(UUID tenantId, java.time.OffsetDateTime from, java.time.OffsetDateTime to);
     List<AiInvocationLogEntity> findTop200ByTenantIdOrderByCreatedAtDesc(UUID tenantId);
+    List<AiInvocationLogEntity> findByCreatedAtBetween(OffsetDateTime from, OffsetDateTime to);
+    List<AiInvocationLogEntity> findByProviderNameAndCreatedAtBetween(String providerName, OffsetDateTime from, OffsetDateTime to);
+    List<AiInvocationLogEntity> findTop200ByOrderByCreatedAtDesc();
 
     @Query("""
             select count(l) from AiInvocationLogEntity l

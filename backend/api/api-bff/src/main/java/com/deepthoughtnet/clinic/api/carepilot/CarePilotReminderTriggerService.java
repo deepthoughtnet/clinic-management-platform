@@ -191,6 +191,7 @@ public class CarePilotReminderTriggerService {
                 break;
             }
         }
+        runtimeSchedulerMonitor.markGlobalReminderScan(OffsetDateTime.now());
         return queued;
     }
 

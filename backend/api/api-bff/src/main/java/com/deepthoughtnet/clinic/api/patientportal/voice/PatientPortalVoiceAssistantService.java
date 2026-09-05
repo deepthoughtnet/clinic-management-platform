@@ -112,7 +112,7 @@ public class PatientPortalVoiceAssistantService {
                     0L,
                     Duration.between(requestStart, Instant.now()).toMillis(),
                     audioBytes == null ? 0 : audioBytes.length,
-                    ex.getMessage()
+                    "Speech recognition unavailable"
             );
         }
         long sttDurationMs = Duration.between(sttStart, Instant.now()).toMillis();
@@ -213,7 +213,7 @@ public class PatientPortalVoiceAssistantService {
                     playableAudioBytes(synthesis) != null);
         } catch (RuntimeException ex) {
             ttsDurationMs = Duration.between(ttsStart, Instant.now()).toMillis();
-            ttsFallbackReason = ex.getMessage();
+            ttsFallbackReason = "Voice playback unavailable";
             log.warn("patient.voice.tts.fallback reason={} durationMs={}", ttsFallbackReason, ttsDurationMs);
         }
         byte[] audioPayload = playableAudioBytes(synthesis);
