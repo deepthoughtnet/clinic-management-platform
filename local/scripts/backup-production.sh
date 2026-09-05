@@ -129,8 +129,12 @@ docker run --rm \
 
     mkdir -p "/backup/$BACKUP_TIMESTAMP"
 
-    mc ls jeevanam | while read -r line; do
-      bucket="$(echo "$line" | awk "{print \$NF}" | sed "s:/*\$::")"
+    mc ls jeevanam | while IFS= read -r line; do
+      # Extract the final field from "mc ls" output using POSIX shell
+      # parameter expansion only. Do not depend on awk/sed because
+      # minimal minio/mc images may not include those utilities.
+      bucket="${line##* }"
+      bucket="${bucket%/}"
 
       [ -n "$bucket" ] || continue
 
