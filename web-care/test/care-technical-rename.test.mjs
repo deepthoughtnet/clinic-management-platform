@@ -25,6 +25,16 @@ test("Phase 3B preserves patient route URLs and legacy Discover redirects", () =
     "/patient/login",
     "/patient/register",
     "/patient/dashboard",
+    "/patient/doctors",
+    "/patient/doctors/:doctorSlug",
+    "/patient/clinics",
+    "/patient/clinics/:clinicSlug",
+    "/patient/hospitals",
+    "/patient/hospitals/:hospitalSlug",
+    "/patient/specialities",
+    "/patient/specialities/:specialitySlug",
+    "/patient/services",
+    "/patient/services/:specialitySlug",
     "/patient/book-appointment",
     "/patient/appointments",
     "/patient/prescriptions",
@@ -39,5 +49,7 @@ test("Phase 3B preserves patient route URLs and legacy Discover redirects", () =
 
   assert.ok(app.includes('path="/doctors" element={<LegacyDiscoverRedirectPage />}'));
   assert.ok(app.includes('path="/clinics" element={<LegacyDiscoverRedirectPage />}'));
+  assert.ok(app.includes('path="/hospitals" element={<LegacyDiscoverRedirectPage />}'));
   assert.ok(app.includes('path="/specialities" element={<LegacyDiscoverRedirectPage />}'));
+  assert.ok(app.includes('path="/services" element={<LegacyDiscoverRedirectPage />}'));
 });

@@ -9,6 +9,8 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface PatientPortalAccessRequestRepository extends JpaRepository<PatientPortalAccessRequestEntity, UUID> {
     List<PatientPortalAccessRequestEntity> findByTenantIdOrderByCreatedAtDesc(UUID tenantId);
 
+    List<PatientPortalAccessRequestEntity> findByMobileNormalizedOrderByCreatedAtDesc(String mobileNormalized);
+
     Optional<PatientPortalAccessRequestEntity> findTopByTenantIdAndMobileNormalizedOrderByCreatedAtDesc(UUID tenantId, String mobileNormalized);
 
     List<PatientPortalAccessRequestEntity> findByTenantIdAndStatusOrderByCreatedAtDesc(UUID tenantId, PatientPortalAccessRequestStatus status);

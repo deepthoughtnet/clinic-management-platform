@@ -41,7 +41,7 @@ test("patient login and dashboard remain branded and data-driven", () => {
   assert.ok(portalSource.includes("status-pill--compact"));
   assert.ok(portalSource.includes("No visit scheduled"));
   assert.ok(portalSource.includes("No payment due"));
-  assert.ok(portalSource.includes("No recent care activity"));
+  assert.ok(portalSource.includes("No recent activity yet"));
   assert.ok(portalSource.includes("Ask AIVA about your care journey"));
   assert.ok(portalSource.includes("Latest consultation bill paid"));
   assert.ok(portalSource.includes("Vaccination records are not currently available in Jeevanam Care"));
@@ -62,6 +62,7 @@ test("dashboard hover and compactness styles are present", () => {
   assert.ok(stylesSource.includes("repeat(5, minmax(0, 1fr))"));
   assert.ok(stylesSource.includes(".patient-dashboard-dual-grid"));
   assert.ok(stylesSource.includes("repeat(2, minmax(0, 1fr))"));
+  assert.ok(stylesSource.includes(".patient-dashboard-activity-item__bullet"));
 });
 
 test("patient registration session cleanup is centralized", () => {

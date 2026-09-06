@@ -13,6 +13,7 @@ In scope:
 - shared authenticated Care layout cleanup
 - dashboard summary and section presentation
 - duplicate patient identity reduction
+- recent activity timeline summarization
 - patient-friendly labels and empty states
 - independent loading and retry states for dashboard widgets
 - responsive behavior for dashboard and shell surfaces
@@ -40,7 +41,7 @@ Out of scope:
 - duplicate dashboard identity card is removed
 - patient phone is not repeated unnecessarily
 - dashboard summary cards use patient-friendly labels
+- recent activity shows the latest three distinct transaction items
 - appointment, prescription, bill, lab report, notification, and AIVA widgets load independently
 - empty, loading, and error states are present with retry where appropriate
 - mobile layout remains usable without horizontal overflow
-

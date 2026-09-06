@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -30,7 +32,12 @@ import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderedTestRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderedTestSpecimenRecord;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalAppointmentBookingRequest;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalAppointmentConfirmationResponse;
+import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalAuthorizedClinicResponse;
+import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalClinicResponse;
+import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorAvailabilityDayResponse;
+import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorAvailabilityResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorSlotResponse;
+import com.deepthoughtnet.clinic.api.patientportal.auth.dto.PatientPortalAccessLoginResponse;
 import com.deepthoughtnet.clinic.billing.service.BillingService;
 import com.deepthoughtnet.clinic.billing.service.model.BillItemType;
 import com.deepthoughtnet.clinic.billing.service.model.BillLineRecord;
@@ -43,6 +50,7 @@ import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
 import com.deepthoughtnet.clinic.clinic.service.DoctorProfileService;
 import com.deepthoughtnet.clinic.clinic.service.model.ClinicProfileRecord;
 import com.deepthoughtnet.clinic.clinic.service.model.DoctorProfileRecord;
+import com.deepthoughtnet.clinic.consultation.service.ConsultationService;
 import com.deepthoughtnet.clinic.identity.db.AppUserEntity;
 import com.deepthoughtnet.clinic.identity.db.AppUserRepository;
 import com.deepthoughtnet.clinic.identity.db.TenantEntity;
@@ -51,7 +59,14 @@ import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
 import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
 import com.deepthoughtnet.clinic.patient.db.PatientEntity;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
+import com.deepthoughtnet.clinic.patient.service.PatientPortalAccessRequestService;
+import com.deepthoughtnet.clinic.patient.service.model.PatientPortalAccessGrantRecord;
+import com.deepthoughtnet.clinic.patient.service.model.PatientPortalAccessRequestRecord;
+import com.deepthoughtnet.clinic.patient.service.model.PatientPortalAccessRequestStatus;
+import com.deepthoughtnet.clinic.patient.service.model.PatientPortalAccessRequestType;
+import com.deepthoughtnet.clinic.patient.service.model.PatientPortalAuthorizedClinicRecord;
 import com.deepthoughtnet.clinic.patient.service.PatientService;
+import com.deepthoughtnet.clinic.api.patientportal.auth.PatientPortalSessionTokenService;
 import com.deepthoughtnet.clinic.platform.core.security.AppUserProvisioner;
 import com.deepthoughtnet.clinic.notification.service.NotificationHistoryService;
 import com.deepthoughtnet.clinic.notification.service.model.NotificationHistoryRecord;
@@ -100,6 +115,7 @@ class PatientPortalServiceTest {
     private static final UUID OTHER_TENANT_ID = UUID.randomUUID();
     private static final UUID APP_USER_ID = UUID.randomUUID();
     private static final UUID PATIENT_ID = UUID.randomUUID();
+    private static final UUID OTHER_PATIENT_ID = UUID.randomUUID();
 
     private AppUserRepository appUserRepository;
     private TenantRepository tenantRepository;
@@ -108,7 +124,10 @@ class PatientPortalServiceTest {
     private TenantUserManagementService tenantUserManagementService;
     private DoctorProfileService doctorProfileService;
     private PatientService patientService;
+    private PatientPortalAccessRequestService accessRequestService;
+    private ConsultationService consultationService;
     private AppUserProvisioner appUserProvisioner;
+    private PatientPortalSessionTokenService sessionTokenService;
     private ClinicTimeZoneResolver clinicTimeZoneResolver;
     private AppointmentService appointmentService;
     private PrescriptionService prescriptionService;
@@ -131,7 +150,10 @@ class PatientPortalServiceTest {
         tenantUserManagementService = mock(TenantUserManagementService.class);
         doctorProfileService = mock(DoctorProfileService.class);
         patientService = mock(PatientService.class);
+        accessRequestService = mock(PatientPortalAccessRequestService.class);
+        consultationService = mock(ConsultationService.class);
         appUserProvisioner = mock(AppUserProvisioner.class);
+        sessionTokenService = mock(PatientPortalSessionTokenService.class);
         clinicTimeZoneResolver = mock(ClinicTimeZoneResolver.class);
         appointmentService = mock(AppointmentService.class);
         prescriptionService = mock(PrescriptionService.class);
@@ -151,9 +173,12 @@ class PatientPortalServiceTest {
                 tenantUserManagementService,
                 doctorProfileService,
                 patientService,
+                accessRequestService,
                 appUserProvisioner,
+                sessionTokenService,
                 clinicTimeZoneResolver,
                 appointmentService,
+                consultationService,
                 prescriptionService,
                 billingService,
                 labService,
@@ -222,6 +247,230 @@ class PatientPortalServiceTest {
         verify(appointmentService, times(2)).listByPatient(TENANT_ID, PATIENT_ID);
         verify(prescriptionService, times(2)).listByPatient(TENANT_ID, PATIENT_ID);
         verify(billingService, times(2)).listByPatient(TENANT_ID, PATIENT_ID);
+    }
+
+    @Test
+    void patientCanSeeTenantClinicContextEvenWhenUnpublished() {
+        AppUserEntity appUser = AppUserEntity.create(TENANT_ID, "patient-sub", "patient@example.com", "Portal Patient");
+        appUser.setPatientId(PATIENT_ID);
+
+        when(appUserRepository.findByTenantIdAndId(TENANT_ID, APP_USER_ID)).thenReturn(Optional.of(appUser));
+        when(patientRepository.findByTenantIdAndId(TENANT_ID, PATIENT_ID)).thenReturn(Optional.of(patientEntity(TENANT_ID, PATIENT_ID, "PAT-001")));
+        when(clinicProfileService.findByTenantId(TENANT_ID)).thenReturn(Optional.of(clinicProfile(TENANT_ID, "Sunrise Clinic", false)));
+
+        PatientPortalClinicResponse clinic = service.clinic();
+        assertThat(clinic.clinicName()).isEqualTo("Sunrise Health");
+        assertThat(clinic.displayName()).isEqualTo("Sunrise Clinic");
+        assertThat(clinic.active()).isTrue();
+        assertThat(clinic.bookable()).isTrue();
+    }
+
+    @Test
+    void patientSeesPrivateTenantDoctorsInCarePortal() {
+        AppUserEntity appUser = AppUserEntity.create(TENANT_ID, "patient-sub", "patient@example.com", "Portal Patient");
+        appUser.setPatientId(PATIENT_ID);
+        UUID doctorUserId = UUID.randomUUID();
+
+        when(appUserRepository.findByTenantIdAndId(TENANT_ID, APP_USER_ID)).thenReturn(Optional.of(appUser));
+        when(patientRepository.findByTenantIdAndId(TENANT_ID, PATIENT_ID)).thenReturn(Optional.of(patientEntity(TENANT_ID, PATIENT_ID, "PAT-001")));
+        when(tenantUserManagementService.list(TENANT_ID)).thenReturn(List.of(doctorUser(doctorUserId, "Dr. Mehta", TENANT_ID)));
+        when(doctorProfileService.findByDoctorUserId(TENANT_ID, doctorUserId)).thenReturn(Optional.empty());
+
+        assertThat(service.doctors()).singleElement().satisfies(doctor -> {
+            assertThat(doctor.publicDoctorId()).isEqualTo(doctorUserId.toString());
+            assertThat(doctor.doctorName()).isEqualTo("Dr. Mehta");
+            assertThat(doctor.specialization()).isNull();
+        });
+    }
+
+    @Test
+    void clinicsEndpointSurfacesOnlyAuthorizedTenantContexts() {
+        AppUserEntity appUser = AppUserEntity.create(TENANT_ID, "patient-sub", "patient@example.com", "Portal Patient");
+        appUser.setPatientId(PATIENT_ID);
+        UUID automationDoctorId = UUID.randomUUID();
+        when(appUserRepository.findByTenantIdAndId(TENANT_ID, APP_USER_ID)).thenReturn(Optional.of(appUser));
+        when(patientRepository.findByTenantIdAndId(TENANT_ID, PATIENT_ID)).thenReturn(Optional.of(patientEntity(TENANT_ID, PATIENT_ID, "PAT-001")));
+        when(patientRepository.findByMobileIgnoreCaseAndActiveTrue("9999999999")).thenReturn(List.of(
+                patientEntity(TENANT_ID, PATIENT_ID, "PAT-001"),
+                patientEntity(OTHER_TENANT_ID, OTHER_PATIENT_ID, "PAT-201")
+        ));
+        when(tenantRepository.findById(TENANT_ID)).thenReturn(Optional.of(tenant("demo-clinic", TENANT_ID)));
+        when(tenantRepository.findById(OTHER_TENANT_ID)).thenReturn(Optional.of(tenant("automation-lab", OTHER_TENANT_ID)));
+        when(accessRequestService.listAuthorizedClinics("9999999999")).thenReturn(List.of(
+                new PatientPortalAuthorizedClinicRecord(TENANT_ID, "demo-clinic", "Demo Clinic", PATIENT_ID, "NewAuto Lab", true, "PATIENT_PORTAL_ACCESS_REQUEST")
+        ));
+        when(appointmentService.listByPatient(OTHER_TENANT_ID, OTHER_PATIENT_ID)).thenReturn(List.of(
+                new AppointmentRecord(
+                        UUID.randomUUID(),
+                        OTHER_TENANT_ID,
+                        OTHER_PATIENT_ID,
+                        "PAT-201",
+                        "NewAuto Lab",
+                        "9999999999",
+                        automationDoctorId,
+                        "Doc UAT Automation Doctor",
+                        null,
+                        LocalDate.now(),
+                        java.time.LocalTime.of(10, 30),
+                        17,
+                        "Review visit",
+                        AppointmentType.SCHEDULED,
+                        AppointmentPriority.NORMAL,
+                        AppointmentStatus.COMPLETED,
+                        OffsetDateTime.now(),
+                        OffsetDateTime.now()
+                )
+        ));
+
+        var clinics = service.clinics();
+
+        assertThat(clinics).extracting(PatientPortalAuthorizedClinicResponse::tenantId)
+                .containsExactly(TENANT_ID, OTHER_TENANT_ID);
+        assertThat(clinics).extracting(PatientPortalAuthorizedClinicResponse::selected)
+                .containsExactly(true, false);
+        assertThat(clinics).extracting(PatientPortalAuthorizedClinicResponse::authorizationSource)
+                .containsExactly("PATIENT_PORTAL_ACCESS_REQUEST", "HEALTH_DERIVED");
+
+        verify(accessRequestService).listAuthorizedClinics("9999999999");
+    }
+
+    @Test
+    void switchClinicIssuesNewTenantScopedPatientSession() {
+        AppUserEntity appUser = AppUserEntity.create(TENANT_ID, "patient-sub", "patient@example.com", "Portal Patient");
+        appUser.setPatientId(PATIENT_ID);
+        when(appUserRepository.findByTenantIdAndId(TENANT_ID, APP_USER_ID)).thenReturn(Optional.of(appUser));
+        when(patientRepository.findByTenantIdAndId(TENANT_ID, PATIENT_ID)).thenReturn(Optional.of(patientEntity(TENANT_ID, PATIENT_ID, "PAT-001")));
+        when(accessRequestService.findLatestByTenantAndMobile(OTHER_TENANT_ID, "9999999999")).thenReturn(Optional.of(
+                accessRequestRecord(OTHER_TENANT_ID, OTHER_PATIENT_ID, "automation-lab", "Jeevanam Automation Lab", PatientPortalAccessRequestStatus.ACTIVE)
+        ));
+        when(tenantRepository.findById(OTHER_TENANT_ID)).thenReturn(Optional.of(tenant("automation-lab", OTHER_TENANT_ID)));
+        when(accessRequestService.switchAuthorizedClinic("9999999999", OTHER_TENANT_ID)).thenReturn(
+                new PatientPortalAccessGrantRecord(OTHER_TENANT_ID, "automation-lab", OTHER_PATIENT_ID, "Amit Verma", "9876543210", "patientportal:" + OTHER_TENANT_ID + ":" + OTHER_PATIENT_ID)
+        );
+        when(sessionTokenService.issuePatientToken(
+                "patientportal:" + OTHER_TENANT_ID + ":" + OTHER_PATIENT_ID,
+                OTHER_TENANT_ID,
+                OTHER_PATIENT_ID,
+                "9876543210",
+                "Amit Verma"
+        )).thenReturn("new-session-token");
+
+        var response = service.switchClinic(OTHER_TENANT_ID);
+
+        assertThat(response.authenticated()).isTrue();
+        assertThat(response.tenantId()).isEqualTo(OTHER_TENANT_ID.toString());
+        assertThat(response.patientDisplayName()).isEqualTo("Amit Verma");
+        assertThat(response.patientSessionToken()).isEqualTo("new-session-token");
+        verify(accessRequestService).switchAuthorizedClinic("9999999999", OTHER_TENANT_ID);
+        verify(sessionTokenService).issuePatientToken(
+                "patientportal:" + OTHER_TENANT_ID + ":" + OTHER_PATIENT_ID,
+                OTHER_TENANT_ID,
+                OTHER_PATIENT_ID,
+                "9876543210",
+                "Amit Verma"
+        );
+    }
+
+    @Test
+    void switchClinicAllowsHealthDerivedTenantWhenNoExplicitAccessRequestExists() {
+        AppUserEntity appUser = AppUserEntity.create(TENANT_ID, "patient-sub", "patient@example.com", "Portal Patient");
+        appUser.setPatientId(PATIENT_ID);
+        UUID automationDoctorId = UUID.randomUUID();
+
+        when(appUserRepository.findByTenantIdAndId(TENANT_ID, APP_USER_ID)).thenReturn(Optional.of(appUser));
+        when(patientRepository.findByTenantIdAndId(TENANT_ID, PATIENT_ID)).thenReturn(Optional.of(patientEntity(TENANT_ID, PATIENT_ID, "PAT-001")));
+        when(patientRepository.findByTenantIdAndId(OTHER_TENANT_ID, OTHER_PATIENT_ID)).thenReturn(Optional.of(patientEntity(OTHER_TENANT_ID, OTHER_PATIENT_ID, "PAT-201")));
+        when(patientRepository.findByTenantIdAndMobileIgnoreCaseAndActiveTrue(OTHER_TENANT_ID, "9999999999")).thenReturn(List.of(patientEntity(OTHER_TENANT_ID, OTHER_PATIENT_ID, "PAT-201")));
+        when(patientRepository.findByMobileIgnoreCaseAndActiveTrue("9999999999")).thenReturn(List.of(
+                patientEntity(TENANT_ID, PATIENT_ID, "PAT-001"),
+                patientEntity(OTHER_TENANT_ID, OTHER_PATIENT_ID, "PAT-201")
+        ));
+        when(accessRequestService.findLatestByTenantAndMobile(OTHER_TENANT_ID, "9999999999")).thenReturn(Optional.empty());
+        when(tenantRepository.findById(OTHER_TENANT_ID)).thenReturn(Optional.of(tenant("automation-lab", OTHER_TENANT_ID)));
+        when(appointmentService.listByPatient(OTHER_TENANT_ID, OTHER_PATIENT_ID)).thenReturn(List.of(
+                new AppointmentRecord(
+                        UUID.randomUUID(),
+                        OTHER_TENANT_ID,
+                        OTHER_PATIENT_ID,
+                        "PAT-201",
+                        "Amit Verma",
+                        "9999999999",
+                        automationDoctorId,
+                        "Doc UAT Automation Doctor",
+                        null,
+                        LocalDate.now(),
+                        java.time.LocalTime.of(10, 30),
+                        9,
+                        "Follow-up",
+                        AppointmentType.SCHEDULED,
+                        AppointmentPriority.NORMAL,
+                        AppointmentStatus.COMPLETED,
+                        OffsetDateTime.now(),
+                        OffsetDateTime.now()
+                )
+        ));
+        when(appUserProvisioner.upsertAndReturnId(eq(OTHER_TENANT_ID), any(), any(), eq("Riya Sharma"))).thenReturn(APP_USER_ID);
+        when(appUserRepository.findByTenantIdAndId(OTHER_TENANT_ID, APP_USER_ID)).thenReturn(Optional.of(AppUserEntity.create(OTHER_TENANT_ID, "patientportal:" + OTHER_TENANT_ID + ":" + OTHER_PATIENT_ID, "riya@example.com", "Riya Sharma")));
+        when(sessionTokenService.issuePatientToken(
+                "patientportal:" + OTHER_TENANT_ID + ":" + OTHER_PATIENT_ID,
+                OTHER_TENANT_ID,
+                OTHER_PATIENT_ID,
+                "9999999999",
+                "Riya Sharma"
+        )).thenReturn("derived-session-token");
+
+        var response = service.switchClinic(OTHER_TENANT_ID);
+
+        assertThat(response.authenticated()).isTrue();
+        assertThat(response.tenantId()).isEqualTo(OTHER_TENANT_ID.toString());
+        assertThat(response.patientSessionToken()).isEqualTo("derived-session-token");
+        verify(accessRequestService, never()).switchAuthorizedClinic("9999999999", OTHER_TENANT_ID);
+        verify(appUserProvisioner).upsertAndReturnId(eq(OTHER_TENANT_ID), any(), any(), eq("Riya Sharma"));
+    }
+
+    @Test
+    void revokedClinicCannotBeSwitchedEvenWhenHealthEvidenceExists() {
+        AppUserEntity appUser = AppUserEntity.create(TENANT_ID, "patient-sub", "patient@example.com", "Portal Patient");
+        appUser.setPatientId(PATIENT_ID);
+
+        when(appUserRepository.findByTenantIdAndId(TENANT_ID, APP_USER_ID)).thenReturn(Optional.of(appUser));
+        when(patientRepository.findByTenantIdAndId(TENANT_ID, PATIENT_ID)).thenReturn(Optional.of(patientEntity(TENANT_ID, PATIENT_ID, "PAT-001")));
+        when(patientRepository.findByTenantIdAndMobileIgnoreCaseAndActiveTrue(OTHER_TENANT_ID, "9999999999")).thenReturn(List.of(patientEntity(OTHER_TENANT_ID, OTHER_PATIENT_ID, "PAT-201")));
+        when(accessRequestService.findLatestByTenantAndMobile(OTHER_TENANT_ID, "9999999999")).thenReturn(Optional.of(
+                accessRequestRecord(OTHER_TENANT_ID, OTHER_PATIENT_ID, "automation-lab", "Jeevanam Automation Lab", PatientPortalAccessRequestStatus.REVOKED)
+        ));
+        when(patientRepository.findByMobileIgnoreCaseAndActiveTrue("9999999999")).thenReturn(List.of(
+                patientEntity(TENANT_ID, PATIENT_ID, "PAT-001"),
+                patientEntity(OTHER_TENANT_ID, OTHER_PATIENT_ID, "PAT-201")
+        ));
+        when(tenantRepository.findById(OTHER_TENANT_ID)).thenReturn(Optional.of(tenant("automation-lab", OTHER_TENANT_ID)));
+        when(appointmentService.listByPatient(OTHER_TENANT_ID, OTHER_PATIENT_ID)).thenReturn(List.of(
+                new AppointmentRecord(
+                        UUID.randomUUID(),
+                        OTHER_TENANT_ID,
+                        OTHER_PATIENT_ID,
+                        "PAT-201",
+                        "Amit Verma",
+                        "9999999999",
+                        UUID.randomUUID(),
+                        "Doc UAT Automation Doctor",
+                        null,
+                        LocalDate.now(),
+                        java.time.LocalTime.of(10, 30),
+                        9,
+                        "Follow-up",
+                        AppointmentType.SCHEDULED,
+                        AppointmentPriority.NORMAL,
+                        AppointmentStatus.COMPLETED,
+                        OffsetDateTime.now(),
+                        OffsetDateTime.now()
+                )
+        ));
+
+        assertThatThrownBy(() -> service.switchClinic(OTHER_TENANT_ID))
+                .isInstanceOf(ForbiddenException.class)
+                .hasMessageContaining("no longer available");
+        verify(accessRequestService, never()).switchAuthorizedClinic("9999999999", OTHER_TENANT_ID);
     }
 
     @Test
@@ -344,6 +593,43 @@ class PatientPortalServiceTest {
             assertThat(item.doctorName()).isEqualTo("Dr. Mehta");
             assertThat(item.appointmentDate()).isEqualTo(appointmentDate);
         });
+    }
+
+    @Test
+    void patientCanBookPrivateTenantDoctorWithoutPublicListing() {
+        AppUserEntity appUser = AppUserEntity.create(TENANT_ID, "patient-sub", "patient@example.com", "Portal Patient");
+        appUser.setPatientId(PATIENT_ID);
+        PatientEntity patient = patientEntity(TENANT_ID, PATIENT_ID, "PAT-001");
+        UUID doctorUserId = UUID.randomUUID();
+        LocalDate appointmentDate = LocalDate.now().plusDays(2);
+        var appointment = appointmentRecord(PATIENT_ID, doctorUserId, appointmentDate, java.time.LocalTime.of(10, 30));
+
+        when(appUserRepository.findByTenantIdAndId(TENANT_ID, APP_USER_ID)).thenReturn(Optional.of(appUser));
+        when(patientRepository.findByTenantIdAndId(TENANT_ID, PATIENT_ID)).thenReturn(Optional.of(patient));
+        when(clinicProfileService.findByTenantId(TENANT_ID)).thenReturn(Optional.of(clinicProfile(TENANT_ID, "Sunrise Clinic", false)));
+        when(tenantUserManagementService.list(TENANT_ID)).thenReturn(List.of(doctorUser(doctorUserId, "Dr. Mehta", TENANT_ID)));
+        when(doctorProfileService.findByDoctorUserId(TENANT_ID, doctorUserId)).thenReturn(Optional.empty());
+        when(appointmentService.listSlots(eq(TENANT_ID), eq(doctorUserId), eq(appointmentDate), any()))
+                .thenReturn(List.of(slotRecord(doctorUserId, appointmentDate, java.time.LocalTime.of(10, 30), DoctorAvailabilitySlotStatus.AVAILABLE, true)));
+        when(appointmentService.createScheduled(eq(TENANT_ID), any(AppointmentUpsertCommand.class), eq(APP_USER_ID), eq(false), any()))
+                .thenReturn(appointment);
+        when(appointmentService.listByPatient(TENANT_ID, PATIENT_ID)).thenReturn(List.of(appointment));
+
+        var slots = service.doctorSlots(doctorUserId.toString(), appointmentDate);
+        assertThat(slots).singleElement().satisfies(slot -> assertThat(slot.selectable()).isTrue());
+
+        var confirmation = service.bookAppointment(new PatientPortalAppointmentBookingRequest(
+                doctorUserId.toString(),
+                null,
+                null,
+                null,
+                appointmentDate,
+                java.time.LocalTime.of(10, 30),
+                "Seasonal fever"
+        ));
+
+        assertThat(confirmation.clinicName()).isEqualTo("Sunrise Clinic");
+        verify(appointmentService).createScheduled(eq(TENANT_ID), any(AppointmentUpsertCommand.class), eq(APP_USER_ID), eq(false), any());
     }
 
     @Test
@@ -482,6 +768,62 @@ class PatientPortalServiceTest {
         assertThat(slots).singleElement().satisfies(slot -> assertThat(slot.selectable()).isTrue());
         verify(tenantRepository, never()).findByCode("curapilot-demo-clinic");
         verify(appointmentService).listSlots(eq(publicTenantId), eq(doctorUserId), eq(appointmentDate), any());
+    }
+
+    @Test
+    void patientCanLoadFutureDoctorAvailabilityWhenSelectedDateHasNoSlots() {
+        AppUserEntity appUser = AppUserEntity.create(TENANT_ID, "patient-sub", "patient@example.com", "Portal Patient");
+        appUser.setPatientId(PATIENT_ID);
+        UUID doctorUserId = UUID.randomUUID();
+        LocalDate selectedDate = LocalDate.of(2026, 9, 6);
+        LocalDate nextDate = selectedDate.plusDays(3);
+
+        when(appUserRepository.findByTenantIdAndId(TENANT_ID, APP_USER_ID)).thenReturn(Optional.of(appUser));
+        when(patientRepository.findByTenantIdAndId(TENANT_ID, PATIENT_ID)).thenReturn(Optional.of(patientEntity(TENANT_ID, PATIENT_ID, "PAT-001")));
+        when(clinicProfileService.findByTenantId(TENANT_ID)).thenReturn(Optional.of(clinicProfile(TENANT_ID, "Sunrise Clinic", true)));
+        when(clinicProfileService.findBySlug("demo-clinic")).thenReturn(Optional.of(clinicProfile(TENANT_ID, "Sunrise Clinic", true)));
+        when(tenantUserManagementService.list(TENANT_ID)).thenReturn(List.of(doctorUser(doctorUserId, "Dr. Asha", TENANT_ID)));
+        when(doctorProfileService.findByDoctorUserId(TENANT_ID, doctorUserId)).thenReturn(Optional.of(doctorProfile(TENANT_ID, doctorUserId, false)));
+        when(appointmentService.listSlots(eq(TENANT_ID), eq(doctorUserId), any(LocalDate.class), any())).thenAnswer(invocation -> {
+            LocalDate requestedDate = invocation.getArgument(2);
+            if (nextDate.equals(requestedDate)) {
+                return List.of(slotRecord(doctorUserId, requestedDate, java.time.LocalTime.of(11, 30), DoctorAvailabilitySlotStatus.AVAILABLE, true));
+            }
+            return List.of();
+        });
+
+        PatientPortalDoctorAvailabilityResponse availability = service.doctorAvailability(null, doctorUserId.toString(), "demo-clinic", null, null, selectedDate);
+
+        assertThat(availability.selectedDate()).isEqualTo(selectedDate);
+        assertThat(availability.slots()).isEmpty();
+        assertThat(availability.nextAvailable()).singleElement().satisfies(day -> {
+            assertThat(day.appointmentDate()).isEqualTo(nextDate);
+            assertThat(day.slots()).singleElement().satisfies(slot -> assertThat(slot.slotTime()).isEqualTo(java.time.LocalTime.of(11, 30)));
+        });
+        verify(appointmentService, atLeast(4)).listSlots(eq(TENANT_ID), eq(doctorUserId), any(LocalDate.class), any());
+    }
+
+    @Test
+    void patientCanLoadDoctorAvailabilityWithoutFutureSlotsWhenNoneExist() {
+        AppUserEntity appUser = AppUserEntity.create(TENANT_ID, "patient-sub", "patient@example.com", "Portal Patient");
+        appUser.setPatientId(PATIENT_ID);
+        UUID doctorUserId = UUID.randomUUID();
+        LocalDate selectedDate = LocalDate.of(2026, 9, 6);
+
+        when(appUserRepository.findByTenantIdAndId(TENANT_ID, APP_USER_ID)).thenReturn(Optional.of(appUser));
+        when(patientRepository.findByTenantIdAndId(TENANT_ID, PATIENT_ID)).thenReturn(Optional.of(patientEntity(TENANT_ID, PATIENT_ID, "PAT-001")));
+        when(clinicProfileService.findByTenantId(TENANT_ID)).thenReturn(Optional.of(clinicProfile(TENANT_ID, "Sunrise Clinic", true)));
+        when(clinicProfileService.findBySlug("demo-clinic")).thenReturn(Optional.of(clinicProfile(TENANT_ID, "Sunrise Clinic", true)));
+        when(tenantUserManagementService.list(TENANT_ID)).thenReturn(List.of(doctorUser(doctorUserId, "Dr. Asha", TENANT_ID)));
+        when(doctorProfileService.findByDoctorUserId(TENANT_ID, doctorUserId)).thenReturn(Optional.of(doctorProfile(TENANT_ID, doctorUserId, false)));
+        when(appointmentService.listSlots(eq(TENANT_ID), eq(doctorUserId), any(LocalDate.class), any())).thenReturn(List.of());
+
+        PatientPortalDoctorAvailabilityResponse availability = service.doctorAvailability(null, doctorUserId.toString(), "demo-clinic", null, null, selectedDate);
+
+        assertThat(availability.selectedDate()).isEqualTo(selectedDate);
+        assertThat(availability.slots()).isEmpty();
+        assertThat(availability.nextAvailable()).isEmpty();
+        verify(appointmentService, atLeastOnce()).listSlots(eq(TENANT_ID), eq(doctorUserId), any(LocalDate.class), any());
     }
 
     @Test
@@ -883,16 +1225,8 @@ class PatientPortalServiceTest {
         assertThat(commandCaptor.getValue().patientId()).isEqualTo(targetPatientId);
         assertThat(commandCaptor.getValue().doctorUserId()).isEqualTo(doctorUserId);
         assertThat(confirmation.clinicName()).isEqualTo("Demo Clinic");
-        assertThat(service.appointments()).singleElement().satisfies(item -> {
-            assertThat(item.appointmentDate()).isEqualTo(appointmentDate);
-            assertThat(item.clinicName()).isEqualTo("Demo Clinic");
-        });
-        assertThat(service.careAiUpcomingAppointments()).singleElement().satisfies(item -> {
-            assertThat(item.appointmentId()).isEqualTo(appointment.id());
-            assertThat(item.appointmentDate()).isEqualTo(appointmentDate);
-            assertThat(item.clinicName()).isEqualTo("Demo Clinic");
-            assertThat(item.status()).isEqualTo("BOOKED");
-        });
+        assertThat(service.appointments()).isEmpty();
+        assertThat(service.careAiUpcomingAppointments()).isEmpty();
     }
 
     @Test
@@ -1545,6 +1879,43 @@ class PatientPortalServiceTest {
                 List.of(result),
                 now.minusDays(1),
                 now
+        );
+    }
+
+    private PatientPortalAccessRequestRecord accessRequestRecord(
+            UUID tenantId,
+            UUID linkedPatientId,
+            String tenantCode,
+            String tenantName,
+            PatientPortalAccessRequestStatus status
+    ) {
+        OffsetDateTime now = OffsetDateTime.now();
+        return new PatientPortalAccessRequestRecord(
+                UUID.randomUUID(),
+                tenantId,
+                tenantCode,
+                tenantName,
+                PatientPortalAccessRequestType.PATIENT,
+                "Amit Verma",
+                "9999999999",
+                "amit@example.com",
+                null,
+                status,
+                null,
+                linkedPatientId,
+                "Amit Verma",
+                null,
+                null,
+                null,
+                now,
+                now,
+                now,
+                status == PatientPortalAccessRequestStatus.ACTIVE ? now : null,
+                status == PatientPortalAccessRequestStatus.REVOKED ? now : null,
+                now.plusDays(7),
+                now,
+                now,
+                0L
         );
     }
 }

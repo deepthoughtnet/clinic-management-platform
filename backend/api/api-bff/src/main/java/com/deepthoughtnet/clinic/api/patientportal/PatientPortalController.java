@@ -8,8 +8,11 @@ import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalAppointmentR
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalAppointmentBookingRequest;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalAppointmentConfirmationResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalBillResponse;
+import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalAuthorizedClinicResponse;
+import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalClinicResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDashboardResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorResponse;
+import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorAvailabilityResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorSlotResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalLabLatestResultResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalLabOrderResponse;
@@ -17,6 +20,7 @@ import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalNotification
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalMeResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalProfileUpdateRequest;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalPrescriptionResponse;
+import com.deepthoughtnet.clinic.api.patientportal.auth.dto.PatientPortalAccessLoginResponse;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
@@ -69,6 +73,16 @@ public class PatientPortalController {
         return patientPortalService.appointments();
     }
 
+    @GetMapping("/clinic")
+    public PatientPortalClinicResponse clinic() {
+        return patientPortalService.clinic();
+    }
+
+    @GetMapping("/clinics")
+    public List<PatientPortalAuthorizedClinicResponse> clinics() {
+        return patientPortalService.clinics();
+    }
+
     @GetMapping("/doctors")
     public List<PatientPortalDoctorResponse> doctors() {
         return patientPortalService.doctors();
@@ -86,11 +100,28 @@ public class PatientPortalController {
         return patientPortalService.doctorSlots(bookingReference, publicDoctorId, clinicSlug, tenantId, clinicId, date);
     }
 
+    @GetMapping("/doctors/{publicDoctorId}/slots/next")
+    public PatientPortalDoctorAvailabilityResponse doctorAvailability(
+            @PathVariable String publicDoctorId,
+            @RequestParam(required = false) String bookingReference,
+            @RequestParam(required = false) String clinicSlug,
+            @RequestParam(required = false) String tenantId,
+            @RequestParam(required = false) String clinicId,
+            @RequestParam LocalDate date
+    ) {
+        return patientPortalService.doctorAvailability(bookingReference, publicDoctorId, clinicSlug, tenantId, clinicId, date);
+    }
+
     @PostMapping("/appointments")
     public PatientPortalAppointmentConfirmationResponse bookAppointment(
             @RequestBody PatientPortalAppointmentBookingRequest request
     ) {
         return patientPortalService.bookAppointment(request);
+    }
+
+    @PostMapping("/clinics/{tenantId}/switch")
+    public PatientPortalAccessLoginResponse switchClinic(@PathVariable UUID tenantId) {
+        return patientPortalService.switchClinic(tenantId);
     }
 
     @PostMapping("/careai/message")

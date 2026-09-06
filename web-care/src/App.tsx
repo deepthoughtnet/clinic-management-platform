@@ -13,6 +13,14 @@ import {
   PatientRegistrationPage,
   PatientPrescriptionsPage,
 } from "./pages/patient/PatientPortalPages";
+import {
+  PatientPublicClinicProfilePage,
+  PatientPublicDoctorProfilePage,
+  PatientPublicHospitalProfilePage,
+  PatientPublicServicesPage,
+  PatientPublicSpecialityPage,
+  PatientUnifiedDiscoveryPage,
+} from "./pages/patient/PatientDiscoveryPages";
 import PatientLabPage from "./pages/patient/PatientLabPage";
 import {
   type PatientPortalSession,
@@ -47,6 +55,9 @@ function pageTitleForPath(pathname: string) {
   if (pathname === "/patient/login") return `Login | ${branding.productName}`;
   if (pathname === "/patient/request-access") return `Request Access | ${branding.productName}`;
   if (pathname === "/patient/register") return `Register | ${branding.productName}`;
+  if (pathname.startsWith("/patient/doctors") || pathname.startsWith("/patient/clinics") || pathname.startsWith("/patient/hospitals") || pathname.startsWith("/patient/specialities") || pathname.startsWith("/patient/services")) {
+    return `Find care | ${branding.productName}`;
+  }
   if (pathname === "/patient/dashboard") return `Dashboard | ${branding.productName}`;
   if (pathname === "/patient/appointments") return `Appointments | ${branding.productName}`;
   if (pathname === "/patient/prescriptions") return `Prescriptions | ${branding.productName}`;
@@ -322,12 +333,56 @@ export function App() {
           <Route path="/ai-assistant/*" element={<Navigate to="/aiva" replace />} />
           <Route path="/aiva/*" element={<AivaRedirectPage />} />
           <Route path="/" element={<CareHomePage session={session} />} />
+          <Route
+            path="/patient/doctors"
+            element={<PatientUnifiedDiscoveryPage session={session} onSaveSession={saveSession} onSignOut={clearPatientSessionAndContext} defaultTab="doctors" />}
+          />
+          <Route
+            path="/patient/doctors/:doctorSlug"
+            element={<PatientPublicDoctorProfilePage session={session} onSignOut={clearPatientSessionAndContext} />}
+          />
+          <Route
+            path="/patient/clinics"
+            element={<PatientUnifiedDiscoveryPage session={session} onSaveSession={saveSession} onSignOut={clearPatientSessionAndContext} defaultTab="clinics" />}
+          />
+          <Route
+            path="/patient/clinics/:clinicSlug"
+            element={<PatientPublicClinicProfilePage session={session} onSignOut={clearPatientSessionAndContext} />}
+          />
+          <Route
+            path="/patient/hospitals"
+            element={<PatientUnifiedDiscoveryPage session={session} onSaveSession={saveSession} onSignOut={clearPatientSessionAndContext} defaultTab="hospitals" />}
+          />
+          <Route
+            path="/patient/hospitals/:hospitalSlug"
+            element={<PatientPublicHospitalProfilePage session={session} onSignOut={clearPatientSessionAndContext} />}
+          />
+          <Route
+            path="/patient/specialities"
+            element={<PatientUnifiedDiscoveryPage session={session} onSaveSession={saveSession} onSignOut={clearPatientSessionAndContext} defaultTab="specialities" />}
+          />
+          <Route
+            path="/patient/specialities/:specialitySlug"
+            element={<PatientPublicSpecialityPage session={session} onSignOut={clearPatientSessionAndContext} />}
+          />
+          <Route
+            path="/patient/services"
+            element={<PatientUnifiedDiscoveryPage session={session} onSaveSession={saveSession} onSignOut={clearPatientSessionAndContext} defaultTab="services" />}
+          />
+          <Route
+            path="/patient/services/:specialitySlug"
+            element={<PatientPublicServicesPage session={session} onSignOut={clearPatientSessionAndContext} />}
+          />
           <Route path="/doctors" element={<LegacyDiscoverRedirectPage />} />
           <Route path="/doctors/:doctorSlug" element={<LegacyDiscoverRedirectPage />} />
           <Route path="/clinics" element={<LegacyDiscoverRedirectPage />} />
           <Route path="/clinics/:clinicSlug" element={<LegacyDiscoverRedirectPage />} />
+          <Route path="/hospitals" element={<LegacyDiscoverRedirectPage />} />
+          <Route path="/hospitals/:hospitalSlug" element={<LegacyDiscoverRedirectPage />} />
           <Route path="/specialities" element={<LegacyDiscoverRedirectPage />} />
           <Route path="/specialities/:specialitySlug" element={<LegacyDiscoverRedirectPage />} />
+          <Route path="/services" element={<LegacyDiscoverRedirectPage />} />
+          <Route path="/services/:specialitySlug" element={<LegacyDiscoverRedirectPage />} />
           <Route path="/careai" element={<Navigate to="/patient/careai" replace />} />
           <Route
             path="/patient/login"
@@ -361,7 +416,7 @@ export function App() {
               />
             }
           />
-          <Route path="/patient/dashboard" element={<PatientDashboardPage session={session} onSignOut={clearPatientSessionAndContext} />} />
+          <Route path="/patient/dashboard" element={<PatientDashboardPage session={session} onSignOut={clearPatientSessionAndContext} onSaveSession={saveSession} />} />
           <Route
             path="/patient/book-appointment"
             element={

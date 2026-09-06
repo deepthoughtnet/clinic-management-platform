@@ -38,7 +38,9 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 
 class PatientPortalAccessRequestServiceTest {
     private static final UUID TENANT_ID = UUID.randomUUID();
+    private static final UUID OTHER_TENANT_ID = UUID.randomUUID();
     private static final UUID PATIENT_ID = UUID.randomUUID();
+    private static final UUID OTHER_PATIENT_ID = UUID.randomUUID();
     private static final UUID APP_USER_ID = UUID.randomUUID();
 
     private PatientPortalAccessRequestRepository requestRepository;
@@ -61,6 +63,7 @@ class PatientPortalAccessRequestServiceTest {
         auditEventPublisher = mock(AuditEventPublisher.class);
 
         when(tenantRepository.findById(TENANT_ID)).thenReturn(Optional.of(tenant("jeevanam-preview", TENANT_ID)));
+        when(tenantRepository.findById(OTHER_TENANT_ID)).thenReturn(Optional.of(tenant("automation-lab", OTHER_TENANT_ID)));
         when(auditEventPublisher.record(any())).thenReturn(UUID.randomUUID());
 
         service = new PatientPortalAccessRequestService(
@@ -241,6 +244,68 @@ class PatientPortalAccessRequestServiceTest {
                 .hasMessageContaining("expired");
     }
 
+    @Test
+    void listAuthorizedClinicsReturnsOnlyActiveTenantContexts() {
+        PatientPortalAccessRequestEntity demo = PatientPortalAccessRequestEntity.create(TENANT_ID, "Amit Verma", "9876543210", "9876543210", null, null);
+        demo.approve(UUID.randomUUID(), "Platform Admin", PATIENT_ID, "Amit Verma");
+        demo.activate();
+        PatientPortalAccessRequestEntity automation = PatientPortalAccessRequestEntity.create(OTHER_TENANT_ID, "Amit Verma", "9876543210", "9876543210", null, null);
+        automation.approve(UUID.randomUUID(), "Platform Admin", OTHER_PATIENT_ID, "Amit Verma");
+        automation.activate();
+        PatientPortalAccessRequestEntity revoked = PatientPortalAccessRequestEntity.create(UUID.randomUUID(), "Amit Verma", "9876543210", "9876543210", null, null);
+        revoked.revoke(UUID.randomUUID(), "Platform Admin", "Revoked for test");
+        when(requestRepository.findByMobileNormalizedOrderByCreatedAtDesc("9876543210"))
+                .thenReturn(List.of(demo, automation, revoked));
+        when(patientRepository.findByTenantIdAndId(TENANT_ID, PATIENT_ID)).thenReturn(Optional.of(patient()));
+        when(patientRepository.findByTenantIdAndId(OTHER_TENANT_ID, OTHER_PATIENT_ID)).thenReturn(Optional.of(otherPatient()));
+
+        var clinics = service.listAuthorizedClinics("9876543210");
+
+        assertThat(clinics).hasSize(2);
+        assertThat(clinics).extracting("tenantId").containsExactly(TENANT_ID, OTHER_TENANT_ID);
+        assertThat(clinics).extracting("authorizationSource").containsOnly("PATIENT_PORTAL_ACCESS_REQUEST");
+        assertThat(clinics).allSatisfy(record -> assertThat(record.active()).isTrue());
+        verify(patientRepository).findByTenantIdAndId(TENANT_ID, PATIENT_ID);
+        verify(patientRepository).findByTenantIdAndId(OTHER_TENANT_ID, OTHER_PATIENT_ID);
+    }
+
+    @Test
+    void findLatestByTenantAndMobileReturnsLatestRequestState() {
+        PatientPortalAccessRequestEntity revoked = PatientPortalAccessRequestEntity.create(TENANT_ID, "Amit Verma", "9876543210", "9876543210", null, null);
+        revoked.revoke(UUID.randomUUID(), "Platform Admin", "Revoked for test");
+        when(requestRepository.findTopByTenantIdAndMobileNormalizedOrderByCreatedAtDesc(TENANT_ID, "9876543210"))
+                .thenReturn(Optional.of(revoked));
+        when(tenantRepository.findById(TENANT_ID)).thenReturn(Optional.of(tenant("jeevanam-preview", TENANT_ID)));
+
+        var record = service.findLatestByTenantAndMobile(TENANT_ID, "9876543210");
+
+        assertThat(record).isPresent();
+        assertThat(record.orElseThrow().status()).isEqualTo(PatientPortalAccessRequestStatus.REVOKED);
+        assertThat(record.orElseThrow().tenantId()).isEqualTo(TENANT_ID);
+    }
+
+    @Test
+    void switchAuthorizedClinicReturnsGrantForActiveTenantContext() {
+        PatientPortalAccessRequestEntity automation = PatientPortalAccessRequestEntity.create(OTHER_TENANT_ID, "Amit Verma", "9876543210", "9876543210", null, null);
+        automation.approve(UUID.randomUUID(), "Platform Admin", OTHER_PATIENT_ID, "Amit Verma");
+        automation.activate();
+        when(requestRepository.findTopByTenantIdAndMobileNormalizedOrderByCreatedAtDesc(OTHER_TENANT_ID, "9876543210"))
+                .thenReturn(Optional.of(automation));
+        when(patientRepository.findByTenantIdAndId(OTHER_TENANT_ID, OTHER_PATIENT_ID)).thenReturn(Optional.of(otherPatient()));
+        AppUserEntity appUser = AppUserEntity.create(OTHER_TENANT_ID, "patientportal:" + OTHER_TENANT_ID + ":" + OTHER_PATIENT_ID, "amit@example.com", "Amit Verma");
+        when(appUserProvisioner.upsertAndReturnId(eq(OTHER_TENANT_ID), any(), eq("amit@example.com"), eq("Amit Verma"))).thenReturn(APP_USER_ID);
+        when(appUserRepository.findByTenantIdAndId(OTHER_TENANT_ID, APP_USER_ID)).thenReturn(Optional.of(appUser));
+
+        var grant = service.switchAuthorizedClinic("9876543210", OTHER_TENANT_ID);
+
+        assertThat(grant.tenantId()).isEqualTo(OTHER_TENANT_ID);
+        assertThat(grant.patientId()).isEqualTo(OTHER_PATIENT_ID);
+        assertThat(grant.patientDisplayName()).isEqualTo("Amit Verma");
+        assertThat(grant.patientMobile()).isEqualTo("9876543210");
+        verify(appUserProvisioner).upsertAndReturnId(eq(OTHER_TENANT_ID), any(), eq("amit@example.com"), eq("Amit Verma"));
+        verify(appUserRepository).findByTenantIdAndId(OTHER_TENANT_ID, APP_USER_ID);
+    }
+
     private TenantEntity tenant(String code, UUID id) {
         TenantEntity tenant = TenantEntity.create(code, "Jeevanam Preview", "PRO");
         try {
@@ -254,15 +319,23 @@ class PatientPortalAccessRequestServiceTest {
     }
 
     private PatientEntity patient() {
-        PatientEntity patient = PatientEntity.create(TENANT_ID, "P-001");
+        return patient(TENANT_ID, PATIENT_ID, "P-001", "Amit", "Verma", "9876543210", "amit@example.com");
+    }
+
+    private PatientEntity otherPatient() {
+        return patient(OTHER_TENANT_ID, OTHER_PATIENT_ID, "P-201", "Amit", "Verma", "9876543210", "amit@example.com");
+    }
+
+    private PatientEntity patient(UUID tenantId, UUID patientId, String patientNumber, String firstName, String lastName, String mobile, String email) {
+        PatientEntity patient = PatientEntity.create(tenantId, patientNumber);
         patient.update(
-                "Amit",
-                "Verma",
+                firstName,
+                lastName,
                 PatientGender.MALE,
                 null,
                 null,
-                "9876543210",
-                "amit@example.com",
+                mobile,
+                email,
                 null,
                 null,
                 "Pune",
@@ -282,7 +355,7 @@ class PatientPortalAccessRequestServiceTest {
         try {
             var field = PatientEntity.class.getDeclaredField("id");
             field.setAccessible(true);
-            field.set(patient, PATIENT_ID);
+            field.set(patient, patientId);
         } catch (ReflectiveOperationException ex) {
             throw new IllegalStateException(ex);
         }

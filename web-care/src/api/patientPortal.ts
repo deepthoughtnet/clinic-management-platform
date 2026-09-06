@@ -132,6 +132,35 @@ export type PatientPortalMeResponse = {
   longTermMedications: string | null;
 };
 
+export type PatientPortalClinicResponse = {
+  clinicId: string | null;
+  tenantId: string | null;
+  clinicName: string;
+  displayName: string;
+  phone: string | null;
+  email: string | null;
+  addressLine1: string | null;
+  addressLine2: string | null;
+  city: string | null;
+  state: string | null;
+  country: string | null;
+  postalCode: string | null;
+  active: boolean;
+  bookable: boolean;
+  slug: string | null;
+};
+
+export type PatientPortalAuthorizedClinicResponse = {
+  tenantId: string;
+  tenantCode: string;
+  clinicName: string;
+  patientId: string;
+  patientDisplayName: string;
+  active: boolean;
+  selected: boolean;
+  authorizationSource: string;
+};
+
 export type PatientPortalRegistrationRequest = {
   firstName: string;
   lastName: string;
@@ -202,6 +231,17 @@ export type PatientPortalDoctorSlotResponse = {
   selectable: boolean;
 };
 
+export type PatientPortalDoctorAvailabilityDayResponse = {
+  appointmentDate: string;
+  slots: PatientPortalDoctorSlotResponse[];
+};
+
+export type PatientPortalDoctorAvailabilityResponse = {
+  selectedDate: string;
+  slots: PatientPortalDoctorSlotResponse[];
+  nextAvailable: PatientPortalDoctorAvailabilityDayResponse[];
+};
+
 export type PatientPortalAppointmentBookingRequest = {
   publicDoctorId: string;
   clinicSlug?: string | null;
@@ -232,6 +272,8 @@ export type PatientPortalAppointmentConfirmationResponse = {
   reason: string | null;
   message: string;
 };
+
+export type PatientPortalClinicSwitchResponse = PatientPortalAccessLoginResponse;
 
 export type PatientPortalPrescriptionMedicineResponse = {
   medicineName: string;
@@ -493,6 +535,13 @@ export async function postPatientPortalAccessLogin<T>(
   return postPatientPortalJson<T>(path, body);
 }
 
+export async function postPatientPortalClinicSwitch<T>(
+  path: string,
+  session: PatientPortalSession,
+): Promise<T> {
+  return postPatientPortalSessionJson<T>(path, {}, session);
+}
+
 export async function putPatientPortalSessionJson<T>(
   path: string,
   body: unknown,
@@ -522,6 +571,10 @@ export async function fetchPatientPortalJson<T>(path: string, session: PatientPo
   return response.json() as Promise<T>;
 }
 
+export async function getPatientPortalClinic(session: PatientPortalSession) {
+  return fetchPatientPortalJson<PatientPortalClinicResponse>("/api/patient-portal/clinic", session);
+}
+
 export async function loadPatientPortalDoctorSlots(
   query: PatientPortalDoctorSlotQuery,
   session: PatientPortalSession,
@@ -543,6 +596,32 @@ export async function loadPatientPortalDoctorSlots(
   params.set("date", query.date);
   return fetchPatientPortalJson<PatientPortalDoctorSlotResponse[]>(
     `/api/patient-portal/doctors/${encodeURIComponent(query.doctorId)}/slots?${params.toString()}`,
+    session,
+    signal,
+  );
+}
+
+export async function loadPatientPortalDoctorAvailability(
+  query: PatientPortalDoctorSlotQuery,
+  session: PatientPortalSession,
+  signal?: AbortSignal,
+) {
+  const params = new URLSearchParams();
+  if (query.bookingReference?.trim()) {
+    params.set("bookingReference", query.bookingReference.trim());
+  }
+  if (isUuid(query.clinicId)) {
+    params.set("clinicId", query.clinicId);
+  }
+  if (isUuid(query.tenantId)) {
+    params.set("tenantId", query.tenantId);
+  }
+  if (query.clinicSlug.trim()) {
+    params.set("clinicSlug", query.clinicSlug.trim());
+  }
+  params.set("date", query.date);
+  return fetchPatientPortalJson<PatientPortalDoctorAvailabilityResponse>(
+    `/api/patient-portal/doctors/${encodeURIComponent(query.doctorId)}/slots/next?${params.toString()}`,
     session,
     signal,
   );

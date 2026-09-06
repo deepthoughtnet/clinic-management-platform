@@ -16,6 +16,7 @@ import com.deepthoughtnet.clinic.patient.service.model.PatientPortalAccessReques
 import com.deepthoughtnet.clinic.patient.service.model.PatientPortalAccessRequestRecord;
 import com.deepthoughtnet.clinic.patient.service.model.PatientPortalAccessRequestStatus;
 import com.deepthoughtnet.clinic.patient.service.model.PatientPortalAccessRequestType;
+import com.deepthoughtnet.clinic.patient.service.model.PatientPortalAuthorizedClinicRecord;
 import com.deepthoughtnet.clinic.patient.service.model.PatientRecord;
 import com.deepthoughtnet.clinic.patient.service.model.PatientUpsertCommand;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventCommand;
@@ -244,6 +245,61 @@ public class PatientPortalAccessRequestService {
             recordAudit(tenant.getId(), entity.getId(), "PATIENT_ACCESS_ACTIVATED", null, "Patient access activated", detailsJson(entity));
         }
         return new PatientPortalAccessGrantRecord(tenant.getId(), tenant.getCode(), patient.id(), displayName, normalizedMobile, subject);
+    }
+
+    @Transactional(readOnly = true)
+    public List<PatientPortalAuthorizedClinicRecord> listAuthorizedClinics(String mobile) {
+        String normalizedMobile = normalizeRequiredPhone(mobile);
+        return requestRepository.findByMobileNormalizedOrderByCreatedAtDesc(normalizedMobile).stream()
+                .filter(request -> request.getStatus() == PatientPortalAccessRequestStatus.ACTIVE)
+                .map(request -> toAuthorizedClinicRecord(request, normalizedMobile))
+                .flatMap(java.util.Optional::stream)
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<PatientPortalAccessRequestRecord> findLatestByTenantAndMobile(UUID tenantId, String mobile) {
+        if (tenantId == null) {
+            return Optional.empty();
+        }
+        String normalizedMobile = normalizeRequiredPhone(mobile);
+        return requestRepository.findTopByTenantIdAndMobileNormalizedOrderByCreatedAtDesc(tenantId, normalizedMobile)
+                .map(request -> toRecord(request, tenantRepository.findById(request.getTenantId()).orElse(null), null));
+    }
+
+    @Transactional
+    public PatientPortalAccessGrantRecord switchAuthorizedClinic(String mobile, UUID targetTenantId) {
+        String normalizedMobile = normalizeRequiredPhone(mobile);
+        if (targetTenantId == null) {
+            throw new IllegalArgumentException("Clinic context could not be resolved");
+        }
+        PatientPortalAccessRequestEntity entity = requestRepository.findTopByTenantIdAndMobileNormalizedOrderByCreatedAtDesc(targetTenantId, normalizedMobile)
+                .orElseThrow(() -> new PatientPortalAccessRequestConflictException("No approved access request was found for this account."));
+        if (entity.getStatus() != PatientPortalAccessRequestStatus.ACTIVE) {
+            throw new PatientPortalAccessRequestConflictException("This access request is not currently active.");
+        }
+        TenantEntity tenant = tenantRepository.findById(targetTenantId)
+                .orElseThrow(() -> new IllegalArgumentException("Tenant not found"));
+        PatientRecord patient = ensureLinkedPatient(tenant.getId(), entity, null, entity.getLinkedPatientId());
+        if (patient == null) {
+            throw new PatientPortalAccessRequestConflictException("This approved access request has not been linked to a patient yet.");
+        }
+        if (entity.getLinkedPatientId() != null) {
+            PatientEntity activePatient = patientRepository.findByTenantIdAndId(tenant.getId(), entity.getLinkedPatientId())
+                    .filter(PatientEntity::isActive)
+                    .orElseThrow(() -> new PatientPortalAccessRequestConflictException("This approved access request has not been linked to an active patient yet."));
+            patient = toPatientRecord(activePatient);
+        }
+
+        PatientRecord selectedPatient = patient;
+        String displayName = selectedPatient.fullName();
+        String subject = patientSubject(tenant.getId(), selectedPatient.id());
+        UUID appUserId = appUserProvisioner.upsertAndReturnId(tenant.getId(), subject, selectedPatient.email(), displayName);
+        appUserRepository.findByTenantIdAndId(tenant.getId(), appUserId).ifPresent(appUser -> {
+            appUser.setPatientId(selectedPatient.id());
+            appUser.updateProfile(selectedPatient.email(), displayName);
+        });
+        return new PatientPortalAccessGrantRecord(tenant.getId(), tenant.getCode(), selectedPatient.id(), displayName, normalizedMobile, subject);
     }
 
     private TenantEntity resolveTenant(PatientPortalAccessContext context) {
@@ -519,6 +575,45 @@ public class PatientPortalAccessRequestService {
     private boolean isTerminal(PatientPortalAccessRequestStatus status) {
         return status == PatientPortalAccessRequestStatus.REJECTED
                 || status == PatientPortalAccessRequestStatus.REVOKED;
+    }
+
+    private java.util.Optional<PatientPortalAuthorizedClinicRecord> toAuthorizedClinicRecord(
+            PatientPortalAccessRequestEntity entity,
+            String verifiedMobile
+    ) {
+        if (entity == null || entity.getTenantId() == null) {
+            return java.util.Optional.empty();
+        }
+        TenantEntity tenant = tenantRepository.findById(entity.getTenantId()).orElse(null);
+        if (tenant == null || !"ACTIVE".equalsIgnoreCase(tenant.getStatus())) {
+            return java.util.Optional.empty();
+        }
+
+        PatientEntity patient = entity.getLinkedPatientId() == null
+                ? patientRepository.findByTenantIdAndMobileIgnoreCaseAndActiveTrue(entity.getTenantId(), verifiedMobile).stream()
+                        .min(Comparator.comparing(PatientEntity::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder()))
+                                .thenComparing(PatientEntity::getId))
+                        .orElse(null)
+                : patientRepository.findByTenantIdAndId(entity.getTenantId(), entity.getLinkedPatientId())
+                        .filter(PatientEntity::isActive)
+                        .orElse(null);
+        if (patient == null) {
+            return java.util.Optional.empty();
+        }
+
+        String patientDisplayName = entity.getLinkedPatientDisplayName();
+        if (!StringUtils.hasText(patientDisplayName)) {
+            patientDisplayName = fullName(patient.getFirstName(), patient.getLastName());
+        }
+        return java.util.Optional.of(new PatientPortalAuthorizedClinicRecord(
+                tenant.getId(),
+                tenant.getCode(),
+                tenant.getName(),
+                patient.getId(),
+                patientDisplayName,
+                true,
+                "PATIENT_PORTAL_ACCESS_REQUEST"
+        ));
     }
 
     private String generateAccessCode() {

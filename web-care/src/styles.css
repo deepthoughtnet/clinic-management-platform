@@ -2151,7 +2151,7 @@ input {
 .patient-record-card strong,
 .patient-stat-card strong {
   margin: 0;
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: inherit;
   letter-spacing: -0.02em;
 }
 
@@ -2208,6 +2208,26 @@ input {
   display: grid;
   gap: 0.55rem;
   grid-template-columns: minmax(0, 1fr);
+}
+
+.patient-topbar-before-title {
+  display: flex;
+  align-items: center;
+}
+
+.patient-profile-back-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  width: fit-content;
+  line-height: 1;
+  cursor: pointer;
+  text-align: left;
+}
+
+.patient-profile-back-link:hover,
+.patient-profile-back-link:focus-visible {
+  text-decoration: underline;
 }
 
 .patient-topbar p,
@@ -2367,6 +2387,109 @@ input {
   box-shadow: 0 16px 28px rgba(18, 54, 60, 0.08);
 }
 
+.patient-dashboard-clinic-grid {
+  display: grid;
+  gap: 0.85rem;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.patient-dashboard-clinic-card,
+.patient-dashboard-clinic-doctors {
+  display: grid;
+  gap: 0.4rem;
+  padding: 0.95rem 1rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(18, 54, 60, 0.08);
+  background: rgba(255, 255, 255, 0.8);
+}
+
+.patient-dashboard-clinic-card strong,
+.patient-dashboard-clinic-doctors strong {
+  font-size: 1rem;
+  line-height: 1.3;
+}
+
+.patient-dashboard-clinic-card span,
+.patient-dashboard-clinic-card small,
+.patient-dashboard-clinic-doctors span,
+.patient-dashboard-clinic-doctors small {
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.patient-dashboard-doctor-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.patient-dashboard-doctor-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.1rem;
+  padding: 0.35rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid rgba(15, 122, 117, 0.16);
+  background: rgba(15, 122, 117, 0.08);
+  color: var(--primary-strong);
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.patient-dashboard-network {
+  gap: 0.85rem;
+}
+
+.patient-care-network-list {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.patient-care-network-item {
+  display: grid;
+  gap: 0.35rem;
+  width: 100%;
+  padding: 0.95rem 1rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(18, 54, 60, 0.1);
+  background: rgba(255, 255, 255, 0.88);
+  text-align: left;
+  min-width: 0;
+}
+
+.patient-care-network-item strong,
+.patient-care-network-item span,
+.patient-care-network-item small {
+  min-width: 0;
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
+
+.patient-care-network-item span,
+.patient-care-network-item small {
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.patient-care-network-item.is-selected {
+  border-color: rgba(15, 122, 117, 0.22);
+  background: rgba(15, 122, 117, 0.08);
+  box-shadow: 0 16px 28px rgba(18, 54, 60, 0.06);
+}
+
+.patient-care-network-item:disabled {
+  cursor: default;
+  opacity: 0.92;
+}
+
+.patient-care-network-item:not(:disabled):hover,
+.patient-care-network-item:not(:disabled):focus-visible {
+  transform: translateY(-2px);
+  border-color: rgba(15, 122, 117, 0.22);
+  box-shadow: 0 16px 28px rgba(18, 54, 60, 0.08);
+}
+
 .patient-dashboard-widget {
   gap: 0.85rem;
 }
@@ -2405,8 +2528,10 @@ input {
 
 .patient-dashboard-activity-item {
   display: grid;
-  gap: 0.55rem;
-  padding: 0.85rem 0.95rem;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  align-items: start;
+  padding: 0.7rem 0.85rem;
   border-radius: var(--radius-sm);
   border: 1px solid rgba(18, 54, 60, 0.08);
   background: rgba(255, 255, 255, 0.78);
@@ -2416,19 +2541,35 @@ input {
     border-color 0.18s ease;
 }
 
+.patient-dashboard-activity-item__bullet {
+  width: 0.6rem;
+  height: 0.6rem;
+  margin-top: 0.3rem;
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(15, 122, 117, 0.95), rgba(15, 122, 117, 0.55));
+  box-shadow: 0 0 0 4px rgba(15, 122, 117, 0.09);
+}
+
 .patient-dashboard-activity-item__copy {
   display: grid;
-  gap: 0.15rem;
+  gap: 0.1rem;
 }
 
 .patient-dashboard-activity-item__copy strong {
-  font-size: 0.98rem;
+  font-size: 0.95rem;
+  line-height: 1.35;
 }
 
 .patient-dashboard-activity-item__copy span,
 .patient-dashboard-activity-item small {
   color: var(--muted);
-  line-height: 1.45;
+  line-height: 1.35;
+}
+
+.patient-dashboard-activity-item small {
+  white-space: nowrap;
+  font-size: 0.82rem;
+  padding-top: 0.1rem;
 }
 
 .patient-dashboard-activity-item:hover,
@@ -2502,8 +2643,8 @@ input {
   display: grid;
   gap: 0.05rem;
   color: var(--primary-strong);
-  font-size: clamp(1.1rem, 2.8vw, 1.5rem);
-  line-height: 1.05;
+  font-size: clamp(1rem, 2.2vw, 1.25rem);
+  line-height: 1.1;
 }
 
 .patient-stat-card__featured-date span {
@@ -2526,8 +2667,8 @@ input {
   gap: 0.05rem;
   color: var(--primary-strong);
   font-weight: 700;
-  font-size: clamp(1.1rem, 2.6vw, 1.45rem);
-  line-height: 1.04;
+  font-size: clamp(1rem, 2vw, 1.2rem);
+  line-height: 1.1;
 }
 
 .patient-highlight-card__eyebrow span {
@@ -2605,8 +2746,8 @@ input {
 }
 
 .patient-stat-card strong {
-  font-size: clamp(1.2rem, 4vw, 1.75rem);
-  line-height: 1.08;
+  font-size: clamp(1rem, 2.2vw, 1.3rem);
+  line-height: 1.15;
   word-break: break-word;
 }
 
@@ -2787,8 +2928,15 @@ input {
   font-weight: 700;
 }
 
+.patient-discover-link {
+  font-size: 0.92rem;
+  font-weight: 600;
+  opacity: 0.88;
+}
+
 .panel-caption,
-.patient-form-field span:first-child {
+.patient-form-field span:first-child,
+.patient-filter-field > span {
   font-size: 0.86rem;
   font-weight: 700;
   color: var(--primary-strong);
@@ -2796,6 +2944,13 @@ input {
 
 .patient-booking-grid {
   grid-template-columns: repeat(1, minmax(0, 1fr));
+  align-items: start;
+}
+
+.patient-booking-doctor-list {
+  display: grid;
+  gap: 0.9rem;
+  min-width: 0;
 }
 
 .patient-find-care-panel {
@@ -2870,6 +3025,165 @@ input {
   border-radius: var(--radius-sm);
   border: 1px solid rgba(18, 54, 60, 0.08);
   background: rgba(255, 255, 255, 0.76);
+}
+
+.patient-discovery-stack {
+  display: grid;
+  gap: 1rem;
+}
+
+.patient-discovery-search-panel {
+  gap: 0.85rem;
+}
+
+.patient-discovery-action-row {
+  align-items: center;
+}
+
+.patient-discovery-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding-top: 0.15rem;
+}
+
+.patient-discovery-card {
+  min-height: 100%;
+}
+
+.patient-booking-panel {
+  position: relative;
+  align-self: start;
+  align-content: start;
+  gap: 0.7rem;
+}
+
+.patient-booking-confirmation-panel {
+  margin-top: 0.2rem;
+}
+
+.patient-booking-panel .patient-form-field {
+  gap: 0.6rem;
+}
+
+.patient-filter-field {
+  display: grid;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.patient-select-shell {
+  position: relative;
+  min-width: 0;
+}
+
+.patient-select-shell::after {
+  content: "▾";
+  position: absolute;
+  top: 50%;
+  right: 1rem;
+  transform: translateY(-50%);
+  color: var(--muted);
+  font-size: 0.8rem;
+  pointer-events: none;
+}
+
+.patient-filter-field select {
+  appearance: none;
+  width: 100%;
+  min-height: 3rem;
+  padding: 0.92rem 2.4rem 0.92rem 1rem;
+  border: 1px solid rgba(21, 48, 54, 0.14);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(247, 252, 251, 0.98));
+  color: var(--text);
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease;
+}
+
+.patient-filter-field select:hover {
+  border-color: rgba(15, 122, 117, 0.24);
+}
+
+.patient-filter-field select:focus-visible {
+  outline: none;
+  border-color: rgba(15, 122, 117, 0.42);
+  box-shadow: 0 0 0 3px rgba(15, 122, 117, 0.12);
+}
+
+.booking-contact-panel {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.booking-contact-panel__header {
+  display: grid;
+  gap: 0.18rem;
+}
+
+.booking-contact-panel__header strong {
+  font-size: 1.05rem;
+  line-height: 1.2;
+}
+
+.booking-contact-panel__header span,
+.booking-contact-panel__header p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.booking-contact-panel__details {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.95rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(18, 54, 60, 0.08);
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.booking-contact-panel__row {
+  display: grid;
+  gap: 0.18rem;
+  min-width: 0;
+}
+
+.booking-contact-panel__label {
+  color: var(--primary-strong);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.booking-contact-panel__row p,
+.booking-contact-panel__row strong {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.booking-service-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.booking-service-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.9rem;
+  padding: 0.34rem 0.65rem;
+  border-radius: 999px;
+  border: 1px solid rgba(15, 122, 117, 0.14);
+  background: rgba(15, 122, 117, 0.08);
+  color: var(--primary-strong);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.booking-service-pill--muted {
+  border-color: rgba(18, 54, 60, 0.12);
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--muted);
 }
 
 .patient-subcard-group__heading {
@@ -4195,6 +4509,10 @@ input {
     grid-column: span 2;
   }
 
+  .patient-care-network-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .public-preview-grid,
   .public-detail-grid,
   .public-careai-panel {
@@ -4213,7 +4531,22 @@ input {
   .patient-content-grid,
   .patient-prescription-grid,
   .patient-booking-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+    align-items: start;
+  }
+
+  .patient-booking-panel {
+    position: sticky;
+    top: 1rem;
+    max-height: calc(100dvh - 2rem);
+    overflow: visible;
+  }
+
+  .patient-booking-doctor-list {
+    max-height: calc(100dvh - 18rem);
+    overflow: auto;
+    padding-right: 0.15rem;
+    scrollbar-gutter: stable;
   }
 }
 
@@ -4347,6 +4680,11 @@ input {
 
   .patient-dashboard-dual-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
+
+  .patient-dashboard-clinic-grid {
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
     align-items: start;
   }
 
@@ -5081,6 +5419,10 @@ input {
   .patient-prescription-grid,
   .patient-booking-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .patient-booking-grid {
+    align-items: start;
   }
 
   .patient-careai-page .patient-content-grid {
