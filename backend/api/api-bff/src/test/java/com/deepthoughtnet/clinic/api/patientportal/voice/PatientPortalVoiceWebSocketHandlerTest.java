@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -13,7 +14,9 @@ import com.deepthoughtnet.clinic.ai.careai.persistence.CareAiConversationSession
 import com.deepthoughtnet.clinic.ai.careai.persistence.db.CareAiConversationEntity;
 import com.deepthoughtnet.clinic.ai.careai.persistence.db.CareAiWorkflowEntity;
 import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiStateResponse;
+import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiProgressEvent;
 import com.deepthoughtnet.clinic.api.patientportal.voice.PatientPortalVoiceAssistantService.PatientPortalVoiceTurnResponse;
+import com.deepthoughtnet.clinic.api.patientportal.voice.PatientPortalVoiceAssistantService.PatientPortalVoiceProgressAudio;
 import com.deepthoughtnet.clinic.api.voice.VoiceTestProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.net.URI;
@@ -27,6 +30,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Consumer;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
@@ -63,7 +67,7 @@ class PatientPortalVoiceWebSocketHandlerTest {
                 List.of(),
                 List.of("10:30")
         );
-        when(assistantService.processAudioTurn(any(), any(), any(), any())).thenReturn(
+        when(assistantService.processAudioTurn(any(), any(), any(), any(), any())).thenReturn(
                 new PatientPortalVoiceTurnResponse(
                         "req-voice-1",
                         "I want to book an appointment.",
@@ -99,11 +103,69 @@ class PatientPortalVoiceWebSocketHandlerTest {
         assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"session.started\""));
         assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"transcript.final\"") && payload.contains("book an appointment"));
         assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"assistant.text\"") && payload.contains("confirm the 10:30 slot"));
+        assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"assistant.audio.chunk\""));
         assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"assistant.audio.end\"") && payload.contains("\"contentType\":\"audio/wav\""));
+        assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"turn.tts.complete\""));
         assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"turn.complete\"") && payload.contains("\"currentIntent\":\"BOOK_APPOINTMENT\""));
         assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"session.started\"") && payload.contains("\"voiceConfig\""));
         assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"turn.complete\"") && payload.contains("\"totalDurationMs\":260"));
-        verify(assistantService).processAudioTurn(any(), any(), any(), any());
+        int audioEndIndex = indexOfPayload(fixture.payloads(), "\"type\":\"assistant.audio.end\"");
+        int ttsCompleteIndex = indexOfPayload(fixture.payloads(), "\"type\":\"turn.tts.complete\"");
+        int turnCompleteIndex = indexOfPayload(fixture.payloads(), "\"type\":\"turn.complete\"");
+        assertThat(audioEndIndex).isGreaterThanOrEqualTo(0);
+        assertThat(ttsCompleteIndex).isGreaterThan(audioEndIndex);
+        assertThat(turnCompleteIndex).isGreaterThan(ttsCompleteIndex);
+        verify(assistantService).processAudioTurn(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void liveCareAiProgressIsDeliveredAsSafeIntermediateEvent() throws Exception {
+        PatientPortalVoiceAssistantService assistantService = mock(PatientPortalVoiceAssistantService.class);
+        CareAiConversationPersistenceService persistenceService = mock(CareAiConversationPersistenceService.class);
+        when(assistantService.synthesizeProgressAudio(any(), anyString()))
+                .thenReturn(new PatientPortalVoiceProgressAudio(
+                        "audio/wav",
+                        Base64.getEncoder().encodeToString("progress-audio".getBytes(StandardCharsets.UTF_8)),
+                        "elevenlabs"
+                ));
+        doAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            Consumer<PatientPortalCareAiProgressEvent> progress = invocation.getArgument(4);
+            progress.accept(new PatientPortalCareAiProgressEvent(
+                    "turn-1",
+                    "skill-1",
+                    "doctor.find",
+                    "checking-doctors",
+                    "WAITING_FOR_TOOL",
+                    "Let me check available doctors."
+            ));
+            return new PatientPortalVoiceTurnResponse(
+                    "request-1", "Find a doctor", "I found a doctor.", null,
+                    null, null, "stt", "PATIENT_PORTAL_CAREAI", "tts",
+                    1L, 1L, 1L, 3L, 10L, null
+            );
+        }).when(assistantService).processAudioTurn(any(), any(), any(), any(), any());
+
+        PatientPortalVoiceWebSocketHandler handler = new PatientPortalVoiceWebSocketHandler(
+                new ObjectMapper(), assistantService, new VoiceTestProperties(), persistenceService);
+        SessionFixture fixture = new SessionFixture(TENANT_ID, PATIENT_ID, APP_USER_ID, Set.of("PATIENT"), "patient-progress-1");
+        String audioBase64 = Base64.getEncoder().encodeToString("voice".getBytes(StandardCharsets.UTF_8));
+
+        handler.afterConnectionEstablished(fixture.session);
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"session.start\",\"language\":\"auto\"}"));
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.chunk\",\"sequence\":1,\"totalChunks\":1,\"audioBase64Chunk\":\"" + audioBase64 + "\"}"));
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.end\",\"totalChunks\":1}"));
+
+        assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"turn.progress\"")
+                && payload.contains("\"progressKey\":\"checking-doctors\"")
+                && payload.contains("\"state\":\"WAITING_FOR_TOOL\"")
+                && payload.contains("Let me check available doctors."));
+        assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"assistant.progress.audio.chunk\"")
+                && payload.contains("\"skillExecutionId\":\"skill-1\""));
+        assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"assistant.progress.audio.end\"")
+                && payload.contains("\"contentType\":\"audio/wav\""));
+        assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"turn.complete\""));
+        assertThat(fixture.payloads()).noneMatch(payload -> payload.contains("sessionToken") || payload.contains("Authorization"));
     }
 
     @Test
@@ -190,7 +252,7 @@ class PatientPortalVoiceWebSocketHandlerTest {
     void assistantFailuresAreSanitizedBeforeReachingThePatientClient() throws Exception {
         PatientPortalVoiceAssistantService assistantService = mock(PatientPortalVoiceAssistantService.class);
         CareAiConversationPersistenceService persistenceService = mock(CareAiConversationPersistenceService.class);
-        when(assistantService.processAudioTurn(any(), any(), any(), any()))
+        when(assistantService.processAudioTurn(any(), any(), any(), any(), any()))
                 .thenThrow(new IllegalStateException("ElevenLabs synthesis failed: http://internal.example/token=secret"));
 
         PatientPortalVoiceWebSocketHandler handler = new PatientPortalVoiceWebSocketHandler(
@@ -245,5 +307,14 @@ class PatientPortalVoiceWebSocketHandlerTest {
         private List<String> payloads() {
             return payloads;
         }
+    }
+
+    private static int indexOfPayload(List<String> payloads, String fragment) {
+        for (int index = 0; index < payloads.size(); index++) {
+            if (payloads.get(index).contains(fragment)) {
+                return index;
+            }
+        }
+        return -1;
     }
 }

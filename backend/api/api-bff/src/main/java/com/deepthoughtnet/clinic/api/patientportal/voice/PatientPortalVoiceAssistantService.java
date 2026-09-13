@@ -2,6 +2,7 @@ package com.deepthoughtnet.clinic.api.patientportal.voice;
 
 import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiMessageRequest;
 import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiMessageResponse;
+import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiProgressEvent;
 import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiResponseComposerService;
 import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiService;
 import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiStateResponse;
@@ -16,6 +17,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Consumer;
 import java.time.Duration;
 import java.time.Instant;
 import org.slf4j.Logger;
@@ -72,6 +74,43 @@ public class PatientPortalVoiceAssistantService {
             String contentType,
             String originalFilename,
             String language
+    ) {
+        return processAudioTurn(audioBytes, contentType, originalFilename, language, null);
+    }
+
+    /** Synthesizes only ephemeral progress speech through the existing voice provider path. */
+    public PatientPortalVoiceProgressAudio synthesizeProgressAudio(
+            PatientPortalCareAiProgressEvent progress,
+            String language
+    ) {
+        if (progress == null || !StringUtils.hasText(progress.acknowledgement())) {
+            return null;
+        }
+        try {
+            String voiceText = voiceTextNormalizer.normalizeForVoice(progress.acknowledgement(), language);
+            VoiceSynthesisResult synthesis = voiceOrchestratorService.synthesizeAssistantText(voiceText, language);
+            byte[] audio = playableAudioBytes(synthesis);
+            if (audio == null || audio.length == 0 || !StringUtils.hasText(synthesis.contentType())) {
+                return null;
+            }
+            return new PatientPortalVoiceProgressAudio(
+                    synthesis.contentType(),
+                    Base64.getEncoder().encodeToString(audio),
+                    synthesis.providerName()
+            );
+        } catch (RuntimeException ex) {
+            log.debug("patient.voice.progress.tts.unavailable skillExecutionId={} reason={}",
+                    progress.skillExecutionId(), ex.getClass().getSimpleName());
+            return null;
+        }
+    }
+
+    public PatientPortalVoiceTurnResponse processAudioTurn(
+            byte[] audioBytes,
+            String contentType,
+            String originalFilename,
+            String language,
+            Consumer<PatientPortalCareAiProgressEvent> progressSink
     ) {
         Instant requestStart = Instant.now();
         log.info("patient.voice.turn.request.received contentType={} sizeBytes={} language={}",
@@ -161,7 +200,8 @@ public class PatientPortalVoiceAssistantService {
         Instant careAiStart = Instant.now();
         log.info("patient.voice.careai.start");
         PatientPortalCareAiMessageResponse careAiResponse = patientPortalCareAiService.messageFromVoice(
-                new PatientPortalCareAiMessageRequest(transcription.transcript(), language)
+                new PatientPortalCareAiMessageRequest(transcription.transcript(), language),
+                progressSink
         );
         long careAiDurationMs = Duration.between(careAiStart, Instant.now()).toMillis();
         log.info("patient.voice.careai.complete durationMs={}", careAiDurationMs);
@@ -381,6 +421,13 @@ public class PatientPortalVoiceAssistantService {
             long totalDurationMs,
             long captureBytes,
             String ttsFallbackReason
+    ) {
+    }
+
+    public record PatientPortalVoiceProgressAudio(
+            String contentType,
+            String audioBase64,
+            String provider
     ) {
     }
 }

@@ -11,6 +11,8 @@ class PatientPortalCareAiToolRegistryTest {
     void findDoctorRequiresDoctorOrSpecialityMetadata() {
         PatientPortalCareAiToolDefinition definition = registry.definitionFor(PatientPortalCareAiToolType.FIND_DOCTOR);
         assertThat(definition.requiredEntities()).contains(PatientPortalCareAiEntityType.DOCTOR, PatientPortalCareAiEntityType.SPECIALITY);
+        assertThat(definition.skillId()).isEqualTo("doctor.find");
+        assertThat(definition.authorizationPolicy()).isEqualTo(PatientPortalCareAiSkillAuthorizationPolicy.PATIENT_CONTEXT_AND_PUBLIC_DISCOVERY);
     }
 
     @Test
@@ -28,6 +30,7 @@ class PatientPortalCareAiToolRegistryTest {
                 PatientPortalCareAiEntityType.TIME_SLOT
         );
         assertThat(definition.confirmationRequired()).isTrue();
+        assertThat(definition.confirmationPolicy()).isEqualTo(PatientPortalCareAiSkillConfirmationPolicy.REQUIRED);
     }
 
     @Test

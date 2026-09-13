@@ -10,6 +10,7 @@ enum PatientPortalCareAiEntityType {
     TIME_WINDOW,
     SPECIALITY,
     LOCATION,
+    SERVICE,
     CONFIRMATION,
     CANCELLATION,
     RESET

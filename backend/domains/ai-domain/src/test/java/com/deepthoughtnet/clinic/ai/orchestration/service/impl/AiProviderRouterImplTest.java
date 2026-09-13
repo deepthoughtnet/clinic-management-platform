@@ -62,6 +62,62 @@ class AiProviderRouterImplTest {
         assertEquals(3, candidates.size());
     }
 
+    @Test
+    void excludesMockFromNonTestRuntimeChain() {
+        AiProvider mock = new StubProvider("MOCK");
+        AiProvider groq = new StubProvider("GROQ");
+        AiProvider gemini = new StubProvider("GEMINI");
+        AiProviderRouterImpl router = new AiProviderRouterImpl(
+                List.of(mock, groq, gemini), "GEMINI,GROQ,MOCK", false);
+
+        List<AiProvider> candidates = router.resolveCandidates(AiTaskType.GENERIC_EXTRACTION);
+
+        assertEquals(List.of("GEMINI", "GROQ"),
+                candidates.stream().map(AiProvider::providerName).toList());
+    }
+
+    @Test
+    void ordersSarvamAfterGroqAsFinalRealFallback() {
+        AiProvider sarvam = new StubProvider("SARVAM");
+        AiProvider groq = new StubProvider("GROQ");
+        AiProvider gemini = new StubProvider("GEMINI");
+        AiProviderRouterImpl router = new AiProviderRouterImpl(
+                List.of(sarvam, groq, gemini), "GEMINI,GROQ,SARVAM", false);
+
+        assertEquals(List.of("GEMINI", "GROQ", "SARVAM"),
+                router.resolveCandidates(AiTaskType.GENERIC_EXTRACTION).stream()
+                        .map(AiProvider::providerName).toList());
+    }
+
+    @Test
+    void usesSarvamFirstOnlyForAivaV2Workload() {
+        AiProvider sarvam = new StubProvider("SARVAM");
+        AiProvider groq = new StubProvider("GROQ");
+        AiProvider gemini = new StubProvider("GEMINI");
+        AiProviderRouterImpl router = new AiProviderRouterImpl(
+                List.of(groq, gemini, sarvam), "GEMINI,GROQ,SARVAM", false,
+                "SARVAM,GEMINI,GROQ", "GEMINI,GROQ", null);
+
+        assertEquals(List.of("SARVAM", "GEMINI", "GROQ"),
+                router.resolveCandidates(null, AiTaskType.GENERIC_EXTRACTION,
+                                "patient-portal-aiva-v2-decision").stream()
+                        .map(AiProvider::providerName).toList());
+    }
+
+    @Test
+    void keepsSarvamOutOfClinicalWorkload() {
+        AiProvider sarvam = new StubProvider("SARVAM");
+        AiProvider groq = new StubProvider("GROQ");
+        AiProvider gemini = new StubProvider("GEMINI");
+        AiProviderRouterImpl router = new AiProviderRouterImpl(
+                List.of(sarvam, groq, gemini), "GEMINI,GROQ,SARVAM", false,
+                "SARVAM,GEMINI,GROQ", "GEMINI,GROQ", null);
+
+        assertEquals(List.of("GEMINI", "GROQ"),
+                router.resolveCandidates(null, AiTaskType.CLINICAL_REASONING, "clinical-reasoning").stream()
+                        .map(AiProvider::providerName).toList());
+    }
+
     private static final class StubProvider implements AiProvider {
         private final String name;
         private final AiProviderStatus status;

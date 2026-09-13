@@ -3481,6 +3481,31 @@ input {
   max-width: 56rem;
 }
 
+.patient-careai-engine-selector {
+  display: grid;
+  gap: 0.35rem;
+  justify-items: end;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.patient-careai-engine-selector > div {
+  display: inline-flex;
+  gap: 0.35rem;
+}
+
+.patient-careai-engine-selector .careai-prompt-chip {
+  min-height: 2rem;
+  padding: 0.35rem 0.75rem;
+}
+
+.patient-careai-engine-selector .careai-prompt-chip.is-selected {
+  background: var(--primary);
+  color: #fff;
+}
+
 .patient-careai-secure-badge {
   display: inline-flex;
   align-items: center;

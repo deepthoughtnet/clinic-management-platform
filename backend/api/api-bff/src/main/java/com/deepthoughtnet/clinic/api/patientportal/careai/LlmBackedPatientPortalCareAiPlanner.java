@@ -81,13 +81,21 @@ public class LlmBackedPatientPortalCareAiPlanner implements PatientPortalCareAiP
                     You are a planning assistant for a patient appointment workflow.
                     Use the current conversation state and latest user message to infer the next safe planning update only.
                     Return strict JSON with keys:
-                    intent, doctorName, speciality, preferredDate, preferredTimeWindow, confirmation, reason, topicSwitch, sideTopic.
-                    intent must be one of BOOK_APPOINTMENT, RESCHEDULE_APPOINTMENT, CANCEL_APPOINTMENT, CHECK_APPOINTMENT, or null.
+                    dialogAct, intent, doctorName, speciality, preferredDate, preferredTimeWindow,
+                    confirmation, correctionTarget, alternativeTarget, selectionOrdinal, selectionTarget,
+                    reason, topicSwitch, sideTopic.
+                    dialogAct must be one of START_REQUEST, PROVIDE_INFORMATION, CHANGE_INFORMATION,
+                    SELECT_OPTION, REQUEST_ALTERNATIVE, CONFIRM, REJECT, ASK_QUESTION, ABANDON_WORKFLOW,
+                    END_CONVERSATION, SMALL_TALK, or UNKNOWN.
+                    intent must be one of FIND_DOCTOR, BOOK_APPOINTMENT, RESCHEDULE_APPOINTMENT, CANCEL_APPOINTMENT, CHECK_APPOINTMENT, or null.
                     preferredDate should be yyyy-MM-dd when confidently known, otherwise null.
                     preferredTimeWindow may be morning, afternoon, evening, night, before lunch, after lunch, now, HH:mm, or null.
                     confirmation must be confirm, reject, or null.
                     topicSwitch must be true only if the patient is clearly abandoning the current booking topic.
                     sideTopic may be CLINIC_TIMINGS, DOCTOR_AVAILABILITY, APPOINTMENT_STATUS, or null.
+                    correctionTarget and alternativeTarget may be doctor, clinic, speciality, date, time, slot, or null.
+                    selectionOrdinal must be an integer only when the patient selects a numbered option.
+                    selectionTarget may be doctor, clinic, slot, appointment, or null.
                     Do not execute actions. Do not invent patient identity. Do not return medical advice, diagnosis, or irreversible actions.
                     If the user is answering a missing field from the current state, prefer filling that field over repeating the same question.
                     """);
@@ -131,7 +139,12 @@ public class LlmBackedPatientPortalCareAiPlanner implements PatientPortalCareAiP
                     parseConfirmation(stringValue(structured, "confirmation")),
                     trimToLength(stringValue(structured, "reason"), 160),
                     parseTopicSwitch(structured.get("topicSwitch")),
-                    trimToLength(stringValue(structured, "sideTopic"), 64)
+                    trimToLength(stringValue(structured, "sideTopic"), 64),
+                    parseDialogAct(stringValue(structured, "dialogAct")),
+                    trimToLength(stringValue(structured, "correctionTarget"), 32),
+                    trimToLength(stringValue(structured, "alternativeTarget"), 32),
+                    parseInteger(structured.get("selectionOrdinal")),
+                    trimToLength(stringValue(structured, "selectionTarget"), 32)
             );
             return isActionable(decision) ? decision : null;
         } catch (Exception ex) {
@@ -150,7 +163,12 @@ public class LlmBackedPatientPortalCareAiPlanner implements PatientPortalCareAiP
                 || decision.confirmationDecision() != PatientPortalCareAiPlannerConfirmationDecision.NONE
                 || StringUtils.hasText(decision.reason())
                 || decision.topicSwitch()
-                || StringUtils.hasText(decision.sideTopic()));
+                || StringUtils.hasText(decision.sideTopic())
+                || decision.dialogAct() != null
+                || StringUtils.hasText(decision.correctionTarget())
+                || StringUtils.hasText(decision.alternativeTarget())
+                || decision.selectionOrdinal() != null
+                || StringUtils.hasText(decision.selectionTarget()));
     }
 
     private Map<String, Object> payload(AiOrchestrationResponse response) throws Exception {
@@ -216,6 +234,31 @@ public class LlmBackedPatientPortalCareAiPlanner implements PatientPortalCareAiP
         }
         String normalized = String.valueOf(rawValue).trim().toLowerCase(Locale.ROOT);
         return List.of("true", "yes", "switch", "switch_topic").contains(normalized);
+    }
+
+    private PatientPortalCareAiDialogAct parseDialogAct(String value) {
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
+        try {
+            return PatientPortalCareAiDialogAct.valueOf(value.trim().toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException ex) {
+            return null;
+        }
+    }
+
+    private Integer parseInteger(Object value) {
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        if (!StringUtils.hasText(value == null ? null : String.valueOf(value))) {
+            return null;
+        }
+        try {
+            return Integer.valueOf(String.valueOf(value).trim());
+        } catch (NumberFormatException ex) {
+            return null;
+        }
     }
 
     private String stringValue(Map<String, Object> structured, String key) {

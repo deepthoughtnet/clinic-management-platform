@@ -48,7 +48,8 @@ public class GeminiAiProviderAdapter implements AiProvider {
                 request.request() == null ? null : request.request().taskType(),
                 request.modelOverride(),
                 request.thinkingBudget(),
-                request.strictJsonMode()
+                request.strictJsonMode(),
+                request.structuredOutputSchema()
         ));
         if (response == null || response.text() == null || response.text().isBlank()) {
             throw new IllegalStateException("Gemini returned an empty response");

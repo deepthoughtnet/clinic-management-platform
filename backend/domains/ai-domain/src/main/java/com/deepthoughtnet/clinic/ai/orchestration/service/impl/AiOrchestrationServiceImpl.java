@@ -53,6 +53,8 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
     private final ObjectMapper objectMapper;
     private boolean soapTraceEnabled;
     private boolean soapTraceRawResponseEnabled;
+    private String aivaV2ProviderChain = "SARVAM,GEMINI,GROQ";
+    private String clinicalProviderChain = "GEMINI,GROQ";
 
     public AiOrchestrationServiceImpl(AiPromptTemplateRegistryService templateRegistry,
                                       AiProviderRouter providerRouter,
@@ -80,6 +82,16 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
         this.soapTraceRawResponseEnabled = soapTraceRawResponseEnabled;
     }
 
+    @Value("${clinic.ai.aiva-v2.provider-chain:${AIVA_V2_PROVIDER_CHAIN:SARVAM,GEMINI,GROQ}}")
+    void setAivaV2ProviderChain(String providerChain) {
+        this.aivaV2ProviderChain = providerChain;
+    }
+
+    @Value("${clinic.ai.clinical.provider-chain:${CLINICAL_AI_PROVIDER_CHAIN:GEMINI,GROQ}}")
+    void setClinicalProviderChain(String providerChain) {
+        this.clinicalProviderChain = providerChain;
+    }
+
     @Override
     @Transactional
     public AiOrchestrationResponse complete(AiOrchestrationRequest request) {
@@ -96,11 +108,18 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
         String evidenceSummary = summarizeEvidence(request.evidence());
         String userPrompt = render(template.userPromptTemplate(), renderedVariables, evidenceSummary);
         AiGuardrailService.ExecutionSettings executionSettings = guardrailService.resolveExecutionSettings(request.tenantId(), userPrompt, requestWithTaskDefaults, null);
-        boolean strictJson = requiresStrictJson(template);
+        boolean strictJson = requiresStrictJson(template) || request.structuredOutputSchema() != null;
         String schemaMode = executionSettings.compactMode()
                 ? "COMPACT_JSON"
                 : (strictJson ? "STRICT_JSON" : "FREEFORM");
-        List<AiProvider> candidates = providerRouter.resolveCandidates(request.taskType());
+        List<AiProvider> candidates = providerRouter.resolveCandidates(
+                request.productCode(), request.taskType(), request.useCaseCode());
+        // Preserve the legacy router contract for older adapters/tests that do not
+        // implement workload-aware resolution. AIVA V2 never falls back to the
+        // legacy task-only route because that could reintroduce the global chain.
+        if (candidates.isEmpty() && !isAivaV2DecisionRequest(request)) {
+            candidates = providerRouter.resolveCandidates(request.taskType());
+        }
         AiProvider candidateForLog = candidates.isEmpty() ? null : candidates.get(0);
         if (isSoapTrace(request) && soapTraceEnabled) {
             log.info("SOAP-DRAFT-TRACE stage=PROMPT_RENDERED traceId={} tenantId={} consultationId={} patientId={} templateKey={} provider={} renderedPromptChars={} estimatedPromptTokens={} outputTokenLimit={} retryCount={} inputKeyNames={} aiPromptContextChars={} clinicalContextSummaryChars={} clinicalContextJsonChars={} strictJsonMode={} expectedResponseFieldNames={} promptHash={}",
@@ -123,7 +142,8 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                     sha256Hex(userPrompt));
         }
         String fallbackOrder = buildFallbackOrder(candidates);
-        log.info("[AI-REQUEST] taskType={} provider={} resolvedModel={} requestedMaxTokens={} effectiveMaxTokens={} guardrailLimit={} temperature={} topP={} schemaMode={} compactMode={} promptChars={} estimatedPromptTokens={} thinkingBudget={} strictJsonMode={} fallbackOrder={}",
+        log.info("[AI-REQUEST] effectiveWorkload={} taskType={} provider={} resolvedModel={} requestedMaxTokens={} effectiveMaxTokens={} guardrailLimit={} temperature={} topP={} schemaMode={} compactMode={} promptChars={} estimatedPromptTokens={} thinkingBudget={} strictJsonMode={} effectiveProviderChain={} fallbackOrder={}",
+                effectiveWorkload(request),
                 request.taskType(),
                 candidateForLog == null ? null : candidateForLog.providerName(),
                 generationConfig.modelOverride(),
@@ -138,6 +158,7 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                 executionSettings.estimatedPromptTokens(),
                 generationConfig.thinkingBudget(),
                 generationConfig.strictJsonMode(),
+                effectiveProviderChain(request, candidates),
                 fallbackOrder);
         AiOrchestrationRequest executionRequest = applyMaxTokens(requestWithTaskDefaults, executionSettings.effectiveMaxTokens());
         renderedVariables = renderVariables(executionRequest, template);
@@ -156,7 +177,7 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
         for (int i = 0; i < candidates.size(); i++) {
             AiProvider candidate = candidates.get(i);
             AiProviderRequest providerRequest = new AiProviderRequest(
-                    executionRequest,
+                executionRequest,
                     template.version(),
                     template.systemPrompt(),
                     userPrompt,
@@ -165,7 +186,8 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                     requestId,
                     "GEMINI".equalsIgnoreCase(candidate.providerName()) ? generationConfig.modelOverride() : null,
                     "GEMINI".equalsIgnoreCase(candidate.providerName()) ? generationConfig.thinkingBudget() : null,
-                    generationConfig.strictJsonMode()
+                    generationConfig.strictJsonMode() || executionRequest.structuredOutputSchema() != null,
+                    executionRequest.structuredOutputSchema()
             );
             long providerStarted = System.currentTimeMillis();
             soapStage = "PROVIDER_REQUEST";
@@ -273,7 +295,8 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                             requestId,
                             "GEMINI".equalsIgnoreCase(candidate.providerName()) ? generationConfig.modelOverride() : null,
                             "GEMINI".equalsIgnoreCase(candidate.providerName()) ? generationConfig.thinkingBudget() : null,
-                            generationConfig.strictJsonMode()
+                            generationConfig.strictJsonMode() || retryRequest.structuredOutputSchema() != null,
+                            retryRequest.structuredOutputSchema()
                     );
                     long retryStarted = System.currentTimeMillis();
                     soapStage = "PROVIDER_REQUEST";
@@ -369,6 +392,23 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                 }
                 soapStage = "SOAP_PARSE";
                 ParsedOutput parsed = parseProviderOutput(providerResponse, template);
+                if (isAivaV2DecisionRequest(executionRequest)
+                        && !hasAivaV2DecisionEnvelope(providerResponse)) {
+                    String reason = "AIVA V2 provider response did not contain a valid decision envelope.";
+                    log.info("AI_PROVIDER_ATTEMPT_TRACE providerAttempted={} providerAvailable=true providerResult=FAILURE "
+                            + "failureCategory=SEMANTIC_VALIDATION_FAILURE httpStatusClass=NONE fallbackEligible={} fallbackAttempted={} "
+                                    + "fallbackResult={} nextProvider={} rawResponseValidJson={} decisionEnvelopeValid=false "
+                                    + "schemaRejected=false parseRejected=false semanticRejected=true timeout=false configurationMissing=false",
+                            candidate.providerName(), i + 1 < candidates.size(), i + 1 < candidates.size(),
+                            i + 1 < candidates.size() ? "PENDING" : "SAFE_UNAVAILABLE",
+                            i + 1 < candidates.size() ? candidates.get(i + 1).providerName() : "NONE",
+                            isValidJsonResponse(providerResponse));
+                    lastFailure = AiProviderException.retryable(reason, null, candidate.providerName(),
+                            providerResponse.model(), null, null);
+                    lastRetryableFailure = lastFailure;
+                    provider = candidate;
+                    continue;
+                }
                 if (shouldAdvanceToNextProvider(executionRequest, parsed)) {
                     log.warn("AI provider returned incomplete structured output. requestId={}, provider={}, attempt={}, taskType={}, parseStatus={}, finishReason={}, useCaseCode={}",
                             requestId,
@@ -390,8 +430,15 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                     provider = candidate;
                     continue;
                 }
-                    response = toResponse(executionRequest, requestId, provider, providerResponse, template, request.evidence(),
+                response = toResponse(executionRequest, requestId, provider, providerResponse, template, request.evidence(),
                         started, fallbackUsed, fallbackUsed ? "Fallback provider was used. Please verify before acting." : null, parsed);
+                log.info("AI_PROVIDER_ATTEMPT_TRACE providerAttempted={} providerAvailable=true providerResult=SUCCESS "
+                                + "failureCategory=SUCCESS httpStatusClass=NONE fallbackEligible=false fallbackAttempted={} "
+                                + "fallbackResult=NOT_ATTEMPTED rawResponseValidJson={} decisionEnvelopeValid={} "
+                                + "schemaRejected=false parseRejected=false semanticRejected=false "
+                                + "timeout=false configurationMissing=false",
+                        candidate.providerName(), i + 1 < candidates.size(), isValidJsonResponse(providerResponse),
+                        !isAivaV2DecisionRequest(executionRequest) || hasAivaV2DecisionEnvelope(providerResponse));
                 break;
             } catch (AiProviderException ex) {
                 if (isSoapTrace(request) && soapTraceEnabled) {
@@ -415,6 +462,12 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                         ex.statusCode(),
                         System.currentTimeMillis() - providerStarted,
                         safeMessage(ex));
+                log.info("AI_PROVIDER_ATTEMPT_TRACE providerAttempted={} providerAvailable=true providerResult=FAILURE "
+                                + "failureCategory={} httpStatusClass={} fallbackEligible={} fallbackAttempted={} "
+                                + "fallbackResult={} schemaRejected={} parseRejected={} semanticRejected={} timeout={} configurationMissing={}",
+                        candidate.providerName(), classifyProviderFailure(ex), statusClass(ex.statusCode()), ex.retryable(),
+                        i + 1 < candidates.size(), i + 1 < candidates.size() ? "PENDING" : "SAFE_UNAVAILABLE",
+                        isSchemaFailure(ex), isParseFailure(ex), false, isTimeout(ex), isConfigurationMissing(ex));
                 if (!ex.retryable()) {
                     throw ex;
                 }
@@ -438,6 +491,12 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                         candidate.providerName(),
                         System.currentTimeMillis() - providerStarted,
                         safeMessage(ex));
+                log.info("AI_PROVIDER_ATTEMPT_TRACE providerAttempted={} providerAvailable=true providerResult=FAILURE "
+                                + "failureCategory={} httpStatusClass=NONE fallbackEligible=true fallbackAttempted={} "
+                                + "fallbackResult={} schemaRejected={} parseRejected={} semanticRejected=false timeout={} configurationMissing={}",
+                        candidate.providerName(), classifyProviderFailure(ex), i + 1 < candidates.size(),
+                        i + 1 < candidates.size() ? "PENDING" : "SAFE_UNAVAILABLE", isSchemaFailure(ex),
+                        isParseFailure(ex), isTimeout(ex), isConfigurationMissing(ex));
                 lastRetryableFailure = AiProviderException.retryable(
                         safeMessage(ex),
                         null,
@@ -455,6 +514,9 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
             String errorMessage = "AI providers are temporarily unavailable. Please retry.";
             response = fallbackResponse(request, requestId, template, evidenceSummary, started, errorMessage);
             lastFailure = lastRetryableFailure == null ? lastFailure : lastRetryableFailure;
+            log.info("AI_PROVIDER_ATTEMPT_TRACE providerAttempted=NONE providerAvailable=false providerResult=SAFE_UNAVAILABLE "
+                    + "failureCategory=CONFIG_MISSING httpStatusClass=NONE fallbackEligible=false fallbackAttempted=false "
+                    + "fallbackResult=SAFE_UNAVAILABLE schemaRejected=false parseRejected=false semanticRejected=false timeout=false configurationMissing=true");
         }
 
         auditService.record(new AiRequestAuditCommand(
@@ -615,7 +677,7 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                 maxTokens,
                 request.temperature(),
                 request.correlationId(),
-                request.useCaseCode()
+                request.useCaseCode(), request.structuredOutputSchema()
         );
     }
 
@@ -644,7 +706,7 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                 nextMaxTokens,
                 request.temperature(),
                 request.correlationId(),
-                request.useCaseCode()
+                request.useCaseCode(), request.structuredOutputSchema()
         );
     }
 
@@ -784,6 +846,44 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
         );
     }
 
+    private String classifyProviderFailure(Throwable ex) {
+        if (ex == null) return "PARSE_FAILURE";
+        int status = ex instanceof AiProviderException providerException && providerException.statusCode() != null
+                ? providerException.statusCode() : 0;
+        if (status == 401 || status == 403) return "AUTH_FAILURE";
+        if (status == 429) return "RATE_LIMIT";
+        if (status == 400) return "HTTP_400_SCHEMA";
+        if (status >= 500) return "HTTP_5XX";
+        if (isTimeout(ex)) return "TIMEOUT";
+        if (isConfigurationMissing(ex)) return "CONFIG_MISSING";
+        return isSchemaFailure(ex) ? "INVALID_STRUCTURED_OUTPUT" : "PARSE_FAILURE";
+    }
+
+    private String statusClass(Integer status) {
+        if (status == null) return "NONE";
+        return (status / 100) + "XX";
+    }
+
+    private boolean isTimeout(Throwable error) {
+        String message = safeMessage(error).toLowerCase(java.util.Locale.ROOT);
+        return message.contains("timeout") || message.contains("timed out");
+    }
+
+    private boolean isConfigurationMissing(Throwable error) {
+        String message = safeMessage(error).toLowerCase(java.util.Locale.ROOT);
+        return message.contains("not configured") || message.contains("api key") || message.contains("configuration");
+    }
+
+    private boolean isSchemaFailure(Throwable error) {
+        String message = safeMessage(error).toLowerCase(java.util.Locale.ROOT);
+        return message.contains("schema") || message.contains("structured output") || message.contains("json");
+    }
+
+    private boolean isParseFailure(Throwable error) {
+        String message = safeMessage(error).toLowerCase(java.util.Locale.ROOT);
+        return message.contains("parse") || message.contains("deserialize") || message.contains("empty response");
+    }
+
     private boolean shouldAdvanceToNextProvider(AiOrchestrationRequest request, ParsedOutput parsed) {
         if (request == null || request.taskType() != AiTaskType.CLINICAL_REASONING || parsed == null) {
             return false;
@@ -796,6 +896,86 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
             return true;
         }
         return !hasCompleteClinicalReasoningCore(parsed.structuredJson());
+    }
+
+    private boolean isAivaV2DecisionRequest(AiOrchestrationRequest request) {
+        return request != null
+                && "patient-portal-aiva-v2-decision".equalsIgnoreCase(request.useCaseCode());
+    }
+
+    private boolean hasAivaV2DecisionEnvelope(AiProviderResponse response) {
+        String raw = response == null ? null : firstNonBlank(response.structuredJson(), response.rawText(), response.outputText());
+        if (raw == null || raw.isBlank()) {
+            return false;
+        }
+        try {
+            JsonNode root = objectMapper.readTree(extractJsonCandidate(raw));
+            if (root != null && root.isObject()) {
+                if (root.path("decision").isObject()) root = root.path("decision");
+                else if (root.path("answer").isObject()) root = root.path("answer");
+            }
+            return root != null && root.isObject()
+                    && hasNonBlankText(root, "schemaVersion")
+                    && hasNonBlankText(root, "dialogAct")
+                    && hasNonBlankText(root, "operation")
+                    && validAivaResponseLanguage(root);
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private boolean validAivaResponseLanguage(JsonNode root) {
+        JsonNode language = root.get("responseLanguage");
+        if (language == null || language.isNull()) {
+            return true;
+        }
+        if (!language.isTextual()) {
+            return false;
+        }
+        String value = language.textValue().trim();
+        return value.matches("(?i)auto|[a-z]{2,3}(?:-[a-z0-9]{2,8})*");
+    }
+
+    private boolean isValidJsonResponse(AiProviderResponse response) {
+        String raw = response == null ? null : firstNonBlank(response.structuredJson(), response.rawText(), response.outputText());
+        if (raw == null || raw.isBlank()) {
+            return false;
+        }
+        try {
+            return objectMapper.readTree(extractJsonCandidate(raw)) != null;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private boolean hasNonBlankText(JsonNode node, String field) {
+        return node.has(field) && node.get(field).isTextual() && !node.get(field).asText().isBlank();
+    }
+
+    private String effectiveWorkload(AiOrchestrationRequest request) {
+        if (isAivaV2DecisionRequest(request)) return "AIVA_V2";
+        if (request != null && (request.taskType() == AiTaskType.CLINICAL_REASONING
+                || request.taskType() == AiTaskType.CLINICAL_DOCUMENT_EXTRACTION
+                || request.taskType() == AiTaskType.CONSULTATION_NOTE_STRUCTURING
+                || request.taskType() == AiTaskType.SYMPTOMS_DIAGNOSIS_DRAFT
+                || request.taskType() == AiTaskType.PRESCRIPTION_TEMPLATE_SUGGESTION
+                || request.taskType() == AiTaskType.PATIENT_INSTRUCTIONS_DRAFT
+                || request.taskType() == AiTaskType.ALLERGY_CONDITION_WARNING)) return "CLINICAL";
+        return "LEGACY";
+    }
+
+    private String effectiveProviderChain(AiOrchestrationRequest request, List<AiProvider> candidates) {
+        String configured = switch (effectiveWorkload(request)) {
+            case "AIVA_V2" -> aivaV2ProviderChain;
+            case "CLINICAL" -> clinicalProviderChain;
+            default -> buildFallbackOrder(candidates);
+        };
+        if (configured == null || configured.isBlank()) return buildFallbackOrder(candidates);
+        return java.util.Arrays.stream(configured.split(","))
+                .map(String::trim)
+                .filter(value -> !value.isBlank())
+                .filter(value -> !"MOCK".equalsIgnoreCase(value))
+                .collect(java.util.stream.Collectors.joining(","));
     }
 
     private boolean hasCompleteClinicalReasoningCore(String structuredJson) {

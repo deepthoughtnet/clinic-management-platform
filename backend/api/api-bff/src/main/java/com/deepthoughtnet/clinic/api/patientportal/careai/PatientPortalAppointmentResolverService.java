@@ -61,6 +61,44 @@ public class PatientPortalAppointmentResolverService {
         return AppointmentResolution.none(noMatchPrompt(language));
     }
 
+    /** Resolves only the semantic facts already produced by the turn interpreter. */
+    public AppointmentResolution resolveCanonical(
+            List<PatientPortalCareAiAppointmentOption> appointments,
+            PatientPortalCareAiCanonicalTurn turn,
+            String language
+    ) {
+        List<PatientPortalCareAiAppointmentOption> safeAppointments = appointments == null ? List.of() : appointments;
+        if (safeAppointments.isEmpty() || turn == null) {
+            return AppointmentResolution.none();
+        }
+        PatientPortalCareAiCanonicalEntities entities = turn.entities();
+        Integer ordinal = turn.selection().ordinal();
+        if (turn.selection().present() && ordinal != null
+                && ordinal >= 1 && ordinal <= safeAppointments.size()) {
+            return AppointmentResolution.resolved(safeAppointments.get(ordinal - 1));
+        }
+        SelectionSignals signals = new SelectionSignals(
+                "",
+                normalize(entities.doctor()),
+                entities.date(),
+                firstNonBlank(entities.exactTime(), entities.timeWindow()),
+                canonicalTimeWindow(entities.timeWindow())
+        );
+        List<PatientPortalCareAiAppointmentOption> matches = safeAppointments.stream()
+                .filter(option -> matches(option, signals))
+                .sorted(Comparator
+                        .comparing(PatientPortalCareAiAppointmentOption::appointmentDate, Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(PatientPortalCareAiAppointmentOption::appointmentTime, Comparator.nullsLast(Comparator.naturalOrder())))
+                .toList();
+        if (matches.size() == 1) {
+            return AppointmentResolution.resolved(matches.getFirst());
+        }
+        if (matches.size() > 1) {
+            return AppointmentResolution.multiple(matches, multipleMatchPrompt(language));
+        }
+        return AppointmentResolution.none(noMatchPrompt(language));
+    }
+
     private SelectionSignals extractSignals(String message, String language, PatientPortalCareAiExtractedEntities extractedEntities) {
         String raw = message == null ? "" : message.trim();
         String normalized = normalize(raw);

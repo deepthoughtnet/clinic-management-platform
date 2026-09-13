@@ -77,6 +77,10 @@ record PatientPortalCareAiExtractedEntities(
         return first(PatientPortalCareAiEntityType.LOCATION);
     }
 
+    String service() {
+        return first(PatientPortalCareAiEntityType.SERVICE);
+    }
+
     boolean confirmation() {
         return has(PatientPortalCareAiEntityType.CONFIRMATION);
     }

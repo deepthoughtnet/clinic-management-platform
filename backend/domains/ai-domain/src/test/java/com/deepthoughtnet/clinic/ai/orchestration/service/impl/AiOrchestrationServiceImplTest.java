@@ -718,6 +718,125 @@ class AiOrchestrationServiceImplTest {
     }
 
     @Test
+    void fallsBackFromStructuredOutputRequestRejectionToGroq() {
+        AiPromptTemplateRegistryService registry = mock(AiPromptTemplateRegistryService.class);
+        AiProviderRouter router = mock(AiProviderRouter.class);
+        AiRequestAuditService auditService = mock(AiRequestAuditService.class);
+        AiOrchestrationServiceImpl service = newService(registry, router, auditService);
+
+        AiOrchestrationRequest request = new AiOrchestrationRequest(
+                AiProductCode.GENERIC,
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                AiTaskType.GENERIC_EXTRACTION,
+                "generic.extraction.v1",
+                Map.of("message", "Book Akshu tomorrow"),
+                List.of(),
+                800,
+                0.1d,
+                "corr-structured-fallback",
+                "patient-portal-aiva-v2-decision",
+                Map.of("type", "object", "properties", Map.of("operation", Map.of("type", "string"))));
+        when(registry.resolve(request)).thenReturn(new AiPromptTemplateDefinition(
+                "generic.extraction.v1", "v1", AiProductCode.GENERIC, AiTaskType.GENERIC_EXTRACTION,
+                "system prompt", "{{input.message}}",
+                com.deepthoughtnet.clinic.platform.contracts.ai.AiPromptTemplateStatus.ACTIVE,
+                "fallback", List.of(), List.of()));
+        AiProvider gemini = failingProvider("GEMINI", "Gemini structured output request was rejected.", 400);
+        AiProvider groq = provider("GROQ", "{\"schemaVersion\":\"1.0\",\"dialogAct\":\"START_REQUEST\",\"operation\":\"START_BOOKING\"}", AiProviderStatus.AVAILABLE);
+        when(router.resolveCandidates(AiProductCode.GENERIC, AiTaskType.GENERIC_EXTRACTION,
+                "patient-portal-aiva-v2-decision")).thenReturn(List.of(gemini, groq));
+
+        AiOrchestrationResponse response = service.complete(request);
+
+        assertEquals("GROQ", response.provider());
+        assertTrue(response.fallbackUsed());
+        verify(router).resolveCandidates(AiProductCode.GENERIC, AiTaskType.GENERIC_EXTRACTION,
+                "patient-portal-aiva-v2-decision");
+    }
+
+    @Test
+    void aivaIncompleteSarvamDecisionFallsBackToGemini() {
+        AiPromptTemplateRegistryService registry = mock(AiPromptTemplateRegistryService.class);
+        AiProviderRouter router = mock(AiProviderRouter.class);
+        AiRequestAuditService auditService = mock(AiRequestAuditService.class);
+        AiOrchestrationServiceImpl service = newService(registry, router, auditService);
+        AiOrchestrationRequest request = aivaDecisionRequest("aiva-incomplete-sarvam");
+        when(registry.resolve(request)).thenReturn(aivaDecisionTemplate());
+
+        AiProvider sarvam = provider("SARVAM", "{\"responseLanguage\":\"en\",\"selection\":{\"candidateRef\":\"NONE\"}}", AiProviderStatus.AVAILABLE);
+        AiProvider gemini = provider("GEMINI", "{\"schemaVersion\":\"1.0\",\"dialogAct\":\"ASK_QUESTION\",\"operation\":\"LOOKUP_APPOINTMENTS\"}", AiProviderStatus.AVAILABLE);
+        when(router.resolveCandidates(AiProductCode.GENERIC, AiTaskType.GENERIC_EXTRACTION,
+                "patient-portal-aiva-v2-decision")).thenReturn(List.of(sarvam, gemini));
+
+        AiOrchestrationResponse response = service.complete(request);
+
+        assertEquals("GEMINI", response.provider());
+        assertTrue(response.fallbackUsed());
+    }
+
+    @Test
+    void aivaSarvamLocaleListIsRejectedBeforeItReachesTheGateway() {
+        AiPromptTemplateRegistryService registry = mock(AiPromptTemplateRegistryService.class);
+        AiProviderRouter router = mock(AiProviderRouter.class);
+        AiRequestAuditService auditService = mock(AiRequestAuditService.class);
+        AiOrchestrationServiceImpl service = newService(registry, router, auditService);
+        AiOrchestrationRequest request = aivaDecisionRequest("aiva-locale-list");
+        when(registry.resolve(request)).thenReturn(aivaDecisionTemplate());
+
+        AiProvider sarvam = provider("SARVAM", "{\"schemaVersion\":\"1.0\",\"dialogAct\":\"ASK_QUESTION\",\"operation\":\"LOOKUP_APPOINTMENTS\",\"responseLanguage\":\"en,en-IN,hi-IN\"}", AiProviderStatus.AVAILABLE);
+        AiProvider gemini = provider("GEMINI", "{\"schemaVersion\":\"1.0\",\"dialogAct\":\"ASK_QUESTION\",\"operation\":\"LOOKUP_APPOINTMENTS\",\"responseLanguage\":\"en\"}", AiProviderStatus.AVAILABLE);
+        when(router.resolveCandidates(AiProductCode.GENERIC, AiTaskType.GENERIC_EXTRACTION,
+                "patient-portal-aiva-v2-decision")).thenReturn(List.of(sarvam, gemini));
+
+        AiOrchestrationResponse response = service.complete(request);
+
+        assertEquals("GEMINI", response.provider());
+        assertTrue(response.fallbackUsed());
+    }
+
+    @Test
+    void aivaValidSarvamDecisionStopsBeforeGemini() {
+        AiPromptTemplateRegistryService registry = mock(AiPromptTemplateRegistryService.class);
+        AiProviderRouter router = mock(AiProviderRouter.class);
+        AiRequestAuditService auditService = mock(AiRequestAuditService.class);
+        AiOrchestrationServiceImpl service = newService(registry, router, auditService);
+        AiOrchestrationRequest request = aivaDecisionRequest("aiva-valid-sarvam");
+        when(registry.resolve(request)).thenReturn(aivaDecisionTemplate());
+
+        AiProvider sarvam = provider("SARVAM", "{\"schemaVersion\":\"1.0\",\"dialogAct\":\"ASK_QUESTION\",\"operation\":\"LOOKUP_APPOINTMENTS\"}", AiProviderStatus.AVAILABLE);
+        AiProvider gemini = provider("GEMINI", "{\"schemaVersion\":\"1.0\",\"dialogAct\":\"ASK_QUESTION\",\"operation\":\"LOOKUP_APPOINTMENTS\"}", AiProviderStatus.AVAILABLE);
+        when(router.resolveCandidates(AiProductCode.GENERIC, AiTaskType.GENERIC_EXTRACTION,
+                "patient-portal-aiva-v2-decision")).thenReturn(List.of(sarvam, gemini));
+
+        AiOrchestrationResponse response = service.complete(request);
+
+        assertEquals("SARVAM", response.provider());
+        assertFalse(response.fallbackUsed());
+    }
+
+    @Test
+    void aivaIncompleteProvidersProduceSafeUnavailableWithoutUsingStaleDecision() {
+        AiPromptTemplateRegistryService registry = mock(AiPromptTemplateRegistryService.class);
+        AiProviderRouter router = mock(AiProviderRouter.class);
+        AiRequestAuditService auditService = mock(AiRequestAuditService.class);
+        AiOrchestrationServiceImpl service = newService(registry, router, auditService);
+        AiOrchestrationRequest request = aivaDecisionRequest("aiva-all-incomplete");
+        when(registry.resolve(request)).thenReturn(aivaDecisionTemplate());
+
+        when(router.resolveCandidates(AiProductCode.GENERIC, AiTaskType.GENERIC_EXTRACTION,
+                "patient-portal-aiva-v2-decision")).thenReturn(List.of(
+                provider("SARVAM", "{\"responseLanguage\":\"en\"}", AiProviderStatus.AVAILABLE),
+                provider("GEMINI", "{\"responseLanguage\":\"en\"}", AiProviderStatus.AVAILABLE),
+                provider("GROQ", "{\"responseLanguage\":\"en\"}", AiProviderStatus.AVAILABLE)));
+
+        AiOrchestrationResponse response = service.complete(request);
+
+        assertEquals(null, response.provider());
+        assertTrue(response.outputText().contains("temporarily unavailable"));
+    }
+
+    @Test
     void clinicalReasoningFallsBackFromGeminiToGroqWithoutExpandingPrompt() {
         AiPromptTemplateRegistryService registry = mock(AiPromptTemplateRegistryService.class);
         AiProviderRouter router = mock(AiProviderRouter.class);
@@ -1050,6 +1169,33 @@ class AiOrchestrationServiceImplTest {
                 "corr-1",
                 "use-case-1"
         );
+    }
+
+    private AiOrchestrationRequest aivaDecisionRequest(String correlationId) {
+        return new AiOrchestrationRequest(
+                AiProductCode.GENERIC,
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                AiTaskType.GENERIC_EXTRACTION,
+                "generic.extraction.v1",
+                Map.of("message", "What appointments do I have?"),
+                List.of(),
+                800,
+                0.1d,
+                correlationId,
+                "patient-portal-aiva-v2-decision",
+                Map.of("type", "object", "properties", Map.of(
+                        "schemaVersion", Map.of("type", "string"),
+                        "dialogAct", Map.of("type", "string"),
+                        "operation", Map.of("type", "string"))));
+    }
+
+    private AiPromptTemplateDefinition aivaDecisionTemplate() {
+        return new AiPromptTemplateDefinition(
+                "generic.extraction.v1", "v1", AiProductCode.GENERIC, AiTaskType.GENERIC_EXTRACTION,
+                "system prompt", "{{input.message}}",
+                com.deepthoughtnet.clinic.platform.contracts.ai.AiPromptTemplateStatus.ACTIVE,
+                "fallback", List.of(), List.of());
     }
 
     private AiProvider provider(String name, String outputText, AiProviderStatus status) {

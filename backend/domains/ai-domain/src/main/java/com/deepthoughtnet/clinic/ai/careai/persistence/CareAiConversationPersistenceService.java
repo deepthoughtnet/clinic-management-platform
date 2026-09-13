@@ -436,12 +436,15 @@ public class CareAiConversationPersistenceService {
             }
         }
         if (patientId != null) {
-            return conversationRepository.findTopByTenantIdAndChannelAndPatientIdAndStatusInOrderByUpdatedAtDesc(
+            Optional<CareAiConversationEntity> byChannelAndPatient = conversationRepository.findTopByTenantIdAndChannelAndPatientIdAndStatusInOrderByUpdatedAtDesc(
                     tenantId,
                     channel.name(),
                     patientId,
                     ACTIVE_STATUSES.stream().map(Enum::name).toList()
             );
+            if (byChannelAndPatient.isPresent()) {
+                return byChannelAndPatient;
+            }
         }
         if (patientId != null) {
             Optional<CareAiConversationEntity> crossChannel = conversationRepository

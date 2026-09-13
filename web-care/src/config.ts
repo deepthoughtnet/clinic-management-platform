@@ -65,6 +65,8 @@ export const careConfig = {
   supportUrl: trimEnv(import.meta.env.VITE_SUPPORT_URL),
   aivaAppUrl: trimEnv(import.meta.env.VITE_AIVA_APP_URL),
   careAuthMode: resolvedCareAuthMode,
+  aivaV2Enabled: import.meta.env.DEV && import.meta.env.VITE_AIVA_V2_ENABLED !== "false"
+    || trimEnv(import.meta.env.VITE_AIVA_V2_ENABLED).toLowerCase() === "true",
 };
 
 export function externalAppUrl(baseUrl: string, path = "/", search = "") {

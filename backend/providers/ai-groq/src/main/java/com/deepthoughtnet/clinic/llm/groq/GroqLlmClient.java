@@ -305,6 +305,16 @@ public class GroqLlmClient implements LlmClient {
         payload.put("model", request.modelOverride() != null && !request.modelOverride().isBlank() ? request.modelOverride() : model);
         payload.put("temperature", request.temperature() != null ? request.temperature() : defaultTemperature);
         payload.put("max_tokens", request.maxOutputTokens() != null ? request.maxOutputTokens() : defaultMaxOutputTokens);
+        if (request.structuredOutputSchema() != null) {
+            payload.put("response_format", Map.of(
+                    "type", "json_schema",
+                    "json_schema", Map.of(
+                            "name", "aiva_v2_conversation_decision",
+                            "strict", true,
+                            "schema", GroqResponseSchemaAdapter.adapt(request.structuredOutputSchema()))));
+        } else if (request.strictJsonMode()) {
+            payload.put("response_format", Map.of("type", "json_object"));
+        }
 
         return payload;
     }
@@ -401,17 +411,29 @@ public class GroqLlmClient implements LlmClient {
     }
 
     private AiProviderException mapGroqException(int status, RestClientResponseException ex) {
+        boolean generatedSchemaFailure = status == 400 && isGeneratedSchemaFailure(ex.getResponseBodyAsString());
         String message = switch (status) {
-            case 400 -> "Groq request failed with invalid request.";
+            case 400 -> generatedSchemaFailure
+                    ? "Groq generated structured output did not match the requested schema."
+                    : "Groq request failed with invalid request.";
             case 401, 403 -> "Groq authorization failed. Check API key/provider configuration.";
             case 429 -> "Groq quota exceeded.";
             case 500, 502, 503, 504 -> "Groq provider unavailable.";
             default -> status >= 500 ? "Groq provider unavailable." : "Groq request failed.";
         };
-        boolean retryable = status == 429 || status == 500 || status == 502 || status == 503 || status == 504;
+        boolean retryable = generatedSchemaFailure
+                || status == 429 || status == 500 || status == 502 || status == 503 || status == 504;
         return retryable
                 ? AiProviderException.retryable(message, status, providerName(), model, "/chat/completions", ex)
                 : AiProviderException.fatal(message, status, providerName(), model, "/chat/completions", ex);
+    }
+
+    private boolean isGeneratedSchemaFailure(String body) {
+        if (body == null || body.isBlank()) return false;
+        String normalized = body.toLowerCase(java.util.Locale.ROOT);
+        return normalized.contains("failed_generation")
+                || normalized.contains("does not match schema")
+                || normalized.contains("generated json") && normalized.contains("schema");
     }
 
     private boolean isTimeout(Throwable ex) {

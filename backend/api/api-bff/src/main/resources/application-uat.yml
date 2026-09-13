@@ -32,7 +32,11 @@ clinic:
   ai:
     enabled: ${CLINIC_AI_ENABLED:false}
     provider: ${CLINIC_AI_PROVIDER:DISABLED}
-    provider-chain: ${AI_PROVIDER_CHAIN:GEMINI,GROQ,MOCK}
+    provider-chain: ${AI_PROVIDER_CHAIN:GEMINI,GROQ,SARVAM}
+    aiva-v2:
+      provider-chain: ${AIVA_V2_PROVIDER_CHAIN:SARVAM,GEMINI,GROQ}
+    clinical:
+      provider-chain: ${CLINICAL_AI_PROVIDER_CHAIN:GEMINI,GROQ}
     request-timeout-seconds: ${CLINIC_AI_REQUEST_TIMEOUT_SECONDS:60}
     clinical-document-extraction:
       max-output-tokens: ${CLINIC_AI_CLINICAL_DOCUMENT_EXTRACTION_MAX_OUTPUT_TOKENS:4096}
@@ -54,7 +58,8 @@ clinic:
       max-output-tokens: ${GROQ_MAX_OUTPUT_TOKENS:2048}
       timeout-seconds: ${GROQ_TIMEOUT_SECONDS:${CLINIC_AI_REQUEST_TIMEOUT_SECONDS:60}}
     mock:
-      enabled: ${AI_MOCK_ENABLED:true}
+      enabled: ${AI_MOCK_ENABLED:false}
+      allow-runtime: ${AI_MOCK_ALLOW_RUNTIME:false}
     jobs:
       fixedDelay: ${CLINIC_AI_JOB_FIXED_DELAY:PT1M}
       maxAttempts: ${CLINIC_AI_MAX_ATTEMPTS:3}

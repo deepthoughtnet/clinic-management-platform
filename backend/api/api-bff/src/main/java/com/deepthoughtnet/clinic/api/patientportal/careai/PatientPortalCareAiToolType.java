@@ -3,6 +3,7 @@ package com.deepthoughtnet.clinic.api.patientportal.careai;
 enum PatientPortalCareAiToolType {
     FIND_DOCTOR,
     FIND_CLINIC,
+    FIND_SERVICE,
     FIND_SLOTS,
     BOOK_APPOINTMENT,
     FIND_APPOINTMENTS,

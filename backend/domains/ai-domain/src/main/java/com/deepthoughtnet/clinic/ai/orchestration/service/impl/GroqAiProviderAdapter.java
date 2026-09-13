@@ -90,7 +90,8 @@ public class GroqAiProviderAdapter implements AiProvider {
                 request.request() == null ? null : request.request().taskType(),
                 request.modelOverride(),
                 request.thinkingBudget(),
-                request.strictJsonMode()
+                request.strictJsonMode(),
+                request.structuredOutputSchema()
         ));
         if (response == null || response.text() == null || response.text().isBlank()) {
             log.warn("LLM provider returned empty content. provider=GROQ, requestId={}", request == null ? null : request.requestId());

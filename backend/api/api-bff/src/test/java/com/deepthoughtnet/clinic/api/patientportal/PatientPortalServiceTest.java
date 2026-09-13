@@ -37,6 +37,7 @@ import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalClinicRespon
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorAvailabilityDayResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorAvailabilityResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorSlotResponse;
+import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiAppointmentOption;
 import com.deepthoughtnet.clinic.api.patientportal.auth.dto.PatientPortalAccessLoginResponse;
 import com.deepthoughtnet.clinic.billing.service.BillingService;
 import com.deepthoughtnet.clinic.billing.service.model.BillItemType;
@@ -335,6 +336,39 @@ class PatientPortalServiceTest {
     }
 
     @Test
+    void v2UpcomingAppointmentsUsesAllCareAuthorizedClinicsWithoutSwitchingContext() {
+        AppUserEntity appUser = AppUserEntity.create(TENANT_ID, "patient-sub", "patient@example.com", "Portal Patient");
+        appUser.setPatientId(PATIENT_ID);
+        PatientEntity currentPatient = patientEntity(TENANT_ID, PATIENT_ID, "PAT-001");
+        PatientEntity otherPatient = patientEntity(OTHER_TENANT_ID, OTHER_PATIENT_ID, "PAT-201");
+        LocalDate firstDate = LocalDate.now(ZoneId.of("Asia/Kolkata")).plusDays(1);
+
+        when(appUserRepository.findByTenantIdAndId(TENANT_ID, APP_USER_ID)).thenReturn(Optional.of(appUser));
+        when(patientRepository.findByTenantIdAndId(TENANT_ID, PATIENT_ID)).thenReturn(Optional.of(currentPatient));
+        when(patientRepository.findByTenantIdAndId(OTHER_TENANT_ID, OTHER_PATIENT_ID)).thenReturn(Optional.of(otherPatient));
+        when(patientRepository.findByMobileIgnoreCaseAndActiveTrue("9999999999")).thenReturn(List.of());
+        when(accessRequestService.listAuthorizedClinics("9999999999")).thenReturn(List.of(
+                new PatientPortalAuthorizedClinicRecord(TENANT_ID, "demo-clinic", "Demo Clinic", PATIENT_ID,
+                        "Portal Patient", true, "PATIENT_PORTAL_ACCESS_REQUEST"),
+                new PatientPortalAuthorizedClinicRecord(OTHER_TENANT_ID, "automation-lab", "Automation Lab", OTHER_PATIENT_ID,
+                        "Portal Patient", true, "PATIENT_PORTAL_ACCESS_REQUEST")));
+        when(appointmentService.listByPatient(TENANT_ID, PATIENT_ID)).thenReturn(List.of(
+                appointmentRecord(TENANT_ID, PATIENT_ID, UUID.randomUUID(), firstDate, LocalTime.of(9, 0))));
+        when(appointmentService.listByPatient(OTHER_TENANT_ID, OTHER_PATIENT_ID)).thenReturn(List.of(
+                appointmentRecord(OTHER_TENANT_ID, OTHER_PATIENT_ID, UUID.randomUUID(), firstDate.plusDays(1), LocalTime.of(10, 0))));
+        when(clinicProfileService.findByTenantId(TENANT_ID)).thenReturn(Optional.of(clinicProfile()));
+        when(clinicProfileService.findByTenantId(OTHER_TENANT_ID)).thenReturn(Optional.of(
+                clinicProfile(OTHER_TENANT_ID, "Automation Lab", true)));
+
+        var appointments = service.careAiUpcomingAppointmentsAcrossAuthorizedClinics();
+
+        assertThat(appointments).hasSize(2);
+        assertThat(appointments).extracting(PatientPortalCareAiAppointmentOption::tenantId)
+                .containsExactly(TENANT_ID, OTHER_TENANT_ID);
+        verify(accessRequestService).listAuthorizedClinics("9999999999");
+    }
+
+    @Test
     void switchClinicIssuesNewTenantScopedPatientSession() {
         AppUserEntity appUser = AppUserEntity.create(TENANT_ID, "patient-sub", "patient@example.com", "Portal Patient");
         appUser.setPatientId(PATIENT_ID);
@@ -616,7 +650,10 @@ class PatientPortalServiceTest {
         when(appointmentService.listByPatient(TENANT_ID, PATIENT_ID)).thenReturn(List.of(appointment));
 
         var slots = service.doctorSlots(doctorUserId.toString(), appointmentDate);
-        assertThat(slots).singleElement().satisfies(slot -> assertThat(slot.selectable()).isTrue());
+        assertThat(slots).singleElement().satisfies(slot -> {
+            assertThat(slot.selectable()).isTrue();
+            assertThat(slot.slotReference()).startsWith("care-slot-");
+        });
 
         var confirmation = service.bookAppointment(new PatientPortalAppointmentBookingRequest(
                 doctorUserId.toString(),
@@ -775,7 +812,7 @@ class PatientPortalServiceTest {
         AppUserEntity appUser = AppUserEntity.create(TENANT_ID, "patient-sub", "patient@example.com", "Portal Patient");
         appUser.setPatientId(PATIENT_ID);
         UUID doctorUserId = UUID.randomUUID();
-        LocalDate selectedDate = LocalDate.of(2026, 9, 6);
+        LocalDate selectedDate = LocalDate.now(ZoneId.of("Asia/Kolkata")).plusDays(2);
         LocalDate nextDate = selectedDate.plusDays(3);
 
         when(appUserRepository.findByTenantIdAndId(TENANT_ID, APP_USER_ID)).thenReturn(Optional.of(appUser));
@@ -808,7 +845,7 @@ class PatientPortalServiceTest {
         AppUserEntity appUser = AppUserEntity.create(TENANT_ID, "patient-sub", "patient@example.com", "Portal Patient");
         appUser.setPatientId(PATIENT_ID);
         UUID doctorUserId = UUID.randomUUID();
-        LocalDate selectedDate = LocalDate.of(2026, 9, 6);
+        LocalDate selectedDate = LocalDate.now(ZoneId.of("Asia/Kolkata")).plusDays(2);
 
         when(appUserRepository.findByTenantIdAndId(TENANT_ID, APP_USER_ID)).thenReturn(Optional.of(appUser));
         when(patientRepository.findByTenantIdAndId(TENANT_ID, PATIENT_ID)).thenReturn(Optional.of(patientEntity(TENANT_ID, PATIENT_ID, "PAT-001")));
@@ -1505,9 +1542,14 @@ class PatientPortalServiceTest {
     }
 
     private AppointmentRecord appointmentRecord(UUID patientId, UUID doctorUserId, LocalDate appointmentDate, java.time.LocalTime appointmentTime) {
+        return appointmentRecord(TENANT_ID, patientId, doctorUserId, appointmentDate, appointmentTime);
+    }
+
+    private AppointmentRecord appointmentRecord(UUID tenantId, UUID patientId, UUID doctorUserId,
+                                                LocalDate appointmentDate, java.time.LocalTime appointmentTime) {
         return new AppointmentRecord(
                 UUID.randomUUID(),
-                TENANT_ID,
+                tenantId,
                 patientId,
                 "PAT-001",
                 "Riya Sharma",

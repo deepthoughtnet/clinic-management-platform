@@ -66,7 +66,11 @@ clinic:
   ai:
     enabled: ${CLINIC_AI_ENABLED:true}
     provider: ${CLINIC_AI_PROVIDER:GEMINI}
-    provider-chain: ${AI_LLM_PROVIDER_ORDER:${AI_PROVIDER_CHAIN:${VOICE_LLM_PROVIDER_ORDER:gemini,groq,mock}}}
+    provider-chain: ${AI_LLM_PROVIDER_ORDER:${AI_PROVIDER_CHAIN:${VOICE_LLM_PROVIDER_ORDER:gemini,groq,sarvam}}}
+    aiva-v2:
+      provider-chain: ${AIVA_V2_PROVIDER_CHAIN:SARVAM,GEMINI,GROQ}
+    clinical:
+      provider-chain: ${CLINICAL_AI_PROVIDER_CHAIN:GEMINI,GROQ}
     request-timeout-seconds: ${CLINIC_AI_REQUEST_TIMEOUT_SECONDS:60}
     consultation:
       max-output-tokens: ${CLINIC_AI_CONSULTATION_MAX_OUTPUT_TOKENS:${GEMINI_MAX_OUTPUT_TOKENS:2048}}
@@ -89,8 +93,18 @@ clinic:
       temperature: ${GROQ_TEMPERATURE:0.1}
       max-output-tokens: ${GROQ_MAX_OUTPUT_TOKENS:2048}
       timeout-seconds: ${GROQ_TIMEOUT_SECONDS:${CLINIC_AI_REQUEST_TIMEOUT_SECONDS:60}}
+    sarvam:
+      enabled: ${CLINIC_SARVAM_ENABLED:${SARVAM_LLM_ENABLED:false}}
+      api-key: ${SARVAM_LLM_API_KEY:${SARVAM_API_KEY:}}
+      model: ${SARVAM_LLM_MODEL:sarvam-105b-conversations}
+      base-url: ${SARVAM_LLM_BASE_URL:https://api.sarvam.ai}
+      temperature: ${SARVAM_LLM_TEMPERATURE:0.1}
+      max-output-tokens: ${SARVAM_LLM_MAX_OUTPUT_TOKENS:2048}
+      aiva-max-output-tokens: ${SARVAM_LLM_AIVA_MAX_OUTPUT_TOKENS:512}
+      timeout-seconds: ${SARVAM_LLM_TIMEOUT_SECONDS:${CLINIC_AI_REQUEST_TIMEOUT_SECONDS:60}}
     mock:
-      enabled: ${AI_MOCK_ENABLED:true}
+      enabled: ${AI_MOCK_ENABLED:false}
+      allow-runtime: ${AI_MOCK_ALLOW_RUNTIME:false}
     jobs:
       fixedDelay: ${CLINIC_AI_JOB_FIXED_DELAY:PT1M}
       maxAttempts: ${CLINIC_AI_MAX_ATTEMPTS:3}

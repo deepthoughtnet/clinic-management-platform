@@ -294,6 +294,8 @@ class PlatformOperationsOverviewServiceTest {
         when(geminiProvider.getIfAvailable()).thenReturn(null);
         ObjectProvider<LlmClient> groqProvider = mock(ObjectProvider.class);
         when(groqProvider.getIfAvailable()).thenReturn(null);
+        ObjectProvider<LlmClient> sarvamProvider = mock(ObjectProvider.class);
+        when(sarvamProvider.getIfAvailable()).thenReturn(null);
 
         return new PlatformOperationsOverviewService(
                 releaseProperties,
@@ -311,6 +313,7 @@ class PlatformOperationsOverviewServiceTest {
                 schedulerLockMonitor,
                 geminiProvider,
                 groqProvider,
+                sarvamProvider,
                 environment
         );
     }

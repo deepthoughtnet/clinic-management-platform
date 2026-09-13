@@ -12,9 +12,10 @@ final class PatientPortalCareAiEntityRegistry {
         Map<PatientPortalCareAiEntityType, PatientPortalCareAiEntityDefinition> byType =
                 new EnumMap<>(PatientPortalCareAiEntityType.class);
         register(byType, PatientPortalCareAiEntityType.DOCTOR, "Doctor name or identifier",
-                List.of("Dr Vikas", "Vikas", "Dr Ashish"), Set.of("dr", "doctor"), 0.95);
+                List.of("Dr Vikas", "Vikas", "Dr Ashish", "Doc Akshu Kumar", "UAT doctor"), Set.of("dr", "doctor", "doc"), 0.95);
         register(byType, PatientPortalCareAiEntityType.CLINIC, "Clinic name or public clinic identifier",
-                List.of("Sunrise Clinic", "CuraPilot Demo Clinic"), Set.of("clinic", "hospital", "centre", "center", "branch"), 0.92);
+                List.of("Sunrise Clinic", "CuraPilot Demo Clinic", "Jeevanam Automation Lab", "Demo Clinic"),
+                Set.of("clinic", "hospital", "centre", "center", "branch"), 0.92);
         register(byType, PatientPortalCareAiEntityType.APPOINTMENT, "Appointment reference or appointment mention",
                 List.of("my appointment", "upcoming appointment", "cancel appointment"), Set.of("appointment", "booking", "visit"), 0.85);
         register(byType, PatientPortalCareAiEntityType.DATE, "Date or relative date expression",
@@ -26,9 +27,27 @@ final class PatientPortalCareAiEntityRegistry {
         register(byType, PatientPortalCareAiEntityType.TIME_WINDOW, "Loose time window",
                 List.of("morning", "afternoon", "evening", "night"), Set.of("morning", "afternoon", "evening", "night"), 0.9);
         register(byType, PatientPortalCareAiEntityType.SPECIALITY, "Medical speciality or department",
-                List.of("cardiology", "dermatology"), Set.of("speciality", "specialty", "department"), 0.8);
+                List.of("General Medicine", "General Physician", "physician", "GP", "family physician", "cardiology", "dermatology"),
+                Set.of(
+                        "speciality",
+                        "specialty",
+                        "department",
+                        "general medicine",
+                        "general physician",
+                        "physician",
+                        "gp",
+                        "family physician",
+                        "general practitioner",
+                        "जनरल फिजिशियन",
+                        "जनरल मेडिसिन"
+                ),
+                0.8);
         register(byType, PatientPortalCareAiEntityType.LOCATION, "Location or area reference",
-                List.of("Andheri", "Mumbai"), Set.of("location", "area", "city", "near"), 0.7);
+                List.of("Andheri", "Mumbai", "Pune", "Baner", "Kharadi"), Set.of("location", "area", "city", "locality", "near"), 0.7);
+        register(byType, PatientPortalCareAiEntityType.SERVICE, "Service or care offering",
+                List.of("consultation", "health check", "teleconsultation", "follow-up consultation"),
+                Set.of("service", "services", "consultation", "health check", "teleconsultation", "follow up consultation"),
+                0.78);
         register(byType, PatientPortalCareAiEntityType.CONFIRMATION, "Positive confirmation",
                 List.of("yes", "confirm", "book it", "cancel it", "हाँ", "हां", "ठीक है"), Set.of("yes", "confirm", "book it", "go ahead", "okay", "ok", "हाँ", "हां", "ठीक है", "कन्फर्म", "बुक कर दीजिए"), 0.99);
         register(byType, PatientPortalCareAiEntityType.CANCELLATION, "Cancellation acknowledgement",

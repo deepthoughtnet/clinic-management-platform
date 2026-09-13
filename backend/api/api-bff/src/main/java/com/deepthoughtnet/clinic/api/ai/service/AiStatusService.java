@@ -66,18 +66,32 @@ public class AiStatusService {
                 .map(provider -> provider + ":" + providerStatus(provider))
                 .toList();
         boolean geminiKeyPresent = geminiApiKey != null && !geminiApiKey.isBlank();
-        String geminiKeyPrefix = geminiKeyPresent ? geminiApiKey.substring(0, Math.min(4, geminiApiKey.length())) : "-";
+        boolean sarvamSemanticEnabled = environment.getProperty("clinic.ai.sarvam.enabled", Boolean.class, false);
+        String sarvamSemanticKey = environment.getProperty("clinic.ai.sarvam.api-key", "");
+        String sarvamSemanticModel = environment.getProperty("clinic.ai.sarvam.model", "");
+        boolean sarvamSemanticKeyPresent = sarvamSemanticKey != null && !sarvamSemanticKey.isBlank();
+        boolean sarvamSemanticModelConfigured = sarvamSemanticModel != null && !sarvamSemanticModel.isBlank();
+        boolean sarvamSemanticBeanPresent = providers.stream()
+                .anyMatch(provider -> "SARVAM".equalsIgnoreCase(normalize(provider.providerName(), "")));
+        boolean sarvamSemanticAvailable = providerStatus("SARVAM") != AiProviderStatus.UNAVAILABLE;
         log.info(
-                "AI config activeProfiles={} runtimeEnabled={} activeProvider={} providerChain={} geminiEnabled={} geminiKeyPresent={} keyPrefix={} providerBeans={}",
+                "AI config activeProfiles={} runtimeEnabled={} activeProvider={} providerChain={} geminiEnabled={} geminiKeyPresent={} providerBeans={}",
                 String.join(",", environment.getActiveProfiles()),
                 clinicAiEnabled,
                 activeProviderName(),
                 clinicAiProviderChain,
                 geminiEnabled,
                 geminiKeyPresent,
-                geminiKeyPrefix,
                 providerStates
         );
+        log.info("AI semantic provider diagnostics provider=SARVAM sarvamSemanticEnabled={} "
+                        + "sarvamSemanticKeyPresent={} sarvamSemanticModelConfigured={} "
+                        + "sarvamSemanticBeanPresent={} sarvamSemanticAvailable={}",
+                sarvamSemanticEnabled,
+                sarvamSemanticKeyPresent,
+                sarvamSemanticModelConfigured,
+                sarvamSemanticBeanPresent,
+                sarvamSemanticAvailable);
         log.info(
                 "AI provider order for CLINICAL_REASONING = {}",
                 clinicalReasoningOrder.isEmpty() ? "NONE" : String.join(" > ", clinicalReasoningOrder)
@@ -175,7 +189,7 @@ public class AiStatusService {
 
     private List<String> parseProviderChain() {
         if (clinicAiProviderChain == null || clinicAiProviderChain.isBlank()) {
-            return List.of("GEMINI", "GROQ", "MOCK");
+            return List.of("GEMINI", "GROQ");
         }
         List<String> parsed = java.util.Arrays.stream(clinicAiProviderChain.split(","))
                 .map(value -> normalize(value, ""))
@@ -184,7 +198,6 @@ public class AiStatusService {
                 .distinct()
                 .toList();
         java.util.ArrayList<String> ordered = new java.util.ArrayList<>(parsed);
-        ordered.add("MOCK");
         return List.copyOf(ordered);
     }
 

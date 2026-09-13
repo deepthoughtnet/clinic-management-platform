@@ -201,6 +201,16 @@ public class GeminiLlmClient implements LlmClient {
                         model,
                         status,
                         bodyPreview);
+                if (request.structuredOutputSchema() != null) {
+                    throw AiProviderException.retryable(
+                            "Gemini structured output request was rejected.",
+                            status,
+                            providerName(),
+                            model,
+                            "/models/" + model + ":generateContent",
+                            ex
+                    );
+                }
                 throw AiProviderException.fatal(
                         "Gemini request failed with client error.",
                         status,
@@ -318,6 +328,9 @@ public class GeminiLlmClient implements LlmClient {
         );
         if (request.strictJsonMode()) {
             generationConfig.put("responseMimeType", "application/json");
+            if (request.structuredOutputSchema() != null) {
+                generationConfig.put("responseSchema", GeminiResponseSchemaAdapter.adapt(request.structuredOutputSchema()));
+            }
         }
         if (request.thinkingBudget() != null) {
             generationConfig.put("thinkingConfig", Map.of("thinkingBudget", Math.max(0, request.thinkingBudget())));

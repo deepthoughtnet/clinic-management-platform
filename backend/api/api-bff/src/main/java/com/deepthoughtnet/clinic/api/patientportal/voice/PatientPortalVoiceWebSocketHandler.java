@@ -5,6 +5,8 @@ import com.deepthoughtnet.clinic.ai.careai.persistence.CareAiConversationPersist
 import com.deepthoughtnet.clinic.ai.careai.persistence.CareAiConversationSessionSnapshot;
 import com.deepthoughtnet.clinic.ai.careai.persistence.CareAiTransport;
 import com.deepthoughtnet.clinic.api.patientportal.voice.PatientPortalVoiceAssistantService.PatientPortalVoiceTurnResponse;
+import com.deepthoughtnet.clinic.api.patientportal.voice.PatientPortalVoiceAssistantService.PatientPortalVoiceProgressAudio;
+import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiProgressEvent;
 import com.deepthoughtnet.clinic.api.voice.VoiceTestProperties;
 import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
 import com.deepthoughtnet.clinic.platform.core.context.TenantId;
@@ -284,7 +286,8 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
                     audioBytes,
                     state.contentType == null ? "audio/webm" : state.contentType,
                     state.filename == null ? "patient-careai-voice.webm" : state.filename,
-                    state.language
+                    state.language,
+                    progress -> sendProgressEvent(session, state, turnIndex, progress)
             );
             state.turnCount = turnIndex;
             sendEvent(session, Map.of(
@@ -372,8 +375,7 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
                     state.sessionId,
                     turnIndex,
                     ex.getClass().getSimpleName(),
-                    ex.getMessage(),
-                    ex);
+                    safeVoiceDiagnosticReason(ex));
             sendError(session, safePatientVoiceErrorMessage(ex));
         } finally {
             RequestContextHolder.clear();
@@ -450,6 +452,16 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
         return "Voice service temporarily unavailable.";
     }
 
+    private String safeVoiceDiagnosticReason(Exception ex) {
+        String message = ex.getMessage();
+        if (message == null || message.isBlank()) {
+            return "unspecified";
+        }
+        String sanitized = message.replaceAll("(?i)(token|sessionToken|jwt|authorization|api[_-]?key|secret)=[^&\\s]+", "$1=[redacted]");
+        sanitized = sanitized.replaceAll("(?i)(wss?|https?)://[^\\s]+", "[endpoint-redacted]");
+        return sanitized.length() > 160 ? sanitized.substring(0, 160) : sanitized;
+    }
+
     private boolean enforceSessionPolicies(WebSocketSession session, SessionState state) throws IOException {
         Instant now = Instant.now();
         if (state.startedAt != null
@@ -476,10 +488,76 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
     }
 
     private void sendEvent(WebSocketSession session, Object payload) throws IOException {
-        if (!session.isOpen()) {
-            return;
+        synchronized (session) {
+            if (!session.isOpen()) {
+                return;
+            }
+            session.sendMessage(new TextMessage(objectMapper.writeValueAsString(payload)));
         }
-        session.sendMessage(new TextMessage(objectMapper.writeValueAsString(payload)));
+    }
+
+    private void sendProgressEvent(
+            WebSocketSession session,
+            SessionState state,
+            int turnIndex,
+            PatientPortalCareAiProgressEvent progress
+    ) {
+        try {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("type", "turn.progress");
+            payload.put("sessionId", state.sessionId);
+            payload.put("turnIndex", turnIndex);
+            payload.put("turnId", progress.turnId());
+            payload.put("skillExecutionId", progress.skillExecutionId());
+            payload.put("skillId", progress.skillId());
+            payload.put("progressKey", progress.progressKey());
+            payload.put("state", progress.state());
+            payload.put("acknowledgement", progress.acknowledgement());
+            sendEvent(session, payload);
+            PatientPortalVoiceProgressAudio audio = voiceAssistantService.synthesizeProgressAudio(progress, state.language);
+            if (audio != null) {
+                sendProgressAudioChunks(session, state, turnIndex, progress, audio);
+            }
+        } catch (IOException ex) {
+            log.debug("patient.voice.progress.delivery.failed sessionId={} turnIndex={} reason={}",
+                    state.sessionId, turnIndex, safeVoiceDiagnosticReason(ex));
+        }
+    }
+
+    private void sendProgressAudioChunks(
+            WebSocketSession session,
+            SessionState state,
+            int turnIndex,
+            PatientPortalCareAiProgressEvent progress,
+            PatientPortalVoiceProgressAudio audio
+    ) throws IOException {
+        String audioBase64 = audio.audioBase64();
+        int totalChunks = (int) Math.ceil((double) audioBase64.length() / RESPONSE_CHUNK_BASE64_CHARS);
+        for (int sequence = 1; sequence <= totalChunks; sequence++) {
+            int start = (sequence - 1) * RESPONSE_CHUNK_BASE64_CHARS;
+            int end = Math.min(audioBase64.length(), start + RESPONSE_CHUNK_BASE64_CHARS);
+            sendEvent(session, Map.of(
+                    "type", "assistant.progress.audio.chunk",
+                    "sessionId", state.sessionId,
+                    "turnIndex", turnIndex,
+                    "turnId", progress.turnId(),
+                    "skillExecutionId", progress.skillExecutionId(),
+                    "sequence", sequence,
+                    "totalChunks", totalChunks,
+                    "contentType", audio.contentType(),
+                    "audioBase64Chunk", audioBase64.substring(start, end)
+            ));
+        }
+        sendEvent(session, Map.of(
+                "type", "assistant.progress.audio.end",
+                "sessionId", state.sessionId,
+                "turnIndex", turnIndex,
+                "turnId", progress.turnId(),
+                "skillExecutionId", progress.skillExecutionId(),
+                "totalChunks", totalChunks,
+                "contentType", audio.contentType(),
+                "provider", audio.provider() == null ? "" : audio.provider()
+        ));
     }
 
     private byte[] decodeAudioChunks(SessionState state, int totalChunks) {

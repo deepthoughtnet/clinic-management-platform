@@ -423,6 +423,61 @@ export type PatientPortalCareAiResetResponse = {
   message: string;
 };
 
+export type AivaV2StateView = {
+  draftId: string | null;
+  status: string | null;
+  revision: number;
+  providerName: string | null;
+  specialty: string | null;
+  date: string | null;
+  timeWindow: string | null;
+  exactTime: string | null;
+  selectedSlotReference: string | null;
+  confirmationPending: boolean;
+  appointmentReference: string | null;
+};
+
+export type AivaV2MessageRequest = {
+  conversationId: string | null;
+  message: string;
+  language: string;
+  action?: AivaV2InteractiveActionRequest;
+};
+
+export type AivaV2InteractiveActionRequest = {
+  type: string;
+  value?: string | null;
+  slotReference?: string | null;
+};
+
+export type AivaV2InteractiveAction = {
+  type: string;
+  label: string;
+  value: string | null;
+  slotReference: string | null;
+};
+
+export type AivaV2MessageResponse = {
+  conversationId: string;
+  turnId: string;
+  assistantMessage: string;
+  responseCategory: string;
+  state: AivaV2StateView;
+  interpretationProvider: string;
+  fallbackUsed: boolean;
+  actions: AivaV2InteractiveAction[];
+};
+
+export class PatientPortalHttpError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "PatientPortalHttpError";
+    this.status = status;
+  }
+}
+
 const apiBaseUrl = careConfig.apiBaseUrl;
 const careAiRuntimeUrl = import.meta.env.VITE_CAREAI_RUNTIME_URL?.trim() ?? "";
 
@@ -519,6 +574,21 @@ export async function postPatientPortalSessionJson<T>(
     throw new Error(await parseError(response));
   }
   return response.json() as Promise<T>;
+}
+
+export async function postPatientPortalAivaV2Message(
+  request: AivaV2MessageRequest,
+  session: PatientPortalPatientSession,
+): Promise<AivaV2MessageResponse> {
+  const response = await fetch(buildUrl("/api/patient-portal/aiva-v2/message"), {
+    method: "POST",
+    headers: buildHeaders(session, { "Content-Type": "application/json" }),
+    body: JSON.stringify(request),
+  });
+  if (!response.ok) {
+    throw new PatientPortalHttpError(response.status, await parseError(response));
+  }
+  return response.json() as Promise<AivaV2MessageResponse>;
 }
 
 export async function postPatientPortalAccessRequest<T>(

@@ -78,6 +78,7 @@ public class PlatformOperationsOverviewService {
     private final SchedulerLockMonitor schedulerLockMonitor;
     private final ObjectProvider<LlmClient> geminiLlmClient;
     private final ObjectProvider<LlmClient> groqLlmClient;
+    private final ObjectProvider<LlmClient> sarvamLlmClient;
     private final HttpClient httpClient;
     private final Environment environment;
 
@@ -97,6 +98,7 @@ public class PlatformOperationsOverviewService {
             SchedulerLockMonitor schedulerLockMonitor,
             @Qualifier("geminiLlmClient") ObjectProvider<LlmClient> geminiLlmClient,
             @Qualifier("groqLlmClient") ObjectProvider<LlmClient> groqLlmClient,
+            @Qualifier("sarvamLlmClient") ObjectProvider<LlmClient> sarvamLlmClient,
             Environment environment
     ) {
         this.releaseProperties = releaseProperties;
@@ -114,6 +116,7 @@ public class PlatformOperationsOverviewService {
         this.schedulerLockMonitor = schedulerLockMonitor;
         this.geminiLlmClient = geminiLlmClient;
         this.groqLlmClient = groqLlmClient;
+        this.sarvamLlmClient = sarvamLlmClient;
         this.environment = environment;
         this.httpClient = HttpClient.newBuilder().connectTimeout(PROBE_TIMEOUT).build();
     }
@@ -128,6 +131,7 @@ public class PlatformOperationsOverviewService {
                 minioHealth(now),
                 geminiHealth(now),
                 groqHealth(now),
+                sarvamHealth(now),
                 documentAiHealth(now),
                 schedulerHealth(now),
                 backupHealth(now),
@@ -422,6 +426,10 @@ public class PlatformOperationsOverviewService {
 
     private ComponentHealthResponse groqHealth(Instant now) {
         return aiProviderHealth("Groq", "GROQ", groqLlmClient, now);
+    }
+
+    private ComponentHealthResponse sarvamHealth(Instant now) {
+        return aiProviderHealth("Sarvam LLM", "SARVAM", sarvamLlmClient, now);
     }
 
     private ComponentHealthResponse documentAiHealth(Instant now) {

@@ -1,0 +1,20 @@
+package com.deepthoughtnet.clinic.api.patientportal.careai;
+
+enum PatientPortalCareAiWorkflowSubState {
+    START,
+    NEED_PROVIDER_OR_SPECIALTY,
+    FINDING_PROVIDERS,
+    NEED_PROVIDER_SELECTION,
+    NEED_DATE,
+    CHECKING_AVAILABILITY,
+    NEED_SLOT_SELECTION,
+    CONFIRMATION_PENDING,
+    EXECUTING,
+    COMPLETED,
+    FAILED,
+    CANCELLED,
+    NEED_APPOINTMENT,
+    NEED_NEW_DATE,
+    RESOLVING,
+    WAITING_FOR_TOOL
+}
