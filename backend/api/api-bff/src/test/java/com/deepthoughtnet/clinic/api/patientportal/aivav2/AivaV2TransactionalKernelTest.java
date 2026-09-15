@@ -31,6 +31,8 @@ import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.SessionPr
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ToolResult;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.TopicAction;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ValuePatch;
+import com.deepthoughtnet.clinic.api.patientportal.PatientPortalService;
+import com.deepthoughtnet.clinic.api.publicsite.PublicCatalogFacade;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -99,11 +101,44 @@ class AivaV2TransactionalKernelTest {
                 AivaV2TemporalResolution.unchanged(null, null), ZoneOffset.UTC, "turn-lookup");
 
         assertThat(result.response().responseCategory()).isEqualTo("APPOINTMENTS_FOUND");
+        assertThat(result.response().structuredResponse().type()).isEqualTo(AivaStructuredResponse.ResponseType.APPOINTMENTS_FOUND);
+        assertThat(((AivaStructuredResponse.AppointmentListPayload) result.response().structuredResponse().payload())
+                .appointments()).singleElement().satisfies(appointment -> {
+                    assertThat(appointment.appointmentReference()).isEqualTo("APT-1");
+                    assertThat(appointment.providerDisplayName()).isEqualTo("Doc Akshu Kumar");
+                    assertThat(appointment.date()).isEqualTo(LocalDate.of(2026, 9, 14));
+                    assertThat(appointment.time()).isEqualTo(LocalTime.of(17, 30));
+                });
         assertThat(result.session().activeDraft()).isSameAs(session.activeDraft());
         assertThat(result.session().pendingConfirmation()).isSameAs(session.pendingConfirmation());
         verify(lookupTool).lookup(any(), any(), any(), any());
         verify(tools, never()).getBookingAvailability(any());
         verify(tools, never()).resolveBookingProvider(any(), any());
+    }
+
+    @Test
+    void rescheduleProviderBindingFailureUsesStructuredSafeFailurePayload() {
+        AivaV2AppointmentLookupTool lookupTool = mock(AivaV2AppointmentLookupTool.class);
+        AivaV2RescheduleTools rescheduleTools = mock(AivaV2RescheduleTools.class);
+        AivaV2TransactionalKernel rescheduleKernel = new AivaV2TransactionalKernel(tools, lookupTool,
+                null, rescheduleTools, Clock.fixed(NOW, ZoneOffset.UTC));
+        var appointment = new AivaV2Models.AppointmentSummary("appointment-ref", "Doc Akshu Kumar", "Clinic",
+                LocalDate.of(2026, 9, 24), LocalTime.of(20, 0), "CONFIRMED", null,
+                "doctor-akshu", "clinic-1", "tenant-1", "clinic-1");
+        when(lookupTool.lookup(any(), any(), any(), any())).thenReturn(
+                AivaV2Models.AppointmentLookupResult.found(List.of(appointment)));
+        ConversationDecision decision = new ConversationDecision("1.0", DialogAct.START_REQUEST,
+                Operation.RESCHEDULE_APPOINTMENT, BookingPatch.empty(), null, ConfirmationPolarity.NONE,
+                TopicAction.CONTINUE, "en", 1, "TEST", false, 1,
+                new AivaV2Models.AppointmentLookupFilter(null, null, null, true));
+
+        var result = rescheduleKernel.handle(readySession(), decision,
+                AivaV2TemporalResolution.unchanged(null, null), ZoneOffset.UTC, "turn-reschedule-bind-failure");
+
+        assertThat(result.response().responseCategory()).isEqualTo("RESCHEDULE_UNAVAILABLE");
+        assertThat(result.response().structuredResponse().type()).isEqualTo(AivaStructuredResponse.ResponseType.FAILURE);
+        assertThat(result.response().structuredResponse().payload())
+                .isEqualTo(new AivaStructuredResponse.FailurePayload("RESCHEDULE_UNAVAILABLE"));
     }
 
     @Test
@@ -178,6 +213,9 @@ class AivaV2TransactionalKernelTest {
                 null, null, null, null, 1, NOW.plusSeconds(1800)), decision, temporal, ZoneOffset.UTC, "turn-cancel");
 
         assertThat(result.response().responseCategory()).isEqualTo("CANCELLATION_CONFIRMATION");
+        assertThat(result.response().structuredResponse().type()).isEqualTo(AivaStructuredResponse.ResponseType.CANCELLATION_CONFIRMATION);
+        assertThat(((AivaStructuredResponse.CancellationConfirmationPayload) result.response().structuredResponse().payload())
+                .appointment().appointmentReference()).isEqualTo(appointment.appointmentReference());
         var filterCaptor = org.mockito.ArgumentCaptor.forClass(AivaV2Models.AppointmentLookupFilter.class);
         var dateCaptor = org.mockito.ArgumentCaptor.forClass(LocalDate.class);
         verify(lookupTool).lookup(filterCaptor.capture(), dateCaptor.capture(), eq("c1"), eq("turn-cancel"));
@@ -229,6 +267,9 @@ class AivaV2TransactionalKernelTest {
                 AivaV2TemporalResolution.unchanged(null, null), ZoneOffset.UTC, "turn-ambiguous");
 
         assertThat(result.response().responseCategory()).isEqualTo("CANCELLATION_CHOICES");
+        assertThat(result.response().structuredResponse().type()).isEqualTo(AivaStructuredResponse.ResponseType.CANCELLATION_CHOICES);
+        assertThat(((AivaStructuredResponse.CancellationChoicesPayload) result.response().structuredResponse().payload())
+                .candidates()).hasSize(2);
         assertThat(result.session().activeDraft()).isSameAs(draftSession.activeDraft());
         assertThat(result.session().pendingCancellationResolution()).isNotNull();
         assertThat(result.session().pendingCancellationResolution().criteria().doctorText().value()).isEqualTo("Dr Akshu");
@@ -294,6 +335,11 @@ class AivaV2TransactionalKernelTest {
                 ZoneOffset.UTC, "turn-reschedule-target");
 
         assertThat(result.response().responseCategory()).isEqualTo("RESCHEDULE_SLOT_CHOICES");
+        assertThat(result.response().structuredResponse().type()).isEqualTo(AivaStructuredResponse.ResponseType.RESCHEDULE_AVAILABLE_SLOTS);
+        var structuredSlots = (AivaStructuredResponse.AvailabilityPayload) result.response().structuredResponse().payload();
+        assertThat(structuredSlots.date()).isEqualTo(target);
+        assertThat(structuredSlots.slots()).extracting(AivaStructuredResponse.SlotFact::slotReference).containsExactly("slot-1830");
+        assertThat(structuredSlots.hasMore()).isFalse();
         assertThat(result.session().pendingReschedule().targetDate()).isEqualTo(target);
         assertThat(result.session().pendingReschedule().tenantId()).isEqualTo("tenant-newauto");
         verify(rescheduleTools).availability(any());
@@ -414,6 +460,11 @@ class AivaV2TransactionalKernelTest {
                 ConfirmationPolarity.NEGATIVE, BookingPatch.empty(), null), "turn-reschedule-no");
 
         assertThat(result.response().responseCategory()).isEqualTo("RESCHEDULE_CONFIRMATION_REJECTED");
+        assertThat(result.response().structuredResponse().type()).isEqualTo(AivaStructuredResponse.ResponseType.RESCHEDULE_REJECTED);
+        var rejectedPayload = (AivaStructuredResponse.RescheduleConfirmationPayload) result.response().structuredResponse().payload();
+        assertThat(rejectedPayload.originalAppointment().appointmentReference()).isEqualTo("appointment");
+        assertThat(rejectedPayload.targetDate()).isEqualTo(LocalDate.of(2026, 9, 22));
+        assertThat(rejectedPayload.targetTime()).isEqualTo(LocalTime.of(19, 30));
         assertThat(result.session().pendingReschedule()).isNotNull();
         assertThat(result.session().pendingReschedule().sourceAppointmentReference()).isEqualTo("appointment");
         assertThat(result.session().pendingReschedule().providerHandle()).isEqualTo("doctor-akshu");
@@ -466,6 +517,9 @@ class AivaV2TransactionalKernelTest {
         var result = rescheduleKernel.handle(rescheduleConfirmationSession(), abandon, "turn-reschedule-stop");
 
         assertThat(result.response().responseCategory()).isEqualTo("RESCHEDULE_ABANDONED");
+        assertThat(result.response().structuredResponse().type()).isEqualTo(AivaStructuredResponse.ResponseType.RESCHEDULE_REJECTED);
+        assertThat(((AivaStructuredResponse.RescheduleConfirmationPayload) result.response().structuredResponse().payload())
+                .originalAppointment().appointmentReference()).isEqualTo("appointment");
         assertThat(result.session().pendingReschedule()).isNull();
         assertThat(result.session().pendingRescheduleConfirmation()).isNull();
     }
@@ -489,6 +543,98 @@ class AivaV2TransactionalKernelTest {
         assertThat(result.session().activeDraft().selectedSlotReference()).isNull();
         assertThat(result.session().pendingConfirmation()).isNull();
         verify(tools, never()).resolveBookingProvider(any(), any());
+    }
+
+    @Test
+    void activeProviderCandidateSelectionBindsProviderAndClearsAmbiguity() {
+        BookingDraft draft = BookingDraft.create(UUID.randomUUID(), "tenant", NOW);
+        ProviderCandidate selected = provider();
+        var candidates = new AivaV2Models.ProviderSearchResult(UUID.randomUUID(),
+                AivaV2Models.ResolutionStatus.AMBIGUOUS, "criteria",
+                List.of(selected, new ProviderCandidate("other", "other", "other", null, "tenant", null, null,
+                        "Demo Doctor", "General Medicine", "Clinic", ProviderSource.CARE_PRIVATE,
+                        new ProviderCapabilities(true, true, false, false, false, true, false))),
+                null, NOW, NOW.plusSeconds(600));
+        SessionProjection session = new SessionProjection("c1", draft.patientSubjectId(), "tenant", draft,
+                null, candidates, null, null, 1, NOW.plusSeconds(1800));
+
+        var result = kernel.handle(session, decision(Operation.RESOLVE_PROVIDER, ConfirmationPolarity.NONE,
+                BookingPatch.empty(), new Selection("candidate", null, null, null)), "turn-provider-select");
+
+        assertThat(result.response().responseCategory()).isEqualTo("NEED_DATE");
+        assertThat(result.session().activeDraft().selectedProvider().displayName()).isEqualTo("Doc Akshu Kumar");
+        assertThat(result.session().latestProviderResult()).isNull();
+        verify(tools, never()).resolveBookingProvider(any(), any());
+    }
+
+    @Test
+    void compoundNegativeThenShowMoreRestoresAndPaginatesCurrentAvailability() {
+        PatientPortalService patientPortal = mock(PatientPortalService.class);
+        AivaV2BookingTools realTools = new AivaV2BookingTools(patientPortal,
+                mock(PublicCatalogFacade.class), Clock.fixed(NOW, ZoneOffset.UTC));
+        AivaV2TransactionalKernel realKernel = new AivaV2TransactionalKernel(realTools,
+                Clock.fixed(NOW, ZoneOffset.UTC));
+        ProviderCandidate provider = provider();
+        UUID patient = UUID.randomUUID();
+        UUID draftId = UUID.randomUUID();
+        UUID availabilityId = UUID.randomUUID();
+        BookingDraft searchDraft = new BookingDraft(draftId, patient, "tenant", provider, null,
+                LocalDate.of(2026, 9, 24), "evening", null, availabilityId, null,
+                DraftStatus.COLLECTING, 4, NOW.plusSeconds(1800), null);
+        List<AvailabilitySlot> slots = List.of(slot("slot-1", "17:00"), slot("slot-2", "17:30"),
+                slot("slot-3", "18:00"), slot("slot-4", "18:30"), slot("slot-5", "19:00"),
+                slot("slot-6", "19:30"), slot("slot-7", "20:00"), slot("slot-8", "21:00"),
+                slot("slot-9", "21:30"));
+        AvailabilityResult current = new AvailabilityResult(availabilityId, draftId, 4,
+                realTools.criteriaFingerprint(searchDraft), provider.providerHandle(), provider.doctorId(),
+                provider.clinicId(), searchDraft.preferredDate(), searchDraft.preferredTimeWindow(), null,
+                "Asia/Kolkata", slots, null, true, NOW, NOW.plusSeconds(300), 3, 3);
+        BookingDraft selectedDraft = new BookingDraft(draftId, patient, "tenant", provider, null,
+                searchDraft.preferredDate(), searchDraft.preferredTimeWindow(), LocalTime.of(20, 0),
+                availabilityId, "slot-7", DraftStatus.READY_FOR_CONFIRMATION, 4,
+                searchDraft.expiresAt(), null);
+        BookingConfirmation confirmation = new BookingConfirmation("confirm-1", draftId, 4,
+                provider.providerHandle(), provider.doctorId(), provider.clinicId(), availabilityId,
+                "slot-7", searchDraft.preferredDate(), LocalTime.of(20, 0), NOW.plusSeconds(300), "idem-1");
+        SessionProjection session = new SessionProjection("c1", patient, "tenant", selectedDraft, null,
+                null, current, confirmation, 1, NOW.plusSeconds(1800));
+        ConversationDecision compound = new ConversationDecision("1.0", DialogAct.REQUEST_ALTERNATIVE,
+                Operation.SHOW_MORE_SLOTS, BookingPatch.empty(), null, ConfirmationPolarity.NEGATIVE,
+                TopicAction.CONTINUE, "en", 1, "DETERMINISTIC", false, 1);
+
+        var result = realKernel.handle(session, compound, "turn-compound-show-more");
+
+        assertThat(result.response().responseCategory()).isEqualTo("SLOT_CHOICES");
+        assertThat(result.session().pendingConfirmation()).isNull();
+        assertThat(result.session().activeDraft().selectedSlotReference()).isNull();
+        assertThat(result.session().activeDraft().selectedProvider().displayName()).isEqualTo("Doc Akshu Kumar");
+        assertThat(result.session().activeDraft().preferredDate()).isEqualTo(LocalDate.of(2026, 9, 24));
+        assertThat(result.session().activeDraft().preferredTimeWindow()).isEqualTo("evening");
+        assertThat(result.session().activeDraft().exactTime()).isNull();
+        assertThat(result.session().latestAvailabilityResult().requestId()).isEqualTo(availabilityId);
+        assertThat(result.session().latestAvailabilityResult().displayOffset()).isEqualTo(6);
+        verifyNoInteractions(patientPortal);
+    }
+
+    @Test
+    void invalidActiveProviderSelectionPreservesCandidatesWithoutMutation() {
+        BookingDraft draft = BookingDraft.create(UUID.randomUUID(), "tenant", NOW);
+        var candidates = new AivaV2Models.ProviderSearchResult(UUID.randomUUID(),
+                AivaV2Models.ResolutionStatus.AMBIGUOUS, "criteria", List.of(provider()), null,
+                NOW, NOW.plusSeconds(600));
+        SessionProjection session = new SessionProjection("c1", draft.patientSubjectId(), "tenant", draft,
+                null, candidates, null, null, 1, NOW.plusSeconds(1800));
+
+        var result = kernel.handle(session, decision(Operation.RESOLVE_PROVIDER, ConfirmationPolarity.NONE,
+                BookingPatch.empty(), null), "turn-provider-clarify");
+
+        assertThat(result.response().responseCategory()).isEqualTo("PROVIDER_CHOICES");
+        assertThat(result.response().structuredResponse().type()).isEqualTo(AivaStructuredResponse.ResponseType.PROVIDER_CHOICES);
+        assertThat(((AivaStructuredResponse.ProviderChoicesPayload) result.response().structuredResponse().payload())
+                .candidates()).extracting(AivaStructuredResponse.ProviderOption::doctorDisplayName)
+                .containsExactly(provider().displayName());
+        assertThat(result.session().latestProviderResult()).isSameAs(candidates);
+        assertThat(result.session().activeDraft().selectedProvider()).isNull();
     }
 
     @Test

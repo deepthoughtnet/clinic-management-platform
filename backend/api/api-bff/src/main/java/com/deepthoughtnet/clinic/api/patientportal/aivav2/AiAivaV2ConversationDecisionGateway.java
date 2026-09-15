@@ -11,10 +11,14 @@ import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.Conversat
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.DialogAct;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.Operation;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.PatchMode;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ProviderSearchResult;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.Selection;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.SessionProjection;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.TopicAction;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ValuePatch;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.language.LanguageAdapterRegistry;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.language.NormalizedUserTurn;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.language.DeterministicControl;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiOrchestrationRequest;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiOrchestrationResponse;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiProductCode;
@@ -51,11 +55,6 @@ class AiAivaV2ConversationDecisionGateway implements AivaV2ConversationDecisionG
     private static final Pattern TIME_ACCEPTANCE = Pattern.compile(
             "^(?:at\\s+)?([01]?\\d|2[0-3])(?::([0-5]\\d))?\\s*(am|pm)?\\s+(?:works(?:\\s+for\\s+me)?|is\\s+(?:fine|okay)|will\\s+do)[.!?]?$",
             Pattern.CASE_INSENSITIVE);
-    private static final Map<String, String> SPOKEN_CLOCK_NUMBERS = Map.ofEntries(
-            Map.entry("one", "1"), Map.entry("two", "2"), Map.entry("three", "3"),
-            Map.entry("four", "4"), Map.entry("five", "5"), Map.entry("six", "6"),
-            Map.entry("seven", "7"), Map.entry("eight", "8"), Map.entry("nine", "9"),
-            Map.entry("ten", "10"), Map.entry("eleven", "11"), Map.entry("twelve", "12"));
     private static final String TIME_TOKEN = "([0-9]{1,2}(?:[:.][0-9]{2})?\\s*(?:am|pm)?)";
     private static final Pattern BETWEEN_TIME_CONSTRAINT = Pattern.compile(
             "\\bbetween\\s+" + TIME_TOKEN + "\\s+and\\s+" + TIME_TOKEN + "\\b", Pattern.CASE_INSENSITIVE);
@@ -79,42 +78,80 @@ class AiAivaV2ConversationDecisionGateway implements AivaV2ConversationDecisionG
                     + "|^(?:show\\s+me\\s+)?(?:next|more)\\s+slots?[.!?]?$", Pattern.CASE_INSENSITIVE);
     private static final Pattern DAYPART_CONTROL = Pattern.compile(
             "\\b(morning|afternoon|evening)\\b", Pattern.CASE_INSENSITIVE);
-    private static final Pattern EXPLICIT_DOCTOR_REFERENCE = Pattern.compile(
-            "\\b(?:with|from|by)\\s+((?:doctor|dr|doc)\\s+[\\p{L}][\\p{L}\\p{N}'-]*(?:\\s+[\\p{L}][\\p{L}\\p{N}'-]*){0,3})"
-                    + "(?=\\s+(?:on|at|for|in|and)\\b|[?.!,]|$)", Pattern.CASE_INSENSITIVE);
-    private static final Pattern EXPLICIT_LOOKUP_QUALIFIER = Pattern.compile(
-            "\\b(?:with|from|by)\\s+([^?.!,]+?)(?=\\s+(?:on|at|for|in|and)\\b|[?.!,]|$)",
+    private static final Pattern PROVIDER_ORDINAL = Pattern.compile(
+            "^(?:the\\s+)?(first|second|third|fourth|[1-9])(?:\\s+(?:one|doctor|provider))?(?:\\s*\\..*)?$",
             Pattern.CASE_INSENSITIVE);
 
     private final AiOrchestrationService orchestrationService;
     private final ObjectMapper objectMapper;
     private final ClinicTimeZoneResolver clinicTimeZoneResolver;
     private final Clock clock;
+    private final LanguageAdapterRegistry languageAdapterRegistry;
+
+    @Override
+    public NormalizedUserTurn presentationTurn(String text, String language) {
+        return languageAdapterRegistry.resolve(language, text).normalize(text);
+    }
+
+    @Override
+    public NormalizedUserTurn normalizeTurn(String text, String language, LocalDate referenceDate) {
+        return languageAdapterRegistry.resolve(language, text).normalize(text, referenceDate);
+    }
 
     @Autowired
     AiAivaV2ConversationDecisionGateway(AiOrchestrationService orchestrationService, ObjectMapper objectMapper,
-                                        ClinicTimeZoneResolver clinicTimeZoneResolver) {
-        this(orchestrationService, objectMapper, clinicTimeZoneResolver, Clock.systemUTC());
+                                        ClinicTimeZoneResolver clinicTimeZoneResolver,
+                                        LanguageAdapterRegistry languageAdapterRegistry) {
+        this(orchestrationService, objectMapper, clinicTimeZoneResolver, Clock.systemUTC(), languageAdapterRegistry);
     }
 
     AiAivaV2ConversationDecisionGateway(AiOrchestrationService orchestrationService, ObjectMapper objectMapper,
                                         ClinicTimeZoneResolver clinicTimeZoneResolver, Clock clock) {
+        this(orchestrationService, objectMapper, clinicTimeZoneResolver, clock, LanguageAdapterRegistry.defaults());
+    }
+
+    AiAivaV2ConversationDecisionGateway(AiOrchestrationService orchestrationService, ObjectMapper objectMapper,
+                                        ClinicTimeZoneResolver clinicTimeZoneResolver, Clock clock,
+                                        LanguageAdapterRegistry languageAdapterRegistry) {
         this.orchestrationService = orchestrationService;
         this.objectMapper = objectMapper;
         this.clinicTimeZoneResolver = clinicTimeZoneResolver;
         this.clock = clock;
+        this.languageAdapterRegistry = languageAdapterRegistry;
     }
 
     @Override
     public ConversationDecision decide(String text, String language, SessionProjection context) {
+        ZoneId zone = clinicTimeZoneResolver.resolve(RequestContextHolder.requireTenantId());
+        return decide(normalizeTurn(text, language, LocalDate.now(clock.withZone(zone))), context);
+    }
+
+    @Override
+    public ConversationDecision decide(NormalizedUserTurn normalizedTurn, SessionProjection context) {
+        String language = normalizedTurn.languageCode();
         long started = System.nanoTime();
-        ConversationDecision fast = fastPath(text, language, context, started);
+        ConversationDecision fast = fastPath(normalizedTurn, language, context, started);
         if (fast != null) {
+            fast = mergeCanonicalFacts(normalizedTurn, fast);
+            log.info("AIVA_V2_CONTROL_TRACE rawControlLanguage={} semanticControl={} normalizedOperation={} "
+                            + "normalizedTime={} normalizedDaypart={} confirmation={} providerCallRequired=false activeWorkflow={}",
+                    normalizedTurn.languageCode(), semanticControl(fast), fast.operation(), normalizedTime(fast),
+                    normalizedDaypart(fast), fast.confirmation(), activeWorkflow(context));
             return fast;
         }
         try {
             Map<String, Object> variables = new LinkedHashMap<>();
-            variables.put("message", text);
+            variables.put("message", normalizedTurn.canonicalSemanticText());
+            variables.put("canonicalFacts", Map.of(
+                    "doctor", normalizedTurn.doctorEntity() == null ? "" : normalizedTurn.doctorEntity().canonicalQuery(),
+                    "specialty", normalizedTurn.specialtyEntity() == null ? "" : normalizedTurn.specialtyEntity().canonicalQuery(),
+                    "date", normalizedTurn.temporal().localDate() == null ? "" : normalizedTurn.temporal().localDate().toString(),
+                    "exactTime", normalizedTurn.exactTime() == null ? "" : normalizedTurn.exactTime().toString(),
+                    "daypart", normalizedTurn.daypart() == null ? "" : normalizedTurn.daypart().name(),
+                    "ordinal", normalizedTurn.ordinal() == null ? "" : normalizedTurn.ordinal().toString(),
+                    "confirmation", normalizedTurn.confirmation().name(),
+                    "pagination", normalizedTurn.pagination().name()));
+            variables.put("boundedRawContext", normalizedTurn.rawText().substring(0, Math.min(256, normalizedTurn.rawText().length())));
             variables.put("language", language);
             variables.put("bookingContext", safeContext(context));
             ZoneId zone = clinicTimeZoneResolver.resolve(RequestContextHolder.requireTenantId());
@@ -135,7 +172,9 @@ class AiAivaV2ConversationDecisionGateway implements AivaV2ConversationDecisionG
                     "patient-portal-aiva-v2-decision",
                     AivaV2ConversationDecisionSchema.definition()
             ));
-            ConversationDecision decision = recoverExplicitLookupDoctor(text, parse(response, language, elapsed(started)));
+            ConversationDecision decision = parse(response, language, elapsed(started));
+            decision = recoverUnsolicitedConfirmationAsBooking(normalizedTurn, context, decision);
+            decision = mergeCanonicalFacts(normalizedTurn, decision);
             log.info("AIVA_V2_DECISION_TRACE conversationId={} provider={} fallbackUsed={} responseEnvelope={} operation={} dialogAct={} confidence={} parseStatus={} normalization={} defaultsApplied={}",
                     context == null ? null : context.conversationId(), decision.provider(), decision.fallbackUsed(),
                     envelope(response), decision.operation(), decision.dialogAct(), decision.confidence(),
@@ -147,27 +186,130 @@ class AiAivaV2ConversationDecisionGateway implements AivaV2ConversationDecisionG
     }
 
     /**
-     * Preserve an explicitly named doctor when a valid provider envelope omits
-     * the optional lookup filter. This is a bounded entity recovery step, not a
-     * provider- or appointment-specific rule; the lookup tool remains the
-     * authority for matching against authorized appointments.
+     * Applies trusted current-turn facts to the canonical fields consumed by the
+     * selected operation. Appointment source resolution uses lookupFilter;
+     * booking and availability refinement use bookingPatch.
      */
-    private ConversationDecision recoverExplicitLookupDoctor(String text, ConversationDecision decision) {
-        if (decision == null || decision.operation() != Operation.LOOKUP_APPOINTMENTS
-                || decision.lookupFilter().doctorText().mode() == AivaV2Models.PatchMode.SET) return decision;
-        String input = text == null ? "" : text;
-        Matcher doctor = EXPLICIT_DOCTOR_REFERENCE.matcher(input);
-        if (doctor.find()) {
-            var filter = decision.lookupFilter();
-            var recoveredFilter = new AivaV2Models.AppointmentLookupFilter(
-                    ValuePatch.set(doctor.group(1).trim()), filter.dateExpression(), filter.status(),
-                    filter.clinicText(), filter.nextOnly());
-            return new ConversationDecision(decision.schemaVersion(), decision.dialogAct(), decision.operation(),
-                    decision.bookingPatch(), decision.selection(), decision.confirmation(), decision.topicAction(),
-                    decision.responseLanguage(), decision.confidence(), decision.provider(), decision.fallbackUsed(),
-                    decision.latencyMs(), recoveredFilter, false);
+    private ConversationDecision mergeCanonicalFacts(NormalizedUserTurn turn, ConversationDecision decision) {
+        if (decision == null) return null;
+        Operation operation = decision.operation();
+        if (isAppointmentSourceResolution(operation)) {
+            return mergeAppointmentLookupFacts(turn, decision);
         }
-        return EXPLICIT_LOOKUP_QUALIFIER.matcher(input).find() ? withUnresolvedQualifier(decision) : decision;
+        if (!isBookingCriteriaOperation(operation)) return decision;
+
+        BookingPatch patch = decision.bookingPatch();
+        String doctorQuery = canonicalDoctorQuery(turn);
+        var doctor = StringUtils.hasText(doctorQuery) ? ValuePatch.set(doctorQuery) : patch.doctorText();
+        var specialty = turn.specialtyEntity() == null || !StringUtils.hasText(turn.specialtyEntity().canonicalQuery())
+                ? patch.specialtyText() : ValuePatch.set(turn.specialtyEntity().canonicalQuery());
+        var date = turn.temporal().status() == NormalizedUserTurn.TemporalStatus.RESOLVED
+                ? ValuePatch.set(turn.temporal().localDate().toString()) : patch.dateExpression();
+        logCanonicalFactConflicts("BOOKING_PATCH", doctorQuery, patch.doctorText(),
+                turn.temporal(), patch.dateExpression());
+        boolean selectedSlot = decision.operation() == Operation.SELECT_SLOT
+                || decision.operation() == Operation.SELECT_RESCHEDULE_SLOT;
+        BookingPatch merged = new BookingPatch(doctor, specialty, date, patch.timeWindow(),
+                turn.exactTime() == null || selectedSlot ? patch.exactTime() : ValuePatch.set(turn.exactTime().toString()),
+                patch.clinicText(), patch.availabilityTimeConstraint());
+        return new ConversationDecision(decision.schemaVersion(), decision.dialogAct(), decision.operation(), merged,
+                decision.selection(), decision.confirmation(), decision.topicAction(), decision.responseLanguage(),
+                decision.confidence(), decision.provider(), decision.fallbackUsed(), decision.latencyMs(),
+                decision.lookupFilter(), decision.unresolvedExplicitQualifierPresent());
+    }
+
+    private ConversationDecision mergeAppointmentLookupFacts(NormalizedUserTurn turn,
+                                                               ConversationDecision decision) {
+        var filter = decision.lookupFilter();
+        String doctorQuery = canonicalDoctorQuery(turn);
+        var doctor = StringUtils.hasText(doctorQuery) ? ValuePatch.set(doctorQuery) : filter.doctorText();
+        var date = turn.temporal().status() == NormalizedUserTurn.TemporalStatus.RESOLVED
+                ? ValuePatch.set(turn.temporal().localDate().toString()) : filter.dateExpression();
+        logCanonicalFactConflicts("LOOKUP_FILTER", doctorQuery, filter.doctorText(),
+                turn.temporal(), filter.dateExpression());
+        var mergedFilter = new AivaV2Models.AppointmentLookupFilter(doctor, date, filter.status(),
+                filter.clinicText(), filter.nextOnly());
+        boolean unresolvedQualifier = decision.unresolvedExplicitQualifierPresent();
+        if (decision.operation() == Operation.LOOKUP_APPOINTMENTS
+                && !StringUtils.hasText(doctorQuery) && turn.explicitLookupQualifierPresent()) {
+            unresolvedQualifier = true;
+        } else if (StringUtils.hasText(doctorQuery)) {
+            unresolvedQualifier = false;
+        }
+        return new ConversationDecision(decision.schemaVersion(), decision.dialogAct(), decision.operation(),
+                decision.bookingPatch(), decision.selection(), decision.confirmation(), decision.topicAction(),
+                decision.responseLanguage(), decision.confidence(), decision.provider(), decision.fallbackUsed(),
+                decision.latencyMs(), mergedFilter, unresolvedQualifier);
+    }
+
+    private boolean isAppointmentSourceResolution(Operation operation) {
+        return operation == Operation.LOOKUP_APPOINTMENTS
+                || operation == Operation.CANCEL_APPOINTMENT
+                || operation == Operation.RESCHEDULE_APPOINTMENT;
+    }
+
+    private boolean isBookingCriteriaOperation(Operation operation) {
+        return operation == Operation.START_BOOKING
+                || operation == Operation.UPDATE_BOOKING
+                || operation == Operation.RESOLVE_PROVIDER
+                || operation == Operation.GET_AVAILABILITY
+                || operation == Operation.UPDATE_RESCHEDULE
+                || operation == Operation.GET_RESCHEDULE_AVAILABILITY;
+    }
+
+    private String canonicalDoctorQuery(NormalizedUserTurn turn) {
+        if (turn.doctorEntity() != null && StringUtils.hasText(turn.doctorEntity().canonicalQuery())) {
+            return turn.doctorEntity().canonicalQuery();
+        }
+        return StringUtils.hasText(turn.explicitDoctorReference()) ? turn.explicitDoctorReference() : null;
+    }
+
+    private void logCanonicalFactConflicts(String target, String trustedDoctor, ValuePatch providerDoctor,
+                                           NormalizedUserTurn.TemporalFact trustedTemporal,
+                                           ValuePatch providerDate) {
+        List<String> conflicts = new java.util.ArrayList<>();
+        if (StringUtils.hasText(trustedDoctor) && isSet(providerDoctor)
+                && !normalizeFactForComparison(trustedDoctor).equals(normalizeFactForComparison(providerDoctor.value()))) {
+            conflicts.add("DOCTOR");
+        }
+        if (trustedTemporal != null && trustedTemporal.status() == NormalizedUserTurn.TemporalStatus.RESOLVED
+                && isSet(providerDate) && !trustedTemporal.localDate().toString().equals(providerDate.value())) {
+            conflicts.add("DATE");
+        }
+        if (!conflicts.isEmpty()) {
+            log.info("AIVA_V2_CANONICAL_FACT_CONFLICT target={} canonicalFactConflict=true conflictField={} providerFactOverridden=true",
+                    target, String.join(",", conflicts));
+        }
+    }
+
+    private boolean isSet(ValuePatch patch) {
+        return patch != null && patch.mode() == PatchMode.SET && StringUtils.hasText(patch.value());
+    }
+
+    private String normalizeFactForComparison(String value) {
+        return value == null ? "" : value.toLowerCase(Locale.ROOT)
+                .replaceAll("[^\\p{L}\\p{N}]+", " ").trim()
+                .replaceFirst("^(doctor|dr|doc)\\s+", "");
+    }
+
+    /** A provider confirmation cannot start a transaction when no capability exists. */
+    private ConversationDecision recoverUnsolicitedConfirmationAsBooking(NormalizedUserTurn turn,
+                                                                         SessionProjection context,
+                                                                         ConversationDecision decision) {
+        if (decision == null || context != null && context.pendingConfirmation() != null
+                || decision.operation() != Operation.CONFIRM_BOOKING
+                || decision.confirmation() == ConfirmationPolarity.NEGATIVE
+                || !isBookingIntent(turn.normalizedText())) return decision;
+        BookingPatch patch = decision.bookingPatch();
+        return new ConversationDecision(decision.schemaVersion(), DialogAct.START_REQUEST, Operation.START_BOOKING,
+                patch, decision.selection(), ConfirmationPolarity.NONE, decision.topicAction(),
+                decision.responseLanguage(), decision.confidence(), decision.provider(), decision.fallbackUsed(),
+                decision.latencyMs(), decision.lookupFilter(), decision.unresolvedExplicitQualifierPresent());
+    }
+
+    private boolean isBookingIntent(String normalizedText) {
+        String text = normalizedText == null ? "" : normalizedText;
+        return text.matches(".*\\b(?:book|booking)\\b.*") && text.matches(".*\\bappointment\\b.*");
     }
 
     private ConversationDecision withUnresolvedQualifier(ConversationDecision decision) {
@@ -177,41 +319,91 @@ class AiAivaV2ConversationDecisionGateway implements AivaV2ConversationDecisionG
                 decision.latencyMs(), decision.lookupFilter(), true);
     }
 
-    private ConversationDecision fastPath(String text, String language, SessionProjection context, long started) {
-        String normalized = text == null ? "" : text.trim().toLowerCase(Locale.ROOT);
-        String selectionText = normalizeSelectionText(normalized);
+    private ConversationDecision fastPath(NormalizedUserTurn turn, String language,
+                                          SessionProjection context, long started) {
+        String normalized = turn.normalizedText();
+        String selectionText = turn.selectionText();
         boolean confirmationPending = context != null
                 && (context.pendingConfirmation() != null || context.pendingCancellation() != null
                 || context.pendingRescheduleConfirmation() != null);
-        if (confirmationPending && List.of("yes", "yes please", "confirm", "go ahead", "हाँ", "हां").contains(normalized)) {
+        if (confirmationPending && turn.confirmation() != NormalizedUserTurn.Confirmation.NONE
+                && turn.pagination() == NormalizedUserTurn.Pagination.SHOW_MORE
+                && turn.confirmation() == NormalizedUserTurn.Confirmation.NEGATIVE) {
+            return decision(DialogAct.REQUEST_ALTERNATIVE, Operation.SHOW_MORE_SLOTS, null, null,
+                    ConfirmationPolarity.NEGATIVE, language, started);
+        }
+        if (confirmationPending && turn.confirmation() == NormalizedUserTurn.Confirmation.POSITIVE) {
+            Operation operation = context.pendingRescheduleConfirmation() != null ? Operation.CONFIRM_RESCHEDULE
+                    : context.pendingCancellation() != null ? Operation.CONFIRM_CANCELLATION : Operation.CONFIRM_BOOKING;
+            return decision(DialogAct.CONFIRM, operation, null, null, ConfirmationPolarity.POSITIVE, language, started);
+        }
+        if (confirmationPending && turn.confirmation() == NormalizedUserTurn.Confirmation.NEGATIVE) {
+            Operation operation = context.pendingRescheduleConfirmation() != null ? Operation.CONFIRM_RESCHEDULE
+                    : context.pendingCancellation() != null ? Operation.CANCEL_APPOINTMENT : Operation.UPDATE_BOOKING;
+            return decision(DialogAct.REJECT, operation, null, null, ConfirmationPolarity.NEGATIVE, language, started);
+        }
+        if (turn.pagination() == NormalizedUserTurn.Pagination.SHOW_MORE) {
+            return decision(DialogAct.REQUEST_ALTERNATIVE, Operation.SHOW_MORE_SLOTS, null, null,
+                    ConfirmationPolarity.NONE, language, started);
+        }
+        if (turn.daypart() != null && turn.exactTime() == null) {
+            BookingPatch patch = new BookingPatch(null, null, null,
+                    ValuePatch.set(turn.daypart().name().toLowerCase(Locale.ROOT)), null);
+            Operation operation = context != null && context.pendingReschedule() != null
+                    ? Operation.GET_RESCHEDULE_AVAILABILITY : Operation.GET_AVAILABILITY;
+            return decision(DialogAct.PROVIDE_INFORMATION, operation, patch, null,
+                    ConfirmationPolarity.NONE, language, started);
+        }
+        if (turn.exactTime() != null && context != null && currentAvailability(context) != null) {
+            String exact = turn.exactTime().toString();
+            if (matchesTime(context, exact)) return decision(DialogAct.SELECT_OPTION, Operation.SELECT_SLOT, null,
+                    new Selection(null, null, null, exact), ConfirmationPolarity.NONE, language, started);
+        }
+        if (turn.ordinal() != null && context != null && hasAvailability(context)
+                && matchesOrdinal(context, turn.ordinal())) {
+            return decision(DialogAct.SELECT_OPTION, Operation.SELECT_SLOT, null,
+                    new Selection(null, turn.ordinal(), null, null), ConfirmationPolarity.NONE, language, started);
+        }
+        if (turn.temporal().status() == NormalizedUserTurn.TemporalStatus.RESOLVED
+                && turn.intent() != NormalizedUserTurn.Intent.LOOKUP
+                && turn.intent() != NormalizedUserTurn.Intent.CANCELLATION
+                && turn.intent() != NormalizedUserTurn.Intent.RESCHEDULE
+                && !(turn.intent() == NormalizedUserTurn.Intent.BOOKING
+                && (context == null || context.activeDraft() == null))) {
+            BookingPatch patch = new BookingPatch(null, null, ValuePatch.set(turn.temporal().localDate().toString()), null, null);
+            Operation operation = context != null && context.pendingReschedule() != null
+                    ? Operation.UPDATE_RESCHEDULE : Operation.UPDATE_BOOKING;
+            return decision(DialogAct.CHANGE_INFORMATION, operation, patch, null,
+                    ConfirmationPolarity.NONE, language, started);
+        }
+        if (confirmationPending
+                && turn.controls().contains(DeterministicControl.CONFIRMATION_NEGATIVE)
+                && turn.controls().contains(DeterministicControl.SHOW_MORE_SLOTS)) {
+            return decision(DialogAct.REQUEST_ALTERNATIVE, Operation.SHOW_MORE_SLOTS, null, null,
+                    ConfirmationPolarity.NEGATIVE, language, started);
+        }
+        if (confirmationPending && isPositiveConfirmation(normalized)) {
             Operation operation = context.pendingRescheduleConfirmation() != null ? Operation.CONFIRM_RESCHEDULE
                     : context.pendingCancellation() != null ? Operation.CONFIRM_CANCELLATION : Operation.CONFIRM_BOOKING;
             return decision(DialogAct.CONFIRM, operation, null, null,
                     ConfirmationPolarity.POSITIVE, language, started);
         }
-        if (confirmationPending && List.of("no", "no thanks", "don't", "never mind", "नहीं", "नही").contains(normalized)) {
+        if (confirmationPending && isNegativeConfirmation(normalized)) {
             Operation operation = context.pendingRescheduleConfirmation() != null ? Operation.CONFIRM_RESCHEDULE
                     : context.pendingCancellation() != null ? Operation.CANCEL_APPOINTMENT : Operation.UPDATE_BOOKING;
             return decision(DialogAct.REJECT, operation, null, null,
                     ConfirmationPolarity.NEGATIVE, language, started);
         }
+        ConversationDecision providerSelection = providerCandidateFastPath(turn, context, language, started);
+        if (providerSelection != null) return providerSelection;
         ConversationDecision timeConstraint = timeConstraintFastPath(normalized, language, started);
         if (timeConstraint != null && context != null && context.pendingReschedule() != null) {
             return decision(DialogAct.PROVIDE_INFORMATION, Operation.GET_RESCHEDULE_AVAILABILITY,
                     timeConstraint.bookingPatch(), null, ConfirmationPolarity.NONE, language, started);
         }
         if (timeConstraint != null) return timeConstraint;
-        if (SHOW_MORE_CONTROL.matcher(normalized).matches()) {
+        if (isShowMoreControl(normalized)) {
             return decision(DialogAct.REQUEST_ALTERNATIVE, Operation.SHOW_MORE_SLOTS, null, null,
-                    ConfirmationPolarity.NONE, language, started);
-        }
-        Matcher daypart = DAYPART_CONTROL.matcher(normalized);
-        if (daypart.find() && isAvailabilityRefinement(normalized)) {
-            BookingPatch patch = new BookingPatch(null, null, null,
-                    ValuePatch.set(daypart.group(1).toLowerCase(Locale.ROOT)), null);
-            Operation operation = context != null && context.pendingReschedule() != null
-                    ? Operation.GET_RESCHEDULE_AVAILABILITY : Operation.GET_AVAILABILITY;
-            return decision(DialogAct.PROVIDE_INFORMATION, operation, patch, null,
                     ConfirmationPolarity.NONE, language, started);
         }
         var ordinal = ORDINAL.matcher(selectionText);
@@ -242,6 +434,15 @@ class AiAivaV2ConversationDecisionGateway implements AivaV2ConversationDecisionG
                         new Selection(null, null, null, exact), ConfirmationPolarity.NONE, language, started);
             }
         }
+        Matcher daypart = DAYPART_CONTROL.matcher(normalized);
+        if (daypart.find() && isAvailabilityRefinement(normalized)) {
+            BookingPatch patch = new BookingPatch(null, null, null,
+                    ValuePatch.set(daypart.group(1).toLowerCase(Locale.ROOT)), null);
+            Operation operation = context != null && context.pendingReschedule() != null
+                    ? Operation.GET_RESCHEDULE_AVAILABILITY : Operation.GET_AVAILABILITY;
+            return decision(DialogAct.PROVIDE_INFORMATION, operation, patch, null,
+                    ConfirmationPolarity.NONE, language, started);
+        }
         if (isIsoDate(normalized)) {
             return decision(DialogAct.CHANGE_INFORMATION, Operation.UPDATE_BOOKING,
                     new BookingPatch(null, null, ValuePatch.set(normalized), null, null), null,
@@ -250,22 +451,99 @@ class AiAivaV2ConversationDecisionGateway implements AivaV2ConversationDecisionG
         return null;
     }
 
-    /**
-     * Normalizes generic selection language before deterministic matching. This
-     * is shared by typed text and voice transcripts; it is deliberately limited
-     * to control vocabulary and does not interpret domain content.
-     */
-    private String normalizeSelectionText(String text) {
-        String normalized = text.replaceFirst("^(?:take|choose|select|use)\\s+", "");
-        for (Map.Entry<String, String> entry : SPOKEN_CLOCK_NUMBERS.entrySet()) {
-            normalized = normalized.replaceAll("\\b" + entry.getKey()
-                    + "(?=\\s*(?:am|pm|o['’]?clock)\\b)", entry.getValue());
+    private ConversationDecision providerCandidateFastPath(NormalizedUserTurn turn, SessionProjection context,
+                                                            String language, long started) {
+        ProviderSearchResult result = context == null ? null : context.latestProviderResult();
+        if (result == null || result.candidates().isEmpty() || result.status() != AivaV2Models.ResolutionStatus.AMBIGUOUS) {
+            return null;
         }
-        return normalized.replaceAll("\\bo['’]?clock\\b", "").replaceAll("\\s+", " ").trim();
+        String selectionText = turn.selectionText();
+        Matcher ordinal = PROVIDER_ORDINAL.matcher(selectionText);
+        if (ordinal.matches()) {
+            int value = ordinalValue(ordinal.group(1));
+            return providerSelectionDecision(result, value, language, started);
+        }
+        String query = StringUtils.hasText(turn.explicitDoctorReference())
+                ? turn.explicitDoctorReference() : selectionText;
+        if (!isProviderSelectionText(query)) return null;
+        var candidate = AivaV2ProviderCandidateResolver.byDisplayedText(result, query);
+        return decision(DialogAct.SELECT_OPTION, Operation.RESOLVE_PROVIDER, null,
+                candidate.map(value -> new Selection(value.candidateHandle(), null, null, null)).orElse(null),
+                ConfirmationPolarity.NONE, language, started);
+    }
+
+    private ConversationDecision providerSelectionDecision(ProviderSearchResult result, int ordinal,
+                                                            String language, long started) {
+        var candidate = AivaV2ProviderCandidateResolver.byOrdinal(result, ordinal);
+        return decision(DialogAct.SELECT_OPTION, Operation.RESOLVE_PROVIDER, null,
+                candidate.map(value -> new Selection(value.candidateHandle(), null, null, null)).orElse(null),
+                ConfirmationPolarity.NONE, language, started);
+    }
+
+    private boolean isProviderSelectionText(String text) {
+        if (!StringUtils.hasText(text)) return false;
+        return text.matches("(?i)^(?:book\\s+with\\s+|with\\s+)?(?:doctor|dr|doc)\\b.*");
     }
 
     private boolean isAvailabilityRefinement(String text) {
-        return text.contains("slot") || text.contains("availability") || text.matches("^(morning|afternoon|evening)$");
+        return text.contains("slot") || text.contains("availability") || DAYPART_CONTROL.matcher(text).find();
+    }
+
+    private boolean isPositiveConfirmation(String text) {
+        return List.of("yes", "yes please", "confirm", "go ahead")
+                .contains(normalizeControlToken(text));
+    }
+
+    private boolean isNegativeConfirmation(String text) {
+        return List.of("no", "no thanks", "don't", "never mind")
+                .contains(normalizeControlToken(text));
+    }
+
+    private String normalizeControlToken(String text) {
+        return (text == null ? "" : text).trim().toLowerCase(Locale.ROOT)
+                .replaceAll("[.!?]+$", "").replaceAll("\\s+", " ").trim();
+    }
+
+    private boolean isShowMoreControl(String text) {
+        if (SHOW_MORE_CONTROL.matcher(text).matches()) return true;
+        boolean moreOrNext = text.matches(".*\\b(?:more|next)\\b.*");
+        boolean slotsOrShow = text.matches(".*\\b(?:slots?|show)\\b.*");
+        return moreOrNext && slotsOrShow;
+    }
+
+    private String semanticControl(ConversationDecision decision) {
+        if (decision.confirmation() == ConfirmationPolarity.POSITIVE) return "CONFIRMATION_POSITIVE";
+        if (decision.confirmation() == ConfirmationPolarity.NEGATIVE) return "CONFIRMATION_NEGATIVE";
+        return switch (decision.operation()) {
+            case SELECT_SLOT -> "SELECT_SLOT";
+            case SHOW_MORE_SLOTS -> "SHOW_MORE";
+            case GET_AVAILABILITY, GET_RESCHEDULE_AVAILABILITY ->
+                    decision.bookingPatch().timeWindow().mode() == PatchMode.SET ? "DAYPART" : "TIME_CONSTRAINT";
+            default -> decision.operation().name();
+        };
+    }
+
+    private String normalizedTime(ConversationDecision decision) {
+        if (decision.selection() != null && StringUtils.hasText(decision.selection().exactTime())) {
+            return decision.selection().exactTime();
+        }
+        var constraint = decision.bookingPatch().availabilityTimeConstraint().value();
+        if (constraint == null) return null;
+        return constraint.startTime() != null ? constraint.startTime().toString()
+                : constraint.endTime() == null ? null : constraint.endTime().toString();
+    }
+
+    private String normalizedDaypart(ConversationDecision decision) {
+        return decision.bookingPatch().timeWindow().mode() == PatchMode.SET
+                ? decision.bookingPatch().timeWindow().value() : null;
+    }
+
+    private String activeWorkflow(SessionProjection context) {
+        if (context != null && context.pendingReschedule() != null) return "RESCHEDULE";
+        if (context != null && (context.pendingConfirmation() != null || context.pendingCancellation() != null)) {
+            return "BOOKING_OR_CANCELLATION";
+        }
+        return "NONE";
     }
 
     private ConversationDecision timeConstraintFastPath(String text, String language, long started) {

@@ -2,6 +2,7 @@ package com.deepthoughtnet.clinic.api.patientportal.aivav2;
 
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.PatchMode;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ValuePatch;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.language.NormalizedUserTurn;
 import java.time.Clock;
 import java.time.DayOfWeek;
 import java.time.DateTimeException;
@@ -75,6 +76,21 @@ final class AivaV2TemporalNormalizer {
                 .orElseGet(() -> new AivaV2TemporalResolution(isNumericDate(modelCandidate)
                                 ? AivaV2TemporalResolution.Status.INVALID : AivaV2TemporalResolution.Status.AMBIGUOUS, null,
                         AivaV2TemporalResolution.Source.MODEL_CANONICAL, null, modelCandidate, false));
+    }
+
+    AivaV2TemporalResolution normalize(NormalizedUserTurn.TemporalFact fact, ValuePatch modelPatch, LocalDate previous) {
+        if (fact != null && fact.status() != NormalizedUserTurn.TemporalStatus.NONE) {
+            boolean resolved = fact.status() == NormalizedUserTurn.TemporalStatus.RESOLVED;
+            LocalDate modelDate = modelPatch != null && modelPatch.mode() == PatchMode.SET
+                    ? resolveValue(modelPatch.value()).orElse(null) : null;
+            return new AivaV2TemporalResolution(resolved ? AivaV2TemporalResolution.Status.RESOLVED
+                    : fact.status() == NormalizedUserTurn.TemporalStatus.INVALID
+                    ? AivaV2TemporalResolution.Status.INVALID : AivaV2TemporalResolution.Status.AMBIGUOUS,
+                    resolved ? fact.localDate() : null, AivaV2TemporalResolution.Source.CURRENT_TURN_EXPLICIT,
+                    fact.rawSpan(), modelPatch == null ? null : modelPatch.value(),
+                    resolved && modelDate != null && !fact.localDate().equals(modelDate));
+        }
+        return normalize("", modelPatch, previous);
     }
 
     private Optional<Candidate> findCurrentTurnDate(String transcript) {

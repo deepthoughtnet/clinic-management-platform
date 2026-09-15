@@ -14,6 +14,7 @@ import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.PatchMode
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.TopicAction;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ValuePatch;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.SessionProjection;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.language.NormalizedUserTurn;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.time.Clock;
 import java.time.Instant;
@@ -34,6 +35,7 @@ class AivaV2ConversationService {
     private final PatientPortalService patientPortalService;
     private final ClinicTimeZoneResolver clinicTimeZoneResolver;
     private final Clock clock;
+    private final AivaResponseRenderer responseRenderer;
 
     @Autowired
     AivaV2ConversationService(
@@ -41,9 +43,10 @@ class AivaV2ConversationService {
             AivaV2TransactionalKernel kernel,
             AivaV2SessionStore sessionStore,
             PatientPortalService patientPortalService,
-            ClinicTimeZoneResolver clinicTimeZoneResolver
+            ClinicTimeZoneResolver clinicTimeZoneResolver,
+            AivaResponseRenderer responseRenderer
     ) {
-        this(decisionGateway, kernel, sessionStore, patientPortalService, clinicTimeZoneResolver, Clock.systemUTC());
+        this(decisionGateway, kernel, sessionStore, patientPortalService, clinicTimeZoneResolver, Clock.systemUTC(), responseRenderer);
     }
 
     AivaV2ConversationService(
@@ -53,7 +56,7 @@ class AivaV2ConversationService {
             PatientPortalService patientPortalService,
             Clock clock
     ) {
-        this(decisionGateway, kernel, sessionStore, patientPortalService, null, clock);
+        this(decisionGateway, kernel, sessionStore, patientPortalService, null, clock, new AivaResponseRenderer());
     }
 
     AivaV2ConversationService(
@@ -64,12 +67,25 @@ class AivaV2ConversationService {
             ClinicTimeZoneResolver clinicTimeZoneResolver,
             Clock clock
     ) {
+        this(decisionGateway, kernel, sessionStore, patientPortalService, clinicTimeZoneResolver, clock, new AivaResponseRenderer());
+    }
+
+    AivaV2ConversationService(
+            AivaV2ConversationDecisionGateway decisionGateway,
+            AivaV2TransactionalKernel kernel,
+            AivaV2SessionStore sessionStore,
+            PatientPortalService patientPortalService,
+            ClinicTimeZoneResolver clinicTimeZoneResolver,
+            Clock clock,
+            AivaResponseRenderer responseRenderer
+    ) {
         this.decisionGateway = decisionGateway;
         this.kernel = kernel;
         this.sessionStore = sessionStore;
         this.patientPortalService = patientPortalService;
         this.clinicTimeZoneResolver = clinicTimeZoneResolver;
         this.clock = clock;
+        this.responseRenderer = responseRenderer;
     }
 
     @PostConstruct
@@ -96,25 +112,28 @@ class AivaV2ConversationService {
             SessionProjection session = current == null ? new SessionProjection(
                     conversationId, patientId, tenantId, null, null, null, null, null,
                     1L, Instant.now(clock).plusSeconds(30 * 60)) : current;
-            var decision = request.action() == null
-                    ? decisionGateway.decide(request.message(), safeLanguage(request.language()), session)
-                    : decisionForAction(request.action(), safeLanguage(request.language()));
-            logDecision(conversationId, turnId, decision);
             ZoneId clinicZone = clinicTimeZoneResolver == null
                     ? ZoneId.of("Asia/Kolkata")
                     : clinicTimeZoneResolver.resolve(RequestContextHolder.requireTenantId());
+            NormalizedUserTurn normalizedTurn = decisionGateway.normalizeTurn(request.message(), safeLanguage(request.language()),
+                    java.time.LocalDate.now(clock.withZone(clinicZone)));
+            var presentation = sessionStore.updatePresentation(key, normalizedTurn, session.expiresAt());
+            var decision = request.action() == null
+                    ? decisionGateway.decide(normalizedTurn, session)
+                    : decisionForAction(request.action(), safeLanguage(request.language()));
+            logDecision(conversationId, turnId, decision);
             AivaV2Models.ValuePatch datePatch = decision.operation() == AivaV2Models.Operation.LOOKUP_APPOINTMENTS
                     || decision.operation() == AivaV2Models.Operation.CANCEL_APPOINTMENT
                     || decision.operation() == AivaV2Models.Operation.RESCHEDULE_APPOINTMENT
                     ? decision.lookupFilter().dateExpression() : decision.bookingPatch().dateExpression();
             AivaV2TemporalResolution temporal = new AivaV2TemporalNormalizer(clock, clinicZone)
-                    .normalize(request.message(), datePatch,
+                    .normalize(normalizedTurn.temporal(), datePatch,
                             cancellationDate(session, decision));
             decision = applyPendingCancellationRefinement(session, decision, temporal);
             decision = applyPendingRescheduleRefinement(session, decision, temporal);
             logTemporal(conversationId, turnId, decision, temporal);
             AivaV2TransactionalKernel.KernelResult result = kernel.handle(session, decision, temporal, clinicZone, turnId);
-            response.set(result.response());
+            response.set(responseRenderer.render(result.response(), presentation.responseLanguage(), presentation.responseStyle()));
             return result.session();
         });
         return response.get();

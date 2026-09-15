@@ -7,6 +7,9 @@ import com.deepthoughtnet.clinic.ai.orchestration.service.AiOrchestrationService
 import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
 import com.deepthoughtnet.clinic.api.patientportal.PatientPortalService;
 import com.deepthoughtnet.clinic.api.publicsite.PublicCatalogFacade;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.language.EnglishLanguageAdapter;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.language.HindiLanguageAdapter;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.language.LanguageAdapterRegistry;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -22,6 +25,8 @@ class AivaV2SpringWiringTest {
                     AivaV2BookingTools.class, AivaV2TransactionalKernel.class,
                     AivaV2AppointmentLookupTool.class, AivaV2CancellationTool.class,
                     AivaV2RescheduleTools.class,
+                    AivaResponseRenderer.class,
+                    EnglishLanguageAdapter.class, HindiLanguageAdapter.class, LanguageAdapterRegistry.class,
                     AivaV2ConversationService.class, AivaV2Controller.class);
 
     @Test

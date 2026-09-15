@@ -1,6 +1,8 @@
 package com.deepthoughtnet.clinic.api.patientportal.aivav2;
 
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.SessionProjection;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.language.NormalizedUserTurn;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.language.ResponseStyle;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Optional;
@@ -12,6 +14,7 @@ import org.springframework.stereotype.Component;
 @Component
 class AivaV2SessionStore {
     private final ConcurrentHashMap<String, SessionProjection> sessions = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, PresentationMetadata> presentation = new ConcurrentHashMap<>();
     private final Clock clock;
 
     @Autowired
@@ -38,5 +41,23 @@ class AivaV2SessionStore {
 
     void clear() {
         sessions.clear();
+        presentation.clear();
     }
+
+    PresentationMetadata updatePresentation(String key, NormalizedUserTurn turn, Instant expiresAt) {
+        Instant now = Instant.now(clock);
+        PresentationMetadata old = presentation.get(key);
+        if (old != null && (old.expiresAt() == null || old.expiresAt().isBefore(now))) {
+            presentation.remove(key, old);
+            old = null;
+        }
+        boolean noScriptSignal = turn.rawText().codePoints().noneMatch(Character::isLetter);
+        PresentationMetadata current = noScriptSignal && old != null
+                ? new PresentationMetadata(old.responseLanguage(), old.responseStyle(), expiresAt)
+                : new PresentationMetadata(turn.responseLanguage(), turn.responseStyle(), expiresAt);
+        presentation.put(key, current);
+        return current;
+    }
+
+    record PresentationMetadata(String responseLanguage, ResponseStyle responseStyle, Instant expiresAt) { }
 }

@@ -548,10 +548,18 @@ public final class AivaV2Models {
             StateView state,
             String interpretationProvider,
             boolean fallbackUsed,
-            List<InteractiveAction> actions
+            List<InteractiveAction> actions,
+            AivaStructuredResponse structuredResponse
     ) {
         public MessageResponse {
             actions = actions == null ? List.of() : List.copyOf(actions);
+        }
+
+        public MessageResponse(String conversationId, String turnId, String assistantMessage,
+                               String responseCategory, StateView state, String interpretationProvider,
+                               boolean fallbackUsed, List<InteractiveAction> actions) {
+            this(conversationId, turnId, assistantMessage, responseCategory, state,
+                    interpretationProvider, fallbackUsed, actions, null);
         }
     }
 

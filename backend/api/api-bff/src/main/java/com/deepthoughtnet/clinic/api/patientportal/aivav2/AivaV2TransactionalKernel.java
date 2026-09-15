@@ -29,6 +29,7 @@ import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.SessionPr
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.StateView;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ToolResult;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ValuePatch;
+import static com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaStructuredResponse.*;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -152,11 +153,13 @@ class AivaV2TransactionalKernel {
         }
         if (session.pendingReschedule() != null
                 && decision.topicAction() == AivaV2Models.TopicAction.ABANDON) {
+            AivaStructuredResponse rejected = AivaStructuredResponse.of(ResponseType.RESCHEDULE_REJECTED,
+                    rescheduleConfirmationPayload(session), List.of());
             SessionProjection updated = replace(session, session.activeDraft(), session.suspendedDraft(),
                     session.latestProviderResult(), session.latestAvailabilityResult(), session.pendingConfirmation(),
                     session.pendingCancellation());
             return result(updated, decision, turnId, "RESCHEDULE_ABANDONED",
-                    "I will leave your original appointment unchanged.");
+                    "I will leave your original appointment unchanged.", rejected);
         }
         if (decision.operation() == Operation.RESCHEDULE_APPOINTMENT
                 || decision.operation() == Operation.UPDATE_RESCHEDULE
@@ -177,7 +180,10 @@ class AivaV2TransactionalKernel {
                             ? RescheduleStatus.TARGET_COLLECTING : RescheduleStatus.AVAILABILITY_READY);
             SessionProjection updated = replaceReschedule(session, rejected, null);
             return result(updated, decision, turnId, "RESCHEDULE_CONFIRMATION_REJECTED",
-                    "I will leave your original appointment unchanged. You can choose another slot or date.");
+                    "I will leave your original appointment unchanged. You can choose another slot or date.",
+                    AivaStructuredResponse.of(ResponseType.RESCHEDULE_REJECTED,
+                            new RescheduleConfirmationPayload(state.originalDoctorDisplayName(), appointmentFact(state),
+                                    state.targetDate(), state.selectedStartsAt()), List.of()));
         }
         if (decision.operation() == Operation.LOOKUP_APPOINTMENTS) {
             return lookupAppointments(session, decision, temporal, turnId);
@@ -186,10 +192,12 @@ class AivaV2TransactionalKernel {
                 || decision.operation() == Operation.CANCEL_APPOINTMENT)
                 && decision.confirmation() == ConfirmationPolarity.NEGATIVE
                 && session.pendingCancellation() != null) {
+            AppointmentFact rejectedAppointment = cancellationFact(session.pendingCancellation());
             SessionProjection updated = replace(session, session.activeDraft(), session.suspendedDraft(),
                     session.latestProviderResult(), session.latestAvailabilityResult(), session.pendingConfirmation(), null);
             return result(updated, decision, turnId, "CANCEL_CONFIRMATION_REJECTED",
-                    "I’ll leave that appointment unchanged.");
+                    "I’ll leave that appointment unchanged.", AivaStructuredResponse.of(ResponseType.CANCELLATION_REJECTED,
+                            new CancellationConfirmationPayload(rejectedAppointment), List.of()));
         }
         if (decision.operation() == Operation.CANCEL_APPOINTMENT) {
             return prepareCancellation(session, decision, temporal, turnId);
@@ -241,8 +249,8 @@ class AivaV2TransactionalKernel {
         if (decision.confirmation() == ConfirmationPolarity.NEGATIVE && session.pendingConfirmation() != null) {
             BookingDraft rejected = copyDraft(session.activeDraft(), session.activeDraft().selectedProvider(),
                     session.activeDraft().specialtyFilter(), session.activeDraft().preferredDate(),
-                    session.activeDraft().preferredTimeWindow(), session.activeDraft().exactTime(),
-                    session.activeDraft().latestAvailabilityRequestId(), session.activeDraft().selectedSlotReference(),
+                    session.activeDraft().preferredTimeWindow(), null,
+                    session.activeDraft().latestAvailabilityRequestId(), null,
                     DraftStatus.COLLECTING, session.activeDraft().revision(), null);
             session = replace(session, rejected, null, session.latestProviderResult(),
                     session.latestAvailabilityResult(), null);
@@ -253,6 +261,9 @@ class AivaV2TransactionalKernel {
         if (decision.operation() == Operation.SELECT_SLOT && decision.selection() != null) {
             KernelResult selection = selectCurrentCandidate(session, decision, turnId);
             if (selection != null) return selection;
+        }
+        if (decision.operation() == Operation.RESOLVE_PROVIDER && session.latestProviderResult() != null) {
+            return resolveProviderCandidate(session, decision, turnId);
         }
 
         PatchResult patchResult = applyPatch(session, decision, temporal, clinicZone);
@@ -426,11 +437,15 @@ class AivaV2TransactionalKernel {
         if (lookup.status() == AivaV2Models.AppointmentLookupStatus.NONE) {
             log.info("AIVA_V2_LOOKUP_RESPONSE_TRACE conversationId={} turnId={} operation={} resultStatus={} resultCount={} responseCategory={}",
                     session.conversationId(), turnId, decision.operation(), lookup.status(), lookup.appointments().size(), "APPOINTMENTS_NONE");
-            return result(session, decision, turnId, "APPOINTMENTS_NONE", appointmentLookupNoneMessage(filter, date));
+            return result(session, decision, turnId, "APPOINTMENTS_NONE", appointmentLookupNoneMessage(filter, date),
+                    AivaStructuredResponse.of(ResponseType.APPOINTMENTS_NONE,
+                            new AppointmentListPayload(List.of(), appliedFilters(filter, date)), List.of()));
         }
         log.info("AIVA_V2_LOOKUP_RESPONSE_TRACE conversationId={} turnId={} operation={} resultStatus={} resultCount={} responseCategory={}",
                 session.conversationId(), turnId, decision.operation(), lookup.status(), lookup.appointments().size(), "APPOINTMENTS_FOUND");
-        return result(session, decision, turnId, "APPOINTMENTS_FOUND", appointmentMessage(lookup.appointments()));
+        return result(session, decision, turnId, "APPOINTMENTS_FOUND", appointmentMessage(lookup.appointments()),
+                AivaStructuredResponse.of(ResponseType.APPOINTMENTS_FOUND,
+                        new AppointmentListPayload(appointmentFacts(lookup.appointments()), appliedFilters(filter, date)), List.of()));
     }
 
     private String appointmentMessage(List<AivaV2Models.AppointmentSummary> appointments) {
@@ -590,10 +605,14 @@ class AivaV2TransactionalKernel {
                 "Your appointment has been rescheduled to " + confirmation.targetDate().format(HUMAN_DATE) + " at " + confirmation.targetStartsAt() + ".");
         ToolResult<String> confirmed = rescheduleTools.confirm(confirmation, session.conversationId(), turnId);
         if (!"SUCCESS".equals(confirmed.category())) return result(session, decision, turnId, confirmed.category(), confirmed.safeReason());
-        return result(replaceReschedule(session, rescheduleState(state, state.targetDate(), state.availabilityConstraint(),
-                        state.latestAvailability(), state.selectedSlotReference(), RescheduleStatus.COMPLETED), confirmation), decision,
-                turnId, "RESCHEDULE_CONFIRMED", "Your appointment has been rescheduled to "
-                        + confirmation.targetDate().format(HUMAN_DATE) + " at " + confirmation.targetStartsAt() + ".");
+        SessionProjection updated = replaceReschedule(session, rescheduleState(state, state.targetDate(),
+                state.availabilityConstraint(), state.latestAvailability(), state.selectedSlotReference(),
+                RescheduleStatus.COMPLETED), confirmation);
+        return result(updated, decision, turnId, "RESCHEDULE_CONFIRMED", "Your appointment has been rescheduled to "
+                        + confirmation.targetDate().format(HUMAN_DATE) + " at " + confirmation.targetStartsAt() + ".",
+                AivaStructuredResponse.of(ResponseType.RESCHEDULE_SUCCESS,
+                        new RescheduleSuccessPayload(state.originalDoctorDisplayName(), state.originalDate(),
+                                state.originalStartsAt(), confirmation.targetDate(), confirmation.targetStartsAt()), List.of()));
     }
 
     private RescheduleResolution rescheduleState(RescheduleResolution state, LocalDate targetDate,
@@ -768,7 +787,9 @@ class AivaV2TransactionalKernel {
                         + "confirmationResult=SUCCESS", decision.operation());
         return result(updated, decision, turnId, "CANCELLATION_CONFIRMED",
                 "Your appointment with " + confirmation.doctorDisplayName() + " on " + confirmation.date()
-                        + " at " + confirmation.startsAt() + " has been cancelled.");
+                        + " at " + confirmation.startsAt() + " has been cancelled.",
+                AivaStructuredResponse.of(ResponseType.CANCELLATION_SUCCESS,
+                        new CancellationSuccessPayload(cancellationFact(confirmation)), List.of()));
     }
 
     private String cancellationPrompt(AppointmentSummary appointment) {
@@ -889,6 +910,21 @@ class AivaV2TransactionalKernel {
         return index >= 0 && index < result.candidates().size() ? result.candidates().get(index) : null;
     }
 
+    private KernelResult resolveProviderCandidate(SessionProjection session, ConversationDecision decision,
+                                                  String turnId) {
+        BookingDraft draft = session.activeDraft();
+        ProviderSearchResult result = session.latestProviderResult();
+        ProviderCandidate selected = decision.selection() == null ? null : selectProvider(result, decision.selection());
+        if (selected == null) {
+            return result(session, decision, turnId, "PROVIDER_CHOICES", providerChoices(result));
+        }
+        BookingDraft changed = copyDraft(draft, selected, draft.specialtyFilter(), draft.preferredDate(),
+                draft.preferredTimeWindow(), draft.exactTime(), draft.availabilityTimeConstraint(), null, null,
+                DraftStatus.COLLECTING, draft.revision() + 1, null);
+        SessionProjection updated = replace(session, changed, null, null, null, null);
+        return continueFromDraft(updated, decision, turnId);
+    }
+
     private boolean availabilityIsCurrent(BookingDraft draft, AvailabilityResult result) {
         return draft != null && result != null && result.draftId().equals(draft.draftId())
                 && result.draftRevision() == draft.revision()
@@ -970,6 +1006,13 @@ class AivaV2TransactionalKernel {
 
     private KernelResult result(SessionProjection session, ConversationDecision decision, String turnId,
                                 String category, String message) {
+        List<InteractiveAction> actions = interactiveActions(session, category);
+        return result(session, decision, turnId, category, message,
+                structuredResponse(session, category, actions));
+    }
+
+    private KernelResult result(SessionProjection session, ConversationDecision decision, String turnId,
+                                String category, String message, AivaStructuredResponse structured) {
         log.info("AIVA_V2_TRACE conversationId={} turnId={} provider={} fallbackUsed={} dialogAct={} operation={} category={} "
                         + "draftRevision={} draftStatus={} providerResolved={} datePresent={} slotSelected={} confirmationPending={}",
                 session.conversationId(), turnId, decision.provider(), decision.fallbackUsed(), decision.dialogAct(), decision.operation(), category,
@@ -979,10 +1022,225 @@ class AivaV2TransactionalKernel {
                 session.activeDraft() != null && session.activeDraft().preferredDate() != null,
                 session.activeDraft() != null && session.activeDraft().selectedSlotReference() != null,
                 session.pendingConfirmation() != null);
+        List<InteractiveAction> actions = interactiveActions(session, category);
         MessageResponse response = new MessageResponse(session.conversationId(), turnId, message, category,
                 view(session.activeDraft(), session.pendingConfirmation()), decision.provider(), decision.fallbackUsed(),
-                interactiveActions(session, category));
+                actions, structured == null ? structuredResponse(session, category, actions) : structured);
         return new KernelResult(session, response);
+    }
+
+    private AivaStructuredResponse structuredResponse(SessionProjection session, String category,
+                                                       List<InteractiveAction> actions) {
+        BookingDraft draft = session.activeDraft();
+        ProviderCandidate provider = draft == null ? null : draft.selectedProvider();
+        RescheduleResolution reschedule = session.pendingReschedule();
+        AvailabilityResult availability = reschedule == null
+                ? session.latestAvailabilityResult() : reschedule.latestAvailability();
+        ResponseType type;
+        Payload payload;
+        switch (category) {
+            case "NEED_PROVIDER" -> {
+                type = ResponseType.NEED_PROVIDER;
+                payload = new NeedProviderPayload(draft == null ? null : draft.specialtyFilter(), null);
+            }
+            case "PROVIDER_CHOICES", "PROVIDER_SUGGESTION" -> {
+                type = ResponseType.PROVIDER_CHOICES;
+                ProviderSearchResult result = session.latestProviderResult();
+                List<ProviderOption> candidates = result == null ? List.of() : result.candidates().stream()
+                        .limit(3).map(candidate -> new ProviderOption(candidate.candidateHandle(),
+                                candidate.displayName(), candidate.specialty(), candidate.clinicDisplayName())).toList();
+                payload = new ProviderChoicesPayload(candidates);
+            }
+            case "PROVIDER_NOT_FOUND" -> {
+                type = ResponseType.PROVIDER_NOT_FOUND;
+                payload = new ProviderNotFoundPayload(null, draft == null ? null : draft.specialtyFilter());
+            }
+            case "NEED_DATE", "RESCHEDULE_NEED_DATE", "RESCHEDULE_SOURCE_RESOLVED" -> {
+                if (category.startsWith("RESCHEDULE")) {
+                    type = ResponseType.RESCHEDULE_NEED_DATE;
+                    payload = new RescheduleNeedDatePayload(reschedule == null ? null : reschedule.originalDoctorDisplayName(),
+                            reschedule == null ? null : appointmentFact(reschedule));
+                } else {
+                    type = ResponseType.NEED_DATE;
+                    payload = new NeedDatePayload(provider == null ? null : provider.displayName());
+                }
+            }
+            case "SLOT_CHOICES", "RESCHEDULE_SLOT_CHOICES", "NO_AVAILABILITY" -> {
+                boolean isReschedule = reschedule != null || "RESCHEDULE_SLOT_CHOICES".equals(category);
+                type = isReschedule ? ResponseType.RESCHEDULE_AVAILABLE_SLOTS : ResponseType.AVAILABLE_SLOTS;
+                payload = availability == null ? new AvailabilityPayload(providerName(session),
+                        draft == null ? null : draft.preferredDate(), List.of(), false, null)
+                        : new AvailabilityPayload(providerName(session), availability.date(),
+                        slotFacts(availability), availability.hasMore(), constraint(availability));
+            }
+            case "NO_MORE_SLOTS" -> {
+                type = reschedule == null ? ResponseType.NO_MORE_SLOTS : ResponseType.RESCHEDULE_NO_MORE_SLOTS;
+                payload = availability == null
+                        ? new NoMoreSlotsEmptyPayload("NO_MORE_MATCHING_SLOTS")
+                        : new NoMoreSlotsPayload(providerName(session), availability.date(), constraint(availability));
+            }
+            case "CONFIRMATION_REQUIRED" -> {
+                type = ResponseType.BOOKING_CONFIRMATION;
+                var confirmation = session.pendingConfirmation();
+                payload = new BookingConfirmationPayload(providerName(session),
+                        confirmation == null ? draft == null ? null : draft.preferredDate() : confirmation.date(),
+                        confirmation == null ? draft == null ? null : draft.exactTime() : confirmation.startsAt());
+            }
+            case "BOOKING_CONFIRMED" -> {
+                type = ResponseType.BOOKING_SUCCESS;
+                payload = new BookingSuccessPayload(draft == null ? null : draft.confirmedAppointmentReference(),
+                        providerName(session), draft == null ? null : draft.preferredDate(),
+                        draft == null ? null : draft.exactTime());
+            }
+            case "APPOINTMENTS_NONE" -> {
+                type = ResponseType.APPOINTMENTS_NONE;
+                payload = new AppointmentListPayload(List.of(), null);
+            }
+            case "APPOINTMENTS_FOUND" -> {
+                type = ResponseType.APPOINTMENTS_FOUND;
+                payload = new AppointmentListPayload(List.of(), null);
+            }
+            case "LOOKUP_CLARIFICATION" -> {
+                type = ResponseType.LOOKUP_CLARIFICATION;
+                payload = new ClarificationPayload("LOOKUP_FILTER_AMBIGUOUS", List.of());
+            }
+            case "CANCELLATION_NONE" -> {
+                type = ResponseType.CANCELLATION_NONE;
+                payload = new CancellationChoicesPayload(List.of());
+            }
+            case "CANCELLATION_CHOICES" -> {
+                type = ResponseType.CANCELLATION_CHOICES;
+                var pending = session.pendingCancellationResolution();
+                payload = new CancellationChoicesPayload(pending == null ? List.of() : appointmentFacts(pending.candidates()));
+            }
+            case "CANCELLATION_CONFIRMATION" -> {
+                type = ResponseType.CANCELLATION_CONFIRMATION;
+                payload = new CancellationConfirmationPayload(cancellationFact(session.pendingCancellation()));
+            }
+            case "CANCELLATION_CONFIRMED" -> {
+                type = ResponseType.CANCELLATION_SUCCESS;
+                payload = new CancellationSuccessPayload(null);
+            }
+            case "CANCEL_CONFIRMATION_REJECTED" -> {
+                type = ResponseType.CANCELLATION_REJECTED;
+                payload = new CancellationConfirmationPayload(null);
+            }
+            case "RESCHEDULE_SOURCE_CHOICES" -> {
+                type = ResponseType.RESCHEDULE_SOURCE_CHOICES;
+                payload = new RescheduleSourceChoicesPayload(reschedule == null ? List.of()
+                        : appointmentFacts(reschedule.sourceCandidates()));
+            }
+            case "RESCHEDULE_NONE" -> {
+                type = ResponseType.RESCHEDULE_SOURCE_NONE;
+                payload = new RescheduleSourceChoicesPayload(List.of());
+            }
+            case "RESCHEDULE_CONFIRMATION" -> {
+                type = ResponseType.RESCHEDULE_CONFIRMATION;
+                payload = rescheduleConfirmationPayload(session);
+            }
+            case "RESCHEDULE_CONFIRMED" -> {
+                type = ResponseType.RESCHEDULE_SUCCESS;
+                payload = rescheduleSuccessPayload(session);
+            }
+            case "RESCHEDULE_CONFIRMATION_REJECTED" -> {
+                type = ResponseType.RESCHEDULE_REJECTED;
+                payload = rescheduleConfirmationPayload(session);
+            }
+            case "CALL_TO_BOOK" -> {
+                type = ResponseType.CALL_TO_BOOK;
+                payload = new CallToBookPayload(providerName(session), provider == null ? null : provider.clinicDisplayName(), null);
+            }
+            case "STALE", "EXPIRED" -> {
+                type = ResponseType.STALE_RESULT;
+                payload = new StaleResultPayload(category, null);
+            }
+            case "FAILED", "INVALID", "NOT_BOOKABLE", "NEEDS_INPUT", "RESCHEDULE_UNAVAILABLE" -> {
+                type = ResponseType.FAILURE;
+                payload = new FailurePayload(category);
+            }
+            case "CLARIFICATION", "PAST_DATE" -> {
+                type = ResponseType.CLARIFICATION;
+                payload = new ClarificationPayload(category, List.of());
+            }
+            default -> {
+                type = ResponseType.LEGACY;
+                payload = new EmptyPayload(category);
+            }
+        }
+        return AivaStructuredResponse.of(type, payload, actions);
+    }
+
+    private AivaStructuredResponse structuredLookup(List<AppointmentSummary> appointments,
+                                                    AivaV2Models.AppointmentLookupFilter filter, LocalDate date) {
+        return AivaStructuredResponse.of(ResponseType.APPOINTMENTS_FOUND,
+                new AppointmentListPayload(appointmentFacts(appointments), appliedFilters(filter, date)), List.of());
+    }
+
+    private List<AppointmentFact> appointmentFacts(List<AppointmentSummary> appointments) {
+        if (appointments == null) return List.of();
+        return appointments.stream().map(appointment -> new AppointmentFact(appointment.appointmentReference(),
+                appointment.doctorDisplayName(), appointment.date(), appointment.time(),
+                appointment.clinicDisplayName(), appointment.status())).toList();
+    }
+
+    private AppointmentFact appointmentFact(RescheduleResolution state) {
+        return state == null ? null : new AppointmentFact(state.sourceAppointmentReference(),
+                state.originalDoctorDisplayName(), state.originalDate(), state.originalStartsAt(), null, null);
+    }
+
+    private AppointmentFact cancellationFact(CancellationConfirmation confirmation) {
+        return confirmation == null ? null : new AppointmentFact(confirmation.appointmentReference(),
+                confirmation.doctorDisplayName(), confirmation.date(), confirmation.startsAt(),
+                confirmation.clinicDisplayName(), null);
+    }
+
+    private AppliedFilters appliedFilters(AivaV2Models.AppointmentLookupFilter filter, LocalDate resolvedDate) {
+        if (filter == null) return null;
+        LocalDate date = resolvedDate;
+        if (date == null && filter.dateExpression().mode() == PatchMode.SET) {
+            try { date = LocalDate.parse(filter.dateExpression().value()); } catch (RuntimeException ignored) { }
+        }
+        return new AppliedFilters(filter.doctorText().mode() == PatchMode.SET ? filter.doctorText().value() : null,
+                date, filter.status().mode() == PatchMode.SET ? filter.status().value() : null,
+                filter.clinicText().mode() == PatchMode.SET ? filter.clinicText().value() : null, filter.nextOnly());
+    }
+
+    private List<SlotFact> slotFacts(AvailabilityResult result) {
+        int start = result.displayOffset();
+        int end = Math.min(result.slots().size(), start + result.pageSize());
+        return result.slots().subList(start, end).stream().map(slot ->
+                new SlotFact(slot.slotReference(), slot.startsAt(), slot.endsAt(), slot.displayTime())).toList();
+    }
+
+    private String constraint(AvailabilityResult result) {
+        if (result.timeWindow() != null) return result.timeWindow();
+        if (result.availabilityTimeConstraint() == null) return null;
+        return result.availabilityTimeConstraint().mode().name();
+    }
+
+    private String providerName(SessionProjection session) {
+        if (session.pendingReschedule() != null && session.pendingReschedule().originalDoctorDisplayName() != null) {
+            return session.pendingReschedule().originalDoctorDisplayName();
+        }
+        return session.activeDraft() == null || session.activeDraft().selectedProvider() == null ? null
+                : session.activeDraft().selectedProvider().displayName();
+    }
+
+    private RescheduleConfirmationPayload rescheduleConfirmationPayload(SessionProjection session) {
+        RescheduleResolution state = session.pendingReschedule();
+        RescheduleConfirmation confirmation = session.pendingRescheduleConfirmation();
+        return new RescheduleConfirmationPayload(state == null ? null : state.originalDoctorDisplayName(),
+                appointmentFact(state), confirmation == null ? state == null ? null : state.targetDate() : confirmation.targetDate(),
+                confirmation == null ? state == null ? null : state.selectedStartsAt() : confirmation.targetStartsAt());
+    }
+
+    private RescheduleSuccessPayload rescheduleSuccessPayload(SessionProjection session) {
+        RescheduleResolution state = session.pendingReschedule();
+        RescheduleConfirmation confirmation = session.pendingRescheduleConfirmation();
+        return new RescheduleSuccessPayload(state == null ? null : state.originalDoctorDisplayName(),
+                state == null ? null : state.originalDate(), state == null ? null : state.originalStartsAt(),
+                confirmation == null ? state == null ? null : state.targetDate() : confirmation.targetDate(),
+                confirmation == null ? state == null ? null : state.selectedStartsAt() : confirmation.targetStartsAt());
     }
 
     private List<InteractiveAction> interactiveActions(SessionProjection session, String category) {
