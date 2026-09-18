@@ -118,8 +118,10 @@ class AivaV2RescheduleTools {
             return ToolResult.failure("STALE", "The reschedule confirmation has expired.");
         }
         try {
-            patientPortalService.rescheduleAppointment(UUID.fromString(confirmation.sourceAppointmentReference()),
-                    confirmation.targetDate(), confirmation.targetStartsAt(), "Rescheduled by patient", confirmation.commandId());
+            patientPortalService.rescheduleAppointmentInOwningTenant(
+                    UUID.fromString(confirmation.sourceAppointmentReference()),
+                    UUID.fromString(confirmation.tenantId()), confirmation.targetDate(), confirmation.targetStartsAt(),
+                    "Rescheduled by patient", confirmation.commandId());
             return ToolResult.success("RESCHEDULED");
         } catch (org.springframework.web.server.ResponseStatusException ex) {
             String category = classify(ex);

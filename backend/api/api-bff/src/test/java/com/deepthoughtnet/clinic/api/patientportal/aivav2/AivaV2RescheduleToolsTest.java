@@ -88,8 +88,8 @@ class AivaV2RescheduleToolsTest {
 
     private ToolResult<String> confirmWith(RuntimeException failure) {
         PatientPortalService patientPortalService = mock(PatientPortalService.class);
-        when(patientPortalService.rescheduleAppointment(any(UUID.class), any(LocalDate.class), any(LocalTime.class),
-                anyString(), anyString())).thenThrow(failure);
+        when(patientPortalService.rescheduleAppointmentInOwningTenant(any(UUID.class), any(UUID.class),
+                any(LocalDate.class), any(LocalTime.class), anyString(), anyString())).thenThrow(failure);
         AivaV2RescheduleTools subject = new AivaV2RescheduleTools(patientPortalService, null,
                 Clock.fixed(Instant.parse("2026-09-13T00:00:00Z"), ZoneOffset.UTC));
         return subject.confirm(confirmation(), "conversation-1", "turn-1");
@@ -97,7 +97,7 @@ class AivaV2RescheduleToolsTest {
 
     private RescheduleConfirmation confirmation() {
         return new RescheduleConfirmation("confirmation-1", UUID.randomUUID().toString(), "provider",
-                "doctor", "clinic", "tenant", UUID.randomUUID(), "slot-1", LocalDate.of(2026, 9, 23),
+                "doctor", "clinic", "00000000-0000-0000-0000-000000000099", UUID.randomUUID(), "slot-1", LocalDate.of(2026, 9, 23),
                 LocalTime.of(20, 0), 3, Instant.parse("2026-09-13T00:00:00Z"),
                 Instant.parse("2026-09-13T00:05:00Z"), "command-1");
     }

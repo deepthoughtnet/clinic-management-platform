@@ -680,7 +680,7 @@ class AivaV2LanguageBoundaryVerticalTest {
                         slot(date, "rs-18", "18:00"), slot(date, "rs-19", "19:00"), slot(date, "rs-1930", "19:30"),
                         slot(date, "rs-20", "20:00"), slot(date, "rs-2030", "20:30"), slot(date, "rs-21", "21:00")), List.of());
             });
-            when(fixturePortal.rescheduleAppointment(any(), any(), any(), any(), any())).thenReturn(
+            when(fixturePortal.rescheduleAppointmentInOwningTenant(any(), any(), any(), any(), any(), any())).thenReturn(
                     new PatientPortalAppointmentConfirmationResponse(sourceId.toString(), "RESCHEDULED", targetDate,
                             LocalTime.of(20, 0), "Asia/Kolkata", "Doc Akshu Kumar", "Clinic", null,
                             "ONLINE", "AIVA", "CONFIRMED", null, "Rescheduled", null, null, false, null, null));
@@ -731,7 +731,8 @@ class AivaV2LanguageBoundaryVerticalTest {
             assertThat(success.newDate()).isEqualTo(targetDate);
             assertThat(success.newTime()).isEqualTo(LocalTime.of(20, 0));
             assertThat(response.assistantMessage()).isNotBlank();
-            org.mockito.Mockito.verify(fixturePortal, org.mockito.Mockito.times(1)).rescheduleAppointment(any(), any(), any(), any(), any());
+            org.mockito.Mockito.verify(fixturePortal, org.mockito.Mockito.times(1))
+                    .rescheduleAppointmentInOwningTenant(any(), any(), any(), any(), any(), any());
         }
     }
 

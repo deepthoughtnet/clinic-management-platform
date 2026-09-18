@@ -713,7 +713,37 @@ public class PatientPortalService {
             String reason,
             String idempotencyKey
     ) {
+        return rescheduleAppointmentInternal(appointmentId, null, appointmentDate, appointmentTime, reason, idempotencyKey);
+    }
+
+    @Transactional
+    public PatientPortalAppointmentConfirmationResponse rescheduleAppointmentInOwningTenant(
+            UUID appointmentId,
+            UUID owningTenantId,
+            LocalDate appointmentDate,
+            LocalTime appointmentTime,
+            String reason,
+            String idempotencyKey
+    ) {
+        return rescheduleAppointmentInternal(appointmentId, owningTenantId, appointmentDate, appointmentTime, reason, idempotencyKey);
+    }
+
+    private PatientPortalAppointmentConfirmationResponse rescheduleAppointmentInternal(
+            UUID appointmentId,
+            UUID owningTenantId,
+            LocalDate appointmentDate,
+            LocalTime appointmentTime,
+            String reason,
+            String idempotencyKey
+    ) {
         PatientAccess access = requireCurrentPatientAccess();
+        PatientAccess transactionAccess = access;
+        if (owningTenantId != null) {
+            transactionAccess = resolveCareAuthorizedPatientAccesses(access).stream()
+                    .filter(candidate -> owningTenantId.equals(candidate.tenantId()))
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalArgumentException("Appointment tenant is not authorized"));
+        }
         requireAppointmentDate(appointmentDate);
         if (appointmentTime == null) {
             throw new IllegalArgumentException("Appointment time is required");
@@ -721,13 +751,16 @@ public class PatientPortalService {
         String requestSignature = String.join("|", "reschedule", String.valueOf(appointmentId),
                 String.valueOf(appointmentDate), String.valueOf(appointmentTime), normalizeNullable(reason));
         if (StringUtils.hasText(idempotencyKey)) {
-            var cached = idempotencyService.findCachedResponse(access.tenantId(), idempotencyKey, requestSignature);
+            var cached = idempotencyService.findCachedResponse(transactionAccess.tenantId(), idempotencyKey, requestSignature);
             if (cached.isPresent()) {
                 return deserializeConfirmation(cached.get());
             }
         }
-        AppointmentRecord current = requireAccessibleUpcomingAppointment(access, appointmentId);
-        PatientEntity bookingPatient = resolveBookingPatient(access, current.tenantId());
+        AppointmentRecord current = requireAccessibleUpcomingAppointment(transactionAccess, appointmentId);
+        if (owningTenantId != null && !owningTenantId.equals(current.tenantId())) {
+            throw new IllegalArgumentException("Appointment owner tenant mismatch");
+        }
+        PatientEntity bookingPatient = transactionAccess.patient();
         UUID actorAppUserId = current.tenantId().equals(access.tenantId())
                 ? requireActorAppUserId()
                 : ensurePatientPortalActor(current.tenantId(), bookingPatient);
@@ -755,7 +788,7 @@ public class PatientPortalService {
                 summarize(updated.reason()),
                 "Appointment rescheduled successfully."
         );
-        storeMutationResponse(access.tenantId(), idempotencyKey, requestSignature, confirmation);
+        storeMutationResponse(transactionAccess.tenantId(), idempotencyKey, requestSignature, confirmation);
         return confirmation;
     }
 
