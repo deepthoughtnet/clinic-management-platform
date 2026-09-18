@@ -766,32 +766,74 @@ public class PatientPortalService {
 
     @Transactional
     public PatientPortalAppointmentConfirmationResponse cancelAppointment(UUID appointmentId, String reason, String idempotencyKey) {
+        return cancelAppointmentInternal(appointmentId, null, reason, idempotencyKey);
+    }
+
+    @Transactional(readOnly = false)
+    public PatientPortalAppointmentConfirmationResponse cancelAppointmentInOwningTenant(
+            UUID appointmentId, UUID owningTenantId, String reason, String idempotencyKey) {
+        return cancelAppointmentInternal(appointmentId, owningTenantId, reason, idempotencyKey);
+    }
+
+    private PatientPortalAppointmentConfirmationResponse cancelAppointmentInternal(
+            UUID appointmentId, UUID owningTenantId, String reason, String idempotencyKey) {
         PatientAccess access = requireCurrentPatientAccess();
         String requestSignature = String.join("|", "cancel", String.valueOf(appointmentId), normalizeNullable(reason));
+        PatientAccess transactionAccess = access;
+        if (owningTenantId != null) {
+            transactionAccess = resolveCareAuthorizedPatientAccesses(access).stream()
+                    .filter(candidate -> owningTenantId.equals(candidate.tenantId()))
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalArgumentException("Appointment tenant is not authorized"));
+        }
         if (StringUtils.hasText(idempotencyKey)) {
-            var cached = idempotencyService.findCachedResponse(access.tenantId(), idempotencyKey, requestSignature);
+            var cached = idempotencyService.findCachedResponse(transactionAccess.tenantId(), idempotencyKey, requestSignature);
             if (cached.isPresent()) {
                 return deserializeConfirmation(cached.get());
             }
         }
-        AppointmentRecord current = requireAccessibleUpcomingAppointment(access, appointmentId);
+        AppointmentRecord current;
+        try {
+            current = requireAccessibleUpcomingAppointment(transactionAccess, appointmentId);
+        } catch (IllegalArgumentException ex) {
+            CancellationDiagnostic diagnostic = diagnoseCancellationVisibility(access, appointmentId);
+            String rejectionReason = !diagnostic.appointmentIdPresent() ? "INVALID_REQUEST"
+                    : diagnostic.visibleInAuthorizedOtherTenant() ? "AUTHORIZED_OTHER_TENANT"
+                    : diagnostic.visibleInCurrentTenant() ? "CURRENT_TENANT_APPOINTMENT_NOT_FOUND"
+                    : diagnostic.authorizedTenantLookupCompleted() ? "UNAUTHORIZED_TENANT" : "OTHER_ARGUMENT_REJECTION";
+            logCancellationDiagnostic(diagnostic, false, rejectionReason);
+            throw ex;
+        }
         String cancelReason = StringUtils.hasText(reason) ? reason.trim() : "Cancelled by patient";
-        PatientEntity bookingPatient = resolveBookingPatient(access, current.tenantId());
+        if (owningTenantId != null && !owningTenantId.equals(current.tenantId())) {
+            throw new IllegalArgumentException("Appointment owner tenant mismatch");
+        }
+        PatientEntity bookingPatient = transactionAccess.patient();
         UUID actorAppUserId = current.tenantId().equals(access.tenantId())
                 ? requireActorAppUserId()
                 : ensurePatientPortalActor(current.tenantId(), bookingPatient);
-        var updated = appointmentService.updateStatus(
-                current.tenantId(),
-                current.id(),
-                new AppointmentStatusUpdateCommand(
-                        AppointmentStatus.CANCELLED,
-                        cancelReason,
-                        null,
-                        null,
-                        null
-                ),
-                actorAppUserId
-        );
+        CancellationDiagnostic diagnostic = cancellationDiagnostic(access, current, true, true);
+        logCancellationDiagnostic(diagnostic, true, null);
+        AppointmentRecord updated;
+        try {
+            updated = appointmentService.updateStatus(
+                    current.tenantId(),
+                    current.id(),
+                    new AppointmentStatusUpdateCommand(
+                            AppointmentStatus.CANCELLED,
+                            cancelReason,
+                            null,
+                            null,
+                            null
+                    ),
+                    actorAppUserId
+            );
+        } catch (IllegalArgumentException ex) {
+            String rejectionReason = isCancellationLifecycleRejection(ex, current.status())
+                    ? "INVALID_LIFECYCLE_TRANSITION" : "OTHER_ARGUMENT_REJECTION";
+            logCancellationDiagnostic(diagnostic, true, rejectionReason);
+            throw ex;
+        }
         PatientPortalAppointmentConfirmationResponse confirmation = new PatientPortalAppointmentConfirmationResponse(
                 updated.appointmentDate(),
                 updated.appointmentTime(),
@@ -802,9 +844,89 @@ public class PatientPortalService {
                 summarize(updated.reason()),
                 "Appointment cancelled successfully."
         );
-        storeMutationResponse(access.tenantId(), idempotencyKey, requestSignature, confirmation);
+        storeMutationResponse(transactionAccess.tenantId(), idempotencyKey, requestSignature, confirmation);
         return confirmation;
     }
+
+    private CancellationDiagnostic diagnoseCancellationVisibility(PatientAccess access, UUID appointmentId) {
+        boolean currentTenantPresent = access.tenantId() != null;
+        boolean appointmentIdPresent = appointmentId != null;
+        if (!appointmentIdPresent) {
+            return new CancellationDiagnostic(currentTenantPresent, false, false, false,
+                    false, false, "OTHER", true);
+        }
+        try {
+            AppointmentRecord currentRecord = appointmentService.listByPatient(access.tenantId(), access.patient().getId())
+                    .stream().filter(record -> appointmentId.equals(record.id())).findFirst().orElse(null);
+            if (currentRecord != null) {
+                return cancellationDiagnostic(access, currentRecord, true, true);
+            }
+            List<PatientAccess> authorizedAccesses = resolveCareAuthorizedPatientAccesses(access);
+            AppointmentRecord authorizedOtherRecord = allAppointments(authorizedAccesses).stream()
+                    .filter(record -> appointmentId.equals(record.id()))
+                    .filter(record -> !access.tenantId().equals(record.tenantId()))
+                    .findFirst().orElse(null);
+            if (authorizedOtherRecord != null) {
+                return cancellationDiagnostic(access, authorizedOtherRecord, false, true);
+            }
+            return new CancellationDiagnostic(currentTenantPresent, true, false, false,
+                    false, false, "OTHER", true);
+        } catch (RuntimeException diagnosticFailure) {
+            // Diagnostics must not replace the cancellation guard's original result.
+            return new CancellationDiagnostic(currentTenantPresent, true, false, false,
+                    false, false, "OTHER", false);
+        }
+    }
+
+    private CancellationDiagnostic cancellationDiagnostic(PatientAccess access, AppointmentRecord appointment,
+                                                          boolean visibleInCurrentTenant,
+                                                          boolean authorizedTenantLookupCompleted) {
+        boolean ownerTenantPresent = appointment != null && appointment.tenantId() != null;
+        boolean ownerMatchesCurrent = ownerTenantPresent && appointment.tenantId().equals(access.tenantId());
+        return new CancellationDiagnostic(access.tenantId() != null, appointment != null && appointment.id() != null,
+                visibleInCurrentTenant, ownerTenantPresent && !ownerMatchesCurrent,
+                ownerTenantPresent, ownerMatchesCurrent, cancellationStatusCategory(appointment),
+                authorizedTenantLookupCompleted);
+    }
+
+    private String cancellationStatusCategory(AppointmentRecord appointment) {
+        if (appointment == null || appointment.status() == null) return "OTHER";
+        return switch (appointment.status()) {
+            case BOOKED -> "BOOKED";
+            case WAITING -> "WAITING";
+            case IN_CONSULTATION -> "IN_CONSULTATION";
+            case COMPLETED -> "COMPLETED";
+            case CANCELLED -> "CANCELLED";
+            case NO_SHOW -> "NO_SHOW";
+        };
+    }
+
+    private boolean isCancellationLifecycleRejection(IllegalArgumentException exception,
+                                                      AppointmentStatus currentStatus) {
+        return currentStatus == AppointmentStatus.IN_CONSULTATION
+                && exception.getMessage() != null
+                && exception.getMessage().startsWith(
+                        "Invalid appointment status transition from IN_CONSULTATION to CANCELLED");
+    }
+
+    private void logCancellationDiagnostic(CancellationDiagnostic diagnostic,
+                                           boolean appointmentDomainInvocationReached,
+                                           String rejectionReason) {
+        log.info("PATIENT_PORTAL_CANCEL_DIAGNOSTIC currentTenantPresent={} appointmentIdPresent={} "
+                        + "visibleInCurrentTenant={} visibleInAuthorizedOtherTenant={} "
+                        + "authorizedOwnerTenantPresent={} ownerTenantMatchesCurrentTenant={} "
+                        + "appointmentStatusCategory={} appointmentDomainInvocationReached={} rejectionReason={}",
+                diagnostic.currentTenantPresent(), diagnostic.appointmentIdPresent(),
+                diagnostic.visibleInCurrentTenant(), diagnostic.visibleInAuthorizedOtherTenant(),
+                diagnostic.authorizedOwnerTenantPresent(), diagnostic.ownerTenantMatchesCurrentTenant(),
+                diagnostic.appointmentStatusCategory(), appointmentDomainInvocationReached,
+                rejectionReason == null ? "NONE" : rejectionReason);
+    }
+
+    private record CancellationDiagnostic(boolean currentTenantPresent, boolean appointmentIdPresent,
+                                          boolean visibleInCurrentTenant, boolean visibleInAuthorizedOtherTenant,
+                                          boolean authorizedOwnerTenantPresent, boolean ownerTenantMatchesCurrentTenant,
+                                          String appointmentStatusCategory, boolean authorizedTenantLookupCompleted) { }
 
     private void storeMutationResponse(UUID scope,
                                        String idempotencyKey,

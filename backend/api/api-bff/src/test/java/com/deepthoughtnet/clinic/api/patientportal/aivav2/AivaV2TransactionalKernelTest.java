@@ -42,6 +42,9 @@ import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.core.read.ListAppender;
+import org.slf4j.LoggerFactory;
 
 class AivaV2TransactionalKernelTest {
     private static final Instant NOW = Instant.parse("2026-09-11T00:00:00Z");
@@ -246,6 +249,35 @@ class AivaV2TransactionalKernelTest {
     }
 
     @Test
+    void missingCancellationCapabilityIsStaleWithoutCallingCancellationTool() {
+        AivaV2AppointmentLookupTool lookupTool = mock(AivaV2AppointmentLookupTool.class);
+        AivaV2CancellationTool cancellationTool = mock(AivaV2CancellationTool.class);
+        AivaV2TransactionalKernel cancellationKernel = new AivaV2TransactionalKernel(tools, lookupTool,
+                cancellationTool, Clock.fixed(NOW, ZoneOffset.UTC));
+        Logger logger = (Logger) LoggerFactory.getLogger(AivaV2TransactionalKernel.class);
+        ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> events = new ListAppender<>();
+        events.start();
+        logger.addAppender(events);
+        SessionProjection session = new SessionProjection("c1", UUID.randomUUID(), "tenant", null, null,
+                null, null, null, null, 7, NOW.plusSeconds(1800));
+        try {
+            var result = cancellationKernel.handle(session, decision(Operation.CONFIRM_CANCELLATION,
+                    ConfirmationPolarity.POSITIVE, BookingPatch.empty(), null), "turn-missing-capability");
+
+            assertThat(result.response().structuredResponse().type()).isEqualTo(AivaStructuredResponse.ResponseType.STALE_RESULT);
+            assertThat(result.session().pendingCancellation()).isNull();
+            assertThat(events.list).anySatisfy(event -> assertThat(event.getFormattedMessage())
+                    .contains("staleReason=CAPABILITY_MISSING")
+                    .contains("pendingCancellationPresent=false")
+                    .contains("domainInvocationReached=false"));
+            verifyNoInteractions(lookupTool, cancellationTool);
+        } finally {
+            logger.detachAppender(events);
+            events.stop();
+        }
+    }
+
+    @Test
     void cancellationAmbiguityStoresResolutionWithoutReplacingBookingDraft() {
         AivaV2AppointmentLookupTool lookupTool = mock(AivaV2AppointmentLookupTool.class);
         AivaV2CancellationTool cancellationTool = mock(AivaV2CancellationTool.class);
@@ -274,6 +306,102 @@ class AivaV2TransactionalKernelTest {
         assertThat(result.session().pendingCancellationResolution()).isNotNull();
         assertThat(result.session().pendingCancellationResolution().criteria().doctorText().value()).isEqualTo("Dr Akshu");
         assertThat(result.session().pendingCancellationResolution().candidates()).hasSize(2);
+    }
+
+    @Test
+    void cancellationOrdinalAndExactTimeResolveOnlyFromStoredCandidates() {
+        AivaV2AppointmentLookupTool lookupTool = mock(AivaV2AppointmentLookupTool.class);
+        AivaV2CancellationTool cancellationTool = mock(AivaV2CancellationTool.class);
+        AivaV2TransactionalKernel cancellationKernel = new AivaV2TransactionalKernel(tools, lookupTool,
+                cancellationTool, Clock.fixed(NOW, ZoneOffset.UTC));
+        LocalDate date = LocalDate.of(2026, 9, 24);
+        var first = new AivaV2Models.AppointmentSummary(UUID.randomUUID().toString(), "Doc Akshu Kumar", "Clinic",
+                date, LocalTime.of(20, 0), "CONFIRMED", null);
+        var second = new AivaV2Models.AppointmentSummary(UUID.randomUUID().toString(), "Doc Akshu Kumar", "Clinic",
+                date, LocalTime.of(20, 30), "CONFIRMED", null);
+        var criteria = new AivaV2Models.AppointmentLookupFilter(ValuePatch.set("Dr Akshu"),
+                ValuePatch.set(date.toString()), ValuePatch.unchanged(), null, false);
+        var expires = NOW.plusSeconds(300);
+        var resolution = new AivaV2Models.CancellationResolution(criteria, List.of(first, second), NOW, expires);
+        var session = new SessionProjection("c1", UUID.randomUUID(), "tenant", null, null, null, null,
+                null, null, resolution, null, null, 1, expires);
+        when(cancellationTool.prepare(any(), any())).thenAnswer(call -> {
+            var candidate = (AivaV2Models.AppointmentSummary) call.getArgument(0);
+            return ToolResult.success(new AivaV2Models.CancellationConfirmation("confirmation",
+                    UUID.fromString(candidate.appointmentReference()), candidate.appointmentReference(),
+                    candidate.doctorDisplayName(), candidate.clinicDisplayName(), candidate.date(), candidate.time(),
+                    expires, "idempotency"));
+        });
+
+        for (Selection selection : List.of(new Selection(null, 2, null, null),
+                new Selection(null, null, null, "20:30"))) {
+            var result = cancellationKernel.handle(session, new ConversationDecision("1.0", DialogAct.SELECT_OPTION,
+                    Operation.CANCEL_APPOINTMENT, BookingPatch.empty(), selection, ConfirmationPolarity.NONE,
+                    TopicAction.CONTINUE, "en", 1, "DETERMINISTIC", false, 0, criteria),
+                    AivaV2TemporalResolution.unchanged(null, null), ZoneOffset.UTC, "turn-bounded-selection");
+            assertThat(result.response().structuredResponse().type())
+                    .isEqualTo(AivaStructuredResponse.ResponseType.CANCELLATION_CONFIRMATION);
+            assertThat(((AivaStructuredResponse.CancellationConfirmationPayload) result.response()
+                    .structuredResponse().payload()).appointment().appointmentReference())
+                    .isEqualTo(second.appointmentReference());
+        }
+        verify(lookupTool, never()).lookup(any(), any(), any(), any());
+        verify(cancellationTool, org.mockito.Mockito.times(2)).prepare(any(), any());
+    }
+
+    @Test
+    void freshCancellationAppliesExactTimeOnlyToAuthorizedLookupCandidates() {
+        AivaV2AppointmentLookupTool lookupTool = mock(AivaV2AppointmentLookupTool.class);
+        AivaV2CancellationTool cancellationTool = mock(AivaV2CancellationTool.class);
+        AivaV2TransactionalKernel cancellationKernel = new AivaV2TransactionalKernel(tools, lookupTool,
+                cancellationTool, Clock.fixed(NOW, ZoneOffset.UTC));
+        LocalDate date = LocalDate.of(2026, 9, 24);
+        var first = new AivaV2Models.AppointmentSummary(UUID.randomUUID().toString(), "Doc Akshu Kumar", "Clinic",
+                date, LocalTime.of(20, 0), "CONFIRMED", null);
+        var second = new AivaV2Models.AppointmentSummary(UUID.randomUUID().toString(), "Doc Akshu Kumar", "Clinic",
+                date, LocalTime.of(20, 30), "CONFIRMED", null);
+        var filter = new AivaV2Models.AppointmentLookupFilter(ValuePatch.set("Dr Akshu"),
+                ValuePatch.set(date.toString()), ValuePatch.unchanged(), null, false);
+        when(lookupTool.lookup(any(), any(), any(), any()))
+                .thenReturn(AivaV2Models.AppointmentLookupResult.found(List.of(first, second)));
+        when(cancellationTool.prepare(any(), any())).thenAnswer(call -> {
+            var candidate = (AivaV2Models.AppointmentSummary) call.getArgument(0);
+            return ToolResult.success(new AivaV2Models.CancellationConfirmation("confirmation",
+                    UUID.fromString(candidate.appointmentReference()), candidate.appointmentReference(),
+                    candidate.doctorDisplayName(), candidate.clinicDisplayName(), candidate.date(), candidate.time(),
+                    NOW.plusSeconds(300), "idempotency"));
+        });
+
+        for (var expected : List.of(first, second)) {
+            SessionProjection clean = new SessionProjection("fresh", UUID.randomUUID(), "tenant", null, null,
+                    null, null, null, 1, NOW.plusSeconds(600));
+            var decision = new ConversationDecision("1.0", DialogAct.START_REQUEST, Operation.CANCEL_APPOINTMENT,
+                    BookingPatch.empty(), new Selection(null, null, null, expected.time().toString()),
+                    ConfirmationPolarity.NONE, TopicAction.CONTINUE, "en", 0.99d, "DETERMINISTIC", false, 0,
+                    filter);
+            var result = cancellationKernel.handle(clean, decision,
+                    new AivaV2TemporalResolution(AivaV2TemporalResolution.Status.RESOLVED, date,
+                            AivaV2TemporalResolution.Source.CURRENT_TURN_EXPLICIT, null, date.toString(), false),
+                    ZoneOffset.UTC, "fresh-exact-time");
+            assertThat(result.response().structuredResponse().type())
+                    .isEqualTo(AivaStructuredResponse.ResponseType.CANCELLATION_CONFIRMATION);
+            assertThat(((AivaStructuredResponse.CancellationConfirmationPayload) result.response()
+                    .structuredResponse().payload()).appointment().appointmentReference())
+                    .isEqualTo(expected.appointmentReference());
+        }
+
+        SessionProjection clean = new SessionProjection("fresh-no-match", UUID.randomUUID(), "tenant", null, null,
+                null, null, null, 1, NOW.plusSeconds(600));
+        var wrongTime = new ConversationDecision("1.0", DialogAct.START_REQUEST, Operation.CANCEL_APPOINTMENT,
+                BookingPatch.empty(), new Selection(null, null, null, "21:00"), ConfirmationPolarity.NONE,
+                TopicAction.CONTINUE, "en", 0.99d, "DETERMINISTIC", false, 0, filter);
+        var noMatch = cancellationKernel.handle(clean, wrongTime,
+                AivaV2TemporalResolution.unchanged(date, date.toString()), ZoneOffset.UTC, "fresh-no-time-match");
+        assertThat(noMatch.response().structuredResponse().type())
+                .isEqualTo(AivaStructuredResponse.ResponseType.CANCELLATION_CHOICES);
+        assertThat(noMatch.session().pendingCancellationResolution().candidates()).hasSize(2);
+        verify(lookupTool, org.mockito.Mockito.times(3)).lookup(any(), any(), any(), any());
+        verify(cancellationTool, org.mockito.Mockito.times(2)).prepare(any(), any());
     }
 
     @Test

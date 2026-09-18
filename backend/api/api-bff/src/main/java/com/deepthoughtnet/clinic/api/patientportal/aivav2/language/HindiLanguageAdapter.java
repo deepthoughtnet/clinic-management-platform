@@ -12,8 +12,8 @@ public class HindiLanguageAdapter extends EnglishLanguageAdapter {
             "(?:mujhe|meri|mere|ke\\s+saath|karni\\s+hai|wali|wala|theek|hai|haan|nahi|nahin|subah|dopahar|shaam|raat|baje|dikhao|aur|dusri|agali|pehla|पहला|हाँ|हां|नहीं|नही|सुबह|दोपहर|शाम|रात|बजे|दिखाओ|और|दूसरी|अगली|स्लॉट)",
             Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
     private static final Pattern HINGLISH_DOCTOR = Pattern.compile(
-            "(?i)((?:doctor|dr\\.?|doc)\\s+[\\p{L}][\\p{L}\\p{N}'-]*(?:\\s+(?!ke\\b|sath\\b|with\\b|appointment\\b)[\\p{L}][\\p{L}\\p{N}'-]*){0,3})"
-                    + "(?=\\s+(?:ke\\s+(?:saath|sath)|se|with|appointment)\\b|[?.!,]|$)");
+            "(?i)((?:doctor|dr\\.?|doc)\\s+[\\p{L}][\\p{L}\\p{N}'-]*(?:\\s+(?!ke\\b|के(?=\\s)|sath\\b|साथ(?=\\s)|with\\b|appointment\\b)[\\p{L}][\\p{L}\\p{N}'-]*){0,3})"
+                    + "(?=\\s+(?:ke\\s+(?:saath|sath)|के\\s+साथ|से|with|appointment)(?:\\s|$)|[?.!,।]|$)");
     private static final Pattern DEVANAGARI_DOCTOR = Pattern.compile(
             "((?:डॉ\\.?|डॉक्टर)\\s+(?!(?:के|साथ|से)(?=\\s|$))[\\p{IsDevanagari}\\p{M}]+"
                     + "(?:\\s+(?!(?:के|साथ|से)(?=\\s|$))[\\p{IsDevanagari}\\p{M}]+){0,3})"
@@ -69,6 +69,10 @@ public class HindiLanguageAdapter extends EnglishLanguageAdapter {
                 .replaceAll("(?<![\\p{L}\\p{N}])(?:शेड्यूल|reschedule)(?![\\p{L}\\p{N}])", " reschedule ")
                 .replaceAll("(?<![\\p{L}\\p{N}])(?:मेरी|अपनी)(?![\\p{L}\\p{N}])", " my ")
                 .replaceAll("\\s+", " ").trim();
+        if (Pattern.compile("(?i)^\\s*(?:theek|thik)\\s+hai(?:\\s+kar\\s+do)?[.!?।\\s]*$")
+                .matcher(normalized).matches()) {
+            normalized = "yes";
+        }
 
         String selectionInput = original
                 .replaceAll("(?i)(?<![\\p{L}\\p{N}])(?:raat|रात)\\s+([01]?\\d|2[0-3])", "$1 pm")

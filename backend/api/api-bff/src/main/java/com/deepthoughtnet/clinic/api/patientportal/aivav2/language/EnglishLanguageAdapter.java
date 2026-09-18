@@ -14,6 +14,10 @@ import org.springframework.stereotype.Component;
 public class EnglishLanguageAdapter implements AivaLanguageAdapter {
     private static final Pattern SPOKEN_TIME = Pattern.compile(
             "(?i)(?<![\\p{L}\\p{N}])(\\d{1,2})(?::([0-5]\\d))?\\s*(am|pm)?(?:\\s*(?:works?(?:\\s+for\\s+me)?|is\\s+(?:fine|okay)|will\\s+do))?(?![\\p{L}\\p{N}])");
+    private static final Pattern EXPLICIT_CLOCK_TIME = Pattern.compile(
+            "(?<![\\p{L}\\p{N}])([01]?\\d|2[0-3]):([0-5]\\d)(?![\\p{L}\\p{N}])");
+    private static final Pattern TIME_BOUND_OR_RANGE = Pattern.compile(
+            "(?i)\\b(?:after|before|between|from|later than|earlier than)\\b");
     private static final Pattern EXPLICIT_DOCTOR_REFERENCE = Pattern.compile(
             "(?i)(?:with|from|by)\\s+((?:doctor|dr\\.?|doc)\\s+[\\p{L}][\\p{L}\\p{N}'-]*(?:\\s+(?!on\\b|at\\b|for\\b|in\\b|and\\b|appointment\\b|today\\b|tomorrow\\b|tonight\\b)[\\p{L}][\\p{L}\\p{N}'-]*){0,3})"
                     + "(?=\\s+(?:on|at|for|in|and|appointment)\\b|[?.!,]|$)");
@@ -87,6 +91,7 @@ public class EnglishLanguageAdapter implements AivaLanguageAdapter {
         if (daypart != null) controls.add(DeterministicControl.valueOf(daypart.name()));
 
         LocalTime exactTime = parseTime(selection);
+        if (exactTime == null) exactTime = parseEmbeddedClockTime(original);
         if (exactTime != null) controls.add(DeterministicControl.EXACT_TIME);
         Integer ordinal = parseOrdinal(selection);
         if (ordinal != null) controls.add(DeterministicControl.ORDINAL);
@@ -129,6 +134,20 @@ public class EnglishLanguageAdapter implements AivaLanguageAdapter {
         if ("pm".equalsIgnoreCase(meridiem) && hour < 12) hour += 12;
         if ("am".equalsIgnoreCase(meridiem) && hour == 12) hour = 0;
         try { return LocalTime.of(hour, minute); } catch (RuntimeException ignored) { return null; }
+    }
+
+    private LocalTime parseEmbeddedClockTime(String value) {
+        if (TIME_BOUND_OR_RANGE.matcher(value == null ? "" : value).find()) return null;
+        Matcher matcher = EXPLICIT_CLOCK_TIME.matcher(value == null ? "" : value);
+        if (!matcher.find()) return null;
+        String hour = matcher.group(1);
+        String minute = matcher.group(2);
+        if (matcher.find()) return null;
+        try {
+            return LocalTime.of(Integer.parseInt(hour), Integer.parseInt(minute));
+        } catch (RuntimeException ignored) {
+            return null;
+        }
     }
 
     private Integer parseOrdinal(String value) {

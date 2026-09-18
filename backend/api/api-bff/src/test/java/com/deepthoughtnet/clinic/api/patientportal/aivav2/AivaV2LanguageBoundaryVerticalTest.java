@@ -349,7 +349,7 @@ class AivaV2LanguageBoundaryVerticalTest {
             when(fixturePortal.careAiUpcomingAppointmentsAcrossAuthorizedClinics()).thenReturn(List.of(
                     new PatientPortalCareAiAppointmentOption(sourceId, UUID.randomUUID(), "Doc Akshu Kumar",
                             tenantUuid, "Clinic", appointmentDate, LocalTime.of(20, 0), "CONFIRMED", null)));
-            when(fixturePortal.cancelAppointment(any(), any(), any())).thenReturn(
+            when(fixturePortal.cancelAppointmentInOwningTenant(any(), any(), any(), any())).thenReturn(
                     new PatientPortalAppointmentConfirmationResponse(sourceId.toString(), "CANCELLED", appointmentDate,
                             LocalTime.of(20, 0), "Asia/Kolkata", "Doc Akshu Kumar", "Clinic", null,
                             "ONLINE", "AIVA", "CANCELLED", null, "Cancelled", null, null, false, null, null));
@@ -393,12 +393,262 @@ class AivaV2LanguageBoundaryVerticalTest {
             assertThat(successPayload.appointment().date()).isEqualTo(appointmentDate);
             assertThat(successPayload.appointment().time()).isEqualTo(LocalTime.of(20, 0));
             assertThat(success.assistantMessage()).isNotBlank();
-            org.mockito.Mockito.verify(fixturePortal, org.mockito.Mockito.times(1)).cancelAppointment(any(), any(), any());
+            org.mockito.Mockito.verify(fixturePortal, org.mockito.Mockito.times(1)).cancelAppointmentInOwningTenant(any(), any(), any(), any());
             MessageResponse repeatedYes = service.message(new MessageRequest(conversationId,
                     flow[0].equals("en") ? "yes" : flow[0].equals("hi") && flow[1].startsWith("Dr ") ? "haan" : "हाँ", flow[0]));
             assertStructuredResponseRendersInAllStyles(repeatedYes);
             assertThat(repeatedYes.structuredResponse().type()).isNotEqualTo(AivaStructuredResponse.ResponseType.CANCELLATION_SUCCESS);
-            org.mockito.Mockito.verify(fixturePortal, org.mockito.Mockito.times(1)).cancelAppointment(any(), any(), any());
+            org.mockito.Mockito.verify(fixturePortal, org.mockito.Mockito.times(1)).cancelAppointmentInOwningTenant(any(), any(), any(), any());
+        }
+    }
+
+    @Test
+    void hinglishThikHaiKarDoConfirmsThePendingCancellationWithoutProviderCall() {
+        String cancel = "{\"schemaVersion\":\"1.0\",\"dialogAct\":\"START_REQUEST\","
+                + "\"operation\":\"CANCEL_APPOINTMENT\",\"confidence\":0.99}";
+        when(semanticProvider.complete(any())).thenReturn(orchestrationResponse(cancel));
+        PatientPortalService fixturePortal = mock(PatientPortalService.class);
+        when(fixturePortal.currentPatientId()).thenReturn(patient);
+        UUID selectedId = UUID.randomUUID();
+        LocalDate date = LocalDate.of(2026, 9, 24);
+        when(fixturePortal.careAiUpcomingAppointmentsAcrossAuthorizedClinics()).thenReturn(List.of(
+                new PatientPortalCareAiAppointmentOption(selectedId, UUID.randomUUID(), "Doc Akshu Kumar",
+                        tenantUuid, "Clinic", date, LocalTime.of(20, 30), "CONFIRMED", null)));
+        when(fixturePortal.cancelAppointmentInOwningTenant(any(), any(), any(), any())).thenReturn(
+                new PatientPortalAppointmentConfirmationResponse(selectedId.toString(), "CANCELLED", date,
+                        LocalTime.of(20, 30), "Asia/Kolkata", "Doc Akshu Kumar", "Clinic", null,
+                        "ONLINE", "AIVA", "CANCELLED", null, "Cancelled", null, null, false, null, null));
+        Clock liveFixtureClock = Clock.systemUTC();
+        ClinicTimeZoneResolver resolver = zoneResolver();
+        AivaV2BookingTools bookingTools = new AivaV2BookingTools(fixturePortal,
+                mock(PublicCatalogFacade.class), resolver, liveFixtureClock);
+        AivaV2TransactionalKernel realKernel = new AivaV2TransactionalKernel(bookingTools,
+                new AivaV2AppointmentLookupTool(fixturePortal), new AivaV2CancellationTool(fixturePortal), liveFixtureClock);
+        AivaV2SessionStore sessionStore = new AivaV2SessionStore(liveFixtureClock);
+        AivaV2ConversationService service = new AivaV2ConversationService(gateway, realKernel,
+                sessionStore, fixturePortal, resolver, liveFixtureClock, renderer);
+
+        MessageResponse confirmation = service.message(new MessageRequest(null,
+                "Mujhe Dr Akshu ke saath 24 September ki appointment cancel karni hai", "hi"));
+        assertThat(confirmation.structuredResponse().type())
+                .isEqualTo(AivaStructuredResponse.ResponseType.CANCELLATION_CONFIRMATION);
+        assertThat(((AivaStructuredResponse.CancellationConfirmationPayload) confirmation.structuredResponse()
+                .payload()).appointment().appointmentReference()).isEqualTo(selectedId.toString());
+        String sessionKey = tenant + "|" + patient + "|" + confirmation.conversationId();
+        var pending = sessionStore.find(sessionKey).orElseThrow().pendingCancellation();
+        assertThat(pending).isNotNull();
+        assertThat(pending.appointmentReference()).isEqualTo(selectedId.toString());
+        assertThat(pending.expiresAt()).isAfter(Instant.now());
+        assertThat(sessionStore.find(sessionKey).orElseThrow().version()).isEqualTo(2L);
+        org.mockito.Mockito.clearInvocations(semanticProvider);
+
+        MessageResponse success = service.message(new MessageRequest(confirmation.conversationId(),
+                "thik hai kar do", "hi"));
+
+        assertThat(success.structuredResponse().type()).isEqualTo(AivaStructuredResponse.ResponseType.CANCELLATION_SUCCESS);
+        assertThat(((AivaStructuredResponse.CancellationSuccessPayload) success.structuredResponse()
+                .payload()).appointment().appointmentReference()).isEqualTo(selectedId.toString());
+        org.mockito.Mockito.verifyNoInteractions(semanticProvider);
+        verify(fixturePortal).cancelAppointmentInOwningTenant(org.mockito.ArgumentMatchers.eq(selectedId), any(), any(), any());
+        assertThat(success.conversationId()).isEqualTo(confirmation.conversationId());
+        assertThat(sessionStore.find(sessionKey).orElseThrow().pendingCancellation()).isNull();
+        verify(fixturePortal, org.mockito.Mockito.times(1)).cancelAppointmentInOwningTenant(any(), any(), any(), any());
+    }
+
+    @Test
+    void realSessionRetainsOrdinalSelectedCancellationCapabilityThroughPositiveConfirmation() {
+        String cancelJson = "{\"schemaVersion\":\"1.0\",\"dialogAct\":\"START_REQUEST\","
+                + "\"operation\":\"CANCEL_APPOINTMENT\",\"confidence\":0.99}";
+        when(semanticProvider.complete(any())).thenReturn(orchestrationResponse(cancelJson));
+        PatientPortalService fixturePortal = mock(PatientPortalService.class);
+        when(fixturePortal.currentPatientId()).thenReturn(patient);
+        LocalDate date = LocalDate.of(2026, 9, 24);
+        UUID firstId = UUID.randomUUID();
+        UUID secondId = UUID.randomUUID();
+        when(fixturePortal.careAiUpcomingAppointmentsAcrossAuthorizedClinics()).thenReturn(List.of(
+                new PatientPortalCareAiAppointmentOption(firstId, UUID.randomUUID(), "Doc Akshu Kumar", tenantUuid,
+                        "Clinic", date, LocalTime.of(20, 0), "CONFIRMED", null),
+                new PatientPortalCareAiAppointmentOption(secondId, UUID.randomUUID(), "Doc Akshu Kumar", tenantUuid,
+                        "Clinic", date, LocalTime.of(20, 30), "CONFIRMED", null)));
+        when(fixturePortal.cancelAppointmentInOwningTenant(any(), any(), any(), any())).thenReturn(
+                new PatientPortalAppointmentConfirmationResponse(secondId.toString(), "CANCELLED", date,
+                        LocalTime.of(20, 30), "Asia/Kolkata", "Doc Akshu Kumar", "Clinic", null,
+                        "ONLINE", "AIVA", "CANCELLED", null, "Cancelled", null, null, false, null, null));
+        Clock liveFixtureClock = Clock.systemUTC();
+        ClinicTimeZoneResolver resolver = zoneResolver();
+        AivaV2BookingTools bookingTools = new AivaV2BookingTools(fixturePortal,
+                mock(PublicCatalogFacade.class), resolver, liveFixtureClock);
+        AivaV2TransactionalKernel realKernel = new AivaV2TransactionalKernel(bookingTools,
+                new AivaV2AppointmentLookupTool(fixturePortal), new AivaV2CancellationTool(fixturePortal), liveFixtureClock);
+        AivaV2SessionStore sessionStore = new AivaV2SessionStore(liveFixtureClock);
+        AivaV2ConversationService service = new AivaV2ConversationService(gateway, realKernel,
+                sessionStore, fixturePortal, resolver, liveFixtureClock, renderer);
+
+        MessageResponse choices = service.message(new MessageRequest(null,
+                "डॉ. अक्षु के साथ 24 सितंबर की अपॉइंटमेंट रद्द करें।", "hi"));
+        assertThat(choices.structuredResponse().type()).isEqualTo(AivaStructuredResponse.ResponseType.CANCELLATION_CHOICES);
+        String sessionKey = tenant + "|" + patient + "|" + choices.conversationId();
+        assertThat(sessionStore.find(sessionKey).orElseThrow().pendingCancellationResolution().candidates()).hasSize(2);
+        org.mockito.Mockito.clearInvocations(semanticProvider);
+
+        MessageResponse confirmation = service.message(new MessageRequest(choices.conversationId(), "2", "hi"));
+        assertThat(confirmation.structuredResponse().type())
+                .isEqualTo(AivaStructuredResponse.ResponseType.CANCELLATION_CONFIRMATION);
+        var capability = sessionStore.find(sessionKey).orElseThrow().pendingCancellation();
+        assertThat(capability).isNotNull();
+        assertThat(capability.appointmentReference()).isEqualTo(secondId.toString());
+        assertThat(capability.expiresAt()).isAfter(Instant.now());
+        assertThat(confirmation.conversationId()).isEqualTo(choices.conversationId());
+        org.mockito.Mockito.clearInvocations(semanticProvider);
+
+        MessageResponse success = service.message(new MessageRequest(choices.conversationId(), "haan kar do", "hi"));
+
+        assertThat(success.structuredResponse().type()).isEqualTo(AivaStructuredResponse.ResponseType.CANCELLATION_SUCCESS);
+        assertThat(((AivaStructuredResponse.CancellationSuccessPayload) success.structuredResponse().payload())
+                .appointment().appointmentReference()).isEqualTo(secondId.toString());
+        assertThat(success.conversationId()).isEqualTo(choices.conversationId());
+        org.mockito.Mockito.verifyNoInteractions(semanticProvider);
+        verify(fixturePortal, org.mockito.Mockito.times(1)).cancelAppointmentInOwningTenant(
+                org.mockito.ArgumentMatchers.eq(secondId), any(), any(), any());
+        verify(fixturePortal, org.mockito.Mockito.times(1)).careAiUpcomingAppointmentsAcrossAuthorizedClinics();
+        assertThat(sessionStore.find(sessionKey).orElseThrow().pendingCancellation()).isNull();
+    }
+
+    @Test
+    void freshCancellationUsesOnlyTypedExactTimeAndNeverProviderInventedOrdinalAcrossLanguages() {
+        String providerInventedSelection = "{\"schemaVersion\":\"1.0\",\"dialogAct\":\"START_REQUEST\","
+                + "\"operation\":\"CANCEL_APPOINTMENT\",\"lookupFilter\":{"
+                + "\"doctorText\":{\"mode\":\"SET\",\"value\":\"Dr Mehta\"},"
+                + "\"dateExpression\":{\"mode\":\"SET\",\"value\":\"2026-09-25\"}},"
+                + "\"selection\":{\"ordinal\":1,\"candidateRef\":\"not-user-selected\"},\"confidence\":0.99}";
+        String[][] cases = {
+                {"en", "Cancel my appointment with Dr Akshu on 24 September", "choices", ""},
+                {"en", "Cancel my appointment with Dr Akshu on 24 September at 20:00", "confirmation", "20:00"},
+                {"en", "Cancel my appointment with Dr Akshu on 24 September at 20:30", "confirmation", "20:30"},
+                {"hi", "Mujhe Dr Akshu ke saath 24 September ki appointment cancel karni hai", "choices", ""},
+                {"hi", "Mujhe Dr Akshu ke saath 24 September ki appointment cancel karni hai at 20:00", "confirmation", "20:00"},
+                {"hi", "Mujhe Dr Akshu ke saath 24 September ki appointment cancel karni hai at 20:30", "confirmation", "20:30"},
+                {"hi", "Doc Akshu Kumar के साथ 24 सितंबर 2026 को अपॉइंटमेंट रद्द करें।", "choices", ""},
+                {"hi", "Doc Akshu Kumar के साथ 24 सितंबर 2026 को 20:00 बजे की अपॉइंटमेंट रद्द करें।", "confirmation", "20:00"},
+                {"hi", "Doc Akshu Kumar के साथ 24 सितंबर 2026 को 20:30 बजे की अपॉइंटमेंट रद्द करें।", "confirmation", "20:30"}
+        };
+        for (String[] testCase : cases) {
+            PatientPortalService fixturePortal = mock(PatientPortalService.class);
+            when(fixturePortal.currentPatientId()).thenReturn(patient);
+            UUID priorId = UUID.randomUUID();
+            UUID at2000 = UUID.randomUUID();
+            UUID at2030 = UUID.randomUUID();
+            when(fixturePortal.careAiUpcomingAppointmentsAcrossAuthorizedClinics()).thenReturn(List.of(
+                    new PatientPortalCareAiAppointmentOption(priorId, UUID.randomUUID(), "Doc Akshu Kumar",
+                            tenantUuid, "Clinic", LocalDate.of(2026, 9, 23), LocalTime.of(20, 0), "CONFIRMED", null),
+                    new PatientPortalCareAiAppointmentOption(at2000, UUID.randomUUID(), "Doc Akshu Kumar",
+                            tenantUuid, "Clinic", EXPECTED, LocalTime.of(20, 0), "CONFIRMED", null),
+                    new PatientPortalCareAiAppointmentOption(at2030, UUID.randomUUID(), "Doc Akshu Kumar",
+                            tenantUuid, "Clinic", EXPECTED, LocalTime.of(20, 30), "CONFIRMED", null)));
+            when(semanticProvider.complete(any())).thenReturn(orchestrationResponse(providerInventedSelection));
+            ClinicTimeZoneResolver resolver = zoneResolver();
+            AivaV2BookingTools bookingTools = new AivaV2BookingTools(fixturePortal,
+                    mock(PublicCatalogFacade.class), resolver, clock);
+            AivaV2TransactionalKernel realKernel = new AivaV2TransactionalKernel(bookingTools,
+                    new AivaV2AppointmentLookupTool(fixturePortal), new AivaV2CancellationTool(fixturePortal), clock);
+            AivaV2ConversationService service = new AivaV2ConversationService(gateway, realKernel,
+                    new AivaV2SessionStore(clock), fixturePortal, resolver, clock, renderer);
+
+            MessageResponse response = service.message(new MessageRequest(null, testCase[1], testCase[0]));
+            AivaStructuredResponse.ResponseType expectedType = "choices".equals(testCase[2])
+                    ? AivaStructuredResponse.ResponseType.CANCELLATION_CHOICES
+                    : AivaStructuredResponse.ResponseType.CANCELLATION_CONFIRMATION;
+            assertThat(response.structuredResponse().type()).as(testCase[1]).isEqualTo(expectedType);
+            if ("choices".equals(testCase[2])) {
+                assertThat(((AivaStructuredResponse.CancellationChoicesPayload) response.structuredResponse()
+                        .payload()).candidates()).hasSize(2);
+                org.mockito.Mockito.verify(fixturePortal, org.mockito.Mockito.never())
+                        .cancelAppointment(any(), any(), any());
+            } else {
+                var selected = ((AivaStructuredResponse.CancellationConfirmationPayload)
+                        response.structuredResponse().payload()).appointment();
+                assertThat(selected.date()).isEqualTo(EXPECTED);
+                assertThat(selected.time()).isEqualTo(LocalTime.parse(testCase[3]));
+                assertThat(selected.appointmentReference()).isEqualTo(
+                        LocalTime.parse(testCase[3]).equals(LocalTime.of(20, 0)) ? at2000.toString() : at2030.toString());
+            }
+            org.mockito.Mockito.verify(fixturePortal, org.mockito.Mockito.times(1))
+                    .careAiUpcomingAppointmentsAcrossAuthorizedClinics();
+        }
+    }
+
+    @Test
+    void ambiguousCancellationFollowUpsSelectOnlyFromTheActiveCandidatesAcrossLanguages() {
+        String cancelJson = "{\"schemaVersion\":\"1.0\",\"dialogAct\":\"START_REQUEST\","
+                + "\"operation\":\"CANCEL_APPOINTMENT\",\"lookupFilter\":{"
+                + "\"doctorText\":{\"mode\":\"SET\",\"value\":\"Dr Mehta\"},"
+                + "\"dateExpression\":{\"mode\":\"SET\",\"value\":\"2026-09-25\"}},\"confidence\":0.99}";
+        String[][] scenarios = {
+                {"en", "Cancel my appointment with Dr Akshu on 24 September", "1", "20:00", "confirmation"},
+                {"hi", "Mujhe Dr Akshu ke saath 24 September ki appointment cancel karni hai", "2", "20:30", "confirmation"},
+                {"hi", "डॉ. अक्षु के साथ 24 सितंबर की अपॉइंटमेंट रद्द करें।", "दूसरा", "20:30", "confirmation"},
+                {"en", "Cancel my appointment with Dr Akshu on 24 September", "20:00", "20:00", "confirmation"},
+                {"hi", "Mujhe Dr Akshu ke saath 24 September ki appointment cancel karni hai", "20:30 wali", "20:30", "confirmation"},
+                {"hi", "डॉ. अक्षु के साथ 24 सितंबर की अपॉइंटमेंट रद्द करें।", "20:00 बजे की अपॉइंटमेंट रद्द करें", "20:00", "confirmation"},
+                {"en", "Cancel my appointment with Dr Akshu on 24 September", "Cancel my appointment with Dr Akshu on 24 September 2026 at 20:00", "20:00", "confirmation"},
+                {"hi", "Mujhe Dr Akshu ke saath 24 September ki appointment cancel karni hai", "Dr Akshu ke saath 24 September 2026 ko 20:00 wali appointment cancel karo", "20:00", "confirmation"},
+                {"hi", "डॉ. अक्षु के साथ 24 सितंबर की अपॉइंटमेंट रद्द करें।", "डॉ. अक्षु के साथ 24 सितंबर 2026 को 20:00 बजे की अपॉइंटमेंट रद्द करें।", "20:00", "confirmation"},
+                {"en", "Cancel my appointment with Dr Akshu on 24 September", "19:00", "19:00", "choices"}
+        };
+        LocalDate priorDate = LocalDate.of(2026, 9, 23);
+        LocalDate targetDate = LocalDate.of(2026, 9, 24);
+        for (String[] scenario : scenarios) {
+            PatientPortalService fixturePortal = mock(PatientPortalService.class);
+            when(fixturePortal.currentPatientId()).thenReturn(patient);
+            UUID priorId = UUID.randomUUID();
+            UUID morningId = UUID.randomUUID();
+            UUID eveningId = UUID.randomUUID();
+            when(fixturePortal.careAiUpcomingAppointmentsAcrossAuthorizedClinics()).thenReturn(List.of(
+                    new PatientPortalCareAiAppointmentOption(priorId, UUID.randomUUID(), "Doc Akshu Kumar",
+                            tenantUuid, "Clinic", priorDate, LocalTime.of(20, 0), "CONFIRMED", null),
+                    new PatientPortalCareAiAppointmentOption(morningId, UUID.randomUUID(), "Doc Akshu Kumar",
+                            tenantUuid, "Clinic", targetDate, LocalTime.of(20, 0), "CONFIRMED", null),
+                    new PatientPortalCareAiAppointmentOption(eveningId, UUID.randomUUID(), "Doc Akshu Kumar",
+                            tenantUuid, "Clinic", targetDate, LocalTime.of(20, 30), "CONFIRMED", null)));
+            when(semanticProvider.complete(any())).thenReturn(orchestrationResponse(cancelJson));
+            ClinicTimeZoneResolver resolver = zoneResolver();
+            AivaV2BookingTools bookingTools = new AivaV2BookingTools(fixturePortal,
+                    mock(PublicCatalogFacade.class), resolver, clock);
+            AivaV2TransactionalKernel realKernel = new AivaV2TransactionalKernel(bookingTools,
+                    new AivaV2AppointmentLookupTool(fixturePortal), new AivaV2CancellationTool(fixturePortal), clock);
+            AivaV2ConversationService service = new AivaV2ConversationService(gateway, realKernel,
+                    new AivaV2SessionStore(clock), fixturePortal, resolver, clock, renderer);
+
+            MessageResponse choices = service.message(new MessageRequest(null, scenario[1], scenario[0]));
+            assertThat(choices.structuredResponse().type()).as(scenario[1])
+                    .isEqualTo(AivaStructuredResponse.ResponseType.CANCELLATION_CHOICES);
+            var choicesPayload = (AivaStructuredResponse.CancellationChoicesPayload) choices.structuredResponse().payload();
+            assertThat(choicesPayload.candidates()).hasSize(2);
+            String conversationId = choices.conversationId();
+            org.mockito.Mockito.clearInvocations(fixturePortal, semanticProvider);
+
+            MessageResponse confirmation = service.message(new MessageRequest(conversationId, scenario[2], scenario[0]));
+            if ("choices".equals(scenario[4])) {
+                assertThat(confirmation.structuredResponse().type()).isEqualTo(AivaStructuredResponse.ResponseType.CANCELLATION_CHOICES);
+                assertThat(((AivaStructuredResponse.CancellationChoicesPayload) confirmation.structuredResponse().payload())
+                        .candidates()).hasSize(2);
+                org.mockito.Mockito.verify(fixturePortal, org.mockito.Mockito.never())
+                        .careAiUpcomingAppointmentsAcrossAuthorizedClinics();
+                org.mockito.Mockito.verifyNoInteractions(semanticProvider);
+                continue;
+            }
+            assertThat(confirmation.structuredResponse().type()).as(scenario[2])
+                    .isEqualTo(AivaStructuredResponse.ResponseType.CANCELLATION_CONFIRMATION);
+            var selected = ((AivaStructuredResponse.CancellationConfirmationPayload)
+                    confirmation.structuredResponse().payload()).appointment();
+            assertThat(selected.date()).isEqualTo(targetDate);
+            assertThat(selected.time()).isEqualTo(LocalTime.parse(scenario[3]));
+            assertThat(selected.appointmentReference()).isEqualTo(
+                    LocalTime.parse(scenario[3]).equals(LocalTime.of(20, 0)) ? morningId.toString() : eveningId.toString());
+            assertThat(selected.appointmentReference()).isNotEqualTo(priorId.toString());
+            org.mockito.Mockito.verify(fixturePortal, org.mockito.Mockito.never())
+                    .careAiUpcomingAppointmentsAcrossAuthorizedClinics();
+            org.mockito.Mockito.verifyNoInteractions(semanticProvider);
         }
     }
 

@@ -229,6 +229,13 @@ class AiAivaV2ConversationDecisionGateway implements AivaV2ConversationDecisionG
                 turn.temporal(), filter.dateExpression());
         var mergedFilter = new AivaV2Models.AppointmentLookupFilter(doctor, date, filter.status(),
                 filter.clinicText(), filter.nextOnly());
+        Selection selection = decision.selection();
+        if (decision.operation() == Operation.CANCEL_APPOINTMENT) {
+            // Appointment identity is selected from typed user facts, never a provider-invented ordinal/reference.
+            selection = turn.ordinal() == null && turn.exactTime() == null ? null
+                    : new Selection(null, turn.ordinal(), null,
+                    turn.exactTime() == null ? null : turn.exactTime().toString());
+        }
         boolean unresolvedQualifier = decision.unresolvedExplicitQualifierPresent();
         if (decision.operation() == Operation.LOOKUP_APPOINTMENTS
                 && !StringUtils.hasText(doctorQuery) && turn.explicitLookupQualifierPresent()) {
@@ -237,7 +244,7 @@ class AiAivaV2ConversationDecisionGateway implements AivaV2ConversationDecisionG
             unresolvedQualifier = false;
         }
         return new ConversationDecision(decision.schemaVersion(), decision.dialogAct(), decision.operation(),
-                decision.bookingPatch(), decision.selection(), decision.confirmation(), decision.topicAction(),
+                decision.bookingPatch(), selection, decision.confirmation(), decision.topicAction(),
                 decision.responseLanguage(), decision.confidence(), decision.provider(), decision.fallbackUsed(),
                 decision.latencyMs(), mergedFilter, unresolvedQualifier);
     }
@@ -342,6 +349,8 @@ class AiAivaV2ConversationDecisionGateway implements AivaV2ConversationDecisionG
                     : context.pendingCancellation() != null ? Operation.CANCEL_APPOINTMENT : Operation.UPDATE_BOOKING;
             return decision(DialogAct.REJECT, operation, null, null, ConfirmationPolarity.NEGATIVE, language, started);
         }
+        ConversationDecision cancellationSelection = cancellationCandidateFastPath(turn, context, language, started);
+        if (cancellationSelection != null) return cancellationSelection;
         if (turn.pagination() == NormalizedUserTurn.Pagination.SHOW_MORE) {
             return decision(DialogAct.REQUEST_ALTERNATIVE, Operation.SHOW_MORE_SLOTS, null, null,
                     ConfirmationPolarity.NONE, language, started);
@@ -449,6 +458,20 @@ class AiAivaV2ConversationDecisionGateway implements AivaV2ConversationDecisionG
                     ConfirmationPolarity.NONE, language, started);
         }
         return null;
+    }
+
+    private ConversationDecision cancellationCandidateFastPath(NormalizedUserTurn turn,
+                                                               SessionProjection context,
+                                                               String language, long started) {
+        if (context == null || context.pendingCancellationResolution() == null
+                || context.pendingCancellationResolution().candidates().isEmpty()) return null;
+        Integer ordinal = turn.ordinal();
+        String exactTime = turn.exactTime() == null ? null : turn.exactTime().toString();
+        boolean explicitRefinement = turn.doctorEntity() != null
+                || turn.temporal().status() == NormalizedUserTurn.TemporalStatus.RESOLVED;
+        if (ordinal == null && exactTime == null && !explicitRefinement) return null;
+        return decision(DialogAct.SELECT_OPTION, Operation.CANCEL_APPOINTMENT, null,
+                new Selection(null, ordinal, null, exactTime), ConfirmationPolarity.NONE, language, started);
     }
 
     private ConversationDecision providerCandidateFastPath(NormalizedUserTurn turn, SessionProjection context,

@@ -22,6 +22,21 @@ class AivaLanguageAdapterTest {
     }
 
     @Test
+    void boundedHinglishAffirmativesNormalizeToPositiveButKarDoAloneDoesNot() {
+        for (String phrase : new String[]{"haan", "haan kar do", "theek hai", "theek hai kar do",
+                "thik hai", "thik hai kar do"}) {
+            assertThat(normalize(phrase, "hi").confirmation()).as(phrase)
+                    .isEqualTo(NormalizedUserTurn.Confirmation.POSITIVE);
+        }
+        assertThat(normalize("kar do", "hi").confirmation())
+                .isEqualTo(NormalizedUserTurn.Confirmation.NONE);
+        for (String phrase : new String[]{"nahi", "nahin", "नहीं"}) {
+            assertThat(normalize(phrase, "hi").confirmation()).as(phrase)
+                    .isEqualTo(NormalizedUserTurn.Confirmation.NEGATIVE);
+        }
+    }
+
+    @Test
     void hindiDevanagariAndHinglishNormalizeDaypartsAndPagination() {
         for (String text : new String[]{"shaam ki slots dikhao", "शाम की स्लॉट्स दिखाओ"}) {
             assertThat(normalize(text, "hi").normalizedText()).contains("evening", "slot", "show");
@@ -39,11 +54,33 @@ class AivaLanguageAdapterTest {
     }
 
     @Test
+    void embeddedExactClockTimeIsTypedWithoutMistakingTimeBoundsForSelection() {
+        assertThat(normalize("Cancel my appointment with Dr Akshu at 20:00", "en").exactTime())
+                .isEqualTo(LocalTime.of(20, 0));
+        assertThat(normalize("डॉ. अक्षु के साथ 24 सितंबर को 20:30 बजे की अपॉइंटमेंट रद्द करें", "hi").exactTime())
+                .isEqualTo(LocalTime.of(20, 30));
+        assertThat(normalize("Do you have appointments after 20:00?", "en").exactTime()).isNull();
+        assertThat(normalize("Between 19:00 and 20:00", "en").exactTime()).isNull();
+    }
+
+    @Test
     void mixedHindiPreservesDoctorEntityWithoutTranslatingIt() {
         NormalizedUserTurn turn = normalize("Mujhe Dr Akshu ke saath appointment book karni hai", "hi");
 
         assertThat(turn.explicitDoctorReference()).isEqualTo("Dr Akshu");
         assertThat(turn.rawText()).contains("Akshu");
+    }
+
+    @Test
+    void mixedScriptHindiConjunctionPreservesLatinDoctorEntity() {
+        NormalizedUserTurn turn = normalize(
+                "Doc Akshu Kumar के साथ 24 सितंबर 2026 को 20:00 बजे की अपॉइंटमेंट रद्द करें", "hi");
+
+        assertThat(turn.doctorEntity()).isNotNull();
+        assertThat(turn.doctorEntity().canonicalQuery()).isEqualTo("Doc Akshu Kumar");
+        assertThat(turn.doctorEntity().rawSpan()).isEqualTo("Doc Akshu Kumar");
+        assertThat(turn.temporal().localDate()).isEqualTo(LocalDate.of(2026, 9, 24));
+        assertThat(turn.exactTime()).isEqualTo(LocalTime.of(20, 0));
     }
 
     @Test

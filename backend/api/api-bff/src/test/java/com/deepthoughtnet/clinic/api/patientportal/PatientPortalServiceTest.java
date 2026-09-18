@@ -76,6 +76,9 @@ import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
 import com.deepthoughtnet.clinic.platform.core.context.TenantId;
 import com.deepthoughtnet.clinic.platform.core.errors.ForbiddenException;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.deepthoughtnet.clinic.platform.contracts.providerintegration.AvailabilityState;
 import com.deepthoughtnet.clinic.platform.contracts.providerintegration.BookingCapability;
 import com.deepthoughtnet.clinic.platform.contracts.providerintegration.BookingSlotSummary;
@@ -104,6 +107,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import org.mockito.ArgumentCaptor;
+import org.slf4j.LoggerFactory;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -1489,6 +1493,192 @@ class PatientPortalServiceTest {
                 eq(APP_USER_ID)
         );
         assertThat(confirmation.status()).isEqualTo("CANCELLED");
+    }
+
+    @Test
+    void cancellationDiagnosticsDistinguishCurrentTenantAppointment() {
+        prepareCancellationPatientAccess();
+        UUID appointmentId = UUID.randomUUID();
+        AppointmentRecord current = cancellationAppointment(TENANT_ID, PATIENT_ID, appointmentId,
+                AppointmentStatus.BOOKED);
+        when(appointmentService.listByPatient(TENANT_ID, PATIENT_ID)).thenReturn(List.of(current));
+        when(appointmentService.updateStatus(eq(TENANT_ID), eq(appointmentId), any(), eq(APP_USER_ID)))
+                .thenReturn(cancellationAppointment(TENANT_ID, PATIENT_ID, appointmentId, AppointmentStatus.CANCELLED));
+
+        ListAppender<ILoggingEvent> appender = captureCancellationDiagnostics();
+        try {
+            service.cancelAppointment(appointmentId, "Cancelled by patient");
+            String event = cancellationDiagnosticEvent(appender);
+            assertThat(event).contains("visibleInCurrentTenant=true", "visibleInAuthorizedOtherTenant=false",
+                    "authorizedOwnerTenantPresent=true", "ownerTenantMatchesCurrentTenant=true",
+                    "appointmentStatusCategory=BOOKED", "appointmentDomainInvocationReached=true",
+                    "rejectionReason=NONE");
+        } finally {
+            detachCancellationDiagnostics(appender);
+        }
+    }
+
+    @Test
+    void cancellationDiagnosticsIdentifyAuthorizedOtherTenantWithoutTransactingThere() {
+        prepareCancellationPatientAccess();
+        UUID appointmentId = UUID.randomUUID();
+        PatientEntity otherPatient = patientEntity(OTHER_TENANT_ID, OTHER_PATIENT_ID, "PAT-201");
+        AppointmentRecord otherAppointment = cancellationAppointment(OTHER_TENANT_ID, OTHER_PATIENT_ID,
+                appointmentId, AppointmentStatus.BOOKED);
+        when(appointmentService.listByPatient(TENANT_ID, PATIENT_ID)).thenReturn(List.of());
+        when(accessRequestService.listAuthorizedClinics("9999999999")).thenReturn(List.of(
+                new PatientPortalAuthorizedClinicRecord(OTHER_TENANT_ID, "other-clinic", "Other Clinic",
+                        OTHER_PATIENT_ID, "Portal Patient", true, "PATIENT_PORTAL_ACCESS_REQUEST")));
+        when(patientRepository.findByTenantIdAndId(OTHER_TENANT_ID, OTHER_PATIENT_ID)).thenReturn(Optional.of(otherPatient));
+        when(patientRepository.findByMobileIgnoreCaseAndActiveTrue("9999999999")).thenReturn(List.of());
+        when(appointmentService.listByPatient(OTHER_TENANT_ID, OTHER_PATIENT_ID)).thenReturn(List.of(otherAppointment));
+
+        ListAppender<ILoggingEvent> appender = captureCancellationDiagnostics();
+        try {
+            assertThatThrownBy(() -> service.cancelAppointment(appointmentId, "Cancelled by patient"))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("Upcoming appointment not found");
+            String event = cancellationDiagnosticEvent(appender);
+            assertThat(event).contains("visibleInCurrentTenant=false", "visibleInAuthorizedOtherTenant=true",
+                    "authorizedOwnerTenantPresent=true", "ownerTenantMatchesCurrentTenant=false",
+                    "appointmentStatusCategory=BOOKED", "appointmentDomainInvocationReached=false",
+                    "rejectionReason=AUTHORIZED_OTHER_TENANT");
+            verify(appointmentService, never()).updateStatus(any(), any(), any(), any());
+        } finally {
+            detachCancellationDiagnostics(appender);
+        }
+    }
+
+    @Test
+    void authorizedOtherTenantCancellationUsesResolvedOwnerTenant() {
+        prepareCancellationPatientAccess();
+        UUID appointmentId = UUID.randomUUID();
+        UUID ownerActor = UUID.randomUUID();
+        PatientEntity otherPatient = patientEntity(OTHER_TENANT_ID, OTHER_PATIENT_ID, "PAT-201");
+        AppointmentRecord otherAppointment = cancellationAppointment(OTHER_TENANT_ID, OTHER_PATIENT_ID,
+                appointmentId, AppointmentStatus.BOOKED);
+        AppointmentRecord cancelled = cancellationAppointment(OTHER_TENANT_ID, OTHER_PATIENT_ID,
+                appointmentId, AppointmentStatus.CANCELLED);
+        when(accessRequestService.listAuthorizedClinics("9999999999")).thenReturn(List.of(
+                new PatientPortalAuthorizedClinicRecord(OTHER_TENANT_ID, "other-clinic", "Other Clinic",
+                        OTHER_PATIENT_ID, "Portal Patient", true, "PATIENT_PORTAL_ACCESS_REQUEST")));
+        when(patientRepository.findByTenantIdAndId(OTHER_TENANT_ID, OTHER_PATIENT_ID)).thenReturn(Optional.of(otherPatient));
+        when(patientRepository.findByMobileIgnoreCaseAndActiveTrue("9999999999")).thenReturn(List.of());
+        when(appointmentService.listByPatient(OTHER_TENANT_ID, OTHER_PATIENT_ID)).thenReturn(List.of(otherAppointment));
+        when(appUserProvisioner.upsertAndReturnId(eq(OTHER_TENANT_ID), anyString(), any(), anyString())).thenReturn(ownerActor);
+        when(appointmentService.updateStatus(eq(OTHER_TENANT_ID), eq(appointmentId), any(), eq(ownerActor))).thenReturn(cancelled);
+
+        var confirmation = service.cancelAppointmentInOwningTenant(appointmentId, OTHER_TENANT_ID,
+                "Cancelled by patient", "owner-scope-key");
+
+        assertThat(confirmation.status()).isEqualTo("CANCELLED");
+        verify(appointmentService).updateStatus(eq(OTHER_TENANT_ID), eq(appointmentId), any(), eq(ownerActor));
+        verify(appointmentService, never()).updateStatus(eq(TENANT_ID), eq(appointmentId), any(), any());
+        verify(idempotencyService).storeResponse(eq(OTHER_TENANT_ID), eq("owner-scope-key"), anyString(), anyString());
+    }
+
+    @Test
+    void ownerTenantMismatchIsRejectedBeforeMutation() {
+        prepareCancellationPatientAccess();
+        UUID appointmentId = UUID.randomUUID();
+        when(accessRequestService.listAuthorizedClinics("9999999999")).thenReturn(List.of(
+                new PatientPortalAuthorizedClinicRecord(OTHER_TENANT_ID, "other-clinic", "Other Clinic",
+                        OTHER_PATIENT_ID, "Portal Patient", true, "PATIENT_PORTAL_ACCESS_REQUEST")));
+        when(patientRepository.findByTenantIdAndId(OTHER_TENANT_ID, OTHER_PATIENT_ID))
+                .thenReturn(Optional.of(patientEntity(OTHER_TENANT_ID, OTHER_PATIENT_ID, "PAT-201")));
+        when(patientRepository.findByMobileIgnoreCaseAndActiveTrue("9999999999")).thenReturn(List.of());
+
+        assertThatThrownBy(() -> service.cancelAppointmentInOwningTenant(appointmentId, UUID.randomUUID(),
+                "Cancelled by patient", "mismatch-key"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Appointment tenant is not authorized");
+        verify(appointmentService, never()).updateStatus(any(), any(), any(), any());
+        verify(idempotencyService, never()).storeResponse(any(), anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void cancellationDiagnosticsClassifyAppointmentOutsideAuthorizedScopesWithoutDomainCall() {
+        prepareCancellationPatientAccess();
+        UUID appointmentId = UUID.randomUUID();
+        when(appointmentService.listByPatient(TENANT_ID, PATIENT_ID)).thenReturn(List.of());
+        when(accessRequestService.listAuthorizedClinics("9999999999")).thenReturn(List.of());
+        when(patientRepository.findByMobileIgnoreCaseAndActiveTrue("9999999999")).thenReturn(List.of());
+
+        ListAppender<ILoggingEvent> appender = captureCancellationDiagnostics();
+        try {
+            assertThatThrownBy(() -> service.cancelAppointment(appointmentId, "Cancelled by patient"))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("Upcoming appointment not found");
+            String event = cancellationDiagnosticEvent(appender);
+            assertThat(event).contains("visibleInCurrentTenant=false", "visibleInAuthorizedOtherTenant=false",
+                    "authorizedOwnerTenantPresent=false", "ownerTenantMatchesCurrentTenant=false",
+                    "appointmentDomainInvocationReached=false", "rejectionReason=UNAUTHORIZED_TENANT");
+            verify(appointmentService, never()).updateStatus(any(), any(), any(), any());
+        } finally {
+            detachCancellationDiagnostics(appender);
+        }
+    }
+
+    @Test
+    void cancellationDiagnosticsIdentifyInvalidInConsultationLifecycleTransition() {
+        prepareCancellationPatientAccess();
+        UUID appointmentId = UUID.randomUUID();
+        AppointmentRecord current = cancellationAppointment(TENANT_ID, PATIENT_ID, appointmentId,
+                AppointmentStatus.IN_CONSULTATION);
+        when(appointmentService.listByPatient(TENANT_ID, PATIENT_ID)).thenReturn(List.of(current));
+        when(appointmentService.updateStatus(eq(TENANT_ID), eq(appointmentId), any(), eq(APP_USER_ID)))
+                .thenThrow(new IllegalArgumentException(
+                        "Invalid appointment status transition from IN_CONSULTATION to CANCELLED"));
+
+        ListAppender<ILoggingEvent> appender = captureCancellationDiagnostics();
+        try {
+            assertThatThrownBy(() -> service.cancelAppointment(appointmentId, "Cancelled by patient"))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageStartingWith("Invalid appointment status transition");
+            String event = cancellationDiagnosticEvent(appender);
+            assertThat(event).contains("visibleInCurrentTenant=true", "visibleInAuthorizedOtherTenant=false",
+                    "ownerTenantMatchesCurrentTenant=true", "appointmentStatusCategory=IN_CONSULTATION",
+                    "appointmentDomainInvocationReached=true", "rejectionReason=INVALID_LIFECYCLE_TRANSITION");
+            verify(appointmentService).updateStatus(eq(TENANT_ID), eq(appointmentId), any(), eq(APP_USER_ID));
+        } finally {
+            detachCancellationDiagnostics(appender);
+        }
+    }
+
+    private void prepareCancellationPatientAccess() {
+        AppUserEntity appUser = AppUserEntity.create(TENANT_ID, "patient-sub", "patient@example.com", "Portal Patient");
+        appUser.setPatientId(PATIENT_ID);
+        when(appUserRepository.findByTenantIdAndId(TENANT_ID, APP_USER_ID)).thenReturn(Optional.of(appUser));
+        when(patientRepository.findByTenantIdAndId(TENANT_ID, PATIENT_ID))
+                .thenReturn(Optional.of(patientEntity(TENANT_ID, PATIENT_ID, "PAT-001")));
+        when(clinicProfileService.findByTenantId(TENANT_ID)).thenReturn(Optional.of(clinicProfile()));
+    }
+
+    private AppointmentRecord cancellationAppointment(UUID tenantId, UUID patientId, UUID appointmentId,
+                                                        AppointmentStatus status) {
+        return new AppointmentRecord(appointmentId, tenantId, patientId, "PAT-001", "Portal Patient", "9999999999",
+                UUID.randomUUID(), "Provider", null, LocalDate.now(ZoneId.of("Asia/Kolkata")).plusDays(1),
+                LocalTime.of(20, 30), 17, "Review", AppointmentType.SCHEDULED, AppointmentPriority.NORMAL,
+                status, OffsetDateTime.now(), OffsetDateTime.now());
+    }
+
+    private ListAppender<ILoggingEvent> captureCancellationDiagnostics() {
+        Logger logger = (Logger) LoggerFactory.getLogger(PatientPortalService.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        return appender;
+    }
+
+    private String cancellationDiagnosticEvent(ListAppender<ILoggingEvent> appender) {
+        return appender.list.stream().map(ILoggingEvent::getFormattedMessage)
+                .filter(message -> message.contains("PATIENT_PORTAL_CANCEL_DIAGNOSTIC"))
+                .reduce((first, last) -> last).orElseThrow();
+    }
+
+    private void detachCancellationDiagnostics(ListAppender<ILoggingEvent> appender) {
+        ((Logger) LoggerFactory.getLogger(PatientPortalService.class)).detachAppender(appender);
+        appender.stop();
     }
 
     private PatientEntity patientEntity(UUID tenantId, UUID patientId, String patientNumber) {

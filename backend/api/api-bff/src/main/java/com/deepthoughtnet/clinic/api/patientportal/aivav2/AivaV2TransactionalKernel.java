@@ -129,6 +129,8 @@ class AivaV2TransactionalKernel {
                 && StringUtils.hasText(session.pendingReschedule().sourceAppointmentReference())
                 && decision.operation() == Operation.RESCHEDULE_APPOINTMENT
                 && hasBoundRescheduleTargetRefinement(decision, temporal);
+        boolean cancellationCandidateSelection = session.pendingCancellationResolution() != null
+                && decision.operation() == Operation.CANCEL_APPOINTMENT;
         if (targetRefinementDetected) {
             decision = withOperation(decision, Operation.UPDATE_RESCHEDULE);
         }
@@ -146,7 +148,8 @@ class AivaV2TransactionalKernel {
                 temporal == null ? null : temporal.localDate());
         if ((session.pendingCancellationResolution() != null || session.pendingReschedule() != null)
                 && isExplicitNewWorkflow(decision) && !rescheduleOwnsAvailability
-                && decision.operation() != Operation.LOOKUP_APPOINTMENTS) {
+                && decision.operation() != Operation.LOOKUP_APPOINTMENTS
+                && !cancellationCandidateSelection) {
             session = replace(session, session.activeDraft(), session.suspendedDraft(),
                     session.latestProviderResult(), session.latestAvailabilityResult(),
                     session.pendingConfirmation(), null, null, null, null);
@@ -697,6 +700,9 @@ class AivaV2TransactionalKernel {
         if (appointmentLookupTool == null || cancellationTool == null) {
             return result(session, decision, turnId, "FAILED", "Cancellation is temporarily unavailable.");
         }
+        if (session.pendingCancellationResolution() != null) {
+            return refinePendingCancellation(session, decision, turnId);
+        }
         var requestedFilter = decision.lookupFilter();
         // Cancellation targets upcoming appointments; persistence status is domain-owned.
         var filter = new AivaV2Models.AppointmentLookupFilter(
@@ -724,8 +730,15 @@ class AivaV2TransactionalKernel {
         if (selected != null) {
             return prepareCancellationConfirmation(session, decision, turnId, selected);
         }
-        if (lookup.appointments().size() > 1) {
-            CancellationResolution pending = new CancellationResolution(filter, lookup.appointments(),
+        String requestedTime = decision.selection() == null ? null : decision.selection().exactTime();
+        List<AppointmentSummary> choices = StringUtils.hasText(requestedTime)
+                ? lookup.appointments().stream().filter(candidate -> candidate.time() != null
+                        && candidate.time().toString().equals(requestedTime)).toList()
+                : lookup.appointments();
+        // A typed time that matched no authorized candidate must not silently select the sole different-time result.
+        if (lookup.appointments().size() > 1 || StringUtils.hasText(requestedTime)) {
+            CancellationResolution pending = new CancellationResolution(filter,
+                    choices.isEmpty() ? lookup.appointments() : choices,
                     Instant.now(clock), Instant.now(clock).plusSeconds(5 * 60));
             SessionProjection updated = replace(session, session.activeDraft(), session.suspendedDraft(),
                     session.latestProviderResult(), session.latestAvailabilityResult(), session.pendingConfirmation(),
@@ -733,7 +746,8 @@ class AivaV2TransactionalKernel {
             log.info("AIVA_V2_CANCELLATION_TRACE operation={} pendingCancellationPresent=true doctorFilterPresent={} "
                             + "dateFilterPresent={} clinicFilterPresent={} candidateCount={} resolutionStatus=AMBIGUOUS activeWorkflow=CANCELLATION",
                     decision.operation(), StringUtils.hasText(lookupValue(filter.doctorText())),
-                    date != null, StringUtils.hasText(lookupValue(filter.clinicText())), lookup.appointments().size());
+                    date != null, StringUtils.hasText(lookupValue(filter.clinicText())),
+                    choices.isEmpty() ? lookup.appointments().size() : choices.size());
             return result(updated, decision, turnId, "CANCELLATION_CHOICES",
                     "I found more than one matching appointment. Which one would you like to cancel?");
         }
@@ -743,13 +757,23 @@ class AivaV2TransactionalKernel {
 
     private KernelResult prepareCancellationConfirmation(SessionProjection session, ConversationDecision decision,
                                                          String turnId, AppointmentSummary appointment) {
+        long sessionVersionBefore = session.version();
         var prepared = cancellationTool.prepare(appointment, Instant.now(clock));
         if (!"SUCCESS".equals(prepared.category())) {
             return result(session, decision, turnId, prepared.category(), prepared.safeReason());
         }
+        CancellationConfirmation capability = prepared.value();
+        log.info("AIVA_V2_CANCELLATION_CAPABILITY_CREATE conversationId={} sessionVersionBefore={} "
+                        + "selectedAppointmentRefPresent={} confirmationRefPresent={} expiresAt={} pendingCancellationStored=true",
+                session.conversationId(), sessionVersionBefore,
+                capability.appointmentReference() != null, capability.confirmationRef() != null,
+                capability.expiresAt());
         SessionProjection updated = replace(session, session.activeDraft(), session.suspendedDraft(),
                 session.latestProviderResult(), session.latestAvailabilityResult(), session.pendingConfirmation(),
-                prepared.value(), null);
+                capability, null);
+        log.info("AIVA_V2_CANCELLATION_CAPABILITY_STORED conversationId={} sessionVersionAfter={} "
+                        + "pendingCancellationPresent={}",
+                updated.conversationId(), updated.version(), updated.pendingCancellation() != null);
         log.info("AIVA_V2_CANCELLATION_TRACE operation={} pendingCancellationPresent=true doctorFilterPresent={} "
                         + "dateFilterPresent={} clinicFilterPresent={} candidateCount=1 resolutionStatus=RESOLVED "
                         + "owningClinicPresent={} owningTenantPresent={} confirmationPending=true activeWorkflow=CANCELLATION",
@@ -766,17 +790,96 @@ class AivaV2TransactionalKernel {
                     .filter(candidate -> selection.candidateRef().equals(candidate.appointmentReference()))
                     .findFirst().orElse(null);
         }
+        if (StringUtils.hasText(selection.exactTime())) {
+            List<AppointmentSummary> matching = candidates.stream()
+                    .filter(candidate -> candidate.time() != null
+                            && candidate.time().toString().equals(selection.exactTime()))
+                    .toList();
+            return matching.size() == 1 ? matching.get(0) : null;
+        }
         if (selection.ordinal() == null || selection.ordinal() < 1) return null;
         int index = selection.ordinal() - 1;
         return index < candidates.size() ? candidates.get(index) : null;
     }
 
+    private KernelResult refinePendingCancellation(SessionProjection session, ConversationDecision decision,
+                                                   String turnId) {
+        CancellationResolution pending = session.pendingCancellationResolution();
+        List<AppointmentSummary> candidates = pending.candidates();
+        Selection selection = decision.selection();
+        if (selection != null && selection.ordinal() != null) {
+            AppointmentSummary selected = selectCancellationCandidate(candidates, selection);
+            if (selected != null) return prepareCancellationConfirmation(session, decision, turnId, selected);
+            return cancellationChoices(session, decision, turnId, pending);
+        }
+
+        String doctor = lookupValue(decision.lookupFilter().doctorText());
+        LocalDate date = parseLookupDate(decision.lookupFilter().dateExpression());
+        String exactTime = selection == null ? null : selection.exactTime();
+        List<AppointmentSummary> matching = candidates.stream()
+                .filter(candidate -> !StringUtils.hasText(doctor)
+                        || normalizedDoctor(candidate.doctorDisplayName()).contains(normalizedDoctor(doctor)))
+                .filter(candidate -> date == null || date.equals(candidate.date()))
+                .filter(candidate -> !StringUtils.hasText(exactTime)
+                        || candidate.time() != null && candidate.time().toString().equals(exactTime))
+                .toList();
+        if (matching.size() == 1) {
+            return prepareCancellationConfirmation(session, decision, turnId, matching.get(0));
+        }
+        if (matching.size() > 1) {
+            AivaV2Models.AppointmentLookupFilter criteria = decision.lookupFilter();
+            CancellationResolution refined = new CancellationResolution(
+                    new AivaV2Models.AppointmentLookupFilter(
+                            criteria.doctorText().mode() == PatchMode.SET ? criteria.doctorText() : pending.criteria().doctorText(),
+                            criteria.dateExpression().mode() == PatchMode.SET ? criteria.dateExpression() : pending.criteria().dateExpression(),
+                            pending.criteria().status(), pending.criteria().clinicText(), pending.criteria().nextOnly()),
+                    matching, pending.createdAt(), pending.expiresAt());
+            return cancellationChoices(sessionWithCancellationResolution(session, refined), decision, turnId,
+                    refined);
+        }
+        // A failed refinement stays bounded to the server-held choices; never broaden the lookup.
+        return cancellationChoices(session, decision, turnId, pending);
+    }
+
+    private KernelResult cancellationChoices(SessionProjection session, ConversationDecision decision, String turnId,
+                                             CancellationResolution resolution) {
+        SessionProjection updated = resolution == session.pendingCancellationResolution() ? session
+                : sessionWithCancellationResolution(session, resolution);
+        return result(updated, decision, turnId, "CANCELLATION_CHOICES",
+                "Please choose one of the matching appointments.");
+    }
+
+    private SessionProjection sessionWithCancellationResolution(SessionProjection session,
+                                                                CancellationResolution resolution) {
+        return replace(session, session.activeDraft(), session.suspendedDraft(), session.latestProviderResult(),
+                session.latestAvailabilityResult(), session.pendingConfirmation(), session.pendingCancellation(),
+                resolution, session.pendingReschedule(), session.pendingRescheduleConfirmation());
+    }
+
+    private LocalDate parseLookupDate(ValuePatch patch) {
+        if (patch == null || patch.mode() != PatchMode.SET || !StringUtils.hasText(patch.value())) return null;
+        try { return LocalDate.parse(patch.value()); }
+        catch (DateTimeParseException ignored) { return null; }
+    }
+
+    private String normalizedDoctor(String value) {
+        return value == null ? "" : value.toLowerCase(Locale.ROOT)
+                .replaceAll("[^\\p{L}\\p{N}]+", " ").trim()
+                .replaceFirst("^(doctor|dr|doc)\\s+", "");
+    }
+
     private KernelResult confirmCancellation(SessionProjection session, ConversationDecision decision, String turnId) {
         CancellationConfirmation confirmation = session.pendingCancellation();
         if (confirmation == null) {
+            log.info("AIVA_V2_CANCELLATION_CONFIRMATION conversationId={} activeWorkflow=CANCELLATION "
+                            + "sessionVersion={} pendingCancellationPresent=false confirmationRefPresent=false "
+                            + "appointmentRefPresent=false expiresAt=null currentInstant={} "
+                            + "domainInvocationReached=false staleReason=CAPABILITY_MISSING",
+                    session.conversationId(), session.version(), Instant.now(clock));
             return result(session, decision, turnId, "STALE", "There is no current cancellation to confirm.");
         }
-        var cancelled = cancellationTool.cancel(confirmation);
+        var attempt = cancellationTool.cancel(confirmation, session.conversationId(), session.version());
+        var cancelled = attempt.result();
         if (!"SUCCESS".equals(cancelled.category())) {
             return result(session, decision, turnId, cancelled.category(), cancelled.safeReason());
         }

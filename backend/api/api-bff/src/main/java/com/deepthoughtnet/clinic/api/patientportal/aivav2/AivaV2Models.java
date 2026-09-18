@@ -363,8 +363,15 @@ public final class AivaV2Models {
             LocalDate date,
             LocalTime startsAt,
             Instant expiresAt,
-            String idempotencyKey
+            String idempotencyKey,
+            UUID owningTenantId
     ) {
+        public CancellationConfirmation(String confirmationRef, UUID appointmentId, String appointmentReference,
+                                        String doctorDisplayName, String clinicDisplayName, LocalDate date,
+                                        LocalTime startsAt, Instant expiresAt, String idempotencyKey) {
+            this(confirmationRef, appointmentId, appointmentReference, doctorDisplayName, clinicDisplayName,
+                    date, startsAt, expiresAt, idempotencyKey, null);
+        }
     }
 
     public record CancellationResolution(

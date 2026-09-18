@@ -114,6 +114,55 @@ class AiAivaV2ConversationDecisionGatewayTest {
     }
 
     @Test
+    void thikHaiKarDoUsesDeterministicPendingCancellationConfirmation() {
+        SessionProjection context = pendingCancellationConfirmationContext();
+
+        ConversationDecision decision = gateway.decide("thik hai kar do", "hi", context);
+
+        assertThat(decision.operation()).isEqualTo(Operation.CONFIRM_CANCELLATION);
+        assertThat(decision.confirmation()).isEqualTo(AivaV2Models.ConfirmationPolarity.POSITIVE);
+        assertThat(decision.provider()).isEqualTo("DETERMINISTIC");
+        assertThat(context.pendingCancellation().appointmentReference()).isEqualTo("appointment-20-30");
+        org.mockito.Mockito.verifyNoInteractions(orchestration);
+    }
+
+    @Test
+    void cancellationSelectionUsesTypedUserFactsAndDropsProviderInventedSelection() {
+        when(orchestration.complete(any())).thenReturn(response("GEMINI", false, """
+                {"schemaVersion":"1.0","dialogAct":"START_REQUEST","operation":"CANCEL_APPOINTMENT",
+                 "lookupFilter":{"doctorText":{"mode":"SET","value":"Dr Mehta"},
+                 "dateExpression":{"mode":"SET","value":"2026-09-25"}},
+                 "selection":{"ordinal":1,"candidateRef":"provider-invented"},"confidence":0.95}
+                """));
+        var turn = gateway.normalizeTurn("Cancel my appointment with Dr Akshu on 24 September", "en",
+                LocalDate.of(2026, 9, 1));
+
+        ConversationDecision decision = gateway.decide(turn, emptyContext());
+
+        assertThat(decision.operation()).isEqualTo(Operation.CANCEL_APPOINTMENT);
+        assertThat(decision.lookupFilter().doctorText().value()).isEqualTo("Dr Akshu");
+        assertThat(decision.lookupFilter().dateExpression().value()).isEqualTo("2026-09-24");
+        assertThat(decision.selection()).isNull();
+    }
+
+    @Test
+    void trustedCancellationExactTimeOverridesProviderOrdinalAndCandidateReference() {
+        when(orchestration.complete(any())).thenReturn(response("GEMINI", false, """
+                {"schemaVersion":"1.0","dialogAct":"START_REQUEST","operation":"CANCEL_APPOINTMENT",
+                 "selection":{"ordinal":1,"candidateRef":"provider-invented"},"confidence":0.95}
+                """));
+        var turn = gateway.normalizeTurn("Cancel my appointment with Dr Akshu on 24 September at 20:30", "en",
+                LocalDate.of(2026, 9, 1));
+
+        ConversationDecision decision = gateway.decide(turn, emptyContext());
+
+        assertThat(turn.exactTime()).isEqualTo(LocalTime.of(20, 30));
+        assertThat(decision.selection()).isEqualTo(new AivaV2Models.Selection(null, null, null, "20:30"));
+        assertThat(decision.lookupFilter().doctorText().value()).isEqualTo("Dr Akshu");
+        assertThat(decision.lookupFilter().dateExpression().value()).isEqualTo("2026-09-24");
+    }
+
+    @Test
     void shortNaturalSlotAcceptancesUseSelectionFastPath() {
         SessionProjection context = availabilityContext();
 
@@ -376,6 +425,26 @@ class AiAivaV2ConversationDecisionGatewayTest {
 
         assertThat(decision.lookupFilter().doctorText().value()).isEqualTo("Dr Akshu");
         assertThat(decision.lookupFilter().dateExpression().value()).isEqualTo("2026-09-24");
+    }
+
+    @Test
+    void activeCancellationChoicesUseTypedOrdinalAndExactTimeWithoutProvider() {
+        SessionProjection context = cancellationAmbiguityContext();
+        for (String[] input : new String[][]{{"en", "2"}, {"hi", "dusra"}, {"hi", "दूसरा"}}) {
+            var turn = gateway.normalizeTurn(input[1], input[0], LocalDate.of(2026, 9, 1));
+            ConversationDecision decision = gateway.decide(turn, context);
+            assertThat(decision.operation()).as(input[1]).isEqualTo(Operation.CANCEL_APPOINTMENT);
+            assertThat(decision.selection().ordinal()).as(input[1]).isEqualTo(2);
+        }
+        for (String[] input : new String[][]{{"en", "20:00"}, {"hi", "20:00 wali"},
+                {"hi", "20:00 बजे की अपॉइंटमेंट रद्द करें"}}) {
+            var turn = gateway.normalizeTurn(input[1], input[0], LocalDate.of(2026, 9, 1));
+            ConversationDecision decision = gateway.decide(turn, context);
+            assertThat(turn.exactTime()).as(input[1]).isEqualTo(LocalTime.of(20, 0));
+            assertThat(decision.operation()).as(input[1]).isEqualTo(Operation.CANCEL_APPOINTMENT);
+            assertThat(decision.selection().exactTime()).as(input[1]).isEqualTo("20:00");
+        }
+        org.mockito.Mockito.verifyNoInteractions(orchestration);
     }
 
     private void assertTrustedLookupFacts(String operation, String userText, boolean providerConflicts) {
@@ -778,6 +847,31 @@ class AiAivaV2ConversationDecisionGatewayTest {
     private SessionProjection emptyContext() {
         return new SessionProjection("c1", UUID.randomUUID(), UUID.randomUUID().toString(), null, null,
                 null, null, null, 1, Instant.now().plusSeconds(600));
+    }
+
+    private SessionProjection pendingCancellationConfirmationContext() {
+        Instant expires = Instant.now().plusSeconds(300);
+        var pending = new AivaV2Models.CancellationConfirmation("confirmation", UUID.randomUUID(),
+                "appointment-20-30", "Doc Akshu Kumar", "Clinic", LocalDate.of(2026, 9, 24),
+                LocalTime.of(20, 30), expires, "cancel-idempotency");
+        return new SessionProjection("c1", UUID.randomUUID(), "tenant", null, null, null, null,
+                null, pending, null, null, null, 1, expires);
+    }
+
+    private SessionProjection cancellationAmbiguityContext() {
+        UUID patient = UUID.randomUUID();
+        Instant expiresAt = Instant.now().plusSeconds(300);
+        var candidates = List.of(
+                new AivaV2Models.AppointmentSummary("apt-1", "Doc Akshu Kumar", "Clinic",
+                        LocalDate.of(2026, 9, 24), LocalTime.of(20, 0), "CONFIRMED", null),
+                new AivaV2Models.AppointmentSummary("apt-2", "Doc Akshu Kumar", "Clinic",
+                        LocalDate.of(2026, 9, 24), LocalTime.of(20, 30), "CONFIRMED", null));
+        var criteria = new AivaV2Models.AppointmentLookupFilter(AivaV2Models.ValuePatch.set("Dr Akshu"),
+                AivaV2Models.ValuePatch.set("2026-09-24"), AivaV2Models.ValuePatch.unchanged(), null, false);
+        var resolution = new AivaV2Models.CancellationResolution(criteria, candidates,
+                Instant.now(), expiresAt);
+        return new SessionProjection("c1", patient, UUID.randomUUID().toString(), null, null, null, null,
+                null, null, resolution, null, null, 1, expiresAt);
     }
 
     private SessionProjection providerDisambiguationContext() {
