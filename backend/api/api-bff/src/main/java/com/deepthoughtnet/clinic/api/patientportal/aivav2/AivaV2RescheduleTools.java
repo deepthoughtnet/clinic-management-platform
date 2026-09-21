@@ -187,13 +187,13 @@ class AivaV2RescheduleTools {
 
     private void traceFailure(String conversationId, String turnId, RescheduleConfirmation confirmation,
                               String category, Class<?> exceptionClass) {
-        log.warn("AIVA_V2_RESCHEDULE_DOMAIN_FAILURE conversationId={} turnId={} failureCategory={} "
-                        + "exceptionClass={} domainOperation=RESCHEDULE sourceBound={} targetDate={} targetTime={} "
+        log.warn("AIVA_V2_RESCHEDULE_DOMAIN_FAILURE conversationIdHash={} turnId={} failureCategory={} "
+                        + "exceptionClass={} domainOperation=RESCHEDULE sourceBound={} targetDatePresent={} targetTimePresent={} "
                         + "owningClinicPresent={} owningTenantPresent={}",
-                conversationId, turnId, category, exceptionClass == null ? null : exceptionClass.getSimpleName(),
+                AivaV2LogRedaction.correlation(conversationId), turnId, category, exceptionClass == null ? null : exceptionClass.getSimpleName(),
                 confirmation != null && StringUtils.hasText(confirmation.sourceAppointmentReference()),
-                confirmation == null ? null : confirmation.targetDate(),
-                confirmation == null ? null : confirmation.targetStartsAt(),
+                confirmation != null && confirmation.targetDate() != null,
+                confirmation != null && confirmation.targetStartsAt() != null,
                 confirmation != null && StringUtils.hasText(confirmation.clinicId()),
                 confirmation != null && StringUtils.hasText(confirmation.tenantId()));
     }

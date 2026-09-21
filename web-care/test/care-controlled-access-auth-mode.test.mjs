@@ -82,6 +82,9 @@ test("care controlled-access mode wires request access and access login paths", 
   assert.ok(accessValidation.includes('sanitizePatientAccessCodeInput'));
   assert.ok(pages.includes('postPatientPortalAccessLogin'));
   assert.ok(pages.includes('postPatientPortalAccessRequest'));
+  assert.ok(pages.includes('postPatientPortalAccessCodeReissue'));
+  assert.ok(pages.includes('Get new access code'));
+  assert.ok(api.includes('postPatientPortalAccessCodeReissue'));
   assert.ok(pages.includes('mode: "access"'));
   assert.ok(pages.includes('CareEntrySecurityStrip mode="access"'));
   assert.ok(pages.includes('isDevOtpMode'));
@@ -107,4 +110,5 @@ test("access approval mode keeps OTP controls behind configuration", () => {
   assert.ok(accessValidation.includes('already pending'));
   assert.ok(accessValidation.includes('Select the correct clinic or hospital before signing in.'));
   assert.ok(pages.includes('Invite-controlled access'));
+  assert.ok(pages.includes('approvedRecoveryAvailable'));
 });

@@ -94,6 +94,7 @@ public class EnglishLanguageAdapter implements AivaLanguageAdapter {
         if (exactTime == null) exactTime = parseEmbeddedClockTime(original);
         if (exactTime != null) controls.add(DeterministicControl.EXACT_TIME);
         Integer ordinal = parseOrdinal(selection);
+        if (ordinal == null) ordinal = appointmentOrdinal(original);
         if (ordinal != null) controls.add(DeterministicControl.ORDINAL);
 
         NormalizedUserTurn.Intent intent = intent(normalized);
@@ -151,12 +152,33 @@ public class EnglishLanguageAdapter implements AivaLanguageAdapter {
     }
 
     private Integer parseOrdinal(String value) {
-        Matcher matcher = Pattern.compile("(?i)^(?:the\\s+)?(first|second|third|fourth|[1-9])(?:\\s+(?:one|slot))?(?:\\s+works?)?$")
+        Matcher matcher = Pattern.compile("(?i)^(?:the\\s+)?(first|second|third|fourth|[1-9](?:st|nd|rd|th)?)(?:\\s+(?:one|slot))?(?:\\s+works?)?$")
                 .matcher(value == null ? "" : value.trim());
         if (!matcher.matches()) return null;
         return switch (matcher.group(1).toLowerCase(Locale.ROOT)) {
             case "first" -> 1; case "second" -> 2; case "third" -> 3; case "fourth" -> 4;
-            default -> Integer.valueOf(matcher.group(1));
+            default -> Integer.valueOf(matcher.group(1).replaceAll("[^0-9]", ""));
+        };
+    }
+
+    private Integer appointmentOrdinal(String value) {
+        String text = value == null ? "" : value.toLowerCase(Locale.ROOT);
+        if (!text.matches(".*(?:\\bappointments?\\b|अपॉइंटमेंट्स?|अपॉइंटमेन्ट्स?).*")) return null;
+        if (text.contains("second") || text.contains("dusri") || text.contains("doosri")
+                || text.contains("दूसरी") || text.contains("सेकंड")) return 2;
+        if (text.contains("third") || text.contains("teesri") || text.contains("तीसरी")) return 3;
+        if (text.contains("first") || text.contains("pehli") || text.contains("pahli")
+                || text.contains("पहली")) return 1;
+        Matcher matcher = Pattern.compile(
+                "(?i)(?:^|[^\\p{L}\\p{N}])(first|second|third|fourth|pehli|pahli|dusri|doosri|teesri|पहली|दूसरी|तीसरी|सेकंड|[1-9](?:st|nd|rd|th)?)(?=[^\\p{L}\\p{N}]|$)",
+                Pattern.UNICODE_CASE).matcher(text);
+        if (!matcher.find()) return null;
+        return switch (matcher.group(1).toLowerCase(Locale.ROOT)) {
+            case "first", "pehli", "pahli", "पहली" -> 1;
+            case "second", "dusri", "doosri", "दूसरी", "सेकंड" -> 2;
+            case "third", "teesri", "तीसरी" -> 3;
+            case "fourth" -> 4;
+            default -> Integer.valueOf(matcher.group(1).replaceAll("[^0-9]", ""));
         };
     }
 }

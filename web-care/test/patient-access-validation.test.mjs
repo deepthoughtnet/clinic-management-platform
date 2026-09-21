@@ -40,6 +40,10 @@ test("patient access error mapping preserves business conflicts and maps validat
     "Access has already been approved for this account.",
   );
   assert.equal(
+    sanitizePatientAccessErrorMessage("This access code has expired. Please request a new approval."),
+    "This access code has expired. Request a new access code.",
+  );
+  assert.equal(
     sanitizePatientAccessErrorMessage("mobile: must match ^[0-9]{10}$"),
     "Enter a valid 10-digit Indian mobile number.",
   );

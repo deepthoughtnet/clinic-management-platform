@@ -66,6 +66,11 @@ export type PatientPortalAccessRequestSubmitRequest = {
   context?: PatientPortalAccessRequestContext | null;
 };
 
+export type PatientPortalAccessCodeReissueRequest = {
+  mobile: string;
+  context?: PatientPortalAccessRequestContext | null;
+};
+
 export type PatientPortalAccessRequestResponse = {
   id: string;
   tenantId: string;
@@ -441,6 +446,8 @@ export type AivaV2MessageRequest = {
   conversationId: string | null;
   message: string;
   language: string;
+  clientTurnId: string;
+  clientTurnSequence: number;
   action?: AivaV2InteractiveActionRequest;
 };
 
@@ -580,11 +587,22 @@ export async function postPatientPortalAivaV2Message(
   request: AivaV2MessageRequest,
   session: PatientPortalPatientSession,
 ): Promise<AivaV2MessageResponse> {
-  const response = await fetch(buildUrl("/api/patient-portal/aiva-v2/message"), {
+  const init: RequestInit = {
     method: "POST",
     headers: buildHeaders(session, { "Content-Type": "application/json" }),
     body: JSON.stringify(request),
-  });
+  };
+  let response: Response;
+  try {
+    response = await fetch(buildUrl("/api/patient-portal/aiva-v2/message"), init);
+  } catch (firstError) {
+    // Transport retries reuse the exact request object, including turn identity and sequence.
+    try {
+      response = await fetch(buildUrl("/api/patient-portal/aiva-v2/message"), init);
+    } catch {
+      throw firstError;
+    }
+  }
   if (!response.ok) {
     throw new PatientPortalHttpError(response.status, await parseError(response));
   }
@@ -594,6 +612,13 @@ export async function postPatientPortalAivaV2Message(
 export async function postPatientPortalAccessRequest<T>(
   path: string,
   body: PatientPortalAccessRequestSubmitRequest,
+): Promise<T> {
+  return postPatientPortalJson<T>(path, body);
+}
+
+export async function postPatientPortalAccessCodeReissue<T>(
+  path: string,
+  body: PatientPortalAccessCodeReissueRequest,
 ): Promise<T> {
   return postPatientPortalJson<T>(path, body);
 }

@@ -1,6 +1,8 @@
 package com.deepthoughtnet.clinic.api.patientportal.aivav2;
 
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.InteractiveAction;
+import com.fasterxml.jackson.annotation.JsonSubTypes;
+import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.List;
@@ -14,22 +16,53 @@ public record AivaStructuredResponse(ResponseType type, Payload payload, List<In
 
     public enum ResponseType {
         NEED_PROVIDER, PROVIDER_CHOICES, PROVIDER_NOT_FOUND, NEED_DATE, AVAILABLE_SLOTS,
+        NO_FUTURE_AVAILABILITY,
         NO_MORE_SLOTS, BOOKING_CONFIRMATION, BOOKING_SUCCESS, APPOINTMENTS_NONE,
         APPOINTMENTS_FOUND, LOOKUP_CLARIFICATION, CANCELLATION_CHOICES,
         CANCELLATION_CONFIRMATION, CANCELLATION_REJECTED, CANCELLATION_SUCCESS,
         RESCHEDULE_SOURCE_CHOICES, RESCHEDULE_NEED_DATE, RESCHEDULE_AVAILABLE_SLOTS,
         RESCHEDULE_NO_MORE_SLOTS, RESCHEDULE_CONFIRMATION, RESCHEDULE_REJECTED,
         RESCHEDULE_SUCCESS, CANCELLATION_NONE, RESCHEDULE_SOURCE_NONE,
-        STALE_RESULT, FAILURE, CLARIFICATION, CALL_TO_BOOK, LEGACY
+        STALE_RESULT, FAILURE, CLARIFICATION, CALL_TO_BOOK,
+        BOOKING_ABANDONED, BOOKING_SUSPENDED, NO_SUSPENDED_BOOKING, CONVERSATION_CLOSED,
+        CONTEXTUAL_INFORMATION, LEGACY
     }
 
+    @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.PROPERTY, property = "payloadType")
+    @JsonSubTypes({
+            @JsonSubTypes.Type(value = NeedProviderPayload.class, name = "needProvider"),
+            @JsonSubTypes.Type(value = ProviderChoicesPayload.class, name = "providerChoices"),
+            @JsonSubTypes.Type(value = NeedDatePayload.class, name = "needDate"),
+            @JsonSubTypes.Type(value = AvailabilityPayload.class, name = "availability"),
+            @JsonSubTypes.Type(value = NoMoreSlotsPayload.class, name = "noMoreSlots"),
+            @JsonSubTypes.Type(value = BookingConfirmationPayload.class, name = "bookingConfirmation"),
+            @JsonSubTypes.Type(value = BookingSuccessPayload.class, name = "bookingSuccess"),
+            @JsonSubTypes.Type(value = AppointmentListPayload.class, name = "appointmentList"),
+            @JsonSubTypes.Type(value = CancellationChoicesPayload.class, name = "cancellationChoices"),
+            @JsonSubTypes.Type(value = CancellationConfirmationPayload.class, name = "cancellationConfirmation"),
+            @JsonSubTypes.Type(value = CancellationSuccessPayload.class, name = "cancellationSuccess"),
+            @JsonSubTypes.Type(value = RescheduleSourceChoicesPayload.class, name = "rescheduleSourceChoices"),
+            @JsonSubTypes.Type(value = RescheduleNeedDatePayload.class, name = "rescheduleNeedDate"),
+            @JsonSubTypes.Type(value = RescheduleConfirmationPayload.class, name = "rescheduleConfirmation"),
+            @JsonSubTypes.Type(value = RescheduleSuccessPayload.class, name = "rescheduleSuccess"),
+            @JsonSubTypes.Type(value = ClarificationPayload.class, name = "clarification"),
+            @JsonSubTypes.Type(value = FailurePayload.class, name = "failure"),
+            @JsonSubTypes.Type(value = StaleResultPayload.class, name = "staleResult"),
+            @JsonSubTypes.Type(value = CallToBookPayload.class, name = "callToBook"),
+            @JsonSubTypes.Type(value = ProviderNotFoundPayload.class, name = "providerNotFound"),
+            @JsonSubTypes.Type(value = NoMoreSlotsEmptyPayload.class, name = "noMoreSlotsEmpty"),
+            @JsonSubTypes.Type(value = BookingStatePayload.class, name = "bookingState"),
+            @JsonSubTypes.Type(value = ContextualInformationPayload.class, name = "contextualInformation"),
+            @JsonSubTypes.Type(value = EmptyPayload.class, name = "empty")
+    })
     public sealed interface Payload permits NeedProviderPayload, ProviderChoicesPayload, NeedDatePayload,
             AvailabilityPayload, NoMoreSlotsPayload, BookingConfirmationPayload, BookingSuccessPayload,
             AppointmentListPayload, CancellationChoicesPayload, CancellationConfirmationPayload,
             CancellationSuccessPayload, RescheduleSourceChoicesPayload, RescheduleNeedDatePayload,
             RescheduleConfirmationPayload, RescheduleSuccessPayload, ClarificationPayload,
             FailurePayload, StaleResultPayload, CallToBookPayload, ProviderNotFoundPayload,
-            NoMoreSlotsEmptyPayload, EmptyPayload { }
+            NoMoreSlotsEmptyPayload, BookingStatePayload, ContextualInformationPayload,
+            EmptyPayload { }
 
     public record NeedProviderPayload(String specialty, String context) implements Payload { }
     public record ProviderOption(String candidateReference, String doctorDisplayName,
@@ -77,6 +110,9 @@ public record AivaStructuredResponse(ResponseType type, Payload payload, List<In
     public record StaleResultPayload(String reasonCode, String safeContext) implements Payload { }
     public record CallToBookPayload(String providerDisplayName, String clinicDisplayName,
                                     String authorizedContactDetails) implements Payload { }
+    public record BookingStatePayload(String state) implements Payload { }
+    public record ContextualInformationPayload(String kind, LocalDate date,
+                                               String providerDisplayName) implements Payload { }
     public record EmptyPayload(String reasonCode) implements Payload { }
 
     public static AivaStructuredResponse of(ResponseType type, Payload payload, List<InteractiveAction> actions) {

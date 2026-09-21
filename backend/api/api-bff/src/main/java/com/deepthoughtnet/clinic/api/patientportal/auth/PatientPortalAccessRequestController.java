@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.api.patientportal.auth;
 
 import com.deepthoughtnet.clinic.api.patientportal.auth.dto.PatientPortalAccessRequestResponse;
+import com.deepthoughtnet.clinic.api.patientportal.auth.dto.PatientPortalAccessCodeReissueRequest;
 import com.deepthoughtnet.clinic.api.patientportal.auth.dto.PatientPortalAccessRequestSubmitRequest;
 import com.deepthoughtnet.clinic.api.patientportal.auth.dto.PatientPortalOtpContext;
 import com.deepthoughtnet.clinic.patient.service.PatientPortalAccessRequestService;
@@ -32,6 +33,11 @@ public class PatientPortalAccessRequestController {
                 toDomainContext(request.context())
         ));
         return toResponse(record);
+    }
+
+    @PostMapping("/reissue")
+    public PatientPortalAccessRequestResponse reissue(@Valid @RequestBody PatientPortalAccessCodeReissueRequest request) {
+        return toResponse(accessRequestService.reissueAccessCode(request.mobile(), toDomainContext(request.context())));
     }
 
     private PatientPortalAccessContext toDomainContext(PatientPortalOtpContext context) {

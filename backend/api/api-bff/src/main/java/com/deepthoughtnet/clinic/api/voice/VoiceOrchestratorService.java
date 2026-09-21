@@ -7,6 +7,8 @@ import com.deepthoughtnet.clinic.api.voice.spi.VoiceSynthesisRequest;
 import com.deepthoughtnet.clinic.api.voice.spi.VoiceSynthesisResult;
 import com.deepthoughtnet.clinic.api.voice.spi.VoiceTranscriptionRequest;
 import com.deepthoughtnet.clinic.api.voice.spi.VoiceTranscriptionResult;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2VoiceTurnConnector;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.MessageResponse;
 import com.deepthoughtnet.clinic.tts.spi.VoiceTextNormalizer;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventCommand;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
@@ -63,6 +65,7 @@ public class VoiceOrchestratorService {
     private final ElevenLabsTextToSpeechProvider elevenLabsTextToSpeechProvider;
     private final PiperTextToSpeechProvider piperTextToSpeechProvider;
     private final VoiceAppointmentWorkflowService voiceAppointmentWorkflowService;
+    private final AivaV2VoiceTurnConnector aivaV2VoiceTurnConnector;
     private final VoiceTextNormalizer voiceTextNormalizer = new VoiceTextNormalizer();
     private final AtomicReference<VoiceTtsDiagnosticResponse> elevenLabsLastTest = new AtomicReference<>();
 
@@ -75,7 +78,22 @@ public class VoiceOrchestratorService {
                                     FasterWhisperSpeechToTextProvider fasterWhisperSpeechToTextProvider,
                                     PiperTextToSpeechProvider piperTextToSpeechProvider) {
         this(sttProviders, ttsProviders, aiOrchestrationService, auditEventPublisher, properties, objectMapper,
-                fasterWhisperSpeechToTextProvider, null, piperTextToSpeechProvider, null);
+                fasterWhisperSpeechToTextProvider, null, piperTextToSpeechProvider, null, null);
+    }
+
+    public VoiceOrchestratorService(List<SpeechToTextProvider> sttProviders,
+                                    List<TextToSpeechProvider> ttsProviders,
+                                    AiOrchestrationService aiOrchestrationService,
+                                    AuditEventPublisher auditEventPublisher,
+                                    VoiceTestProperties properties,
+                                    ObjectMapper objectMapper,
+                                    FasterWhisperSpeechToTextProvider fasterWhisperSpeechToTextProvider,
+                                    ElevenLabsTextToSpeechProvider elevenLabsTextToSpeechProvider,
+                                    PiperTextToSpeechProvider piperTextToSpeechProvider,
+                                    VoiceAppointmentWorkflowService voiceAppointmentWorkflowService) {
+        this(sttProviders, ttsProviders, aiOrchestrationService, auditEventPublisher, properties, objectMapper,
+                fasterWhisperSpeechToTextProvider, elevenLabsTextToSpeechProvider, piperTextToSpeechProvider,
+                voiceAppointmentWorkflowService, null);
     }
 
     public VoiceOrchestratorService(List<SpeechToTextProvider> sttProviders,
@@ -88,7 +106,7 @@ public class VoiceOrchestratorService {
                                     ElevenLabsTextToSpeechProvider elevenLabsTextToSpeechProvider,
                                     PiperTextToSpeechProvider piperTextToSpeechProvider) {
         this(sttProviders, ttsProviders, aiOrchestrationService, auditEventPublisher, properties, objectMapper,
-                fasterWhisperSpeechToTextProvider, elevenLabsTextToSpeechProvider, piperTextToSpeechProvider, null);
+                fasterWhisperSpeechToTextProvider, elevenLabsTextToSpeechProvider, piperTextToSpeechProvider, null, null);
     }
 
     @Autowired
@@ -101,7 +119,8 @@ public class VoiceOrchestratorService {
                                     FasterWhisperSpeechToTextProvider fasterWhisperSpeechToTextProvider,
                                     ElevenLabsTextToSpeechProvider elevenLabsTextToSpeechProvider,
                                     PiperTextToSpeechProvider piperTextToSpeechProvider,
-                                    VoiceAppointmentWorkflowService voiceAppointmentWorkflowService) {
+                                    VoiceAppointmentWorkflowService voiceAppointmentWorkflowService,
+                                    AivaV2VoiceTurnConnector aivaV2VoiceTurnConnector) {
         this.sttProviders = sttProviders;
         this.ttsProviders = ttsProviders;
         this.aiOrchestrationService = aiOrchestrationService;
@@ -112,8 +131,22 @@ public class VoiceOrchestratorService {
         this.elevenLabsTextToSpeechProvider = elevenLabsTextToSpeechProvider;
         this.piperTextToSpeechProvider = piperTextToSpeechProvider;
         this.voiceAppointmentWorkflowService = voiceAppointmentWorkflowService;
+        this.aivaV2VoiceTurnConnector = aivaV2VoiceTurnConnector;
         log.info("voice.stt.providers.available={}", sttProviderRegistry().keySet().stream().toList());
         logSttStartupStatus();
+    }
+
+    public VoiceOrchestratorService(List<SpeechToTextProvider> sttProviders,
+                                    List<TextToSpeechProvider> ttsProviders,
+                                    AiOrchestrationService aiOrchestrationService,
+                                    AuditEventPublisher auditEventPublisher,
+                                    VoiceTestProperties properties,
+                                    ObjectMapper objectMapper,
+                                    FasterWhisperSpeechToTextProvider fasterWhisperSpeechToTextProvider,
+                                    PiperTextToSpeechProvider piperTextToSpeechProvider,
+                                    AivaV2VoiceTurnConnector aivaV2VoiceTurnConnector) {
+        this(sttProviders, ttsProviders, aiOrchestrationService, auditEventPublisher, properties, objectMapper,
+                fasterWhisperSpeechToTextProvider, null, piperTextToSpeechProvider, null, aivaV2VoiceTurnConnector);
     }
 
     public VoiceTestResponse processAudio(MultipartFile audio, String context, String language) {
@@ -196,6 +229,20 @@ public class VoiceOrchestratorService {
                                                   String language,
                                                   String workflowMode,
                                                   VoiceWorkflowSummary existingWorkflowSummary) {
+        return processBufferedAudio(audioBytes, contentType, originalFilename, context, language, workflowMode,
+                existingWorkflowSummary, null, null, null);
+    }
+
+    public VoiceTestResponse processBufferedAudio(byte[] audioBytes,
+                                                  String contentType,
+                                                  String originalFilename,
+                                                  String context,
+                                                  String language,
+                                                  String workflowMode,
+                                                  VoiceWorkflowSummary existingWorkflowSummary,
+                                                  String conversationId,
+                                                  String clientTurnId,
+                                                  Long clientTurnSequence) {
         if (!properties.isEnabled()) {
             throw new IllegalArgumentException("Voice test is disabled.");
         }
@@ -239,11 +286,30 @@ public class VoiceOrchestratorService {
                     ),
                     debugTrace
             );
-            log.info("voice.stt.complete requestId={} provider={} durationMs={} transcriptPreview={}",
+            log.info("voice.stt.complete requestId={} provider={} durationMs={} transcriptLength={}",
                     requestId,
                     transcription.providerName(),
                     Duration.between(sttStart, Instant.now()).toMillis(),
-                    preview(transcription.transcript()));
+                    transcription.transcript() == null ? 0 : transcription.transcript().length());
+            if (properties.isAivaV2Enabled()) {
+                if (conversationId == null || clientTurnId == null || clientTurnSequence == null) {
+                    throw new IllegalStateException("AIVA V2 voice turn metadata is unavailable.");
+                }
+                return processAivaV2FinalTranscript(
+                        transcription,
+                        normalizedLanguage,
+                        tenantId,
+                        requestId,
+                        debugTrace,
+                        contentType,
+                        originalFilename,
+                        audioBytes.length,
+                        clientTurnId,
+                        clientTurnSequence,
+                        conversationId,
+                        requestStart
+                );
+            }
             Instant llmStart = Instant.now();
             VoiceWorkflowMode resolvedWorkflowMode = VoiceWorkflowMode.from(workflowMode);
             VoiceWorkflowSummary workflowSummary = resolveWorkflowSummary(
@@ -367,6 +433,56 @@ public class VoiceOrchestratorService {
         }
     }
 
+    private VoiceTestResponse processAivaV2FinalTranscript(VoiceTranscriptionResult transcription,
+                                                            String language,
+                                                            UUID tenantId,
+                                                            UUID requestId,
+                                                            List<VoiceDebugTraceEntry> debugTrace,
+                                                            String contentType,
+                                                            String originalFilename,
+                                                            int audioBytes,
+                                                            String clientTurnId,
+                                                            long clientTurnSequence,
+                                                            String conversationId,
+                                                            Instant requestStart) {
+        if (aivaV2VoiceTurnConnector == null) {
+            throw new IllegalStateException("AIVA V2 voice connector is unavailable.");
+        }
+        log.info("AIVA_V2_VOICE_TRACE stage=FINAL_STT_RECEIVED conversationIdPresent=true clientTurnSequence={} language={} sttFinal=true",
+                clientTurnSequence, language);
+        MessageResponse v2Response = aivaV2VoiceTurnConnector.submitFinalTranscript(
+                conversationId, transcription.transcript(), language, clientTurnId, clientTurnSequence);
+        log.info("AIVA_V2_VOICE_TRACE stage=V2_TURN_ACCEPTED conversationIdPresent=true clientTurnSequence={} turnDisposition={} v2Invoked=true",
+                clientTurnSequence, v2Response.responseCategory());
+        log.info("AIVA_V2_VOICE_TRACE stage=V2_RESPONSE_READY conversationIdPresent=true clientTurnSequence={} turnDisposition={} v2Invoked=true",
+                clientTurnSequence, v2Response.responseCategory());
+        Instant ttsStart = Instant.now();
+        String ttsAssistantText = normalizeAssistantTextForVoice(v2Response.assistantMessage(), language);
+        log.info("AIVA_V2_VOICE_TRACE stage=TTS_STARTED conversationIdPresent=true clientTurnSequence={} ttsInvoked=true",
+                clientTurnSequence);
+        VoiceSynthesisResult synthesis = synthesize(new VoiceSynthesisRequest(tenantId, ttsAssistantText, language));
+        log.info("AIVA_V2_VOICE_TRACE stage=TTS_COMPLETED conversationIdPresent=true clientTurnSequence={} ttsInvoked=true",
+                clientTurnSequence);
+        debugTrace.add(trace("AIVA_V2_RESPONSE", true, v2Response.interpretationProvider(), null, null,
+                safeFilename(originalFilename), contentType, (long) audioBytes, null, null, null, null,
+                Duration.between(requestStart, Instant.now()).toMillis(), null, v2Response.responseCategory(), null));
+        debugTrace.add(trace("AIVA_V2_TTS", synthesis != null, synthesis == null ? null : synthesis.providerName(), null, null,
+                safeFilename(originalFilename), contentType, (long) audioBytes, null, null, null, null,
+                Duration.between(ttsStart, Instant.now()).toMillis(), null, null, null));
+        byte[] audioPayload = hasPlayableAudio(synthesis) ? synthesis.audioBytes() : null;
+        return new VoiceTestResponse(
+                requestId.toString(),
+                transcription.transcript(),
+                v2Response.assistantMessage(),
+                audioPayload == null ? null : synthesis.contentType(),
+                audioPayload == null ? null : Base64.getEncoder().encodeToString(audioPayload),
+                new VoiceProviderTrace(transcription.providerName(), v2Response.interpretationProvider(),
+                        synthesis == null ? null : synthesis.providerName()),
+                List.copyOf(debugTrace),
+                null
+        );
+    }
+
     public VoiceTranscriptionResult transcribeBufferedAudio(byte[] audioBytes,
                                                             String contentType,
                                                             String originalFilename,
@@ -400,6 +516,19 @@ public class VoiceOrchestratorService {
         String normalizedLanguage = normalizeLanguageHint(language);
         String ttsAssistantText = normalizeAssistantTextForVoice(assistantText, normalizedLanguage);
         return synthesize(new VoiceSynthesisRequest(tenantId, ttsAssistantText, normalizedLanguage));
+    }
+
+    /**
+     * Synthesizes an already-rendered V2 response without applying the legacy
+     * voice-language rewriting pass. The structured V2 renderer is authoritative
+     * for the text and language-specific wording.
+     */
+    public VoiceSynthesisResult synthesizeRenderedAssistantText(String assistantText, String language) {
+        if (!properties.isEnabled()) {
+            throw new IllegalArgumentException("Voice test is disabled.");
+        }
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        return synthesize(new VoiceSynthesisRequest(tenantId, assistantText, normalizeLanguageHint(language)));
     }
 
     public VoiceTtsDiagnosticResponse testElevenLabsTts() {

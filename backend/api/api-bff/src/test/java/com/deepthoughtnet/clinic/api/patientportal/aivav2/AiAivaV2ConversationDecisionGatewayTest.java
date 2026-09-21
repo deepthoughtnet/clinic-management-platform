@@ -12,6 +12,7 @@ import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.BookingDr
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ConversationDecision;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.AvailabilityResult;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.AvailabilitySlot;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.AvailabilityTimeConstraint;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.Operation;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ProviderCandidate;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ProviderSearchResult;
@@ -69,6 +70,148 @@ class AiAivaV2ConversationDecisionGatewayTest {
     }
 
     @Test
+    void pendingBookingCapabilityConsumesNaturalAffirmativesWithoutReinterpretingBooking() {
+        for (String[] sample : List.of(
+                new String[]{"Yeah, book it", "en"}, new String[]{"yes please", "en"},
+                new String[]{"go ahead", "en"}, new String[]{"haan kar do", "hi"},
+                new String[]{"बुक कर दीजिए", "hi"})) {
+            String text = sample[0];
+            ConversationDecision decision = gateway.decide(text, sample[1], pendingContext());
+            assertThat(decision.operation()).as(text).isEqualTo(Operation.CONFIRM_BOOKING);
+            assertThat(decision.confirmation()).as(text)
+                    .isEqualTo(AivaV2Models.ConfirmationPolarity.POSITIVE);
+            assertThat(decision.provider()).as(text).isEqualTo("DETERMINISTIC");
+        }
+    }
+
+    @Test
+    void exactTimeSelectionUsesCurrentDisplayedCandidatesBeforeAvailabilityRefresh() {
+        ConversationDecision decision = gateway.decide("Look, 8:30 PM", "en", currentTimePageContext());
+
+        assertThat(decision.operation()).isEqualTo(Operation.SELECT_SLOT);
+        assertThat(decision.selection().exactTime()).isEqualTo("20:30");
+        assertThat(decision.provider()).isEqualTo("DETERMINISTIC");
+    }
+
+    @Test
+    void ordinalBindsToPendingRescheduleCandidates() {
+        var first = new AivaV2Models.AppointmentSummary("apt-1", "Doc Akshu Kumar", "Clinic",
+                LocalDate.of(2026, 9, 23), LocalTime.of(20, 0), "CONFIRMED", null);
+        var second = new AivaV2Models.AppointmentSummary("apt-2", "Doc Akshu Kumar", "Clinic",
+                LocalDate.of(2026, 9, 25), LocalTime.of(9, 30), "CONFIRMED", null);
+        var pending = new AivaV2Models.RescheduleResolution(
+                null, AivaV2Models.AppointmentLookupFilter.empty(), List.of(first, second),
+                null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+                AivaV2Models.RescheduleStatus.SOURCE_AMBIGUOUS, 1, Instant.now(), Instant.now().plusSeconds(300));
+        SessionProjection context = new SessionProjection("c1", UUID.randomUUID(), "tenant", null, null, null, null,
+                null, null, null, pending, null, 1, Instant.now().plusSeconds(600));
+
+        ConversationDecision decision = gateway.decide("Second one", "en", context);
+
+        assertThat(decision.operation()).isEqualTo(Operation.RESCHEDULE_APPOINTMENT);
+        assertThat(decision.selection().ordinal()).isEqualTo(2);
+        assertThat(decision.provider()).isEqualTo("DETERMINISTIC");
+    }
+
+    @Test
+    void bareMultilingualAppointmentOrdinalBindsOnlyInsideActionCandidates() {
+        var first = new AivaV2Models.AppointmentSummary("apt-1", "Doc Akshu Kumar", "Clinic",
+                LocalDate.of(2026, 9, 23), LocalTime.of(20, 0), "CONFIRMED", null);
+        var second = new AivaV2Models.AppointmentSummary("apt-2", "Doc Akshu Kumar", "Clinic",
+                LocalDate.of(2026, 9, 25), LocalTime.of(9, 30), "CONFIRMED", null);
+        var pending = new AivaV2Models.RescheduleResolution(
+                null, AivaV2Models.AppointmentLookupFilter.empty(), List.of(first, second),
+                null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+                AivaV2Models.RescheduleStatus.SOURCE_AMBIGUOUS, 1, Instant.now(), Instant.now().plusSeconds(300));
+        SessionProjection context = new SessionProjection("c1", UUID.randomUUID(), "tenant", null, null, null, null,
+                null, null, null, pending, null, 1, Instant.now().plusSeconds(600));
+
+        for (String text : List.of("2", "two", "do", "दो", "दूसरा")) {
+            ConversationDecision decision = gateway.decide(text, "hi", context);
+            assertThat(decision.operation()).as(text).isEqualTo(Operation.RESCHEDULE_APPOINTMENT);
+            assertThat(decision.selection().ordinal()).as(text).isEqualTo(2);
+        }
+        assertThat(gateway.decide("दो", "hi", emptyContext()).operation())
+                .isNotEqualTo(Operation.RESCHEDULE_APPOINTMENT);
+    }
+
+    @Test
+    void immediateSingularAppointmentReferentBindsRescheduleAndCancellation() {
+        var appointment = new AivaV2Models.AppointmentSummary("apt-2", "Doc Akshu Kumar", "Clinic",
+                LocalDate.of(2026, 9, 25), LocalTime.of(9, 30), "CONFIRMED", null);
+        SessionProjection context = availabilityContext().withAppointmentReferent(appointment);
+
+        ConversationDecision reschedule = gateway.decide("Reschedule it", "en", context);
+        ConversationDecision cancel = gateway.decide("Cancel that appointment", "en", context);
+
+        assertThat(reschedule.operation()).isEqualTo(Operation.RESCHEDULE_APPOINTMENT);
+        assertThat(reschedule.selection().candidateRef()).isEqualTo("apt-2");
+        assertThat(cancel.operation()).isEqualTo(Operation.CANCEL_APPOINTMENT);
+        assertThat(cancel.selection().candidateRef()).isEqualTo("apt-2");
+    }
+
+    @Test
+    void multilingualRescheduleOrdinalAndDateAreOneCanonicalDecision() {
+        for (String[] sample : new String[][]{
+                {"hi", "Meri second appointment reschedule karo"},
+                {"hi", "दूसरी अपॉइंटमेंट रीशेड्यूल करो"},
+                {"hi", "सेकंड अपॉइंटमेंट को 29 तारीख को रीशेड्यूल कर दो"},
+                {"hi", "dusri appointment 29 September ko reschedule karo"}}) {
+            ConversationDecision decision = gateway.decide(sample[1], sample[0], emptyContext());
+            assertThat(decision.operation()).as(sample[1]).isEqualTo(Operation.RESCHEDULE_APPOINTMENT);
+            assertThat(decision.selection().ordinal()).as(sample[1]).isEqualTo(2);
+        }
+        ConversationDecision withDate = gateway.decide(
+                "सेकंड अपॉइंटमेंट को 29 तारीख को रीशेड्यूल कर दो", "hi", emptyContext());
+        assertThat(withDate.lookupFilter().dateExpression().value()).isEqualTo("2026-09-29");
+    }
+
+    @Test
+    void nextAppointmentQuestionsUseNextOnlyLookupInsteadOfBooking() {
+        for (String[] sample : new String[][]{
+                {"en", "What is my next appointment?"},
+                {"hi", "मेरी अगली अपॉइंटमेंट कब है?"},
+                {"hi", "Meri agli appointment kaunsi hai?"}}) {
+            ConversationDecision decision = gateway.decide(sample[1], sample[0], emptyContext());
+            assertThat(decision.operation()).as(sample[1]).isEqualTo(Operation.NEXT_UPCOMING_APPOINTMENT);
+            assertThat(decision.lookupFilter().nextOnly()).as(sample[1]).isTrue();
+        }
+    }
+
+    @Test
+    void farewellIsTerminalAndNotBookingAbandonment() {
+        for (String[] sample : new String[][]{{"en", "Good night"}, {"hi", "शुभ रात्रि"}, {"hi", "Theek hai, good night"}}) {
+            ConversationDecision decision = gateway.decide(sample[1], sample[0], emptyContext());
+            assertThat(decision.operation()).as(sample[1]).isEqualTo(Operation.END_CONVERSATION);
+            assertThat(decision.operation()).isNotEqualTo(Operation.ABANDON_BOOKING);
+        }
+    }
+
+    @Test
+    void explicitBookingStillStartsBooking() {
+        when(orchestration.complete(any())).thenReturn(response("GEMINI", false,
+                "{\"schemaVersion\":\"1.0\",\"dialogAct\":\"START_REQUEST\",\"operation\":\"START_BOOKING\",\"confidence\":0.95}"));
+        ConversationDecision decision = gateway.decide("I want to book an appointment", "en", emptyContext());
+        assertThat(decision.operation()).isEqualTo(Operation.START_BOOKING);
+    }
+
+    @Test
+    void noAvailabilityRecoveryUsesServerHeldBookingContext() {
+        SessionProjection context = noAvailabilityBookingContext();
+
+        for (String[] sample : new String[][]{
+                {"en", "Yes"},
+                {"en", "Yes, please go ahead"},
+                {"en", "When is the next available slot?"},
+                {"hi", "haan, aage dekho"},
+                {"hi", "अगला उपलब्ध स्लॉट कब है?"}}) {
+            ConversationDecision decision = gateway.decide(sample[1], sample[0], context);
+            assertThat(decision.operation()).as(sample[1]).isEqualTo(Operation.FIND_NEXT_AVAILABLE_SLOT);
+            assertThat(decision.provider()).as(sample[1]).isEqualTo("DETERMINISTIC");
+        }
+    }
+
+    @Test
     void canonicalDateFactReachesGatewayAndKernelDecisionAsLocalDateWithoutProvider() {
         var turn = gateway.normalizeTurn("24 सितंबर", "hi", LocalDate.of(2026, 9, 1));
         ConversationDecision decision = gateway.decide(turn, emptyContext());
@@ -93,7 +236,7 @@ class AiAivaV2ConversationDecisionGatewayTest {
                 org.mockito.ArgumentCaptor.forClass(com.deepthoughtnet.clinic.platform.contracts.ai.AiOrchestrationRequest.class);
         org.mockito.Mockito.verify(orchestration).complete(captor.capture());
         assertThat(captor.getValue().inputVariables()).containsEntry("message", "book appointment");
-        assertThat(captor.getValue().inputVariables().get("boundedRawContext")).isEqualTo(turn.rawText());
+        assertThat(captor.getValue().inputVariables()).doesNotContainKey("boundedRawContext");
         assertThat(captor.getValue().inputVariables().get("canonicalFacts").toString()).contains("Dr Akshu");
         assertThat(decision.operation()).isEqualTo(Operation.START_BOOKING);
         assertThat(decision.bookingPatch().doctorText().value()).isEqualTo("Dr Akshu");
@@ -256,6 +399,50 @@ class AiAivaV2ConversationDecisionGatewayTest {
     }
 
     @Test
+    void hindiRescheduleTimeConstraintsUseCanonicalRangeModel() {
+        ConversationDecision after = gateway.decide("8 बजे के बाद का स्लॉट बताओ", "hi", rescheduleAvailabilityContext());
+        assertThat(after.operation()).isEqualTo(Operation.GET_RESCHEDULE_AVAILABILITY);
+        assertThat(after.bookingPatch().availabilityTimeConstraint().value().mode())
+                .isEqualTo(AivaV2Models.AvailabilityTimeConstraintMode.AFTER);
+        assertThat(after.bookingPatch().availabilityTimeConstraint().value().startTime()).isEqualTo(LocalTime.of(20, 0));
+
+        ConversationDecision between = gateway.decide("सात से नौ के बीच का स्लॉट बताओ", "hi", rescheduleAvailabilityContext());
+        assertThat(between.operation()).isEqualTo(Operation.GET_RESCHEDULE_AVAILABILITY);
+        assertThat(between.bookingPatch().availabilityTimeConstraint().value().mode())
+                .isEqualTo(AivaV2Models.AvailabilityTimeConstraintMode.BETWEEN);
+        assertThat(between.bookingPatch().availabilityTimeConstraint().value().startTime()).isEqualTo(LocalTime.of(19, 0));
+        assertThat(between.bookingPatch().availabilityTimeConstraint().value().endTime()).isEqualTo(LocalTime.of(21, 0));
+    }
+
+    @Test
+    void hindiPmMarkersAreAuthoritativeAndCanonicalEveningContextResolvesBareHours() {
+        ConversationDecision explicitPm = gateway.decide(
+                "सात पी एम से नौ पी एम के बीच स्लॉट बताइए", "hi", rescheduleAvailabilityContext());
+        assertThat(explicitPm.bookingPatch().availabilityTimeConstraint().value().mode())
+                .isEqualTo(AivaV2Models.AvailabilityTimeConstraintMode.BETWEEN);
+        assertThat(explicitPm.bookingPatch().availabilityTimeConstraint().value().startTime())
+                .isEqualTo(LocalTime.of(19, 0));
+        assertThat(explicitPm.bookingPatch().availabilityTimeConstraint().value().endTime())
+                .isEqualTo(LocalTime.of(21, 0));
+
+        ConversationDecision bareAfter = gateway.decide(
+                "8 बजे के बाद का स्लॉट बताइए", "hi", rescheduleAvailabilityContextWithEveningConstraint());
+        assertThat(bareAfter.bookingPatch().availabilityTimeConstraint().value().mode())
+                .isEqualTo(AivaV2Models.AvailabilityTimeConstraintMode.AFTER);
+        assertThat(bareAfter.bookingPatch().availabilityTimeConstraint().value().startTime())
+                .isEqualTo(LocalTime.of(20, 0));
+    }
+
+    @Test
+    void genericHindiSlotRequestsStayInsideActiveRescheduleWorkflow() {
+        for (String text : List.of("स्लॉट बताइए", "शाम का स्लॉट बताइए", "और स्लॉट दिखाइए")) {
+            ConversationDecision decision = gateway.decide(text, "hi", rescheduleContext());
+            assertThat(decision.operation()).as(text)
+                    .isIn(Operation.GET_RESCHEDULE_AVAILABILITY, Operation.SHOW_MORE_SLOTS);
+        }
+    }
+
+    @Test
     void showMoreIsAGenericControlInsideReschedule() {
         ConversationDecision decision = gateway.decide("show me next slots", "en", rescheduleContext());
 
@@ -274,7 +461,9 @@ class AiAivaV2ConversationDecisionGatewayTest {
 
     @Test
     void hindiExactTimeAcceptanceUsesTheDeterministicSelectionPath() {
-        for (String text : List.of("20 baje wali theek hai", "20:30 wali theek hai",
+        assertThat(gateway.normalizeTurn("रात 8 बजे वाला ठीक है", "hi", LocalDate.of(2026, 9, 18)).exactTime())
+                .isEqualTo(LocalTime.of(20, 0));
+        for (String text : List.of("20 baje wali theek hai", "19:30 wali theek hai",
                 "रात 8 बजे वाला ठीक है", "20:00 वाला ठीक है")) {
             ConversationDecision decision = gateway.decide(text, "hi", rescheduleAvailabilityContext());
 
@@ -628,6 +817,44 @@ class AiAivaV2ConversationDecisionGatewayTest {
                 LocalTime.of(18, 0), LocalTime.of(20, 0));
     }
 
+    @Test
+    void explicitRangesSupportEnglishHindiAndHinglishAndOverrideEveningBucket() {
+        ConversationDecision english = gateway.decide("slot between 7 to 9", "en", eveningAvailabilityContext());
+        ConversationDecision hindi = gateway.decide("7 से 8 के बीच में स्लॉट दिखाइए", "hi", eveningAvailabilityContext());
+        ConversationDecision hinglish = gateway.decide("shaam 7 se 9", "hi", eveningAvailabilityContext());
+        ConversationDecision meridiem = gateway.decide("7 p.m. to 9 p.m.", "en", eveningAvailabilityContext());
+
+        for (ConversationDecision decision : List.of(english, hindi, hinglish, meridiem)) {
+            assertThat(decision.operation()).isEqualTo(Operation.GET_AVAILABILITY);
+            assertThat(decision.bookingPatch().timeWindow().mode()).isEqualTo(AivaV2Models.PatchMode.CLEAR);
+            assertThat(decision.bookingPatch().availabilityTimeConstraint().value().mode())
+                    .isEqualTo(AivaV2Models.AvailabilityTimeConstraintMode.BETWEEN);
+        }
+        assertThat(english.bookingPatch().availabilityTimeConstraint().value())
+                .isEqualTo(new AivaV2Models.AvailabilityTimeConstraint(
+                        AivaV2Models.AvailabilityTimeConstraintMode.BETWEEN,
+                        LocalTime.of(19, 0), LocalTime.of(21, 0)));
+        assertThat(hindi.bookingPatch().availabilityTimeConstraint().value())
+                .isEqualTo(new AivaV2Models.AvailabilityTimeConstraint(
+                        AivaV2Models.AvailabilityTimeConstraintMode.BETWEEN,
+                        LocalTime.of(19, 0), LocalTime.of(20, 0)));
+    }
+
+    @Test
+    void contextualExclusionsUseCanonicalConstraints() {
+        ConversationDecision exact = gateway.decide("not 7 pm", "en", eveningAvailabilityContext());
+        ConversationDecision hindi = gateway.decide("morning nahi", "hi", eveningAvailabilityContext());
+
+        assertThat(exact.operation()).isEqualTo(Operation.GET_AVAILABILITY);
+        assertThat(exact.bookingPatch().availabilityTimeConstraint().value()).isEqualTo(
+                new AivaV2Models.AvailabilityTimeConstraint(
+                        AivaV2Models.AvailabilityTimeConstraintMode.EXCLUDE, LocalTime.of(19, 0), null));
+        assertThat(hindi.operation()).isEqualTo(Operation.GET_AVAILABILITY);
+        assertThat(hindi.bookingPatch().availabilityTimeConstraint().value()).isEqualTo(
+                new AivaV2Models.AvailabilityTimeConstraint(
+                        AivaV2Models.AvailabilityTimeConstraintMode.EXCLUDE, LocalTime.MIDNIGHT, LocalTime.NOON));
+    }
+
     private void assertConstraint(String text, AivaV2Models.AvailabilityTimeConstraintMode mode,
                                   LocalTime start, LocalTime end) {
         ConversationDecision decision = gateway.decide(text, "en", emptyContext());
@@ -909,6 +1136,41 @@ class AiAivaV2ConversationDecisionGatewayTest {
                 availability, null, 1, Instant.now().plusSeconds(600));
     }
 
+    private SessionProjection currentTimePageContext() {
+        BookingDraft draft = BookingDraft.create(UUID.randomUUID(), UUID.randomUUID().toString(), Instant.now());
+        AvailabilityResult availability = new AvailabilityResult(UUID.randomUUID(), draft.draftId(), draft.revision(),
+                "criteria", "provider", "doctor", "clinic", LocalDate.of(2026, 9, 28), "evening",
+                "Asia/Kolkata", List.of(
+                        new AvailabilitySlot("slot-1", LocalTime.of(20, 30), LocalTime.of(21, 0), "20:30"),
+                        new AvailabilitySlot("slot-2", LocalTime.of(21, 0), LocalTime.of(21, 30), "21:00")),
+                null, false, Instant.now(), Instant.now().plusSeconds(300));
+        return new SessionProjection("c1", draft.patientSubjectId(), draft.tenantScope(), draft, null, null,
+                availability, null, 1, Instant.now().plusSeconds(600));
+    }
+
+    private SessionProjection eveningAvailabilityContext() {
+        AvailabilityResult availability = new AvailabilityResult(UUID.randomUUID(), UUID.randomUUID(), 1,
+                "criteria", "provider", "doctor", "clinic", LocalDate.of(2026, 9, 28), "evening",
+                "Asia/Kolkata", List.of(
+                        new AvailabilitySlot("slot-1", LocalTime.of(17, 0), LocalTime.of(17, 30), "17:00")),
+                null, false, Instant.now(), Instant.now().plusSeconds(300));
+        return new SessionProjection("c1", UUID.randomUUID(), "tenant", null, null, null,
+                availability, null, 1, Instant.now().plusSeconds(600));
+    }
+
+    private SessionProjection noAvailabilityBookingContext() {
+        Instant now = Instant.parse("2026-09-10T00:00:00Z");
+        ProviderCandidate provider = providerCandidate("provider", "Doc Akshu Kumar");
+        BookingDraft draft = new BookingDraft(UUID.randomUUID(), UUID.randomUUID(), "tenant", provider, null,
+                LocalDate.of(2026, 9, 26), null, null, null, null,
+                AivaV2Models.DraftStatus.COLLECTING, 1, now.plusSeconds(1800), null);
+        AvailabilityResult empty = new AvailabilityResult(UUID.randomUUID(), draft.draftId(), draft.revision(),
+                "criteria", provider.providerHandle(), provider.doctorId(), provider.clinicId(), draft.preferredDate(),
+                null, "Asia/Kolkata", List.of(), null, false, now, now.plusSeconds(300));
+        return new SessionProjection("c1", draft.patientSubjectId(), "tenant", draft, null, null,
+                empty, null, 1, now.plusSeconds(1800));
+    }
+
     private SessionProjection availabilityConfirmationContext() {
         SessionProjection context = availabilityContext();
         BookingConfirmation confirmation = new BookingConfirmation("confirmation", UUID.randomUUID(), 1,
@@ -943,6 +1205,17 @@ class AiAivaV2ConversationDecisionGatewayTest {
                 "doctor-akshu", "clinic", "tenant", "clinic", LocalDate.of(2026, 9, 16),
                 LocalTime.of(20, 0), LocalDate.of(2026, 9, 18), null, availability.requestId(), availability,
                 null, null, AivaV2Models.RescheduleStatus.AVAILABILITY_READY, 2, Instant.now(), Instant.now().plusSeconds(600));
+        return new SessionProjection("c1", UUID.randomUUID(), "tenant", null, null, null, null, null,
+                null, null, state, null, 1, Instant.now().plusSeconds(600));
+    }
+
+    private SessionProjection rescheduleAvailabilityContextWithEveningConstraint() {
+        AvailabilityTimeConstraint evening = new AvailabilityTimeConstraint(
+                AivaV2Models.AvailabilityTimeConstraintMode.AFTER, LocalTime.of(17, 0), null);
+        var state = new AivaV2Models.RescheduleResolution("appointment", "Dr Akshu", "doctor-akshu",
+                "doctor-akshu", "clinic", "tenant", "clinic", LocalDate.of(2026, 9, 16),
+                LocalTime.of(20, 0), LocalDate.of(2026, 9, 18), evening, null, null, null, null,
+                AivaV2Models.RescheduleStatus.AVAILABILITY_READY, 2, Instant.now(), Instant.now().plusSeconds(600));
         return new SessionProjection("c1", UUID.randomUUID(), "tenant", null, null, null, null, null,
                 null, null, state, null, 1, Instant.now().plusSeconds(600));
     }

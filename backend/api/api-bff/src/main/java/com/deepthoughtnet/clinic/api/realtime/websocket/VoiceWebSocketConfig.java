@@ -6,6 +6,7 @@ import com.deepthoughtnet.clinic.api.voice.VoiceTestWebSocketHandler;
 import com.deepthoughtnet.clinic.api.patientportal.voice.PatientPortalVoiceAssistantService;
 import com.deepthoughtnet.clinic.api.patientportal.voice.PatientPortalVoiceWebSocketAuthInterceptor;
 import com.deepthoughtnet.clinic.api.patientportal.voice.PatientPortalVoiceWebSocketHandler;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2VoiceTurnConnector;
 import com.deepthoughtnet.clinic.ai.careai.persistence.CareAiConversationPersistenceService;
 import com.deepthoughtnet.clinic.realtime.voice.events.VoiceSessionEventBus;
 import com.deepthoughtnet.clinic.realtime.voice.metrics.RealtimeVoiceGatewayMetrics;
@@ -32,6 +33,7 @@ public class VoiceWebSocketConfig implements WebSocketConfigurer {
     private final PatientPortalVoiceWebSocketAuthInterceptor patientPortalVoiceAuthInterceptor;
     private final PatientPortalVoiceAssistantService patientPortalVoiceAssistantService;
     private final CareAiConversationPersistenceService careAiConversationPersistenceService;
+    private final AivaV2VoiceTurnConnector aivaV2VoiceTurnConnector;
 
     public VoiceWebSocketConfig(VoiceSessionEventBus eventBus, RealtimeVoiceGatewayMetrics metrics,
                                 ObjectMapper objectMapper, VoiceWebSocketAuthInterceptor authInterceptor,
@@ -40,7 +42,8 @@ public class VoiceWebSocketConfig implements WebSocketConfigurer {
                                 VoiceTestProperties voiceTestProperties,
                                 PatientPortalVoiceWebSocketAuthInterceptor patientPortalVoiceAuthInterceptor,
                                 PatientPortalVoiceAssistantService patientPortalVoiceAssistantService,
-                                CareAiConversationPersistenceService careAiConversationPersistenceService) {
+                                CareAiConversationPersistenceService careAiConversationPersistenceService,
+                                AivaV2VoiceTurnConnector aivaV2VoiceTurnConnector) {
         this.eventBus = eventBus;
         this.metrics = metrics;
         this.objectMapper = objectMapper;
@@ -51,6 +54,7 @@ public class VoiceWebSocketConfig implements WebSocketConfigurer {
         this.patientPortalVoiceAuthInterceptor = patientPortalVoiceAuthInterceptor;
         this.patientPortalVoiceAssistantService = patientPortalVoiceAssistantService;
         this.careAiConversationPersistenceService = careAiConversationPersistenceService;
+        this.aivaV2VoiceTurnConnector = aivaV2VoiceTurnConnector;
     }
 
     @Override
@@ -65,7 +69,8 @@ public class VoiceWebSocketConfig implements WebSocketConfigurer {
                         objectMapper,
                         patientPortalVoiceAssistantService,
                         voiceTestProperties,
-                        careAiConversationPersistenceService
+                        careAiConversationPersistenceService,
+                        aivaV2VoiceTurnConnector
                 ), "/ws/patient-portal/careai")
                 .addInterceptors(patientPortalVoiceAuthInterceptor)
                 .setAllowedOrigins("*");

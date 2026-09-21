@@ -837,6 +837,69 @@ class AiOrchestrationServiceImplTest {
     }
 
     @Test
+    void aivaSarvamTimeoutFallsBackToGeminiInConfiguredOrder() {
+        AiPromptTemplateRegistryService registry = mock(AiPromptTemplateRegistryService.class);
+        AiProviderRouter router = mock(AiProviderRouter.class);
+        AiRequestAuditService auditService = mock(AiRequestAuditService.class);
+        AiOrchestrationServiceImpl service = newService(registry, router, auditService);
+        AiOrchestrationRequest request = aivaDecisionRequest("aiva-sarvam-timeout-gemini");
+        when(registry.resolve(request)).thenReturn(aivaDecisionTemplate());
+
+        AiProvider sarvam = failingProvider("SARVAM", "Sarvam request timed out.", null);
+        AiProvider gemini = provider("GEMINI", "{\"schemaVersion\":\"1.0\",\"dialogAct\":\"ASK_QUESTION\",\"operation\":\"LOOKUP_APPOINTMENTS\"}", AiProviderStatus.AVAILABLE);
+        AiProvider groq = provider("GROQ", "{\"schemaVersion\":\"1.0\",\"dialogAct\":\"ASK_QUESTION\",\"operation\":\"LOOKUP_APPOINTMENTS\"}", AiProviderStatus.AVAILABLE);
+        when(router.resolveCandidates(AiProductCode.GENERIC, AiTaskType.GENERIC_EXTRACTION,
+                "patient-portal-aiva-v2-decision")).thenReturn(List.of(sarvam, gemini, groq));
+
+        AiOrchestrationResponse response = service.complete(request);
+
+        assertEquals("GEMINI", response.provider());
+        assertTrue(response.fallbackUsed());
+    }
+
+    @Test
+    void aivaSarvamAndGeminiTimeoutsFallBackToGroqInConfiguredOrder() {
+        AiPromptTemplateRegistryService registry = mock(AiPromptTemplateRegistryService.class);
+        AiProviderRouter router = mock(AiProviderRouter.class);
+        AiRequestAuditService auditService = mock(AiRequestAuditService.class);
+        AiOrchestrationServiceImpl service = newService(registry, router, auditService);
+        AiOrchestrationRequest request = aivaDecisionRequest("aiva-sarvam-gemini-timeout-groq");
+        when(registry.resolve(request)).thenReturn(aivaDecisionTemplate());
+
+        AiProvider sarvam = failingProvider("SARVAM", "Sarvam request timed out.", null);
+        AiProvider gemini = failingProvider("GEMINI", "Gemini request timed out.", null);
+        AiProvider groq = provider("GROQ", "{\"schemaVersion\":\"1.0\",\"dialogAct\":\"ASK_QUESTION\",\"operation\":\"LOOKUP_APPOINTMENTS\"}", AiProviderStatus.AVAILABLE);
+        when(router.resolveCandidates(AiProductCode.GENERIC, AiTaskType.GENERIC_EXTRACTION,
+                "patient-portal-aiva-v2-decision")).thenReturn(List.of(sarvam, gemini, groq));
+
+        AiOrchestrationResponse response = service.complete(request);
+
+        assertEquals("GROQ", response.provider());
+        assertTrue(response.fallbackUsed());
+    }
+
+    @Test
+    void aivaSarvamGeminiAndGroqTimeoutsReturnSafeUnavailable() {
+        AiPromptTemplateRegistryService registry = mock(AiPromptTemplateRegistryService.class);
+        AiProviderRouter router = mock(AiProviderRouter.class);
+        AiRequestAuditService auditService = mock(AiRequestAuditService.class);
+        AiOrchestrationServiceImpl service = newService(registry, router, auditService);
+        AiOrchestrationRequest request = aivaDecisionRequest("aiva-all-timeout");
+        when(registry.resolve(request)).thenReturn(aivaDecisionTemplate());
+        when(router.resolveCandidates(AiProductCode.GENERIC, AiTaskType.GENERIC_EXTRACTION,
+                "patient-portal-aiva-v2-decision")).thenReturn(List.of(
+                failingProvider("SARVAM", "Sarvam request timed out.", null),
+                failingProvider("GEMINI", "Gemini request timed out.", null),
+                failingProvider("GROQ", "Groq request timed out.", null)));
+
+        AiOrchestrationResponse response = service.complete(request);
+
+        assertEquals(null, response.provider());
+        assertTrue(response.fallbackUsed());
+        assertTrue(response.outputText().contains("temporarily unavailable"));
+    }
+
+    @Test
     void clinicalReasoningFallsBackFromGeminiToGroqWithoutExpandingPrompt() {
         AiPromptTemplateRegistryService registry = mock(AiPromptTemplateRegistryService.class);
         AiProviderRouter router = mock(AiProviderRouter.class);

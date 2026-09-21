@@ -69,6 +69,7 @@ clinic:
     provider-chain: ${AI_LLM_PROVIDER_ORDER:${AI_PROVIDER_CHAIN:${VOICE_LLM_PROVIDER_ORDER:gemini,groq,sarvam}}}
     aiva-v2:
       provider-chain: ${AIVA_V2_PROVIDER_CHAIN:SARVAM,GEMINI,GROQ}
+      session-store: ${AIVA_V2_SESSION_STORE:redis}
     clinical:
       provider-chain: ${CLINICAL_AI_PROVIDER_CHAIN:GEMINI,GROQ}
     request-timeout-seconds: ${CLINIC_AI_REQUEST_TIMEOUT_SECONDS:60}
@@ -234,6 +235,7 @@ logging:
 
 voice:
   enabled: ${VOICE_TEST_ENABLED:true}
+  aiva-v2-enabled: ${VOICE_AIVA_V2_ENABLED:false}
   default-language: ${AIVA_DEFAULT_LANGUAGE:hi-IN}
   response-language: ${AIVA_RESPONSE_LANGUAGE:hi-IN}
   sarvam:

@@ -39,4 +39,20 @@ class VoiceTextNormalizerTest {
 
         assertThat(normalizer.normalizeForVoice(text, "en-IN")).isEqualTo(text);
     }
+
+    @Test
+    void normalizesOnlyHindiTemporalValuesWithoutRewritingVisibleWording() {
+        String text = "आपकी अपॉइंटमेंट 23 सितंबर 2026 को 20:00 बजे है।";
+
+        assertThat(normalizer.normalizeTemporalValuesForVoice(text, "hi-IN"))
+                .isEqualTo("आपकी अपॉइंटमेंट तेईस सितंबर दो हज़ार छब्बीस को शाम आठ बजे है।");
+        assertThat(text).isEqualTo("आपकी अपॉइंटमेंट 23 सितंबर 2026 को 20:00 बजे है।");
+    }
+
+    @Test
+    void leavesEnglishTemporalValuesUnchanged() {
+        String text = "Your appointment is on 23 September 2026 at 20:00.";
+
+        assertThat(normalizer.normalizeTemporalValuesForVoice(text, "en-IN")).isEqualTo(text);
+    }
 }

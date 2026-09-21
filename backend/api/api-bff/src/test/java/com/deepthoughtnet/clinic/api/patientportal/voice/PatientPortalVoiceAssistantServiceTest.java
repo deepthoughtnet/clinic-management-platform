@@ -3,6 +3,7 @@ package com.deepthoughtnet.clinic.api.patientportal.voice;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -15,7 +16,10 @@ import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiRes
 import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiService;
 import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiStateResponse;
 import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalConversationStateService;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.MessageResponse;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2VoiceTurnConnector;
 import com.deepthoughtnet.clinic.api.voice.VoiceOrchestratorService;
+import com.deepthoughtnet.clinic.api.voice.VoiceTestProperties;
 import com.deepthoughtnet.clinic.api.voice.spi.VoiceSynthesisResult;
 import com.deepthoughtnet.clinic.api.voice.spi.VoiceTranscriptionResult;
 import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
@@ -82,6 +86,59 @@ class PatientPortalVoiceAssistantServiceTest {
         assertThat(response.totalDurationMs()).isGreaterThanOrEqualTo(0L);
         assertThat(response.captureBytes()).isEqualTo(5L);
         assertThat(response.ttsFallbackReason()).isNull();
+    }
+
+    @Test
+    void v2EnglishRenderedResponseReachesTtsUnchangedWithEnglishLocale() {
+        VoiceOrchestratorService orchestratorService = mock(VoiceOrchestratorService.class);
+        PatientPortalCareAiService careAiService = mock(PatientPortalCareAiService.class);
+        AivaV2VoiceTurnConnector connector = mock(AivaV2VoiceTurnConnector.class);
+        PatientPortalVoiceAssistantService service = new PatientPortalVoiceAssistantService(
+                orchestratorService, careAiService, new VoiceTestProperties(), null, null, connector);
+        String rendered = "You have 2 upcoming appointments: 1. 23 September 2026 at 20:00.";
+        when(orchestratorService.transcribeBufferedAudio(any(), any(), any(), any()))
+                .thenReturn(new VoiceTranscriptionResult("Show my appointments", "sarvam", "ok"));
+        when(connector.submitFinalTranscript(any(), any(), any(), any(), anyLong()))
+                .thenReturn(new MessageResponse("voice-conversation", "turn-1", rendered, "APPOINTMENTS_FOUND",
+                        null, "DETERMINISTIC", false, List.of()));
+        when(connector.responseLanguageForVoice("Show my appointments", "auto")).thenReturn("en");
+        when(orchestratorService.synthesizeRenderedAssistantText(rendered, "en-IN"))
+                .thenReturn(new VoiceSynthesisResult("voice".getBytes(StandardCharsets.UTF_8), "audio/wav", "piper", "ok"));
+
+        var response = service.processAudioTurnV2(
+                "audio".getBytes(StandardCharsets.UTF_8), "audio/webm", "voice.webm", "auto",
+                "voice-conversation", "voice-turn-1", 1L);
+
+        assertThat(response.assistantText()).isEqualTo(rendered);
+        verify(orchestratorService).synthesizeRenderedAssistantText(rendered, "en-IN");
+        verify(orchestratorService, never()).synthesizeAssistantText(any(), any());
+    }
+
+    @Test
+    void v2HindiRenderedResponseKeepsVisibleTextAndUsesHindiTemporalSpeechText() {
+        VoiceOrchestratorService orchestratorService = mock(VoiceOrchestratorService.class);
+        PatientPortalCareAiService careAiService = mock(PatientPortalCareAiService.class);
+        AivaV2VoiceTurnConnector connector = mock(AivaV2VoiceTurnConnector.class);
+        PatientPortalVoiceAssistantService service = new PatientPortalVoiceAssistantService(
+                orchestratorService, careAiService, new VoiceTestProperties(), null, null, connector);
+        String rendered = "आपकी अपॉइंटमेंट 23 सितंबर 2026 को 20:00 बजे है।";
+        String speechText = "आपकी अपॉइंटमेंट तेईस सितंबर दो हज़ार छब्बीस को शाम आठ बजे है।";
+        when(orchestratorService.transcribeBufferedAudio(any(), any(), any(), any()))
+                .thenReturn(new VoiceTranscriptionResult("मेरी अपॉइंटमेंट दिखाओ", "sarvam", "ok"));
+        when(connector.submitFinalTranscript(any(), any(), any(), any(), anyLong()))
+                .thenReturn(new MessageResponse("voice-conversation", "turn-1", rendered, "APPOINTMENTS_FOUND",
+                        null, "DETERMINISTIC", false, List.of()));
+        when(connector.responseLanguageForVoice("मेरी अपॉइंटमेंट दिखाओ", "auto")).thenReturn("hi");
+        when(orchestratorService.synthesizeRenderedAssistantText(speechText, "hi-IN"))
+                .thenReturn(new VoiceSynthesisResult("voice".getBytes(StandardCharsets.UTF_8), "audio/wav", "piper", "ok"));
+
+        var response = service.processAudioTurnV2(
+                "audio".getBytes(StandardCharsets.UTF_8), "audio/webm", "voice.webm", "auto",
+                "voice-conversation", "voice-turn-1", 1L);
+
+        assertThat(response.assistantText()).isEqualTo(rendered);
+        verify(orchestratorService).synthesizeRenderedAssistantText(speechText, "hi-IN");
+        verify(orchestratorService, never()).synthesizeAssistantText(any(), any());
     }
 
     @Test

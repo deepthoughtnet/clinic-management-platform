@@ -28,8 +28,10 @@ import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.Selection
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.SessionProjection;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.StateView;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ToolResult;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.TemporalClarification;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ValuePatch;
 import static com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaStructuredResponse.*;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.language.NormalizedUserTurn;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -112,14 +114,33 @@ class AivaV2TransactionalKernel {
 
     KernelResult handle(SessionProjection original, ConversationDecision decision,
                         AivaV2TemporalResolution temporal, ZoneId clinicZone, String turnId) {
+        return handle(original, decision, temporal, clinicZone, turnId, false);
+    }
+
+    KernelResult handle(SessionProjection original, ConversationDecision decision,
+                        AivaV2TemporalResolution temporal, ZoneId clinicZone, String turnId,
+                        boolean ambiguousTime) {
         Instant now = Instant.now(clock);
         SessionProjection session = original;
+        if (session.pendingTemporalClarification() != null && temporal != null
+                && temporal.status() == AivaV2TemporalResolution.Status.RESOLVED
+                && temporal.source() == AivaV2TemporalResolution.Source.CURRENT_TURN_EXPLICIT) {
+            session = session.withTemporalClarification(null);
+        }
         if (session.pendingCancellationResolution() != null
                 && session.pendingCancellationResolution().expiresAt() != null
                 && !session.pendingCancellationResolution().expiresAt().isAfter(now)) {
             session = replace(session, session.activeDraft(), session.suspendedDraft(),
                     session.latestProviderResult(), session.latestAvailabilityResult(),
                     session.pendingConfirmation(), session.pendingCancellation(), null);
+        }
+        if (ambiguousTime) {
+            SessionProjection clarification = session.withTemporalClarification(new TemporalClarification(
+                    "TIME", List.of("AM", "PM"), decision.operation(), session.version()));
+            return result(clarification, decision, turnId, "TEMPORAL_TIME_AMBIGUOUS",
+                    "Please clarify the appointment time.",
+                    AivaStructuredResponse.of(ResponseType.CLARIFICATION,
+                            new ClarificationPayload("TEMPORAL_TIME_AMBIGUOUS", List.of()), List.of()));
         }
         Operation incomingOperation = decision.operation();
         boolean explicitNewWorkflow = isExplicitNewWorkflow(decision);
@@ -131,21 +152,39 @@ class AivaV2TransactionalKernel {
                 && hasBoundRescheduleTargetRefinement(decision, temporal);
         boolean cancellationCandidateSelection = session.pendingCancellationResolution() != null
                 && decision.operation() == Operation.CANCEL_APPOINTMENT;
+        if ((decision.operation() == Operation.LOOKUP_APPOINTMENTS
+                || decision.operation() == Operation.NEXT_UPCOMING_APPOINTMENT)
+                && (session.pendingCancellationResolution() != null
+                || session.pendingReschedule() != null
+                && session.pendingReschedule().status() == RescheduleStatus.SOURCE_AMBIGUOUS)) {
+            session = replace(session, session.activeDraft(), session.suspendedDraft(),
+                    session.latestProviderResult(), session.latestAvailabilityResult(), session.pendingConfirmation(),
+                    session.pendingCancellation(), null, null, null);
+        }
         if (targetRefinementDetected) {
             decision = withOperation(decision, Operation.UPDATE_RESCHEDULE);
         }
-        log.info("AIVA_V2_RESCHEDULE_REFINEMENT_TRACE conversationId={} turnId={} incomingOperation={} "
+        if (decision.operation() == Operation.END_CONVERSATION) {
+            SessionProjection closed = session.close();
+            return result(closed, decision, turnId, "CONVERSATION_CLOSED", "",
+                    AivaStructuredResponse.of(ResponseType.CONVERSATION_CLOSED,
+                            new EmptyPayload("CONVERSATION_CLOSED"), List.of()));
+        }
+        if (decision.operation() == Operation.FIND_NEXT_AVAILABLE_SLOT) {
+            return findNextAvailableSlot(session, decision, turnId);
+        }
+        log.info("AIVA_V2_RESCHEDULE_REFINEMENT_TRACE conversationIdHash={} turnId={} incomingOperation={} "
                         + "normalizedOperation={} activeWorkflow={} pendingReschedulePresent={} "
                         + "targetRefinementDetected={} targetRefinementSource={} explicitNewWorkflow={} "
-                        + "sourceAppointmentBound={} targetDate={}",
-                session.conversationId(), turnId, incomingOperation,
+                        + "sourceAppointmentBound={} targetDatePresent={}",
+                AivaV2LogRedaction.correlation(session.conversationId()), turnId, incomingOperation,
                 decision.operation(), session.pendingReschedule() == null ? "NONE" : "RESCHEDULE",
                 session.pendingReschedule() != null, targetRefinementDetected,
                 targetRefinementSource(decision, temporal),
                 explicitNewWorkflow,
                 session.pendingReschedule() != null
                         && StringUtils.hasText(session.pendingReschedule().sourceAppointmentReference()),
-                temporal == null ? null : temporal.localDate());
+                temporal != null && temporal.localDate() != null);
         if ((session.pendingCancellationResolution() != null || session.pendingReschedule() != null)
                 && isExplicitNewWorkflow(decision) && !rescheduleOwnsAvailability
                 && decision.operation() != Operation.LOOKUP_APPOINTMENTS
@@ -188,7 +227,8 @@ class AivaV2TransactionalKernel {
                             new RescheduleConfirmationPayload(state.originalDoctorDisplayName(), appointmentFact(state),
                                     state.targetDate(), state.selectedStartsAt()), List.of()));
         }
-        if (decision.operation() == Operation.LOOKUP_APPOINTMENTS) {
+        if (decision.operation() == Operation.LOOKUP_APPOINTMENTS
+                || decision.operation() == Operation.NEXT_UPCOMING_APPOINTMENT) {
             return lookupAppointments(session, decision, temporal, turnId);
         }
         if ((decision.operation() == Operation.CONFIRM_CANCELLATION
@@ -219,11 +259,15 @@ class AivaV2TransactionalKernel {
         if (decision.topicAction() == AivaV2Models.TopicAction.SUSPEND || decision.operation() == Operation.SUSPEND_BOOKING) {
             SessionProjection updated = new SessionProjection(session.conversationId(), session.patientId(), session.tenantId(),
                     null, session.activeDraft(), null, null, null, session.version() + 1, session.expiresAt());
-            return result(updated, decision, turnId, "BOOKING_SUSPENDED", "Your booking is paused. You can continue it later.");
+            return result(updated, decision, turnId, "BOOKING_SUSPENDED", "",
+                    AivaStructuredResponse.of(ResponseType.BOOKING_SUSPENDED,
+                            new BookingStatePayload("SUSPENDED"), List.of()));
         }
         if (decision.topicAction() == AivaV2Models.TopicAction.RESUME || decision.operation() == Operation.RESUME_BOOKING) {
             if (session.suspendedDraft() == null || session.suspendedDraft().expiresAt().isBefore(now)) {
-                return result(session, decision, turnId, "NO_SUSPENDED_BOOKING", "There is no active booking to resume.");
+                return result(session, decision, turnId, "NO_SUSPENDED_BOOKING", "",
+                        AivaStructuredResponse.of(ResponseType.NO_SUSPENDED_BOOKING,
+                                new BookingStatePayload("NONE"), List.of()));
             }
             SessionProjection updated = new SessionProjection(session.conversationId(), session.patientId(), session.tenantId(),
                     session.suspendedDraft(), null, null, null, null, session.version() + 1, session.expiresAt());
@@ -232,7 +276,9 @@ class AivaV2TransactionalKernel {
         if (decision.topicAction() == AivaV2Models.TopicAction.ABANDON || decision.operation() == Operation.ABANDON_BOOKING) {
             BookingDraft abandoned = tools.abandonBooking(session.activeDraft());
             SessionProjection updated = replace(session, abandoned, null, null, null, null);
-            return result(updated, decision, turnId, "BOOKING_ABANDONED", "I have abandoned this booking draft.");
+            return result(updated, decision, turnId, "BOOKING_ABANDONED", "",
+                    AivaStructuredResponse.of(ResponseType.BOOKING_ABANDONED,
+                            new BookingStatePayload("ABANDONED"), List.of()));
         }
 
         BookingDraft draft = session.activeDraft();
@@ -273,6 +319,13 @@ class AivaV2TransactionalKernel {
         session = patchResult.session();
         draft = session.activeDraft();
         if (patchResult.invalidDate()) {
+            if (temporal != null && temporal.status() == AivaV2TemporalResolution.Status.AMBIGUOUS) {
+                SessionProjection clarification = session.withTemporalClarification(new TemporalClarification(
+                        "DATE", temporal.candidateDates().stream().map(LocalDate::toString).toList(),
+                        decision.operation(), session.version()));
+                return result(clarification, decision, turnId, "TEMPORAL_AMBIGUOUS",
+                        "Please clarify the appointment date.", temporalClarification(temporal));
+            }
             return result(session, decision, turnId, "CLARIFICATION", "Please provide an unambiguous appointment date.");
         }
         if (patchResult.providerResult() != null) {
@@ -342,6 +395,7 @@ class AivaV2TransactionalKernel {
         if (constraintPatch.mode() == PatchMode.CLEAR) { constraint = null; criteriaChanged = true; }
         if (constraintPatch.mode() == PatchMode.SET) {
             constraint = constraintPatch.value();
+            window = null;
             exact = null;
             criteriaChanged = true;
         }
@@ -356,9 +410,19 @@ class AivaV2TransactionalKernel {
             date = temporal.localDate();
             criteriaChanged = true;
         }
-        if (patch.timeWindow().mode() == PatchMode.SET) { window = patch.timeWindow().value(); criteriaChanged = true; }
+        if (patch.timeWindow().mode() == PatchMode.SET) {
+            window = patch.timeWindow().value();
+            constraint = null;
+            exact = null;
+            criteriaChanged = true;
+        }
         if (patch.exactTime().mode() == PatchMode.SET) {
-            try { exact = LocalTime.parse(patch.exactTime().value()); constraint = null; criteriaChanged = true; }
+            try {
+                exact = LocalTime.parse(patch.exactTime().value());
+                constraint = null;
+                window = null;
+                criteriaChanged = true;
+            }
             catch (DateTimeParseException ignored) { }
         }
         long revision = criteriaChanged ? draft.revision() + 1 : draft.revision();
@@ -428,27 +492,83 @@ class AivaV2TransactionalKernel {
         AivaV2Models.AppointmentLookupFilter filter = decision.lookupFilter();
         if (filter.dateExpression().mode() == PatchMode.SET
                 && (temporal == null || temporal.status() != AivaV2TemporalResolution.Status.RESOLVED)) {
+            if (temporal != null && temporal.status() == AivaV2TemporalResolution.Status.AMBIGUOUS) {
+                SessionProjection clarification = session.withTemporalClarification(new TemporalClarification(
+                        "DATE", temporal.candidateDates().stream().map(LocalDate::toString).toList(),
+                        decision.operation(), session.version()));
+                return result(clarification, decision, turnId, "TEMPORAL_AMBIGUOUS",
+                        "Please clarify the appointment date.", temporalClarification(temporal));
+            }
             return result(session, decision, turnId, "CLARIFICATION", "Please provide a valid appointment date.");
         }
         LocalDate date = filter.dateExpression().mode() == PatchMode.SET ? temporal.localDate() : null;
         var lookup = appointmentLookupTool.lookup(filter, date, session.conversationId(), turnId);
         if (lookup.status() == AivaV2Models.AppointmentLookupStatus.FAILED) {
-            log.info("AIVA_V2_LOOKUP_RESPONSE_TRACE conversationId={} turnId={} operation={} resultStatus={} resultCount={} responseCategory={}",
-                    session.conversationId(), turnId, decision.operation(), lookup.status(), lookup.appointments().size(), "FAILED");
+            log.info("AIVA_V2_LOOKUP_RESPONSE_TRACE conversationIdHash={} turnId={} operation={} resultStatus={} resultCount={} responseCategory={}",
+                    AivaV2LogRedaction.correlation(session.conversationId()), turnId, decision.operation(), lookup.status(), lookup.appointments().size(), "FAILED");
             return result(session, decision, turnId, "FAILED", lookup.safeReason());
         }
         if (lookup.status() == AivaV2Models.AppointmentLookupStatus.NONE) {
-            log.info("AIVA_V2_LOOKUP_RESPONSE_TRACE conversationId={} turnId={} operation={} resultStatus={} resultCount={} responseCategory={}",
-                    session.conversationId(), turnId, decision.operation(), lookup.status(), lookup.appointments().size(), "APPOINTMENTS_NONE");
-            return result(session, decision, turnId, "APPOINTMENTS_NONE", appointmentLookupNoneMessage(filter, date),
+            log.info("AIVA_V2_LOOKUP_RESPONSE_TRACE conversationIdHash={} turnId={} operation={} resultStatus={} resultCount={} responseCategory={}",
+                    AivaV2LogRedaction.correlation(session.conversationId()), turnId, decision.operation(), lookup.status(), lookup.appointments().size(), "APPOINTMENTS_NONE");
+            SessionProjection cleared = session.withAppointmentReferent(null);
+            return result(cleared, decision, turnId, "APPOINTMENTS_NONE", appointmentLookupNoneMessage(filter, date),
                     AivaStructuredResponse.of(ResponseType.APPOINTMENTS_NONE,
                             new AppointmentListPayload(List.of(), appliedFilters(filter, date)), List.of()));
         }
-        log.info("AIVA_V2_LOOKUP_RESPONSE_TRACE conversationId={} turnId={} operation={} resultStatus={} resultCount={} responseCategory={}",
-                session.conversationId(), turnId, decision.operation(), lookup.status(), lookup.appointments().size(), "APPOINTMENTS_FOUND");
-        return result(session, decision, turnId, "APPOINTMENTS_FOUND", appointmentMessage(lookup.appointments()),
+        if (decision.selection() != null && decision.selection().ordinal() != null) {
+            int ordinal = decision.selection().ordinal();
+            int index = ordinal == -1 ? lookup.appointments().size() - 1 : ordinal - 1;
+            if (index < 0 || index >= lookup.appointments().size()) {
+                return result(session, decision, turnId, "APPOINTMENTS_NONE", appointmentLookupNoneMessage(filter, date),
+                        AivaStructuredResponse.of(ResponseType.APPOINTMENTS_NONE,
+                                new AppointmentListPayload(List.of(), appliedFilters(filter, date)), List.of()));
+            }
+            var selected = List.of(lookup.appointments().get(index));
+            SessionProjection updated = session.withAppointmentReferent(selected.get(0));
+            return result(updated, decision, turnId, "APPOINTMENTS_FOUND", appointmentMessage(selected),
+                    AivaStructuredResponse.of(ResponseType.APPOINTMENTS_FOUND,
+                            new AppointmentListPayload(appointmentFacts(selected), appliedFilters(filter, date)), List.of()));
+        }
+        log.info("AIVA_V2_LOOKUP_RESPONSE_TRACE conversationIdHash={} turnId={} operation={} resultStatus={} resultCount={} responseCategory={}",
+                AivaV2LogRedaction.correlation(session.conversationId()), turnId, decision.operation(), lookup.status(), lookup.appointments().size(), "APPOINTMENTS_FOUND");
+        SessionProjection updated = lookup.appointments().size() == 1
+                ? session.withAppointmentReferent(lookup.appointments().get(0))
+                : session.withAppointmentReferent(null);
+        return result(updated, decision, turnId, "APPOINTMENTS_FOUND", appointmentMessage(lookup.appointments()),
                 AivaStructuredResponse.of(ResponseType.APPOINTMENTS_FOUND,
                         new AppointmentListPayload(appointmentFacts(lookup.appointments()), appliedFilters(filter, date)), List.of()));
+    }
+
+    private KernelResult findNextAvailableSlot(SessionProjection session, ConversationDecision decision, String turnId) {
+        BookingDraft draft = session.activeDraft();
+        if (draft == null || draft.selectedProvider() == null || draft.preferredDate() == null
+                || session.latestAvailabilityResult() == null) {
+            return result(session, decision, turnId, "CLARIFICATION", "Please provide a doctor and date first.");
+        }
+        ToolResult<AvailabilityResult> next = tools.getNextBookingAvailability(draft);
+        if (!"SUCCESS".equals(next.category())) {
+            if ("NO_FUTURE_AVAILABILITY".equals(next.category())) {
+                SessionProjection cleared = replace(session, draft, null, session.latestProviderResult(), null, null);
+                return result(cleared, decision, turnId, "NO_FUTURE_AVAILABILITY", next.safeReason(),
+                        AivaStructuredResponse.of(ResponseType.NO_FUTURE_AVAILABILITY,
+                                new EmptyPayload("NO_FUTURE_AVAILABILITY"), List.of()));
+            }
+            return result(session, decision, turnId, next.category(), next.safeReason());
+        }
+        AvailabilityResult availability = next.value();
+        long revision = draft.revision() + 1;
+        BookingDraft updatedDraft = copyDraft(draft, draft.selectedProvider(), draft.specialtyFilter(), availability.date(),
+                draft.preferredTimeWindow(), draft.exactTime(), availability.requestId(), null,
+                DraftStatus.COLLECTING, revision, null);
+        AvailabilityResult rebound = new AvailabilityResult(availability.requestId(), availability.draftId(), revision,
+                tools.criteriaFingerprint(updatedDraft), availability.providerHandle(), availability.doctorId(),
+                availability.clinicId(), availability.date(), availability.timeWindow(),
+                availability.availabilityTimeConstraint(), availability.timezone(), availability.slots(),
+                availability.cursor(), availability.hasMore(), availability.generatedAt(), availability.expiresAt(),
+                availability.displayOffset(), availability.pageSize());
+        SessionProjection updated = replace(session, updatedDraft, null, session.latestProviderResult(), rebound, null);
+        return result(updated, decision, turnId, "SLOT_CHOICES", slotChoices(rebound));
     }
 
     private String appointmentMessage(List<AivaV2Models.AppointmentSummary> appointments) {
@@ -608,9 +728,7 @@ class AivaV2TransactionalKernel {
                 "Your appointment has been rescheduled to " + confirmation.targetDate().format(HUMAN_DATE) + " at " + confirmation.targetStartsAt() + ".");
         ToolResult<String> confirmed = rescheduleTools.confirm(confirmation, session.conversationId(), turnId);
         if (!"SUCCESS".equals(confirmed.category())) return result(session, decision, turnId, confirmed.category(), confirmed.safeReason());
-        SessionProjection updated = replaceReschedule(session, rescheduleState(state, state.targetDate(),
-                state.availabilityConstraint(), state.latestAvailability(), state.selectedSlotReference(),
-                RescheduleStatus.COMPLETED), confirmation);
+        SessionProjection updated = session.clearTransientWorkflow();
         return result(updated, decision, turnId, "RESCHEDULE_CONFIRMED", "Your appointment has been rescheduled to "
                         + confirmation.targetDate().format(HUMAN_DATE) + " at " + confirmation.targetStartsAt() + ".",
                 AivaStructuredResponse.of(ResponseType.RESCHEDULE_SUCCESS,
@@ -645,7 +763,8 @@ class AivaV2TransactionalKernel {
                 && temporal.status() == AivaV2TemporalResolution.Status.RESOLVED
                 && decision.dialogAct() == AivaV2Models.DialogAct.CHANGE_INFORMATION
                 && decision.lookupFilter().doctorText().mode() != PatchMode.SET
-                && decision.lookupFilter().clinicText().mode() != PatchMode.SET;
+                && decision.lookupFilter().clinicText().mode() != PatchMode.SET
+                || decision.lookupFilter().dateExpression().mode() == PatchMode.SET;
     }
 
     private String targetRefinementSource(ConversationDecision decision,
@@ -662,6 +781,7 @@ class AivaV2TransactionalKernel {
                 && temporal.status() == AivaV2TemporalResolution.Status.RESOLVED) {
             return "TEMPORAL";
         }
+        if (decision.lookupFilter().dateExpression().mode() == PatchMode.SET) return "LOOKUP_DATE";
         return "NONE";
     }
 
@@ -673,7 +793,7 @@ class AivaV2TransactionalKernel {
     }
 
     private SessionProjection storeReschedule(SessionProjection session, RescheduleResolution state) {
-        return replace(session, session.activeDraft(), session.suspendedDraft(), session.latestProviderResult(),
+        return replace(session.withAppointmentReferent(null), session.activeDraft(), session.suspendedDraft(), session.latestProviderResult(),
                 session.latestAvailabilityResult(), session.pendingConfirmation(), session.pendingCancellation(),
                 session.pendingCancellationResolution(), state, null);
     }
@@ -763,17 +883,16 @@ class AivaV2TransactionalKernel {
             return result(session, decision, turnId, prepared.category(), prepared.safeReason());
         }
         CancellationConfirmation capability = prepared.value();
-        log.info("AIVA_V2_CANCELLATION_CAPABILITY_CREATE conversationId={} sessionVersionBefore={} "
-                        + "selectedAppointmentRefPresent={} confirmationRefPresent={} expiresAt={} pendingCancellationStored=true",
-                session.conversationId(), sessionVersionBefore,
-                capability.appointmentReference() != null, capability.confirmationRef() != null,
-                capability.expiresAt());
+        log.info("AIVA_V2_CANCELLATION_CAPABILITY_CREATE conversationIdHash={} sessionVersionBefore={} "
+                        + "selectedAppointmentRefPresent={} confirmationRefPresent={} expiryConfigured=true pendingCancellationStored=true",
+                AivaV2LogRedaction.correlation(session.conversationId()), sessionVersionBefore,
+                capability.appointmentReference() != null, capability.confirmationRef() != null);
         SessionProjection updated = replace(session, session.activeDraft(), session.suspendedDraft(),
                 session.latestProviderResult(), session.latestAvailabilityResult(), session.pendingConfirmation(),
                 capability, null);
-        log.info("AIVA_V2_CANCELLATION_CAPABILITY_STORED conversationId={} sessionVersionAfter={} "
+        log.info("AIVA_V2_CANCELLATION_CAPABILITY_STORED conversationIdHash={} sessionVersionAfter={} "
                         + "pendingCancellationPresent={}",
-                updated.conversationId(), updated.version(), updated.pendingCancellation() != null);
+                AivaV2LogRedaction.correlation(updated.conversationId()), updated.version(), updated.pendingCancellation() != null);
         log.info("AIVA_V2_CANCELLATION_TRACE operation={} pendingCancellationPresent=true doctorFilterPresent={} "
                         + "dateFilterPresent={} clinicFilterPresent={} candidateCount=1 resolutionStatus=RESOLVED "
                         + "owningClinicPresent={} owningTenantPresent={} confirmationPending=true activeWorkflow=CANCELLATION",
@@ -851,7 +970,7 @@ class AivaV2TransactionalKernel {
 
     private SessionProjection sessionWithCancellationResolution(SessionProjection session,
                                                                 CancellationResolution resolution) {
-        return replace(session, session.activeDraft(), session.suspendedDraft(), session.latestProviderResult(),
+        return replace(session.withAppointmentReferent(null), session.activeDraft(), session.suspendedDraft(), session.latestProviderResult(),
                 session.latestAvailabilityResult(), session.pendingConfirmation(), session.pendingCancellation(),
                 resolution, session.pendingReschedule(), session.pendingRescheduleConfirmation());
     }
@@ -871,11 +990,11 @@ class AivaV2TransactionalKernel {
     private KernelResult confirmCancellation(SessionProjection session, ConversationDecision decision, String turnId) {
         CancellationConfirmation confirmation = session.pendingCancellation();
         if (confirmation == null) {
-            log.info("AIVA_V2_CANCELLATION_CONFIRMATION conversationId={} activeWorkflow=CANCELLATION "
+            log.info("AIVA_V2_CANCELLATION_CONFIRMATION conversationIdHash={} activeWorkflow=CANCELLATION "
                             + "sessionVersion={} pendingCancellationPresent=false confirmationRefPresent=false "
-                            + "appointmentRefPresent=false expiresAt=null currentInstant={} "
+                            + "appointmentRefPresent=false confirmationExpired=true currentTimePresent=true "
                             + "domainInvocationReached=false staleReason=CAPABILITY_MISSING",
-                    session.conversationId(), session.version(), Instant.now(clock));
+                    AivaV2LogRedaction.correlation(session.conversationId()), session.version());
             return result(session, decision, turnId, "STALE", "There is no current cancellation to confirm.");
         }
         var attempt = cancellationTool.cancel(confirmation, session.conversationId(), session.version());
@@ -883,8 +1002,7 @@ class AivaV2TransactionalKernel {
         if (!"SUCCESS".equals(cancelled.category())) {
             return result(session, decision, turnId, cancelled.category(), cancelled.safeReason());
         }
-        SessionProjection updated = replace(session, session.activeDraft(), session.suspendedDraft(),
-                session.latestProviderResult(), session.latestAvailabilityResult(), session.pendingConfirmation(), null);
+        SessionProjection updated = session.clearTransientWorkflow();
         log.info("AIVA_V2_CANCELLATION_TRACE operation={} candidateCount=1 resolutionStatus=RESOLVED "
                         + "owningClinicPresent=true owningTenantPresent=true confirmationPending=false "
                         + "confirmationResult=SUCCESS", decision.operation());
@@ -985,10 +1103,7 @@ class AivaV2TransactionalKernel {
         if (!"SUCCESS".equals(booked.category())) {
             return result(session, decision, turnId, booked.category(), safe(booked.safeReason(), "I could not confirm the booking."));
         }
-        BookingDraft confirmed = copyDraft(draft, draft.selectedProvider(), draft.specialtyFilter(), draft.preferredDate(),
-                draft.preferredTimeWindow(), draft.exactTime(), draft.latestAvailabilityRequestId(),
-                draft.selectedSlotReference(), DraftStatus.CONFIRMED, draft.revision(), booked.value().appointmentReference());
-        SessionProjection updated = replace(session, confirmed, null, session.latestProviderResult(), session.latestAvailabilityResult(), null);
+        SessionProjection updated = session.clearTransientWorkflow();
         return result(updated, decision, turnId, "BOOKING_CONFIRMED",
                 "Your appointment is booked. Reference: " + booked.value().appointmentReference() + ".");
     }
@@ -996,11 +1111,16 @@ class AivaV2TransactionalKernel {
     private KernelResult answerContext(SessionProjection session, ConversationDecision decision, String turnId) {
         AvailabilityResult availability = session.latestAvailabilityResult();
         if (availability != null) {
-            return result(session, decision, turnId, "CONTEXT_ANSWER", "These slots are for " + availability.date() + ".");
+            return result(session, decision, turnId, "CONTEXT_ANSWER", "",
+                    AivaStructuredResponse.of(ResponseType.CONTEXTUAL_INFORMATION,
+                            new ContextualInformationPayload("AVAILABILITY_DATE", availability.date(), null), List.of()));
         }
         BookingDraft draft = session.activeDraft();
         if (draft != null && draft.selectedProvider() != null) {
-            return result(session, decision, turnId, "CONTEXT_ANSWER", "The selected doctor is " + draft.selectedProvider().displayName() + ".");
+            return result(session, decision, turnId, "CONTEXT_ANSWER", "",
+                    AivaStructuredResponse.of(ResponseType.CONTEXTUAL_INFORMATION,
+                            new ContextualInformationPayload("SELECTED_PROVIDER", null,
+                                    draft.selectedProvider().displayName()), List.of()));
         }
         return result(session, decision, turnId, "CLARIFICATION", "There is no current booking context yet.");
     }
@@ -1062,7 +1182,7 @@ class AivaV2TransactionalKernel {
         StringBuilder message = new StringBuilder("Available slots for ").append(result.date()).append(": ");
         for (int i = offset; i < end; i++) {
             if (i > offset) message.append("; ");
-            message.append(i + 1).append(". ").append(result.slots().get(i).displayTime());
+            message.append(i - offset + 1).append(". ").append(result.slots().get(i).displayTime());
         }
         return message.append(". Which one works?").toString();
     }
@@ -1091,6 +1211,9 @@ class AivaV2TransactionalKernel {
             case AFTER -> " after " + constraint.startTime();
             case BEFORE -> " before " + constraint.endTime();
             case BETWEEN -> " between " + constraint.startTime() + " and " + constraint.endTime();
+            case EXCLUDE -> constraint.endTime() == null
+                    ? " except " + constraint.startTime()
+                    : " excluding " + constraint.startTime() + " to " + constraint.endTime();
         };
     }
 
@@ -1116,9 +1239,9 @@ class AivaV2TransactionalKernel {
 
     private KernelResult result(SessionProjection session, ConversationDecision decision, String turnId,
                                 String category, String message, AivaStructuredResponse structured) {
-        log.info("AIVA_V2_TRACE conversationId={} turnId={} provider={} fallbackUsed={} dialogAct={} operation={} category={} "
+        log.info("AIVA_V2_TRACE conversationIdHash={} turnId={} provider={} fallbackUsed={} dialogAct={} operation={} category={} "
                         + "draftRevision={} draftStatus={} providerResolved={} datePresent={} slotSelected={} confirmationPending={}",
-                session.conversationId(), turnId, decision.provider(), decision.fallbackUsed(), decision.dialogAct(), decision.operation(), category,
+                AivaV2LogRedaction.correlation(session.conversationId()), turnId, decision.provider(), decision.fallbackUsed(), decision.dialogAct(), decision.operation(), category,
                 session.activeDraft() == null ? null : session.activeDraft().revision(),
                 session.activeDraft() == null ? null : session.activeDraft().status(),
                 session.activeDraft() != null && session.activeDraft().selectedProvider() != null,
@@ -1175,6 +1298,10 @@ class AivaV2TransactionalKernel {
                         draft == null ? null : draft.preferredDate(), List.of(), false, null)
                         : new AvailabilityPayload(providerName(session), availability.date(),
                         slotFacts(availability), availability.hasMore(), constraint(availability));
+            }
+            case "NO_FUTURE_AVAILABILITY" -> {
+                type = ResponseType.NO_FUTURE_AVAILABILITY;
+                payload = new EmptyPayload("NO_FUTURE_AVAILABILITY");
             }
             case "NO_MORE_SLOTS" -> {
                 type = reschedule == null ? ResponseType.NO_MORE_SLOTS : ResponseType.RESCHEDULE_NO_MORE_SLOTS;
@@ -1265,12 +1392,32 @@ class AivaV2TransactionalKernel {
                 type = ResponseType.CLARIFICATION;
                 payload = new ClarificationPayload(category, List.of());
             }
+            case "TEMPORAL_AMBIGUOUS" -> {
+                type = ResponseType.CLARIFICATION;
+                payload = new ClarificationPayload("TEMPORAL_AMBIGUOUS", temporalCandidates(session));
+            }
+            case "TEMPORAL_TIME_AMBIGUOUS" -> {
+                type = ResponseType.CLARIFICATION;
+                payload = new ClarificationPayload("TEMPORAL_TIME_AMBIGUOUS", List.of());
+            }
             default -> {
                 type = ResponseType.LEGACY;
                 payload = new EmptyPayload(category);
             }
         }
         return AivaStructuredResponse.of(type, payload, actions);
+    }
+
+    private AivaStructuredResponse temporalClarification(AivaV2TemporalResolution temporal) {
+        return AivaStructuredResponse.of(ResponseType.CLARIFICATION,
+                new ClarificationPayload("TEMPORAL_AMBIGUOUS",
+                        temporal == null ? List.of() : temporal.candidateDates().stream().map(LocalDate::toString).toList()),
+                List.of());
+    }
+
+    private List<String> temporalCandidates(SessionProjection session) {
+        return session.pendingTemporalClarification() == null ? List.of()
+                : session.pendingTemporalClarification().candidates();
     }
 
     private AivaStructuredResponse structuredLookup(List<AppointmentSummary> appointments,
@@ -1418,7 +1565,8 @@ class AivaV2TransactionalKernel {
                                       RescheduleConfirmation rescheduleConfirmation) {
         return new SessionProjection(session.conversationId(), session.patientId(), session.tenantId(), active, suspended,
                 providerResult, availability, confirmation, cancellation, resolution,
-                reschedule, rescheduleConfirmation, session.version() + 1, session.expiresAt());
+                reschedule, rescheduleConfirmation, session.pendingTemporalClarification(),
+                session.closed(), session.version() + 1, session.expiresAt(), session.activeAppointmentReferent());
     }
 
     private boolean isExplicitNewWorkflow(ConversationDecision decision) {

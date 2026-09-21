@@ -7,6 +7,7 @@ import com.deepthoughtnet.clinic.ai.careai.persistence.CareAiTransport;
 import com.deepthoughtnet.clinic.api.patientportal.voice.PatientPortalVoiceAssistantService.PatientPortalVoiceTurnResponse;
 import com.deepthoughtnet.clinic.api.patientportal.voice.PatientPortalVoiceAssistantService.PatientPortalVoiceProgressAudio;
 import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiProgressEvent;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2VoiceTurnConnector;
 import com.deepthoughtnet.clinic.api.voice.VoiceTestProperties;
 import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
 import com.deepthoughtnet.clinic.platform.core.context.TenantId;
@@ -42,6 +43,7 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
     private final PatientPortalVoiceAssistantService voiceAssistantService;
     private final VoiceTestProperties properties;
     private final CareAiConversationPersistenceService conversationPersistenceService;
+    private final AivaV2VoiceTurnConnector aivaV2VoiceTurnConnector;
     private final Map<String, SessionState> sessionStates = new ConcurrentHashMap<>();
 
     public PatientPortalVoiceWebSocketHandler(
@@ -50,10 +52,21 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
             VoiceTestProperties properties,
             CareAiConversationPersistenceService conversationPersistenceService
     ) {
+        this(objectMapper, voiceAssistantService, properties, conversationPersistenceService, null);
+    }
+
+    public PatientPortalVoiceWebSocketHandler(
+            ObjectMapper objectMapper,
+            PatientPortalVoiceAssistantService voiceAssistantService,
+            VoiceTestProperties properties,
+            CareAiConversationPersistenceService conversationPersistenceService,
+            AivaV2VoiceTurnConnector aivaV2VoiceTurnConnector
+    ) {
         this.objectMapper = objectMapper;
         this.voiceAssistantService = voiceAssistantService;
         this.properties = properties;
         this.conversationPersistenceService = conversationPersistenceService;
+        this.aivaV2VoiceTurnConnector = aivaV2VoiceTurnConnector;
     }
 
     @Override
@@ -110,6 +123,28 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
         state.touch();
         String requestedResumeSessionId = root.path("resumeSessionId").asText("").trim();
         state.logicalSessionId = requestedResumeSessionId.isBlank() ? state.logicalSessionId : requestedResumeSessionId;
+        String requestedEngine = root.path("engine").asText("legacy").trim().toLowerCase();
+        if (!requestedEngine.equals("legacy") && !requestedEngine.equals("v2")) {
+            sendError(session, "Unsupported voice engine.");
+            state.closed = true;
+            return;
+        }
+        if (!requestedEngine.equals("legacy") && !properties.isAivaV2Enabled()) {
+            sendError(session, "AIVA V2 voice is currently unavailable.");
+            state.closed = true;
+            return;
+        }
+        if (state.startedAt != null && !state.closed && !state.engine.equals(requestedEngine)) {
+            sendError(session, "Voice engine cannot change during an active session.");
+            return;
+        }
+        state.engine = requestedEngine;
+        state.v2ConversationId = requestedEngine.equals("v2")
+                ? v2ConversationId(state.logicalSessionId)
+                : null;
+        state.v2TurnSequence = requestedEngine.equals("v2")
+                ? resumedV2TurnSequence(session, state.v2ConversationId)
+                : 0L;
         state.language = root.path("language").asText("auto");
         state.startedAt = Instant.now();
         state.lastActivityAt = Instant.now();
@@ -122,6 +157,7 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
         payload.put("type", "session.started");
         payload.put("sessionId", state.logicalSessionId);
         payload.put("language", state.language);
+        payload.put("engine", state.engine);
         payload.put("resumed", recovered != null);
         payload.put("conversationId", recovered == null ? null : recovered.conversation().getId());
         payload.put("workflowId", recovered == null || recovered.workflow() == null ? null : recovered.workflow().getId());
@@ -150,6 +186,17 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
         }
         if (state.turnInProgress) {
             sendError(session, "A voice turn is already being processed.");
+            return;
+        }
+        if (state.audioChunks.isEmpty()) {
+            state.voiceUtteranceId = requestedUtteranceId(root);
+            if (state.voiceUtteranceId == null) {
+                state.voiceUtteranceId = UUID.randomUUID().toString();
+            }
+        } else if (root.hasNonNull("voiceUtteranceId")
+                && !state.voiceUtteranceId.equals(requestedUtteranceId(root))) {
+            sendError(session, "Audio utterance identity changed mid-stream.");
+            clearAudioBuffer(state);
             return;
         }
         String audioBase64Chunk = stripDataUrlPrefix(root.path("audioBase64Chunk").asText(""));
@@ -220,6 +267,17 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
             return;
         }
         state.touch();
+        String requestedUtteranceId = requestedUtteranceId(root);
+        if (state.turnInProgress) {
+            boolean sameV2TurnWithoutClientId = state.engine.equals("v2") && requestedUtteranceId == null;
+            if (state.voiceUtteranceId != null
+                    && (state.voiceUtteranceId.equals(requestedUtteranceId) || sameV2TurnWithoutClientId)) {
+                sendEvent(session, Map.of("type", "turn.in_flight", "voiceUtteranceId", state.voiceUtteranceId));
+            } else {
+                sendError(session, "A voice turn is already being processed.");
+            }
+            return;
+        }
         int declaredTotalChunks = root.path("totalChunks").asInt(state.expectedTotalChunks);
         if (declaredTotalChunks > 0 && state.expectedTotalChunks > 0 && declaredTotalChunks != state.expectedTotalChunks) {
             sendError(session, "Audio end metadata did not match the received chunks.");
@@ -227,6 +285,13 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
             return;
         }
         if (state.audioChunks.isEmpty()) {
+            boolean sameV2TurnWithoutClientId = state.engine.equals("v2") && requestedUtteranceId == null;
+            if (state.lastCompletedTurn != null
+                    && (state.lastCompletedTurn.voiceUtteranceId().equals(requestedUtteranceId)
+                    || sameV2TurnWithoutClientId)) {
+                replayCompletedTurn(session, state, state.lastCompletedTurn);
+                return;
+            }
             sendError(session, "No audio chunks were received.");
             return;
         }
@@ -282,14 +347,28 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
                     "turnIndex", turnIndex
             ));
             sendEvent(session, Map.of("type", "stt.started"));
-            PatientPortalVoiceTurnResponse response = voiceAssistantService.processAudioTurn(
-                    audioBytes,
-                    state.contentType == null ? "audio/webm" : state.contentType,
-                    state.filename == null ? "patient-careai-voice.webm" : state.filename,
-                    state.language,
-                    progress -> sendProgressEvent(session, state, turnIndex, progress)
-            );
+            PatientPortalVoiceTurnResponse response = state.engine.equals("v2")
+                    ? voiceAssistantService.processAudioTurnV2(
+                            audioBytes,
+                            state.contentType == null ? "audio/webm" : state.contentType,
+                            state.filename == null ? "patient-careai-voice.webm" : state.filename,
+                            state.language,
+                            state.v2ConversationId,
+                            "voice-" + state.voiceUtteranceId,
+                            state.v2TurnSequence + 1
+                    )
+                    : voiceAssistantService.processAudioTurn(
+                            audioBytes,
+                            state.contentType == null ? "audio/webm" : state.contentType,
+                            state.filename == null ? "patient-careai-voice.webm" : state.filename,
+                            state.language,
+                            progress -> sendProgressEvent(session, state, turnIndex, progress)
+                    );
             state.turnCount = turnIndex;
+            if (state.engine.equals("v2")) {
+                state.v2TurnSequence++;
+            }
+            state.lastCompletedTurn = new CompletedTurn(state.voiceUtteranceId, turnIndex, response);
             sendEvent(session, Map.of(
                     "type", "transcript.final",
                     "text", response.transcript(),
@@ -357,6 +436,11 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
             metrics.put("ttsFallbackReason", response.ttsFallbackReason() == null ? "" : response.ttsFallbackReason());
             completedEvent.put("metrics", metrics);
             sendEvent(session, completedEvent);
+            if (response.conversationClosed()) {
+                sendEvent(session, Map.of("type", "conversation.closed", "sessionId", state.sessionId,
+                        "turnIndex", turnIndex));
+                session.close(CloseStatus.NORMAL);
+            }
             log.info("patient.voice.turn.completed sessionId={} turnIndex={} requestId={} uploadDurationMs={} sttDurationMs={} careAiDurationMs={} ttsDurationMs={} totalDurationMs={} sttProvider={} llmProvider={} ttsProvider={} ttsFallback={}",
                     state.sessionId,
                     turnIndex,
@@ -426,6 +510,45 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
         state.firstUploadAt = null;
         state.lastUploadActivityAt = null;
         state.turnStartedAt = null;
+        state.voiceUtteranceId = null;
+    }
+
+    private void replayCompletedTurn(WebSocketSession session, SessionState state, CompletedTurn completedTurn) throws IOException {
+        PatientPortalVoiceTurnResponse response = completedTurn.response();
+        sendEvent(session, Map.of(
+                "type", "turn.duplicate_replay",
+                "sessionId", state.sessionId,
+                "turnIndex", completedTurn.turnIndex(),
+                "voiceUtteranceId", completedTurn.voiceUtteranceId(),
+                "clientTurnId", "voice-" + completedTurn.voiceUtteranceId()
+        ));
+        sendEvent(session, Map.of(
+                "type", "transcript.final",
+                "text", response.transcript(),
+                "turnIndex", completedTurn.turnIndex()
+        ));
+        Map<String, Object> assistantTextEvent = new LinkedHashMap<>();
+        assistantTextEvent.put("type", "assistant.text");
+        assistantTextEvent.put("text", response.assistantText());
+        assistantTextEvent.put("turnIndex", completedTurn.turnIndex());
+        assistantTextEvent.put("requestId", response.requestId());
+        assistantTextEvent.put("state", response.state());
+        assistantTextEvent.put("providerTrace", Map.of(
+                "sttProvider", response.sttProvider() == null ? "" : response.sttProvider(),
+                "llmProvider", response.llmProvider() == null ? "" : response.llmProvider(),
+                "ttsProvider", response.ttsProvider() == null ? "" : response.ttsProvider()
+        ));
+        sendEvent(session, assistantTextEvent);
+        if (response.audioBase64() != null && response.audioContentType() != null) {
+            sendAssistantAudioChunks(session, response, completedTurn.turnIndex());
+        }
+        sendEvent(session, Map.of(
+                "type", "turn.complete",
+                "sessionId", state.sessionId,
+                "turnIndex", completedTurn.turnIndex(),
+                "requestId", response.requestId(),
+                "replayed", true
+        ));
     }
 
     private void sendError(WebSocketSession session, String message) throws IOException {
@@ -584,6 +707,34 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
         return value;
     }
 
+    private String requestedUtteranceId(JsonNode root) {
+        String value = root.path("voiceUtteranceId").asText("").trim();
+        if (value.isBlank() || value.length() > 100 || !value.matches("[A-Za-z0-9_-]+")) {
+            return null;
+        }
+        return value;
+    }
+
+    private String v2ConversationId(String logicalSessionId) {
+        String normalized = logicalSessionId == null ? "session" : logicalSessionId.replaceAll("[^A-Za-z0-9_-]", "-");
+        if (normalized.length() > 80) {
+            normalized = normalized.substring(0, 80);
+        }
+        return "voice-v2-" + normalized;
+    }
+
+    private long resumedV2TurnSequence(WebSocketSession session, String conversationId) {
+        if (aivaV2VoiceTurnConnector == null) {
+            return 0L;
+        }
+        UUID tenantId = uuidAttribute(session, "tenantId");
+        UUID patientId = uuidAttribute(session, "patientId");
+        if (tenantId == null || patientId == null) {
+            throw new IllegalStateException("Missing patient session context");
+        }
+        return aivaV2VoiceTurnConnector.lastAcceptedVoiceTurnSequence(tenantId, patientId, conversationId);
+    }
+
     private void sendAssistantAudioChunks(WebSocketSession session, PatientPortalVoiceTurnResponse response, int turnIndex) throws IOException {
         String audioBase64 = response.audioBase64();
         int totalChunks = (int) Math.ceil((double) audioBase64.length() / RESPONSE_CHUNK_BASE64_CHARS);
@@ -693,6 +844,11 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
         private Instant turnStartedAt;
         private UUID recoveredConversationId;
         private UUID recoveredWorkflowId;
+        private String engine = "legacy";
+        private String v2ConversationId;
+        private long v2TurnSequence;
+        private String voiceUtteranceId;
+        private CompletedTurn lastCompletedTurn;
 
         private SessionState(String sessionId) {
             this.sessionId = sessionId;
@@ -708,5 +864,12 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
             this.lastActivityAt = now;
             this.lastHeartbeatAt = now;
         }
+    }
+
+    private record CompletedTurn(
+            String voiceUtteranceId,
+            int turnIndex,
+            PatientPortalVoiceTurnResponse response
+    ) {
     }
 }

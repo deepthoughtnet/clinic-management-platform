@@ -7,6 +7,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.when;
 
@@ -23,6 +24,8 @@ import com.deepthoughtnet.clinic.api.voice.spi.VoiceSynthesisResult;
 import com.deepthoughtnet.clinic.api.voice.spi.VoiceTranscriptionRequest;
 import com.deepthoughtnet.clinic.api.voice.spi.VoiceTranscriptionResult;
 import com.deepthoughtnet.clinic.api.voice.ElevenLabsTextToSpeechProvider;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.MessageResponse;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2VoiceTurnConnector;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiOrchestrationResponse;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiOrchestrationRequest;
@@ -48,6 +51,41 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.mock.web.MockMultipartFile;
 
 class VoiceOrchestratorServiceTest {
+
+    @Test
+    void finalizedTranscriptUsesAivaV2AndDoesNotCallLegacySemanticPath() {
+        UUID tenantId = UUID.randomUUID();
+        RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), null, "voice-patient", Set.of("PATIENT"), "PATIENT", "voice-correlation"));
+        VoiceTestProperties properties = new VoiceTestProperties();
+        properties.setAivaV2Enabled(true);
+        properties.getStt().setProviderOrder(List.of("mock"));
+        properties.getTts().setProviderOrder(List.of("mock"));
+        AiOrchestrationService legacyAi = mock(AiOrchestrationService.class);
+        AivaV2VoiceTurnConnector connector = mock(AivaV2VoiceTurnConnector.class);
+        when(connector.submitFinalTranscript(any(), any(), any(), any(), any(Long.class))).thenReturn(
+                new MessageResponse("voice-conversation", "turn-1", "V2 response", "LOOKUP_RESULT", null, "GEMINI", false, List.of())
+        );
+        VoiceOrchestratorService service = new VoiceOrchestratorService(
+                List.of(new MockVoiceSpeechToTextProvider()),
+                List.of(new MockVoiceTextToSpeechProvider()),
+                legacyAi,
+                mock(AuditEventPublisher.class),
+                properties,
+                new ObjectMapper(),
+                mock(FasterWhisperSpeechToTextProvider.class),
+                mock(PiperTextToSpeechProvider.class),
+                connector
+        );
+
+        VoiceTestResponse response = service.processBufferedAudio(
+                "voice".getBytes(), "audio/webm", "voice.webm", null, "en-IN", null, null,
+                "voice-conversation", "client-turn-1", 1L
+        );
+
+        assertThat(response.assistantText()).isEqualTo("V2 response");
+        verify(connector).submitFinalTranscript("voice-conversation", "Hello, I want to book an appointment.", "en-in", "client-turn-1", 1L);
+        verifyNoInteractions(legacyAi);
+    }
 
     private ClinicTimeZoneResolver zoneResolver() {
         ClinicTimeZoneResolver resolver = mock(ClinicTimeZoneResolver.class);

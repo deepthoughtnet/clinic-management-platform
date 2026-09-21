@@ -187,10 +187,8 @@ public class GroqLlmClient implements LlmClient {
 
             ParsedGroqResponse parsed = extractResponse(responseBody);
             long latencyMs = System.currentTimeMillis() - startedAt;
-            log.info("[LLM-RAW] provider=GROQ rawChars={} first300Chars=\"{}\" last300Chars=\"{}\" finishReason={} candidateCount={} safetyBlocked={}",
+            log.info("LLM_RESPONSE_METADATA provider=GROQ rawChars={} finishReason={} candidateCount={} safetyBlocked={}",
                     responseBody == null ? 0 : responseBody.length(),
-                    previewStart(responseBody),
-                    previewEnd(responseBody),
                     parsed.finishReason(),
                     parsed.text() == null || parsed.text().isBlank() ? 0 : 1,
                     false);
@@ -203,13 +201,8 @@ public class GroqLlmClient implements LlmClient {
                     formatTokenUsage(parsed.tokenUsage())
             );
 
-            if (log.isDebugEnabled()) {
-                log.debug("Groq preview. requestId={}, text=\"{}\"", requestId, safePreview(parsed.text()));
-            }
-            log.info("[NORMALIZED] provider=GROQ normalizedChars={} first300Chars=\"{}\" last300Chars=\"{}\" finishReason={} tokenUsage={}",
+            log.info("LLM_NORMALIZED_METADATA provider=GROQ normalizedChars={} finishReason={} tokenUsage={}",
                     parsed.text() == null ? 0 : parsed.text().length(),
-                    previewStart(parsed.text()),
-                    previewEnd(parsed.text()),
                     parsed.finishReason(),
                     formatTokenUsage(parsed.tokenUsage()));
             if ("length".equalsIgnoreCase(parsed.finishReason())) {
@@ -242,12 +235,10 @@ public class GroqLlmClient implements LlmClient {
                     "UNKNOWN");
         } catch (RestClientResponseException ex) {
             int status = ex.getRawStatusCode();
-            String bodyPreview = sanitizePreview(ex.getResponseBodyAsString(), 300);
-            log.error("Groq request failed. requestId={}, provider=GROQ, model={}, endpointPath=/chat/completions, status={}, bodyPreview=\"{}\"",
+            log.error("Groq request failed. requestId={}, provider=GROQ, model={}, endpointPath=/chat/completions, status={}",
                     requestId,
                     model,
-                    status,
-                    bodyPreview);
+                    status);
             throw mapGroqException(status, ex);
         } catch (ResourceAccessException ex) {
             if (isTimeout(ex)) {
@@ -262,8 +253,8 @@ public class GroqLlmClient implements LlmClient {
                         ex
                 );
             }
-            log.error("Groq network failure. requestId={}, provider=GROQ, model={}, endpointPath=/chat/completions, message={}",
-                    requestId, model, sanitize(ex.getMessage()));
+            log.error("Groq network failure. requestId={}, provider=GROQ, model={}, endpointPath=/chat/completions, exceptionClass={}",
+                    requestId, model, ex.getClass().getSimpleName());
             throw AiProviderException.retryable(
                     "Groq network failure.",
                     null,
@@ -275,10 +266,10 @@ public class GroqLlmClient implements LlmClient {
         } catch (AiProviderException ex) {
             throw ex;
         } catch (Exception ex) {
-            log.error("Groq unexpected failure. requestId={}, provider=GROQ, model={}, endpointPath=/chat/completions, message={}",
+            log.error("Groq unexpected failure. requestId={}, provider=GROQ, model={}, endpointPath=/chat/completions, exceptionClass={}",
                     requestId,
                     model,
-                    sanitize(ex.getMessage()));
+                    ex.getClass().getSimpleName());
             throw AiProviderException.retryable(
                     "Groq provider failed unexpectedly.",
                     null,
@@ -343,13 +334,12 @@ public class GroqLlmClient implements LlmClient {
             log.error(diagnostic);
             return AvailabilitySnapshot.unavailable(diagnostic);
         } catch (RestClientResponseException ex) {
-            String bodyPreview = sanitizePreview(ex.getResponseBodyAsString(), 300);
             String diagnostic = switch (ex.getRawStatusCode()) {
                 case 401, 403 -> "Groq model validation failed. provider=GROQ model=" + model + " endpointPath=/models reason=authorization_failed status=" + ex.getRawStatusCode();
                 case 404 -> "Groq model validation failed. provider=GROQ model=" + model + " endpointPath=/models reason=model_not_found status=404";
                 default -> "Groq model validation failed. provider=GROQ model=" + model + " endpointPath=/models status=" + ex.getRawStatusCode();
             };
-            log.error("{} bodyPreview=\"{}\"", diagnostic, bodyPreview);
+            log.error("{}", diagnostic);
             return AvailabilitySnapshot.unavailable(diagnostic);
         } catch (Exception ex) {
             String diagnostic = "Groq model validation failed. provider=GROQ model=" + model + " endpointPath=/models reason=" + sanitize(ex.getMessage());
@@ -398,7 +388,8 @@ public class GroqLlmClient implements LlmClient {
             String finishReason = firstChoice.path("finish_reason").asText(null);
             return new ParsedGroqResponse(content, responseBody.length(), finishReason, tokenUsage(root));
         } catch (Exception ex) {
-            log.error("Groq parsing failure. message={}, responsePreview=\"{}\"", sanitize(ex.getMessage()), sanitizePreview(responseBody, 300));
+            log.error("Groq parsing failure. exceptionClass={}, responseLengthBucket={}",
+                    ex.getClass().getSimpleName(), lengthBucket(responseBody));
             throw AiProviderException.retryable(
                     "Failed to parse Groq response",
                     null,
@@ -469,6 +460,15 @@ public class GroqLlmClient implements LlmClient {
             return "";
         }
         return value.replaceAll("[\\r\\n\\t]+", " ").trim();
+    }
+
+    private String lengthBucket(String value) {
+        int length = value == null ? 0 : value.length();
+        if (length == 0) return "0";
+        if (length < 256) return "1-255";
+        if (length < 1024) return "256-1023";
+        if (length < 4096) return "1024-4095";
+        return "4096+";
     }
 
     private String sanitizePreview(String value, int maxLength) {

@@ -60,14 +60,14 @@ public class ModuleBusinessEventPublisherService implements ModuleBusinessEventP
             }
             metrics.published(event.eventType());
             log.info(
-                    "module_event_published eventId={} eventType={} eventVersion={} tenantId={} sourceModule={} aggregateType={} aggregateId={} correlationId={} causationId={} listenerCount={}",
+                    "module_event_published eventId={} eventType={} eventVersion={} tenantPresent={} sourceModule={} aggregateType={} aggregateIdPresent={} correlationId={} causationId={} listenerCount={}",
                     event.eventId(),
                     event.eventType(),
                     event.eventVersion(),
-                    event.tenantId(),
+                    event.tenantId() != null,
                     event.sourceModule(),
                     event.aggregateType(),
-                    event.aggregateId(),
+                    event.aggregateId() != null,
                     safe(event.correlationId()),
                     safe(event.causationId()),
                     listeners.size()

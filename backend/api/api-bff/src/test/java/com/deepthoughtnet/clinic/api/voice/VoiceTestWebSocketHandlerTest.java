@@ -42,7 +42,7 @@ class VoiceTestWebSocketHandlerTest {
                 )
         );
         VoiceTestWebSocketHandler handler = new VoiceTestWebSocketHandler(new ObjectMapper(), orchestrator, new VoiceTestProperties());
-        SessionFixture fixture = new SessionFixture(TENANT_ID, Set.of("CLINIC_ADMIN"), "session-1");
+        SessionFixture fixture = new SessionFixture(TENANT_ID, Set.of("PLATFORM_ADMIN"), "session-1");
         String audioBase64 = Base64.getEncoder().encodeToString("voice".getBytes(StandardCharsets.UTF_8));
 
         handler.afterConnectionEstablished(fixture.session);
@@ -58,6 +58,45 @@ class VoiceTestWebSocketHandlerTest {
         assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"turn.complete\""));
         assertThat(fixture.payloads()).noneMatch(payload -> payload.contains("\"type\":\"session.closed\""));
         verify(orchestrator).processBufferedAudio(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void finalizedUtteranceIdentityIsReusedForDuplicateEndAndNewTextTurnGetsNextIdentity() throws Exception {
+        VoiceOrchestratorService orchestrator = mock(VoiceOrchestratorService.class);
+        VoiceTestProperties properties = new VoiceTestProperties();
+        properties.setAivaV2Enabled(true);
+        VoiceTestResponse response = new VoiceTestResponse(
+                "req-voice-v2",
+                "show my appointments",
+                "Here are your appointments.",
+                null,
+                null,
+                new VoiceProviderTrace("mock", "GEMINI", "mock"),
+                List.of()
+        );
+        when(orchestrator.processBufferedAudio(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(response, response);
+        VoiceTestWebSocketHandler handler = new VoiceTestWebSocketHandler(new ObjectMapper(), orchestrator, properties);
+        SessionFixture fixture = new SessionFixture(TENANT_ID, Set.of("PLATFORM_ADMIN"), "session-v2-identity");
+        String audioBase64 = Base64.getEncoder().encodeToString("voice".getBytes(StandardCharsets.UTF_8));
+
+        handler.afterConnectionEstablished(fixture.session);
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"session.start\",\"language\":\"en-IN\"}"));
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.start\",\"voiceUtteranceId\":\"u1\"}"));
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.chunk\",\"voiceUtteranceId\":\"u1\",\"sequence\":1,\"totalChunks\":1,\"audioBase64Chunk\":\"" + audioBase64 + "\"}"));
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.end\",\"voiceUtteranceId\":\"u1\",\"totalChunks\":1}"));
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.end\",\"voiceUtteranceId\":\"u1\",\"totalChunks\":1}"));
+
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.start\",\"voiceUtteranceId\":\"u2\"}"));
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.chunk\",\"voiceUtteranceId\":\"u2\",\"sequence\":1,\"totalChunks\":1,\"audioBase64Chunk\":\"" + audioBase64 + "\"}"));
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.end\",\"voiceUtteranceId\":\"u2\",\"totalChunks\":1}"));
+
+        ArgumentCaptor<String> clientTurnId = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<Long> clientTurnSequence = ArgumentCaptor.forClass(Long.class);
+        verify(orchestrator, org.mockito.Mockito.times(2)).processBufferedAudio(
+                any(), any(), any(), any(), any(), any(), any(), any(), clientTurnId.capture(), clientTurnSequence.capture());
+        assertThat(clientTurnId.getAllValues()).containsExactly("voice-u1", "voice-u2");
+        assertThat(clientTurnSequence.getAllValues()).containsExactly(1L, 2L);
     }
 
     @Test
@@ -85,7 +124,7 @@ class VoiceTestWebSocketHandlerTest {
                         )
                 );
         VoiceTestWebSocketHandler handler = new VoiceTestWebSocketHandler(new ObjectMapper(), orchestrator, new VoiceTestProperties());
-        SessionFixture fixture = new SessionFixture(TENANT_ID, Set.of("CLINIC_ADMIN"), "session-10");
+        SessionFixture fixture = new SessionFixture(TENANT_ID, Set.of("PLATFORM_ADMIN"), "session-10");
         String audioBase64 = Base64.getEncoder().encodeToString("voice".getBytes(StandardCharsets.UTF_8));
 
         handler.afterConnectionEstablished(fixture.session);
@@ -112,7 +151,7 @@ class VoiceTestWebSocketHandlerTest {
     @Test
     void missingChunkReturnsClearError() throws Exception {
         VoiceTestWebSocketHandler handler = new VoiceTestWebSocketHandler(new ObjectMapper(), mock(VoiceOrchestratorService.class), new VoiceTestProperties());
-        SessionFixture fixture = new SessionFixture(TENANT_ID, Set.of("CLINIC_ADMIN"), "session-4");
+        SessionFixture fixture = new SessionFixture(TENANT_ID, Set.of("PLATFORM_ADMIN"), "session-4");
         String audioBase64 = Base64.getEncoder().encodeToString("voice".getBytes(StandardCharsets.UTF_8));
 
         handler.afterConnectionEstablished(fixture.session);
@@ -126,7 +165,7 @@ class VoiceTestWebSocketHandlerTest {
     @Test
     void oversizedChunkReturnsClearError() throws Exception {
         VoiceTestWebSocketHandler handler = new VoiceTestWebSocketHandler(new ObjectMapper(), mock(VoiceOrchestratorService.class), new VoiceTestProperties());
-        SessionFixture fixture = new SessionFixture(TENANT_ID, Set.of("CLINIC_ADMIN"), "session-7");
+        SessionFixture fixture = new SessionFixture(TENANT_ID, Set.of("PLATFORM_ADMIN"), "session-7");
         String oversizedChunk = "A".repeat((32 * 1024) + 1);
 
         handler.afterConnectionEstablished(fixture.session);
@@ -151,7 +190,7 @@ class VoiceTestWebSocketHandlerTest {
                 )
         );
         VoiceTestWebSocketHandler handler = new VoiceTestWebSocketHandler(new ObjectMapper(), orchestrator, new VoiceTestProperties());
-        SessionFixture fixture = new SessionFixture(TENANT_ID, Set.of("CLINIC_ADMIN"), "session-5");
+        SessionFixture fixture = new SessionFixture(TENANT_ID, Set.of("PLATFORM_ADMIN"), "session-5");
 
         String fullBase64 = Base64.getEncoder().encodeToString("voice".getBytes(StandardCharsets.UTF_8));
         String partOne = fullBase64.substring(0, fullBase64.length() / 2);
@@ -182,7 +221,7 @@ class VoiceTestWebSocketHandlerTest {
                 )
         );
         VoiceTestWebSocketHandler handler = new VoiceTestWebSocketHandler(new ObjectMapper(), orchestrator, new VoiceTestProperties());
-        SessionFixture fixture = new SessionFixture(TENANT_ID, Set.of("CLINIC_ADMIN"), "session-8");
+        SessionFixture fixture = new SessionFixture(TENANT_ID, Set.of("PLATFORM_ADMIN"), "session-8");
         String audioBase64 = Base64.getEncoder().encodeToString("voice".getBytes(StandardCharsets.UTF_8));
 
         handler.afterConnectionEstablished(fixture.session);
@@ -197,7 +236,7 @@ class VoiceTestWebSocketHandlerTest {
     @Test
     void invalidBase64ReturnsClearError() throws Exception {
         VoiceTestWebSocketHandler handler = new VoiceTestWebSocketHandler(new ObjectMapper(), mock(VoiceOrchestratorService.class), new VoiceTestProperties());
-        SessionFixture fixture = new SessionFixture(TENANT_ID, Set.of("CLINIC_ADMIN"), "session-9");
+        SessionFixture fixture = new SessionFixture(TENANT_ID, Set.of("PLATFORM_ADMIN"), "session-9");
 
         handler.afterConnectionEstablished(fixture.session);
         handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"session.start\"}"));
@@ -223,7 +262,7 @@ class VoiceTestWebSocketHandlerTest {
                 )
         );
         VoiceTestWebSocketHandler handler = new VoiceTestWebSocketHandler(new ObjectMapper(), orchestrator, new VoiceTestProperties());
-        SessionFixture fixture = new SessionFixture(TENANT_ID, Set.of("CLINIC_ADMIN"), "session-6");
+        SessionFixture fixture = new SessionFixture(TENANT_ID, Set.of("PLATFORM_ADMIN"), "session-6");
         String audioBase64 = Base64.getEncoder().encodeToString("voice".getBytes(StandardCharsets.UTF_8));
 
         handler.afterConnectionEstablished(fixture.session);
@@ -240,7 +279,7 @@ class VoiceTestWebSocketHandlerTest {
     @Test
     void heartbeatReturnsAck() throws Exception {
         VoiceTestWebSocketHandler handler = new VoiceTestWebSocketHandler(new ObjectMapper(), mock(VoiceOrchestratorService.class), new VoiceTestProperties());
-        SessionFixture fixture = new SessionFixture(TENANT_ID, Set.of("CLINIC_ADMIN"), "session-heartbeat");
+        SessionFixture fixture = new SessionFixture(TENANT_ID, Set.of("PLATFORM_ADMIN"), "session-heartbeat");
 
         handler.afterConnectionEstablished(fixture.session);
         handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"session.start\"}"));
@@ -266,7 +305,7 @@ class VoiceTestWebSocketHandlerTest {
         VoiceTestProperties properties = new VoiceTestProperties();
         properties.getLive().setMaxTurnsPerSession(1);
         VoiceTestWebSocketHandler handler = new VoiceTestWebSocketHandler(new ObjectMapper(), orchestrator, properties);
-        SessionFixture fixture = new SessionFixture(TENANT_ID, Set.of("CLINIC_ADMIN"), "session-max-turns");
+        SessionFixture fixture = new SessionFixture(TENANT_ID, Set.of("PLATFORM_ADMIN"), "session-max-turns");
         String audioBase64 = Base64.getEncoder().encodeToString("voice".getBytes(StandardCharsets.UTF_8));
 
         handler.afterConnectionEstablished(fixture.session);
@@ -326,7 +365,7 @@ class VoiceTestWebSocketHandlerTest {
                 )
         );
         VoiceTestWebSocketHandler handler = new VoiceTestWebSocketHandler(new ObjectMapper(), orchestrator, new VoiceTestProperties());
-        SessionFixture fixture = new SessionFixture(TENANT_ID, Set.of("CLINIC_ADMIN"), "session-workflow");
+        SessionFixture fixture = new SessionFixture(TENANT_ID, Set.of("PLATFORM_ADMIN"), "session-workflow");
         String audioBase64 = Base64.getEncoder().encodeToString("voice".getBytes(StandardCharsets.UTF_8));
 
         handler.afterConnectionEstablished(fixture.session);
@@ -350,9 +389,9 @@ class VoiceTestWebSocketHandlerTest {
     }
 
     @Test
-    void receptionistIsAuthorizedOnConnect() throws Exception {
+    void platformAdminIsAuthorizedOnConnect() throws Exception {
         VoiceTestWebSocketHandler handler = new VoiceTestWebSocketHandler(new ObjectMapper(), mock(VoiceOrchestratorService.class), new VoiceTestProperties());
-        SessionFixture fixture = new SessionFixture(TENANT_ID, Set.of("RECEPTIONIST"), "session-receptionist");
+        SessionFixture fixture = new SessionFixture(TENANT_ID, Set.of("PLATFORM_ADMIN"), "session-platform-admin");
 
         handler.afterConnectionEstablished(fixture.session);
 
@@ -361,14 +400,13 @@ class VoiceTestWebSocketHandlerTest {
     }
 
     @Test
-    void tenantAdminIsAuthorizedOnConnect() throws Exception {
+    void tenantAdminWithoutVoicePermissionIsRejectedOnConnect() throws Exception {
         VoiceTestWebSocketHandler handler = new VoiceTestWebSocketHandler(new ObjectMapper(), mock(VoiceOrchestratorService.class), new VoiceTestProperties());
         SessionFixture fixture = new SessionFixture(TENANT_ID, Set.of("TENANT_ADMIN"), "session-tenant-admin");
 
         handler.afterConnectionEstablished(fixture.session);
 
-        verify(fixture.session, never()).close(any(CloseStatus.class));
-        assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"session.connected\""));
+        verify(fixture.session).close(any(CloseStatus.class));
     }
 
     @Test

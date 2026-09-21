@@ -12,6 +12,18 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class AivaResponseRendererTest {
+
+    @Test
+    void rendersLocalizedConversationClosing() {
+        var response = new AivaV2Models.MessageResponse("c", "t", "", "CONVERSATION_CLOSED", null,
+                "SERVER", false, java.util.List.of(), AivaStructuredResponse.of(
+                        AivaStructuredResponse.ResponseType.CONVERSATION_CLOSED,
+                        new AivaStructuredResponse.EmptyPayload("CONVERSATION_CLOSED"), java.util.List.of()));
+        assertThat(new AivaResponseRenderer().render(response, "en", ResponseStyle.STANDARD).assistantMessage())
+                .isEqualTo("Goodbye. Take care.");
+        assertThat(new AivaResponseRenderer().render(response, "hi", ResponseStyle.STANDARD).assistantMessage())
+                .contains("बातचीत");
+    }
     private final AivaResponseRenderer renderer = new AivaResponseRenderer();
 
     @Test
@@ -122,6 +134,8 @@ class AivaResponseRendererTest {
                 AivaStructuredResponse.of(ResponseType.PROVIDER_NOT_FOUND, new ProviderNotFoundPayload("Dr Unknown", null), List.of()),
                 AivaStructuredResponse.of(ResponseType.NEED_DATE, new NeedDatePayload("Doc Akshu Kumar"), List.of()),
                 AivaStructuredResponse.of(ResponseType.AVAILABLE_SLOTS, availability, List.of()),
+                AivaStructuredResponse.of(ResponseType.NO_FUTURE_AVAILABILITY,
+                        new EmptyPayload("NO_FUTURE_AVAILABILITY"), List.of()),
                 AivaStructuredResponse.of(ResponseType.RESCHEDULE_AVAILABLE_SLOTS, availability, List.of()),
                 AivaStructuredResponse.of(ResponseType.NO_MORE_SLOTS, new NoMoreSlotsPayload("Doc Akshu Kumar", date, null), List.of()),
                 AivaStructuredResponse.of(ResponseType.RESCHEDULE_NO_MORE_SLOTS, new NoMoreSlotsPayload("Doc Akshu Kumar", date, null), List.of()),
@@ -146,6 +160,13 @@ class AivaResponseRendererTest {
                 AivaStructuredResponse.of(ResponseType.FAILURE, new FailurePayload("SAFE_FAILURE"), List.of()),
                 AivaStructuredResponse.of(ResponseType.CLARIFICATION, new ClarificationPayload("MISSING_DATE", List.of("date")), List.of()),
                 AivaStructuredResponse.of(ResponseType.CALL_TO_BOOK, new CallToBookPayload("Doc Akshu Kumar", "Clinic", null), List.of())
+                ,AivaStructuredResponse.of(ResponseType.BOOKING_ABANDONED, new BookingStatePayload("ABANDONED"), List.of())
+                ,AivaStructuredResponse.of(ResponseType.BOOKING_SUSPENDED, new BookingStatePayload("SUSPENDED"), List.of())
+                ,AivaStructuredResponse.of(ResponseType.NO_SUSPENDED_BOOKING, new BookingStatePayload("NONE"), List.of())
+                ,AivaStructuredResponse.of(ResponseType.CONTEXTUAL_INFORMATION,
+                        new ContextualInformationPayload("AVAILABILITY_DATE", date, null), List.of())
+                ,AivaStructuredResponse.of(ResponseType.CONVERSATION_CLOSED,
+                        new EmptyPayload("CONVERSATION_CLOSED"), List.of())
         );
 
         for (AivaStructuredResponse structured : responses) {

@@ -16,7 +16,10 @@ public final class VoiceTextNormalizer {
     private static final Pattern ISO_DATE_PATTERN = Pattern.compile("\\b(\\d{4})-(\\d{2})-(\\d{2})\\b");
     private static final Pattern DMY_DATE_PATTERN = Pattern.compile("\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+([A-Za-z]{3,9})\\s+(\\d{4})\\b");
     private static final Pattern MDY_DATE_PATTERN = Pattern.compile("\\b([A-Za-z]{3,9})\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,)?\\s+(\\d{4})\\b");
-    private static final Pattern TIME_PATTERN = Pattern.compile("\\b(\\d{1,2}):(\\d{2})\\b");
+    private static final Pattern HINDI_DMY_DATE_PATTERN = Pattern.compile(
+            "(?<!\\d)(\\d{1,2})\\s+(जनवरी|फ़रवरी|फरवरी|मार्च|अप्रैल|मई|जून|जुलाई|अगस्त|सितंबर|सितम्बर|अक्टूबर|नवंबर|नवम्बर|दिसंबर|दिसम्बर)\\s+(\\d{4})(?!\\d)");
+    private static final Pattern TIME_PATTERN = Pattern.compile("\\b(\\d{1,2}):(\\d{2})\\b(?:\\s+बजे)?");
+    private static final Pattern YEAR_PATTERN = Pattern.compile("(?<![\\d-])(19\\d{2}|20\\d{2})(?![\\d-])");
     private static final Pattern LATIN_WORD_PATTERN = Pattern.compile("\\b[A-Za-z][A-Za-z.'-]*\\b");
     private static final Pattern APPOINTMENT_LINE_PATTERN = Pattern.compile(
             "(?i)^(\\s*)([A-Za-z][A-Za-z.'-]*(?:\\s+[A-Za-z][A-Za-z.'-]*){1,4})(\\s*,\\s*(?:\\d{4}-\\d{2}-\\d{2}|\\d{1,2}\\s+[A-Za-z]{3,9}\\s+\\d{4})\\s*,\\s*\\d{1,2}:\\d{2}\\b.*)$"
@@ -75,6 +78,42 @@ public final class VoiceTextNormalizer {
             return text;
         }
         return normalizeHindiVoiceText(text);
+    }
+
+    /**
+     * Converts only temporal numeric values for Hindi speech. It deliberately
+     * leaves wording, names, and the visible structured response unchanged.
+     */
+    public String normalizeTemporalValuesForVoice(String text, String language) {
+        if (!isHindiLanguage(language) || !StringUtils.hasText(text)) {
+            return text;
+        }
+        String normalized = replaceMatches(text, ISO_DATE_PATTERN, match -> spokenDate(
+                Integer.parseInt(match.group(1)),
+                Integer.parseInt(match.group(2)),
+                Integer.parseInt(match.group(3))
+        ));
+        normalized = replaceMatches(normalized, DMY_DATE_PATTERN, match -> spokenDate(
+                Integer.parseInt(match.group(3)),
+                monthFromName(match.group(2)),
+                Integer.parseInt(match.group(1))
+        ));
+        normalized = replaceMatches(normalized, MDY_DATE_PATTERN, match -> spokenDate(
+                Integer.parseInt(match.group(3)),
+                monthFromName(match.group(1)),
+                Integer.parseInt(match.group(2))
+        ));
+        normalized = replaceMatches(normalized, HINDI_DMY_DATE_PATTERN, match -> spokenDate(
+                Integer.parseInt(match.group(3)),
+                monthFromHindiName(match.group(2)),
+                Integer.parseInt(match.group(1))
+        ));
+        normalized = replaceMatches(normalized, TIME_PATTERN, match -> spokenTime(
+                Integer.parseInt(match.group(1)),
+                Integer.parseInt(match.group(2))
+        ));
+        return replaceMatches(normalized, YEAR_PATTERN,
+                match -> spokenYear(Integer.parseInt(match.group(1))));
     }
 
     public String normalizeHindiVoiceText(String text) {
@@ -459,6 +498,27 @@ public final class VoiceTextNormalizer {
             case "oct", "october" -> 10;
             case "nov", "november" -> 11;
             case "dec", "december" -> 12;
+            default -> 0;
+        };
+    }
+
+    private int monthFromHindiName(String value) {
+        if (!StringUtils.hasText(value)) {
+            return 0;
+        }
+        return switch (value.trim()) {
+            case "जनवरी" -> 1;
+            case "फ़रवरी", "फरवरी" -> 2;
+            case "मार्च" -> 3;
+            case "अप्रैल" -> 4;
+            case "मई" -> 5;
+            case "जून" -> 6;
+            case "जुलाई" -> 7;
+            case "अगस्त" -> 8;
+            case "सितंबर", "सितम्बर" -> 9;
+            case "अक्टूबर" -> 10;
+            case "नवंबर", "नवम्बर" -> 11;
+            case "दिसंबर", "दिसम्बर" -> 12;
             default -> 0;
         };
     }

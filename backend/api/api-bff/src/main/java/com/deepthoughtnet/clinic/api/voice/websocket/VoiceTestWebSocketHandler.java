@@ -92,6 +92,7 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
         String type = root.path("type").asText("");
         switch (type) {
             case "session.start" -> handleSessionStart(session, root);
+            case "audio.start" -> handleAudioStart(session, root);
             case "audio.chunk" -> handleAudioChunk(session, root);
             case "audio.end" -> handleAudioEnd(session, root);
             case "heartbeat" -> handleHeartbeat(session);
@@ -134,6 +135,8 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
         state.turnCount = 0;
         state.history.clear();
         state.audioChunks.clear();
+        state.voiceUtteranceId = null;
+        state.completedTurn = null;
         log.info("voice.session.workflow sessionId={} workflowMode={} language={}",
                 state.sessionId, state.workflowMode.configValue(), state.language);
         sendEvent(session, Map.of(
@@ -143,6 +146,23 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
                 "context", state.context,
                 "workflowMode", state.workflowMode.configValue()
         ));
+    }
+
+    private void handleAudioStart(WebSocketSession session, JsonNode root) throws IOException {
+        SessionState state = requireState(session);
+        if (enforceSessionPolicies(session, state)) {
+            return;
+        }
+        if (state.turnInProgress || !state.audioChunks.isEmpty()) {
+            sendError(session, "A voice utterance is already being captured.");
+            return;
+        }
+        state.touch();
+        state.voiceUtteranceId = requestedUtteranceId(root);
+        if (state.voiceUtteranceId == null) {
+            state.voiceUtteranceId = UUID.randomUUID().toString();
+        }
+        sendEvent(session, Map.of("type", "audio.started", "voiceUtteranceId", state.voiceUtteranceId));
     }
 
     private void handleAudioChunk(WebSocketSession session, JsonNode root) throws IOException {
@@ -183,6 +203,14 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
         }
         if (totalChunks > maxTotalChunks()) {
             sendError(session, "Audio recording exceeds the supported chunk count.");
+            clearAudioBuffer(state);
+            return;
+        }
+        String chunkUtteranceId = requestedUtteranceId(root);
+        if (state.voiceUtteranceId == null) {
+            state.voiceUtteranceId = chunkUtteranceId == null ? UUID.randomUUID().toString() : chunkUtteranceId;
+        } else if (chunkUtteranceId != null && !chunkUtteranceId.equals(state.voiceUtteranceId)) {
+            sendError(session, "Audio chunk utterance identifier did not match the buffered audio.");
             clearAudioBuffer(state);
             return;
         }
@@ -228,13 +256,15 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
         sendEvent(session, Map.of(
                 "type", "audio.chunk.received",
                 "sequence", sequence,
-                "totalChunks", state.expectedTotalChunks > 0 ? state.expectedTotalChunks : state.chunkCount
+                "totalChunks", state.expectedTotalChunks > 0 ? state.expectedTotalChunks : state.chunkCount,
+                "voiceUtteranceId", state.voiceUtteranceId
         ));
         sendEvent(session, Map.of(
                 "type", "turn.audio.received",
                 "sessionId", state.sessionId,
                 "sequence", sequence,
-                "totalChunks", state.expectedTotalChunks > 0 ? state.expectedTotalChunks : state.chunkCount
+                "totalChunks", state.expectedTotalChunks > 0 ? state.expectedTotalChunks : state.chunkCount,
+                "voiceUtteranceId", state.voiceUtteranceId
         ));
     }
 
@@ -244,6 +274,22 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
             return;
         }
         state.touch();
+        String requestedUtteranceId = requestedUtteranceId(root);
+        if (state.audioChunks.isEmpty()) {
+            if (state.completedTurn != null
+                    && state.voiceUtteranceId == null
+                    && (requestedUtteranceId == null
+                    || requestedUtteranceId.equals(state.completedTurn.voiceUtteranceId()))) {
+                replayCompletedTurn(session, state.completedTurn);
+            } else {
+                sendError(session, "No audio chunks were received.");
+            }
+            return;
+        }
+        if (requestedUtteranceId != null && !requestedUtteranceId.equals(state.voiceUtteranceId)) {
+            sendError(session, "Audio end utterance identifier did not match the buffered audio.");
+            return;
+        }
         int declaredTotalChunks = root.path("totalChunks").asInt(state.expectedTotalChunks);
         if (declaredTotalChunks > 0 && state.expectedTotalChunks > 0 && declaredTotalChunks != state.expectedTotalChunks) {
             sendError(session, "Audio end metadata did not match the received chunks.");
@@ -292,6 +338,13 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
             clearAudioBuffer(state);
             return;
         }
+        synchronized (state) {
+            if (state.turnInProgress) {
+                sendError(session, "A voice turn is already being processed.");
+                return;
+            }
+            state.turnInProgress = true;
+        }
         log.info("voice.ws.audio.decode.success sessionId={} bytes={} contentType={} filename={}",
                 state.sessionId,
                 audioBytes.length,
@@ -312,7 +365,6 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
         String subject = String.valueOf(session.getAttributes().getOrDefault("sub", "voice-user"));
         Set<String> roles = castRoles(session.getAttributes().get("roles"));
         int turnIndex = state.turnCount + 1;
-        state.turnInProgress = true;
         Instant turnStartedAt = Instant.now();
         log.info("voice.turn.started sessionId={} turnIndex={} workflowMode={} language={} contentType={} filename={} sizeBytes={}",
                 state.sessionId, turnIndex, state.workflowMode.configValue(), state.language, state.contentType, state.filename, audioBytes.length);
@@ -327,16 +379,30 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
             sendEvent(session, Map.of(
                     "type", "stt.started"
             ));
-            VoiceTestResponse response = voiceOrchestratorService.processBufferedAudio(
-                    audioBytes,
-                    state.contentType == null ? "audio/webm" : state.contentType,
-                    state.filename == null ? "voice-test-stream.webm" : state.filename,
-                    buildConversationContext(state),
-                    state.language,
-                    state.workflowMode.configValue(),
-                    state.workflowSummary
-            );
+            VoiceTestResponse response = properties.isAivaV2Enabled()
+                    ? voiceOrchestratorService.processBufferedAudio(
+                            audioBytes,
+                            state.contentType == null ? "audio/webm" : state.contentType,
+                            state.filename == null ? "voice-test-stream.webm" : state.filename,
+                            buildConversationContext(state),
+                            state.language,
+                            state.workflowMode.configValue(),
+                            state.workflowSummary,
+                            state.conversationId,
+                            "voice-" + state.voiceUtteranceId,
+                            (long) turnIndex
+                    )
+                    : voiceOrchestratorService.processBufferedAudio(
+                            audioBytes,
+                            state.contentType == null ? "audio/webm" : state.contentType,
+                            state.filename == null ? "voice-test-stream.webm" : state.filename,
+                            buildConversationContext(state),
+                            state.language,
+                            state.workflowMode.configValue(),
+                            state.workflowSummary
+                    );
             state.turnCount = turnIndex;
+            state.completedTurn = new CompletedTurn(state.voiceUtteranceId, turnIndex, response);
             state.workflowSummary = response.workflowSummary();
             state.history.add(new TurnHistoryEntry(
                     turnIndex,
@@ -466,6 +532,43 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
         state.base64CharsReceived = 0;
         state.filename = null;
         state.contentType = null;
+        state.voiceUtteranceId = null;
+    }
+
+    private String requestedUtteranceId(JsonNode root) {
+        String value = root.path("voiceUtteranceId").asText(null);
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        if (value.length() > 128) {
+            throw new IllegalArgumentException("Voice utterance identifier is too long.");
+        }
+        return value;
+    }
+
+    private void replayCompletedTurn(WebSocketSession session, CompletedTurn completedTurn) throws IOException {
+        VoiceTestResponse response = completedTurn.response();
+        sendEvent(session, Map.of(
+                "type", "transcript.final",
+                "text", response.transcript() == null ? "" : response.transcript(),
+                "turnIndex", completedTurn.turnIndex()
+        ));
+        Map<String, Object> assistantTextEvent = new LinkedHashMap<>();
+        assistantTextEvent.put("type", "assistant.text");
+        assistantTextEvent.put("text", response.assistantText() == null ? "" : response.assistantText());
+        assistantTextEvent.put("providerTrace", response.providerTrace());
+        assistantTextEvent.put("requestId", response.requestId());
+        assistantTextEvent.put("turnIndex", completedTurn.turnIndex());
+        sendEvent(session, assistantTextEvent);
+        if (response.audioBase64() != null && response.audioContentType() != null) {
+            sendAssistantAudioChunks(session, response, completedTurn.turnIndex());
+        }
+        sendEvent(session, Map.of(
+                "type", "turn.complete",
+                "sessionId", session.getId(),
+                "turnIndex", completedTurn.turnIndex(),
+                "requestId", response.requestId()
+        ));
     }
 
     private void sendError(WebSocketSession session, String message) throws IOException {
@@ -673,6 +776,7 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
 
     static final class SessionState {
         private final String sessionId;
+        private String conversationId;
         private final Map<Integer, String> audioChunks = new LinkedHashMap<>();
         private String language = "auto";
         private String context = "General voice test harness conversation.";
@@ -689,10 +793,13 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
         private boolean closed;
         private boolean turnInProgress;
         private int turnCount;
+        private String voiceUtteranceId;
+        private CompletedTurn completedTurn;
         private final List<TurnHistoryEntry> history = new ArrayList<>();
 
         private SessionState(String sessionId) {
             this.sessionId = sessionId;
+            this.conversationId = "voice-" + sessionId.replaceAll("[^A-Za-z0-9_-]", "-");
         }
 
         private void touch() {
@@ -704,6 +811,9 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
             this.lastHeartbeatAt = now;
             this.lastActivityAt = now;
         }
+    }
+
+    private record CompletedTurn(String voiceUtteranceId, int turnIndex, VoiceTestResponse response) {
     }
 
     private record TurnHistoryEntry(int turnIndex, String userTranscript, String assistantReply, OffsetDateTime timestamp) {

@@ -67,6 +67,8 @@ Behavior:
 - approval must map to an explicit tenant and patient identity
 - direct patient IDs must not be accepted from the request form
 - duplicate requests must be rejected with a business-readable response
+- approved accounts retain approval when a temporary code expires; an explicit,
+  clinic-context-bound code reissue may replace the expired or consumed code
 - audit must record request / approve / reject / activate / revoke events
 - existing patient portal session token format should be reused
 

@@ -36,7 +36,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.ThreadLocalRandom;
+import java.security.SecureRandom;
 import java.util.stream.Collectors;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -48,6 +48,7 @@ public class PatientPortalAccessRequestService {
     private static final String ENTITY_TYPE = "PATIENT_PORTAL_ACCESS_REQUEST";
     private static final String ACCESS_CODE_SUBJECT_PREFIX = "patientportal-access";
     private static final Duration ACCESS_CODE_TTL = Duration.ofDays(7);
+    private static final SecureRandom ACCESS_CODE_RANDOM = new SecureRandom();
 
     private final PatientPortalAccessRequestRepository requestRepository;
     private final TenantRepository tenantRepository;
@@ -108,6 +109,41 @@ public class PatientPortalAccessRequestService {
         PatientPortalAccessRequestEntity saved = requestRepository.save(entity);
         recordAudit(tenantId, saved.getId(), "PATIENT_ACCESS_REQUESTED", null, "Patient access requested", detailsJson(saved));
         return toRecord(saved, tenant, null);
+    }
+
+    @Transactional
+    public PatientPortalAccessRequestRecord reissueAccessCode(String mobile, PatientPortalAccessContext context) {
+        String normalizedMobile = normalizeRequiredPhone(mobile);
+        TenantEntity tenant = resolveTenant(context);
+        if (tenant == null) {
+            throw new IllegalArgumentException("Clinic context could not be resolved");
+        }
+        PatientPortalAccessRequestEntity entity = requestRepository
+                .findTopByTenantIdAndMobileNormalizedOrderByCreatedAtDesc(tenant.getId(), normalizedMobile)
+                .orElseThrow(() -> new PatientPortalAccessRequestConflictException(
+                        "No approved access request was found for this account."));
+        if (entity.getStatus() == PatientPortalAccessRequestStatus.REJECTED
+                || entity.getStatus() == PatientPortalAccessRequestStatus.REVOKED
+                || (entity.getStatus() != PatientPortalAccessRequestStatus.APPROVED
+                && entity.getStatus() != PatientPortalAccessRequestStatus.ACTIVE)) {
+            throw new PatientPortalAccessRequestConflictException("This account is not eligible for access-code recovery.");
+        }
+        if (entity.getLinkedPatientId() == null) {
+            throw new PatientPortalAccessRequestConflictException(
+                    "This approved access request has not been linked to a patient yet.");
+        }
+        patientRepository.findByTenantIdAndId(tenant.getId(), entity.getLinkedPatientId())
+                .filter(PatientEntity::isActive)
+                .orElseThrow(() -> new PatientPortalAccessRequestConflictException(
+                        "This approved access request has not been linked to an active patient yet."));
+
+        String accessCode = generateAccessCode();
+        OffsetDateTime now = OffsetDateTime.now();
+        entity.attachAccessCode(passwordEncoder.encode(accessCode), now, now.plus(ACCESS_CODE_TTL));
+        requestRepository.save(entity);
+        recordAudit(tenant.getId(), entity.getId(), "PATIENT_ACCESS_CODE_REISSUED", null,
+                "Patient access code reissued", detailsJson(entity));
+        return toRecord(entity, tenant, accessCode);
     }
 
     @Transactional(readOnly = true)
@@ -222,7 +258,7 @@ public class PatientPortalAccessRequestService {
             throw new PatientPortalAccessRequestConflictException("This access request is not currently active.");
         }
         if (entity.getAccessCodeHash() == null || entity.getAccessCodeExpiresAt() == null || entity.getAccessCodeExpiresAt().isBefore(OffsetDateTime.now())) {
-            throw new PatientPortalAccessRequestConflictException("This access code has expired. Please request a new approval.");
+            throw new PatientPortalAccessRequestConflictException("This access code has expired. Request a new access code.");
         }
         if (!passwordEncoder.matches(normalizeRequired(accessCode, "Access code is required", 64), entity.getAccessCodeHash())) {
             throw new PatientPortalAccessRequestConflictException("The access code is invalid.");
@@ -617,7 +653,7 @@ public class PatientPortalAccessRequestService {
     }
 
     private String generateAccessCode() {
-        int code = ThreadLocalRandom.current().nextInt(10_000_000, 100_000_000);
+        int code = ACCESS_CODE_RANDOM.nextInt(90_000_000) + 10_000_000;
         return String.valueOf(code);
     }
 

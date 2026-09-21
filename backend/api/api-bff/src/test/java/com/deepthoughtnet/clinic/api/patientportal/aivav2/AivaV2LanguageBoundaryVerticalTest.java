@@ -161,11 +161,11 @@ class AivaV2LanguageBoundaryVerticalTest {
 
         String[][] conversations = {
                 {"en", "I want to book an appointment with Dr Akshu", "24 September", "show evening slots",
-                        "show more slots", "19:00 works", "no, show me other slots", "20:00 works", "yes"},
+                        "show more slots", "19:30 works", "no, show me other slots", "21:00 works", "yes"},
                 {"hi", "Mujhe Dr Akshu ke saath appointment book karni hai", "24 September", "shaam ki slots dikhao",
-                        "aur slots dikhao", "19:00 wali theek hai", "nahi, dusri slots dikhao", "20:00 wali theek hai", "haan"},
+                        "aur slots dikhao", "19:30 wali theek hai", "nahi, dusri slots dikhao", "21:00 wali theek hai", "haan"},
                 {"hi", "मुझे डॉ. अक्षु के साथ अपॉइंटमेंट बुक करनी है।", "24 सितंबर", "शाम की स्लॉट्स दिखाओ।",
-                        "और स्लॉट्स दिखाओ।", "19:00 वाली ठीक है।", "नहीं, दूसरी स्लॉट्स दिखाओ।", "20:00 वाली ठीक है।", "हाँ।"}
+                        "और स्लॉट्स दिखाओ।", "19:30 वाली ठीक है।", "नहीं, दूसरी स्लॉट्स दिखाओ।", "21:00 वाली ठीक है।", "हाँ।"}
         };
         int bookings = 0;
         for (String[] flow : conversations) {
@@ -187,18 +187,18 @@ class AivaV2LanguageBoundaryVerticalTest {
             response = service.message(new MessageRequest(conversationId, flow[5], flow[0]));
             assertThat(response.structuredResponse().type()).isEqualTo(AivaStructuredResponse.ResponseType.BOOKING_CONFIRMATION);
             assertRenderedStyle(response, flow);
-            assertThat(response.state().exactTime()).isEqualTo(LocalTime.of(19, 0));
+            assertThat(response.state().exactTime()).isEqualTo(LocalTime.of(19, 30));
             response = service.message(new MessageRequest(conversationId, flow[6], flow[0]));
             assertThat(response.structuredResponse().type()).isEqualTo(AivaStructuredResponse.ResponseType.AVAILABLE_SLOTS);
             assertRenderedStyle(response, flow);
             response = service.message(new MessageRequest(conversationId, flow[7], flow[0]));
             assertThat(response.structuredResponse().type()).isEqualTo(AivaStructuredResponse.ResponseType.BOOKING_CONFIRMATION);
             assertRenderedStyle(response, flow);
-            assertThat(response.state().exactTime()).isEqualTo(LocalTime.of(20, 0));
+            assertThat(response.state().exactTime()).isEqualTo(LocalTime.of(21, 0));
             response = service.message(new MessageRequest(conversationId, flow[8], flow[0]));
             assertThat(response.structuredResponse().type()).isEqualTo(AivaStructuredResponse.ResponseType.BOOKING_SUCCESS);
             assertRenderedStyle(response, flow);
-            assertThat(response.state().appointmentReference()).isEqualTo("APT-STAGE3");
+            assertThat(response.state()).isNull();
             if ("en".equals(flow[0])) assertThat(response.assistantMessage()).isEqualTo("Your appointment is booked.");
             if ("hi".equals(flow[0]) && flow[1].startsWith("Mujhe")) assertThat(response.assistantMessage()).isEqualTo("Aapki appointment book ho gayi hai.");
             if (flow[1].startsWith("मुझे")) assertThat(response.assistantMessage()).isEqualTo("आपकी अपॉइंटमेंट बुक हो गई है।");
@@ -661,9 +661,9 @@ class AivaV2LanguageBoundaryVerticalTest {
         LocalDate sourceDate = LocalDate.of(2026, 9, 24);
         LocalDate targetDate = LocalDate.of(2026, 9, 25);
         String[][] flows = {
-                {"en", "Reschedule my appointment with Dr Akshu on 24 September", "25 September", "evening", "show more slots", "19:00 works", "no", "20:00 works", "yes"},
-                {"hi", "Mujhe Dr Akshu ke saath 24 September ki appointment reschedule karni hai", "25 September", "shaam", "aur slots dikhao", "19:00 wali theek hai", "nahi", "20:00 wali theek hai", "haan"},
-                {"hi", "डॉ. अक्षु के साथ मेरी 24 सितंबर की अपॉइंटमेंट फिर से तय करें।", "25 सितंबर", "शाम", "और स्लॉट्स दिखाओ।", "19:00 वाली ठीक है।", "नहीं", "20:00 वाली ठीक है।", "हाँ।"}
+                {"en", "Reschedule my appointment with Dr Akshu on 24 September", "25 September", "evening", "show more slots", "20:00 works", "no", "21:00 works", "yes"},
+                {"hi", "Mujhe Dr Akshu ke saath 24 September ki appointment reschedule karni hai", "25 September", "shaam", "aur slots dikhao", "20:00 wali theek hai", "nahi", "21:00 wali theek hai", "haan"},
+                {"hi", "डॉ. अक्षु के साथ मेरी 24 सितंबर की अपॉइंटमेंट फिर से तय करें।", "25 सितंबर", "शाम", "और स्लॉट्स दिखाओ।", "20:00 वाली ठीक है।", "नहीं", "21:00 वाली ठीक है।", "हाँ।"}
         };
         for (String[] flow : flows) {
             PatientPortalService fixturePortal = mock(PatientPortalService.class);
@@ -722,14 +722,14 @@ class AivaV2LanguageBoundaryVerticalTest {
             var confirmation = (AivaStructuredResponse.RescheduleConfirmationPayload) response.structuredResponse().payload();
             assertThat(confirmation.originalAppointment().appointmentReference()).isEqualTo(sourceId.toString());
             assertThat(confirmation.targetDate()).isEqualTo(targetDate);
-            assertThat(confirmation.targetTime()).isEqualTo(LocalTime.of(20, 0));
+            assertThat(confirmation.targetTime()).isEqualTo(LocalTime.of(21, 0));
             response = service.message(new MessageRequest(conversationId, flow[8], flow[0]));
             assertStructuredResponseRendersInAllStyles(response);
             assertThat(response.structuredResponse().type()).isEqualTo(AivaStructuredResponse.ResponseType.RESCHEDULE_SUCCESS);
             var success = (AivaStructuredResponse.RescheduleSuccessPayload) response.structuredResponse().payload();
             assertThat(success.oldDate()).isEqualTo(sourceDate);
             assertThat(success.newDate()).isEqualTo(targetDate);
-            assertThat(success.newTime()).isEqualTo(LocalTime.of(20, 0));
+            assertThat(success.newTime()).isEqualTo(LocalTime.of(21, 0));
             assertThat(response.assistantMessage()).isNotBlank();
             org.mockito.Mockito.verify(fixturePortal, org.mockito.Mockito.times(1))
                     .rescheduleAppointmentInOwningTenant(any(), any(), any(), any(), any(), any());

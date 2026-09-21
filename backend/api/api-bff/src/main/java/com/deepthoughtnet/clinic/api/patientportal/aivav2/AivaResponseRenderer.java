@@ -41,6 +41,10 @@ public class AivaResponseRenderer {
             case NEED_DATE -> hindi ? (hinglish ? "Aap kis date ki appointment lena chahenge?"
                     : "आप किस तारीख की अपॉइंटमेंट लेना चाहेंगे?") : "What date would you prefer?";
             case AVAILABLE_SLOTS -> availability((AvailabilityPayload) payload, hinglish, hindi);
+            case NO_FUTURE_AVAILABILITY -> hindi
+                    ? (hinglish ? "Is booking window mein koi aur available slot nahi mila."
+                    : "मौजूदा बुकिंग विंडो में कोई और उपलब्ध स्लॉट नहीं मिला।")
+                    : "No available slots were found in the current booking window.";
             case RESCHEDULE_AVAILABLE_SLOTS -> rescheduleAvailability((AvailabilityPayload) payload, hinglish, hindi);
             case NO_MORE_SLOTS -> payload instanceof NoMoreSlotsPayload value
                     ? noMore(value, hinglish, hindi) : hindi ? "अभी और उपलब्ध स्लॉट नहीं हैं।" : "There are no more available slots.";
@@ -49,6 +53,14 @@ public class AivaResponseRenderer {
             case BOOKING_CONFIRMATION -> bookingConfirmation((BookingConfirmationPayload) payload, hinglish, hindi);
             case BOOKING_SUCCESS -> hindi ? (hinglish ? "Aapki appointment book ho gayi hai."
                     : "आपकी अपॉइंटमेंट बुक हो गई है।") : "Your appointment is booked.";
+            case BOOKING_ABANDONED -> bookingState((BookingStatePayload) payload, "ABANDONED", hinglish, hindi);
+            case BOOKING_SUSPENDED -> bookingState((BookingStatePayload) payload, "SUSPENDED", hinglish, hindi);
+            case NO_SUSPENDED_BOOKING -> bookingState((BookingStatePayload) payload, "NONE", hinglish, hindi);
+            case CONVERSATION_CLOSED -> hindi
+                    ? (hinglish ? "Theek hai. Aapka conversation yahin samapt karte hain. Apna dhyan rakhiye."
+                    : "ठीक है। बातचीत यहीं समाप्त करते हैं। अपना ध्यान रखिए।")
+                    : "Goodbye. Take care.";
+            case CONTEXTUAL_INFORMATION -> contextualInformation((ContextualInformationPayload) payload, hinglish, hindi);
             case APPOINTMENTS_NONE -> noAppointments((AppointmentListPayload) payload, hinglish, hindi);
             case APPOINTMENTS_FOUND -> appointments((AppointmentListPayload) payload, hinglish, hindi);
             case LOOKUP_CLARIFICATION -> hindi ? (hinglish ? "Kaunsi appointment ke baare mein jaanna chahte hain?"
@@ -79,6 +91,41 @@ public class AivaResponseRenderer {
             case CALL_TO_BOOK -> callToBook((CallToBookPayload) payload, hinglish, hindi);
             case LEGACY -> null;
         };
+    }
+
+    private String bookingState(BookingStatePayload payload, String expectedState,
+                                boolean hinglish, boolean hindi) {
+        String state = payload == null ? expectedState : payload.state();
+        if ("ABANDONED".equals(state)) {
+            if (hindi) return hinglish ? "Theek hai, booking draft hata di gayi hai."
+                    : "ठीक है, बुकिंग ड्राफ्ट हटा दी गई है।";
+            return "This booking has been abandoned.";
+        }
+        if ("SUSPENDED".equals(state)) {
+            if (hindi) return hinglish ? "Booking pause kar di gayi hai. Aap ise baad mein continue kar sakte hain."
+                    : "बुकिंग रोक दी गई है। आप इसे बाद में जारी रख सकते हैं।";
+            return "Your booking is paused. You can continue it later.";
+        }
+        if (hindi) return hinglish ? "Koi paused booking continue karne ke liye nahi hai."
+                : "जारी रखने के लिए कोई रुकी हुई बुकिंग नहीं है।";
+        return "There is no paused booking to resume.";
+    }
+
+    private String contextualInformation(ContextualInformationPayload payload,
+                                         boolean hinglish, boolean hindi) {
+        if (payload == null) return hindi ? "कोई वर्तमान बुकिंग संदर्भ नहीं है।" : "There is no current booking context.";
+        if ("AVAILABILITY_DATE".equals(payload.kind()) && payload.date() != null) {
+            String date = formatDate(payload.date(), hinglish, hindi);
+            if (hindi) return hinglish ? "Yeh slots " + date + " ke liye hain."
+                    : "ये स्लॉट " + date + " के लिए हैं।";
+            return "These slots are for " + date + ".";
+        }
+        if ("SELECTED_PROVIDER".equals(payload.kind()) && payload.providerDisplayName() != null) {
+            if (hindi) return hinglish ? "Selected doctor " + payload.providerDisplayName() + " hain."
+                    : "चयनित डॉक्टर " + payload.providerDisplayName() + " हैं।";
+            return "The selected doctor is " + payload.providerDisplayName() + ".";
+        }
+        return hindi ? "कोई वर्तमान बुकिंग संदर्भ नहीं है।" : "There is no current booking context.";
     }
 
     private String needProvider(NeedProviderPayload payload, boolean hinglish, boolean hindi) {
@@ -232,6 +279,24 @@ public class AivaResponseRenderer {
 
     private String clarification(ClarificationPayload payload, boolean hinglish, boolean hindi) {
         String code = payload.reasonCode();
+        if ("TEMPORAL_AMBIGUOUS".equals(code)) {
+            var candidates = payload.missingFields().stream().map(this::parseDate).filter(java.util.Objects::nonNull).toList();
+            if (candidates.size() >= 2) {
+                String first = formatDate(candidates.get(0), hinglish, hindi);
+                String second = formatDate(candidates.get(1), hinglish, hindi);
+                if (hindi) return hinglish ? "Aap " + first + " keh rahe hain ya " + second + "?"
+                        : "क्या आपका मतलब " + first + " या " + second + " है?";
+                return "Did you mean " + first + " or " + second + "?";
+            }
+            if (hindi) return hinglish ? "Kripya date ko clear format mein batayein."
+                    : "कृपया तारीख स्पष्ट रूप से बताएं।";
+            return "Please clarify the appointment date.";
+        }
+        if ("TEMPORAL_TIME_AMBIGUOUS".equals(code)) {
+            if (hindi) return hinglish ? "Aap AM keh rahe hain ya PM?"
+                    : "कृपया बताएं: सुबह का समय या शाम का?";
+            return "Did you mean AM or PM?";
+        }
         if ("PAST_DATE".equals(code)) return hindi ? (hinglish ? "Yeh date beet chuki hai. Aaj ya aage ki date chunen."
                 : "यह तारीख बीत चुकी है। कृपया आज या भविष्य की तारीख चुनें।") : "That date is in the past. Please choose today or a future date.";
         if ("INVALID".equals(code)) return hindi ? (hinglish ? "Main is time ko samajh nahi paaya."
@@ -241,6 +306,10 @@ public class AivaResponseRenderer {
         if (hindi) return hinglish ? "Appointment ke baare mein thoda aur bata sakte hain?"
                 : "अपॉइंटमेंट के बारे में थोड़ा और बता सकते हैं?";
         return "How can I help with an appointment?";
+    }
+
+    private LocalDate parseDate(String value) {
+        try { return LocalDate.parse(value); } catch (RuntimeException ignored) { return null; }
     }
 
     private String callToBook(CallToBookPayload payload, boolean hinglish, boolean hindi) {

@@ -3,9 +3,12 @@ package com.deepthoughtnet.clinic.api.patientportal.voice;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -15,6 +18,7 @@ import com.deepthoughtnet.clinic.ai.careai.persistence.db.CareAiConversationEnti
 import com.deepthoughtnet.clinic.ai.careai.persistence.db.CareAiWorkflowEntity;
 import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiStateResponse;
 import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiProgressEvent;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2VoiceTurnConnector;
 import com.deepthoughtnet.clinic.api.patientportal.voice.PatientPortalVoiceAssistantService.PatientPortalVoiceTurnResponse;
 import com.deepthoughtnet.clinic.api.patientportal.voice.PatientPortalVoiceAssistantService.PatientPortalVoiceProgressAudio;
 import com.deepthoughtnet.clinic.api.voice.VoiceTestProperties;
@@ -40,6 +44,128 @@ class PatientPortalVoiceWebSocketHandlerTest {
     private static final String TENANT_ID = UUID.randomUUID().toString();
     private static final String PATIENT_ID = UUID.randomUUID().toString();
     private static final String APP_USER_ID = UUID.randomUUID().toString();
+
+    @Test
+    void explicitV2CareSessionUsesStableUtteranceIdentityAndSequence() throws Exception {
+        PatientPortalVoiceAssistantService assistantService = mock(PatientPortalVoiceAssistantService.class);
+        CareAiConversationPersistenceService persistenceService = mock(CareAiConversationPersistenceService.class);
+        VoiceTestProperties properties = new VoiceTestProperties();
+        properties.setAivaV2Enabled(true);
+        PatientPortalVoiceTurnResponse response = new PatientPortalVoiceTurnResponse(
+                "v2-turn-1", "show my appointments", "Here are your appointments.", null,
+                null, null, "sarvam", "AIVA_V2", null,
+                10L, 0L, 0L, 10L, 4L, null);
+        when(assistantService.processAudioTurnV2(
+                any(), anyString(), anyString(), anyString(), anyString(), anyString(), anyLong()))
+                .thenReturn(response);
+        PatientPortalVoiceWebSocketHandler handler = new PatientPortalVoiceWebSocketHandler(
+                new ObjectMapper(), assistantService, properties, persistenceService);
+        SessionFixture fixture = new SessionFixture(TENANT_ID, PATIENT_ID, APP_USER_ID, Set.of("PATIENT"), "v2-care-session");
+        String audioBase64 = Base64.getEncoder().encodeToString("voice".getBytes(StandardCharsets.UTF_8));
+
+        handler.afterConnectionEstablished(fixture.session);
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"session.start\",\"engine\":\"v2\",\"language\":\"en\"}"));
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.chunk\",\"voiceUtteranceId\":\"u1\",\"sequence\":1,\"totalChunks\":1,\"audioBase64Chunk\":\"" + audioBase64 + "\"}"));
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.end\",\"voiceUtteranceId\":\"u1\",\"totalChunks\":1}"));
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.end\",\"voiceUtteranceId\":\"u1\",\"totalChunks\":1}"));
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.chunk\",\"voiceUtteranceId\":\"u2\",\"sequence\":1,\"totalChunks\":1,\"audioBase64Chunk\":\"" + audioBase64 + "\"}"));
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.end\",\"voiceUtteranceId\":\"u2\",\"totalChunks\":1}"));
+
+        verify(assistantService, times(1)).processAudioTurnV2(
+                any(), anyString(), anyString(), anyString(), eq("voice-v2-v2-care-session"), eq("voice-u1"), eq(1L));
+        verify(assistantService, times(1)).processAudioTurnV2(
+                any(), anyString(), anyString(), anyString(), eq("voice-v2-v2-care-session"), eq("voice-u2"), eq(2L));
+        verify(assistantService, never()).processAudioTurn(any(), anyString(), anyString(), anyString(), any());
+        assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"engine\":\"v2\""));
+        assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"turn.duplicate_replay\"")
+                && payload.contains("\"voiceUtteranceId\":\"u1\""));
+    }
+
+    @Test
+    void tenConsecutiveV2UtterancesKeepMonotonicSequenceWithoutStaleTurn() throws Exception {
+        PatientPortalVoiceAssistantService assistantService = mock(PatientPortalVoiceAssistantService.class);
+        CareAiConversationPersistenceService persistenceService = mock(CareAiConversationPersistenceService.class);
+        VoiceTestProperties properties = new VoiceTestProperties();
+        properties.setAivaV2Enabled(true);
+        PatientPortalVoiceTurnResponse response = new PatientPortalVoiceTurnResponse(
+                "v2-turn", "show my appointments", "Here are your appointments.", null,
+                null, null, "sarvam", "AIVA_V2", null,
+                10L, 0L, 0L, 10L, 4L, null);
+        when(assistantService.processAudioTurnV2(
+                any(), anyString(), anyString(), anyString(), anyString(), anyString(), anyLong()))
+                .thenReturn(response);
+        PatientPortalVoiceWebSocketHandler handler = new PatientPortalVoiceWebSocketHandler(
+                new ObjectMapper(), assistantService, properties, persistenceService);
+        SessionFixture fixture = new SessionFixture(TENANT_ID, PATIENT_ID, APP_USER_ID, Set.of("PATIENT"), "v2-ten-turn-session");
+        String audioBase64 = Base64.getEncoder().encodeToString("voice".getBytes(StandardCharsets.UTF_8));
+
+        handler.afterConnectionEstablished(fixture.session);
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"session.start\",\"engine\":\"v2\",\"language\":\"auto\"}"));
+        for (int turn = 1; turn <= 10; turn++) {
+            String utteranceId = "u" + turn;
+            handler.handleForTest(fixture.session, new TextMessage(
+                    "{\"type\":\"audio.chunk\",\"voiceUtteranceId\":\"" + utteranceId
+                            + "\",\"sequence\":1,\"totalChunks\":1,\"audioBase64Chunk\":\"" + audioBase64 + "\"}"));
+            handler.handleForTest(fixture.session, new TextMessage(
+                    "{\"type\":\"audio.end\",\"voiceUtteranceId\":\"" + utteranceId + "\",\"totalChunks\":1}"));
+        }
+
+        org.mockito.ArgumentCaptor<Long> sequenceCaptor = org.mockito.ArgumentCaptor.forClass(Long.class);
+        verify(assistantService, times(10)).processAudioTurnV2(
+                any(), anyString(), anyString(), anyString(), anyString(), anyString(), sequenceCaptor.capture());
+        assertThat(sequenceCaptor.getAllValues()).containsExactly(1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L, 10L);
+        assertThat(fixture.payloads()).noneMatch(payload -> payload.contains("message arrived too late"));
+        assertThat(fixture.payloads()).noneMatch(payload -> payload.contains("SEQUENCE_GAP"));
+    }
+
+    @Test
+    void resumedV2SocketHydratesSequenceFromAuthoritativeSessionState() throws Exception {
+        PatientPortalVoiceAssistantService assistantService = mock(PatientPortalVoiceAssistantService.class);
+        CareAiConversationPersistenceService persistenceService = mock(CareAiConversationPersistenceService.class);
+        AivaV2VoiceTurnConnector connector = mock(AivaV2VoiceTurnConnector.class);
+        VoiceTestProperties properties = new VoiceTestProperties();
+        properties.setAivaV2Enabled(true);
+        when(connector.lastAcceptedVoiceTurnSequence(
+                eq(UUID.fromString(TENANT_ID)), eq(UUID.fromString(PATIENT_ID)), eq("voice-v2-resumed-v2-session")))
+                .thenReturn(7L);
+        when(assistantService.processAudioTurnV2(
+                any(), anyString(), anyString(), anyString(), anyString(), anyString(), anyLong()))
+                .thenReturn(new PatientPortalVoiceTurnResponse(
+                        "v2-turn-8", "show my appointments", "Here are your appointments.", null,
+                        null, null, "sarvam", "AIVA_V2", null,
+                        10L, 0L, 0L, 10L, 4L, null));
+        PatientPortalVoiceWebSocketHandler handler = new PatientPortalVoiceWebSocketHandler(
+                new ObjectMapper(), assistantService, properties, persistenceService, connector);
+        SessionFixture fixture = new SessionFixture(TENANT_ID, PATIENT_ID, APP_USER_ID, Set.of("PATIENT"), "resumed-v2-session");
+        String audioBase64 = Base64.getEncoder().encodeToString("voice".getBytes(StandardCharsets.UTF_8));
+
+        handler.afterConnectionEstablished(fixture.session);
+        handler.handleForTest(fixture.session, new TextMessage(
+                "{\"type\":\"session.start\",\"engine\":\"v2\",\"language\":\"auto\",\"resumeSessionId\":\"resumed-v2-session\"}"));
+        handler.handleForTest(fixture.session, new TextMessage(
+                "{\"type\":\"audio.chunk\",\"voiceUtteranceId\":\"u8\",\"sequence\":1,\"totalChunks\":1,\"audioBase64Chunk\":\"" + audioBase64 + "\"}"));
+        handler.handleForTest(fixture.session, new TextMessage(
+                "{\"type\":\"audio.end\",\"voiceUtteranceId\":\"u8\",\"totalChunks\":1}"));
+
+        verify(assistantService).processAudioTurnV2(
+                any(), anyString(), anyString(), anyString(), eq("voice-v2-resumed-v2-session"), eq("voice-u8"), eq(8L));
+    }
+
+    @Test
+    void v2CareSessionIsRejectedWithoutLegacyFallbackWhenFeatureIsDisabled() throws Exception {
+        PatientPortalVoiceAssistantService assistantService = mock(PatientPortalVoiceAssistantService.class);
+        PatientPortalVoiceWebSocketHandler handler = new PatientPortalVoiceWebSocketHandler(
+                new ObjectMapper(), assistantService, new VoiceTestProperties(),
+                mock(CareAiConversationPersistenceService.class));
+        SessionFixture fixture = new SessionFixture(TENANT_ID, PATIENT_ID, APP_USER_ID, Set.of("PATIENT"), "v2-disabled-session");
+
+        handler.afterConnectionEstablished(fixture.session);
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"session.start\",\"engine\":\"v2\"}"));
+
+        verify(assistantService, never()).processAudioTurnV2(any(), anyString(), anyString(), anyString(), anyString(), anyString(), anyLong());
+        verify(assistantService, never()).processAudioTurn(any(), anyString(), anyString(), anyString(), any());
+        assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("AIVA V2 voice is currently unavailable"));
+    }
 
     @Test
     void patientVoiceUsesCareAiEngineAndReturnsAssistantEvents() throws Exception {

@@ -42,6 +42,7 @@ import {
   type PatientPortalBillResponse,
   type PatientPortalAccessLoginRequest,
   type PatientPortalAccessLoginResponse,
+  type PatientPortalAccessCodeReissueRequest,
   type PatientPortalAccessRequestContext,
   type PatientPortalAccessRequestResponse,
   type PatientPortalAccessRequestSubmitRequest,
@@ -75,6 +76,7 @@ import {
   patientPortalHomePath,
   postPatientPortalJson,
   postPatientPortalAccessLogin,
+  postPatientPortalAccessCodeReissue,
   postPatientPortalAccessRequest,
   postPatientPortalClinicSwitch,
   postPatientPortalSessionJson,
@@ -1544,6 +1546,7 @@ export function PatientLoginPage({
   const isDevOtpMode = careAuthMode === "DEV_OTP" && isPatientPortalLocalDev();
   const [accessCode, setAccessCode] = useState("");
   const [accessMessage, setAccessMessage] = useState<string | null>(null);
+  const [accessRecoveryAvailable, setAccessRecoveryAvailable] = useState(false);
   const [accessPending, setAccessPending] = useState(false);
   const [accessAttempted, setAccessAttempted] = useState(false);
   const [accessCodeTouched, setAccessCodeTouched] = useState(false);
@@ -1883,6 +1886,7 @@ export function PatientLoginPage({
     }
     setAccessPending(true);
     setAccessMessage(null);
+    setAccessRecoveryAvailable(false);
     try {
       const context = buildPatientPortalOtpContext(portalClinicContext);
       const response = await postPatientPortalAccessLogin<PatientPortalAccessLoginResponse>("/api/patient-portal/auth/access/login", {
@@ -1907,11 +1911,38 @@ export function PatientLoginPage({
       }
       setAccessMessage(response.message || "Unable to sign in with the temporary access code.");
     } catch (error) {
+      const rawMessage = error instanceof Error ? error.message : "";
+      setAccessRecoveryAvailable(rawMessage.toLowerCase().includes("access code")
+        && rawMessage.toLowerCase().includes("expired"));
       setAccessMessage(
         error instanceof Error
           ? sanitizePatientAccessErrorMessage(error.message)
           : "Unable to sign in right now. Please try again.",
       );
+    } finally {
+      setAccessPending(false);
+    }
+  }
+
+  async function handleAccessCodeReissue() {
+    if (!phoneValidation.success || accessPending) return;
+    setAccessPending(true);
+    setAccessMessage(null);
+    try {
+      const context = buildPatientPortalOtpContext(portalClinicContext);
+      const response = await postPatientPortalAccessCodeReissue<PatientPortalAccessRequestResponse>(
+        "/api/patient-portal/auth/access-requests/reissue",
+        { mobile: normalizedPhone, ...(context ? { context } : {}) } satisfies PatientPortalAccessCodeReissueRequest,
+      );
+      setAccessCode(response.temporaryAccessCode || "");
+      setAccessRecoveryAvailable(false);
+      setAccessMessage(response.temporaryAccessCode
+        ? "A new access code was issued. Use it to sign in."
+        : "A new access code was issued. Check your configured delivery channel.");
+    } catch (error) {
+      setAccessMessage(error instanceof Error
+        ? sanitizePatientAccessErrorMessage(error.message)
+        : "Unable to issue a new access code right now.");
     } finally {
       setAccessPending(false);
     }
@@ -1998,6 +2029,7 @@ export function PatientLoginPage({
                 onChange={(event) => {
                   setPhone(sanitizePatientPhoneInput(event.target.value));
                   setAccessMessage(null);
+                  setAccessRecoveryAvailable(false);
                 }}
                 onBlur={() => setPhoneTouched(true)}
                 placeholder="Enter 10-digit mobile number"
@@ -2023,6 +2055,7 @@ export function PatientLoginPage({
                   onChange={(event) => {
                     setAccessCode(sanitizePatientAccessCodeInput(event.target.value));
                     setAccessMessage(null);
+                    setAccessRecoveryAvailable(false);
                   }}
                 onBlur={() => {
                   setAccessCodeTouched(true);
@@ -2052,6 +2085,13 @@ export function PatientLoginPage({
               <div className="patient-inline-empty">
                 <strong>Access sign-in</strong>
                 <p>{accessMessage}</p>
+                {accessRecoveryAvailable ? (
+                  <div className="cta-row">
+                    <button className="secondary-button" type="button" onClick={handleAccessCodeReissue} disabled={accessPending}>
+                      {accessPending ? "Requesting..." : "Get new access code"}
+                    </button>
+                  </div>
+                ) : null}
               </div>
             ) : null}
 
@@ -2296,6 +2336,7 @@ export function PatientAccessRequestPage({
   const [requestPending, setRequestPending] = useState(false);
   const [requestMessage, setRequestMessage] = useState<string | null>(null);
   const [requestError, setRequestError] = useState<string | null>(null);
+  const [approvedRecoveryAvailable, setApprovedRecoveryAvailable] = useState(false);
   const [attempted, setAttempted] = useState(false);
   const [fullNameTouched, setFullNameTouched] = useState(false);
   const [mobileTouched, setMobileTouched] = useState(false);
@@ -2364,6 +2405,7 @@ export function PatientAccessRequestPage({
     setRequestPending(true);
     setRequestError(null);
     setRequestMessage(null);
+    setApprovedRecoveryAvailable(false);
     try {
       const context = buildPatientPortalOtpContext({
         clinicId: portalClinicContext.clinicId,
@@ -2387,11 +2429,44 @@ export function PatientAccessRequestPage({
       );
       setRequestError(null);
     } catch (error) {
+      const rawMessage = error instanceof Error ? error.message : "";
+      setApprovedRecoveryAvailable(rawMessage.toLowerCase().includes("already been approved"));
       setRequestError(
         error instanceof Error
           ? sanitizePatientAccessErrorMessage(error.message)
           : "Unable to submit your access request right now.",
       );
+    } finally {
+      setRequestPending(false);
+    }
+  }
+
+  async function handleApprovedCodeReissue() {
+    if (!isValidPatientAccessRequestMobile(mobile) || requestPending) return;
+    setRequestPending(true);
+    setRequestError(null);
+    setRequestMessage(null);
+    try {
+      const context = buildPatientPortalOtpContext({
+        clinicId: portalClinicContext.clinicId,
+        clinicSlug: normalizedClinicSlug,
+        clinicCode: normalizedClinicSlug,
+        tenantId: portalClinicContext.tenantId,
+        doctorId: portalClinicContext.doctorId,
+        nextPath: portalClinicContext.nextPath,
+      });
+      const response = await postPatientPortalAccessCodeReissue<PatientPortalAccessRequestResponse>(
+        "/api/patient-portal/auth/access-requests/reissue",
+        { mobile: normalizedMobile, ...(context ? { context } : {}) },
+      );
+      setApprovedRecoveryAvailable(false);
+      setRequestMessage(response.temporaryAccessCode
+        ? `A new access code was issued: ${response.temporaryAccessCode}`
+        : "A new access code was issued. Check your configured delivery channel.");
+    } catch (error) {
+      setRequestError(error instanceof Error
+        ? sanitizePatientAccessErrorMessage(error.message)
+        : "Unable to issue a new access code right now.");
     } finally {
       setRequestPending(false);
     }
@@ -2574,6 +2649,13 @@ export function PatientAccessRequestPage({
               <div className="patient-inline-empty">
                 <strong>Request access</strong>
                 <p>{requestError}</p>
+                {approvedRecoveryAvailable ? (
+                  <div className="cta-row">
+                    <button className="secondary-button" type="button" onClick={handleApprovedCodeReissue} disabled={requestPending}>
+                      {requestPending ? "Requesting..." : "Get new access code"}
+                    </button>
+                  </div>
+                ) : null}
               </div>
             ) : null}
 
@@ -2585,9 +2667,15 @@ export function PatientAccessRequestPage({
             ) : null}
 
             <div className="patient-login-actions">
-              <button className="primary-button wide-button" type="submit" disabled={!canSubmit}>
-                {requestPending ? "Submitting..." : "Submit Request"}
-              </button>
+              {approvedRecoveryAvailable ? (
+                <button className="primary-button wide-button" type="button" onClick={handleApprovedCodeReissue} disabled={requestPending}>
+                  {requestPending ? "Requesting..." : "Get new access code"}
+                </button>
+              ) : (
+                <button className="primary-button wide-button" type="submit" disabled={!canSubmit}>
+                  {requestPending ? "Submitting..." : "Submit Request"}
+                </button>
+              )}
             </div>
           </form>
 
@@ -6001,15 +6089,19 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
     },
   ]);
   const [v2Messages, setV2Messages] = useState<PatientCareAiChatEntry[]>([]);
-  const [aivaEngine, setAivaEngine] = useState<"legacy" | "v2">("legacy");
+  // V2 is the patient-facing default. Setting VITE_AIVA_V2_ENABLED=false is
+  // the internal emergency rollback switch; it is never exposed as UI.
+  const aivaEngine: "legacy" | "v2" = careConfig.aivaV2Enabled ? "v2" : "legacy";
   const [v2ConversationId, setV2ConversationId] = useState<string | null>(null);
   const [v2Technical, setV2Technical] = useState<AivaV2MessageResponse | null>(null);
+  const v2TurnSequenceRef = useRef(0);
   const previousV2TenantRef = useRef<string | null>(portalSession?.tenantId ?? null);
   useEffect(() => {
     const nextTenantId = portalSession?.tenantId ?? null;
     const previousTenantId = previousV2TenantRef.current;
     if (previousTenantId && nextTenantId && previousTenantId !== nextTenantId) {
       setV2ConversationId(null);
+      v2TurnSequenceRef.current = 0;
       setV2Messages([]);
       setV2Technical(null);
       setState(null);
@@ -6622,7 +6714,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
   useEffect(() => {
     chatStreamRef.current?.scrollTo({ top: chatStreamRef.current.scrollHeight, behavior: "smooth" });
     chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [legacyMessages, v2Messages, aivaEngine]);
+  }, [legacyMessages, v2Messages]);
 
   useEffect(() => {
     setLegacyMessages([
@@ -6636,7 +6728,6 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
     setV2Messages([]);
     setV2ConversationId(null);
     setV2Technical(null);
-    setAivaEngine("legacy");
     setDraft("");
     setState(null);
     setError(null);
@@ -6785,7 +6876,8 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
   }
 
   function appendVoicePatientMessage(text: string) {
-    setLegacyMessages((current) => [
+    const updateMessages = aivaEngine === "v2" ? setV2Messages : setLegacyMessages;
+    updateMessages((current) => [
       ...current,
       {
         id: `patient-voice-${Date.now()}`,
@@ -6797,7 +6889,8 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
   }
 
   function appendVoiceAssistantMessage(text: string) {
-    setLegacyMessages((current) => [
+    const updateMessages = aivaEngine === "v2" ? setV2Messages : setLegacyMessages;
+    updateMessages((current) => [
       ...current,
       {
         id: `assistant-voice-${Date.now()}`,
@@ -7037,6 +7130,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
       socket.send(JSON.stringify({
         type: "session.start",
         language: "auto",
+        engine: aivaEngine,
         resumeSessionId: storedVoiceResumeSessionId() || voiceSessionId,
       }));
     };
@@ -7710,16 +7804,21 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
 
     try {
       if (aivaEngine === "v2") {
+        const clientTurnSequence = v2TurnSequenceRef.current + 1;
+        const clientTurnId = crypto.randomUUID();
         const response = await postPatientPortalAivaV2Message({
           conversationId: v2ConversationId,
           message: trimmed,
           language: "auto",
+          clientTurnId,
+          clientTurnSequence,
           action: action ? {
             type: action.type,
             value: action.value,
             slotReference: action.slotReference,
           } : undefined,
         }, portalSession);
+        v2TurnSequenceRef.current = clientTurnSequence;
         setV2ConversationId(response.conversationId);
         setV2Technical(response);
         setV2Messages((current) => [...current, {
@@ -7795,6 +7894,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
         setV2Messages([]);
         setV2ConversationId(null);
         setV2Technical(null);
+        v2TurnSequenceRef.current = 0;
         setDraft("");
         return;
       }
@@ -7835,15 +7935,8 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
     }
   }
 
-  function selectAivaEngine(nextEngine: "legacy" | "v2") {
-    if (nextEngine === "v2") {
-      setV2ConversationId((current) => current || globalThis.crypto.randomUUID());
-    }
-    setAivaEngine(nextEngine);
-  }
-
   const displayedMessages = aivaEngine === "v2" ? v2Messages : legacyMessages;
-  const voiceDisabledForV2 = aivaEngine === "v2";
+  const voiceDisabledForV2 = aivaEngine === "v2" && !careConfig.aivaV2VoiceEnabled;
 
   return (
     <PatientAccessBoundary
@@ -7862,31 +7955,6 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
             </div>
             <p>Your AI healthcare assistant</p>
             </div>
-            {careConfig.aivaV2Enabled ? (
-              <div className="patient-careai-engine-selector" aria-label="AIVA Engine">
-                <span>AIVA Engine</span>
-                <div role="group" aria-label="AIVA Engine">
-                  <button
-                    type="button"
-                    className={`careai-prompt-chip${aivaEngine === "legacy" ? " is-selected" : ""}`}
-                    aria-pressed={aivaEngine === "legacy"}
-                    disabled={voiceStatus !== "idle" && voiceStatus !== "ended" && voiceStatus !== "error"}
-                    onClick={() => selectAivaEngine("legacy")}
-                  >
-                    Legacy
-                  </button>
-                  <button
-                    type="button"
-                    className={`careai-prompt-chip${aivaEngine === "v2" ? " is-selected" : ""}`}
-                    aria-pressed={aivaEngine === "v2"}
-                    disabled={voiceStatus !== "idle" && voiceStatus !== "ended" && voiceStatus !== "error"}
-                    onClick={() => selectAivaEngine("v2")}
-                  >
-                    V2 POC
-                  </button>
-                </div>
-              </div>
-            ) : null}
           <button className="ghost-button patient-careai-reset-button" type="button" disabled={!portalSession || resetting} onClick={handleReset}>
             <RefreshRoundedIcon className="patient-careai-inline-icon" fontSize="small" />
             {resetting ? "Resetting..." : "Reset chat"}
@@ -8003,7 +8071,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
                   <span className="patient-inline-note">{AIVA_CHAT_HELP_TEXT}</span>
                 </div>
                 <div className="patient-careai-composer-hint">{AIVA_CHAT_COMPOSER_HINT}</div>
-                {voiceDisabledForV2 ? <div className="patient-inline-note">AIVA V2 POC is text-only. Voice remains available in Legacy mode.</div> : null}
+                {voiceDisabledForV2 ? <div className="patient-inline-note">Voice is currently unavailable. You can continue with text.</div> : null}
                 {error ? <div className="patient-inline-empty patient-inline-error">{error}</div> : null}
               </form>
             </div>
@@ -8058,7 +8126,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
               </div>
               <span className="patient-inline-note">
                 {voiceDisabledForV2
-                  ? "Voice is not enabled for AIVA V2 POC yet. Use text for V2 testing."
+                  ? "Voice is currently unavailable. Use text to continue."
                   : voiceInfo || (voiceConversationMode === "continuous"
                   ? "Continuous conversation is active. AIVA will listen again after it speaks."
                   : "Start a voice session and AIVA will listen automatically after it connects.")}
@@ -8093,7 +8161,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
               <div className="patient-careai-technical-panel">
                 {aivaEngine === "v2" ? (
                   <div className="patient-careai-voice-meta">
-                    <div className="patient-subcard"><strong>Engine</strong><span>AIVA V2 POC</span></div>
+                    <div className="patient-subcard"><strong>Engine</strong><span>AIVA V2</span></div>
                     <div className="patient-subcard"><strong>Conversation ID</strong><span>{v2ConversationId || "Created with first message"}</span></div>
                     <div className="patient-subcard"><strong>Turn ID</strong><span>{v2Technical?.turnId || "No turn yet"}</span></div>
                     <div className="patient-subcard"><strong>Result</strong><span>{v2Technical?.responseCategory || "No result yet"}</span></div>

@@ -1185,11 +1185,18 @@ class AivaConversationCorpusCertificationTest {
         }
 
         private void setupSlots() {
-            slotsByDoctor.put("doctor-akshu", Map.of(
-                    TOMORROW, List.of(slot(TOMORROW, LocalTime.of(9, 0), true), slot(TOMORROW, LocalTime.of(9, 30), true), slot(TOMORROW, LocalTime.of(10, 30), true)),
-                    NEXT_MONDAY, List.of(slot(NEXT_MONDAY, LocalTime.of(11, 0), true), slot(NEXT_MONDAY, LocalTime.of(11, 30), true)),
-                    NEXT_WEEK, List.of(slot(NEXT_WEEK, LocalTime.of(16, 0), true), slot(NEXT_WEEK, LocalTime.of(16, 30), true))
-            ));
+            Map<LocalDate, List<PatientPortalDoctorSlotResponse>> akshuSlots = new LinkedHashMap<>();
+            akshuSlots.put(TOMORROW, List.of(
+                    slot(TOMORROW, LocalTime.of(9, 0), true),
+                    slot(TOMORROW, LocalTime.of(9, 30), true),
+                    slot(TOMORROW, LocalTime.of(10, 30), true)));
+            mergeSlots(akshuSlots, NEXT_MONDAY, List.of(
+                    slot(NEXT_MONDAY, LocalTime.of(11, 0), true),
+                    slot(NEXT_MONDAY, LocalTime.of(11, 30), true)));
+            mergeSlots(akshuSlots, NEXT_WEEK, List.of(
+                    slot(NEXT_WEEK, LocalTime.of(16, 0), true),
+                    slot(NEXT_WEEK, LocalTime.of(16, 30), true)));
+            slotsByDoctor.put("doctor-akshu", Map.copyOf(akshuSlots));
             Map<LocalDate, List<PatientPortalDoctorSlotResponse>> nehaSlots = new LinkedHashMap<>();
             nehaSlots.put(TOMORROW, List.of(slot(TOMORROW, LocalTime.of(10, 0), true), slot(TOMORROW, LocalTime.of(10, 30), true), slot(TOMORROW, LocalTime.of(11, 0), true)));
             nehaSlots.merge(NEXT_FRIDAY,
@@ -1204,6 +1211,13 @@ class AivaConversationCorpusCertificationTest {
                     TOMORROW, List.of(slot(TOMORROW, LocalTime.of(10, 0), true), slot(TOMORROW, LocalTime.of(10, 30), true)),
                     NEXT_WEEK, List.of(slot(NEXT_WEEK, LocalTime.of(11, 0), true), slot(NEXT_WEEK, LocalTime.of(11, 30), true))
             ));
+        }
+
+        private void mergeSlots(Map<LocalDate, List<PatientPortalDoctorSlotResponse>> slots,
+                                LocalDate date,
+                                List<PatientPortalDoctorSlotResponse> additional) {
+            slots.merge(date, additional,
+                    (current, incoming) -> java.util.stream.Stream.concat(current.stream(), incoming.stream()).toList());
         }
 
         private void setupAppointments() {

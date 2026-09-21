@@ -21,11 +21,12 @@ public final class AivaV2Models {
     public enum Operation {
         START_BOOKING, UPDATE_BOOKING, RESOLVE_PROVIDER, GET_AVAILABILITY,
         SELECT_SLOT, SHOW_MORE_SLOTS, PREPARE_BOOKING, CONFIRM_BOOKING,
+        FIND_NEXT_AVAILABLE_SLOT,
         ANSWER_CONTEXT, SUSPEND_BOOKING, RESUME_BOOKING, ABANDON_BOOKING,
-        LOOKUP_APPOINTMENTS, CANCEL_APPOINTMENT, PREPARE_CANCELLATION,
+        LOOKUP_APPOINTMENTS, NEXT_UPCOMING_APPOINTMENT, CANCEL_APPOINTMENT, PREPARE_CANCELLATION,
         CONFIRM_CANCELLATION, RESCHEDULE_APPOINTMENT, UPDATE_RESCHEDULE,
         GET_RESCHEDULE_AVAILABILITY, SELECT_RESCHEDULE_SLOT, PREPARE_RESCHEDULE,
-        CONFIRM_RESCHEDULE, UNKNOWN
+        CONFIRM_RESCHEDULE, END_CONVERSATION, UNKNOWN
     }
 
     public enum ConfirmationPolarity { POSITIVE, NEGATIVE, AMBIGUOUS, NONE }
@@ -34,7 +35,7 @@ public final class AivaV2Models {
 
     public enum PatchMode { UNCHANGED, SET, CLEAR }
 
-    public enum AvailabilityTimeConstraintMode { EXACT, AFTER, BEFORE, BETWEEN }
+    public enum AvailabilityTimeConstraintMode { EXACT, AFTER, BEFORE, BETWEEN, EXCLUDE }
 
     public enum DraftStatus {
         COLLECTING, READY_FOR_CONFIRMATION, SUBMITTING, CONFIRMED, ABANDONED, EXPIRED
@@ -71,6 +72,13 @@ public final class AivaV2Models {
             }
             if (mode == AvailabilityTimeConstraintMode.EXACT && startTime == null) {
                 throw new IllegalArgumentException("EXACT requires a start time");
+            }
+            if (mode == AvailabilityTimeConstraintMode.EXCLUDE && startTime == null) {
+                throw new IllegalArgumentException("EXCLUDE requires a start time");
+            }
+            if (mode == AvailabilityTimeConstraintMode.EXCLUDE && endTime != null
+                    && !startTime.isBefore(endTime)) {
+                throw new IllegalArgumentException("EXCLUDE range start must be before end");
             }
         }
     }
@@ -498,15 +506,55 @@ public final class AivaV2Models {
             CancellationResolution pendingCancellationResolution,
             RescheduleResolution pendingReschedule,
             RescheduleConfirmation pendingRescheduleConfirmation,
+            TemporalClarification pendingTemporalClarification,
+            boolean closed,
             long version,
-            Instant expiresAt
+            Instant expiresAt,
+            AppointmentSummary activeAppointmentReferent
     ) {
+        public SessionProjection(String conversationId, UUID patientId, String tenantId,
+                                 BookingDraft activeDraft, BookingDraft suspendedDraft,
+                                 ProviderSearchResult latestProviderResult, AvailabilityResult latestAvailabilityResult,
+                                 BookingConfirmation pendingConfirmation, CancellationConfirmation pendingCancellation,
+                                 CancellationResolution pendingCancellationResolution, RescheduleResolution pendingReschedule,
+                                 RescheduleConfirmation pendingRescheduleConfirmation, long version, Instant expiresAt) {
+            this(conversationId, patientId, tenantId, activeDraft, suspendedDraft, latestProviderResult,
+                    latestAvailabilityResult, pendingConfirmation, pendingCancellation, pendingCancellationResolution,
+                    pendingReschedule, pendingRescheduleConfirmation, null, false, version, expiresAt, null);
+        }
+
+        public SessionProjection(String conversationId, UUID patientId, String tenantId,
+                                 BookingDraft activeDraft, BookingDraft suspendedDraft,
+                                 ProviderSearchResult latestProviderResult, AvailabilityResult latestAvailabilityResult,
+                                 BookingConfirmation pendingConfirmation, CancellationConfirmation pendingCancellation,
+                                 CancellationResolution pendingCancellationResolution, RescheduleResolution pendingReschedule,
+                                 RescheduleConfirmation pendingRescheduleConfirmation,
+                                 TemporalClarification pendingTemporalClarification, long version, Instant expiresAt) {
+            this(conversationId, patientId, tenantId, activeDraft, suspendedDraft, latestProviderResult,
+                    latestAvailabilityResult, pendingConfirmation, pendingCancellation, pendingCancellationResolution,
+                    pendingReschedule, pendingRescheduleConfirmation, pendingTemporalClarification, false, version, expiresAt);
+        }
+
+        public SessionProjection(String conversationId, UUID patientId, String tenantId,
+                                 BookingDraft activeDraft, BookingDraft suspendedDraft,
+                                 ProviderSearchResult latestProviderResult, AvailabilityResult latestAvailabilityResult,
+                                 BookingConfirmation pendingConfirmation, CancellationConfirmation pendingCancellation,
+                                 CancellationResolution pendingCancellationResolution, RescheduleResolution pendingReschedule,
+                                 RescheduleConfirmation pendingRescheduleConfirmation,
+                                 TemporalClarification pendingTemporalClarification, boolean closed,
+                                 long version, Instant expiresAt) {
+            this(conversationId, patientId, tenantId, activeDraft, suspendedDraft, latestProviderResult,
+                    latestAvailabilityResult, pendingConfirmation, pendingCancellation, pendingCancellationResolution,
+                    pendingReschedule, pendingRescheduleConfirmation, pendingTemporalClarification,
+                    closed, version, expiresAt, null);
+        }
+
         public SessionProjection(String conversationId, UUID patientId, String tenantId,
                                  BookingDraft activeDraft, BookingDraft suspendedDraft,
                                  ProviderSearchResult latestProviderResult, AvailabilityResult latestAvailabilityResult,
                                  BookingConfirmation pendingConfirmation, long version, Instant expiresAt) {
             this(conversationId, patientId, tenantId, activeDraft, suspendedDraft, latestProviderResult,
-                    latestAvailabilityResult, pendingConfirmation, null, null, null, null, version, expiresAt);
+                    latestAvailabilityResult, pendingConfirmation, null, null, null, null, null, false, version, expiresAt);
         }
 
         public SessionProjection(String conversationId, UUID patientId, String tenantId,
@@ -515,14 +563,54 @@ public final class AivaV2Models {
                                  BookingConfirmation pendingConfirmation, CancellationConfirmation pendingCancellation,
                                  long version, Instant expiresAt) {
             this(conversationId, patientId, tenantId, activeDraft, suspendedDraft, latestProviderResult,
-                    latestAvailabilityResult, pendingConfirmation, pendingCancellation, null, null, null, version, expiresAt);
+                    latestAvailabilityResult, pendingConfirmation, pendingCancellation, null, null, null, null, false, version, expiresAt);
+        }
+
+        public SessionProjection withTemporalClarification(TemporalClarification clarification) {
+            return new SessionProjection(conversationId, patientId, tenantId, activeDraft, suspendedDraft,
+                    latestProviderResult, latestAvailabilityResult, pendingConfirmation, pendingCancellation,
+                    pendingCancellationResolution, pendingReschedule, pendingRescheduleConfirmation,
+                    clarification, closed, version, expiresAt);
+        }
+
+        public SessionProjection withAppointmentReferent(AppointmentSummary referent) {
+            return new SessionProjection(conversationId, patientId, tenantId, activeDraft, suspendedDraft,
+                    latestProviderResult, latestAvailabilityResult, pendingConfirmation, pendingCancellation,
+                    pendingCancellationResolution, pendingReschedule, pendingRescheduleConfirmation,
+                    pendingTemporalClarification, closed, version, expiresAt, referent);
+        }
+
+        public SessionProjection close() {
+            return new SessionProjection(conversationId, patientId, tenantId, null, null, null, null,
+                    null, null, null, null, null, null, true, version + 1, expiresAt, null);
+        }
+
+        /** Clears transient workflow state while preserving conversation lifecycle and identity. */
+        public SessionProjection clearTransientWorkflow() {
+            return new SessionProjection(conversationId, patientId, tenantId, null, null, null, null,
+                    null, null, null, null, null, null, closed, version + 1, expiresAt, null);
+        }
+    }
+
+    public record TemporalClarification(String kind, List<String> candidates, Operation originatingOperation,
+                                        long sessionVersion) {
+        public TemporalClarification {
+            kind = kind == null ? "DATE" : kind;
+            candidates = candidates == null ? List.of() : List.copyOf(candidates);
+            originatingOperation = originatingOperation == null ? Operation.UNKNOWN : originatingOperation;
         }
     }
 
     public record MessageRequest(String conversationId, String message, String language,
-                                 InteractiveActionRequest action) {
+                                 InteractiveActionRequest action, String clientTurnId,
+                                 Long clientTurnSequence) {
         public MessageRequest(String conversationId, String message, String language) {
-            this(conversationId, message, language, null);
+            this(conversationId, message, language, null, null, null);
+        }
+
+        public MessageRequest(String conversationId, String message, String language,
+                               InteractiveActionRequest action) {
+            this(conversationId, message, language, action, null, null);
         }
     }
 

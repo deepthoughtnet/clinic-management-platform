@@ -254,15 +254,11 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                             null,
                             isSoapTruncated(providerResponse) ? "INCOMPLETE" : "COMPLETE");
                     if (soapTraceRawResponseEnabled) {
-                        log.info("SOAP-DRAFT-TRACE stage=RAW_RESPONSE_DEBUG traceId={} tenantId={} consultationId={} patientId={} templateKey={} provider={} rawResponseChars={} rawResponsePreview=\"{}\"",
-                                request.correlationId(),
-                                request.tenantId(),
-                                consultationIdFromRequest(request),
-                                patientIdFromRequest(request),
-                                template.templateCode(),
-                                candidate.providerName(),
-                                firstNonBlank(providerResponse.rawText(), providerResponse.outputText()) == null ? 0 : firstNonBlank(providerResponse.rawText(), providerResponse.outputText()).length(),
-                                redactSoapTraceText(trimTo(firstNonBlank(providerResponse.rawText(), providerResponse.outputText()), 8000)));
+                        log.debug("SOAP-DRAFT-TRACE stage=RAW_RESPONSE_DEBUG_DISABLED_FOR_PRIVACY traceId={} provider={} rawResponsePresent={} rawResponseChars={}",
+                                request.correlationId(), candidate.providerName(),
+                                firstNonBlank(providerResponse.rawText(), providerResponse.outputText()) != null,
+                                firstNonBlank(providerResponse.rawText(), providerResponse.outputText()) == null ? 0
+                                        : firstNonBlank(providerResponse.rawText(), providerResponse.outputText()).length());
                     }
                 }
                 if (soapTask && isSoapTruncated(providerResponse) && soapRetryCount == 0) {
@@ -356,15 +352,11 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                                 null,
                                 isSoapTruncated(providerResponse) ? "INCOMPLETE" : "COMPLETE");
                         if (soapTraceRawResponseEnabled) {
-                            log.info("SOAP-DRAFT-TRACE stage=RAW_RESPONSE_DEBUG traceId={} tenantId={} consultationId={} patientId={} templateKey={} provider={} rawResponseChars={} rawResponsePreview=\"{}\"",
-                                    request.correlationId(),
-                                    request.tenantId(),
-                                    consultationIdFromRequest(request),
-                                    patientIdFromRequest(request),
-                                    template.templateCode(),
-                                    candidate.providerName(),
-                                    firstNonBlank(providerResponse.rawText(), providerResponse.outputText()) == null ? 0 : firstNonBlank(providerResponse.rawText(), providerResponse.outputText()).length(),
-                                    redactSoapTraceText(trimTo(firstNonBlank(providerResponse.rawText(), providerResponse.outputText()), 8000)));
+                            log.debug("SOAP-DRAFT-TRACE stage=RAW_RESPONSE_DEBUG_DISABLED_FOR_PRIVACY traceId={} provider={} rawResponsePresent={} rawResponseChars={}",
+                                    request.correlationId(), candidate.providerName(),
+                                    firstNonBlank(providerResponse.rawText(), providerResponse.outputText()) != null,
+                                    firstNonBlank(providerResponse.rawText(), providerResponse.outputText()) == null ? 0
+                                            : firstNonBlank(providerResponse.rawText(), providerResponse.outputText()).length());
                         }
                     }
                     if (isSoapTruncated(providerResponse)) {
@@ -442,26 +434,21 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                 break;
             } catch (AiProviderException ex) {
                 if (isSoapTrace(request) && soapTraceEnabled) {
-                    log.warn("SOAP-DRAFT-TRACE stage=ERROR traceId={} tenantId={} consultationId={} patientId={} templateKey={} provider={} currentStage={} exceptionClass={} message={} providerErrorCategory={}",
+                    log.warn("SOAP-DRAFT-TRACE stage=ERROR traceId={} provider={} currentStage={} exceptionClass={} providerErrorCategory={}",
                             request.correlationId(),
-                            request.tenantId(),
-                            consultationIdFromRequest(request),
-                            patientIdFromRequest(request),
-                            template.templateCode(),
                             candidate.providerName(),
                             soapStage,
                             ex.getClass().getName(),
-                            safeMessage(ex),
                             ex.retryable() ? "RETRYABLE_PROVIDER_FAILURE" : "FATAL_PROVIDER_FAILURE");
                 }
                 lastFailure = ex;
-                log.warn("AI provider failed. requestId={}, provider={}, retryable={}, status={}, latencyMs={}, error={}",
+                    log.warn("AI provider failed. requestId={}, provider={}, retryable={}, status={}, latencyMs={}, exceptionClass={}",
                         requestId,
                         candidate.providerName(),
                         ex.retryable(),
                         ex.statusCode(),
                         System.currentTimeMillis() - providerStarted,
-                        safeMessage(ex));
+                        ex.getClass().getSimpleName());
                 log.info("AI_PROVIDER_ATTEMPT_TRACE providerAttempted={} providerAvailable=true providerResult=FAILURE "
                                 + "failureCategory={} httpStatusClass={} fallbackEligible={} fallbackAttempted={} "
                                 + "fallbackResult={} schemaRejected={} parseRejected={} semanticRejected={} timeout={} configurationMissing={}",
@@ -474,23 +461,18 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                 lastRetryableFailure = ex;
             } catch (RuntimeException ex) {
                 if (isSoapTrace(request) && soapTraceEnabled) {
-                    log.warn("SOAP-DRAFT-TRACE stage=ERROR traceId={} tenantId={} consultationId={} patientId={} templateKey={} provider={} currentStage={} exceptionClass={} message={} providerErrorCategory={}",
+                    log.warn("SOAP-DRAFT-TRACE stage=ERROR traceId={} provider={} currentStage={} exceptionClass={} providerErrorCategory={}",
                             request.correlationId(),
-                            request.tenantId(),
-                            consultationIdFromRequest(request),
-                            patientIdFromRequest(request),
-                            template.templateCode(),
                             candidate.providerName(),
                             soapStage,
                             ex.getClass().getName(),
-                            safeMessage(ex),
                             "PROVIDER_FAILURE");
                 }
-                log.warn("AI provider failed. requestId={}, provider={}, latencyMs={}, error={}",
+                    log.warn("AI provider failed. requestId={}, provider={}, latencyMs={}, exceptionClass={}",
                         requestId,
                         candidate.providerName(),
                         System.currentTimeMillis() - providerStarted,
-                        safeMessage(ex));
+                        ex.getClass().getSimpleName());
                 log.info("AI_PROVIDER_ATTEMPT_TRACE providerAttempted={} providerAvailable=true providerResult=FAILURE "
                                 + "failureCategory={} httpStatusClass=NONE fallbackEligible=true fallbackAttempted={} "
                                 + "fallbackResult={} schemaRejected={} parseRejected={} semanticRejected=false timeout={} configurationMissing={}",
@@ -1008,9 +990,10 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
         rendered.put("taskType", request.taskType() == null ? AiTaskType.GENERIC_COPILOT.name() : request.taskType().name());
         rendered.put("useCaseCode", safe(request.useCaseCode()));
         rendered.put("promptTemplateCode", safe(request.promptTemplateCode()));
-        rendered.put("tenantId", request.tenantId() == null ? "-" : request.tenantId().toString());
-        rendered.put("actorUserId", request.actorUserId() == null ? "-" : request.actorUserId().toString());
-        rendered.put("correlationId", safe(request.correlationId()));
+        boolean aivaRequest = isAivaV2DecisionRequest(request);
+        rendered.put("tenantId", aivaRequest ? "-" : request.tenantId() == null ? "-" : request.tenantId().toString());
+        rendered.put("actorUserId", aivaRequest ? "-" : request.actorUserId() == null ? "-" : request.actorUserId().toString());
+        rendered.put("correlationId", aivaRequest ? "-" : safe(request.correlationId()));
         rendered.put("inputVariablesJson", safeJson(request.inputVariables()));
         rendered.put("evidenceSummary", summarizeEvidence(request.evidence()));
         rendered.put("templateVersion", template.version());
@@ -1071,12 +1054,10 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
             responseChars = raw.length();
         }
         String normalizedFinishReason = AiFinishReasonNormalizer.normalize(response == null ? null : response.normalizedFinishReason());
-        log.info("[NORMALIZED] provider={} model={} normalizedChars={} first300Chars=\"{}\" last300Chars=\"{}\" finishReason={} normalizedFinishReason={} parseStatus={}",
+        log.info("LLM_NORMALIZED_METADATA provider={} model={} normalizedChars={} finishReason={} normalizedFinishReason={} parseStatus={}",
                 response == null ? null : response.providerName(),
                 response == null ? null : response.model(),
                 raw == null ? 0 : raw.length(),
-                previewStart(raw),
-                previewEnd(raw),
                 response == null ? null : response.finishReason(),
                 normalizedFinishReason,
                 response == null ? null : response.parseStatus());
@@ -1148,9 +1129,9 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                 answer = "AI suggestions generated. Please review.";
             }
             if (looksLikePromptLeak(raw)) {
-                log.warn("AI provider output looked like prompt/template leakage. provider={}, rawPreview=\"{}\"",
+                log.warn("AI provider output looked like prompt/template leakage. provider={}, responseLengthBucket={}",
                         response.providerName(),
-                        trimTo(raw.replaceAll("[\\r\\n\\t]+", " "), 300));
+                        lengthBucket(raw));
                 return invalidParsedOutput("AI returned an invalid response. Please retry.", response.confidence(), raw, normalizedFinishReason,
                         parseStatusFromFinishReason(normalizedFinishReason, "FAILED"));
             }
@@ -1158,9 +1139,8 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                     confidence == null ? response.confidence() : confidence, raw, responseChars, "VALID", normalizedFinishReason, null);
         } catch (Exception ex) {
             if (looksLikePromptLeak(raw)) {
-                log.warn("AI provider response matched prompt/template leakage. provider={}, rawPreview=\"{}\"",
-                        response.providerName(),
-                        trimTo(raw.replaceAll("[\\r\\n\\t]+", " "), 300));
+                log.warn("AI provider response matched prompt/template leakage. provider={}, responseLengthBucket={}",
+                        response.providerName(), lengthBucket(raw));
                 return invalidParsedOutput("AI returned an invalid response. Please retry.", response.confidence(), raw, normalizedFinishReason,
                         parseStatusFromFinishReason(normalizedFinishReason, "FAILED"));
             }
@@ -1170,8 +1150,8 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
             if (AiFinishReasonNormalizer.isTruncated(normalizedFinishReason)) {
                 return invalidParsedOutput("AI response was truncated. Please retry.", response.confidence(), raw, normalizedFinishReason, "TRUNCATED");
             }
-            log.warn("AI provider response parsing fallback used. provider={}, error={}, rawPreview=\"{}\"",
-                    response.providerName(), safeMessage(ex), trimTo(raw.replaceAll("[\\r\\n\\t]+", " "), 300));
+            log.warn("AI provider response parsing fallback used. provider={}, exceptionClass={}, responseLengthBucket={}",
+                    response.providerName(), ex.getClass().getSimpleName(), lengthBucket(raw));
             if (strictJson) {
                 return invalidParsedOutput("AI response could not be parsed. Please retry.", response.confidence(), raw, normalizedFinishReason, "FAILED");
             }
@@ -1504,6 +1484,15 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
             return ex == null ? "AI provider unavailable" : ex.getClass().getSimpleName();
         }
         return ex.getMessage();
+    }
+
+    private String lengthBucket(String value) {
+        int length = value == null ? 0 : value.length();
+        if (length == 0) return "0";
+        if (length < 256) return "1-255";
+        if (length < 1024) return "256-1023";
+        if (length < 4096) return "1024-4095";
+        return "4096+";
     }
 
     private String previewStart(String value) {

@@ -13,17 +13,20 @@ import java.time.temporal.TemporalAdjusters;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /** Resolves V2 date meaning before the transactional kernel sees a turn. */
 final class AivaV2TemporalNormalizer {
     private static final Pattern ISO = Pattern.compile("\\b\\d{4}-\\d{2}-\\d{2}\\b");
-    private static final Pattern NUMERIC = Pattern.compile("\\b(\\d{1,2})[./,\\-\\s]+(\\d{1,2})[./,\\-\\s]+(\\d{4})\\b");
+    private static final Pattern NUMERIC = Pattern.compile("\\b(\\d{1,2})[./,\\-\\s]+(\\d{1,2})(?:[./,\\-\\s]+(\\d{2}|\\d{4}))?\\b");
     private static final Pattern MONTH_DATE = Pattern.compile(
             "\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+([a-z]+)\\s+(\\d{4})\\b", Pattern.CASE_INSENSITIVE);
     private static final Pattern MONTH_DATE_WITHOUT_YEAR = Pattern.compile(
             "\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+([a-z]+)\\b", Pattern.CASE_INSENSITIVE);
+    private static final Pattern MONTH_FIRST_DATE = Pattern.compile(
+            "\\b([a-z]+)\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:\\s+(\\d{4}))?\\b", Pattern.CASE_INSENSITIVE);
     private static final Map<String, DayOfWeek> DAYS = Map.of(
             "monday", DayOfWeek.MONDAY, "tuesday", DayOfWeek.TUESDAY, "wednesday", DayOfWeek.WEDNESDAY,
             "thursday", DayOfWeek.THURSDAY, "friday", DayOfWeek.FRIDAY, "saturday", DayOfWeek.SATURDAY,
@@ -52,12 +55,13 @@ final class AivaV2TemporalNormalizer {
             if (candidate.date() == null) {
                 return new AivaV2TemporalResolution(candidate.invalid()
                                 ? AivaV2TemporalResolution.Status.INVALID : AivaV2TemporalResolution.Status.AMBIGUOUS, null,
-                        AivaV2TemporalResolution.Source.CURRENT_TURN_EXPLICIT, candidate.text(), modelCandidate, false);
+                        AivaV2TemporalResolution.Source.CURRENT_TURN_EXPLICIT, candidate.text(), modelCandidate, false,
+                        candidate.candidateDates());
             }
             LocalDate modelDate = resolveValue(modelCandidate).orElse(null);
             return new AivaV2TemporalResolution(AivaV2TemporalResolution.Status.RESOLVED, candidate.date(),
                     AivaV2TemporalResolution.Source.CURRENT_TURN_EXPLICIT, candidate.text(), modelCandidate,
-                    modelDate != null && !candidate.date().equals(modelDate));
+                    modelDate != null && !candidate.date().equals(modelDate), candidate.candidateDates());
         }
         if (modelPatch == null || modelPatch.mode() == PatchMode.UNCHANGED) {
             return AivaV2TemporalResolution.unchanged(previous, modelCandidate);
@@ -74,7 +78,9 @@ final class AivaV2TemporalNormalizer {
                 .map(date -> new AivaV2TemporalResolution(AivaV2TemporalResolution.Status.RESOLVED, date,
                         AivaV2TemporalResolution.Source.MODEL_CANONICAL, null, modelCandidate, false))
                 .orElseGet(() -> new AivaV2TemporalResolution(isNumericDate(modelCandidate)
-                                ? AivaV2TemporalResolution.Status.INVALID : AivaV2TemporalResolution.Status.AMBIGUOUS, null,
+                                ? (isAmbiguousNumeric(modelCandidate)
+                                ? AivaV2TemporalResolution.Status.AMBIGUOUS : AivaV2TemporalResolution.Status.INVALID)
+                                : AivaV2TemporalResolution.Status.AMBIGUOUS, null,
                         AivaV2TemporalResolution.Source.MODEL_CANONICAL, null, modelCandidate, false));
     }
 
@@ -83,12 +89,12 @@ final class AivaV2TemporalNormalizer {
             boolean resolved = fact.status() == NormalizedUserTurn.TemporalStatus.RESOLVED;
             LocalDate modelDate = modelPatch != null && modelPatch.mode() == PatchMode.SET
                     ? resolveValue(modelPatch.value()).orElse(null) : null;
-            return new AivaV2TemporalResolution(resolved ? AivaV2TemporalResolution.Status.RESOLVED
+                return new AivaV2TemporalResolution(resolved ? AivaV2TemporalResolution.Status.RESOLVED
                     : fact.status() == NormalizedUserTurn.TemporalStatus.INVALID
                     ? AivaV2TemporalResolution.Status.INVALID : AivaV2TemporalResolution.Status.AMBIGUOUS,
                     resolved ? fact.localDate() : null, AivaV2TemporalResolution.Source.CURRENT_TURN_EXPLICIT,
                     fact.rawSpan(), modelPatch == null ? null : modelPatch.value(),
-                    resolved && modelDate != null && !fact.localDate().equals(modelDate));
+                    resolved && modelDate != null && !fact.localDate().equals(modelDate), fact.candidateDates());
         }
         return normalize("", modelPatch, previous);
     }
@@ -101,19 +107,21 @@ final class AivaV2TemporalNormalizer {
         Matcher numeric = NUMERIC.matcher(value);
         if (numeric.find()) {
             String text = numeric.group();
-            int day = Integer.parseInt(numeric.group(1));
-            int month = Integer.parseInt(numeric.group(2));
-            if (day < 1 || day > 31 || month < 1 || month > 12) {
-                return Optional.of(new Candidate(text, null, true));
-            }
-            // Jeevanam's India/UAT patient-facing date convention is day-month-year.
-            return parse(text, text);
+            return numeric(text, Integer.parseInt(numeric.group(1)), Integer.parseInt(numeric.group(2)), numeric.group(3));
         }
         Matcher monthDate = MONTH_DATE.matcher(value);
         if (monthDate.find()) return parse(monthDate.group(), monthDate.group());
         Matcher monthDateWithoutYear = MONTH_DATE_WITHOUT_YEAR.matcher(value);
         if (monthDateWithoutYear.find() && MONTHS.containsKey(monthDateWithoutYear.group(2))) {
             return parseMonthDateWithoutYear(monthDateWithoutYear.group());
+        }
+        Matcher monthFirst = MONTH_FIRST_DATE.matcher(value);
+        if (monthFirst.find() && MONTHS.containsKey(monthFirst.group(1))) {
+            int month = MONTHS.get(monthFirst.group(1)).getValue();
+            int day = Integer.parseInt(monthFirst.group(2));
+            LocalDate date = monthFirst.group(3) == null ? inferredDate(month, day)
+                    : safeDate(Integer.parseInt(monthFirst.group(3)), month, day);
+            return Optional.of(new Candidate(monthFirst.group(), date, date == null));
         }
 
         String normalized = value.replaceAll("[,.!?]", " ").replaceAll("\\s+", " ").trim();
@@ -126,6 +134,33 @@ final class AivaV2TemporalNormalizer {
         return Optional.empty();
     }
 
+    private Optional<Candidate> numeric(String text, int first, int second, String yearText) {
+        int year = yearText == null ? LocalDate.now(clock.withZone(zone)).getYear() : normalizedYear(yearText);
+        LocalDate dayFirst = safeDate(year, second, first);
+        LocalDate monthFirst = safeDate(year, first, second);
+        if (dayFirst != null && monthFirst != null && !dayFirst.equals(monthFirst)) {
+            return Optional.of(new Candidate(text, null, false, List.of(dayFirst, monthFirst)));
+        }
+        LocalDate resolved = dayFirst != null ? dayFirst : monthFirst;
+        return Optional.of(new Candidate(text, resolved, resolved == null, List.of()));
+    }
+
+    private int normalizedYear(String value) {
+        int year = Integer.parseInt(value);
+        return value.length() == 2 ? 2000 + year : year;
+    }
+
+    private LocalDate safeDate(int year, int month, int day) {
+        try { return LocalDate.of(year, month, day); }
+        catch (DateTimeException | NumberFormatException ex) { return null; }
+    }
+
+    private LocalDate inferredDate(int month, int day) {
+        LocalDate today = LocalDate.now(clock.withZone(zone));
+        LocalDate candidate = safeDate(today.getYear(), month, day);
+        return candidate == null ? null : candidate.isBefore(today) ? candidate.plusYears(1) : candidate;
+    }
+
     private Optional<LocalDate> resolveValue(String value) {
         if (value == null || value.isBlank()) return Optional.empty();
         String normalized = value.toLowerCase(Locale.ROOT).replaceAll("[,.!?]", " ").replaceAll("\\s+", " ").trim();
@@ -133,9 +168,12 @@ final class AivaV2TemporalNormalizer {
         if (iso.matches()) return parseDate(() -> LocalDate.parse(normalized));
         Matcher numeric = NUMERIC.matcher(normalized);
         if (numeric.matches()) {
-            int year = Integer.parseInt(numeric.group(3));
-            return parseDate(() -> LocalDate.of(year,
-                    Integer.parseInt(numeric.group(2)), Integer.parseInt(numeric.group(1))));
+            int year = numeric.group(3) == null
+                    ? LocalDate.now(clock.withZone(zone)).getYear() : normalizedYear(numeric.group(3));
+            LocalDate dayFirst = safeDate(year, Integer.parseInt(numeric.group(2)), Integer.parseInt(numeric.group(1)));
+            LocalDate monthFirst = safeDate(year, Integer.parseInt(numeric.group(1)), Integer.parseInt(numeric.group(2)));
+            if (dayFirst != null && monthFirst != null && !dayFirst.equals(monthFirst)) return Optional.empty();
+            return Optional.ofNullable(dayFirst != null ? dayFirst : monthFirst);
         }
         Matcher monthDate = MONTH_DATE.matcher(normalized);
         if (monthDate.matches() && MONTHS.containsKey(monthDate.group(2))) {
@@ -145,6 +183,13 @@ final class AivaV2TemporalNormalizer {
         Matcher monthDateWithoutYear = MONTH_DATE_WITHOUT_YEAR.matcher(normalized);
         if (monthDateWithoutYear.matches() && MONTHS.containsKey(monthDateWithoutYear.group(2))) {
             return parseMonthDateWithoutYear(normalized).map(Candidate::date);
+        }
+        Matcher monthFirst = MONTH_FIRST_DATE.matcher(normalized);
+        if (monthFirst.matches() && MONTHS.containsKey(monthFirst.group(1))) {
+            int month = MONTHS.get(monthFirst.group(1)).getValue();
+            int day = Integer.parseInt(monthFirst.group(2));
+            return Optional.ofNullable(monthFirst.group(3) == null ? inferredDate(month, day)
+                    : safeDate(Integer.parseInt(monthFirst.group(3)), month, day));
         }
         String relative = firstPresent(normalized, "day after tomorrow", "parson", "परसों", "tomorrow", "kal", "कल", "today", "aaj", "आज");
         if (relative != null) return relative(relative, relative).map(Candidate::date);
@@ -159,11 +204,20 @@ final class AivaV2TemporalNormalizer {
         return NUMERIC.matcher(normalized).matches();
     }
 
+    private boolean isAmbiguousNumeric(String value) {
+        Matcher matcher = NUMERIC.matcher(value == null ? "" : value.trim());
+        if (!matcher.matches()) return false;
+        int year = matcher.group(3) == null ? LocalDate.now(clock.withZone(zone)).getYear() : normalizedYear(matcher.group(3));
+        return safeDate(year, Integer.parseInt(matcher.group(2)), Integer.parseInt(matcher.group(1))) != null
+                && safeDate(year, Integer.parseInt(matcher.group(1)), Integer.parseInt(matcher.group(2))) != null
+                && !Integer.valueOf(matcher.group(1)).equals(Integer.valueOf(matcher.group(2)));
+    }
+
     private Optional<Candidate> relative(String text, String candidate) {
         LocalDate today = LocalDate.now(clock.withZone(zone));
         int days = text.equals("today") || text.equals("aaj") || text.equals("आज") ? 0
                 : text.equals("day after tomorrow") || text.equals("parson") || text.equals("परसों") ? 2 : 1;
-        return Optional.of(new Candidate(candidate, today.plusDays(days), false));
+        return Optional.of(new Candidate(candidate, today.plusDays(days), false, List.of()));
     }
 
     private Optional<Candidate> parseMonthDateWithoutYear(String text) {
@@ -200,6 +254,10 @@ final class AivaV2TemporalNormalizer {
         return null;
     }
 
-    private record Candidate(String text, LocalDate date, boolean invalid) { }
+    private record Candidate(String text, LocalDate date, boolean invalid, List<LocalDate> candidateDates) {
+        private Candidate(String text, LocalDate date, boolean invalid) {
+            this(text, date, invalid, List.of());
+        }
+    }
     @FunctionalInterface private interface DateSupplier { LocalDate get(); }
 }

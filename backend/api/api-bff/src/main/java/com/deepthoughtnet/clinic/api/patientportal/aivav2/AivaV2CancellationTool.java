@@ -45,14 +45,13 @@ class AivaV2CancellationTool {
         Instant now = Instant.now();
         if (confirmation == null || confirmation.expiresAt() == null
                 || confirmation.expiresAt().isBefore(now)) {
-            log.info("AIVA_V2_CANCELLATION_CONFIRMATION conversationId={} activeWorkflow=CANCELLATION "
+            log.info("AIVA_V2_CANCELLATION_CONFIRMATION conversationIdHash={} activeWorkflow=CANCELLATION "
                             + "sessionVersion={} pendingCancellationPresent={} confirmationRefPresent={} "
-                            + "appointmentRefPresent={} expiresAt={} currentInstant={} domainInvocationReached=false "
+                            + "appointmentRefPresent={} confirmationExpired=true domainInvocationReached=false "
                             + "staleReason=CAPABILITY_EXPIRED",
-                    conversationId, sessionVersion, confirmation != null,
+                    AivaV2LogRedaction.correlation(conversationId), sessionVersion, confirmation != null,
                     confirmation != null && confirmation.confirmationRef() != null,
-                    confirmation != null && confirmation.appointmentReference() != null,
-                    confirmation == null ? null : confirmation.expiresAt(), now);
+                    confirmation != null && confirmation.appointmentReference() != null);
             return new CancellationAttempt(ToolResult.failure("STALE", "The cancellation confirmation has expired."),
                     StaleReason.CAPABILITY_EXPIRED, false, now, null);
         }
@@ -61,21 +60,21 @@ class AivaV2CancellationTool {
                     ? patientPortalService.cancelAppointment(confirmation.appointmentId(), "Cancelled by patient", confirmation.idempotencyKey())
                     : patientPortalService.cancelAppointmentInOwningTenant(confirmation.appointmentId(),
                     confirmation.owningTenantId(), "Cancelled by patient", confirmation.idempotencyKey());
-            log.info("AIVA_V2_CANCELLATION_CONFIRMATION conversationId={} activeWorkflow=CANCELLATION "
+            log.info("AIVA_V2_CANCELLATION_CONFIRMATION conversationIdHash={} activeWorkflow=CANCELLATION "
                             + "sessionVersion={} pendingCancellationPresent=true confirmationRefPresent={} "
-                            + "appointmentRefPresent={} expiresAt={} currentInstant={} domainInvocationReached=true "
+                            + "appointmentRefPresent={} confirmationExpired=false domainInvocationReached=true "
                             + "staleReason=NONE domainOutcome=RETURNED_SUCCESS idempotencyOutcome=REQUEST_RETURNED",
-                    conversationId, sessionVersion, confirmation.confirmationRef() != null,
-                    confirmation.appointmentReference() != null, confirmation.expiresAt(), now);
+                    AivaV2LogRedaction.correlation(conversationId), sessionVersion, confirmation.confirmationRef() != null,
+                    confirmation.appointmentReference() != null);
             return new CancellationAttempt(ToolResult.success(response.message()), StaleReason.NONE, true, now, null);
         } catch (RuntimeException ex) {
-            log.info("AIVA_V2_CANCELLATION_CONFIRMATION conversationId={} activeWorkflow=CANCELLATION "
+            log.info("AIVA_V2_CANCELLATION_CONFIRMATION conversationIdHash={} activeWorkflow=CANCELLATION "
                             + "sessionVersion={} pendingCancellationPresent=true confirmationRefPresent={} "
-                            + "appointmentRefPresent={} expiresAt={} currentInstant={} domainInvocationReached=true "
+                            + "appointmentRefPresent={} confirmationExpired=false domainInvocationReached=true "
                             + "staleReason=DOMAIN_CANCEL_REJECTED exceptionType={} domainOutcome=THREW "
                             + "appointmentStateCategory=UNKNOWN idempotencyOutcome=UNKNOWN commitStatus=UNKNOWN",
-                    conversationId, sessionVersion, confirmation.confirmationRef() != null,
-                    confirmation.appointmentReference() != null, confirmation.expiresAt(), now,
+                    AivaV2LogRedaction.correlation(conversationId), sessionVersion, confirmation.confirmationRef() != null,
+                    confirmation.appointmentReference() != null,
                     ex.getClass().getSimpleName());
             return new CancellationAttempt(ToolResult.failure("STALE", "The appointment is no longer cancellable."),
                     StaleReason.DOMAIN_CANCEL_REJECTED, true, now, ex.getClass().getSimpleName());

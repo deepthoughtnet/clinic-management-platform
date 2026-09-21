@@ -245,6 +245,49 @@ class PatientPortalAccessRequestServiceTest {
     }
 
     @Test
+    void approvedExpiredCodeCanBeReissuedAndPreviousCodeStopsWorking() {
+        PatientPortalAccessRequestEntity request = PatientPortalAccessRequestEntity.create(
+                TENANT_ID, "Amit Verma", "9876543210", "9876543210", null, null);
+        request.approve(UUID.randomUUID(), "Platform Admin", PATIENT_ID, "Amit Verma");
+        request.attachAccessCode(new BCryptPasswordEncoder().encode("12345678"),
+                request.getCreatedAt().minusDays(8), request.getCreatedAt().minusDays(1));
+        when(requestRepository.findTopByTenantIdAndMobileNormalizedOrderByCreatedAtDesc(TENANT_ID, "9876543210"))
+                .thenReturn(Optional.of(request));
+        when(patientRepository.findByTenantIdAndId(TENANT_ID, PATIENT_ID)).thenReturn(Optional.of(patient()));
+        when(requestRepository.save(any(PatientPortalAccessRequestEntity.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        var record = service.reissueAccessCode("9876543210",
+                new PatientPortalAccessContext(null, null, TENANT_ID.toString(), null, null));
+
+        assertThat(record.temporaryAccessCode()).hasSize(8).isNotEqualTo("12345678");
+        assertThat(new BCryptPasswordEncoder().matches("12345678", request.getAccessCodeHash())).isFalse();
+        assertThat(new BCryptPasswordEncoder().matches(record.temporaryAccessCode(), request.getAccessCodeHash())).isTrue();
+        verify(auditEventPublisher, times(1)).record(any());
+    }
+
+    @Test
+    void revokedAccountCannotReissueAccessCode() {
+        PatientPortalAccessRequestEntity request = PatientPortalAccessRequestEntity.create(
+                TENANT_ID, "Amit Verma", "9876543210", "9876543210", null, null);
+        request.revoke(UUID.randomUUID(), "Platform Admin", "Stopped preview access");
+        when(requestRepository.findTopByTenantIdAndMobileNormalizedOrderByCreatedAtDesc(TENANT_ID, "9876543210"))
+                .thenReturn(Optional.of(request));
+
+        assertThatThrownBy(() -> service.reissueAccessCode("9876543210",
+                new PatientPortalAccessContext(null, null, TENANT_ID.toString(), null, null)))
+                .isInstanceOf(PatientPortalAccessRequestConflictException.class)
+                .hasMessageContaining("not eligible");
+    }
+
+    @Test
+    void reissueRequiresTheExplicitClinicContext() {
+        assertThatThrownBy(() -> service.reissueAccessCode("9876543210", null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Clinic context");
+    }
+
+    @Test
     void listAuthorizedClinicsReturnsOnlyActiveTenantContexts() {
         PatientPortalAccessRequestEntity demo = PatientPortalAccessRequestEntity.create(TENANT_ID, "Amit Verma", "9876543210", "9876543210", null, null);
         demo.approve(UUID.randomUUID(), "Platform Admin", PATIENT_ID, "Amit Verma");

@@ -90,6 +90,10 @@ export function sanitizePatientAccessErrorMessage(value) {
     return normalized;
   }
 
+  if (lower.includes("access code") && lower.includes("expired")) {
+    return "This access code has expired. Request a new access code.";
+  }
+
   if (lower.includes("clinic context")) {
     return "Select the correct clinic or hospital before signing in.";
   }

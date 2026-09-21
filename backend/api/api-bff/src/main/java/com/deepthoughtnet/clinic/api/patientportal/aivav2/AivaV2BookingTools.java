@@ -17,6 +17,8 @@ import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.Resolutio
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.Selection;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ToolResult;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalAppointmentBookingRequest;
+import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorAvailabilityDayResponse;
+import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorAvailabilityResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorSlotResponse;
 import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiDoctorOption;
 import com.deepthoughtnet.clinic.api.publicsite.PublicCatalogFacade;
@@ -121,6 +123,59 @@ class AivaV2BookingTools {
                 draft.availabilityTimeConstraint(), draft.draftId(), draft.revision(), criteriaFingerprint(draft));
     }
 
+    ToolResult<AvailabilityResult> getNextBookingAvailability(BookingDraft draft) {
+        if (draft == null || draft.selectedProvider() == null || draft.preferredDate() == null) {
+            return ToolResult.failure("NEEDS_INPUT", "Provider and date are required.");
+        }
+        ProviderCandidate provider = draft.selectedProvider();
+        if (!provider.capabilities().onlineBooking() || !provider.capabilities().liveAvailability()) {
+            return ToolResult.failure("NOT_BOOKABLE", "Online scheduling is not connected for this doctor.");
+        }
+        try {
+            PatientPortalDoctorAvailabilityResponse response = patientPortalService.doctorAvailability(
+                    provider.bookingReference(), provider.doctorId(), provider.clinicSlug(),
+                    provider.tenantId(), provider.clinicId(), draft.preferredDate());
+            PatientPortalDoctorAvailabilityDayResponse next = response == null || response.nextAvailable() == null
+                    ? null
+                    : response.nextAvailable().stream()
+                    .filter(day -> day != null && day.appointmentDate() != null
+                            && day.appointmentDate().isAfter(draft.preferredDate()))
+                    .map(day -> new PatientPortalDoctorAvailabilityDayResponse(day.appointmentDate(),
+                            filteredSlots(day.slots(), draft.preferredTimeWindow(), draft.availabilityTimeConstraint())))
+                    .filter(day -> day.slots() != null && !day.slots().isEmpty())
+                    .findFirst().orElse(null);
+            if (next == null) return ToolResult.failure("NO_FUTURE_AVAILABILITY",
+                    "No available slots were found in the current booking window.");
+            Instant now = Instant.now(clock);
+            ZoneId zone = clinicTimeZoneResolver == null
+                    ? ZoneId.of("Asia/Kolkata")
+                    : clinicTimeZoneResolver.resolve(RequestContextHolder.requireTenantId());
+            List<AvailabilitySlot> slots = next.slots().stream()
+                    .map(slot -> new AvailabilitySlot(slot.slotReference(), slot.slotTime(), slot.slotEndTime(),
+                            slot.slotTime() == null ? null : slot.slotTime().toString()))
+                    .toList();
+            return ToolResult.success(new AvailabilityResult(UUID.randomUUID(), draft.draftId(), draft.revision(),
+                    criteriaFingerprint(draft), provider.providerHandle(), provider.doctorId(), provider.clinicId(),
+                    next.appointmentDate(), draft.preferredTimeWindow(), draft.availabilityTimeConstraint(), zone.getId(),
+                    slots, null, slots.size() > 3, now, now.plusSeconds(5 * 60), 0, 3));
+        } catch (org.springframework.web.server.ResponseStatusException ex) {
+            return ToolResult.failure(ex.getStatusCode().value() == 409 ? "STALE" : "NOT_BOOKABLE", ex.getReason());
+        } catch (RuntimeException ex) {
+            return ToolResult.failure("FAILED", "Availability could not be retrieved.");
+        }
+    }
+
+    private List<PatientPortalDoctorSlotResponse> filteredSlots(List<PatientPortalDoctorSlotResponse> slots,
+                                                                  String timeWindow,
+                                                                  AvailabilityTimeConstraint constraint) {
+        if (slots == null) return List.of();
+        return slots.stream()
+                .filter(PatientPortalDoctorSlotResponse::selectable)
+                .filter(slot -> matchesWindow(slot.slotTime(), timeWindow))
+                .filter(slot -> matchesTimeConstraint(slot.slotTime(), constraint))
+                .toList();
+    }
+
     ToolResult<AvailabilityResult> getAvailability(ProviderCandidate provider, LocalDate date, String timeWindow,
                                                    AvailabilityTimeConstraint constraint, UUID stateId, long stateRevision,
                                                    String requestedFingerprint) {
@@ -192,16 +247,19 @@ class AivaV2BookingTools {
             return ToolResult.failure("STALE", "Those slots are no longer current.");
         }
         AvailabilitySlot selected = null;
+        int pageStart = Math.min(availability.displayOffset(), availability.slots().size());
+        int pageEnd = Math.min(availability.slots().size(), pageStart + availability.pageSize());
         if (StringUtils.hasText(selection.slotRef())) {
-            selected = availability.slots().stream()
+            selected = availability.slots().subList(pageStart, pageEnd).stream()
                     .filter(slot -> selection.slotRef().equals(slot.slotReference())).findFirst().orElse(null);
         } else if (StringUtils.hasText(selection.exactTime())) {
             try {
                 LocalTime time = LocalTime.parse(selection.exactTime());
-                selected = availability.slots().stream().filter(slot -> time.equals(slot.startsAt())).findFirst().orElse(null);
+                selected = availability.slots().subList(pageStart, pageEnd).stream()
+                        .filter(slot -> time.equals(slot.startsAt())).findFirst().orElse(null);
             } catch (RuntimeException ignored) { }
         } else if (selection.ordinal() != null) {
-            int index = selection.ordinal() == -1 ? availability.slots().size() - 1 : selection.ordinal() - 1;
+            int index = selection.ordinal() == -1 ? pageEnd - 1 : pageStart + selection.ordinal() - 1;
             selected = index >= 0 && index < availability.slots().size() ? availability.slots().get(index) : null;
         }
         return selected == null ? ToolResult.failure("NEEDS_INPUT", "Select one of the current slots.")
@@ -227,10 +285,9 @@ class AivaV2BookingTools {
             Instant now = Instant.now(clock);
             log.info("AIVA_V2_CONFIRMATION_TRACE confirmationStaleReason={} "
                             + "draftRevision={} confirmationDraftRevision={} "
-                            + "confirmationCreatedAt={} confirmationExpiresAt={} currentTime={} "
+                            + "confirmationCreated=true confirmationExpired=true currentTimePresent=true "
                             + "availabilityRequestPresent={} slotReferencePresent={}",
                     staleReason, draft.revision(), confirmation.draftRevision(),
-                    confirmation.expiresAt().minusSeconds(CONFIRMATION_TTL_SECONDS), confirmation.expiresAt(), now,
                     confirmation.availabilityRequestId() != null, StringUtils.hasText(confirmation.slotReference()));
             return ToolResult.failure("STALE", "The confirmation has expired or changed.");
         }
@@ -353,7 +410,10 @@ class AivaV2BookingTools {
             case EXACT -> time.equals(constraint.startTime());
             case AFTER -> time.isAfter(constraint.startTime());
             case BEFORE -> time.isBefore(constraint.endTime());
-            case BETWEEN -> time.isAfter(constraint.startTime()) && time.isBefore(constraint.endTime());
+            case BETWEEN -> !time.isBefore(constraint.startTime()) && !time.isAfter(constraint.endTime());
+            case EXCLUDE -> constraint.endTime() == null
+                    ? !time.equals(constraint.startTime())
+                    : time.isBefore(constraint.startTime()) || !time.isBefore(constraint.endTime());
         };
     }
     private int editDistance(String left, String right) {

@@ -9,6 +9,8 @@ import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiSta
 import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalConversationStateService;
 import com.deepthoughtnet.clinic.api.voice.VoiceOrchestratorService;
 import com.deepthoughtnet.clinic.api.voice.VoiceTestProperties;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2VoiceTurnConnector;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.MessageResponse;
 import com.deepthoughtnet.clinic.api.voice.spi.VoiceSynthesisResult;
 import com.deepthoughtnet.clinic.api.voice.spi.VoiceTranscriptionResult;
 import com.deepthoughtnet.clinic.tts.spi.VoiceTextNormalizer;
@@ -36,13 +38,14 @@ public class PatientPortalVoiceAssistantService {
     private final PatientPortalCareAiResponseComposerService responseComposerService;
     private final PatientPortalConversationStateService conversationStateService;
     private final VoiceTestProperties voiceProperties;
+    private final AivaV2VoiceTurnConnector aivaV2VoiceTurnConnector;
     private final VoiceTextNormalizer voiceTextNormalizer = new VoiceTextNormalizer();
 
     public PatientPortalVoiceAssistantService(
             VoiceOrchestratorService voiceOrchestratorService,
             PatientPortalCareAiService patientPortalCareAiService
     ) {
-        this(voiceOrchestratorService, patientPortalCareAiService, new VoiceTestProperties(), null, null);
+        this(voiceOrchestratorService, patientPortalCareAiService, new VoiceTestProperties(), null, null, null);
     }
 
     public PatientPortalVoiceAssistantService(
@@ -51,7 +54,7 @@ public class PatientPortalVoiceAssistantService {
             VoiceTestProperties voiceProperties,
             PatientPortalCareAiResponseComposerService responseComposerService
     ) {
-        this(voiceOrchestratorService, patientPortalCareAiService, voiceProperties, responseComposerService, null);
+        this(voiceOrchestratorService, patientPortalCareAiService, voiceProperties, responseComposerService, null, null);
     }
 
     @Autowired
@@ -60,13 +63,93 @@ public class PatientPortalVoiceAssistantService {
             PatientPortalCareAiService patientPortalCareAiService,
             VoiceTestProperties voiceProperties,
             PatientPortalCareAiResponseComposerService responseComposerService,
-            PatientPortalConversationStateService conversationStateService
+            PatientPortalConversationStateService conversationStateService,
+            AivaV2VoiceTurnConnector aivaV2VoiceTurnConnector
     ) {
         this.voiceOrchestratorService = voiceOrchestratorService;
         this.patientPortalCareAiService = patientPortalCareAiService;
         this.voiceProperties = voiceProperties;
         this.responseComposerService = responseComposerService;
         this.conversationStateService = conversationStateService;
+        this.aivaV2VoiceTurnConnector = aivaV2VoiceTurnConnector;
+    }
+
+    public PatientPortalVoiceAssistantService(
+            VoiceOrchestratorService voiceOrchestratorService,
+            PatientPortalCareAiService patientPortalCareAiService,
+            VoiceTestProperties voiceProperties,
+            PatientPortalCareAiResponseComposerService responseComposerService,
+            PatientPortalConversationStateService conversationStateService
+    ) {
+        this(voiceOrchestratorService, patientPortalCareAiService, voiceProperties,
+                responseComposerService, conversationStateService, null);
+    }
+
+    /** Processes a finalized Care voice transcript through the certified V2 boundary. */
+    public PatientPortalVoiceTurnResponse processAudioTurnV2(
+            byte[] audioBytes,
+            String contentType,
+            String originalFilename,
+            String language,
+            String conversationId,
+            String clientTurnId,
+            long clientTurnSequence
+    ) {
+        if (aivaV2VoiceTurnConnector == null) {
+            throw new IllegalStateException("AIVA V2 voice connector is unavailable.");
+        }
+        Instant requestStart = Instant.now();
+        Instant sttStart = Instant.now();
+        VoiceTranscriptionResult transcription = voiceOrchestratorService.transcribeBufferedAudio(
+                audioBytes, contentType, originalFilename, language);
+        long sttDurationMs = Duration.between(sttStart, Instant.now()).toMillis();
+        if (!StringUtils.hasText(transcription.transcript())) {
+            throw new IllegalStateException("No speech was captured. Please try again.");
+        }
+        MessageResponse response = aivaV2VoiceTurnConnector.submitFinalTranscript(
+                conversationId,
+                transcription.transcript(),
+                language,
+                clientTurnId,
+                clientTurnSequence
+        );
+        String assistantText = response.assistantMessage();
+        Instant ttsStart = Instant.now();
+        VoiceSynthesisResult synthesis = null;
+        String ttsFallbackReason = null;
+        try {
+            String voiceLanguage = resolveV2VoiceLanguage(transcription.transcript(), language);
+            synthesis = voiceOrchestratorService.synthesizeRenderedAssistantText(
+                    voiceTextNormalizer.normalizeTemporalValuesForVoice(assistantText, voiceLanguage), voiceLanguage);
+        } catch (RuntimeException ex) {
+            ttsFallbackReason = "Voice playback unavailable";
+        }
+        long ttsDurationMs = Duration.between(ttsStart, Instant.now()).toMillis();
+        byte[] audioPayload = playableAudioBytes(synthesis);
+        return new PatientPortalVoiceTurnResponse(
+                response.turnId(),
+                transcription.transcript(),
+                assistantText,
+                null,
+                synthesis == null ? null : synthesis.contentType(),
+                audioPayload == null ? null : Base64.getEncoder().encodeToString(audioPayload),
+                transcription.providerName(),
+                "AIVA_V2",
+                synthesis == null ? null : synthesis.providerName(),
+                sttDurationMs,
+                0L,
+                ttsDurationMs,
+                Duration.between(requestStart, Instant.now()).toMillis(),
+                audioBytes == null ? 0 : audioBytes.length,
+                ttsFallbackReason,
+                "CONVERSATION_CLOSED".equals(response.responseCategory())
+        );
+    }
+
+    private String resolveV2VoiceLanguage(String transcript, String requestedLanguage) {
+        String responseLanguage = aivaV2VoiceTurnConnector.responseLanguageForVoice(transcript, requestedLanguage);
+        return responseLanguage != null && responseLanguage.toLowerCase(java.util.Locale.ROOT).startsWith("hi")
+                ? "hi-IN" : "en-IN";
     }
 
     public PatientPortalVoiceTurnResponse processAudioTurn(
@@ -151,7 +234,7 @@ public class PatientPortalVoiceAssistantService {
                     0L,
                     Duration.between(requestStart, Instant.now()).toMillis(),
                     audioBytes == null ? 0 : audioBytes.length,
-                    "Speech recognition unavailable"
+                    ex.getMessage() == null ? "Speech recognition unavailable" : ex.getMessage()
             );
         }
         long sttDurationMs = Duration.between(sttStart, Instant.now()).toMillis();
@@ -199,10 +282,11 @@ public class PatientPortalVoiceAssistantService {
 
         Instant careAiStart = Instant.now();
         log.info("patient.voice.careai.start");
-        PatientPortalCareAiMessageResponse careAiResponse = patientPortalCareAiService.messageFromVoice(
-                new PatientPortalCareAiMessageRequest(transcription.transcript(), language),
-                progressSink
-        );
+        PatientPortalCareAiMessageRequest careAiRequest =
+                new PatientPortalCareAiMessageRequest(transcription.transcript(), language);
+        PatientPortalCareAiMessageResponse careAiResponse = progressSink == null
+                ? patientPortalCareAiService.messageFromVoice(careAiRequest)
+                : patientPortalCareAiService.messageFromVoice(careAiRequest, progressSink);
         long careAiDurationMs = Duration.between(careAiStart, Instant.now()).toMillis();
         log.info("patient.voice.careai.complete durationMs={}", careAiDurationMs);
         String assistantText = responseComposerService == null
@@ -253,7 +337,7 @@ public class PatientPortalVoiceAssistantService {
                     playableAudioBytes(synthesis) != null);
         } catch (RuntimeException ex) {
             ttsDurationMs = Duration.between(ttsStart, Instant.now()).toMillis();
-            ttsFallbackReason = "Voice playback unavailable";
+            ttsFallbackReason = ex.getMessage() == null ? "Voice playback unavailable" : ex.getMessage();
             log.warn("patient.voice.tts.fallback reason={} durationMs={}", ttsFallbackReason, ttsDurationMs);
         }
         byte[] audioPayload = playableAudioBytes(synthesis);
@@ -420,8 +504,19 @@ public class PatientPortalVoiceAssistantService {
             long ttsDurationMs,
             long totalDurationMs,
             long captureBytes,
-            String ttsFallbackReason
+            String ttsFallbackReason,
+            boolean conversationClosed
     ) {
+        public PatientPortalVoiceTurnResponse(String requestId, String transcript, String assistantText,
+                                              PatientPortalCareAiStateResponse state, String audioContentType,
+                                              String audioBase64, String sttProvider, String llmProvider,
+                                              String ttsProvider, long sttDurationMs, long careAiDurationMs,
+                                              long ttsDurationMs, long totalDurationMs, long captureBytes,
+                                              String ttsFallbackReason) {
+            this(requestId, transcript, assistantText, state, audioContentType, audioBase64, sttProvider,
+                    llmProvider, ttsProvider, sttDurationMs, careAiDurationMs, ttsDurationMs, totalDurationMs,
+                    captureBytes, ttsFallbackReason, false);
+        }
     }
 
     public record PatientPortalVoiceProgressAudio(

@@ -118,10 +118,8 @@ public class GeminiLlmClient implements LlmClient {
 
             ParsedGeminiResponse parsed = extractResponse(responseBody);
             long latencyMs = System.currentTimeMillis() - startedAt;
-            log.info("[LLM-RAW] provider=GEMINI rawChars={} first300Chars=\"{}\" last300Chars=\"{}\" finishReason={} candidateCount={} thoughtsTokenCount={} safetyBlocked={}",
+            log.info("LLM_RESPONSE_METADATA provider=GEMINI rawChars={} finishReason={} candidateCount={} thoughtsTokenCount={} safetyBlocked={}",
                     responseBody == null ? 0 : responseBody.length(),
-                    previewStart(responseBody),
-                    previewEnd(responseBody),
                     parsed.finishReason(),
                     parsed.candidateCount(),
                     parsed.thoughtsTokenCount(),
@@ -137,13 +135,8 @@ public class GeminiLlmClient implements LlmClient {
                     formatTokenUsage(parsed.tokenUsage())
             );
 
-            if (log.isDebugEnabled()) {
-                log.debug("Gemini preview. requestId={}, text=\"{}\"", requestId, safePreview(parsed.text()));
-            }
-            log.info("[NORMALIZED] provider=GEMINI normalizedChars={} first300Chars=\"{}\" last300Chars=\"{}\" finishReason={} thoughtsTokenCount={} tokenUsage={}",
+            log.info("LLM_NORMALIZED_METADATA provider=GEMINI normalizedChars={} finishReason={} thoughtsTokenCount={} tokenUsage={}",
                     parsed.text() == null ? 0 : parsed.text().length(),
-                    previewStart(parsed.text()),
-                    previewEnd(parsed.text()),
                     parsed.finishReason(),
                     parsed.thoughtsTokenCount(),
                     formatTokenUsage(parsed.tokenUsage()));
@@ -177,14 +170,12 @@ public class GeminiLlmClient implements LlmClient {
                     "UNKNOWN");
         } catch (RestClientResponseException ex) {
             int status = ex.getRawStatusCode();
-            String bodyPreview = sanitizePreview(ex.getResponseBodyAsString(), 300);
             if (status == 401 || status == 403) {
-                log.error("Gemini authorization failed. requestId={}, provider=GEMINI, model={}, endpointPath=/models/{}:generateContent, status={}, bodyPreview=\"{}\"",
+                log.error("Gemini authorization failed. requestId={}, provider=GEMINI, model={}, endpointPath=/models/{}:generateContent, status={}",
                         requestId,
                         model,
                         model,
-                        status,
-                        bodyPreview);
+                        status);
                 throw AiProviderException.fatal(
                         "Gemini authorization failed. Check API key/provider configuration.",
                         status,
@@ -195,12 +186,11 @@ public class GeminiLlmClient implements LlmClient {
                 );
             }
             if (status == 400) {
-                log.error("Gemini invalid request. requestId={}, provider=GEMINI, model={}, endpointPath=/models/{}:generateContent, status={}, bodyPreview=\"{}\"",
+                log.error("Gemini invalid request. requestId={}, provider=GEMINI, model={}, endpointPath=/models/{}:generateContent, status={}",
                         requestId,
                         model,
                         model,
-                        status,
-                        bodyPreview);
+                        status);
                 if (request.structuredOutputSchema() != null) {
                     throw AiProviderException.retryable(
                             "Gemini structured output request was rejected.",
@@ -221,8 +211,7 @@ public class GeminiLlmClient implements LlmClient {
                 );
             }
             if (status == 429) {
-                log.error("Gemini quota exceeded. requestId={}, status={}, bodyPreview=\"{}\"",
-                        requestId, status, bodyPreview);
+                log.error("Gemini quota exceeded. requestId={}, status={}", requestId, status);
                 throw AiProviderException.retryable(
                         "Gemini quota exceeded.",
                         status,
@@ -233,12 +222,11 @@ public class GeminiLlmClient implements LlmClient {
                 );
             }
             if (status == 500 || status == 502 || status == 503 || status == 504) {
-                log.error("Gemini provider unavailable. requestId={}, provider=GEMINI, model={}, endpointPath=/models/{}:generateContent, status={}, bodyPreview=\"{}\"",
+                log.error("Gemini provider unavailable. requestId={}, provider=GEMINI, model={}, endpointPath=/models/{}:generateContent, status={}",
                         requestId,
                         model,
                         model,
-                        status,
-                        bodyPreview);
+                        status);
                 throw AiProviderException.retryable(
                         "Gemini provider unavailable.",
                         status,
@@ -248,12 +236,11 @@ public class GeminiLlmClient implements LlmClient {
                         ex
                 );
             }
-            log.error("Gemini HTTP failure. requestId={}, provider=GEMINI, model={}, endpointPath=/models/{}:generateContent, status={}, bodyPreview=\"{}\"",
+            log.error("Gemini HTTP failure. requestId={}, provider=GEMINI, model={}, endpointPath=/models/{}:generateContent, status={}",
                     requestId,
                     model,
                     model,
-                    status,
-                    bodyPreview);
+                    status);
             throw AiProviderException.fatal(
                     "Gemini request failed.",
                     status,
@@ -274,7 +261,7 @@ public class GeminiLlmClient implements LlmClient {
                         ex
                 );
             }
-            log.error("Gemini network failure. requestId={}, message={}", requestId, sanitize(ex.getMessage()));
+            log.error("Gemini network failure. requestId={}, exceptionClass={}", requestId, ex.getClass().getSimpleName());
             throw AiProviderException.retryable(
                     "Gemini network failure.",
                     null,
@@ -284,7 +271,7 @@ public class GeminiLlmClient implements LlmClient {
                     ex
             );
         } catch (Exception ex) {
-            log.error("Gemini unexpected failure. requestId={}, message={}", requestId, sanitize(ex.getMessage()));
+            log.error("Gemini unexpected failure. requestId={}, exceptionClass={}", requestId, ex.getClass().getSimpleName());
             throw AiProviderException.retryable(
                     "Gemini provider failed unexpectedly.",
                     null,
@@ -377,8 +364,8 @@ public class GeminiLlmClient implements LlmClient {
             }
             return new ParsedGeminiResponse(extracted, responseBody.length(), candidates.size(), finishReason(candidates), safetyBlocked, tokenUsage(root), thoughtsTokenCount(root));
         } catch (Exception ex) {
-            String preview = sanitizePreview(responseBody, 300);
-            log.error("Gemini parsing failure. message={}, responsePreview=\"{}\"", sanitize(ex.getMessage()), preview);
+            log.error("Gemini parsing failure. exceptionClass={}, responseLengthBucket={}",
+                    ex.getClass().getSimpleName(), lengthBucket(responseBody));
             throw new IllegalStateException("Failed to parse Gemini response", ex);
         }
     }
@@ -441,6 +428,15 @@ public class GeminiLlmClient implements LlmClient {
         }
         String cleaned = value.replaceAll("[\\r\\n\\t]+", " ").trim();
         return cleaned.length() > 240 ? cleaned.substring(0, 240) + "..." : cleaned;
+    }
+
+    private String lengthBucket(String value) {
+        int length = value == null ? 0 : value.length();
+        if (length == 0) return "0";
+        if (length < 256) return "1-255";
+        if (length < 1024) return "256-1023";
+        if (length < 4096) return "1024-4095";
+        return "4096+";
     }
 
     private String sanitizePreview(String value, int maxChars) {

@@ -32,6 +32,7 @@ import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ToolResul
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.TopicAction;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ValuePatch;
 import com.deepthoughtnet.clinic.api.patientportal.PatientPortalService;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.language.ResponseStyle;
 import com.deepthoughtnet.clinic.api.publicsite.PublicCatalogFacade;
 import java.time.Clock;
 import java.time.Instant;
@@ -67,7 +68,8 @@ class AivaV2TransactionalKernelTest {
                 ConfirmationPolarity.POSITIVE, BookingPatch.empty(), null), "turn-1");
 
         assertThat(result.response().responseCategory()).isEqualTo("BOOKING_CONFIRMED");
-        assertThat(result.session().activeDraft().confirmedAppointmentReference()).isEqualTo("APT-1");
+        assertThat(result.session().activeDraft()).isNull();
+        assertThat(result.session().latestAvailabilityResult()).isNull();
         verify(tools).confirmBooking(any(), any());
         verify(tools, never()).resolveBookingProvider(any(), any());
         verify(tools, never()).getBookingAvailability(any());
@@ -791,6 +793,61 @@ class AivaV2TransactionalKernelTest {
     }
 
     @Test
+    void nextAvailabilityRecoverySearchesStrictlyAfterExhaustedDate() {
+        ProviderCandidate provider = provider();
+        LocalDate exhaustedDate = LocalDate.of(2026, 9, 26);
+        BookingDraft draft = new BookingDraft(UUID.randomUUID(), UUID.randomUUID(), "tenant", provider, null,
+                exhaustedDate, null, null, null, null, DraftStatus.COLLECTING,
+                1, NOW.plusSeconds(1800), null);
+        AvailabilityResult empty = new AvailabilityResult(UUID.randomUUID(), draft.draftId(), draft.revision(),
+                "criteria", provider.providerHandle(), provider.doctorId(), null, exhaustedDate, null,
+                "Asia/Kolkata", List.of(), null, false, NOW, NOW.plusSeconds(300));
+        SessionProjection session = new SessionProjection("c1", draft.patientSubjectId(), "tenant", draft,
+                null, null, empty, null, 1, NOW.plusSeconds(1800));
+        LocalDate nextDate = exhaustedDate.plusDays(2);
+        AvailabilityResult next = new AvailabilityResult(UUID.randomUUID(), draft.draftId(), draft.revision(),
+                "criteria", provider.providerHandle(), provider.doctorId(), null, nextDate, null,
+                "Asia/Kolkata", List.of(slot("next-slot", "10:30")), null, false, NOW, NOW.plusSeconds(300));
+        when(tools.getNextBookingAvailability(any())).thenReturn(ToolResult.success(next));
+        when(tools.criteriaFingerprint(any())).thenReturn("next-criteria");
+
+        var result = kernel.handle(session, decision(Operation.FIND_NEXT_AVAILABLE_SLOT,
+                ConfirmationPolarity.NONE, BookingPatch.empty(), null), "turn-next-slot");
+
+        assertThat(result.response().responseCategory()).isEqualTo("SLOT_CHOICES");
+        assertThat(result.session().activeDraft().preferredDate()).isEqualTo(nextDate);
+        assertThat(result.session().activeDraft().selectedSlotReference()).isNull();
+        assertThat(result.session().latestAvailabilityResult().date()).isEqualTo(nextDate);
+        assertThat(result.session().latestAvailabilityResult().slots()).hasSize(1);
+        verify(tools).getNextBookingAvailability(any());
+        verify(tools, never()).getBookingAvailability(any());
+    }
+
+    @Test
+    void nextAvailabilityRecoveryClearsTerminalEmptyStateWhenHorizonIsExhausted() {
+        ProviderCandidate provider = provider();
+        BookingDraft draft = new BookingDraft(UUID.randomUUID(), UUID.randomUUID(), "tenant", provider, null,
+                LocalDate.of(2026, 9, 26), null, null, null, null, DraftStatus.COLLECTING,
+                1, NOW.plusSeconds(1800), null);
+        AvailabilityResult empty = new AvailabilityResult(UUID.randomUUID(), draft.draftId(), draft.revision(),
+                "criteria", provider.providerHandle(), provider.doctorId(), null, draft.preferredDate(), null,
+                "Asia/Kolkata", List.of(), null, false, NOW, NOW.plusSeconds(300));
+        SessionProjection session = new SessionProjection("c1", draft.patientSubjectId(), "tenant", draft,
+                null, null, empty, null, 1, NOW.plusSeconds(1800));
+        when(tools.getNextBookingAvailability(any())).thenReturn(
+                ToolResult.failure("NO_FUTURE_AVAILABILITY", "No available slots were found in the current booking window."));
+
+        var result = kernel.handle(session, decision(Operation.FIND_NEXT_AVAILABLE_SLOT,
+                ConfirmationPolarity.NONE, BookingPatch.empty(), null), "turn-no-future");
+
+        assertThat(result.response().responseCategory()).isEqualTo("NO_FUTURE_AVAILABILITY");
+        assertThat(result.response().structuredResponse().type())
+                .isEqualTo(AivaStructuredResponse.ResponseType.NO_FUTURE_AVAILABILITY);
+        assertThat(result.session().latestAvailabilityResult()).isNull();
+        assertThat(result.session().activeDraft().selectedProvider()).isSameAs(provider);
+    }
+
+    @Test
     void pastDateIsRejectedBeforeAvailabilityAndExistingDateIsPreserved() {
         SessionProjection session = readySession();
 
@@ -839,7 +896,10 @@ class AivaV2TransactionalKernelTest {
                 ConfirmationPolarity.NONE, BookingPatch.empty(), null), "turn-4");
 
         assertThat(result.response().responseCategory()).isEqualTo("CONTEXT_ANSWER");
-        assertThat(result.response().assistantMessage()).contains("2026-09-14");
+        assertThat(result.response().structuredResponse().type())
+                .isEqualTo(AivaStructuredResponse.ResponseType.CONTEXTUAL_INFORMATION);
+        assertThat(new AivaResponseRenderer().render(result.response(), "en", ResponseStyle.STANDARD)
+                .assistantMessage()).contains("14 September 2026");
         verify(tools, never()).getBookingAvailability(any());
         verify(tools, never()).resolveBookingProvider(any(), any());
     }
@@ -885,7 +945,7 @@ class AivaV2TransactionalKernelTest {
                 ConfirmationPolarity.NONE, BookingPatch.empty(), null), "turn-more");
 
         assertThat(secondPage.response().responseCategory()).isEqualTo("SLOT_CHOICES");
-        assertThat(secondPage.response().assistantMessage()).contains("4. 10:30", "5. 11:00", "6. 11:30");
+        assertThat(secondPage.response().assistantMessage()).contains("1. 10:30", "2. 11:00", "3. 11:30");
         assertThat(secondPage.session().latestAvailabilityResult().displayOffset()).isEqualTo(3);
         verify(tools, never()).getBookingAvailability(any());
 
@@ -903,7 +963,7 @@ class AivaV2TransactionalKernelTest {
                 NOW.plusSeconds(300), "idem-5")));
 
         var selected = kernel.handle(secondPage.session(), decision(Operation.SELECT_SLOT,
-                ConfirmationPolarity.NONE, BookingPatch.empty(), new Selection(null, 5, null, null)), "turn-select-5");
+                ConfirmationPolarity.NONE, BookingPatch.empty(), new Selection(null, 2, null, null)), "turn-select-2");
 
         assertThat(selected.response().responseCategory()).isEqualTo("CONFIRMATION_REQUIRED");
         verify(tools).selectBookingSlot(any(), any(), any());

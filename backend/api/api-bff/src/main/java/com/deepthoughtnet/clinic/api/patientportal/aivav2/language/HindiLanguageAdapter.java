@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.api.patientportal.aivav2.language;
 
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -66,7 +67,7 @@ public class HindiLanguageAdapter extends EnglishLanguageAdapter {
                 .replaceAll("(?<![\\p{L}\\p{N}])(?:करनी|करना|करनी है|करना है)(?![\\p{L}\\p{N}])", " ")
                 .replaceAll("(?<![\\p{L}\\p{N}])(?:रद्द|कैंसल|cancel)(?![\\p{L}\\p{N}])", " cancel ")
                 .replaceAll("फिर\\s+से\\s+(?:तय|शेड्यूल)", " reschedule ")
-                .replaceAll("(?<![\\p{L}\\p{N}])(?:शेड्यूल|reschedule)(?![\\p{L}\\p{N}])", " reschedule ")
+                .replaceAll("(?<![\\p{L}\\p{N}])(?:रीशेड्यूल|शेड्यूल|reschedule)(?![\\p{L}\\p{N}])", " reschedule ")
                 .replaceAll("(?<![\\p{L}\\p{N}])(?:मेरी|अपनी)(?![\\p{L}\\p{N}])", " my ")
                 .replaceAll("\\s+", " ").trim();
         if (Pattern.compile("(?i)^\\s*(?:theek|thik)\\s+hai(?:\\s+kar\\s+do)?[.!?।\\s]*$")
@@ -90,8 +91,63 @@ public class HindiLanguageAdapter extends EnglishLanguageAdapter {
         boolean qualifier = doctor != null || Pattern.compile("(?:के\\s+साथ|में|से)\\s+[^?.!,]+").matcher(original).find();
         String responseStyle = original.codePoints().anyMatch(cp -> cp >= 0x0900 && cp <= 0x097F)
                 ? "STANDARD" : "HINGLISH";
-        return canonicalTurn(original, normalized, selection, languageCode(), "hi",
+        NormalizedUserTurn turn = canonicalTurn(original, normalized, selection, languageCode(), "hi",
                 ResponseStyle.valueOf(responseStyle), doctor, specialty, qualifier, referenceDate);
+        if (turn.ordinal() == null && original.matches("(?is).*?(?:second|dusri|doosri|दूसरी|सेकंड).*?(?:appointment|अपॉइंटमेंट).*")) {
+            turn = turn.withOrdinal(2);
+        } else if (turn.ordinal() == null && original.matches("(?is).*?(?:third|teesri|तीसरी).*?(?:appointment|अपॉइंटमेंट).*")) {
+            turn = turn.withOrdinal(3);
+        } else if (turn.ordinal() == null && original.matches("(?is).*?(?:first|pehli|pahli|पहली).*?(?:appointment|अपॉइंटमेंट).*")) {
+            turn = turn.withOrdinal(1);
+        }
+        if (turn.exactTime() == null) {
+            Matcher contextualHour = Pattern.compile("(?iu)(?<![\\p{L}\\p{N}])(?:subah|सुबह|dopahar|दोपहर|shaam|शाम|raat|रात)\\s+([0-9]{1,2})(?![\\p{L}\\p{N}])")
+                    .matcher(original);
+            if (contextualHour.find()) {
+                int hour = Integer.parseInt(contextualHour.group(1));
+                if (hour >= 1 && hour <= 12) {
+                    String token = contextualHour.group().toLowerCase(Locale.ROOT);
+                    boolean evening = token.contains("shaam") || token.contains("शाम")
+                            || token.contains("raat") || token.contains("रात");
+                    int resolvedHour = evening ? (hour == 12 ? 12 : hour + 12) : hour;
+                    turn = turn.withExactTime(LocalTime.of(resolvedHour, 0));
+                }
+            }
+        }
+        Matcher nightHour = Pattern.compile("(?:raat|रात)\\s+([0-9]{1,2})", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE)
+                .matcher(original);
+        if (nightHour.find()) {
+            int hour = Integer.parseInt(nightHour.group(1));
+            if (hour >= 1 && hour <= 12) turn = turn.withExactTime(LocalTime.of(hour == 12 ? 12 : hour + 12, 0));
+        }
+        return contextualizeRelativeDate(turn, referenceDate == null ? LocalDate.now() : referenceDate);
+    }
+
+    private NormalizedUserTurn contextualizeRelativeDate(NormalizedUserTurn turn, LocalDate referenceDate) {
+        var fact = turn.temporal();
+        if (fact == null || fact.status() != NormalizedUserTurn.TemporalStatus.RESOLVED
+                || fact.relativeKind() == NormalizedUserTurn.RelativeKind.NONE) return turn;
+        String raw = fact.rawSpan() == null ? "" : fact.rawSpan().toLowerCase(Locale.ROOT);
+        boolean kal = raw.contains("कल") || raw.contains("kal");
+        boolean parson = raw.contains("परसों") || raw.contains("parson");
+        if (!kal && !parson) return turn;
+        boolean future = turn.intent() == NormalizedUserTurn.Intent.BOOKING
+                || turn.intent() == NormalizedUserTurn.Intent.RESCHEDULE
+                || turn.intent() == NormalizedUserTurn.Intent.CANCELLATION;
+        boolean retrospective = turn.intent() == NormalizedUserTurn.Intent.LOOKUP
+                && turn.normalizedText().matches(".*(?:था|थी|थे|thi|tha|the|hua|hui|ho|was|were).*" );
+        if (future || retrospective) {
+            int offset = parson ? (future ? 2 : -2) : (future ? 1 : -1);
+            return turn.withTemporal(new NormalizedUserTurn.TemporalFact(fact.rawSpan(),
+                    NormalizedUserTurn.TemporalStatus.RESOLVED,
+                    referenceDate.plusDays(offset),
+                    offset > 0 ? (offset == 1 ? NormalizedUserTurn.RelativeKind.TOMORROW
+                            : NormalizedUserTurn.RelativeKind.DAY_AFTER_TOMORROW)
+                            : NormalizedUserTurn.RelativeKind.NONE, false));
+        }
+        return turn.withTemporal(new NormalizedUserTurn.TemporalFact(fact.rawSpan(),
+                NormalizedUserTurn.TemporalStatus.AMBIGUOUS, null,
+                NormalizedUserTurn.RelativeKind.NONE, false));
     }
 
     private NormalizedUserTurn.EntityReference doctorEntity(String text) {

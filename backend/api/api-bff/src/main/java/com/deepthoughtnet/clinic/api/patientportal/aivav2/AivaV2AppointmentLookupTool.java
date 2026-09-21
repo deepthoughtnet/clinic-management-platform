@@ -13,6 +13,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.Set;
+import java.util.Comparator;
 import java.util.stream.Collectors;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import org.slf4j.Logger;
@@ -63,17 +64,21 @@ class AivaV2AppointmentLookupTool {
                     .filter(appointment -> !StringUtils.hasText(clinic) || clinicTenantIds.contains(appointment.tenantId()))
                     .toList();
             List<AppointmentSummary> matches = afterClinic.stream()
+                    .sorted(Comparator.comparing(PatientPortalCareAiAppointmentOption::appointmentDate,
+                            Comparator.nullsLast(Comparator.naturalOrder()))
+                            .thenComparing(PatientPortalCareAiAppointmentOption::appointmentTime,
+                                    Comparator.nullsLast(Comparator.naturalOrder())))
                     .map(this::summary)
                     .limit(filter.nextOnly() ? 1 : Long.MAX_VALUE)
                     .toList();
-            log.info("AIVA_V2_LOOKUP_TRACE conversationId={} turnId={} authorizedAppointmentCount={} "
+            log.info("AIVA_V2_LOOKUP_TRACE conversationIdHash={} turnId={} authorizedAppointmentCount={} "
                             + "authorizedClinicCount={} queriedClinicCount={} clinicResultCounts={} mergedAppointmentCount={} "
                             + "deduplicatedAppointmentCount={} doctorFilterPresent={} dateFilterPresent={} "
                             + "statusFilterPresent={} clinicFilterPresent={} nextOnly={} "
                             + "afterDoctorFilterCount={} afterDateFilterCount={} afterStatusFilterCount={} "
                             + "finalAppointmentCount={} resultStatus={} currentCareClinicPresent={} "
                             + "authorizedCareClinicCount={} activeTenantContextPresent={} networkLookupMode={} executionClinicSource={}",
-                    conversationId, turnId, authorized.size(), distinctClinics(merged).size(),
+                    AivaV2LogRedaction.correlation(conversationId), turnId, authorized.size(), distinctClinics(merged).size(),
                     distinctClinics(merged).size(), clinicCounts(merged).values().stream().toList(), merged.size(),
                     authorized.size(), StringUtils.hasText(doctor), date != null, isStatusFilter(status),
                     StringUtils.hasText(clinic), filter.nextOnly(), afterDoctor.size(), afterDate.size(),
@@ -85,7 +90,8 @@ class AivaV2AppointmentLookupTool {
                     "AUTHORIZED_CARE_NETWORK", "APPOINTMENT_RECORD");
             return AppointmentLookupResult.found(matches);
         } catch (RuntimeException ex) {
-            log.info("AIVA_V2_LOOKUP_TRACE conversationId={} turnId={} resultStatus=FAILED", conversationId, turnId);
+            log.info("AIVA_V2_LOOKUP_TRACE conversationIdHash={} turnId={} resultStatus=FAILED",
+                    AivaV2LogRedaction.correlation(conversationId), turnId);
             return AppointmentLookupResult.failed("Appointment information could not be retrieved.");
         }
     }

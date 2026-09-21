@@ -16,6 +16,7 @@ import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ProviderS
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ResolutionStatus;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.DraftStatus;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorAvailabilityResponse;
+import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorAvailabilityDayResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorSlotResponse;
 import com.deepthoughtnet.clinic.api.publicsite.PublicCatalogFacade;
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicDoctorSummaryResponse;
@@ -142,6 +143,30 @@ class AivaV2BookingToolsTest {
                 .containsExactly("care-slot-stable");
     }
 
+    @Test
+    void nextAvailabilityUsesAuthoritativeFutureDaysAfterExhaustedDate() {
+        ProviderCandidate provider = new ProviderCandidate("provider", "provider", "doctor-1", null,
+                TENANT.toString(), null, null, "Doc Akshu Kumar", "General Medicine", null,
+                ProviderSource.CARE_PRIVATE, new ProviderCapabilities(true, true, false, false, false, true, false));
+        LocalDate exhausted = LocalDate.of(2026, 9, 26);
+        BookingDraft draft = new BookingDraft(UUID.randomUUID(), UUID.randomUUID(), TENANT.toString(), provider,
+                null, exhausted, null, null, null, null, DraftStatus.COLLECTING, 1,
+                Instant.parse("2026-09-10T01:00:00Z"), null);
+        when(patientPortalService.doctorAvailability(null, "doctor-1", null, TENANT.toString(), null, exhausted))
+                .thenReturn(new PatientPortalDoctorAvailabilityResponse(exhausted, List.of(), List.of(
+                        new PatientPortalDoctorAvailabilityDayResponse(exhausted, List.of()),
+                        new PatientPortalDoctorAvailabilityDayResponse(exhausted.plusDays(2), List.of(
+                                new PatientPortalDoctorSlotResponse("care-slot-next", exhausted.plusDays(2),
+                                        LocalTime.of(10, 30), LocalTime.of(11, 0), "AVAILABLE", true))))));
+
+        var result = tools.getNextBookingAvailability(draft);
+
+        assertThat(result.category()).isEqualTo("SUCCESS");
+        assertThat(result.value().date()).isEqualTo(exhausted.plusDays(2));
+        assertThat(result.value().slots()).extracting(AivaV2Models.AvailabilitySlot::slotReference)
+                .containsExactly("care-slot-next");
+    }
+
     private PatientPortalCareAiDoctorOption careDoctor() {
         return new PatientPortalCareAiDoctorOption("doctor-1", "Doc Akshu Kumar", "General Medicine",
                 UUID.randomUUID(), UUID.randomUUID(), TENANT, "demo-clinic", "Demo Clinic");
@@ -171,7 +196,7 @@ class AivaV2BookingToolsTest {
     }
 
     @Test
-    void betweenConstraintUsesStrictBounds() {
+    void betweenConstraintIncludesRequestedTimeRangeBounds() {
         ProviderCandidate provider = new ProviderCandidate("provider", "provider", "doctor-1", null,
                 TENANT.toString(), null, null, "Doc Akshu Kumar", "General Medicine", null,
                 ProviderSource.CARE_PRIVATE, new ProviderCapabilities(true, true, false, false, false, true, false));
@@ -190,7 +215,7 @@ class AivaV2BookingToolsTest {
         var result = tools.getBookingAvailability(draft);
 
         assertThat(result.value().slots()).extracting(AivaV2Models.AvailabilitySlot::slotReference)
-                .containsExactly("inside");
+                .containsExactly("lower", "inside", "upper");
     }
 
     @Test

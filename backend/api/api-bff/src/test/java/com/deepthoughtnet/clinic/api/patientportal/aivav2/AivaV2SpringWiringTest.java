@@ -16,6 +16,7 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
 class AivaV2SpringWiringTest {
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
+            .withPropertyValues("clinic.ai.aiva-v2.session-store=memory")
             .withBean(AiOrchestrationService.class, () -> mock(AiOrchestrationService.class))
             .withBean(ObjectMapper.class, ObjectMapper::new)
             .withBean(PatientPortalService.class, () -> mock(PatientPortalService.class))

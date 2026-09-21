@@ -110,7 +110,7 @@ class AivaV2PocCertificationTest {
         assertThat(service.message(new MessageRequest(conversation, "4:30 PM.", "en")).responseCategory()).isEqualTo("CONFIRMATION_REQUIRED");
         assertThat(service.message(new MessageRequest(conversation, "What date are these slots for?", "en")).responseCategory()).isEqualTo("CONTEXT_ANSWER");
         assertThat(service.message(new MessageRequest(conversation, "Yes, book it.", "en")).responseCategory()).isEqualTo("BOOKING_CONFIRMED");
-        assertThat(service.message(new MessageRequest(conversation, "Yes", "en")).state().appointmentReference()).isEqualTo("APT-1");
+        assertThat(service.message(new MessageRequest(conversation, "Yes", "en")).responseCategory()).isEqualTo("CLARIFICATION");
         verify(tools, times(1)).confirmBooking(any(), any());
     }
 
@@ -161,15 +161,23 @@ class AivaV2PocCertificationTest {
                 decision(Operation.START_BOOKING, BookingPatch.empty(), null, ConfirmationPolarity.NONE, TopicAction.CONTINUE, "en"),
                 decision(Operation.SUSPEND_BOOKING, BookingPatch.empty(), null, ConfirmationPolarity.NONE, TopicAction.SUSPEND, "en"),
                 decision(Operation.RESUME_BOOKING, BookingPatch.empty(), null, ConfirmationPolarity.NONE, TopicAction.RESUME, "en"),
-                decision(Operation.ABANDON_BOOKING, BookingPatch.empty(), null, ConfirmationPolarity.NONE, TopicAction.ABANDON, "en")
+                decision(Operation.ABANDON_BOOKING, BookingPatch.empty(), null, ConfirmationPolarity.NONE, TopicAction.ABANDON, "en"),
+                decision(Operation.RESUME_BOOKING, BookingPatch.empty(), null, ConfirmationPolarity.NONE, TopicAction.RESUME, "en")
         ));
         AivaV2ConversationService service = service(decisions);
         var first = service.message(new MessageRequest(null, "Book an appointment", "en"));
         String id = first.conversationId();
 
-        assertThat(service.message(new MessageRequest(id, "Let me ask something else", "en")).responseCategory()).isEqualTo("BOOKING_SUSPENDED");
+        var suspended = service.message(new MessageRequest(id, "Let me ask something else", "en"));
+        assertThat(suspended.responseCategory()).isEqualTo("BOOKING_SUSPENDED");
+        assertThat(suspended.structuredResponse().type()).isEqualTo(AivaStructuredResponse.ResponseType.BOOKING_SUSPENDED);
         assertThat(service.message(new MessageRequest(id, "Continue my booking", "en")).responseCategory()).isEqualTo("NEED_PROVIDER");
-        assertThat(service.message(new MessageRequest(id, "Forget it", "en")).state().status()).isEqualTo(AivaV2Models.DraftStatus.ABANDONED);
+        var abandoned = service.message(new MessageRequest(id, "Forget it", "en"));
+        assertThat(abandoned.state().status()).isEqualTo(AivaV2Models.DraftStatus.ABANDONED);
+        assertThat(abandoned.structuredResponse().type()).isEqualTo(AivaStructuredResponse.ResponseType.BOOKING_ABANDONED);
+        var noSuspended = service.message(new MessageRequest(id, "Continue my booking", "en"));
+        assertThat(noSuspended.responseCategory()).isEqualTo("NO_SUSPENDED_BOOKING");
+        assertThat(noSuspended.structuredResponse().type()).isEqualTo(AivaStructuredResponse.ResponseType.NO_SUSPENDED_BOOKING);
     }
 
     @Test

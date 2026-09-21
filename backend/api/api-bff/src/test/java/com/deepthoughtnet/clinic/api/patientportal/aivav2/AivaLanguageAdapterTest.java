@@ -47,6 +47,26 @@ class AivaLanguageAdapterTest {
     }
 
     @Test
+    void appointmentOrdinalsAndDayOnlyRescheduleDatesNormalizeAcrossLanguages() {
+        LocalDate reference = LocalDate.of(2026, 9, 20);
+        for (String[] sample : new String[][]{
+                {"en", "My second appointment reschedule"},
+                {"hi", "Meri second appointment reschedule karo"},
+                {"hi", "दूसरी अपॉइंटमेंट रीशेड्यूल करो"},
+                {"hi", "सेकंड अपॉइंटमेंट को 29 तारीख को रीशेड्यूल कर दो"},
+                {"hi", "dusri appointment 29 September ko reschedule karo"}}) {
+            var turn = registry.resolve(sample[0], sample[1]).normalize(sample[1], reference);
+            assertThat(turn.ordinal()).as(sample[1]).isEqualTo(2);
+            assertThat(turn.intent()).as(sample[1]).isEqualTo(NormalizedUserTurn.Intent.RESCHEDULE);
+        }
+        assertThat(registry.resolve("hi", "सेकंड अपॉइंटमेंट को 29 तारीख को रीशेड्यूल कर दो")
+                .normalize("सेकंड अपॉइंटमेंट को 29 तारीख को रीशेड्यूल कर दो", reference)
+                .temporal().localDate()).isEqualTo(LocalDate.of(2026, 9, 29));
+        assertThat(registry.resolve("en", "29th").normalize("29th", reference).temporal().localDate())
+                .isEqualTo(LocalDate.of(2026, 9, 29));
+    }
+
+    @Test
     void hindiExactTimeFormsShareCanonicalSelectionText() {
         assertThat(normalize("20:30 works", "en").selectionText())
                 .isEqualTo(normalize("20:30 वाली ठीक है", "hi").selectionText());
@@ -140,10 +160,15 @@ class AivaLanguageAdapterTest {
             assertThat(registry.resolve(form[0], form[1]).normalize(form[1], reference).temporal().localDate())
                     .as(form[1]).isEqualTo(reference);
         }
-        for (String[] form : new String[][]{{"en", "tomorrow"}, {"hi", "kal"}, {"hi", "कल"}}) {
-            assertThat(registry.resolve(form[0], form[1]).normalize(form[1], reference).temporal().localDate())
-                    .as(form[1]).isEqualTo(reference.plusDays(1));
+        assertThat(registry.resolve("en", "tomorrow").normalize("tomorrow", reference).temporal().localDate())
+                .isEqualTo(reference.plusDays(1));
+        for (String form : new String[]{"kal", "कल"}) {
+            assertThat(registry.resolve("hi", form).normalize(form, reference).temporal().status())
+                    .as(form).isEqualTo(NormalizedUserTurn.TemporalStatus.AMBIGUOUS);
         }
+        assertThat(registry.resolve("hi", "kal appointment book karni hai")
+                .normalize("kal appointment book karni hai", reference).temporal().localDate())
+                .isEqualTo(reference.plusDays(1));
         for (String[] form : new String[][]{{"en", "Monday"}, {"hi", "somvaar"}, {"hi", "सोमवार"}}) {
             assertThat(registry.resolve(form[0], form[1]).normalize(form[1], reference).temporal().localDate())
                     .as(form[1]).isEqualTo(LocalDate.of(2026, 9, 7));

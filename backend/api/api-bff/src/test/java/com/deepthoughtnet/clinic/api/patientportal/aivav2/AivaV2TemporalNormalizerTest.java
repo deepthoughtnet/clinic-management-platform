@@ -39,14 +39,28 @@ class AivaV2TemporalNormalizerTest {
                 .isEqualTo(LocalDate.of(2026, 9, 14));
         assertThat(normalizer.normalize("Book Dr Akshu on 14.09.2026", ValuePatch.unchanged(), null).localDate())
                 .isEqualTo(LocalDate.of(2026, 9, 14));
-        assertThat(normalizer.normalize("12.09.2026", ValuePatch.set("12.09.2026"), null).localDate())
-                .isEqualTo(LocalDate.of(2026, 9, 12));
-        assertThat(normalizer.normalize("09.12.2026", ValuePatch.set("09.12.2026"), null).localDate())
-                .isEqualTo(LocalDate.of(2026, 12, 9));
+        assertThat(normalizer.normalize("12.09.2026", ValuePatch.set("12.09.2026"), null).status())
+                .isEqualTo(AivaV2TemporalResolution.Status.AMBIGUOUS);
+        assertThat(normalizer.normalize("09.12.2026", ValuePatch.set("09.12.2026"), null).status())
+                .isEqualTo(AivaV2TemporalResolution.Status.AMBIGUOUS);
         assertThat(normalizer.normalize("12 September 2026", ValuePatch.set("12 September 2026"), null).localDate())
                 .isEqualTo(LocalDate.of(2026, 9, 12));
+        assertThat(normalizer.normalize("September 9", ValuePatch.set("September 9"), null).localDate())
+                .isEqualTo(LocalDate.of(2027, 9, 9));
         assertThat(normalizer.normalize("2026-09-12", ValuePatch.set("2026-09-12"), null).localDate())
                 .isEqualTo(LocalDate.of(2026, 9, 12));
+    }
+
+    @Test
+    void appliesSafeNumericAmbiguityPolicy() {
+        var ambiguous = normalizer.normalize("09/10", ValuePatch.set("09/10"), null);
+        assertThat(ambiguous.status()).isEqualTo(AivaV2TemporalResolution.Status.AMBIGUOUS);
+        assertThat(ambiguous.candidateDates()).containsExactly(
+                LocalDate.of(2026, 10, 9), LocalDate.of(2026, 9, 10));
+        assertThat(normalizer.normalize("13/10", ValuePatch.set("13/10"), null).localDate())
+                .isEqualTo(LocalDate.of(2026, 10, 13));
+        assertThat(normalizer.normalize("09/10/26", ValuePatch.set("09/10/26"), null).status())
+                .isEqualTo(AivaV2TemporalResolution.Status.AMBIGUOUS);
     }
 
     @Test
@@ -94,8 +108,8 @@ class AivaV2TemporalNormalizerTest {
         var result = normalizer.normalize("appointment on 12.09.2026", ValuePatch.unchanged(),
                 LocalDate.of(2026, 9, 14));
 
-        assertThat(result.status()).isEqualTo(AivaV2TemporalResolution.Status.RESOLVED);
-        assertThat(result.localDate()).isEqualTo(LocalDate.of(2026, 9, 12));
+        assertThat(result.status()).isEqualTo(AivaV2TemporalResolution.Status.AMBIGUOUS);
+        assertThat(result.localDate()).isNull();
         assertThat(result.source()).isEqualTo(AivaV2TemporalResolution.Source.CURRENT_TURN_EXPLICIT);
     }
 }

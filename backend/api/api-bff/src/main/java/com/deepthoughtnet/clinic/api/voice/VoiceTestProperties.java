@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 @ConfigurationProperties(prefix = "voice")
 public class VoiceTestProperties {
     private boolean enabled = true;
+    private boolean aivaV2Enabled = false;
     private String defaultLanguage = "hi-IN";
     private String responseLanguage = "hi-IN";
     private final Stt stt = new Stt();
@@ -24,6 +25,14 @@ public class VoiceTestProperties {
 
     public void setEnabled(boolean enabled) {
         this.enabled = enabled;
+    }
+
+    public boolean isAivaV2Enabled() {
+        return aivaV2Enabled;
+    }
+
+    public void setAivaV2Enabled(boolean aivaV2Enabled) {
+        this.aivaV2Enabled = aivaV2Enabled;
     }
 
     public String getDefaultLanguage() {
