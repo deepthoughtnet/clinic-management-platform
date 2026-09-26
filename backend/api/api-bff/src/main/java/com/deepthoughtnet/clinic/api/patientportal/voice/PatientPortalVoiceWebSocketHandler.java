@@ -8,6 +8,7 @@ import com.deepthoughtnet.clinic.api.patientportal.voice.PatientPortalVoiceAssis
 import com.deepthoughtnet.clinic.api.patientportal.voice.PatientPortalVoiceAssistantService.PatientPortalVoiceProgressAudio;
 import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiProgressEvent;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2VoiceTurnConnector;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2ProgressEvent;
 import com.deepthoughtnet.clinic.api.voice.VoiceTestProperties;
 import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
 import com.deepthoughtnet.clinic.platform.core.context.TenantId;
@@ -26,6 +27,10 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.socket.CloseStatus;
@@ -38,6 +43,12 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
     private static final int MAX_CHUNK_BASE64_CHARS = 32 * 1024;
     private static final int RESPONSE_CHUNK_BASE64_CHARS = 24 * 1024;
     private static final String INSTANCE_ID = buildInstanceId();
+    private static final ScheduledExecutorService TERMINAL_CLOSE_EXECUTOR =
+            Executors.newSingleThreadScheduledExecutor(runnable -> {
+                Thread thread = new Thread(runnable, "aiva-voice-terminal-close");
+                thread.setDaemon(true);
+                return thread;
+            });
 
     private final ObjectMapper objectMapper;
     private final PatientPortalVoiceAssistantService voiceAssistantService;
@@ -96,6 +107,7 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
             case "session.start" -> handleSessionStart(session, root);
             case "audio.chunk" -> handleAudioChunk(session, root);
             case "audio.end" -> handleAudioEnd(session, root);
+            case "audio.playback.complete" -> handleAudioPlaybackComplete(session, root);
             case "heartbeat" -> handleHeartbeat(session);
             case "session.close" -> handleSessionClose(session);
             default -> sendError(session, "Unsupported websocket message type.");
@@ -110,6 +122,7 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
         SessionState state = sessionStates.remove(session.getId());
         if (state != null) {
+            cancelTerminalClose(state);
             markVoiceDisconnected(session, state);
         }
         log.info("patient.voice.websocket.closed sessionId={} code={} reason={}",
@@ -123,7 +136,7 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
         state.touch();
         String requestedResumeSessionId = root.path("resumeSessionId").asText("").trim();
         state.logicalSessionId = requestedResumeSessionId.isBlank() ? state.logicalSessionId : requestedResumeSessionId;
-        String requestedEngine = root.path("engine").asText("legacy").trim().toLowerCase();
+        String requestedEngine = root.path("engine").asText("v2").trim().toLowerCase();
         if (!requestedEngine.equals("legacy") && !requestedEngine.equals("v2")) {
             sendError(session, "Unsupported voice engine.");
             state.closed = true;
@@ -150,6 +163,8 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
         state.lastActivityAt = Instant.now();
         state.lastHeartbeatAt = Instant.now();
         state.closed = false;
+        state.terminalConversation = false;
+        cancelTerminalClose(state);
         state.turnCount = 0;
         clearAudioBuffer(state);
         CareAiConversationSessionSnapshot recovered = tryResumeConversation(session, state, !requestedResumeSessionId.isBlank());
@@ -179,7 +194,6 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
         if (enforceSessionPolicies(session, state)) {
             return;
         }
-        state.touch();
         if (state.closed) {
             sendError(session, "Session is closed. Start a new session.");
             return;
@@ -204,6 +218,8 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
             sendError(session, "Audio chunk is empty.");
             return;
         }
+        cancelTerminalClose(state);
+        state.terminalConversation = false;
         int sequence = root.path("sequence").asInt(0);
         int totalChunks = root.path("totalChunks").asInt(0);
         if (sequence <= 0 || sequence > maxTotalChunks() || totalChunks > maxTotalChunks()) {
@@ -266,7 +282,6 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
         if (enforceSessionPolicies(session, state)) {
             return;
         }
-        state.touch();
         String requestedUtteranceId = requestedUtteranceId(root);
         if (state.turnInProgress) {
             boolean sameV2TurnWithoutClientId = state.engine.equals("v2") && requestedUtteranceId == null;
@@ -355,7 +370,8 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
                             state.language,
                             state.v2ConversationId,
                             "voice-" + state.voiceUtteranceId,
-                            state.v2TurnSequence + 1
+                            state.v2TurnSequence + 1,
+                            progress -> sendV2ProgressEvent(session, state, turnIndex, progress)
                     )
                     : voiceAssistantService.processAudioTurn(
                             audioBytes,
@@ -364,6 +380,17 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
                             state.language,
                             progress -> sendProgressEvent(session, state, turnIndex, progress)
                     );
+            if (response == null) {
+                log.info("patient.voice.turn.ignored sessionId={} turnIndex={} reason=EMPTY_STT_TRANSCRIPT",
+                        state.sessionId, turnIndex);
+                if (state.terminalCloseTask == null && state.terminalTurnIndex > 0) {
+                    state.terminalConversation = true;
+                    scheduleTerminalClose(session, state, turnIndex);
+                }
+                return;
+            }
+            state.touch();
+            state.idleReminderEmitted = false;
             state.turnCount = turnIndex;
             if (state.engine.equals("v2")) {
                 state.v2TurnSequence++;
@@ -437,9 +464,16 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
             completedEvent.put("metrics", metrics);
             sendEvent(session, completedEvent);
             if (response.conversationClosed()) {
-                sendEvent(session, Map.of("type", "conversation.closed", "sessionId", state.sessionId,
+                state.terminalConversation = true;
+                state.terminalTurnIndex = turnIndex;
+                sendEvent(session, Map.of("type", "conversation.terminal", "sessionId", state.sessionId,
                         "turnIndex", turnIndex));
-                session.close(CloseStatus.NORMAL);
+                // The browser acknowledges actual final-audio playback. If no
+                // audio was produced, completion of the terminal response is
+                // the best available boundary (including TTS failure/fallback).
+                if (response.audioBase64() == null || response.audioContentType() == null) {
+                    scheduleTerminalClose(session, state, turnIndex);
+                }
             }
             log.info("patient.voice.turn.completed sessionId={} turnIndex={} requestId={} uploadDurationMs={} sttDurationMs={} careAiDurationMs={} ttsDurationMs={} totalDurationMs={} sttProvider={} llmProvider={} ttsProvider={} ttsFallback={}",
                     state.sessionId,
@@ -468,12 +502,47 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
         }
     }
 
+    private void handleAudioPlaybackComplete(WebSocketSession session, JsonNode root) throws IOException {
+        SessionState state = requireState(session);
+        if (!state.terminalConversation || state.closed) return;
+        int turnIndex = root.path("turnIndex").asInt(-1);
+        if (turnIndex <= 0 || turnIndex != state.terminalTurnIndex) return;
+        scheduleTerminalClose(session, state, turnIndex);
+    }
+
+    private void scheduleTerminalClose(WebSocketSession session, SessionState state, int turnIndex) {
+        cancelTerminalClose(state);
+        state.terminalTurnIndex = turnIndex;
+        long delaySeconds = Math.max(0, properties.getLive().getTerminalCloseSeconds());
+        state.terminalCloseTask = TERMINAL_CLOSE_EXECUTOR.schedule(() -> {
+            if (state.closed || !state.terminalConversation || state.turnInProgress || !session.isOpen()) return;
+            state.closed = true;
+            clearAudioBuffer(state);
+            try {
+                sendEvent(session, Map.of("type", "session.closed", "sessionId", state.logicalSessionId,
+                        "reason", "terminal_idle"));
+                markVoiceDisconnected(session, state);
+                session.close(CloseStatus.NORMAL);
+            } catch (IOException ex) {
+                log.debug("patient.voice.websocket.terminal-close.failed sessionId={} reason={}",
+                        state.sessionId, ex.getClass().getSimpleName());
+            }
+        }, delaySeconds, TimeUnit.SECONDS);
+    }
+
+    private void cancelTerminalClose(SessionState state) {
+        ScheduledFuture<?> task = state.terminalCloseTask;
+        if (task != null) {
+            task.cancel(false);
+            state.terminalCloseTask = null;
+        }
+    }
+
     private void handleHeartbeat(WebSocketSession session) throws IOException {
         SessionState state = requireState(session);
-        if (enforceSessionPolicies(session, state)) {
+        if (enforceSessionPolicies(session, state, true)) {
             return;
         }
-        state.touchHeartbeat();
         sendEvent(session, Map.of(
                 "type", "heartbeat",
                 "sessionId", state.sessionId,
@@ -484,6 +553,7 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
     private void handleSessionClose(WebSocketSession session) throws IOException {
         SessionState state = requireState(session);
         state.closed = true;
+        cancelTerminalClose(state);
         clearAudioBuffer(state);
         markVoiceDisconnected(session, state);
         sendEvent(session, Map.of(
@@ -586,6 +656,10 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
     }
 
     private boolean enforceSessionPolicies(WebSocketSession session, SessionState state) throws IOException {
+        return enforceSessionPolicies(session, state, false);
+    }
+
+    private boolean enforceSessionPolicies(WebSocketSession session, SessionState state, boolean allowReminder) throws IOException {
         Instant now = Instant.now();
         if (state.startedAt != null
                 && Duration.between(state.startedAt, now).compareTo(Duration.ofSeconds(properties.getLive().getMaxSessionDurationSeconds())) > 0) {
@@ -595,15 +669,45 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
             sendError(session, "Live voice session exceeded the supported duration.");
             return true;
         }
+        long idleSeconds = state.lastActivityAt == null ? 0
+                : Duration.between(state.lastActivityAt, now).getSeconds();
+        if (allowReminder && !state.idleReminderEmitted && !state.turnInProgress && state.audioChunks.isEmpty()
+                && idleSeconds >= properties.getLive().getIdleReminderSeconds()
+                && idleSeconds < properties.getLive().getIdleCloseSeconds()) {
+            sendIdleReminder(session, state);
+            state.idleReminderEmitted = true;
+        }
         if (state.lastActivityAt != null
-                && Duration.between(state.lastActivityAt, now).compareTo(Duration.ofSeconds(properties.getLive().getMaxIdleSeconds())) > 0) {
+                && idleSeconds >= Math.min(properties.getLive().getMaxIdleSeconds(), properties.getLive().getIdleCloseSeconds())) {
             state.closed = true;
             clearAudioBuffer(state);
             sendEvent(session, Map.of("type", "session.timeout", "reason", "idle_timeout"));
+            sendEvent(session, Map.of("type", "assistant.idle.close", "message",
+                    idleMessage(state, true)));
             sendError(session, "Live voice session timed out due to inactivity.");
+            markVoiceDisconnected(session, state);
+            session.close(CloseStatus.NORMAL);
             return true;
         }
         return false;
+    }
+
+    private void sendIdleReminder(WebSocketSession session, SessionState state) throws IOException {
+        String message = idleMessage(state, false);
+        sendEvent(session, Map.of("type", "assistant.idle.reminder", "message", message));
+        PatientPortalVoiceProgressAudio audio = voiceAssistantService.synthesizeV2ProgressAudio(message, state.language);
+        if (audio != null) {
+            sendV2ProgressAudioChunks(session, state, state.turnCount, new AivaV2ProgressEvent("VOICE_IDLE_REMINDER", message), audio);
+        }
+        log.info("VOICE_IDLE_REMINDER_EMITTED sessionId={}", state.sessionId);
+    }
+
+    private String idleMessage(SessionState state, boolean closing) {
+        boolean hindi = state.language != null && state.language.toLowerCase().startsWith("hi");
+        if (closing) return hindi
+                ? "काफी देर से कोई जवाब नहीं मिला, इसलिए मैं अभी यह वॉइस सेशन समाप्त कर रही हूँ। आप कभी भी फिर शुरू कर सकते हैं।"
+                : "I haven't heard a response, so I'll end this voice session for now. You can start again anytime.";
+        return hindi ? "मैं यहीं हूँ। जब आप तैयार हों, बताइए।" : "I'm still here. Let me know when you're ready.";
     }
 
     private int maxTotalChunks() {
@@ -645,6 +749,46 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
             log.debug("patient.voice.progress.delivery.failed sessionId={} turnIndex={} reason={}",
                     state.sessionId, turnIndex, safeVoiceDiagnosticReason(ex));
         }
+    }
+
+    private void sendV2ProgressEvent(WebSocketSession session, SessionState state, int turnIndex,
+                                     AivaV2ProgressEvent progress) {
+        if (progress == null || !session.isOpen()) return;
+        try {
+            sendEvent(session, Map.of(
+                    "type", "turn.progress",
+                    "sessionId", state.sessionId,
+                    "turnIndex", turnIndex,
+                    "operation", progress.operation(),
+                    "acknowledgement", progress.acknowledgement()
+            ));
+            PatientPortalVoiceProgressAudio audio = voiceAssistantService
+                    .synthesizeV2ProgressAudio(progress.acknowledgement(), state.language);
+            if (audio != null) sendV2ProgressAudioChunks(session, state, turnIndex, progress, audio);
+        } catch (IOException ex) {
+            log.debug("patient.voice.v2.progress.delivery.failed sessionId={} turnIndex={} reason={}",
+                    state.sessionId, turnIndex, safeVoiceDiagnosticReason(ex));
+        }
+    }
+
+    private void sendV2ProgressAudioChunks(WebSocketSession session, SessionState state, int turnIndex,
+                                           AivaV2ProgressEvent progress, PatientPortalVoiceProgressAudio audio)
+            throws IOException {
+        String audioBase64 = audio.audioBase64();
+        int totalChunks = (int) Math.ceil((double) audioBase64.length() / RESPONSE_CHUNK_BASE64_CHARS);
+        for (int sequence = 1; sequence <= totalChunks; sequence++) {
+            int start = (sequence - 1) * RESPONSE_CHUNK_BASE64_CHARS;
+            int end = Math.min(audioBase64.length(), start + RESPONSE_CHUNK_BASE64_CHARS);
+            sendEvent(session, Map.of(
+                    "type", "assistant.progress.audio.chunk", "sessionId", state.sessionId,
+                    "turnIndex", turnIndex, "operation", progress.operation(), "sequence", sequence,
+                    "totalChunks", totalChunks, "contentType", audio.contentType(),
+                    "audioBase64Chunk", audioBase64.substring(start, end)));
+        }
+        sendEvent(session, Map.of(
+                "type", "assistant.progress.audio.end", "sessionId", state.sessionId,
+                "turnIndex", turnIndex, "operation", progress.operation(), "totalChunks", totalChunks,
+                "contentType", audio.contentType(), "provider", audio.provider() == null ? "" : audio.provider()));
     }
 
     private void sendProgressAudioChunks(
@@ -839,12 +983,16 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
         private Instant startedAt;
         private Instant lastActivityAt;
         private Instant lastHeartbeatAt;
+        private boolean idleReminderEmitted;
+        private boolean terminalConversation;
+        private int terminalTurnIndex;
+        private ScheduledFuture<?> terminalCloseTask;
         private Instant firstUploadAt;
         private Instant lastUploadActivityAt;
         private Instant turnStartedAt;
         private UUID recoveredConversationId;
         private UUID recoveredWorkflowId;
-        private String engine = "legacy";
+        private String engine = "v2";
         private String v2ConversationId;
         private long v2TurnSequence;
         private String voiceUtteranceId;
@@ -859,11 +1007,7 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
             this.lastActivityAt = Instant.now();
         }
 
-        private void touchHeartbeat() {
-            Instant now = Instant.now();
-            this.lastActivityAt = now;
-            this.lastHeartbeatAt = now;
-        }
+        private void touchHeartbeat() { this.lastHeartbeatAt = Instant.now(); }
     }
 
     private record CompletedTurn(

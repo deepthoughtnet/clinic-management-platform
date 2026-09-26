@@ -10,6 +10,7 @@ import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalConversat
 import com.deepthoughtnet.clinic.api.voice.VoiceOrchestratorService;
 import com.deepthoughtnet.clinic.api.voice.VoiceTestProperties;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2VoiceTurnConnector;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2ProgressEvent;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.MessageResponse;
 import com.deepthoughtnet.clinic.api.voice.spi.VoiceSynthesisResult;
 import com.deepthoughtnet.clinic.api.voice.spi.VoiceTranscriptionResult;
@@ -95,6 +96,20 @@ public class PatientPortalVoiceAssistantService {
             String clientTurnId,
             long clientTurnSequence
     ) {
+        return processAudioTurnV2(audioBytes, contentType, originalFilename, language,
+                conversationId, clientTurnId, clientTurnSequence, null);
+    }
+
+    public PatientPortalVoiceTurnResponse processAudioTurnV2(
+            byte[] audioBytes,
+            String contentType,
+            String originalFilename,
+            String language,
+            String conversationId,
+            String clientTurnId,
+            long clientTurnSequence,
+            Consumer<AivaV2ProgressEvent> progressSink
+    ) {
         if (aivaV2VoiceTurnConnector == null) {
             throw new IllegalStateException("AIVA V2 voice connector is unavailable.");
         }
@@ -103,16 +118,20 @@ public class PatientPortalVoiceAssistantService {
         VoiceTranscriptionResult transcription = voiceOrchestratorService.transcribeBufferedAudio(
                 audioBytes, contentType, originalFilename, language);
         long sttDurationMs = Duration.between(sttStart, Instant.now()).toMillis();
+        // Empty STT finals are transport noise, not patient turns.  Ignore them before
+        // the V2 connector so no semantic turn, Redis sequence, or fallback response is created.
         if (!StringUtils.hasText(transcription.transcript())) {
-            throw new IllegalStateException("No speech was captured. Please try again.");
+            log.info("patient.voice.v2.stt.blank conversationIdHash={} engine=v2 transcriptLength={} blank=true clientSequence={}",
+                    conversationId == null ? null : Integer.toHexString(conversationId.hashCode()),
+                    transcription.transcript() == null ? 0 : transcription.transcript().length(),
+                    clientTurnSequence);
+            return null;
         }
-        MessageResponse response = aivaV2VoiceTurnConnector.submitFinalTranscript(
-                conversationId,
-                transcription.transcript(),
-                language,
-                clientTurnId,
-                clientTurnSequence
-        );
+        MessageResponse response = progressSink == null
+                ? aivaV2VoiceTurnConnector.submitFinalTranscript(
+                        conversationId, transcription.transcript(), language, clientTurnId, clientTurnSequence)
+                : aivaV2VoiceTurnConnector.submitFinalTranscript(
+                        conversationId, transcription.transcript(), language, clientTurnId, clientTurnSequence, progressSink);
         String assistantText = response.assistantMessage();
         Instant ttsStart = Instant.now();
         VoiceSynthesisResult synthesis = null;
@@ -169,8 +188,17 @@ public class PatientPortalVoiceAssistantService {
         if (progress == null || !StringUtils.hasText(progress.acknowledgement())) {
             return null;
         }
+        return synthesizeProgressAudio(progress.acknowledgement(), language, progress.skillExecutionId());
+    }
+
+    public PatientPortalVoiceProgressAudio synthesizeV2ProgressAudio(String acknowledgement, String language) {
+        return synthesizeProgressAudio(acknowledgement, language, "aiva-v2-progress");
+    }
+
+    private PatientPortalVoiceProgressAudio synthesizeProgressAudio(String acknowledgement, String language,
+                                                                     String diagnosticId) {
         try {
-            String voiceText = voiceTextNormalizer.normalizeForVoice(progress.acknowledgement(), language);
+            String voiceText = voiceTextNormalizer.normalizeForVoice(acknowledgement, language);
             VoiceSynthesisResult synthesis = voiceOrchestratorService.synthesizeAssistantText(voiceText, language);
             byte[] audio = playableAudioBytes(synthesis);
             if (audio == null || audio.length == 0 || !StringUtils.hasText(synthesis.contentType())) {
@@ -183,7 +211,7 @@ public class PatientPortalVoiceAssistantService {
             );
         } catch (RuntimeException ex) {
             log.debug("patient.voice.progress.tts.unavailable skillExecutionId={} reason={}",
-                    progress.skillExecutionId(), ex.getClass().getSimpleName());
+                    diagnosticId, ex.getClass().getSimpleName());
             return null;
         }
     }

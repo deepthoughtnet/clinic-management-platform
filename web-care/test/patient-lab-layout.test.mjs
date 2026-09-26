@@ -11,9 +11,12 @@ test("patient lab page keeps a full-width desktop content grid", () => {
   const pageSource = readSource("pages/patient/PatientLabPage.tsx");
   const stylesSource = readSource("styles.css");
 
-  assert.ok(pageSource.includes('className="patient-content-grid patient-lab-page"'));
-  assert.ok(pageSource.includes('className="portal-dashboard-grid patient-lab-stats"'));
-  assert.ok(pageSource.includes('className="portal-section-grid patient-lab-grid"'));
+  assert.ok(pageSource.includes('className="patient-lab-page"'));
+  assert.ok(pageSource.includes('className="portal-dashboard-grid patient-lab-stats-grid"'));
+  assert.ok(pageSource.includes('className="portal-section-grid patient-lab-content-grid"'));
+  assert.ok(stylesSource.includes(".patient-lab-page {\n  display: grid;"));
+  assert.ok(stylesSource.includes(".patient-lab-page .patient-lab-stats-grid"));
+  assert.ok(stylesSource.includes(".patient-lab-page .patient-lab-content-grid"));
   assert.ok(pageSource.includes('title={order.orderNumber}'));
   assert.ok(stylesSource.includes(".patient-lab-page {"));
   assert.ok(stylesSource.includes("grid-template-columns: minmax(0, 1fr);"));

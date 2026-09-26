@@ -76,6 +76,46 @@ class AivaV2TransactionalKernelTest {
     }
 
     @Test
+    void introIsNonMutatingAndReturnsCapabilityMessage() {
+        SessionProjection session = readySession();
+        var result = kernel.handle(session, decision(Operation.INTRO,
+                ConfirmationPolarity.NONE, BookingPatch.empty(), null), "turn-intro");
+
+        assertThat(result.response().structuredResponse().type())
+                .isEqualTo(AivaStructuredResponse.ResponseType.INTRO);
+        assertThat(result.response().assistantMessage()).isEmpty();
+        assertThat(result.session()).isSameAs(session);
+        verifyNoInteractions(tools);
+    }
+
+    @Test
+    void providerContextQuestionAnswersFromResolvedDraftBeforeAvailabilityDate() {
+        var result = kernel.handle(readySession(), decision(Operation.ANSWER_PROVIDER_CONTEXT,
+                ConfirmationPolarity.NONE, BookingPatch.empty(), null), "turn-provider-context");
+
+        assertThat(result.response().responseCategory()).isEqualTo("CONTEXT_ANSWER");
+        var payload = (AivaStructuredResponse.ContextualInformationPayload)
+                result.response().structuredResponse().payload();
+        assertThat(payload.kind()).isEqualTo("SELECTED_PROVIDER");
+        assertThat(payload.providerDisplayName()).isEqualTo("Doc Akshu Kumar");
+        assertThat(result.session().activeDraft().selectedProvider().displayName()).isEqualTo("Doc Akshu Kumar");
+        assertThat(result.session().activeDraft().revision()).isEqualTo(readySession().activeDraft().revision());
+        verifyNoInteractions(tools);
+    }
+
+    @Test
+    void humanAssistanceIsNonMutatingAndDoesNotCallBookingTools() {
+        SessionProjection session = readySession();
+        var result = kernel.handle(session, decision(Operation.REQUEST_HUMAN_ASSISTANCE,
+                ConfirmationPolarity.NONE, BookingPatch.empty(), null), "turn-handoff");
+
+        assertThat(result.response().structuredResponse().type())
+                .isEqualTo(AivaStructuredResponse.ResponseType.HUMAN_ASSISTANCE);
+        assertThat(result.session()).isSameAs(session);
+        verifyNoInteractions(tools);
+    }
+
+    @Test
     void duplicatePositiveConfirmationDoesNotExecuteSecondWrite() {
         BookingDraft confirmed = copy(readySession().activeDraft(), DraftStatus.CONFIRMED, "APT-1");
         SessionProjection session = replace(readySession(), confirmed, null, null);
@@ -119,6 +159,29 @@ class AivaV2TransactionalKernelTest {
         verify(lookupTool).lookup(any(), any(), any(), any());
         verify(tools, never()).getBookingAvailability(any());
         verify(tools, never()).resolveBookingProvider(any(), any());
+    }
+
+    @Test
+    void foundLookupNeverDegradesToNoneWhenSelectionIsOutOfRange() {
+        AivaV2AppointmentLookupTool lookupTool = mock(AivaV2AppointmentLookupTool.class);
+        AivaV2TransactionalKernel lookupKernel = new AivaV2TransactionalKernel(tools, lookupTool,
+                Clock.fixed(NOW, ZoneOffset.UTC));
+        var appointment = new AivaV2Models.AppointmentSummary("APT-1", "Doc Akshu Kumar", "Clinic",
+                LocalDate.of(2026, 9, 14), LocalTime.of(17, 30), "CONFIRMED", null);
+        when(lookupTool.lookup(any(), any(), any(), any()))
+                .thenReturn(AivaV2Models.AppointmentLookupResult.found(List.of(appointment)));
+        ConversationDecision decision = new ConversationDecision("1.0", DialogAct.ASK_QUESTION,
+                Operation.LOOKUP_APPOINTMENTS, BookingPatch.empty(), new Selection(null, 2, null, null),
+                ConfirmationPolarity.NONE, TopicAction.CONTINUE, "en", 1d, "TEST", false, 1,
+                AivaV2Models.AppointmentLookupFilter.empty());
+
+        var result = lookupKernel.handle(readySession(), decision,
+                AivaV2TemporalResolution.unchanged(null, null), ZoneOffset.UTC, "turn-lookup-invalid-selection");
+
+        assertThat(result.response().responseCategory()).isEqualTo("APPOINTMENTS_FOUND");
+        assertThat(result.response().structuredResponse().type()).isEqualTo(AivaStructuredResponse.ResponseType.APPOINTMENTS_FOUND);
+        assertThat(((AivaStructuredResponse.AppointmentListPayload) result.response().structuredResponse().payload())
+                .appointments()).hasSize(1);
     }
 
     @Test

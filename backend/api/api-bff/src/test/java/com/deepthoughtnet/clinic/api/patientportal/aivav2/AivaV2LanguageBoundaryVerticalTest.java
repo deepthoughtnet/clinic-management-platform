@@ -252,7 +252,7 @@ class AivaV2LanguageBoundaryVerticalTest {
             assertThat(((AivaStructuredResponse.AppointmentListPayload) none.structuredResponse().payload()).appointments()).isEmpty();
             if (flow[0].equals("hi") && flow[1].startsWith("मेरी")) {
                 assertThat(all.assistantMessage()).contains("अपॉइंटमेंट").doesNotContain("You have", "upcoming appointments", "with", "on", "at");
-                assertThat(found.assistantMessage()).contains("23 सितंबर 2026", "20:00 बजे").doesNotContain("appointment is", "You have");
+                assertThat(found.assistantMessage()).contains("23 सितंबर 2026", "रात 8 बजे").doesNotContain("appointment is", "You have");
                 assertThat(none.assistantMessage()).contains("कोई आगामी अपॉइंटमेंट").doesNotContain("upcoming appointment");
             }
         }
@@ -332,15 +332,17 @@ class AivaV2LanguageBoundaryVerticalTest {
 
     @Test
     void cancellationConfirmationAndExecutionAreEquivalentAcrossLanguages() {
-        LocalDate appointmentDate = LocalDate.of(2026, 9, 24);
+        Clock liveFixtureClock = Clock.systemUTC();
+        LocalDate appointmentDate = LocalDate.now(liveFixtureClock).plusDays(30);
         String cancel = "{\"schemaVersion\":\"1.0\",\"dialogAct\":\"START_REQUEST\",\"operation\":\"CANCEL_APPOINTMENT\","
                 + "\"lookupFilter\":{\"doctorText\":{\"mode\":\"SET\",\"value\":\"Dr Mehta\"},"
-                + "\"dateExpression\":{\"mode\":\"SET\",\"value\":\"2026-09-25\"}},\"confidence\":0.99}";
+                + "\"dateExpression\":{\"mode\":\"SET\",\"value\":\"" + appointmentDate
+                + "\"}},\"confidence\":0.99}";
         when(semanticProvider.complete(any())).thenReturn(orchestrationResponse(cancel));
         String[][] flows = {
-                {"en", "Cancel my appointment with Dr Akshu on 24 September"},
-                {"hi", "Mujhe Dr Akshu ke saath 24 September ki appointment cancel karni hai"},
-                {"hi", "डॉ. अक्षु के साथ मेरी 24 सितंबर की अपॉइंटमेंट रद्द करें।"}
+                {"en", "Cancel my appointment with Dr Akshu on " + appointmentDate},
+                {"hi", "Mujhe Dr Akshu ke saath " + appointmentDate + " ki appointment cancel karni hai"},
+                {"hi", "डॉ. अक्षु के साथ मेरी " + appointmentDate + " की अपॉइंटमेंट रद्द करें।"}
         };
         for (String[] flow : flows) {
             PatientPortalService fixturePortal = mock(PatientPortalService.class);
@@ -353,7 +355,6 @@ class AivaV2LanguageBoundaryVerticalTest {
                     new PatientPortalAppointmentConfirmationResponse(sourceId.toString(), "CANCELLED", appointmentDate,
                             LocalTime.of(20, 0), "Asia/Kolkata", "Doc Akshu Kumar", "Clinic", null,
                             "ONLINE", "AIVA", "CANCELLED", null, "Cancelled", null, null, false, null, null));
-            Clock liveFixtureClock = Clock.systemUTC();
             ClinicTimeZoneResolver resolver = zoneResolver();
             AivaV2BookingTools bookingTools = new AivaV2BookingTools(fixturePortal, mock(PublicCatalogFacade.class), resolver, liveFixtureClock);
             AivaV2AppointmentLookupTool lookupTool = new AivaV2AppointmentLookupTool(fixturePortal);
@@ -404,13 +405,14 @@ class AivaV2LanguageBoundaryVerticalTest {
 
     @Test
     void hinglishThikHaiKarDoConfirmsThePendingCancellationWithoutProviderCall() {
+        Clock liveFixtureClock = Clock.systemUTC();
+        LocalDate date = LocalDate.now(liveFixtureClock).plusDays(30);
         String cancel = "{\"schemaVersion\":\"1.0\",\"dialogAct\":\"START_REQUEST\","
                 + "\"operation\":\"CANCEL_APPOINTMENT\",\"confidence\":0.99}";
         when(semanticProvider.complete(any())).thenReturn(orchestrationResponse(cancel));
         PatientPortalService fixturePortal = mock(PatientPortalService.class);
         when(fixturePortal.currentPatientId()).thenReturn(patient);
         UUID selectedId = UUID.randomUUID();
-        LocalDate date = LocalDate.of(2026, 9, 24);
         when(fixturePortal.careAiUpcomingAppointmentsAcrossAuthorizedClinics()).thenReturn(List.of(
                 new PatientPortalCareAiAppointmentOption(selectedId, UUID.randomUUID(), "Doc Akshu Kumar",
                         tenantUuid, "Clinic", date, LocalTime.of(20, 30), "CONFIRMED", null)));
@@ -418,7 +420,6 @@ class AivaV2LanguageBoundaryVerticalTest {
                 new PatientPortalAppointmentConfirmationResponse(selectedId.toString(), "CANCELLED", date,
                         LocalTime.of(20, 30), "Asia/Kolkata", "Doc Akshu Kumar", "Clinic", null,
                         "ONLINE", "AIVA", "CANCELLED", null, "Cancelled", null, null, false, null, null));
-        Clock liveFixtureClock = Clock.systemUTC();
         ClinicTimeZoneResolver resolver = zoneResolver();
         AivaV2BookingTools bookingTools = new AivaV2BookingTools(fixturePortal,
                 mock(PublicCatalogFacade.class), resolver, liveFixtureClock);
@@ -429,7 +430,7 @@ class AivaV2LanguageBoundaryVerticalTest {
                 sessionStore, fixturePortal, resolver, liveFixtureClock, renderer);
 
         MessageResponse confirmation = service.message(new MessageRequest(null,
-                "Mujhe Dr Akshu ke saath 24 September ki appointment cancel karni hai", "hi"));
+                "Mujhe Dr Akshu ke saath " + date + " ki appointment cancel karni hai", "hi"));
         assertThat(confirmation.structuredResponse().type())
                 .isEqualTo(AivaStructuredResponse.ResponseType.CANCELLATION_CONFIRMATION);
         assertThat(((AivaStructuredResponse.CancellationConfirmationPayload) confirmation.structuredResponse()
@@ -438,7 +439,7 @@ class AivaV2LanguageBoundaryVerticalTest {
         var pending = sessionStore.find(sessionKey).orElseThrow().pendingCancellation();
         assertThat(pending).isNotNull();
         assertThat(pending.appointmentReference()).isEqualTo(selectedId.toString());
-        assertThat(pending.expiresAt()).isAfter(Instant.now());
+        assertThat(pending.expiresAt()).isAfter(liveFixtureClock.instant());
         assertThat(sessionStore.find(sessionKey).orElseThrow().version()).isEqualTo(2L);
         org.mockito.Mockito.clearInvocations(semanticProvider);
 
@@ -457,12 +458,13 @@ class AivaV2LanguageBoundaryVerticalTest {
 
     @Test
     void realSessionRetainsOrdinalSelectedCancellationCapabilityThroughPositiveConfirmation() {
+        Clock liveFixtureClock = Clock.systemUTC();
         String cancelJson = "{\"schemaVersion\":\"1.0\",\"dialogAct\":\"START_REQUEST\","
                 + "\"operation\":\"CANCEL_APPOINTMENT\",\"confidence\":0.99}";
         when(semanticProvider.complete(any())).thenReturn(orchestrationResponse(cancelJson));
         PatientPortalService fixturePortal = mock(PatientPortalService.class);
         when(fixturePortal.currentPatientId()).thenReturn(patient);
-        LocalDate date = LocalDate.of(2026, 9, 24);
+        LocalDate date = LocalDate.now(liveFixtureClock).plusDays(30);
         UUID firstId = UUID.randomUUID();
         UUID secondId = UUID.randomUUID();
         when(fixturePortal.careAiUpcomingAppointmentsAcrossAuthorizedClinics()).thenReturn(List.of(
@@ -474,7 +476,6 @@ class AivaV2LanguageBoundaryVerticalTest {
                 new PatientPortalAppointmentConfirmationResponse(secondId.toString(), "CANCELLED", date,
                         LocalTime.of(20, 30), "Asia/Kolkata", "Doc Akshu Kumar", "Clinic", null,
                         "ONLINE", "AIVA", "CANCELLED", null, "Cancelled", null, null, false, null, null));
-        Clock liveFixtureClock = Clock.systemUTC();
         ClinicTimeZoneResolver resolver = zoneResolver();
         AivaV2BookingTools bookingTools = new AivaV2BookingTools(fixturePortal,
                 mock(PublicCatalogFacade.class), resolver, liveFixtureClock);
@@ -485,7 +486,7 @@ class AivaV2LanguageBoundaryVerticalTest {
                 sessionStore, fixturePortal, resolver, liveFixtureClock, renderer);
 
         MessageResponse choices = service.message(new MessageRequest(null,
-                "डॉ. अक्षु के साथ 24 सितंबर की अपॉइंटमेंट रद्द करें।", "hi"));
+                "डॉ. अक्षु के साथ मेरी " + date + " की अपॉइंटमेंट रद्द करें।", "hi"));
         assertThat(choices.structuredResponse().type()).isEqualTo(AivaStructuredResponse.ResponseType.CANCELLATION_CHOICES);
         String sessionKey = tenant + "|" + patient + "|" + choices.conversationId();
         assertThat(sessionStore.find(sessionKey).orElseThrow().pendingCancellationResolution().candidates()).hasSize(2);
@@ -497,7 +498,7 @@ class AivaV2LanguageBoundaryVerticalTest {
         var capability = sessionStore.find(sessionKey).orElseThrow().pendingCancellation();
         assertThat(capability).isNotNull();
         assertThat(capability.appointmentReference()).isEqualTo(secondId.toString());
-        assertThat(capability.expiresAt()).isAfter(Instant.now());
+        assertThat(capability.expiresAt()).isAfter(liveFixtureClock.instant());
         assertThat(confirmation.conversationId()).isEqualTo(choices.conversationId());
         org.mockito.Mockito.clearInvocations(semanticProvider);
 
@@ -654,16 +655,18 @@ class AivaV2LanguageBoundaryVerticalTest {
 
     @Test
     void rescheduleConversationUsesRealServiceToolsAndStructuredResponsesInAllStyles() {
+        Clock liveFixtureClock = Clock.systemUTC();
+        LocalDate sourceDate = LocalDate.now(liveFixtureClock).plusDays(30);
+        LocalDate targetDate = sourceDate.plusDays(1);
         String reschedule = "{\"schemaVersion\":\"1.0\",\"dialogAct\":\"START_REQUEST\",\"operation\":\"RESCHEDULE_APPOINTMENT\","
                 + "\"lookupFilter\":{\"doctorText\":{\"mode\":\"SET\",\"value\":\"Dr Mehta\"},"
-                + "\"dateExpression\":{\"mode\":\"SET\",\"value\":\"2026-09-25\"}},\"confidence\":0.99}";
+                + "\"dateExpression\":{\"mode\":\"SET\",\"value\":\"" + sourceDate
+                + "\"}},\"confidence\":0.99}";
         when(semanticProvider.complete(any())).thenReturn(orchestrationResponse(reschedule));
-        LocalDate sourceDate = LocalDate.of(2026, 9, 24);
-        LocalDate targetDate = LocalDate.of(2026, 9, 25);
         String[][] flows = {
-                {"en", "Reschedule my appointment with Dr Akshu on 24 September", "25 September", "evening", "show more slots", "20:00 works", "no", "21:00 works", "yes"},
-                {"hi", "Mujhe Dr Akshu ke saath 24 September ki appointment reschedule karni hai", "25 September", "shaam", "aur slots dikhao", "20:00 wali theek hai", "nahi", "21:00 wali theek hai", "haan"},
-                {"hi", "डॉ. अक्षु के साथ मेरी 24 सितंबर की अपॉइंटमेंट फिर से तय करें।", "25 सितंबर", "शाम", "और स्लॉट्स दिखाओ।", "20:00 वाली ठीक है।", "नहीं", "21:00 वाली ठीक है।", "हाँ।"}
+                {"en", "Reschedule my appointment with Dr Akshu on " + sourceDate, targetDate.toString(), "evening", "show more slots", "20:00 works", "no", "21:00 works", "yes"},
+                {"hi", "Mujhe Dr Akshu ke saath " + sourceDate + " ki appointment reschedule karni hai", targetDate.toString(), "shaam", "aur slots dikhao", "20:00 wali theek hai", "nahi", "21:00 wali theek hai", "haan"},
+                {"hi", "डॉ. अक्षु के साथ मेरी " + sourceDate + " की अपॉइंटमेंट फिर से तय करें।", targetDate.toString(), "शाम", "और स्लॉट्स दिखाओ।", "20:00 वाली ठीक है।", "नहीं", "21:00 वाली ठीक है।", "हाँ।"}
         };
         for (String[] flow : flows) {
             PatientPortalService fixturePortal = mock(PatientPortalService.class);
@@ -684,7 +687,6 @@ class AivaV2LanguageBoundaryVerticalTest {
                     new PatientPortalAppointmentConfirmationResponse(sourceId.toString(), "RESCHEDULED", targetDate,
                             LocalTime.of(20, 0), "Asia/Kolkata", "Doc Akshu Kumar", "Clinic", null,
                             "ONLINE", "AIVA", "CONFIRMED", null, "Rescheduled", null, null, false, null, null));
-            Clock liveFixtureClock = Clock.systemUTC();
             ClinicTimeZoneResolver resolver = zoneResolver();
             AivaV2BookingTools bookingTools = new AivaV2BookingTools(fixturePortal, mock(PublicCatalogFacade.class), resolver, liveFixtureClock);
             AivaV2AppointmentLookupTool lookupTool = new AivaV2AppointmentLookupTool(fixturePortal);

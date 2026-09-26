@@ -14,7 +14,7 @@ import java.util.Set;
 import java.util.regex.Pattern;
 import org.springframework.util.StringUtils;
 
-final class SpecialtyResolver {
+public final class SpecialtyResolver {
     private static final Pattern NON_WORDS = Pattern.compile("[^\\p{L}\\p{N}\\p{M}]+");
     private static final Pattern WHITESPACE = Pattern.compile("\\s+");
     private static final List<String> SEARCH_CONTEXT_WORDS = List.of(
@@ -51,11 +51,11 @@ final class SpecialtyResolver {
 
     private final PatientPortalCareAiEntityRegistry entityRegistry;
 
-    SpecialtyResolver(PatientPortalCareAiEntityRegistry entityRegistry) {
+    public SpecialtyResolver(PatientPortalCareAiEntityRegistry entityRegistry) {
         this.entityRegistry = entityRegistry;
     }
 
-    SpecialtyResolution resolve(String rawText, Collection<String> supportedSpecialties) {
+    public SpecialtyResolution resolve(String rawText, Collection<String> supportedSpecialties) {
         String normalizedRaw = normalize(rawText);
         if (!StringUtils.hasText(normalizedRaw)) {
             return SpecialtyResolution.unresolved(rawText, normalizedRaw, null, List.of(), "empty");
@@ -278,7 +278,7 @@ final class SpecialtyResolver {
         return WHITESPACE.matcher(cleaned).replaceAll(" ");
     }
 
-    record SpecialtyResolution(
+    public record SpecialtyResolution(
             String rawText,
             String normalizedText,
             String canonicalSpecialty,
@@ -339,12 +339,12 @@ final class SpecialtyResolver {
             );
         }
 
-        boolean resolved() {
+        public boolean resolved() {
             return status == SpecialtyResolutionStatus.RESOLVED && StringUtils.hasText(canonicalSpecialty);
         }
     }
 
-    enum SpecialtyResolutionStatus {
+    public enum SpecialtyResolutionStatus {
         RESOLVED,
         AMBIGUOUS,
         UNRESOLVED

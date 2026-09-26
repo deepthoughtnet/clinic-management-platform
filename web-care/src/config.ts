@@ -65,8 +65,9 @@ export const careConfig = {
   supportUrl: trimEnv(import.meta.env.VITE_SUPPORT_URL),
   aivaAppUrl: trimEnv(import.meta.env.VITE_AIVA_APP_URL),
   careAuthMode: resolvedCareAuthMode,
-  aivaV2Enabled: import.meta.env.DEV && import.meta.env.VITE_AIVA_V2_ENABLED !== "false"
-    || trimEnv(import.meta.env.VITE_AIVA_V2_ENABLED).toLowerCase() === "true",
+  // V2 is the patient-facing default. An explicit false is the internal
+  // emergency rollback switch and is never exposed in patient UI.
+  aivaV2Enabled: trimEnv(import.meta.env.VITE_AIVA_V2_ENABLED).toLowerCase() !== "false",
   aivaV2VoiceEnabled: trimEnv(import.meta.env.VITE_AIVA_V2_VOICE_ENABLED).toLowerCase() === "true",
 };
 

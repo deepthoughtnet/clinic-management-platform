@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import java.util.UUID;
+import java.util.function.Consumer;
 
 /** The narrow public boundary used by voice after STT has produced a final utterance. */
 @Component
@@ -49,12 +50,22 @@ public class AivaV2VoiceTurnConnector {
             throw new IllegalArgumentException("A valid voice client turn is required.");
         }
         return conversationService.message(new MessageRequest(
+                conversationId, transcript, language, null, clientTurnId, clientTurnSequence));
+    }
+
+    public MessageResponse submitFinalTranscript(String conversationId,
+                                                  String transcript,
+                                                  String language,
+                                                  String clientTurnId,
+                                                  long clientTurnSequence,
+                                                  Consumer<AivaV2ProgressEvent> progressSink) {
+        return conversationService.message(new MessageRequest(
                 conversationId,
                 transcript,
                 language,
                 null,
                 clientTurnId,
                 clientTurnSequence
-        ));
+        ), progressSink);
     }
 }

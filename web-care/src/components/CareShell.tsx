@@ -343,13 +343,15 @@ export function CareAuthenticatedHeader({
           </span>
           <span className="care-brand-copy">
             <strong>{branding.productName}</strong>
-            <small>Authenticated care portal</small>
+            <small>{session.tenantCode ? `Current clinic · ${session.tenantCode}` : "Authenticated care portal"}</small>
           </span>
         </Link>
         <div className="care-authenticated-header__mobile-actions">
-          <a className="secondary-button" href={careConfig.discoverAppUrl}>
-            Find Care
-          </a>
+          <NavLink className="care-mobile-header-icon" to="/patient/notifications" aria-label="Notifications">
+            <NotificationsOutlined fontSize="small" aria-hidden="true" />
+            {unreadNotificationCount > 0 ? <span className="care-authenticated-header__badge">{unreadNotificationCount}</span> : null}
+          </NavLink>
+          <PatientProfileMenu session={session} patientDisplayName={patientDisplayName} onSignOut={onSignOut} />
         </div>
       </div>
       <nav className="care-authenticated-header__nav" aria-label="Patient shortcuts">
@@ -378,7 +380,7 @@ export function CareAuthenticatedHeader({
 
 export function CareFooter({ authenticated = false }: { authenticated?: boolean }) {
   return (
-    <footer className="care-footer">
+    <footer className={`care-footer${authenticated ? " care-footer--authenticated" : ""}`}>
       <div className="care-footer__grid">
         <section className="care-footer__brand">
           <span className="eyebrow">Jeevanam Care</span>

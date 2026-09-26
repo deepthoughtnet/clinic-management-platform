@@ -76,6 +76,64 @@ class SarvamSpeechToTextProviderTest {
     }
 
     @Test
+    void transcribeExtractsEmptyTranscriptFromSarvamEnvelope() {
+        VoiceTestProperties properties = readyProperties();
+        SarvamSpeechToTextProvider provider = new SarvamSpeechToTextProvider(properties, new RestTemplateBuilder(), new ObjectMapper());
+        RestTemplate restTemplate = (RestTemplate) ReflectionTestUtils.getField(provider, "restTemplate");
+        MockRestServiceServer server = MockRestServiceServer.createServer(restTemplate);
+        server.expect(once(), requestTo("http://sarvam.test/speech-to-text?language=hi-IN"))
+                .andRespond(withSuccess("{\"request_id\":\"request-1\",\"transcript\":\"\",\"language_code\":\"en-IN\"}", MediaType.APPLICATION_JSON));
+
+        var result = provider.transcribe(new VoiceTranscriptionRequest(
+                UUID.randomUUID(), "audio".getBytes(StandardCharsets.UTF_8), "audio/webm", "sample.webm", "auto"));
+
+        assertThat(result.transcript()).isEmpty();
+        server.verify();
+    }
+
+    @Test
+    void malformedJsonDoesNotBecomeTranscriptText() {
+        VoiceTestProperties properties = readyProperties();
+        SarvamSpeechToTextProvider provider = new SarvamSpeechToTextProvider(properties, new RestTemplateBuilder(), new ObjectMapper());
+        RestTemplate restTemplate = (RestTemplate) ReflectionTestUtils.getField(provider, "restTemplate");
+        MockRestServiceServer server = MockRestServiceServer.createServer(restTemplate);
+        server.expect(once(), requestTo("http://sarvam.test/speech-to-text?language=hi-IN"))
+                .andRespond(withSuccess("{not-json", MediaType.APPLICATION_JSON));
+
+        assertThatThrownBy(() -> provider.transcribe(new VoiceTranscriptionRequest(
+                UUID.randomUUID(), "audio".getBytes(StandardCharsets.UTF_8), "audio/webm", "sample.webm", "auto")))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("invalid transcription response");
+        server.verify();
+    }
+
+    @Test
+    void whitespaceTranscriptIsReturnedForBoundaryGuard() {
+        VoiceTestProperties properties = readyProperties();
+        SarvamSpeechToTextProvider provider = new SarvamSpeechToTextProvider(properties, new RestTemplateBuilder(), new ObjectMapper());
+        RestTemplate restTemplate = (RestTemplate) ReflectionTestUtils.getField(provider, "restTemplate");
+        MockRestServiceServer server = MockRestServiceServer.createServer(restTemplate);
+        server.expect(once(), requestTo("http://sarvam.test/speech-to-text?language=hi-IN"))
+                .andRespond(withSuccess("{\"transcript\":\"   \"}", MediaType.APPLICATION_JSON));
+
+        var result = provider.transcribe(new VoiceTranscriptionRequest(
+                UUID.randomUUID(), "audio".getBytes(StandardCharsets.UTF_8), "audio/webm", "sample.webm", "auto"));
+
+        assertThat(result.transcript()).isEmpty();
+        server.verify();
+    }
+
+    private VoiceTestProperties readyProperties() {
+        VoiceTestProperties properties = new VoiceTestProperties();
+        properties.getSarvam().setEnabled(true);
+        properties.getSarvam().setSttEnabled(true);
+        properties.getSarvam().setApiKey("super-secret-key");
+        properties.getSarvam().setBaseUrl("http://sarvam.test");
+        properties.getSarvam().setSttPath("/speech-to-text");
+        return properties;
+    }
+
+    @Test
     void transcribeNormalizesWebmCodecContentTypeForSarvam() {
         VoiceTestProperties properties = new VoiceTestProperties();
         properties.getSarvam().setEnabled(true);

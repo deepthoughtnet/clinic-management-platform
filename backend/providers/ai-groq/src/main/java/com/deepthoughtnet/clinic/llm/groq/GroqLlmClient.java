@@ -296,18 +296,29 @@ public class GroqLlmClient implements LlmClient {
         payload.put("model", request.modelOverride() != null && !request.modelOverride().isBlank() ? request.modelOverride() : model);
         payload.put("temperature", request.temperature() != null ? request.temperature() : defaultTemperature);
         payload.put("max_tokens", request.maxOutputTokens() != null ? request.maxOutputTokens() : defaultMaxOutputTokens);
-        if (request.structuredOutputSchema() != null) {
+        // Groq's gpt-oss models accept JSON object mode but reject the OpenAI
+        // json_schema response_format contract. Keep schema validation in the
+        // orchestration layer while using the model-supported transport mode.
+        if (request.structuredOutputSchema() != null && supportsStructuredSchema(modelFor(request))) {
             payload.put("response_format", Map.of(
                     "type", "json_schema",
                     "json_schema", Map.of(
                             "name", "aiva_v2_conversation_decision",
                             "strict", true,
                             "schema", GroqResponseSchemaAdapter.adapt(request.structuredOutputSchema()))));
-        } else if (request.strictJsonMode()) {
+        } else if (request.strictJsonMode() || request.structuredOutputSchema() != null) {
             payload.put("response_format", Map.of("type", "json_object"));
         }
 
         return payload;
+    }
+
+    private String modelFor(LlmRequest request) {
+        return request.modelOverride() != null && !request.modelOverride().isBlank() ? request.modelOverride() : model;
+    }
+
+    private boolean supportsStructuredSchema(String candidateModel) {
+        return candidateModel == null || !candidateModel.toLowerCase(java.util.Locale.ROOT).contains("gpt-oss");
     }
 
     private AvailabilitySnapshot validateConfiguredModel() {

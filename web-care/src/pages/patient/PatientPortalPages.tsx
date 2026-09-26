@@ -397,6 +397,23 @@ const patientNavItems = [
   { to: "/patient/profile", label: "Profile", shortLabel: "Profile" },
 ];
 
+const mobilePatientNavItems = [
+  { to: "/patient/dashboard", label: "Home", shortLabel: "Home" },
+  { to: "/patient/appointments", label: "Visits", shortLabel: "Visits" },
+  { to: "/patient/careai", label: "AIVA", shortLabel: "AIVA" },
+  { to: "/patient/records", label: "Records", shortLabel: "Records" },
+  { to: "/patient/more", label: "More", shortLabel: "More" },
+];
+
+function isMobilePatientNavActive(pathname: string, target: string) {
+  if (target === "/patient/dashboard") return pathname === target;
+  if (target === "/patient/appointments") return pathname === target || pathname === "/patient/book-appointment";
+  if (target === "/patient/careai") return pathname === target;
+  if (target === "/patient/records") return ["/patient/records", "/patient/prescriptions", "/patient/lab", "/patient/bills"].includes(pathname);
+  if (target === "/patient/more") return ["/patient/more", "/patient/notifications", "/patient/profile"].includes(pathname);
+  return pathname === target;
+}
+
 const CARE_LOGIN_BENEFITS = [
   {
     icon: <CalendarMonthOutlinedIcon fontSize="small" aria-hidden="true" />,
@@ -1278,11 +1295,11 @@ export function PatientPortalShell({
       </div>
 
       <nav className="patient-mobile-nav" aria-label="Patient portal navigation">
-        {patientNavItems.map((item) => (
+        {mobilePatientNavItems.map((item) => (
           <NavLink
             key={item.to}
             to={item.to}
-            className={({ isActive }) => `patient-mobile-link${isActive || location.pathname === item.to ? " is-active" : ""}`}
+            className={`patient-mobile-link${isMobilePatientNavActive(location.pathname, item.to) ? " is-active" : ""}`}
             aria-label={item.label}
             title={item.label}
           >
@@ -1291,6 +1308,75 @@ export function PatientPortalShell({
         ))}
       </nav>
     </section>
+  );
+}
+
+type PatientMobileLandingPageProps = {
+  session: PatientPortalSession | null;
+  onSignOut: () => void;
+};
+
+export function PatientRecordsPage({ session, onSignOut }: PatientMobileLandingPageProps) {
+  return (
+    <PatientAccessBoundary
+      session={session}
+      onSignOut={onSignOut}
+      title="Records"
+      subtitle="Your prescriptions, lab reports, and bills in one place."
+    >
+      <section className="patient-mobile-landing-grid" aria-label="Patient records">
+        <Link className="patient-mobile-landing-card" to="/patient/prescriptions">
+          <strong>Prescriptions</strong>
+          <span>Review medicines and care instructions.</span>
+        </Link>
+        <Link className="patient-mobile-landing-card" to="/patient/lab">
+          <strong>Lab reports</strong>
+          <span>Open reports shared with your account.</span>
+        </Link>
+        <Link className="patient-mobile-landing-card" to="/patient/bills">
+          <strong>Bills &amp; receipts</strong>
+          <span>View charges, receipts, and payment history.</span>
+        </Link>
+      </section>
+    </PatientAccessBoundary>
+  );
+}
+
+export function PatientMorePage({ session, onSignOut }: PatientMobileLandingPageProps) {
+  return (
+    <PatientAccessBoundary
+      session={session}
+      onSignOut={onSignOut}
+      title="More"
+      subtitle="Manage your care access, account, and support options."
+    >
+      <section className="patient-mobile-landing-grid" aria-label="More patient options">
+        <Link className="patient-mobile-landing-card" to="/patient/notifications">
+          <strong>Notifications</strong>
+          <span>Review care updates and reminders.</span>
+        </Link>
+        <Link className="patient-mobile-landing-card" to="/patient/dashboard#care-network">
+          <strong>My Care Network</strong>
+          <span>View authorized clinics and switch clinic context.</span>
+        </Link>
+        <Link className="patient-mobile-landing-card" to="/patient/profile">
+          <strong>Profile</strong>
+          <span>Update your patient profile and preferences.</span>
+        </Link>
+        <Link className="patient-mobile-landing-card" to="/help-centre">
+          <strong>Help</strong>
+          <span>Find answers and contact support.</span>
+        </Link>
+        <Link className="patient-mobile-landing-card" to="/privacy-policy">
+          <strong>Privacy &amp; security</strong>
+          <span>Review how your Care information is protected.</span>
+        </Link>
+        <button className="patient-mobile-landing-card patient-mobile-landing-card--button" type="button" onClick={onSignOut}>
+          <strong>Sign out</strong>
+          <span>Close this patient session securely.</span>
+        </button>
+      </section>
+    </PatientAccessBoundary>
   );
 }
 
@@ -3460,7 +3546,7 @@ export function PatientDashboardPage({
           )}
         </section>
 
-        <section className="patient-panel patient-dashboard-network patient-panel-wide">
+        <section id="care-network" className="patient-panel patient-dashboard-network patient-panel-wide">
           <div className="patient-panel-heading">
             <h2 className="patient-widget-heading">
               <span className="patient-widget-heading__icon" aria-hidden="true">
@@ -3989,20 +4075,21 @@ export function PatientAppointmentsPage({ session, onSignOut }: { session: Patie
               </button>
             ))}
           </div>
-          <label className="patient-search-field">
-            <span>Search appointments</span>
-            <input
-              value={searchText}
-              onChange={(event) => setSearchText(event.target.value)}
-              placeholder="Doctor, clinic, or date"
-            />
-          </label>
-        </div>
-
-        <div className="patient-action-strip">
-          <Link className="primary-button" to="/patient/book-appointment">
-            Book appointment
-          </Link>
+          <div className="patient-appointments-search-actions">
+            <label className="patient-search-field">
+              <span>Search appointments</span>
+              <input
+                value={searchText}
+                onChange={(event) => setSearchText(event.target.value)}
+                placeholder="Doctor, clinic, or date"
+              />
+            </label>
+            <div className="patient-action-strip">
+              <Link className="primary-button" to="/patient/book-appointment">
+                Book appointment
+              </Link>
+            </div>
+          </div>
         </div>
         {upcomingAppointments.length ? (
           <div className="patient-highlight-card patient-guidance-card">
@@ -4033,13 +4120,6 @@ export function PatientAppointmentsPage({ session, onSignOut }: { session: Patie
               <div className="record-card-meta">
                 <span>Source: {appointment.source ?? "Not available"}</span>
               </div>
-              {(appointment.status ?? "").toUpperCase() !== "CANCELLED" &&
-              (appointment.status ?? "").toUpperCase() !== "NO_SHOW" &&
-              (appointment.status ?? "").toUpperCase() !== "COMPLETED" ? (
-                <div className="patient-inline-note">
-                  To cancel or reschedule, please use AIVA or contact receptionist.
-                </div>
-              ) : null}
             </article>
           )) : (
             <div className="patient-inline-empty">
@@ -5965,6 +6045,8 @@ export function PatientNotificationsPage({ session, onSignOut }: { session: Pati
     [],
   );
   const [workingId, setWorkingId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [readAtOverrides, setReadAtOverrides] = useState<Record<string, string>>({});
 
   function actionPath(notification: PatientPortalNotificationResponse) {
     return notification.actionPath ?? switchActionPath(notification.sourceType);
@@ -6003,15 +6085,22 @@ export function PatientNotificationsPage({ session, onSignOut }: { session: Pati
       return;
     }
     setWorkingId(id);
+    setActionError(null);
     try {
-      await markPatientNotificationRead(portalSession, id);
+      const updatedNotification = await markPatientNotificationRead(portalSession, id);
+      if (updatedNotification.readAt) {
+        setReadAtOverrides((current) => ({ ...current, [id]: updatedNotification.readAt as string }));
+      }
       setRefreshKey((current) => current + 1);
+    } catch {
+      setActionError("Unable to mark this notification as read. Please try again.");
     } finally {
       setWorkingId(null);
     }
   }
 
-  const unreadCount = notifications.data.filter((notification) => !notification.readAt).length;
+  const isRead = (notification: PatientPortalNotificationResponse) => Boolean(notification.readAt || readAtOverrides[notification.id]);
+  const unreadCount = notifications.data.filter((notification) => !isRead(notification)).length;
 
   return (
     <PatientAccessBoundary
@@ -6030,26 +6119,28 @@ export function PatientNotificationsPage({ session, onSignOut }: { session: Pati
       >
         <div className="portal-dashboard-grid">
           <article className="dashboard-card">
-            <strong>Total</strong>
-            <span>{notifications.data.length}</span>
+            <strong>{notifications.data.length}</strong>
+            <span>Total</span>
           </article>
           <article className="dashboard-card">
-            <strong>Unread</strong>
-            <span>{unreadCount}</span>
+            <strong>{unreadCount}</strong>
+            <span>Unread</span>
           </article>
           <article className="dashboard-card">
-            <strong>Read</strong>
-            <span>{notifications.data.length - unreadCount}</span>
+            <strong>{notifications.data.length - unreadCount}</strong>
+            <span>Read</span>
           </article>
         </div>
 
+        {actionError ? <div className="patient-inline-error" role="alert">{actionError}</div> : null}
+
         <div className="portal-list">
           {notifications.data.map((notification) => (
-            <article key={notification.id} className="portal-list-card">
+            <article key={notification.id} className={`portal-list-card ${isRead(notification) ? "is-read" : "is-unread"}`}>
               <div className="portal-list-card-header">
                 <strong>{formatNotificationText(notificationDisplayTitle(notification))}</strong>
-                <span className={`status-pill status-${notification.readAt ? "success" : "warning"}`}>
-                  {notification.readAt ? "Read" : "Unread"}
+                <span className={`status-pill status-${isRead(notification) ? "success" : "warning"}`}>
+                  {isRead(notification) ? "Read" : "Unread"}
                 </span>
               </div>
               <div className="portal-list-meta">
@@ -6064,7 +6155,7 @@ export function PatientNotificationsPage({ session, onSignOut }: { session: Pati
                     Open related page
                   </Link>
                 ) : null}
-                {!notification.readAt ? (
+                {!isRead(notification) ? (
                   <button className="ghost-button" type="button" disabled={workingId === notification.id} onClick={() => void handleMarkRead(notification.id)}>
                     {workingId === notification.id ? "Marking..." : "Mark as read"}
                   </button>
@@ -6076,6 +6167,31 @@ export function PatientNotificationsPage({ session, onSignOut }: { session: Pati
       </PatientPortalApiState>
     </PatientAccessBoundary>
   );
+}
+
+const AIVA_V2_TEXT_PROGRESS_DELAY_MS = 800;
+
+function aivaV2WaitingCopy(text: string): string {
+  const normalized = text.toLocaleLowerCase();
+  const hindi = /[\u0900-\u097f]/u.test(text);
+  const hinglish = !hindi && /\b(meri|mujhe|ke|saath|shaam|subah|kal|appointment)\b/u.test(normalized);
+  if (/\b(reschedule|रीशेड्यूल|शेड्यूल)\b/u.test(normalized)) {
+    return hindi ? "मैं नई तारीख के लिए उपलब्ध समय देख रही हूँ।" : hinglish ? "Main nayi date ke liye available time dekh rahi hoon." : "Let me check available times for the new date.";
+  }
+  if (/\b(cancel|cancellation|कैंसल|रद्द)\b/u.test(normalized)) {
+    return hindi ? "मैं उस अपॉइंटमेंट की जानकारी देख रही हूँ।" : hinglish ? "Main us appointment ki jaankari dekh rahi hoon." : "Let me check that appointment.";
+  }
+  if (/\b(show|next|upcoming|today|मेरी|अगली|दिखाओ)\b/u.test(normalized)
+      && /\b(appointment|appointments|अपॉइंटमेंट)\b/u.test(normalized)) {
+    return hindi ? "मैं आपकी अपॉइंटमेंट की जानकारी देख रही हूँ।" : hinglish ? "Main aapki appointment ki jaankari dekh rahi hoon." : "Let me check your appointments.";
+  }
+  if (/\b(doctor|specialty|speciality|physician|डॉक्टर|विशेषज्ञ|फिजिशियन)\b/u.test(normalized)) {
+    return hindi ? "एक क्षण, मैं उपलब्ध डॉक्टर देख रही हूँ।" : hinglish ? "Ek pal, main available doctors dekh rahi hoon." : "Let me check available doctors.";
+  }
+  if (/\b(book|booking|slot|tomorrow|today|morning|afternoon|evening|कल|सुबह|शाम|स्लॉट)\b/u.test(normalized)) {
+    return hindi ? "मैं उपलब्ध स्लॉट देख रही हूँ।" : hinglish ? "Main available slots dekh rahi hoon." : "I’m checking available slots.";
+  }
+  return hindi ? "एक क्षण, मैं आपकी रिक्वेस्ट देख रही हूँ।" : hinglish ? "Ek pal, main aapki request check kar rahi hoon." : "One moment while I check.";
 }
 
 export function PatientCareAiPage({ session, onSignOut }: { session: PatientPortalSession | null; onSignOut: () => void }) {
@@ -6094,6 +6210,9 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
   const aivaEngine: "legacy" | "v2" = careConfig.aivaV2Enabled ? "v2" : "legacy";
   const [v2ConversationId, setV2ConversationId] = useState<string | null>(null);
   const [v2Technical, setV2Technical] = useState<AivaV2MessageResponse | null>(null);
+  const [v2WaitingMessage, setV2WaitingMessage] = useState<string | null>(null);
+  const v2ProgressTimerRef = useRef<number | null>(null);
+  const [interactionMode, setInteractionMode] = useState<"text" | "voice">("text");
   const v2TurnSequenceRef = useRef(0);
   const previousV2TenantRef = useRef<string | null>(portalSession?.tenantId ?? null);
   useEffect(() => {
@@ -6108,6 +6227,9 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
     }
     previousV2TenantRef.current = nextTenantId;
   }, [portalSession?.tenantId]);
+  useEffect(() => () => {
+    if (v2ProgressTimerRef.current !== null) window.clearTimeout(v2ProgressTimerRef.current);
+  }, []);
   const [draft, setDraft] = useState("");
   const [state, setState] = useState<PatientPortalCareAiStateResponse | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -6196,6 +6318,8 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
   const voiceBargeInCountRef = useRef(0);
   const voiceReconnectCountRef = useRef(0);
   const voiceActiveTurnIdRef = useRef<number | null>(null);
+  const voiceTerminalTurnRef = useRef<number | null>(null);
+  const voiceServerClosedRef = useRef(false);
   const voiceSessionStartedAtRef = useRef<number | null>(null);
   const voiceLastTranscriptOrResponseAtRef = useRef<number | null>(null);
   const voiceMutedRef = useRef(false);
@@ -7061,7 +7185,22 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
     voicePlaybackStoppedAtRef.current = performance.now();
     appendVoiceEvent("AUDIO_PLAY_ENDED");
     updateVoiceLatencyTelemetry();
+    if (voiceTerminalTurnRef.current !== null && voiceSocketRef.current?.readyState === WebSocket.OPEN) {
+      voiceSocketRef.current.send(JSON.stringify({
+        type: "audio.playback.complete",
+        turnIndex: voiceTerminalTurnRef.current,
+      }));
+      appendVoiceEvent("TERMINAL_AUDIO_PLAYBACK_COMPLETE");
+      updateVoiceStatus("ending");
+      setVoiceInfo("Voice session ending…");
+      return;
+    }
     if (voiceEndedByUserRef.current) {
+      return;
+    }
+    if (voiceTerminalTurnRef.current !== null) {
+      updateVoiceStatus("ending");
+      setVoiceInfo("Voice session ending…");
       return;
     }
     if (
@@ -7076,7 +7215,12 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
       scheduleVoiceListeningResume("assistant_audio_complete", 0);
       return;
     }
-    updateVoiceStatus("session_started");
+    if (voiceTerminalTurnRef.current !== null) {
+      updateVoiceStatus("ending");
+      setVoiceInfo("Voice session ending…");
+    } else {
+      updateVoiceStatus("session_started");
+    }
     setVoiceInfo(voiceMutedRef.current ? "Microphone is muted. Unmute to continue." : "Session is ready. Start a turn when you want to speak.");
   }
 
@@ -7099,7 +7243,19 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
     voicePendingAutoPlayRef.current = false;
     voicePlaybackStartedAtRef.current = null;
     voicePlaybackStoppedAtRef.current = performance.now();
-    updateVoiceStatus("session_started");
+    if (voiceTerminalTurnRef.current !== null && voiceSocketRef.current?.readyState === WebSocket.OPEN) {
+      voiceSocketRef.current.send(JSON.stringify({
+        type: "audio.playback.complete",
+        turnIndex: voiceTerminalTurnRef.current,
+      }));
+      appendVoiceEvent("TERMINAL_AUDIO_PLAYBACK_ERROR");
+    }
+    if (voiceTerminalTurnRef.current !== null) {
+      updateVoiceStatus("ending");
+      setVoiceInfo("Voice session ending…");
+    } else {
+      updateVoiceStatus("session_started");
+    }
     setVoiceReplyReadyToPlay(false);
     setVoiceError("Voice reply is unavailable. You can still read AIVA's response.");
     setVoiceInfo("Voice reply is unavailable. You can still read AIVA's response.");
@@ -7146,6 +7302,11 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
     }
 
     const type = String(payload.type || "");
+    if (type === "conversation.terminal") {
+      voiceTerminalTurnRef.current = Number(payload.turnIndex || 0) || null;
+      appendVoiceEvent("CONVERSATION_TERMINAL");
+      return;
+    }
     if (type === "session.connected") {
       appendVoiceEvent("SESSION_CONNECTED");
       return;
@@ -7258,6 +7419,12 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
         setState(nextState);
       }
       setVoiceProviderTrace(trace);
+      // Text delivery is the authoritative end of backend processing. Keep
+      // playback state independent, but never leave the UI in Processing while
+      // the final assistant response is already visible.
+      if (voiceStatusRef.current === "processing" || voiceStatusRef.current === "waiting_for_tool") {
+        updateVoiceStatus("session_started");
+      }
       setVoiceInfo("AIVA responded.");
       appendVoiceEvent("ASSISTANT_TEXT");
       updateVoiceLatencyTelemetry();
@@ -7402,6 +7569,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
       return;
     }
     if (type === "session.closed") {
+      voiceServerClosedRef.current = true;
       updateVoiceStatus("ended");
       setVoiceInfo("Voice session closed.");
       appendVoiceEvent("SESSION_CLOSED");
@@ -7441,6 +7609,12 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
         appendVoiceEvent("DISCONNECTED");
         return;
       }
+      if (voiceServerClosedRef.current) {
+        updateVoiceStatus("ended");
+        setVoiceInfo("Voice session closed.");
+        appendVoiceEvent(`DISCONNECTED ${event.code}`);
+        return;
+      }
       if (voiceStatusRef.current !== "error") {
         updateVoiceStatus("idle");
       }
@@ -7462,6 +7636,8 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
     if (voiceSocketRef.current) {
       closeVoiceSocket();
     }
+    voiceServerClosedRef.current = false;
+    voiceTerminalTurnRef.current = null;
     updateVoiceStatus("connecting");
     setVoiceError(null);
     setVoiceInfo("Connecting to AIVA voice…");
@@ -7534,6 +7710,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
       return;
     }
     setVoiceError(null);
+    voiceTerminalTurnRef.current = null;
     setVoiceTranscript("");
     setVoiceAssistant("");
     setVoiceTurnMetrics(null);
@@ -7800,6 +7977,13 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
     }
     setDraft("");
     setSubmitting(true);
+    setV2WaitingMessage(null);
+    if (v2ProgressTimerRef.current !== null) window.clearTimeout(v2ProgressTimerRef.current);
+    if (aivaEngine === "v2") {
+      v2ProgressTimerRef.current = window.setTimeout(() => {
+        setV2WaitingMessage(aivaV2WaitingCopy(trimmed));
+      }, AIVA_V2_TEXT_PROGRESS_DELAY_MS);
+    }
     setError(null);
 
     try {
@@ -7862,6 +8046,9 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
         setError(AIVA_CHAT_FRIENDLY_ERROR);
       }
     } finally {
+      if (v2ProgressTimerRef.current !== null) window.clearTimeout(v2ProgressTimerRef.current);
+      v2ProgressTimerRef.current = null;
+      setV2WaitingMessage(null);
       setSubmitting(false);
     }
   }
@@ -7890,6 +8077,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
     setResetting(true);
     setError(null);
     try {
+      setInteractionMode("text");
       if (aivaEngine === "v2") {
         setV2Messages([]);
         setV2ConversationId(null);
@@ -7938,6 +8126,13 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
   const displayedMessages = aivaEngine === "v2" ? v2Messages : legacyMessages;
   const voiceDisabledForV2 = aivaEngine === "v2" && !careConfig.aivaV2VoiceEnabled;
 
+  function handleInteractionModeChange(nextMode: "text" | "voice") {
+    if (nextMode === "text" && voiceStatus !== "idle" && voiceStatus !== "ended" && voiceStatus !== "error") {
+      handleVoiceEndSession();
+    }
+    setInteractionMode(nextMode);
+  }
+
   return (
     <PatientAccessBoundary
       session={session}
@@ -7946,7 +8141,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
       subtitle="Your AI healthcare assistant"
       className="patient-careai-page"
     >
-      <article className="patient-panel patient-panel-wide patient-careai-shell aiva-workspace-card">
+      <article className={`patient-panel patient-panel-wide patient-careai-shell aiva-workspace-card aiva-mobile-${interactionMode}-mode`}>
         <div className="patient-careai-shell-header aiva-workspace-header">
           <div className="patient-careai-shell-heading">
             <div className="patient-careai-shell-title-row">
@@ -7958,6 +8153,25 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
           <button className="ghost-button patient-careai-reset-button" type="button" disabled={!portalSession || resetting} onClick={handleReset}>
             <RefreshRoundedIcon className="patient-careai-inline-icon" fontSize="small" />
             {resetting ? "Resetting..." : "Reset chat"}
+          </button>
+        </div>
+
+        <div className="patient-careai-mode-selector" role="group" aria-label="AIVA interaction mode">
+          <button
+            className={`patient-careai-mode-option${interactionMode === "text" ? " is-active" : ""}`}
+            type="button"
+            aria-pressed={interactionMode === "text"}
+            onClick={() => handleInteractionModeChange("text")}
+          >
+            Text
+          </button>
+          <button
+            className={`patient-careai-mode-option${interactionMode === "voice" ? " is-active" : ""}`}
+            type="button"
+            aria-pressed={interactionMode === "voice"}
+            onClick={() => handleInteractionModeChange("voice")}
+          >
+            Voice
           </button>
         </div>
 
@@ -7992,11 +8206,13 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
                         <strong>AIVA</strong>
                         <time>{formatDisplayTime(new Date().toISOString())}</time>
                       </div>
-                      <div className="patient-typing-indicator" aria-label="AIVA is typing">
-                        <span />
-                        <span />
-                        <span />
-                      </div>
+                      {v2WaitingMessage ? <p role="status">{v2WaitingMessage}</p> : (
+                        <div className="patient-typing-indicator" aria-label="AIVA is typing">
+                          <span />
+                          <span />
+                          <span />
+                        </div>
+                      )}
                     </div>
                   </div>
                 ) : null}
@@ -8052,7 +8268,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
                 <div ref={chatEndRef} />
               </div>
 
-              <form className="patient-careai-form patient-careai-composer aiva-composer" onSubmit={handleSubmit}>
+              <form className="patient-careai-form patient-careai-composer aiva-composer aiva-mobile-text-composer" onSubmit={handleSubmit}>
                 <label className="patient-form-field">
                   <span>Message</span>
                   <textarea
@@ -8078,7 +8294,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
           </section>
 
           <aside className="patient-careai-tools-panel aiva-tools-column">
-            <section className="patient-careai-tool-card patient-careai-voice-card voice-session-card">
+            <section className={`patient-careai-tool-card patient-careai-voice-card voice-session-card${interactionMode === "voice" ? " is-mobile-voice-mode" : ""}${voiceStatus !== "idle" && voiceStatus !== "ended" && voiceStatus !== "error" ? " is-active" : ""}`}>
               <div className="patient-careai-tool-card-heading voice-session-header">
                 <strong>Voice Session</strong>
                 <span className={`patient-voice-status patient-voice-status-${voiceStatus}`}>

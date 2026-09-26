@@ -35,6 +35,26 @@ selection, booking preparation, confirmation, and draft abandonment. It uses
 one active provider-result and one active availability-result per V2 session.
 Criteria changes revoke confirmation and invalidate slot/result references.
 
+### Active Booking Follow-up and Displayed Slot Selection
+
+An active booking draft supplies bounded semantic context (`activeWorkflow`,
+`pendingField`, provider display name, specialty, date, time window, and exact
+time). When the pending field is provider or specialty, a short doctor phrase is
+treated as a provider candidate and is still validated by the authoritative
+provider resolver. No alias or fuzzy auto-selection is introduced.
+
+When a current availability page is displayed, ordinal/index controls and exact
+times are resolved deterministically against that displayed page. Generic forms
+such as `3`, `third`, `3rd`, and action-wrapped equivalents select only the
+corresponding displayed slot. A uniquely matching `18`, `18:00`, or `6 PM` may
+select the displayed 18:00 slot. Invalid indices and times never select a hidden
+or invented slot.
+
+Unrecognized or invalid turns preserve the active draft and current availability.
+Slot selection remains subject to the existing draft id, revision, availability
+request, criteria fingerprint, provider, clinic, date, and expiry checks. Stale
+selection is rejected or refreshed through the existing kernel path.
+
 V2 also supports read-only upcoming appointment lookup through a dedicated
 `PatientPortalService.careAiUpcomingAppointmentsAcrossAuthorizedClinics()` path.
 That path aggregates only the authenticated patient's existing Care-authorized
@@ -46,15 +66,24 @@ confirmation.
 ## Compatibility And Rollback
 
 - Endpoint: `/api/patient-portal/aiva-v2/message`.
-- Feature flag: `aiva.v2.enabled`, default `false`.
-- The endpoint is absent unless explicitly enabled.
+- Feature flag: `aiva.v2.enabled`, default `true`.
+- The endpoint is enabled by default for the patient-facing Care experience.
+- Set `AIVA_V2_ENABLED=false` and `VITE_AIVA_V2_ENABLED=false` only as an
+  internal emergency rollback; these flags are not exposed in patient UI.
 - Legacy `PatientPortalCareAiService`, CanonicalTurn, reducer shadow runtime,
   voice transport, and existing endpoints are unchanged.
-- Rollback is disabling the flag; no data migration or backfill is required.
+- Rollback is explicitly disabling the engine flags; no data migration or
+  backfill is required.
 
 ## Safety Invariants
 
 - Suggested/near provider names never mutate authoritative provider identity.
+- Semantic interpretation receives only bounded booking context: active workflow,
+  derived pending field, safe provider display name, specialty/date/time criteria,
+  and small state flags. It never receives provider IDs or raw provider objects.
+- When a booking draft is waiting for provider or specialty, the semantic layer
+  interprets the next provider/specialty phrase as a booking update; the kernel
+  still performs authoritative catalog resolution.
 - A slot can be selected only from the latest result matching draft revision.
 - Preparing a booking revalidates availability and capability.
 - Positive confirmation uses only the current server-held confirmation
@@ -68,6 +97,9 @@ confirmation.
 ## Validation
 
 - Focused semantic-gateway, kernel, store, tool-adapter, and controller tests.
+- Regressions for pending-provider follow-up, date preservation, displayed-page
+  ordinal and exact-time selection, invalid index rejection, and state retention
+  after an unrecognized turn.
 - Patient portal, appointment, availability, and CALL_TO_BOOK regressions.
 - API BFF architecture tests and backend package build.
 - `git diff --check` clean.

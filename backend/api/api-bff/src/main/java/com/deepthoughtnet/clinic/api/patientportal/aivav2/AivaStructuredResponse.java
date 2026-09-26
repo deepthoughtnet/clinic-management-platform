@@ -25,7 +25,7 @@ public record AivaStructuredResponse(ResponseType type, Payload payload, List<In
         RESCHEDULE_SUCCESS, CANCELLATION_NONE, RESCHEDULE_SOURCE_NONE,
         STALE_RESULT, FAILURE, CLARIFICATION, CALL_TO_BOOK,
         BOOKING_ABANDONED, BOOKING_SUSPENDED, NO_SUSPENDED_BOOKING, CONVERSATION_CLOSED,
-        CONTEXTUAL_INFORMATION, LEGACY
+        CONTEXTUAL_INFORMATION, HUMAN_ASSISTANCE, INTRO, LEGACY
     }
 
     @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.PROPERTY, property = "payloadType")
@@ -53,7 +53,8 @@ public record AivaStructuredResponse(ResponseType type, Payload payload, List<In
             @JsonSubTypes.Type(value = NoMoreSlotsEmptyPayload.class, name = "noMoreSlotsEmpty"),
             @JsonSubTypes.Type(value = BookingStatePayload.class, name = "bookingState"),
             @JsonSubTypes.Type(value = ContextualInformationPayload.class, name = "contextualInformation"),
-            @JsonSubTypes.Type(value = EmptyPayload.class, name = "empty")
+        @JsonSubTypes.Type(value = EmptyPayload.class, name = "empty"),
+        @JsonSubTypes.Type(value = HumanAssistancePayload.class, name = "humanAssistance")
     })
     public sealed interface Payload permits NeedProviderPayload, ProviderChoicesPayload, NeedDatePayload,
             AvailabilityPayload, NoMoreSlotsPayload, BookingConfirmationPayload, BookingSuccessPayload,
@@ -62,7 +63,7 @@ public record AivaStructuredResponse(ResponseType type, Payload payload, List<In
             RescheduleConfirmationPayload, RescheduleSuccessPayload, ClarificationPayload,
             FailurePayload, StaleResultPayload, CallToBookPayload, ProviderNotFoundPayload,
             NoMoreSlotsEmptyPayload, BookingStatePayload, ContextualInformationPayload,
-            EmptyPayload { }
+            EmptyPayload, HumanAssistancePayload { }
 
     public record NeedProviderPayload(String specialty, String context) implements Payload { }
     public record ProviderOption(String candidateReference, String doctorDisplayName,
@@ -114,6 +115,12 @@ public record AivaStructuredResponse(ResponseType type, Payload payload, List<In
     public record ContextualInformationPayload(String kind, LocalDate date,
                                                String providerDisplayName) implements Payload { }
     public record EmptyPayload(String reasonCode) implements Payload { }
+    public record HumanAssistancePayload(List<String> channels, String clinicPhone, String category)
+            implements Payload {
+        public HumanAssistancePayload {
+            channels = channels == null ? List.of() : List.copyOf(channels);
+        }
+    }
 
     public static AivaStructuredResponse of(ResponseType type, Payload payload, List<InteractiveAction> actions) {
         return new AivaStructuredResponse(type, payload, actions);

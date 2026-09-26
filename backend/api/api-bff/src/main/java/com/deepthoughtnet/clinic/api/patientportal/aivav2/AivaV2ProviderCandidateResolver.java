@@ -2,6 +2,7 @@ package com.deepthoughtnet.clinic.api.patientportal.aivav2;
 
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ProviderCandidate;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ProviderSearchResult;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.language.DevanagariNameTransliterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
@@ -35,8 +36,16 @@ final class AivaV2ProviderCandidateResolver {
     }
 
     private static String normalizeDoctorName(String value) {
-        return value == null ? "" : value.trim().toLowerCase(Locale.ROOT)
+        if (value == null) return "";
+        String normalized = value.trim();
+        if (normalized.codePoints().anyMatch(cp -> cp >= 0x0900 && cp <= 0x097F)) {
+            normalized = DevanagariNameTransliterator.transliterate(normalized);
+        }
+        return normalized.toLowerCase(Locale.ROOT)
                 .replaceAll("[^\\p{L}\\p{N}]+", " ").trim()
-                .replaceFirst("^(doctor|dr|doc)\\s+", "");
+                .replaceFirst("^(doctor|dr|doc)\\s+", "")
+                // Bounded orthographic normalization of the existing
+                // Devanagari transliteration (Kumaar/Kumar, etc.).
+                .replace("aa", "a").replace("ee", "i").replace("oo", "u");
     }
 }

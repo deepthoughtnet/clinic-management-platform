@@ -5,10 +5,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-final class PatientPortalCareAiEntityRegistry {
+public final class PatientPortalCareAiEntityRegistry {
     private final Map<PatientPortalCareAiEntityType, PatientPortalCareAiEntityDefinition> definitions;
 
-    PatientPortalCareAiEntityRegistry() {
+    public PatientPortalCareAiEntityRegistry() {
         Map<PatientPortalCareAiEntityType, PatientPortalCareAiEntityDefinition> byType =
                 new EnumMap<>(PatientPortalCareAiEntityType.class);
         register(byType, PatientPortalCareAiEntityType.DOCTOR, "Doctor name or identifier",

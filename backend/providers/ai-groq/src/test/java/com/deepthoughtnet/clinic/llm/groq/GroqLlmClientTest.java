@@ -1,5 +1,7 @@
 package com.deepthoughtnet.clinic.llm.groq;
 
+import java.util.Map;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -79,6 +81,23 @@ class GroqLlmClientTest {
         assertThat(response.model()).isEqualTo(MODEL);
         assertThat(response.text()).contains("Groq fallback answer");
         assertThat(response.tokenUsage().totalTokens()).isEqualTo(15L);
+    }
+
+    @Test
+    void gptOssUsesJsonObjectTransportForStructuredAivaRequests() throws Exception {
+        GroqLlmClient client = clientWithCatalogAndCompletion("""
+                {"choices":[{"message":{"content":"{\\"operation\\":\\"UNKNOWN\\"}"},"finish_reason":"stop"}]}
+                """);
+
+        client.generate(new LlmRequest("system", "user", null, null, null, null, 1024,
+                AiTaskType.GENERIC_EXTRACTION, null, null, true,
+                Map.of("type", "object", "properties", Map.of("operation", Map.of("type", "string")))));
+
+        ArgumentCaptor<Object> payloadCaptor = ArgumentCaptor.forClass(Object.class);
+        verify(capturedPostSpec).body(payloadCaptor.capture());
+        String requestJson = new ObjectMapper().writeValueAsString(payloadCaptor.getValue());
+        assertThat(requestJson).contains("\"response_format\":{\"type\":\"json_object\"}");
+        assertThat(requestJson).doesNotContain("json_schema");
     }
 
     @Test

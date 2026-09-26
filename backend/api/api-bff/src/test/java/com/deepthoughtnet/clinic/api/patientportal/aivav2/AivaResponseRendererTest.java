@@ -24,6 +24,19 @@ class AivaResponseRendererTest {
         assertThat(new AivaResponseRenderer().render(response, "hi", ResponseStyle.STANDARD).assistantMessage())
                 .contains("बातचीत");
     }
+
+    @Test
+    void rendersOnlyConfiguredHumanAssistanceChannel() {
+        var structured = AivaStructuredResponse.of(ResponseType.HUMAN_ASSISTANCE,
+                new HumanAssistancePayload(List.of("CALL_RECEPTION"), "+91 99999 00000", "APPOINTMENT_ASSISTANCE"), List.of());
+        MessageResponse source = response("HUMAN_ASSISTANCE_REQUESTED", structured, "");
+        assertThat(renderer.render(source, "en", ResponseStyle.STANDARD).assistantMessage())
+                .contains("+91 99999 00000").doesNotContain("transfer");
+        var unavailable = AivaStructuredResponse.of(ResponseType.HUMAN_ASSISTANCE,
+                new HumanAssistancePayload(List.of(), null, "APPOINTMENT_ASSISTANCE"), List.of());
+        assertThat(renderer.render(response("HUMAN_ASSISTANCE_REQUESTED", unavailable, ""), "en", ResponseStyle.STANDARD)
+                .assistantMessage()).contains("can't directly connect");
+    }
     private final AivaResponseRenderer renderer = new AivaResponseRenderer();
 
     @Test
@@ -41,6 +54,30 @@ class AivaResponseRendererTest {
     }
 
     @Test
+    void emptyProviderChoicesRenderBoundedNoMatchInsteadOfEmptyList() {
+        var structured = AivaStructuredResponse.of(ResponseType.PROVIDER_CHOICES,
+                new ProviderChoicesPayload(List.of()), List.of());
+        assertThat(render(structured, "en", ResponseStyle.STANDARD))
+                .isEqualTo("I couldn't find a matching doctor. You can try another doctor name or specialty.");
+        assertThat(render(structured, "hi", ResponseStyle.STANDARD)).contains("मेल नहीं");
+    }
+
+    @Test
+    void rendersSpokenTimesWithoutZeroMinutesAndRetainsNonZeroMinutes() {
+        LocalDate date = LocalDate.of(2026, 9, 24);
+        var slots = AivaStructuredResponse.of(ResponseType.AVAILABLE_SLOTS,
+                new AvailabilityPayload("Doc Akshu Kumar", date,
+                        List.of(new SlotFact("s1", LocalTime.of(9, 0), null, "09:00"),
+                                new SlotFact("s2", LocalTime.of(18, 0), null, "18:00"),
+                                new SlotFact("s3", LocalTime.of(20, 0), null, "20:00"),
+                                new SlotFact("s4", LocalTime.of(9, 30), null, "09:30")), false, null), List.of());
+        String english = render(slots, "en", ResponseStyle.STANDARD);
+        String hindi = render(slots, "hi", ResponseStyle.STANDARD);
+        assertThat(english).contains("9 AM", "6 PM", "8 PM", "9:30 AM").doesNotContain("00 minutes");
+        assertThat(hindi).contains("सुबह 9", "शाम 6", "रात 8", "सुबह 9:30").doesNotContain("00 मिनट");
+    }
+
+    @Test
     void rendersBookingAndAvailabilityInAllThreeStylesFromSameFacts() {
         var askDoctor = AivaStructuredResponse.of(ResponseType.NEED_PROVIDER,
                 new NeedProviderPayload(null, null), List.of());
@@ -51,9 +88,9 @@ class AivaResponseRendererTest {
         var slots = AivaStructuredResponse.of(ResponseType.AVAILABLE_SLOTS,
                 new AvailabilityPayload("Doc Akshu Kumar", LocalDate.of(2026, 9, 24),
                         List.of(new SlotFact("opaque-slot-77", LocalTime.of(20, 0), null, "20:00")), true, null), List.of());
-        assertThat(render(slots, "en", ResponseStyle.STANDARD)).isEqualTo("Available slots for 24 September 2026: 1. 20:00. Which one works?");
-        assertThat(render(slots, "hi", ResponseStyle.STANDARD)).isEqualTo("24 सितंबर 2026 के लिए उपलब्ध स्लॉट: 1. 20:00। आपके लिए कौन-सा समय ठीक रहेगा?");
-        assertThat(render(slots, "hi", ResponseStyle.HINGLISH)).isEqualTo("Available slots for 24 September 2026: 1. 20:00. Aapke liye kaunsa time theek rahega?");
+        assertThat(render(slots, "en", ResponseStyle.STANDARD)).isEqualTo("Available slots for 24 September 2026: 1. 8 PM. Which one works?");
+        assertThat(render(slots, "hi", ResponseStyle.STANDARD)).isEqualTo("24 सितंबर 2026 के लिए उपलब्ध स्लॉट: 1. रात 8 बजे। आपके लिए कौन-सा समय ठीक रहेगा?");
+        assertThat(render(slots, "hi", ResponseStyle.HINGLISH)).isEqualTo("Available slots for 24 September 2026: 1. raat 8 baje. Aapke liye kaunsa time theek rahega?");
     }
 
     @Test
@@ -82,11 +119,11 @@ class AivaResponseRendererTest {
         var found = AivaStructuredResponse.of(ResponseType.APPOINTMENTS_FOUND,
                 new AppointmentListPayload(List.of(appointment), new AppliedFilters(null, null, null, null, true)), List.of());
         assertThat(render(found, "en", ResponseStyle.STANDARD))
-                .isEqualTo("You have an appointment with Doc Akshu Kumar on 23 September 2026 at 20:00.");
+                .isEqualTo("You have an appointment with Doc Akshu Kumar on 23 September 2026 at 8 PM.");
         assertThat(render(found, "hi", ResponseStyle.STANDARD))
-                .isEqualTo("आपकी Doc Akshu Kumar के साथ 23 सितंबर 2026 को 20:00 बजे अपॉइंटमेंट है।");
+                .isEqualTo("आपकी Doc Akshu Kumar के साथ 23 सितंबर 2026 को रात 8 बजे अपॉइंटमेंट है।");
         assertThat(render(found, "hi", ResponseStyle.HINGLISH))
-                .isEqualTo("Aapki Doc Akshu Kumar ke saath 23 September 2026 ko 20:00 baje appointment hai.");
+                .isEqualTo("Aapki Doc Akshu Kumar ke saath 23 September 2026 ko raat 8 baje appointment hai.");
         assertThat(appointment.appointmentReference()).isEqualTo("APT-Ref/X9");
     }
 
@@ -96,12 +133,12 @@ class AivaResponseRendererTest {
         var cancellation = AivaStructuredResponse.of(ResponseType.CANCELLATION_CONFIRMATION,
                 new CancellationConfirmationPayload(appointment), List.of());
         assertThat(render(cancellation, "hi", ResponseStyle.STANDARD))
-                .isEqualTo("आपकी Doc Akshu Kumar के साथ 24 सितंबर 2026 को 20:00 बजे अपॉइंटमेंट है। क्या मैं इसे रद्द कर दूँ?");
+                .isEqualTo("आपकी Doc Akshu Kumar के साथ 24 सितंबर 2026 को रात 8 बजे अपॉइंटमेंट है। क्या मैं इसे रद्द कर दूँ?");
         var reschedule = AivaStructuredResponse.of(ResponseType.RESCHEDULE_CONFIRMATION,
                 new RescheduleConfirmationPayload("Doc Akshu Kumar", appointment,
                         LocalDate.of(2026, 9, 26), LocalTime.of(18, 30)), List.of());
         assertThat(render(reschedule, "hi", ResponseStyle.STANDARD))
-                .isEqualTo("Doc Akshu Kumar के साथ 24 सितंबर 2026 को 20:00 की अपॉइंटमेंट को 26 सितंबर 2026 को 18:30 पर शिफ्ट कर दूँ?");
+                .isEqualTo("Doc Akshu Kumar के साथ 24 सितंबर 2026 को रात 8 की अपॉइंटमेंट को 26 सितंबर 2026 को शाम 6:30 पर शिफ्ट कर दूँ?");
     }
 
     @Test
@@ -109,7 +146,7 @@ class AivaResponseRendererTest {
         var confirmation = AivaStructuredResponse.of(ResponseType.BOOKING_CONFIRMATION,
                 new BookingConfirmationPayload("Doc Akshu Kumar", LocalDate.of(2026, 9, 24), LocalTime.of(20, 0)), List.of());
         assertThat(render(confirmation, "hi", ResponseStyle.STANDARD))
-                .isEqualTo("Doc Akshu Kumar के साथ 24 सितंबर 2026 को 20:00 बजे। क्या मैं इसे बुक कर दूँ?");
+                .isEqualTo("Doc Akshu Kumar के साथ 24 सितंबर 2026 को रात 8 बजे। क्या मैं इसे बुक कर दूँ?");
         var success = AivaStructuredResponse.of(ResponseType.BOOKING_SUCCESS,
                 new BookingSuccessPayload("APT-Ref/X9", null, null, null), List.of());
         assertThat(render(success, "hi", ResponseStyle.STANDARD)).isEqualTo("आपकी अपॉइंटमेंट बुक हो गई है।");
@@ -165,8 +202,11 @@ class AivaResponseRendererTest {
                 ,AivaStructuredResponse.of(ResponseType.NO_SUSPENDED_BOOKING, new BookingStatePayload("NONE"), List.of())
                 ,AivaStructuredResponse.of(ResponseType.CONTEXTUAL_INFORMATION,
                         new ContextualInformationPayload("AVAILABILITY_DATE", date, null), List.of())
+                ,AivaStructuredResponse.of(ResponseType.INTRO, new EmptyPayload("INTRO"), List.of())
                 ,AivaStructuredResponse.of(ResponseType.CONVERSATION_CLOSED,
                         new EmptyPayload("CONVERSATION_CLOSED"), List.of())
+                ,AivaStructuredResponse.of(ResponseType.HUMAN_ASSISTANCE,
+                        new HumanAssistancePayload(List.of("CALL_RECEPTION"), "+91 99999 00000", "APPOINTMENT_ASSISTANCE"), List.of())
         );
 
         for (AivaStructuredResponse structured : responses) {

@@ -21,13 +21,23 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.util.UUID;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @Service
 class AivaV2ConversationService {
+    private static final Logger log = LoggerFactory.getLogger(AivaV2ConversationService.class);
     private static final String RUNTIME_VERSION = "aiva-v2-contract-1.0";
     // Fixed session lifetime from creation; turns never extend a pending capability's lifetime.
     private static final long SESSION_TTL_SECONDS = 30 * 60;
@@ -38,6 +48,13 @@ class AivaV2ConversationService {
     private final ClinicTimeZoneResolver clinicTimeZoneResolver;
     private final Clock clock;
     private final AivaResponseRenderer responseRenderer;
+    private final ScheduledExecutorService progressScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread thread = new Thread(r, "aiva-v2-progress");
+        thread.setDaemon(true);
+        return thread;
+    });
+    @Value("${aiva.v2.progress.delay-ms:1500}")
+    private long progressDelayMs = 1500L;
 
     @Autowired
     AivaV2ConversationService(
@@ -97,6 +114,10 @@ class AivaV2ConversationService {
     }
 
     MessageResponse message(MessageRequest request) {
+        return message(request, null);
+    }
+
+    MessageResponse message(MessageRequest request, Consumer<AivaV2ProgressEvent> progressSink) {
         if (request == null || !StringUtils.hasText(request.message())) {
             throw new IllegalArgumentException("Message is required.");
         }
@@ -134,6 +155,13 @@ class AivaV2ConversationService {
                         presentation.responseLanguage(), presentation.responseStyle());
                 return new AivaV2SessionStore.TurnExecution(session, closedResponse);
             }
+            AtomicBoolean waitingFeedbackEmitted = new AtomicBoolean(false);
+            ScheduledFuture<?> semanticProgressTask = progressSink == null ? null
+                    : progressScheduler.schedule(() -> {
+                        waitingFeedbackEmitted.set(true);
+                        progressSink.accept(AivaV2ProgressFeedback.generic(
+                                presentation.responseLanguage(), presentation.responseStyle()));
+                    }, Math.max(0L, progressDelayMs), TimeUnit.MILLISECONDS);
             var decision = request.action() == null
                     ? decisionGateway.decide(normalizedTurn, session)
                     : decisionForAction(request.action(), safeLanguage(request.language()));
@@ -150,13 +178,34 @@ class AivaV2ConversationService {
             decision = applyPendingRescheduleRefinement(session, decision, temporal);
             decision = applyPendingTemporalClarification(session, decision, temporal);
             logTemporal(conversationId, turnId, decision, temporal);
-            AivaV2TransactionalKernel.KernelResult result = kernel.handle(session, decision, temporal, clinicZone, turnId,
-                    ambiguousTime(normalizedTurn, decision));
-            MessageResponse rendered = responseRenderer.render(result.response(), presentation.responseLanguage(), presentation.responseStyle());
-            return new AivaV2SessionStore.TurnExecution(result.session(), rendered);
+            if (semanticProgressTask != null) semanticProgressTask.cancel(false);
+            AivaV2ProgressEvent progress = AivaV2ProgressFeedback.forOperation(decision.operation(),
+                    presentation.responseLanguage(), presentation.responseStyle());
+            ScheduledFuture<?> progressTask = progressSink == null || progress == null || waitingFeedbackEmitted.get() ? null
+                    : progressScheduler.schedule(() -> {
+                        waitingFeedbackEmitted.set(true);
+                        progressSink.accept(progress);
+                    }, Math.max(0L, progressDelayMs), TimeUnit.MILLISECONDS);
+            long operationStarted = System.nanoTime();
+            try {
+                AivaV2TransactionalKernel.KernelResult result = kernel.handle(session, decision, temporal, clinicZone, turnId,
+                        ambiguousTime(normalizedTurn, decision));
+                MessageResponse rendered = responseRenderer.render(result.response(), presentation.responseLanguage(), presentation.responseStyle());
+                return new AivaV2SessionStore.TurnExecution(result.session(), rendered);
+            } finally {
+                logProgressLatency(decision.operation(), operationStarted, waitingFeedbackEmitted.get());
+                if (semanticProgressTask != null) semanticProgressTask.cancel(false);
+                if (progressTask != null) progressTask.cancel(false);
+            }
         });
         if (exchange.response() != null) return exchange.response();
         return turnDispositionResponse(conversationId, turnId, exchange);
+    }
+
+    private void logProgressLatency(Operation operation, long started, boolean waitingFeedbackEmitted) {
+        long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+        log.info("AIVA_V2_PROGRESS_TRACE operation={} elapsedMs={} waitingFeedbackEmitted={}",
+                operation, elapsedMs, waitingFeedbackEmitted);
     }
 
     long lastAcceptedVoiceTurnSequence(UUID tenantId, UUID patientId, String conversationId) {
@@ -298,6 +347,17 @@ class AivaV2ConversationService {
                     decision.latencyMs(), filter, decision.unresolvedExplicitQualifierPresent());
         }
         Operation operation = decision.operation();
+        // Once the source appointment and target availability are bound, an
+        // unrecognised turn must stay inside that reschedule stage.  Do not let
+        // a semantic fallback reopen source-appointment resolution.
+        if (operation == Operation.RESCHEDULE_APPOINTMENT
+                && pending.targetDate() != null
+                && pending.latestAvailability() != null
+                && decision.lookupFilter().doctorText().mode() == PatchMode.UNCHANGED
+                && decision.lookupFilter().dateExpression().mode() == PatchMode.UNCHANGED
+                && decision.lookupFilter().clinicText().mode() == PatchMode.UNCHANGED) {
+            operation = Operation.UPDATE_RESCHEDULE;
+        }
         if (operation == Operation.SELECT_SLOT
                 || (decision.selection() != null && (decision.selection().ordinal() != null
                 || StringUtils.hasText(decision.selection().exactTime()) || StringUtils.hasText(decision.selection().slotRef())))) {

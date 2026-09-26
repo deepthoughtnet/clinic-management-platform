@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiMessageRequest;
@@ -139,6 +140,21 @@ class PatientPortalVoiceAssistantServiceTest {
         assertThat(response.assistantText()).isEqualTo(rendered);
         verify(orchestratorService).synthesizeRenderedAssistantText(speechText, "hi-IN");
         verify(orchestratorService, never()).synthesizeAssistantText(any(), any());
+    }
+
+    @Test
+    void v2EmptySttResultIsIgnoredBeforeSemanticConnector() {
+        VoiceOrchestratorService orchestratorService = mock(VoiceOrchestratorService.class);
+        PatientPortalCareAiService careAiService = mock(PatientPortalCareAiService.class);
+        AivaV2VoiceTurnConnector connector = mock(AivaV2VoiceTurnConnector.class);
+        PatientPortalVoiceAssistantService service = new PatientPortalVoiceAssistantService(
+                orchestratorService, careAiService, new VoiceTestProperties(), null, null, connector);
+        when(orchestratorService.transcribeBufferedAudio(any(), any(), any(), any()))
+                .thenReturn(new VoiceTranscriptionResult("  ", "sarvam", "ok"));
+
+        assertThat(service.processAudioTurnV2("audio".getBytes(StandardCharsets.UTF_8), "audio/webm",
+                "voice.webm", "auto", "voice-conversation", "voice-turn-1", 1L)).isNull();
+        verifyNoInteractions(connector);
     }
 
     @Test

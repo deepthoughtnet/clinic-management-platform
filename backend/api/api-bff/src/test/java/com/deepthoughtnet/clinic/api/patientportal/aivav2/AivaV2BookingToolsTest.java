@@ -63,7 +63,7 @@ class AivaV2BookingToolsTest {
     void exactCareDoctorResolvesToAuthoritativeHandle() {
         when(patientPortalService.careAiDoctorsAcrossAuthorizedClinics()).thenReturn(List.of(careDoctor()));
 
-        var result = tools.resolveBookingProvider("Dr Akshu Kumar", null);
+        var result = tools.resolveBookingProvider("Doc Akshu Kumar", null);
 
         assertThat(result.status()).isEqualTo(ResolutionStatus.RESOLVED);
         assertThat(result.resolvedProvider().doctorId()).isEqualTo("doctor-1");
@@ -71,13 +71,47 @@ class AivaV2BookingToolsTest {
     }
 
     @Test
-    void akshayNeverSilentlyBecomesAkshu() {
+    void uniqueSpecialtyResolvesAndBindsAuthoritativeProvider() {
         when(patientPortalService.careAiDoctorsAcrossAuthorizedClinics()).thenReturn(List.of(careDoctor()));
 
-        var result = tools.resolveBookingProvider("Akshay Kumar", null);
+        var result = tools.resolveBookingProvider(null, "General Medicine");
 
-        assertThat(result.status()).isEqualTo(ResolutionStatus.SUGGESTION);
+        assertThat(result.status()).isEqualTo(ResolutionStatus.RESOLVED);
+        assertThat(result.resolvedProvider().doctorId()).isEqualTo("doctor-1");
+    }
+
+    @Test
+    void bareSpecialtyAliasResolvesAgainstAuthoritativeCatalog() {
+        when(patientPortalService.careAiDoctorsAcrossAuthorizedClinics()).thenReturn(List.of(careDoctor()));
+
+        var result = tools.resolveSpecialty("General physician");
+
+        assertThat(result.status()).isEqualTo("RESOLVED");
+        assertThat(result.canonical()).isEqualTo("General Medicine");
+    }
+
+    @Test
+    void multipleSpecialtyMatchesRemainAmbiguous() {
+        when(patientPortalService.careAiDoctorsAcrossAuthorizedClinics()).thenReturn(List.of(
+                careDoctor(), new PatientPortalCareAiDoctorOption("doctor-2", "Dr General", "General Physician",
+                        UUID.randomUUID(), UUID.randomUUID(), TENANT, "clinic-2", "Clinic 2")));
+
+        var result = tools.resolveBookingProvider(null, "General");
+
+        assertThat(result.status()).isEqualTo(ResolutionStatus.AMBIGUOUS);
         assertThat(result.resolvedProvider()).isNull();
+    }
+
+    @Test
+    void nearNamesNeverSilentlyBecomeAkshu() {
+        when(patientPortalService.careAiDoctorsAcrossAuthorizedClinics()).thenReturn(List.of(careDoctor()));
+
+        for (String nearName : List.of("Akshay Kumar", "Akshau Kumar")) {
+            var result = tools.resolveBookingProvider(nearName, null);
+
+            assertThat(result.status()).as(nearName).isEqualTo(ResolutionStatus.SUGGESTION);
+            assertThat(result.resolvedProvider()).as(nearName).isNull();
+        }
     }
 
     @Test

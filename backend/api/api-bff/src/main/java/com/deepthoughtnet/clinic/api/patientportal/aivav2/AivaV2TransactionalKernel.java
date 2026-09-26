@@ -45,6 +45,7 @@ import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -57,34 +58,44 @@ class AivaV2TransactionalKernel {
     private final AivaV2AppointmentLookupTool appointmentLookupTool;
     private final AivaV2CancellationTool cancellationTool;
     private final AivaV2RescheduleTools rescheduleTools;
+    private final AivaV2HumanAssistanceService humanAssistanceService;
     private final Clock clock;
 
     @Autowired
     AivaV2TransactionalKernel(AivaV2BookingTools tools, AivaV2AppointmentLookupTool appointmentLookupTool,
-                              AivaV2CancellationTool cancellationTool, AivaV2RescheduleTools rescheduleTools) {
-        this(tools, appointmentLookupTool, cancellationTool, rescheduleTools, Clock.systemUTC());
+                              AivaV2CancellationTool cancellationTool, AivaV2RescheduleTools rescheduleTools,
+                              ObjectProvider<AivaV2HumanAssistanceService> humanAssistanceService) {
+        this(tools, appointmentLookupTool, cancellationTool, rescheduleTools,
+                humanAssistanceService.getIfAvailable(), Clock.systemUTC());
     }
 
     AivaV2TransactionalKernel(AivaV2BookingTools tools, Clock clock) {
-        this(tools, null, null, null, clock);
+        this(tools, null, null, null, null, clock);
     }
 
     AivaV2TransactionalKernel(AivaV2BookingTools tools, AivaV2AppointmentLookupTool appointmentLookupTool, Clock clock) {
-        this(tools, appointmentLookupTool, null, null, clock);
+        this(tools, appointmentLookupTool, null, null, null, clock);
     }
 
     AivaV2TransactionalKernel(AivaV2BookingTools tools, AivaV2AppointmentLookupTool appointmentLookupTool,
                               AivaV2CancellationTool cancellationTool, Clock clock) {
-        this(tools, appointmentLookupTool, cancellationTool, null, clock);
+        this(tools, appointmentLookupTool, cancellationTool, null, null, clock);
     }
 
     AivaV2TransactionalKernel(AivaV2BookingTools tools, AivaV2AppointmentLookupTool appointmentLookupTool,
                               AivaV2CancellationTool cancellationTool, AivaV2RescheduleTools rescheduleTools,
                               Clock clock) {
+        this(tools, appointmentLookupTool, cancellationTool, rescheduleTools, null, clock);
+    }
+
+    AivaV2TransactionalKernel(AivaV2BookingTools tools, AivaV2AppointmentLookupTool appointmentLookupTool,
+                              AivaV2CancellationTool cancellationTool, AivaV2RescheduleTools rescheduleTools,
+                              AivaV2HumanAssistanceService humanAssistanceService, Clock clock) {
         this.tools = tools;
         this.appointmentLookupTool = appointmentLookupTool;
         this.cancellationTool = cancellationTool;
         this.rescheduleTools = rescheduleTools;
+        this.humanAssistanceService = humanAssistanceService;
         this.clock = clock;
     }
 
@@ -122,6 +133,33 @@ class AivaV2TransactionalKernel {
                         boolean ambiguousTime) {
         Instant now = Instant.now(clock);
         SessionProjection session = original;
+        if (decision.operation() == Operation.INTRO) {
+            return result(session, decision, turnId, "INTRO", "",
+                    AivaStructuredResponse.of(ResponseType.INTRO, new EmptyPayload("INTRO"), List.of()));
+        }
+        if (decision.operation() == Operation.REQUEST_HUMAN_ASSISTANCE) {
+            var payload = humanAssistanceService == null
+                    ? new HumanAssistancePayload(List.of(), null, "APPOINTMENT_ASSISTANCE")
+                    : humanAssistanceService.request(session);
+            return result(session, decision, turnId, "HUMAN_ASSISTANCE_REQUESTED", "",
+                    AivaStructuredResponse.of(ResponseType.HUMAN_ASSISTANCE, payload, List.of()));
+        }
+        if (decision.operation() == Operation.PRESENCE_CHECK) {
+            return result(session, decision, turnId, "PRESENCE_CHECK",
+                    presenceResponse(session, decision.responseLanguage()));
+        }
+        if (decision.operation() == Operation.REPEAT_LAST_RESPONSE) {
+            return result(session, decision, turnId, "REPEAT_LAST_RESPONSE",
+                    repeatResponse(session, decision.responseLanguage()));
+        }
+        if (decision.operation() == Operation.HOLD) {
+            return result(session, decision, turnId, "HOLD_ACKNOWLEDGED",
+                    holdResponse(decision.responseLanguage()));
+        }
+        if (decision.operation() == Operation.CONTINUE_CONVERSATION) {
+            return result(session, decision, turnId, "CONTINUE_CONVERSATION",
+                    presenceResponse(session, decision.responseLanguage()));
+        }
         if (session.pendingTemporalClarification() != null && temporal != null
                 && temporal.status() == AivaV2TemporalResolution.Status.RESOLVED
                 && temporal.source() == AivaV2TemporalResolution.Source.CURRENT_TURN_EXPLICIT) {
@@ -252,6 +290,15 @@ class AivaV2TransactionalKernel {
         if (decision.operation() == Operation.UNKNOWN) {
             return result(session, decision, turnId, "CLARIFICATION", unknownClarification(session));
         }
+        // An explicit new booking request starts a fresh collection flow when no
+        // confirmation-protected transaction is active. Stale provider-search
+        // results must not intercept the new request.
+        if (decision.operation() == Operation.START_BOOKING
+                && session.pendingConfirmation() == null
+                && session.pendingCancellation() == null
+                && session.pendingRescheduleConfirmation() == null) {
+            session = replace(session, null, session.suspendedDraft(), null, null, null);
+        }
         if (session.activeDraft() == null && requiresDraft(decision)) {
             session = withActiveDraft(session, BookingDraft.create(session.patientId(), session.tenantId(), now));
         }
@@ -291,6 +338,9 @@ class AivaV2TransactionalKernel {
             return confirm(session, decision, turnId);
         }
 
+        if (decision.operation() == Operation.ANSWER_PROVIDER_CONTEXT) {
+            return answerProviderContext(session, decision, turnId);
+        }
         if (decision.operation() == Operation.ANSWER_CONTEXT) {
             return answerContext(session, decision, turnId);
         }
@@ -520,9 +570,12 @@ class AivaV2TransactionalKernel {
             int ordinal = decision.selection().ordinal();
             int index = ordinal == -1 ? lookup.appointments().size() - 1 : ordinal - 1;
             if (index < 0 || index >= lookup.appointments().size()) {
-                return result(session, decision, turnId, "APPOINTMENTS_NONE", appointmentLookupNoneMessage(filter, date),
-                        AivaStructuredResponse.of(ResponseType.APPOINTMENTS_NONE,
-                                new AppointmentListPayload(List.of(), appliedFilters(filter, date)), List.of()));
+                log.info("AIVA_V2_LOOKUP_SELECTION_TRACE conversationIdHash={} turnId={} resultStatus={} resultCount={} requestedOrdinal={} responseCategory=APPOINTMENTS_FOUND reason=INVALID_ORDINAL",
+                        AivaV2LogRedaction.correlation(session.conversationId()), turnId, lookup.status(),
+                        lookup.appointments().size(), ordinal);
+                return result(session, decision, turnId, "APPOINTMENTS_FOUND", appointmentMessage(lookup.appointments()),
+                        AivaStructuredResponse.of(ResponseType.APPOINTMENTS_FOUND,
+                                new AppointmentListPayload(appointmentFacts(lookup.appointments()), appliedFilters(filter, date)), List.of()));
             }
             var selected = List.of(lookup.appointments().get(index));
             SessionProjection updated = session.withAppointmentReferent(selected.get(0));
@@ -1074,7 +1127,9 @@ class AivaV2TransactionalKernel {
         }
         ToolResult<AvailabilitySlot> slotResult = tools.selectBookingSlot(draft, availability, selection);
         if (!"SUCCESS".equals(slotResult.category())) {
-            return result(session, decision, turnId, slotResult.category(),
+            String category = "NEEDS_INPUT".equals(slotResult.category())
+                    ? "SLOT_SELECTION_REQUIRED" : slotResult.category();
+            return result(session, decision, turnId, category,
                     safe(slotResult.safeReason(), "Please select one of the current slots."));
         }
         AvailabilitySlot slot = slotResult.value();
@@ -1117,12 +1172,59 @@ class AivaV2TransactionalKernel {
         }
         BookingDraft draft = session.activeDraft();
         if (draft != null && draft.selectedProvider() != null) {
+            return answerProviderContext(session, decision, turnId);
+        }
+        return result(session, decision, turnId, "CLARIFICATION", "There is no current booking context yet.");
+    }
+
+    private KernelResult answerProviderContext(SessionProjection session, ConversationDecision decision, String turnId) {
+        BookingDraft draft = session.activeDraft();
+        if (draft != null && draft.selectedProvider() != null) {
             return result(session, decision, turnId, "CONTEXT_ANSWER", "",
                     AivaStructuredResponse.of(ResponseType.CONTEXTUAL_INFORMATION,
                             new ContextualInformationPayload("SELECTED_PROVIDER", null,
                                     draft.selectedProvider().displayName()), List.of()));
         }
-        return result(session, decision, turnId, "CLARIFICATION", "There is no current booking context yet.");
+        return result(session, decision, turnId, "CLARIFICATION",
+                "There is no doctor selected for the current booking.");
+    }
+
+    private String presenceResponse(SessionProjection session, String language) {
+        boolean hindi = language != null && language.toLowerCase(Locale.ROOT).startsWith("hi");
+        if (session.pendingConfirmation() != null || session.pendingCancellation() != null
+                || session.pendingRescheduleConfirmation() != null) {
+            return hindi ? "हाँ, मैं यहाँ हूँ। क्या आप इसकी पुष्टि करना चाहेंगे?"
+                    : "Yes, I'm here. Would you like me to confirm it?";
+        }
+        if (session.latestAvailabilityResult() != null && !session.latestAvailabilityResult().slots().isEmpty()) {
+            return hindi ? "हाँ, मैं यहाँ हूँ। आप कौन सा स्लॉट चुनना चाहेंगे?"
+                    : "Yes, I'm here. Which slot would you like?";
+        }
+        if (session.activeDraft() != null && session.activeDraft().selectedProvider() == null) {
+            return hindi ? "हाँ, मैं यहाँ हूँ। आप किस डॉक्टर या स्पेशलिटी के साथ अपॉइंटमेंट चाहते हैं?"
+                    : "Yes, I'm here. Which doctor or specialty would you like?";
+        }
+        if (session.activeDraft() != null && session.activeDraft().preferredDate() == null) {
+            return hindi ? "हाँ, मैं यहाँ हूँ। आप किस तारीख को अपॉइंटमेंट चाहते हैं?"
+                    : "Yes, I'm here. What date would you prefer?";
+        }
+        return hindi ? "हाँ, मैं यहाँ हूँ। बताइए, मैं कैसे मदद करूँ?"
+                : "Yes, I'm here. How can I help?";
+    }
+
+    private String repeatResponse(SessionProjection session, String language) {
+        boolean hindi = language != null && language.toLowerCase(Locale.ROOT).startsWith("hi");
+        if (session.latestAvailabilityResult() != null && !session.latestAvailabilityResult().slots().isEmpty()) {
+            return hindi ? "उपलब्ध स्लॉट अभी भी वही हैं। कृपया एक स्लॉट चुनें।"
+                    : "The available slots are still shown above. Please choose a slot.";
+        }
+        return hindi ? "मैं आपकी मदद के लिए यहाँ हूँ। कृपया अपना पिछला अनुरोध दोहराएँ।"
+                : "I’m here to help. Please repeat your last request.";
+    }
+
+    private String holdResponse(String language) {
+        boolean hindi = language != null && language.toLowerCase(Locale.ROOT).startsWith("hi");
+        return hindi ? "ठीक है, अपना समय लीजिए।" : "Sure, take your time.";
     }
 
     private ProviderCandidate selectProvider(ProviderSearchResult result, Selection selection) {
@@ -1160,6 +1262,9 @@ class AivaV2TransactionalKernel {
     }
 
     private String providerChoices(ProviderSearchResult result) {
+        if (result == null || result.candidates().isEmpty()) {
+            return "I couldn't find a matching doctor. You can try another doctor name or specialty.";
+        }
         StringBuilder message = new StringBuilder("I found these doctors: ");
         for (int i = 0; i < Math.min(result.candidates().size(), 3); i++) {
             if (i > 0) message.append("; ");
@@ -1270,12 +1375,17 @@ class AivaV2TransactionalKernel {
                 payload = new NeedProviderPayload(draft == null ? null : draft.specialtyFilter(), null);
             }
             case "PROVIDER_CHOICES", "PROVIDER_SUGGESTION" -> {
-                type = ResponseType.PROVIDER_CHOICES;
                 ProviderSearchResult result = session.latestProviderResult();
                 List<ProviderOption> candidates = result == null ? List.of() : result.candidates().stream()
                         .limit(3).map(candidate -> new ProviderOption(candidate.candidateHandle(),
                                 candidate.displayName(), candidate.specialty(), candidate.clinicDisplayName())).toList();
-                payload = new ProviderChoicesPayload(candidates);
+                if (candidates.isEmpty()) {
+                    type = ResponseType.PROVIDER_NOT_FOUND;
+                    payload = new ProviderNotFoundPayload(null, draft == null ? null : draft.specialtyFilter());
+                } else {
+                    type = ResponseType.PROVIDER_CHOICES;
+                    payload = new ProviderChoicesPayload(candidates);
+                }
             }
             case "PROVIDER_NOT_FOUND" -> {
                 type = ResponseType.PROVIDER_NOT_FOUND;
@@ -1388,7 +1498,7 @@ class AivaV2TransactionalKernel {
                 type = ResponseType.FAILURE;
                 payload = new FailurePayload(category);
             }
-            case "CLARIFICATION", "PAST_DATE" -> {
+            case "CLARIFICATION", "PAST_DATE", "SLOT_SELECTION_REQUIRED" -> {
                 type = ResponseType.CLARIFICATION;
                 payload = new ClarificationPayload(category, List.of());
             }

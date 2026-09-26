@@ -114,8 +114,8 @@ export default function PatientLabPage({
       title="Laboratory Reports"
       subtitle="View your lab orders, track report status, and download PDFs securely from your verified portal session."
     >
-      <div className="patient-content-grid patient-lab-page">
-        <div className="portal-dashboard-grid patient-lab-stats">
+      <div className="patient-lab-page">
+        <div className="portal-dashboard-grid patient-lab-stats-grid">
           <article className="dashboard-card">
             <span>Lab orders</span>
             <strong>{orders.length}</strong>
@@ -151,7 +151,7 @@ export default function PatientLabPage({
         ) : null}
 
         {!noLabData ? (
-          <div className="portal-section-grid patient-lab-grid">
+          <div className="portal-section-grid patient-lab-content-grid">
             <section className="portal-panel">
               <div className="portal-panel-header">
                 <h2>Lab Orders</h2>

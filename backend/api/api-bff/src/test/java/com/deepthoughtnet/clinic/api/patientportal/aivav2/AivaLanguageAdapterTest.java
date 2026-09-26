@@ -14,6 +14,27 @@ class AivaLanguageAdapterTest {
     private final LanguageAdapterRegistry registry = LanguageAdapterRegistry.defaults();
 
     @Test
+    void greetingsAreACommonDeterministicControlAcrossEnglishAndHindi() {
+        for (String text : new String[]{"Hi", "Hello", "Hey AIVA", "Hi Iva", "Namaste AIVA"}) {
+            assertThat(normalize(text, "en").controls()).as(text).contains(DeterministicControl.GREETING);
+        }
+        assertThat(normalize("नमस्ते", "hi").controls()).contains(DeterministicControl.GREETING);
+    }
+
+    @Test
+    void humanAssistanceAndConversationControlsNormalizeAcrossLanguages() {
+        for (String[] sample : new String[][]{
+                {"en", "I want to talk to a human", "HUMAN_ASSISTANCE"},
+                {"en", "Are you there?", "PRESENCE_CHECK"},
+                {"en", "Repeat that", "REPEAT_LAST_RESPONSE"},
+                {"hi", "Receptionist se baat karni hai", "HUMAN_ASSISTANCE"},
+                {"hi", "एक मिनट", "HOLD"},
+                {"hi", "फिर से बताओ", "REPEAT_LAST_RESPONSE"}}) {
+            assertThat(normalize(sample[1], sample[0]).orderedControlsText()).as(sample[1]).contains(sample[2]);
+        }
+    }
+
+    @Test
     void englishAndHindiConfirmationControlsHaveEquivalentCanonicalText() {
         assertThat(normalize("no", "en").normalizedText()).isEqualTo(normalize("nahi", "hi").normalizedText());
         assertThat(normalize("no", "en").normalizedText()).isEqualTo(normalize("नहीं", "hi").normalizedText());
@@ -64,6 +85,8 @@ class AivaLanguageAdapterTest {
                 .temporal().localDate()).isEqualTo(LocalDate.of(2026, 9, 29));
         assertThat(registry.resolve("en", "29th").normalize("29th", reference).temporal().localDate())
                 .isEqualTo(LocalDate.of(2026, 9, 29));
+        assertThat(registry.resolve("hi", "तीस तारीख").normalize("तीस तारीख", reference).temporal().localDate())
+                .isEqualTo(LocalDate.of(2026, 9, 30));
     }
 
     @Test
@@ -74,6 +97,19 @@ class AivaLanguageAdapterTest {
     }
 
     @Test
+    void realisticHinglishDisplayedSlotSelectionsNormalizeToOrdinals() {
+        for (String[] sample : new String[][]{
+                {"teesra wala", "3"},
+                {"second wala", "2"},
+                {"last wala", "-1"},
+                {"pehla wala", "1"},
+                {"doosra slot", "2"}}) {
+            NormalizedUserTurn turn = normalize(sample[0], "hi");
+            assertThat(turn.ordinal()).as(sample[0]).isEqualTo(Integer.valueOf(sample[1]));
+        }
+    }
+
+    @Test
     void embeddedExactClockTimeIsTypedWithoutMistakingTimeBoundsForSelection() {
         assertThat(normalize("Cancel my appointment with Dr Akshu at 20:00", "en").exactTime())
                 .isEqualTo(LocalTime.of(20, 0));
@@ -81,6 +117,26 @@ class AivaLanguageAdapterTest {
                 .isEqualTo(LocalTime.of(20, 30));
         assertThat(normalize("Do you have appointments after 20:00?", "en").exactTime()).isNull();
         assertThat(normalize("Between 19:00 and 20:00", "en").exactTime()).isNull();
+    }
+
+    @Test
+    void spokenAmPmVariantsNormalizeToExactLocalTimes() {
+        assertThat(normalize("9 a.m.", "en").exactTime()).isEqualTo(LocalTime.of(9, 0));
+        assertThat(normalize("9 AM", "en").exactTime()).isEqualTo(LocalTime.of(9, 0));
+        assertThat(normalize("9am", "en").exactTime()).isEqualTo(LocalTime.of(9, 0));
+        assertThat(normalize("9:30 a.m.", "en").exactTime()).isEqualTo(LocalTime.of(9, 30));
+        assertThat(normalize("9 30 AM", "en").exactTime()).isEqualTo(LocalTime.of(9, 30));
+        assertThat(normalize("19 a.m.", "en").exactTime()).isNull();
+        assertThat(normalize("13 PM", "en").exactTime()).isNull();
+        assertThat(normalize("25:00", "en").exactTime()).isNull();
+    }
+
+    @Test
+    void hindiProviderNameUsesBoundedDevanagariTransliteration() {
+        NormalizedUserTurn turn = normalize("डॉक्टर अक्षु कुमार के साथ", "hi");
+
+        assertThat(turn.doctorEntity()).isNotNull();
+        assertThat(turn.doctorEntity().canonicalQuery()).isEqualTo("Dr Akshu Kumaar");
     }
 
     @Test

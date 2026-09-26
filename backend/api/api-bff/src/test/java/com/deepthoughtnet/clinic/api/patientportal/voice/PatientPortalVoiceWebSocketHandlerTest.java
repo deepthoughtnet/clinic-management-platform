@@ -56,7 +56,7 @@ class PatientPortalVoiceWebSocketHandlerTest {
                 null, null, "sarvam", "AIVA_V2", null,
                 10L, 0L, 0L, 10L, 4L, null);
         when(assistantService.processAudioTurnV2(
-                any(), anyString(), anyString(), anyString(), anyString(), anyString(), anyLong()))
+                any(), anyString(), anyString(), anyString(), anyString(), anyString(), anyLong(), any()))
                 .thenReturn(response);
         PatientPortalVoiceWebSocketHandler handler = new PatientPortalVoiceWebSocketHandler(
                 new ObjectMapper(), assistantService, properties, persistenceService);
@@ -72,9 +72,9 @@ class PatientPortalVoiceWebSocketHandlerTest {
         handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.end\",\"voiceUtteranceId\":\"u2\",\"totalChunks\":1}"));
 
         verify(assistantService, times(1)).processAudioTurnV2(
-                any(), anyString(), anyString(), anyString(), eq("voice-v2-v2-care-session"), eq("voice-u1"), eq(1L));
+                any(), anyString(), anyString(), anyString(), eq("voice-v2-v2-care-session"), eq("voice-u1"), eq(1L), any());
         verify(assistantService, times(1)).processAudioTurnV2(
-                any(), anyString(), anyString(), anyString(), eq("voice-v2-v2-care-session"), eq("voice-u2"), eq(2L));
+                any(), anyString(), anyString(), anyString(), eq("voice-v2-v2-care-session"), eq("voice-u2"), eq(2L), any());
         verify(assistantService, never()).processAudioTurn(any(), anyString(), anyString(), anyString(), any());
         assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"engine\":\"v2\""));
         assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"turn.duplicate_replay\"")
@@ -92,7 +92,7 @@ class PatientPortalVoiceWebSocketHandlerTest {
                 null, null, "sarvam", "AIVA_V2", null,
                 10L, 0L, 0L, 10L, 4L, null);
         when(assistantService.processAudioTurnV2(
-                any(), anyString(), anyString(), anyString(), anyString(), anyString(), anyLong()))
+                any(), anyString(), anyString(), anyString(), anyString(), anyString(), anyLong(), any()))
                 .thenReturn(response);
         PatientPortalVoiceWebSocketHandler handler = new PatientPortalVoiceWebSocketHandler(
                 new ObjectMapper(), assistantService, properties, persistenceService);
@@ -112,7 +112,7 @@ class PatientPortalVoiceWebSocketHandlerTest {
 
         org.mockito.ArgumentCaptor<Long> sequenceCaptor = org.mockito.ArgumentCaptor.forClass(Long.class);
         verify(assistantService, times(10)).processAudioTurnV2(
-                any(), anyString(), anyString(), anyString(), anyString(), anyString(), sequenceCaptor.capture());
+                any(), anyString(), anyString(), anyString(), anyString(), anyString(), sequenceCaptor.capture(), any());
         assertThat(sequenceCaptor.getAllValues()).containsExactly(1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L, 10L);
         assertThat(fixture.payloads()).noneMatch(payload -> payload.contains("message arrived too late"));
         assertThat(fixture.payloads()).noneMatch(payload -> payload.contains("SEQUENCE_GAP"));
@@ -129,7 +129,7 @@ class PatientPortalVoiceWebSocketHandlerTest {
                 eq(UUID.fromString(TENANT_ID)), eq(UUID.fromString(PATIENT_ID)), eq("voice-v2-resumed-v2-session")))
                 .thenReturn(7L);
         when(assistantService.processAudioTurnV2(
-                any(), anyString(), anyString(), anyString(), anyString(), anyString(), anyLong()))
+                any(), anyString(), anyString(), anyString(), anyString(), anyString(), anyLong(), any()))
                 .thenReturn(new PatientPortalVoiceTurnResponse(
                         "v2-turn-8", "show my appointments", "Here are your appointments.", null,
                         null, null, "sarvam", "AIVA_V2", null,
@@ -148,14 +148,16 @@ class PatientPortalVoiceWebSocketHandlerTest {
                 "{\"type\":\"audio.end\",\"voiceUtteranceId\":\"u8\",\"totalChunks\":1}"));
 
         verify(assistantService).processAudioTurnV2(
-                any(), anyString(), anyString(), anyString(), eq("voice-v2-resumed-v2-session"), eq("voice-u8"), eq(8L));
+                any(), anyString(), anyString(), anyString(), eq("voice-v2-resumed-v2-session"), eq("voice-u8"), eq(8L), any());
     }
 
     @Test
     void v2CareSessionIsRejectedWithoutLegacyFallbackWhenFeatureIsDisabled() throws Exception {
         PatientPortalVoiceAssistantService assistantService = mock(PatientPortalVoiceAssistantService.class);
+        VoiceTestProperties properties = new VoiceTestProperties();
+        properties.setAivaV2Enabled(false);
         PatientPortalVoiceWebSocketHandler handler = new PatientPortalVoiceWebSocketHandler(
-                new ObjectMapper(), assistantService, new VoiceTestProperties(),
+                new ObjectMapper(), assistantService, properties,
                 mock(CareAiConversationPersistenceService.class));
         SessionFixture fixture = new SessionFixture(TENANT_ID, PATIENT_ID, APP_USER_ID, Set.of("PATIENT"), "v2-disabled-session");
 
@@ -165,6 +167,36 @@ class PatientPortalVoiceWebSocketHandlerTest {
         verify(assistantService, never()).processAudioTurnV2(any(), anyString(), anyString(), anyString(), anyString(), anyString(), anyLong());
         verify(assistantService, never()).processAudioTurn(any(), anyString(), anyString(), anyString(), any());
         assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("AIVA V2 voice is currently unavailable"));
+    }
+
+    @Test
+    void omittedEngineUsesV2ByDefault() throws Exception {
+        PatientPortalVoiceAssistantService assistantService = mock(PatientPortalVoiceAssistantService.class);
+        CareAiConversationPersistenceService persistenceService = mock(CareAiConversationPersistenceService.class);
+        VoiceTestProperties properties = new VoiceTestProperties();
+        properties.setAivaV2Enabled(true);
+        when(assistantService.processAudioTurnV2(
+                any(), anyString(), anyString(), anyString(), anyString(), anyString(), anyLong(), any()))
+                .thenReturn(new PatientPortalVoiceTurnResponse(
+                        "v2-default-turn", "show my appointments", "Here are your appointments.", null,
+                        null, null, "stt", "AIVA_V2", null,
+                        1L, 1L, 1L, 3L, 10L, null));
+        PatientPortalVoiceWebSocketHandler handler = new PatientPortalVoiceWebSocketHandler(
+                new ObjectMapper(), assistantService, properties, persistenceService);
+        SessionFixture fixture = new SessionFixture(TENANT_ID, PATIENT_ID, APP_USER_ID, Set.of("PATIENT"), "v2-default-session");
+        String audioBase64 = Base64.getEncoder().encodeToString("voice".getBytes(StandardCharsets.UTF_8));
+
+        handler.afterConnectionEstablished(fixture.session);
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"session.start\",\"language\":\"auto\"}"));
+        handler.handleForTest(fixture.session, new TextMessage(
+                "{\"type\":\"audio.chunk\",\"sequence\":1,\"totalChunks\":1,\"audioBase64Chunk\":\"" + audioBase64 + "\"}"));
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.end\",\"totalChunks\":1}"));
+
+        verify(assistantService).processAudioTurnV2(
+                any(), anyString(), anyString(), anyString(), anyString(), anyString(), eq(1L), any());
+        verify(assistantService, never()).processAudioTurn(any(), anyString(), anyString(), anyString(), any());
+        assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"session.started\"")
+                && payload.contains("\"engine\":\"v2\""));
     }
 
     @Test
@@ -222,7 +254,7 @@ class PatientPortalVoiceWebSocketHandlerTest {
         String audioBase64 = Base64.getEncoder().encodeToString("voice".getBytes(StandardCharsets.UTF_8));
 
         handler.afterConnectionEstablished(fixture.session);
-        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"session.start\",\"language\":\"auto\"}"));
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"session.start\",\"engine\":\"legacy\",\"language\":\"auto\"}"));
         handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.chunk\",\"sequence\":1,\"totalChunks\":1,\"filename\":\"patient-careai.webm\",\"audioBase64Chunk\":\"" + audioBase64 + "\",\"contentType\":\"audio/webm\"}"));
         handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.end\",\"filename\":\"patient-careai.webm\",\"contentType\":\"audio/webm\",\"totalChunks\":1}"));
 
@@ -278,7 +310,7 @@ class PatientPortalVoiceWebSocketHandlerTest {
         String audioBase64 = Base64.getEncoder().encodeToString("voice".getBytes(StandardCharsets.UTF_8));
 
         handler.afterConnectionEstablished(fixture.session);
-        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"session.start\",\"language\":\"auto\"}"));
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"session.start\",\"engine\":\"legacy\",\"language\":\"auto\"}"));
         handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.chunk\",\"sequence\":1,\"totalChunks\":1,\"audioBase64Chunk\":\"" + audioBase64 + "\"}"));
         handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.end\",\"totalChunks\":1}"));
 
@@ -391,13 +423,70 @@ class PatientPortalVoiceWebSocketHandlerTest {
         String audioBase64 = Base64.getEncoder().encodeToString("voice".getBytes(StandardCharsets.UTF_8));
 
         handler.afterConnectionEstablished(fixture.session);
-        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"session.start\",\"language\":\"auto\"}"));
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"session.start\",\"engine\":\"legacy\",\"language\":\"auto\"}"));
         handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.chunk\",\"sequence\":1,\"totalChunks\":1,\"filename\":\"patient-careai.webm\",\"audioBase64Chunk\":\"" + audioBase64 + "\",\"contentType\":\"audio/webm\"}"));
         handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.end\",\"filename\":\"patient-careai.webm\",\"contentType\":\"audio/webm\",\"totalChunks\":1}"));
 
         assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"error\"") && payload.contains("Voice playback unavailable."));
         assertThat(fixture.payloads()).noneMatch(payload -> payload.contains("secret"));
         assertThat(fixture.payloads()).noneMatch(payload -> payload.contains("ElevenLabs synthesis failed"));
+    }
+
+    @Test
+    void terminalResponseStartsCloseAfterFinalPlaybackAndClosesNormally() throws Exception {
+        PatientPortalVoiceAssistantService assistantService = mock(PatientPortalVoiceAssistantService.class);
+        CareAiConversationPersistenceService persistenceService = mock(CareAiConversationPersistenceService.class);
+        VoiceTestProperties properties = new VoiceTestProperties();
+        properties.getLive().setTerminalCloseSeconds(0);
+        String audio = Base64.getEncoder().encodeToString("wav".getBytes(StandardCharsets.UTF_8));
+        when(assistantService.processAudioTurn(any(), anyString(), anyString(), anyString(), any()))
+                .thenReturn(new PatientPortalVoiceTurnResponse(
+                        "terminal-1", "bye", "Goodbye. Take care.", null, "audio/wav", audio,
+                        "stt", "llm", "tts", 1L, 1L, 1L, 3L, 3L, null, true));
+
+        PatientPortalVoiceWebSocketHandler handler = new PatientPortalVoiceWebSocketHandler(
+                new ObjectMapper(), assistantService, properties, persistenceService);
+        SessionFixture fixture = new SessionFixture(TENANT_ID, PATIENT_ID, APP_USER_ID, Set.of("PATIENT"), "terminal-session");
+        String input = Base64.getEncoder().encodeToString("voice".getBytes(StandardCharsets.UTF_8));
+        handler.afterConnectionEstablished(fixture.session);
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"session.start\",\"engine\":\"legacy\"}"));
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.chunk\",\"sequence\":1,\"totalChunks\":1,\"audioBase64Chunk\":\"" + input + "\"}"));
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.end\",\"totalChunks\":1}"));
+        assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"conversation.terminal\""));
+        verify(fixture.session, never()).close(CloseStatus.NORMAL);
+
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.playback.complete\",\"turnIndex\":1}"));
+        Thread.sleep(100);
+
+        verify(fixture.session, times(1)).close(CloseStatus.NORMAL);
+        assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"session.closed\"")
+                && payload.contains("terminal_idle"));
+    }
+
+    @Test
+    void validNewSpeechCancelsPendingTerminalClose() throws Exception {
+        PatientPortalVoiceAssistantService assistantService = mock(PatientPortalVoiceAssistantService.class);
+        CareAiConversationPersistenceService persistenceService = mock(CareAiConversationPersistenceService.class);
+        VoiceTestProperties properties = new VoiceTestProperties();
+        properties.getLive().setTerminalCloseSeconds(1);
+        String audio = Base64.getEncoder().encodeToString("wav".getBytes(StandardCharsets.UTF_8));
+        when(assistantService.processAudioTurn(any(), anyString(), anyString(), anyString(), any()))
+                .thenReturn(new PatientPortalVoiceTurnResponse(
+                        "terminal-2", "bye", "Goodbye. Take care.", null, null, null,
+                        "stt", "llm", null, 1L, 1L, 0L, 2L, 3L, null, true));
+
+        PatientPortalVoiceWebSocketHandler handler = new PatientPortalVoiceWebSocketHandler(
+                new ObjectMapper(), assistantService, properties, persistenceService);
+        SessionFixture fixture = new SessionFixture(TENANT_ID, PATIENT_ID, APP_USER_ID, Set.of("PATIENT"), "terminal-cancel-session");
+        handler.afterConnectionEstablished(fixture.session);
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"session.start\",\"engine\":\"legacy\"}"));
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.chunk\",\"sequence\":1,\"totalChunks\":1,\"audioBase64Chunk\":\"" + audio + "\"}"));
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.end\",\"totalChunks\":1}"));
+        Thread.sleep(100);
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.chunk\",\"sequence\":1,\"totalChunks\":1,\"audioBase64Chunk\":\"" + audio + "\"}"));
+        Thread.sleep(1100);
+
+        verify(fixture.session, never()).close(CloseStatus.NORMAL);
     }
 
     private static final class SessionFixture {

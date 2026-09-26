@@ -114,8 +114,8 @@ public class SarvamSpeechToTextProvider implements SpeechToTextProvider {
 
             ResponseEntity<String> response = restTemplate.postForEntity(url, new HttpEntity<>(body, headers), String.class);
             String transcript = extractTranscript(response.getBody());
-            if (!StringUtils.hasText(transcript)) {
-                throw new IllegalStateException("Sarvam returned an empty transcript.");
+            if (transcript == null) {
+                throw new IllegalStateException("Sarvam returned an invalid transcription response.");
             }
             String trimmed = transcript.trim();
             log.info("voice.stt.complete provider=sarvam latencyMs={} transcriptChars={}",
@@ -209,22 +209,40 @@ public class SarvamSpeechToTextProvider implements SpeechToTextProvider {
         }
         try {
             JsonNode root = objectMapper.readTree(trimmed);
-            String transcript = firstNonBlank(
-                    text(root, "text"),
-                    text(root, "transcript"),
-                    text(root, "transcription"),
-                    text(root, "outputText"),
-                    text(root.path("data"), "text"),
-                    text(root.path("data"), "transcript"),
-                    text(root.path("result"), "text")
+            JsonNode transcriptNode = firstPresent(
+                    node(root, "text"),
+                    node(root, "transcript"),
+                    node(root, "transcription"),
+                    node(root, "outputText"),
+                    node(root.path("data"), "text"),
+                    node(root.path("data"), "transcript"),
+                    node(root.path("result"), "text")
             );
-            if (StringUtils.hasText(transcript)) {
-                return transcript;
-            }
+            // A valid provider envelope with transcript="" is an empty STT result,
+            // not the JSON body itself. Returning the raw body here would turn a
+            // transport envelope into a patient utterance downstream.
+            return transcriptNode == null || transcriptNode.isNull() ? null : transcriptNode.asText();
         } catch (Exception ex) {
-            // fall through to plain-text interpretation below
+            // JSON-shaped responses that cannot be parsed are provider failures,
+            // never plain-text transcripts.
+            return null;
         }
-        return trimmed;
+    }
+
+    private JsonNode node(JsonNode root, String field) {
+        if (root == null || !root.isObject() || !root.has(field)) {
+            return null;
+        }
+        return root.get(field);
+    }
+
+    private JsonNode firstPresent(JsonNode... nodes) {
+        for (JsonNode candidate : nodes) {
+            if (candidate != null) {
+                return candidate;
+            }
+        }
+        return null;
     }
 
     private String extractReason(HttpStatusCodeException ex) {

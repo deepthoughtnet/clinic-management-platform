@@ -16,11 +16,14 @@ import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ProviderS
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ResolutionStatus;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.Selection;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ToolResult;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.language.DevanagariNameTransliterator;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalAppointmentBookingRequest;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorAvailabilityDayResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorAvailabilityResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorSlotResponse;
 import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiDoctorOption;
+import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiEntityRegistry;
+import com.deepthoughtnet.clinic.api.patientportal.careai.SpecialtyResolver;
 import com.deepthoughtnet.clinic.api.publicsite.PublicCatalogFacade;
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicDoctorSummaryResponse;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
@@ -49,6 +52,7 @@ class AivaV2BookingTools {
     private final PublicCatalogFacade publicCatalogFacade;
     private final ClinicTimeZoneResolver clinicTimeZoneResolver;
     private final Clock clock;
+    private final SpecialtyResolver specialtyResolver = new SpecialtyResolver(new PatientPortalCareAiEntityRegistry());
 
     @Autowired
     AivaV2BookingTools(PatientPortalService patientPortalService, PublicCatalogFacade publicCatalogFacade,
@@ -70,6 +74,22 @@ class AivaV2BookingTools {
 
     ProviderSearchResult resolveBookingProvider(String doctorText, String specialtyText) {
         return resolveBookingProvider(doctorText, specialtyText, null);
+    }
+
+    SpecialtyMatch resolveSpecialty(String rawText) {
+        List<String> supported = mergedProviders().stream()
+                .map(ProviderCandidate::specialty)
+                .filter(StringUtils::hasText)
+                .distinct()
+                .toList();
+        SpecialtyResolver.SpecialtyResolution resolution = specialtyResolver.resolve(rawText, supported);
+        return new SpecialtyMatch(resolution.status().name(), resolution.canonicalSpecialty(), resolution.candidates());
+    }
+
+    record SpecialtyMatch(String status, String canonical, List<String> candidates) {
+        SpecialtyMatch {
+            candidates = candidates == null ? List.of() : List.copyOf(candidates);
+        }
     }
 
     ProviderSearchResult resolveBookingProvider(String doctorText, String specialtyText, String clinicText) {
@@ -255,12 +275,13 @@ class AivaV2BookingTools {
         } else if (StringUtils.hasText(selection.exactTime())) {
             try {
                 LocalTime time = LocalTime.parse(selection.exactTime());
-                selected = availability.slots().subList(pageStart, pageEnd).stream()
-                        .filter(slot -> time.equals(slot.startsAt())).findFirst().orElse(null);
+                List<AvailabilitySlot> matches = availability.slots().subList(pageStart, pageEnd).stream()
+                        .filter(slot -> time.equals(slot.startsAt())).toList();
+                selected = matches.size() == 1 ? matches.get(0) : null;
             } catch (RuntimeException ignored) { }
         } else if (selection.ordinal() != null) {
             int index = selection.ordinal() == -1 ? pageEnd - 1 : pageStart + selection.ordinal() - 1;
-            selected = index >= 0 && index < availability.slots().size() ? availability.slots().get(index) : null;
+            selected = index >= pageStart && index < pageEnd ? availability.slots().get(index) : null;
         }
         return selected == null ? ToolResult.failure("NEEDS_INPUT", "Select one of the current slots.")
                 : ToolResult.success(selected);
@@ -390,7 +411,15 @@ class AivaV2BookingTools {
     private String tenantId() { return RequestContextHolder.requireTenantId().toString(); }
     private String blank(String value) { return value == null ? "" : value; }
     private String normalize(String value) { return value == null ? "" : value.trim().toLowerCase(Locale.ROOT).replaceAll("[^\\p{L}\\p{N}]+", " ").trim(); }
-    private String normalizeDoctorName(String value) { return normalize(value).replaceFirst("^(doctor|dr|doc)\\s+", ""); }
+    private String normalizeDoctorName(String value) {
+        if (value == null) return "";
+        String normalized = value.trim();
+        if (normalized.codePoints().anyMatch(cp -> cp >= 0x0900 && cp <= 0x097F)) {
+            normalized = DevanagariNameTransliterator.transliterate(normalized);
+        }
+        return normalize(normalized).replaceFirst("^(doctor|dr|doc)\\s+", "")
+                .replace("aa", "a").replace("ee", "i").replace("oo", "u");
+    }
     private boolean contains(String value, String query) {
         String normalizedValue = normalize(value); String normalizedQuery = normalize(query);
         return StringUtils.hasText(normalizedQuery) && (normalizedValue.contains(normalizedQuery) || normalizedQuery.contains(normalizedValue));

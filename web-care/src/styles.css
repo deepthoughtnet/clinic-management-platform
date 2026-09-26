@@ -1570,19 +1570,24 @@ input {
   max-width: var(--container-narrow);
 }
 
-.patient-content-grid.patient-lab-page {
+.patient-lab-page {
+  display: grid;
+  gap: 1rem;
+  width: 100%;
+  min-width: 0;
   padding-top: 3rem;
   padding-bottom: 4.5rem;
   grid-template-columns: minmax(0, 1fr);
 }
 
-.patient-content-grid.patient-lab-page > * {
+.patient-lab-page > * {
   min-width: 0;
 }
 
-.patient-lab-page .portal-dashboard-grid,
-.patient-lab-page .portal-section-grid {
+.patient-lab-page .patient-lab-stats-grid,
+.patient-lab-page .patient-lab-content-grid {
   width: 100%;
+  min-width: 0;
 }
 
 .patient-lab-page .portal-list-card {
@@ -1597,6 +1602,16 @@ input {
   text-overflow: ellipsis;
   word-break: normal;
   overflow-wrap: normal;
+}
+
+.patient-lab-page .portal-list-card-header {
+  align-items: flex-start;
+  column-gap: 0.7rem;
+  row-gap: 0.45rem;
+}
+
+.patient-lab-page .portal-list-card-header .status-pill {
+  flex: 0 0 auto;
 }
 
 .patient-lab-page .status-pill {
@@ -3504,6 +3519,35 @@ input {
   white-space: nowrap;
 }
 
+.patient-careai-mode-selector {
+  display: none;
+}
+
+.patient-careai-mode-option {
+  min-height: 2.75rem;
+  padding: 0.55rem 1rem;
+  border: 1px solid rgba(18, 54, 60, 0.12);
+  background: rgba(255, 255, 255, 0.86);
+  color: var(--muted);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.patient-careai-mode-option:first-child {
+  border-radius: 999px 0 0 999px;
+}
+
+.patient-careai-mode-option:last-child {
+  border-left: 0;
+  border-radius: 0 999px 999px 0;
+}
+
+.patient-careai-mode-option.is-active {
+  background: var(--primary);
+  color: #fff;
+}
+
 .patient-careai-shell-grid {
   display: grid;
   gap: 1rem;
@@ -4289,6 +4333,59 @@ input {
   text-align: center;
 }
 
+.patient-mobile-landing-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.patient-mobile-landing-card {
+  display: grid;
+  gap: 0.35rem;
+  min-height: 7rem;
+  padding: 1rem;
+  border: 1px solid rgba(18, 54, 60, 0.1);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--text);
+  text-align: left;
+  box-shadow: 0 10px 24px rgba(18, 54, 60, 0.05);
+}
+
+.patient-mobile-landing-card:hover,
+.patient-mobile-landing-card:focus-visible {
+  border-color: rgba(15, 122, 117, 0.35);
+  color: var(--primary-strong);
+}
+
+.patient-mobile-landing-card span {
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.patient-mobile-landing-card--button {
+  font: inherit;
+  cursor: pointer;
+}
+
+.care-mobile-header-icon {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  min-width: 2.8rem;
+  min-height: 2.8rem;
+  border: 1px solid rgba(18, 54, 60, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--primary-strong);
+}
+
+.care-mobile-header-icon .care-authenticated-header__badge {
+  position: absolute;
+  top: -0.25rem;
+  right: -0.25rem;
+}
+
 .toolbar-field {
   display: grid;
   gap: 0.45rem;
@@ -4551,6 +4648,327 @@ input {
 }
 
 @media (max-width: 759px) {
+  .patient-portal-page .patient-sidebar {
+    display: none;
+  }
+
+  .patient-portal-page .patient-portal-shell {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 0.5rem;
+  }
+
+  .patient-portal-page {
+    padding-bottom: calc(6.5rem + env(safe-area-inset-bottom));
+  }
+
+  .care-authenticated-header {
+    padding: 0.65rem 0.75rem;
+  }
+
+  .care-authenticated-header__nav {
+    display: none;
+  }
+
+  .care-authenticated-header__mobile-actions {
+    display: flex;
+    width: auto;
+    margin-left: auto;
+  }
+
+  .care-authenticated-header__mobile-actions .care-profile-menu {
+    width: auto;
+  }
+
+  .care-authenticated-header__mobile-actions .care-profile-menu__trigger {
+    width: auto;
+    justify-content: center;
+  }
+
+  .care-authenticated-header__mobile-actions .care-profile-menu__panel {
+    position: absolute;
+    right: 0;
+    width: min(17rem, calc(100vw - 2rem));
+    margin-top: 0.5rem;
+  }
+
+  .care-authenticated-header__mobile-actions .care-profile-menu__copy,
+  .care-authenticated-header__mobile-actions .care-profile-menu__trigger > .MuiSvgIcon-root {
+    display: none;
+  }
+
+  .care-authenticated-header__mobile-actions .care-profile-menu__trigger {
+    min-width: 2.8rem;
+    min-height: 2.8rem;
+    padding: 0.35rem;
+    justify-content: center;
+  }
+
+  .care-authenticated-header__mobile-actions .care-profile-menu__panel {
+    position: absolute;
+    right: 0;
+    width: min(17rem, calc(100vw - 2rem));
+  }
+
+  .patient-mobile-nav {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 0.25rem;
+    padding: 0.45rem 0.5rem calc(0.45rem + env(safe-area-inset-bottom));
+    overflow: hidden;
+  }
+
+  .patient-mobile-link {
+    min-width: 0;
+    min-height: 3.15rem;
+    padding: 0.45rem 0.2rem;
+    font-size: 0.72rem;
+  }
+
+  .patient-careai-page .patient-main {
+    gap: 0.5rem;
+  }
+
+  .patient-careai-page .patient-careai-shell {
+    gap: 0.6rem;
+  }
+
+  .patient-careai-page .aiva-workspace-card {
+    height: auto;
+    min-height: calc(100dvh - 9rem);
+  }
+
+  .patient-careai-page .patient-careai-shell-header {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    padding: 0.2rem 0 0.65rem;
+    background: var(--surface, #f7fbf9);
+  }
+
+  .patient-careai-page .patient-careai-mode-selector {
+    display: flex;
+    align-self: stretch;
+    justify-content: center;
+    margin: 0 0 0.25rem;
+  }
+
+  .patient-careai-page .patient-careai-mode-option {
+    flex: 1 1 0;
+    max-width: 10rem;
+  }
+
+  .patient-careai-page .patient-careai-shell-heading p {
+    display: none;
+  }
+
+  .patient-careai-page .patient-careai-reset-button {
+    align-self: flex-start;
+    min-height: 2.75rem;
+  }
+
+  .patient-careai-page .patient-careai-conversation {
+    min-height: calc(100dvh - 13rem);
+    padding: 0.65rem;
+    border-radius: 1rem;
+  }
+
+  .patient-careai-page .aiva-transcript {
+    padding: 0.35rem 0.1rem 0.5rem;
+  }
+
+  .patient-careai-page .patient-chat-bubble-ai,
+  .patient-careai-page .patient-chat-bubble-self {
+    max-width: 88%;
+  }
+
+  .patient-careai-page .patient-careai-composer {
+    position: sticky;
+    bottom: 0;
+    z-index: 3;
+    margin-top: 0.5rem;
+    padding: 0.65rem 0 0.15rem;
+    background: linear-gradient(180deg, rgba(248, 252, 251, 0.7), rgba(248, 252, 251, 1) 25%);
+  }
+
+  .patient-careai-page .aiva-mobile-voice-mode .aiva-mobile-text-composer {
+    display: none;
+  }
+
+  .patient-careai-page .aiva-mobile-voice-mode .patient-careai-tools-panel > .patient-careai-tool-card:not(.voice-session-card) {
+    display: none;
+  }
+
+  .patient-careai-page .aiva-mobile-voice-mode .voice-session-card.is-mobile-voice-mode {
+    display: grid;
+  }
+
+  .patient-careai-page .patient-careai-composer textarea {
+    min-height: 3.25rem;
+    max-height: 7rem;
+    padding: 0.75rem 0.85rem;
+    resize: none;
+  }
+
+  .patient-careai-page .patient-careai-composer-actions {
+    justify-content: space-between;
+  }
+
+  .patient-careai-page .patient-careai-tools-panel {
+    gap: 0.5rem;
+  }
+
+  .patient-careai-page .voice-session-card:not(.is-active) {
+    display: none;
+  }
+
+  .patient-careai-page .voice-session-card.is-active {
+    padding: 0.7rem;
+    border-radius: 0.9rem;
+  }
+
+  .patient-careai-page .voice-session-card.is-active .voice-session-controls {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .patient-careai-page .patient-careai-checklist {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+
+  .patient-careai-page .patient-careai-checklist span {
+    padding: 0.3rem 0.5rem;
+    border-radius: 999px;
+    background: rgba(15, 122, 117, 0.07);
+    font-size: 0.78rem;
+  }
+
+  .patient-careai-page .patient-careai-privacy-card {
+    padding: 0.7rem;
+  }
+
+  .patient-careai-page .patient-careai-privacy-card p {
+    display: none;
+  }
+
+  .patient-careai-page .patient-careai-voice-technical-toggle {
+    display: inline-flex;
+    width: auto;
+  }
+
+  .patient-careai-page .patient-careai-quick-actions-rail {
+    display: flex;
+    overflow-x: auto;
+    padding-bottom: 0.1rem;
+  }
+
+  .patient-careai-page .patient-careai-quick-actions-rail .patient-careai-quick-action {
+    flex: 0 0 auto;
+    width: auto;
+    min-height: 2.75rem;
+    padding-inline: 0.85rem;
+  }
+
+  .patient-careai-page .patient-careai-tool-card {
+    padding: 0.75rem;
+  }
+
+  .patient-mobile-landing-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Notifications use a compact patient-facing hierarchy at every Care breakpoint. */
+.patient-notifications-page .portal-dashboard-grid {
+  gap: 0.8rem;
+}
+
+.patient-notifications-page .dashboard-card {
+  min-height: 0;
+  padding: 0.85rem 1rem;
+  gap: 0.25rem;
+}
+
+.patient-notifications-page .dashboard-card strong {
+  color: var(--ink);
+  font-size: clamp(1.35rem, 2.2vw, 1.75rem);
+  line-height: 1;
+}
+
+.patient-notifications-page .dashboard-card span {
+  font-size: var(--care-text-meta, 0.8rem);
+  font-weight: 600;
+}
+
+.patient-notifications-page .portal-list {
+  max-height: min(calc(100dvh - 15rem), 42rem);
+  overflow-y: auto;
+  padding-right: 0.35rem;
+  gap: 0.75rem;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.patient-notifications-page .portal-list-card {
+  gap: 0.55rem;
+  padding: 0.95rem 1rem;
+  border-radius: 0.95rem;
+}
+
+.patient-notifications-page .portal-list-card.is-unread {
+  border-color: rgba(15, 122, 117, 0.24);
+  background: linear-gradient(180deg, rgba(238, 250, 247, 0.9) 0%, #ffffff 100%);
+}
+
+.patient-notifications-page .portal-list-card.is-read {
+  background: #ffffff;
+}
+
+.patient-notifications-page .portal-list-card-header {
+  align-items: flex-start;
+  gap: 0.65rem;
+}
+
+.patient-notifications-page .portal-list-card-header strong {
+  font-size: var(--care-text-card, 0.95rem);
+  line-height: 1.3;
+}
+
+.patient-notifications-page .portal-list-meta {
+  gap: 0.25rem 0.65rem;
+  font-size: var(--care-text-meta, 0.8rem);
+}
+
+.patient-notifications-page .portal-list-card p {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.patient-notifications-page .portal-list-card .cta-row {
+  justify-content: flex-start;
+  gap: 0.5rem;
+}
+
+.patient-notifications-page .portal-list-card .cta-row > * {
+  flex: 0 1 auto;
+  width: auto;
+  min-width: 0;
+  min-height: 2.5rem;
+  padding: 0.55rem 0.8rem;
+}
+
+@media (max-width: 759px) {
+  .patient-notifications-page .portal-list-card .cta-row {
+    flex-direction: row;
+    align-items: stretch;
+  }
+
+  .patient-notifications-page .portal-list-card .cta-row > * {
+    flex: 1 1 0;
+  }
+}
+
+@media (max-width: 759px) {
   .patient-careai-shell-header {
     flex-direction: column;
     align-items: stretch;
@@ -4715,6 +5133,20 @@ input {
 
   .patient-mobile-nav {
     display: none;
+  }
+}
+
+/* Lab Orders carries more metadata than Reports. Keep the two page sections
+   readable instead of allowing the shared equal-column rule to squeeze both. */
+@media (min-width: 980px) and (max-width: 1199px) {
+  .patient-portal-page .patient-lab-page .patient-lab-content-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (min-width: 1200px) {
+  .patient-portal-page .patient-lab-page .patient-lab-content-grid {
+    grid-template-columns: minmax(0, 1.6fr) minmax(300px, 1fr);
   }
 }
 
@@ -5944,6 +6376,1089 @@ input {
   }
 
   .care-footer__links {
+    width: 100%;
+  }
+}
+
+/* Final mobile-shell overrides stay last so the five-item Care navigation wins
+   over older wide-mobile rules without changing desktop/tablet layouts. */
+@media (max-width: 759px) {
+  .care-authenticated-header__nav {
+    display: none;
+  }
+
+  .care-authenticated-header__mobile-actions {
+    display: flex;
+    width: auto;
+    margin-left: auto;
+  }
+
+  .care-authenticated-header__mobile-actions .care-profile-menu {
+    width: auto;
+  }
+
+  .care-authenticated-header__mobile-actions .care-profile-menu__trigger {
+    width: auto;
+    justify-content: center;
+  }
+
+  .care-authenticated-header__mobile-actions .care-profile-menu__panel {
+    position: absolute;
+    right: 0;
+    width: min(17rem, calc(100vw - 2rem));
+    margin-top: 0.5rem;
+  }
+
+  .patient-mobile-nav {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 0.25rem;
+    overflow: hidden;
+  }
+
+  .patient-mobile-link {
+    min-width: 0;
+    flex: initial;
+    white-space: nowrap;
+  }
+
+  .patient-careai-page .voice-session-card:not(.is-active) {
+    display: none;
+  }
+
+  .patient-careai-page .aiva-mobile-text-mode .voice-session-card {
+    display: none;
+  }
+
+  .patient-careai-page .aiva-mobile-voice-mode .voice-session-card.is-mobile-voice-mode {
+    display: grid;
+  }
+
+  .patient-careai-page .patient-careai-conversation {
+    height: auto;
+    min-height: 0;
+  }
+
+  .patient-careai-page .aiva-transcript {
+    flex: 0 1 auto;
+    min-height: 10rem;
+    max-height: 42dvh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .patient-careai-page .aiva-mobile-voice-mode .aiva-transcript {
+    max-height: 34dvh;
+  }
+}
+
+/* Authenticated Care mobile refinement: compact, scannable surfaces without
+   changing route, data, or workflow behavior. */
+@media (max-width: 759px) {
+  .patient-portal-page {
+    overflow-x: clip;
+  }
+
+  .patient-portal-page .patient-portal-shell {
+    gap: 0.7rem;
+    padding: 0.35rem;
+  }
+
+  .patient-portal-page .patient-main {
+    gap: 0.7rem;
+  }
+
+  .patient-portal-page .patient-topbar {
+    gap: 0.25rem;
+    padding: 0.15rem 0.35rem;
+  }
+
+  .patient-portal-page .patient-topbar h1 {
+    font-size: clamp(1.45rem, 7vw, 1.85rem);
+  }
+
+  .patient-portal-page .patient-topbar p {
+    margin: 0;
+    font-size: 0.88rem;
+    line-height: 1.4;
+  }
+
+  .patient-portal-page .patient-panel,
+  .patient-portal-page .patient-record-card,
+  .patient-portal-page .patient-status-card,
+  .patient-portal-page .patient-empty-card,
+  .patient-portal-page .patient-sidebar-card {
+    padding: 0.85rem;
+    border-radius: 1rem;
+  }
+
+  .patient-portal-page .patient-content-grid,
+  .patient-portal-page .patient-card-stack,
+  .patient-portal-page .patient-dashboard-stack,
+  .patient-portal-page .portal-list,
+  .patient-portal-page .portal-section-grid {
+    gap: 0.7rem;
+  }
+
+  .patient-portal-page .patient-action-row,
+  .patient-portal-page .cta-row {
+    gap: 0.55rem;
+  }
+
+  .patient-portal-page .primary-button,
+  .patient-portal-page .secondary-button,
+  .patient-portal-page .ghost-button {
+    min-height: 2.75rem;
+  }
+
+  .patient-portal-page .patient-mobile-nav {
+    box-shadow: 0 -8px 24px rgba(18, 54, 60, 0.08);
+  }
+
+  .patient-portal-page .patient-dashboard-quick-actions-grid {
+    gap: 0.55rem;
+  }
+
+  .patient-portal-page .patient-dashboard-quick-action {
+    min-height: 3.5rem;
+    padding: 0.65rem;
+    border-radius: 0.85rem;
+  }
+
+  .patient-portal-page .patient-dashboard-quick-action span {
+    display: none;
+  }
+
+  .patient-portal-page .patient-dashboard-attention-list,
+  .patient-portal-page .patient-dashboard-activity-list {
+    gap: 0.55rem;
+  }
+
+  .patient-portal-page .patient-dashboard-attention-item,
+  .patient-portal-page .patient-dashboard-activity-item {
+    gap: 0.55rem;
+    padding: 0.65rem 0.7rem;
+  }
+
+  .patient-portal-page .patient-dashboard-clinic-grid {
+    gap: 0.6rem;
+  }
+
+  .patient-portal-page .patient-dashboard-clinic-card,
+  .patient-portal-page .patient-dashboard-clinic-doctors,
+  .patient-portal-page .patient-highlight-card,
+  .patient-portal-page .patient-subcard {
+    padding: 0.7rem 0.75rem;
+  }
+
+  .patient-appointments-page .patient-appointments-toolbar {
+    gap: 0.6rem;
+  }
+
+  .patient-appointments-page .patient-filter-row {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 0.4rem;
+    padding: 0.1rem 0.05rem 0.25rem;
+    scrollbar-width: thin;
+  }
+
+  .patient-appointments-page .patient-filter-pill {
+    min-height: 2.55rem;
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  .patient-appointments-page .patient-action-strip .primary-button {
+    width: 100%;
+  }
+
+  .patient-appointments-page .patient-guidance-card {
+    padding: 0.75rem;
+  }
+
+  .patient-appointments-page .patient-guidance-card p {
+    margin: 0.25rem 0 0.55rem;
+    font-size: 0.84rem;
+  }
+
+  .patient-appointments-page .patient-record-card > p,
+  .patient-appointments-page .patient-record-card .patient-inline-note {
+    display: none;
+  }
+
+  .patient-appointments-page .patient-appointment-list {
+    max-height: none;
+    overflow: visible;
+    padding-right: 0;
+  }
+
+  .patient-appointments-page .record-card-top,
+  .patient-record-card .record-card-top {
+    gap: 0.5rem;
+  }
+
+  .patient-appointments-page .record-card-top > div {
+    min-width: 0;
+  }
+
+  .patient-appointments-page .record-card-top strong {
+    display: block;
+    overflow-wrap: anywhere;
+    font-size: 0.98rem;
+  }
+
+  .patient-appointments-page .record-card-top span:not(.status-pill) {
+    font-size: 0.82rem;
+  }
+
+  .patient-appointments-page .status-pill,
+  .patient-record-card .status-pill {
+    flex: 0 0 auto;
+    padding: 0.28rem 0.55rem;
+    font-size: 0.72rem;
+  }
+
+  .patient-record-card .record-card-meta {
+    gap: 0.35rem 0.65rem;
+    font-size: 0.8rem;
+  }
+
+  .patient-prescription-grid {
+    gap: 0.65rem;
+  }
+
+  .patient-prescription-grid h3 {
+    margin: 0;
+    font-size: 0.9rem;
+  }
+
+  .patient-prescription-grid .patient-subcard-list,
+  .patient-record-card .patient-subcard-list {
+    gap: 0.45rem;
+  }
+
+  .patient-record-card .patient-detail-list {
+    gap: 0.5rem;
+  }
+
+  .patient-bill-summary {
+    gap: 0.4rem;
+  }
+
+  .patient-bill-summary strong {
+    font-size: 1rem;
+  }
+
+  .patient-bill-summary span {
+    font-size: 0.76rem;
+  }
+
+  .patient-notifications-page .portal-dashboard-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.45rem;
+  }
+
+  .patient-notifications-page .dashboard-card {
+    min-height: 0;
+    padding: 0.65rem;
+  }
+
+  .patient-notifications-page .portal-list-card,
+  .patient-lab-page .portal-list-card {
+    gap: 0.55rem;
+    padding: 0.75rem;
+    border-radius: 0.9rem;
+  }
+
+  .patient-notifications-page .portal-list-card p {
+    margin: 0;
+    font-size: 0.86rem;
+  }
+
+  .patient-mobile-landing-grid {
+    gap: 0.65rem;
+  }
+
+  .patient-mobile-landing-card {
+    min-height: 5.7rem;
+    padding: 0.8rem;
+    border-radius: 0.95rem;
+  }
+
+  .patient-lab-page .patient-lab-stats-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.45rem;
+  }
+
+  .patient-lab-page .patient-lab-stats-grid .dashboard-card {
+    min-height: 0;
+    padding: 0.65rem;
+  }
+
+  .patient-lab-page .patient-lab-content-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .patient-lab-page .portal-inline-list {
+    gap: 0.4rem;
+  }
+
+  .patient-lab-page .portal-inline-list li {
+    padding: 0.55rem 0.65rem;
+  }
+
+  .patient-portal-page .patient-careai-page {
+    min-width: 0;
+  }
+
+  .patient-careai-page .patient-careai-tools-panel {
+    gap: 0.55rem;
+  }
+
+  .patient-careai-page .patient-careai-tool-card {
+    padding: 0.7rem;
+  }
+
+  .patient-careai-page .patient-careai-technical-panel {
+    display: none;
+  }
+
+  .patient-careai-page .patient-careai-quick-actions-rail {
+    gap: 0.45rem;
+  }
+
+  .patient-careai-page .patient-careai-checklist span {
+    padding: 0.28rem 0.45rem;
+  }
+
+  .patient-careai-page .patient-careai-privacy-card {
+    min-height: 0;
+  }
+
+  .care-footer--authenticated {
+    margin-top: 0.75rem;
+    padding: 0.75rem;
+    border-radius: 1rem;
+  }
+
+  .care-footer--authenticated .care-footer__grid {
+    display: block;
+  }
+
+  .care-footer--authenticated .care-footer__brand {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .care-footer--authenticated .care-footer__brand strong,
+  .care-footer--authenticated .care-footer__brand p,
+  .care-footer--authenticated .care-footer__column:nth-child(2),
+  .care-footer--authenticated .care-footer__column:nth-child(3) {
+    display: none;
+  }
+
+  .care-footer--authenticated .care-footer__column:nth-child(4) {
+    display: block;
+    margin-top: 0.4rem;
+  }
+
+  .care-footer--authenticated .care-footer__column:nth-child(4) > strong {
+    display: none;
+  }
+
+  .care-footer--authenticated .care-footer__links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 0.75rem;
+    font-size: 0.78rem;
+  }
+}
+
+/* Final Care mobile type and alignment scale. Keep this scoped to the
+   authenticated patient surface so public and desktop experiences retain
+   their existing presentation. */
+@media (max-width: 759px) {
+  .patient-portal-page {
+    --care-page-padding: 0.75rem;
+    --care-space-1: 0.25rem;
+    --care-space-2: 0.5rem;
+    --care-space-3: 0.75rem;
+    --care-space-4: 1rem;
+    --care-space-5: 1.25rem;
+    --care-text-page: clamp(1.55rem, 7vw, 1.8rem);
+    --care-text-section: 1.08rem;
+    --care-text-card: 0.98rem;
+    --care-text-body: 0.9rem;
+    --care-text-meta: 0.8rem;
+    --care-line-body: 1.48;
+    --care-line-meta: 1.4;
+  }
+
+  .patient-portal-page .patient-portal-shell,
+  .patient-portal-page .patient-main,
+  .patient-portal-page .patient-content-grid,
+  .patient-portal-page .patient-dashboard-stack {
+    gap: var(--care-space-3);
+  }
+
+  .patient-portal-page .patient-topbar h1 {
+    font-size: var(--care-text-page);
+    font-weight: 750;
+    line-height: 1.17;
+    letter-spacing: -0.025em;
+  }
+
+  .patient-portal-page .patient-topbar .eyebrow,
+  .patient-portal-page .patient-careai-shell-heading .eyebrow {
+    color: var(--primary-strong);
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    line-height: 1.2;
+    text-transform: uppercase;
+  }
+
+  .patient-portal-page .patient-topbar p {
+    max-width: 36rem;
+    color: var(--muted);
+    font-size: 0.9rem;
+    line-height: 1.48;
+  }
+
+  .patient-portal-page .patient-panel-heading,
+  .patient-portal-page .record-card-top,
+  .patient-portal-page .portal-list-card-header {
+    gap: var(--care-space-3);
+  }
+
+  .patient-portal-page .patient-panel-heading h2,
+  .patient-portal-page .portal-panel-header h2 {
+    font-size: var(--care-text-section);
+    font-weight: 700;
+    line-height: 1.25;
+    letter-spacing: -0.01em;
+  }
+
+  .patient-portal-page .panel-caption,
+  .patient-portal-page .patient-panel-heading > span,
+  .patient-portal-page .patient-panel-heading a,
+  .patient-portal-page .portal-panel-header a {
+    flex: 0 0 auto;
+    font-size: var(--care-text-meta);
+    line-height: var(--care-line-meta);
+  }
+
+  .patient-portal-page .patient-panel p,
+  .patient-portal-page .patient-record-card p,
+  .patient-portal-page .portal-help-text,
+  .patient-portal-page .patient-inline-empty,
+  .patient-portal-page .patient-inline-note {
+    font-size: var(--care-text-body);
+    line-height: var(--care-line-body);
+  }
+
+  .patient-portal-page .patient-record-card strong,
+  .patient-portal-page .portal-list-card-header strong,
+  .patient-portal-page .patient-highlight-card strong,
+  .patient-portal-page .patient-mobile-landing-card strong {
+    font-size: var(--care-text-card);
+    font-weight: 700;
+    line-height: 1.3;
+  }
+
+  .patient-portal-page .record-card-top > div,
+  .patient-portal-page .portal-list-card-header > strong {
+    min-width: 0;
+  }
+
+  .patient-portal-page .record-card-top > div > span,
+  .patient-portal-page .record-card-meta,
+  .patient-portal-page .portal-list-meta,
+  .patient-portal-page .patient-detail-list span,
+  .patient-portal-page .patient-subcard span,
+  .patient-portal-page .patient-highlight-card span,
+  .patient-portal-page .patient-stat-card small {
+    color: var(--muted);
+    font-size: var(--care-text-meta);
+    line-height: var(--care-line-meta);
+  }
+
+  .patient-portal-page .record-card-meta,
+  .patient-portal-page .portal-list-meta {
+    gap: var(--care-space-2) var(--care-space-3);
+  }
+
+  .patient-portal-page .status-pill {
+    min-height: 1.65rem;
+    padding: 0.25rem 0.55rem;
+    font-size: 0.72rem;
+    font-weight: 650;
+    line-height: 1.15;
+    white-space: nowrap;
+  }
+
+  .patient-portal-page .patient-record-card,
+  .patient-portal-page .portal-list-card,
+  .patient-portal-page .patient-highlight-card,
+  .patient-portal-page .patient-subcard {
+    border-radius: 0.9rem;
+  }
+
+  .patient-portal-page .patient-empty-card,
+  .patient-portal-page .patient-inline-empty,
+  .patient-portal-page .portal-empty-state {
+    padding: 0.75rem 0.8rem;
+    border-radius: 0.85rem;
+    background: rgba(15, 122, 117, 0.045);
+  }
+
+  .patient-portal-page .patient-empty-card strong,
+  .patient-portal-page .patient-inline-empty strong,
+  .patient-portal-page .portal-empty-state strong {
+    font-size: 0.92rem;
+    line-height: 1.35;
+  }
+
+  .patient-portal-page .patient-empty-card p,
+  .patient-portal-page .patient-inline-empty p,
+  .patient-portal-page .portal-empty-state p {
+    margin: var(--care-space-1) 0 0;
+    font-size: var(--care-text-meta);
+    line-height: var(--care-line-body);
+  }
+
+  .patient-portal-page .patient-dashboard-network .patient-panel-heading,
+  .patient-portal-page .patient-dashboard-clinic .patient-panel-heading {
+    display: grid;
+    justify-content: initial;
+    gap: var(--care-space-1);
+  }
+
+  .patient-portal-page .patient-dashboard-network .panel-caption,
+  .patient-portal-page .patient-dashboard-clinic .panel-caption {
+    padding-left: 0;
+    font-size: var(--care-text-meta);
+  }
+
+  .patient-portal-page .patient-dashboard-clinic-card strong,
+  .patient-portal-page .patient-dashboard-clinic-doctors strong {
+    font-size: var(--care-text-card);
+  }
+
+  .patient-portal-page .patient-dashboard-clinic-card span,
+  .patient-portal-page .patient-dashboard-clinic-card small,
+  .patient-portal-page .patient-dashboard-clinic-doctors span,
+  .patient-portal-page .patient-dashboard-clinic-doctors small {
+    font-size: var(--care-text-meta);
+    line-height: var(--care-line-meta);
+  }
+
+  .patient-portal-page .patient-dashboard-quick-action strong,
+  .patient-portal-page .patient-dashboard-attention-item__copy strong,
+  .patient-portal-page .patient-dashboard-activity-item__copy strong {
+    font-size: 0.88rem;
+    font-weight: 650;
+  }
+
+  .patient-portal-page .patient-dashboard-attention-item__copy small,
+  .patient-portal-page .patient-dashboard-activity-item__copy span,
+  .patient-portal-page .patient-dashboard-activity-item small {
+    font-size: var(--care-text-meta);
+    line-height: var(--care-line-meta);
+  }
+
+  .patient-appointments-page .patient-record-card .record-card-top {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+  }
+
+  .patient-appointments-page .patient-record-card .record-card-top > div > strong {
+    font-size: 1rem;
+  }
+
+  .patient-appointments-page .patient-guidance-card strong {
+    font-size: 0.9rem;
+  }
+
+  .patient-appointments-page .patient-guidance-card .secondary-button {
+    min-height: 2.55rem;
+  }
+
+  .patient-careai-page .patient-careai-shell-heading h2 {
+    font-size: 1.2rem;
+    line-height: 1.25;
+  }
+
+  .patient-careai-page .patient-careai-secure-badge,
+  .patient-careai-page .patient-careai-mode-option,
+  .patient-careai-page .voice-control-label {
+    font-size: 0.8rem;
+    line-height: 1.2;
+  }
+
+  .patient-careai-page .patient-careai-mode-option {
+    min-height: 2.55rem;
+    padding-inline: 0.85rem;
+  }
+
+  .patient-careai-page .voice-session-controls {
+    gap: 0.5rem;
+  }
+
+  .patient-careai-page .voice-control-button {
+    min-height: 2.75rem;
+  }
+
+  .patient-careai-page .patient-careai-tool-card > strong,
+  .patient-careai-page .patient-careai-tool-card-heading strong {
+    font-size: 0.92rem;
+    line-height: 1.3;
+  }
+
+  .patient-portal-page .patient-mobile-landing-card span {
+    font-size: var(--care-text-meta);
+    line-height: var(--care-line-meta);
+  }
+
+  .patient-portal-page .patient-prescription-grid h3,
+  .patient-portal-page .patient-record-card h3 {
+    font-size: 0.88rem;
+    font-weight: 700;
+    line-height: 1.3;
+  }
+
+  .patient-portal-page .patient-prescription-grid .patient-subcard strong,
+  .patient-portal-page .patient-record-card .patient-subcard strong {
+    font-size: 0.9rem;
+    font-weight: 650;
+  }
+
+  .patient-portal-page .patient-bill-summary strong {
+    font-size: 1.05rem;
+    line-height: 1.2;
+  }
+
+  .patient-portal-page .patient-bill-summary span {
+    font-size: 0.75rem;
+    line-height: 1.3;
+  }
+
+  .patient-notifications-page .portal-list-card-header {
+    align-items: start;
+  }
+
+  .patient-notifications-page .portal-list-card-header strong {
+    font-size: 0.92rem;
+  }
+
+  .patient-portal-page .patient-login-form label > span,
+  .patient-portal-page .patient-form-field > span {
+    font-size: 0.82rem;
+    font-weight: 650;
+  }
+
+  .patient-portal-page input,
+  .patient-portal-page select,
+  .patient-portal-page textarea {
+    font-size: 0.92rem;
+    line-height: 1.45;
+  }
+
+  .care-footer--authenticated {
+    color: var(--muted);
+  }
+
+  .care-footer--authenticated .care-footer__links a {
+    font-size: 0.78rem;
+  }
+}
+
+/* Shared Care page topology for tablet and desktop. This layer only
+   normalizes presentation of the existing page surfaces. */
+@media (min-width: 760px) {
+  .patient-portal-page {
+    --care-shell-gap: 1.25rem;
+    --care-section-gap: 1rem;
+    --care-card-padding: 1rem;
+    --care-page-title-size: clamp(1.9rem, 2.6vw, 2.45rem);
+    --care-section-title-size: 1.15rem;
+    --care-card-title-size: 1rem;
+    --care-meta-size: 0.84rem;
+    --care-body-line: 1.5;
+  }
+
+  .patient-portal-page .patient-portal-shell {
+    gap: var(--care-shell-gap);
+    padding: 1.25rem;
+    border-radius: 1.5rem;
+  }
+
+  .patient-portal-page .patient-sidebar {
+    gap: var(--care-section-gap);
+  }
+
+  .patient-portal-page .patient-sidebar-card,
+  .patient-portal-page .patient-panel,
+  .patient-portal-page .patient-record-card,
+  .patient-portal-page .patient-status-card,
+  .patient-portal-page .patient-empty-card,
+  .patient-portal-page .portal-panel,
+  .patient-portal-page .portal-list-card,
+  .patient-portal-page .dashboard-card {
+    border-radius: 1rem;
+  }
+
+  .patient-portal-page .patient-sidebar-card {
+    padding: 1.05rem;
+  }
+
+  .patient-portal-page .patient-main {
+    gap: var(--care-shell-gap);
+  }
+
+  .patient-portal-page .patient-topbar {
+    gap: 0.4rem;
+    padding: 0.15rem 0.15rem 0.85rem;
+    border-bottom: 1px solid rgba(18, 54, 60, 0.1);
+  }
+
+  .patient-portal-page .patient-topbar h1 {
+    margin: 0;
+    font-size: var(--care-page-title-size);
+    line-height: 1.12;
+    letter-spacing: -0.03em;
+  }
+
+  .patient-portal-page .patient-topbar p {
+    max-width: 52rem;
+    margin: 0.35rem 0 0;
+    line-height: var(--care-body-line);
+  }
+
+  .patient-portal-page .patient-content-grid,
+  .patient-portal-page .patient-prescription-grid,
+  .patient-portal-page .patient-booking-grid,
+  .patient-portal-page .portal-section-grid,
+  .patient-portal-page .patient-summary-grid,
+  .patient-portal-page .patient-dashboard-dual-grid {
+    gap: var(--care-section-gap);
+  }
+
+  .patient-portal-page .patient-panel-heading,
+  .patient-portal-page .portal-panel-header,
+  .patient-portal-page .record-card-top,
+  .patient-portal-page .portal-list-card-header {
+    min-height: 2rem;
+    align-items: flex-start;
+  }
+
+  .patient-portal-page .patient-panel-heading h2,
+  .patient-portal-page .portal-panel-header h2 {
+    margin: 0;
+    font-size: var(--care-section-title-size);
+    line-height: 1.25;
+  }
+
+  .patient-portal-page .patient-record-card,
+  .patient-portal-page .portal-list-card {
+    padding: var(--care-card-padding);
+  }
+
+  .patient-portal-page .patient-record-card strong,
+  .patient-portal-page .portal-list-card-header strong {
+    font-size: var(--care-card-title-size);
+    line-height: 1.3;
+  }
+
+  .patient-portal-page .record-card-meta,
+  .patient-portal-page .portal-list-meta,
+  .patient-portal-page .patient-detail-list span,
+  .patient-portal-page .patient-subcard span {
+    font-size: var(--care-meta-size);
+    line-height: 1.45;
+  }
+
+  .patient-portal-page .status-pill {
+    min-height: 1.7rem;
+    padding: 0.3rem 0.62rem;
+    font-size: 0.76rem;
+    line-height: 1.15;
+    white-space: nowrap;
+  }
+
+  .patient-portal-page .patient-empty-card,
+  .patient-portal-page .patient-inline-empty,
+  .patient-portal-page .portal-empty-state {
+    padding: 0.9rem 1rem;
+  }
+
+  .patient-appointments-page .patient-appointments-toolbar {
+    grid-template-columns: minmax(0, 1fr) minmax(16rem, 0.7fr);
+    align-items: end;
+    gap: 1rem;
+  }
+
+  .patient-appointments-page .patient-filter-row {
+    min-width: 0;
+  }
+
+  .patient-appointments-page .patient-search-field {
+    min-width: 0;
+  }
+
+  .patient-appointments-page .patient-action-strip {
+    justify-content: flex-end;
+  }
+
+  .patient-appointments-page .patient-guidance-card {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: 1rem;
+  }
+
+  .patient-appointments-page .patient-guidance-card p {
+    grid-column: 1;
+    margin: 0.2rem 0 0;
+  }
+
+  .patient-appointments-page .patient-guidance-card .patient-action-row {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+
+  .patient-appointments-page .patient-record-card .record-card-top {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .patient-notifications-page .portal-dashboard-grid,
+  .patient-lab-page .portal-dashboard-grid {
+    gap: 0.8rem;
+  }
+
+  .patient-notifications-page .portal-list,
+  .patient-lab-page .portal-list {
+    gap: 0.75rem;
+  }
+
+  .patient-lab-page .patient-lab-content-grid {
+    align-items: start;
+  }
+
+  .patient-lab-page .portal-list-card-header,
+  .patient-notifications-page .portal-list-card-header {
+    display: flex;
+    justify-content: space-between;
+  }
+
+  .patient-careai-page .patient-careai-shell-header {
+    padding-bottom: 0.8rem;
+    border-bottom: 1px solid rgba(18, 54, 60, 0.1);
+  }
+
+  .patient-careai-page .patient-careai-shell-heading h2 {
+    font-size: 1.35rem;
+    line-height: 1.2;
+  }
+}
+
+@media (min-width: 760px) and (max-width: 979px) {
+  .patient-portal-page .patient-portal-shell {
+    grid-template-columns: minmax(210px, 0.32fr) minmax(0, 0.68fr);
+    padding: 1rem;
+  }
+
+  .patient-portal-page .patient-content-grid,
+  .patient-portal-page .patient-prescription-grid,
+  .patient-portal-page .patient-booking-grid,
+  .patient-portal-page .portal-section-grid,
+  .patient-portal-page .patient-dashboard-dual-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .patient-portal-page .patient-summary-grid,
+  .patient-portal-page .portal-dashboard-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .patient-appointments-page .patient-appointments-toolbar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (min-width: 980px) {
+  .patient-portal-page .patient-portal-shell {
+    grid-template-columns: minmax(250px, 290px) minmax(0, 1fr);
+  }
+
+  .patient-portal-page .patient-content-grid,
+  .patient-portal-page .patient-prescription-grid,
+  .patient-portal-page .patient-booking-grid,
+  .patient-portal-page .portal-section-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .patient-portal-page .patient-dashboard-dual-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* Appointment page topology: natural page flow, compact patient cards, and a
+   single predictable action row. */
+.patient-appointments-page .patient-main {
+  overflow: visible;
+}
+
+.patient-appointments-page .patient-appointments-toolbar {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.patient-appointments-page .patient-appointments-search-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 1rem;
+}
+
+.patient-appointments-page .patient-appointments-search-actions .patient-action-strip {
+  justify-content: flex-end;
+}
+
+.patient-appointments-page .patient-appointments-search-actions .primary-button {
+  min-width: 10.5rem;
+}
+
+.patient-appointments-page .patient-appointment-list {
+  max-height: none;
+  overflow: visible;
+  padding-right: 0;
+}
+
+.patient-appointments-page .patient-guidance-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.15rem 1rem;
+  padding: 0.85rem 1rem;
+  border-color: rgba(15, 122, 117, 0.16);
+  background: linear-gradient(100deg, rgba(15, 122, 117, 0.07), rgba(255, 255, 255, 0.92));
+}
+
+.patient-appointments-page .patient-guidance-card strong {
+  font-size: 0.92rem;
+  line-height: 1.3;
+}
+
+.patient-appointments-page .patient-guidance-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.patient-appointments-page .patient-guidance-card .patient-action-row {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+
+.patient-appointments-page .patient-guidance-card .secondary-button {
+  min-height: 2.6rem;
+  white-space: nowrap;
+}
+
+.patient-appointments-page .patient-record-card {
+  gap: 0.6rem;
+  padding: 1rem;
+}
+
+.patient-appointments-page .patient-record-card .record-card-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.75rem;
+}
+
+.patient-appointments-page .patient-record-card .record-card-top > div {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.patient-appointments-page .patient-record-card .record-card-top strong {
+  font-size: 1rem;
+  line-height: 1.3;
+}
+
+.patient-appointments-page .patient-record-card .record-card-top span:not(.status-pill) {
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.4;
+}
+
+.patient-appointments-page .patient-record-card > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.patient-appointments-page .patient-record-card .record-card-meta {
+  margin-top: 0.05rem;
+  font-size: 0.78rem;
+}
+
+@media (min-width: 760px) {
+  .patient-appointments-page .patient-filter-row {
+    padding-bottom: 0.1rem;
+  }
+
+  .patient-appointments-page .patient-filter-pill {
+    min-height: 2.35rem;
+    padding-inline: 0.75rem;
+    font-size: 0.8rem;
+    white-space: nowrap;
+  }
+}
+
+@media (min-width: 760px) and (max-width: 979px) {
+  .patient-appointments-page .patient-appointments-search-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .patient-appointments-page .patient-appointments-search-actions .patient-action-strip {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 759px) {
+  .patient-appointments-page .patient-appointments-search-actions {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.6rem;
+  }
+
+  .patient-appointments-page .patient-appointments-search-actions .patient-action-strip,
+  .patient-appointments-page .patient-appointments-search-actions .primary-button {
+    width: 100%;
+  }
+
+  .patient-appointments-page .patient-guidance-card {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.25rem;
+  }
+
+  .patient-appointments-page .patient-guidance-card .patient-action-row {
+    grid-column: 1;
+    grid-row: auto;
+    margin-top: 0.35rem;
+  }
+
+  .patient-appointments-page .patient-guidance-card .secondary-button {
     width: 100%;
   }
 }

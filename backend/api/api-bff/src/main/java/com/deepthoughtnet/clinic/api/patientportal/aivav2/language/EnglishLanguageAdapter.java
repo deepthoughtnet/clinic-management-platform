@@ -61,6 +61,12 @@ public class EnglishLanguageAdapter implements AivaLanguageAdapter {
 
     protected String normalizeSelection(String text) {
         String normalized = text.replaceFirst("^(?:take|choose|select|use)\\s+", "");
+        // Normalize common spoken/ASR punctuation variants before parsing the
+        // canonical clock.  This is language-boundary normalization, not a
+        // slot or provider-specific rule.
+        normalized = normalized
+                .replaceAll("(?i)(?<![\\p{L}\\p{N}])([ap])\\s*\\.\\s*m\\.?(?![\\p{L}\\p{N}])", "$1m")
+                .replaceAll("(?i)(?<![\\p{L}\\p{N}])(\\d{1,2})\\s+(\\d{2})(?=\\s*(?:am|pm)\\b)", "$1:$2");
         for (Map.Entry<String, String> entry : SPOKEN_CLOCK_NUMBERS.entrySet()) {
             normalized = normalized.replaceAll("\\b" + entry.getKey()
                     + "(?=\\s*(?:am|pm|o['’]?clock)\\b)", entry.getValue());
@@ -74,6 +80,10 @@ public class EnglishLanguageAdapter implements AivaLanguageAdapter {
                                                 NormalizedUserTurn.EntityReference specialty, boolean qualifier,
                                                 LocalDate referenceDate) {
         List<DeterministicControl> controls = new ArrayList<>();
+        if (normalized.matches("(?iu)^(?:hi|hello|hey|namaste|नमस्ते)(?:\\s+(?:aiva|iva|एआईवीए))?[.!?]*$")) {
+            controls.add(DeterministicControl.GREETING);
+        }
+        addConversationControls(original, normalized, controls);
         boolean negative = Pattern.compile("(?i)(?<![\\p{L}])(?:no|don't|never\\s+mind)(?![\\p{L}])").matcher(normalized).find();
         boolean positive = Pattern.compile("(?i)(?<![\\p{L}])(?:yes|confirm|go\\s+ahead)(?![\\p{L}])").matcher(normalized).find();
         if (negative) controls.add(DeterministicControl.CONFIRMATION_NEGATIVE);
@@ -108,6 +118,33 @@ public class EnglishLanguageAdapter implements AivaLanguageAdapter {
                 pagination, intent);
     }
 
+    /** Bounded conversation controls shared by English, Hindi, and Hinglish adapters. */
+    protected void addConversationControls(String original, String normalized, List<DeterministicControl> controls) {
+        String text = ((normalized == null ? "" : normalized) + " " + (original == null ? "" : original))
+                .toLowerCase(Locale.ROOT);
+        if (text.matches(".*(?:talk\\s+to\\s+(?:a\\s+)?human|speak\\s+to\\s+(?:someone|a\\s+human)|human\\s+agent|receptionist|clinic\\s+se\\s+kisi|रिसेप्शनिस्ट|इंसान|मानव).*") ) {
+            controls.add(DeterministicControl.HUMAN_ASSISTANCE);
+        }
+        if (text.matches(".*(?:are\\s+you\\s+there|can\\s+you\\s+hear\\s+me|aiva\\s*\\?|क्या\\s+आप\\s+हैं|सुन\\s+रही|हो\\s+क्या).*") ) {
+            controls.add(DeterministicControl.PRESENCE_CHECK);
+        }
+        if (text.matches(".*(?:repeat(?:\\s+that)?|say\\s+(?:that|it)\\s+again|फिर\\s+से\\s+बताओ|दोबारा\\s+बताओ).*") ) {
+            controls.add(DeterministicControl.REPEAT_LAST_RESPONSE);
+        }
+        if (text.matches(".*(?:wait|hold\\s+on|one\\s+minute|ek\\s+minute|रुको|एक\\s+मिनट).*") ) {
+            controls.add(DeterministicControl.HOLD);
+        }
+        if (text.matches(".*(?:continue|go\\s+on|जारी\\s+रखो|आगे\\s+बढ़ो).*") ) {
+            controls.add(DeterministicControl.CONTINUE);
+        }
+        if (text.matches(".*(?:stop|cancel\\s+this|never\\s+mind|rehne\\s+do|रहने\\s+दो|बंद\\s+करो).*") ) {
+            controls.add(DeterministicControl.ABANDON_WORKFLOW);
+        }
+        if (text.matches(".*(?:^|\\s)(?:help|what\\s+can\\s+(?:you|i)\\s+do|मदद|क्या\\s+कर\\s+सकती).*(?:$|\\s).*") ) {
+            controls.add(DeterministicControl.HELP);
+        }
+    }
+
     protected NormalizedUserTurn.Intent intent(String normalized) {
         if (normalized.matches(".*\\b(?:reschedule|move)\\b.*")) return NormalizedUserTurn.Intent.RESCHEDULE;
         if (normalized.matches(".*\\b(?:cancel|cancellation)\\b.*")) return NormalizedUserTurn.Intent.CANCELLATION;
@@ -132,6 +169,7 @@ public class EnglishLanguageAdapter implements AivaLanguageAdapter {
         int hour = Integer.parseInt(matcher.group(1));
         int minute = matcher.group(2) == null ? 0 : Integer.parseInt(matcher.group(2));
         String meridiem = matcher.group(3);
+        if (meridiem != null && (hour < 1 || hour > 12)) return null;
         if ("pm".equalsIgnoreCase(meridiem) && hour < 12) hour += 12;
         if ("am".equalsIgnoreCase(meridiem) && hour == 12) hour = 0;
         try { return LocalTime.of(hour, minute); } catch (RuntimeException ignored) { return null; }
@@ -152,11 +190,11 @@ public class EnglishLanguageAdapter implements AivaLanguageAdapter {
     }
 
     private Integer parseOrdinal(String value) {
-        Matcher matcher = Pattern.compile("(?i)^(?:the\\s+)?(first|second|third|fourth|[1-9](?:st|nd|rd|th)?)(?:\\s+(?:one|slot))?(?:\\s+works?)?$")
+        Matcher matcher = Pattern.compile("(?i)^(?:the\\s+)?(first|second|third|fourth|one|two|three|last|[1-9](?:st|nd|rd|th)?)(?:\\s+(?:one|slot))?(?:\\s+works?)?$")
                 .matcher(value == null ? "" : value.trim());
         if (!matcher.matches()) return null;
         return switch (matcher.group(1).toLowerCase(Locale.ROOT)) {
-            case "first" -> 1; case "second" -> 2; case "third" -> 3; case "fourth" -> 4;
+            case "first", "one" -> 1; case "second", "two" -> 2; case "third", "three" -> 3; case "fourth" -> 4; case "last" -> -1;
             default -> Integer.valueOf(matcher.group(1).replaceAll("[^0-9]", ""));
         };
     }

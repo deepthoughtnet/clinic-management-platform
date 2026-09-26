@@ -1203,10 +1203,13 @@ class AivaConversationCorpusCertificationTest {
                     List.of(slot(NEXT_FRIDAY, LocalTime.of(14, 0), true), slot(NEXT_FRIDAY, LocalTime.of(15, 0), true)),
                     (current, additional) -> java.util.stream.Stream.concat(current.stream(), additional.stream()).toList());
             slotsByDoctor.put("doctor-neha", Map.copyOf(nehaSlots));
-            slotsByDoctor.put("doctor-ashish", Map.of(
-                    TOMORROW, List.of(slot(TOMORROW, LocalTime.of(12, 0), true), slot(TOMORROW, LocalTime.of(12, 30), true), slot(TOMORROW, LocalTime.of(13, 0), true)),
-                    NEXT_SATURDAY, List.of(slot(NEXT_SATURDAY, LocalTime.of(9, 0), true), slot(NEXT_SATURDAY, LocalTime.of(10, 0), true))
-            ));
+            Map<LocalDate, List<PatientPortalDoctorSlotResponse>> ashishSlots = new LinkedHashMap<>();
+            ashishSlots.put(TOMORROW, List.of(slot(TOMORROW, LocalTime.of(12, 0), true),
+                    slot(TOMORROW, LocalTime.of(12, 30), true), slot(TOMORROW, LocalTime.of(13, 0), true)));
+            mergeSlots(ashishSlots, NEXT_SATURDAY, List.of(
+                    slot(NEXT_SATURDAY, LocalTime.of(9, 0), true),
+                    slot(NEXT_SATURDAY, LocalTime.of(10, 0), true)));
+            slotsByDoctor.put("doctor-ashish", Map.copyOf(ashishSlots));
             slotsByDoctor.put("doctor-vikas", Map.of(
                     TOMORROW, List.of(slot(TOMORROW, LocalTime.of(10, 0), true), slot(TOMORROW, LocalTime.of(10, 30), true)),
                     NEXT_WEEK, List.of(slot(NEXT_WEEK, LocalTime.of(11, 0), true), slot(NEXT_WEEK, LocalTime.of(11, 30), true))

@@ -3,7 +3,7 @@ package com.deepthoughtnet.clinic.api.patientportal.aivav2.language;
 import java.util.Map;
 
 /** Small, bounded transliterator used only for Devanagari entity spans. */
-final class DevanagariNameTransliterator {
+public final class DevanagariNameTransliterator {
     private static final Map<Character, String> INDEPENDENT_VOWELS = Map.ofEntries(
             Map.entry('अ', "a"), Map.entry('आ', "aa"), Map.entry('इ', "i"), Map.entry('ई', "ee"),
             Map.entry('उ', "u"), Map.entry('ऊ', "oo"), Map.entry('ए', "e"), Map.entry('ऐ', "ai"),
@@ -26,7 +26,7 @@ final class DevanagariNameTransliterator {
 
     private DevanagariNameTransliterator() { }
 
-    static String transliterate(String text) {
+    public static String transliterate(String text) {
         StringBuilder result = new StringBuilder();
         boolean pendingVowel = false;
         for (int i = 0; i < text.length(); i++) {
@@ -61,7 +61,7 @@ final class DevanagariNameTransliterator {
         return result.toString().replaceAll("a$", "").replaceAll("\\s+", " ").trim();
     }
 
-    static String titleCaseWords(String value) {
+    public static String titleCaseWords(String value) {
         StringBuilder result = new StringBuilder();
         for (String word : value.split(" ")) {
             if (word.isEmpty()) continue;

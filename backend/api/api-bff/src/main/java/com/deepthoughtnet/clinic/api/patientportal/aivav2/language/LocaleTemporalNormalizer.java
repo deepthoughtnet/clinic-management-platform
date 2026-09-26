@@ -28,6 +28,8 @@ public final class LocaleTemporalNormalizer {
             "(?<![\\p{L}\\p{N}])(\\d{1,2})(?:st|nd|rd|th)(?!\\s+(?:slot|appointment|one))(?![\\p{L}\\p{N}])"
                     + "|(?<![\\p{L}\\p{N}])(\\d{1,2})\\s*(?:ko|तारीख़?(?:\\s*को)?)(?![\\p{L}\\p{N}])",
             Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
+    private static final Pattern HINDI_DAY_WORD = Pattern.compile(
+            "(?iu)(?<![\\p{L}\\p{N}])(एक|दो|तीन|चार|पाँच|पांच|छह|छः|सात|आठ|नौ|दस|ग्यारह|बारह|तेरह|चौदह|पंद्रह|पन्द्रह|सोलह|सत्रह|अठारह|उन्नीस|बीस|इक्कीस|बाईस|तेईस|चौबीस|पच्चीस|छब्बीस|सत्ताईस|अट्ठाईस|अट्ठाइस|उनतीस|तीस|इकतीस)\\s*(?:तारीख|तारीख़)(?:\\s*को)?(?![\\p{L}\\p{N}])");
     private static final Pattern RELATIVE = Pattern.compile(
             "(?<![\\p{L}\\p{N}])(day after tomorrow|parson|परसों|tomorrow|kal|कल|today|aaj|आज)(?![\\p{L}\\p{N}])",
             Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
@@ -75,6 +77,18 @@ public final class LocaleTemporalNormalizer {
                 LocalDate candidate = LocalDate.of(reference.getYear(), reference.getMonthValue(), day);
                 return candidate.isBefore(reference) ? candidate.plusYears(1) : candidate;
             }, true, NormalizedUserTurn.RelativeKind.NONE);
+        }
+        Matcher hindiDay = HINDI_DAY_WORD.matcher(raw);
+        if (hindiDay.find()) {
+            String word = key(hindiDay.group(1));
+            Integer day = hindiDayNumber(word);
+            if (day != null) {
+                String span = hindiDay.group();
+                return resolve(span, () -> {
+                    LocalDate candidate = LocalDate.of(reference.getYear(), reference.getMonthValue(), day);
+                    return candidate.isBefore(reference) ? candidate.plusYears(1) : candidate;
+                }, true, NormalizedUserTurn.RelativeKind.NONE);
+            }
         }
         Matcher relative = RELATIVE.matcher(raw);
         if (relative.find()) {
@@ -192,6 +206,22 @@ public final class LocaleTemporalNormalizer {
             values.put(key(transliterations[index][1]), day);
         }
         return Map.copyOf(values);
+    }
+
+    private static Integer hindiDayNumber(String value) {
+        return switch (value) {
+            case "एक" -> 1; case "दो" -> 2; case "तीन" -> 3; case "चार" -> 4;
+            case "पांच" -> 5; case "छह", "छः" -> 6; case "सात" -> 7;
+            case "आठ" -> 8; case "नौ" -> 9; case "दस" -> 10; case "ग्यारह" -> 11;
+            case "बारह" -> 12; case "तेरह" -> 13; case "चौदह" -> 14;
+            case "पंद्रह", "पन्द्रह" -> 15; case "सोलह" -> 16; case "सत्रह" -> 17;
+            case "अठारह" -> 18; case "उन्नीस" -> 19; case "बीस" -> 20;
+            case "इक्कीस" -> 21; case "बाईस" -> 22; case "तेईस" -> 23;
+            case "चौबीस" -> 24; case "पच्चीस" -> 25; case "छब्बीस" -> 26;
+            case "सत्ताईस" -> 27; case "अट्ठाईस", "अट्ठाइस" -> 28;
+            case "उनतीस" -> 29; case "तीस" -> 30; case "इकतीस" -> 31;
+            default -> null;
+        };
     }
 
     private static String key(String value) {

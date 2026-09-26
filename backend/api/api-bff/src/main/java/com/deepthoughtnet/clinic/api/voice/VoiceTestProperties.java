@@ -8,7 +8,7 @@ import org.springframework.stereotype.Component;
 @ConfigurationProperties(prefix = "voice")
 public class VoiceTestProperties {
     private boolean enabled = true;
-    private boolean aivaV2Enabled = false;
+    private boolean aivaV2Enabled = true;
     private String defaultLanguage = "hi-IN";
     private String responseLanguage = "hi-IN";
     private final Stt stt = new Stt();
@@ -548,6 +548,9 @@ public class VoiceTestProperties {
         private int staleAfterMs = 45000;
         private int maxSessionDurationSeconds = 900;
         private int maxIdleSeconds = 120;
+        private int idleReminderSeconds = 25;
+        private int idleCloseSeconds = 60;
+        private int terminalCloseSeconds = 20;
         private int maxTurnsPerSession = 20;
         private int maxAudioBytesPerTurn = 10 * 1024 * 1024;
         private int frontendAutoResumeDelayMs = 500;
@@ -583,6 +586,13 @@ public class VoiceTestProperties {
         public void setMaxIdleSeconds(int maxIdleSeconds) {
             this.maxIdleSeconds = maxIdleSeconds;
         }
+
+        public int getIdleReminderSeconds() { return idleReminderSeconds; }
+        public void setIdleReminderSeconds(int value) { this.idleReminderSeconds = value; }
+        public int getIdleCloseSeconds() { return idleCloseSeconds; }
+        public void setIdleCloseSeconds(int value) { this.idleCloseSeconds = value; }
+        public int getTerminalCloseSeconds() { return terminalCloseSeconds; }
+        public void setTerminalCloseSeconds(int value) { this.terminalCloseSeconds = value; }
 
         public int getMaxTurnsPerSession() {
             return maxTurnsPerSession;

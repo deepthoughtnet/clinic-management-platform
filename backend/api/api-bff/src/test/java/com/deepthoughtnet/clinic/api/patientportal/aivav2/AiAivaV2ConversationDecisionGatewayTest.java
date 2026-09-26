@@ -3,6 +3,8 @@ package com.deepthoughtnet.clinic.api.patientportal.aivav2;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.deepthoughtnet.clinic.ai.orchestration.service.AiOrchestrationService;
@@ -37,6 +39,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 class AiAivaV2ConversationDecisionGatewayTest {
     private AiOrchestrationService orchestration;
@@ -67,6 +70,32 @@ class AiAivaV2ConversationDecisionGatewayTest {
         assertThat(decision.operation()).isEqualTo(Operation.CONFIRM_BOOKING);
         assertThat(decision.confirmation()).isEqualTo(AivaV2Models.ConfirmationPolarity.POSITIVE);
         assertThat(decision.provider()).isEqualTo("DETERMINISTIC");
+    }
+
+    @Test
+    void activeGreetingUsesDeterministicPresenceWithoutCallingSemanticProvider() {
+        for (String[] sample : new String[][]{{"Hi", "en"}, {"Hi AIVA", "en"}, {"नमस्ते", "hi"}, {"Namaste AIVA", "hi"}}) {
+            ConversationDecision decision = gateway.decide(sample[0], sample[1], pendingContext());
+            assertThat(decision.operation()).as(sample[0]).isEqualTo(Operation.PRESENCE_CHECK);
+            assertThat(decision.provider()).as(sample[0]).isEqualTo("DETERMINISTIC");
+        }
+        verifyNoInteractions(orchestration);
+    }
+
+    @Test
+    void providerContextQuestionUsesResolvedBookingState() {
+        var provider = providerCandidate("akshu", "Doc Akshu Kumar");
+        BookingDraft draft = new BookingDraft(UUID.randomUUID(), UUID.randomUUID(), "tenant", provider,
+                "General Medicine", LocalDate.of(2026, 9, 29), null, null, null, null,
+                AivaV2Models.DraftStatus.COLLECTING, 1, Instant.now().plusSeconds(600), null);
+        SessionProjection context = new SessionProjection("c1", draft.patientSubjectId(), "tenant", draft, null,
+                null, null, null, 1, Instant.now().plusSeconds(600));
+
+        ConversationDecision decision = gateway.decide("Which doctor is this?", "en", context);
+
+        assertThat(decision.operation()).isEqualTo(Operation.ANSWER_PROVIDER_CONTEXT);
+        assertThat(decision.provider()).isEqualTo("DETERMINISTIC");
+        verifyNoInteractions(orchestration);
     }
 
     @Test
@@ -543,6 +572,69 @@ class AiAivaV2ConversationDecisionGatewayTest {
     }
 
     @Test
+    void providerListOrdinalWordsSelectOnlyFromCurrentAuthorizedCandidates() {
+        SessionProjection context = providerContext(providerResult(List.of(
+                providerCandidate("a", "Demo Doctor"),
+                providerCandidate("b", "Doc Akshu Kumar"),
+                providerCandidate("c", "Doc UAT Automation"))));
+
+        for (String input : List.of("Three", "third", "3", "third one")) {
+            ConversationDecision decision = gateway.decide(input, "en", context);
+            assertThat(decision.operation()).as(input).isEqualTo(Operation.RESOLVE_PROVIDER);
+            assertThat(decision.selection()).as(input).isNotNull();
+            assertThat(decision.selection().candidateRef()).as(input).isEqualTo("c");
+            assertThat(decision.provider()).as(input).isEqualTo("DETERMINISTIC");
+        }
+        ConversationDecision invalid = gateway.decide("four", "en", context);
+        assertThat(invalid.operation()).isEqualTo(Operation.UNKNOWN);
+        assertThat(invalid.selection()).isNull();
+    }
+
+    @Test
+    void providerSelectionAcceptsNaturalWrappersAndRejectsMultipleChoices() {
+        SessionProjection context = providerContext(providerResult(List.of(
+                providerCandidate("a", "Demo Doctor"),
+                providerCandidate("b", "Doc Akshu Kumar"),
+                providerCandidate("c", "Doc UAT Automation"))));
+        for (String input : List.of("number three", "the first one", "I want first",
+                "I would like second", "second one", "choose number two", "two please",
+                "One, Doc Akshu Kumar")) {
+            ConversationDecision decision = gateway.decide(input, "en", context);
+            assertThat(decision.operation()).as(input).isEqualTo(Operation.RESOLVE_PROVIDER);
+            assertThat(decision.selection()).as(input).isNotNull();
+        }
+        ConversationDecision hindiName = gateway.decide("डॉक्टर अक्षु कुमार के साथ", "hi", context);
+        assertThat(hindiName.operation()).isEqualTo(Operation.RESOLVE_PROVIDER);
+        assertThat(hindiName.selection()).isNotNull();
+        assertThat(hindiName.selection().candidateRef()).isEqualTo("b");
+        ConversationDecision multiple = gateway.decide("1 or 2", "en", context);
+        assertThat(multiple.operation()).isEqualTo(Operation.RESOLVE_PROVIDER);
+        assertThat(multiple.selection()).isNull();
+    }
+
+    @Test
+    void explicitHindiTimeWinsOverOrdinalOnDisplayedEveningSlots() {
+        AvailabilityResult availability = new AvailabilityResult(UUID.randomUUID(), UUID.randomUUID(), 1,
+                "criteria", "provider", "doctor", "clinic", LocalDate.of(2026, 9, 25), null,
+                "Asia/Kolkata", List.of(
+                new AvailabilitySlot("s1", LocalTime.of(17, 0), LocalTime.of(17, 30), "17:00"),
+                new AvailabilitySlot("s2", LocalTime.of(17, 30), LocalTime.of(18, 0), "17:30"),
+                new AvailabilitySlot("s3", LocalTime.of(18, 30), LocalTime.of(19, 0), "18:30")),
+                null, false, Instant.now(), Instant.now().plusSeconds(600));
+        SessionProjection context = new SessionProjection("c1", UUID.randomUUID(), "tenant", null, null,
+                null, availability, null, 1, Instant.now().plusSeconds(600));
+        ConversationDecision five = gateway.decide("शाम पाँच बजे", "hi", context);
+        assertThat(five.operation()).isEqualTo(Operation.SELECT_SLOT);
+        assertThat(five.selection().exactTime()).isEqualTo("17:00");
+        ConversationDecision one = gateway.decide("1 बजे", "hi", context);
+        assertThat(one.operation()).isEqualTo(Operation.SELECT_SLOT);
+        assertThat(one.selection().ordinal()).isNull();
+        assertThat(one.selection().exactTime()).isNotEqualTo("17:00");
+        ConversationDecision bare = gateway.decide("one", "en", context);
+        assertThat(bare.selection().ordinal()).isEqualTo(1);
+    }
+
+    @Test
     void appointmentLookupDecisionPreservesTypedFilters() {
         when(orchestration.complete(any())).thenReturn(response("GEMINI", false, """
                 {"schemaVersion":"1.0","dialogAct":"ASK_QUESTION","operation":"LOOKUP_APPOINTMENTS",
@@ -940,6 +1032,41 @@ class AiAivaV2ConversationDecisionGatewayTest {
     }
 
     @Test
+    void activeBookingContextIncludesBoundedDraftValuesAndPendingProviderFieldForSemanticSpecialty() {
+        Instant now = Instant.parse("2026-09-10T00:00:00Z");
+        BookingDraft draft = new BookingDraft(UUID.randomUUID(), UUID.randomUUID(), "tenant", null, null,
+                LocalDate.of(2026, 9, 22), null, null, null, null,
+                AivaV2Models.DraftStatus.COLLECTING, 2, now.plusSeconds(1800), null);
+        SessionProjection context = new SessionProjection("c1", draft.patientSubjectId(), draft.tenantScope(),
+                draft, null, null, null, null, 1, now.plusSeconds(1800));
+        when(orchestration.complete(any())).thenReturn(response("GEMINI", false, """
+                {"schemaVersion":"1.0","dialogAct":"PROVIDE_INFORMATION","operation":"UPDATE_BOOKING",
+                 "bookingPatch":{"specialtyText":{"mode":"SET","value":"General Medicine"}},
+                 "responseLanguage":"hi","confidence":0.95}
+                """));
+
+        ConversationDecision decision = gateway.decide("General Medicine", "hi", context);
+
+        ArgumentCaptor<com.deepthoughtnet.clinic.platform.contracts.ai.AiOrchestrationRequest> captor =
+                ArgumentCaptor.forClass(com.deepthoughtnet.clinic.platform.contracts.ai.AiOrchestrationRequest.class);
+        verify(orchestration).complete(captor.capture());
+        @SuppressWarnings("unchecked")
+        var bookingContext = (java.util.Map<String, Object>) captor.getValue().inputVariables().get("bookingContext");
+        @SuppressWarnings("unchecked")
+        var bookingDraft = (java.util.Map<String, Object>) bookingContext.get("bookingDraft");
+
+        assertThat(bookingContext).containsEntry("activeWorkflow", "BOOKING")
+                .containsEntry("pendingField", "PROVIDER_OR_SPECIALTY");
+        assertThat(bookingDraft).containsEntry("providerName", null)
+                .containsEntry("specialty", null)
+                .containsEntry("date", "2026-09-22")
+                .containsEntry("timeWindow", null)
+                .containsEntry("exactTime", null);
+        assertThat(decision.operation()).isEqualTo(Operation.UPDATE_BOOKING);
+        assertThat(decision.bookingPatch().specialtyText().value()).isEqualTo("General Medicine");
+    }
+
+    @Test
     void devanagariDoctorEntityIsRecoveredBeforeProviderResolution() {
         when(orchestration.complete(any())).thenReturn(response("GEMINI", false, """
                 {"dialogAct":"START_REQUEST","operation":"START_BOOKING","schemaVersion":"1.0",
@@ -1066,9 +1193,20 @@ class AiAivaV2ConversationDecisionGatewayTest {
                 "{\"schemaVersion\":\"1.0\",\"dialogAct\":\"BAD\",\"operation\":\"START_BOOKING\","
                         + "\"bookingPatch\":{},\"confirmation\":\"NONE\",\"topicAction\":\"CONTINUE\",\"confidence\":1.0}"));
 
-        ConversationDecision decision = gateway.decide("Book an appointment", "en", emptyContext());
+        ConversationDecision decision = gateway.decide("Start a consultation", "en", emptyContext());
 
         assertThat(decision.operation()).isEqualTo(Operation.UNKNOWN);
+    }
+
+    @Test
+    void explicitBookingRecoversFromStaleProviderSearchState() {
+        ConversationDecision decision = gateway.decide("Book an appointment", "en",
+                providerContext(new ProviderSearchResult(UUID.randomUUID(), AivaV2Models.ResolutionStatus.NOT_FOUND,
+                        "stale", List.of(), null, Instant.now(), Instant.now().plusSeconds(300))));
+
+        assertThat(decision.operation()).isEqualTo(Operation.START_BOOKING);
+        assertThat(decision.provider()).isEqualTo("DETERMINISTIC");
+        verifyNoInteractions(orchestration);
     }
 
     private SessionProjection emptyContext() {

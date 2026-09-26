@@ -9,7 +9,9 @@ import {
   PatientLoginPage,
   PatientAccessRequestPage,
   PatientNotificationsPage,
+  PatientMorePage,
   PatientProfilePage,
+  PatientRecordsPage,
   PatientRegistrationPage,
   PatientPrescriptionsPage,
 } from "./pages/patient/PatientPortalPages";
@@ -66,6 +68,8 @@ function pageTitleForPath(pathname: string) {
   if (pathname === "/patient/notifications") return `Notifications | ${branding.productName}`;
   if (pathname === "/patient/careai") return `AIVA | ${branding.productName}`;
   if (pathname === "/patient/profile") return `Profile | ${branding.productName}`;
+  if (pathname === "/patient/records") return `Records | ${branding.productName}`;
+  if (pathname === "/patient/more") return `More | ${branding.productName}`;
   if (pathname.startsWith("/patient")) return `${branding.productName}`;
   if (pathname === "/careai") return `AIVA | ${branding.productName}`;
   if (pathname.startsWith("/aiva")) return `AIVA | ${branding.productName}`;
@@ -431,6 +435,8 @@ export function App() {
           <Route path="/patient/prescriptions" element={<PatientPrescriptionsPage session={session} onSignOut={clearPatientSessionAndContext} />} />
           <Route path="/patient/bills" element={<PatientBillsPage session={session} onSignOut={clearPatientSessionAndContext} />} />
           <Route path="/patient/notifications" element={<PatientNotificationsPage session={session} onSignOut={clearPatientSessionAndContext} />} />
+          <Route path="/patient/records" element={<PatientRecordsPage session={session} onSignOut={clearPatientSessionAndContext} />} />
+          <Route path="/patient/more" element={<PatientMorePage session={session} onSignOut={clearPatientSessionAndContext} />} />
           <Route path="/patient/lab" element={<PatientLabPage session={session} onSignOut={clearPatientSessionAndContext} />} />
           <Route path="/patient/careai" element={<PatientCareAiPage session={session} onSignOut={clearPatientSessionAndContext} />} />
           <Route path="/patient/profile" element={<PatientProfilePage session={session} onSignOut={clearPatientSessionAndContext} />} />

@@ -16,6 +16,8 @@ import org.springframework.stereotype.Component;
 public class AivaResponseRenderer {
     private static final DateTimeFormatter EN_DATE = DateTimeFormatter.ofPattern("d MMMM uuuu", Locale.ENGLISH);
     private static final DateTimeFormatter HI_DATE = DateTimeFormatter.ofPattern("d MMMM uuuu", Locale.forLanguageTag("hi-IN"));
+    private static final DateTimeFormatter EN_HOUR = DateTimeFormatter.ofPattern("h a", Locale.ENGLISH);
+    private static final DateTimeFormatter EN_MINUTE = DateTimeFormatter.ofPattern("h:mm a", Locale.ENGLISH);
 
     public MessageResponse render(MessageResponse response, String responseLanguage, ResponseStyle responseStyle) {
         if (response == null) return null;
@@ -61,6 +63,10 @@ public class AivaResponseRenderer {
                     : "ठीक है। बातचीत यहीं समाप्त करते हैं। अपना ध्यान रखिए।")
                     : "Goodbye. Take care.";
             case CONTEXTUAL_INFORMATION -> contextualInformation((ContextualInformationPayload) payload, hinglish, hindi);
+            case HUMAN_ASSISTANCE -> humanAssistance((HumanAssistancePayload) payload, hinglish, hindi);
+            case INTRO -> hindi
+                    ? "नमस्ते, मैं AIVA हूँ। मैं डॉक्टर ढूँढने और अपॉइंटमेंट देखने, बुक करने, रीशेड्यूल करने या कैंसिल करने में मदद कर सकती हूँ।"
+                    : "Hi, I’m AIVA. I can help you find doctors and manage appointments — including booking, viewing, rescheduling, or cancelling them.";
             case APPOINTMENTS_NONE -> noAppointments((AppointmentListPayload) payload, hinglish, hindi);
             case APPOINTMENTS_FOUND -> appointments((AppointmentListPayload) payload, hinglish, hindi);
             case LOOKUP_CLARIFICATION -> hindi ? (hinglish ? "Kaunsi appointment ke baare mein jaanna chahte hain?"
@@ -135,6 +141,11 @@ public class AivaResponseRenderer {
     }
 
     private String providerChoices(ProviderChoicesPayload payload, boolean hinglish, boolean hindi) {
+        if (payload == null || payload.candidates() == null || payload.candidates().isEmpty()) {
+            return hindi ? (hinglish ? "Is doctor se match nahi mila. Aap koi aur doctor ya specialty try kar sakte hain."
+                    : "इस डॉक्टर से मेल नहीं मिला। आप किसी दूसरे डॉक्टर या विशेषज्ञता को आज़मा सकते हैं।")
+                    : "I couldn't find a matching doctor. You can try another doctor name or specialty.";
+        }
         String choices = choices(payload.candidates().stream().map(ProviderOption::doctorDisplayName).toList());
         if (hindi) return hinglish ? "Mujhe ye doctors mile: " + choices + ". Aap kise chunenge?"
                 : "मुझे ये डॉक्टर मिले: " + choices + "। आप किसे चुनेंगे?";
@@ -148,7 +159,7 @@ public class AivaResponseRenderer {
                     : date + " के लिए कोई स्लॉट उपलब्ध नहीं है। क्या आप दूसरी तारीख देखना चाहेंगे?";
             return "There are no available slots for " + date + ". Would you like to check another date?";
         }
-        String slots = slotLabels(payload.slots());
+        String slots = slotLabels(payload.slots(), hinglish, hindi);
         if (hindi) return hinglish ? "Available slots for " + date + ": " + slots + ". Aapke liye kaunsa time theek rahega?"
                 : date + " के लिए उपलब्ध स्लॉट: " + slots + "। आपके लिए कौन-सा समय ठीक रहेगा?";
         return "Available slots for " + date + ": " + slots + ". Which one works?";
@@ -161,7 +172,7 @@ public class AivaResponseRenderer {
                     : date + " को रीशेड्यूल के लिए कोई स्लॉट उपलब्ध नहीं है। क्या आप दूसरी तारीख देखना चाहेंगे?";
             return "There are no available reschedule slots for " + date + ". Would you like to check another date?";
         }
-        String slots = slotLabels(payload.slots());
+        String slots = slotLabels(payload.slots(), hinglish, hindi);
         if (hindi) return hinglish ? "Reschedule ke liye " + date + " par available slots: " + slots + ". Kaunsa time theek rahega?"
                 : "रीशेड्यूल के लिए " + date + " को उपलब्ध स्लॉट: " + slots + "। कौन-सा समय ठीक रहेगा?";
         return "Available reschedule slots for " + date + ": " + slots + ". Which one works?";
@@ -184,7 +195,7 @@ public class AivaResponseRenderer {
     private String bookingConfirmation(BookingConfirmationPayload payload, boolean hinglish, boolean hindi) {
         String provider = safe(payload.providerDisplayName(), hindi ? "डॉक्टर" : "Doctor");
         String date = formatDate(payload.date(), hinglish, hindi);
-        String time = formatTime(payload.time());
+        String time = formatTime(payload.time(), hinglish, hindi);
         if (hindi) return hinglish ? provider + " ke saath " + date + " ko " + time + " baje. Kya main ise book kar doon?"
                 : provider + " के साथ " + date + " को " + time + " बजे। क्या मैं इसे बुक कर दूँ?";
         return provider + " on " + date + " at " + time + ". Shall I book it?";
@@ -262,8 +273,8 @@ public class AivaResponseRenderer {
         AppointmentFact original = payload.originalAppointment();
         String provider = safe(payload.providerDisplayName(), hindi ? "डॉक्टर" : "Doctor");
         String connector = hindi ? (hinglish ? " ko " : " को ") : " at ";
-        String from = original == null ? "" : formatDate(original.date(), hinglish, hindi) + connector + formatTime(original.time());
-        String to = formatDate(payload.targetDate(), hinglish, hindi) + connector + formatTime(payload.targetTime());
+        String from = original == null ? "" : formatDate(original.date(), hinglish, hindi) + connector + formatTime(original.time(), hinglish, hindi);
+        String to = formatDate(payload.targetDate(), hinglish, hindi) + connector + formatTime(payload.targetTime(), hinglish, hindi);
         if (hindi) return hinglish ? provider + " ke saath appointment " + from + " se " + to + " par shift kar doon?"
                 : provider + " के साथ " + from + " की अपॉइंटमेंट को " + to + " पर शिफ्ट कर दूँ?";
         return "Move your appointment with " + provider + " from " + from + " to " + to + "? Shall I reschedule it?";
@@ -271,7 +282,7 @@ public class AivaResponseRenderer {
 
     private String rescheduleSuccess(RescheduleSuccessPayload payload, boolean hinglish, boolean hindi) {
         String date = formatDate(payload.newDate(), hinglish, hindi);
-        String time = formatTime(payload.newTime());
+        String time = formatTime(payload.newTime(), hinglish, hindi);
         if (hindi) return hinglish ? "Aapki appointment " + date + " ko " + time + " baje ke liye reschedule ho gayi hai."
                 : "आपकी अपॉइंटमेंट " + date + " को " + time + " बजे के लिए रीशेड्यूल हो गई है।";
         return "Your appointment has been rescheduled to " + date + " at " + time + ".";
@@ -299,6 +310,10 @@ public class AivaResponseRenderer {
         }
         if ("PAST_DATE".equals(code)) return hindi ? (hinglish ? "Yeh date beet chuki hai. Aaj ya aage ki date chunen."
                 : "यह तारीख बीत चुकी है। कृपया आज या भविष्य की तारीख चुनें।") : "That date is in the past. Please choose today or a future date.";
+        if ("SLOT_SELECTION_REQUIRED".equals(code)) return hindi
+                ? (hinglish ? "Dikhaye gaye slots mein se ek chunen."
+                : "कृपया दिखाए गए स्लॉट में से एक चुनें।")
+                : "Please select one of the displayed slots.";
         if ("INVALID".equals(code)) return hindi ? (hinglish ? "Main is time ko samajh nahi paaya."
                 : "मैं इस समय को समझ नहीं पाया।") : "I couldn't use that time.";
         if ("LOOKUP_FILTER_AMBIGUOUS".equals(code)) return hindi ? (hinglish ? "Kis doctor ya specialty ki appointment?"
@@ -319,6 +334,21 @@ public class AivaResponseRenderer {
         return "Online scheduling is not connected for " + name + ". Please contact the clinic directly.";
     }
 
+    private String humanAssistance(HumanAssistancePayload payload, boolean hinglish, boolean hindi) {
+        boolean call = payload != null && payload.channels().contains("CALL_RECEPTION")
+                && payload.clinicPhone() != null && !payload.clinicPhone().isBlank();
+        if (call) {
+            if (hindi) return hinglish
+                    ? "Aap clinic team se baat kar sakte hain. Reception ko call karein: " + payload.clinicPhone() + "."
+                    : "आप क्लिनिक टीम से बात कर सकते हैं। रिसेप्शन पर कॉल करें: " + payload.clinicPhone() + "।";
+            return "You can contact the clinic team by calling reception at " + payload.clinicPhone() + ".";
+        }
+        if (hindi) return hinglish
+                ? "Main abhi aapko human se connect nahi kar sakti. Care mein diye gaye clinic contact details ka use karein."
+                : "मैं अभी आपको किसी मानव से सीधे नहीं जोड़ सकती। Care में दिए गए क्लिनिक संपर्क विवरण का उपयोग करें।";
+        return "I can't directly connect you right now. You can contact the clinic using the details shown in Care.";
+    }
+
     private String appointmentLine(AppointmentFact appointment, boolean hinglish, boolean hindi) {
         String core = appointmentCore(appointment, hinglish, hindi);
         if (hindi) return hinglish ? "Aapki " + core + " appointment hai."
@@ -331,7 +361,7 @@ public class AivaResponseRenderer {
         String date = appointment.date() == null ? (hindi ? "निर्धारित तारीख" : "the scheduled date")
                 : formatDate(appointment.date(), hinglish, hindi);
         String time = appointment.time() == null ? (hindi ? "निर्धारित समय" : "the scheduled time")
-                : formatTime(appointment.time());
+                : formatTime(appointment.time(), hinglish, hindi);
         if (hindi) return hinglish ? doctor + " ke saath " + date + " ko " + time + " baje"
                 : doctor + " के साथ " + date + " को " + time + " बजे";
         return "with " + doctor + " on " + date + " at " + time;
@@ -349,9 +379,15 @@ public class AivaResponseRenderer {
         return String.join("; ", labels);
     }
 
-    private String slotLabels(List<SlotFact> slots) {
+    private String slotLabels(List<SlotFact> slots, boolean hinglish, boolean hindi) {
         java.util.ArrayList<String> labels = new java.util.ArrayList<>();
-        for (int i = 0; i < slots.size(); i++) labels.add((i + 1) + ". " + safe(slots.get(i).displayTime(), formatTime(slots.get(i).startsAt())));
+        for (int i = 0; i < slots.size(); i++) {
+            SlotFact slot = slots.get(i);
+            String display = slot.startsAt() == null ? null : formatTime(slot.startsAt(), hinglish, hindi);
+            if (display == null || display.isBlank()) display = spokenTime(slot.displayTime(), hinglish, hindi);
+            if (hindi && display != null && !display.isBlank()) display += hinglish ? " baje" : " बजे";
+            labels.add((i + 1) + ". " + safe(display, hindi ? "निर्धारित समय" : "the scheduled time"));
+        }
         return String.join("; ", labels);
     }
 
@@ -360,6 +396,25 @@ public class AivaResponseRenderer {
         return date.format(hindi && !hinglish ? HI_DATE : EN_DATE);
     }
 
-    private String formatTime(LocalTime time) { return time == null ? "" : time.toString(); }
+    private String formatTime(LocalTime time, boolean hinglish, boolean hindi) {
+        if (time == null) return "";
+        if (!hindi) return (time.getMinute() == 0 ? EN_HOUR : EN_MINUTE).format(time);
+        String period = time.getHour() < 12 ? (hinglish ? "subah" : "सुबह")
+                : time.getHour() < 17 ? (hinglish ? "dopahar" : "दोपहर")
+                : time.getHour() < 20 ? (hinglish ? "shaam" : "शाम")
+                : (hinglish ? "raat" : "रात");
+        String clock = (time.getMinute() == 0 ? EN_HOUR : EN_MINUTE).format(time)
+                .replace(" AM", "").replace(" PM", "");
+        return period + " " + clock;
+    }
+
+    private String spokenTime(String value, boolean hinglish, boolean hindi) {
+        if (value == null || value.isBlank()) return value;
+        try {
+            return formatTime(LocalTime.parse(value.trim()), hinglish, hindi);
+        } catch (RuntimeException ignored) {
+            return value;
+        }
+    }
     private String safe(String value, String fallback) { return value == null || value.isBlank() ? fallback : value; }
 }

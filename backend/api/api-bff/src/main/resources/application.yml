@@ -222,6 +222,8 @@ clinic:
       expose-development-code: ${CLINIC_DISCOVER_VERIFICATION_EXPOSE_DEVELOPMENT_CODE:false}
 
 aiva:
+  v2:
+    enabled: ${AIVA_V2_ENABLED:true}
   response-composer:
     enabled: ${AIVA_RESPONSE_COMPOSER_ENABLED:false}
     timeout-seconds: ${AIVA_RESPONSE_COMPOSER_TIMEOUT_SECONDS:5}
@@ -235,7 +237,7 @@ logging:
 
 voice:
   enabled: ${VOICE_TEST_ENABLED:true}
-  aiva-v2-enabled: ${VOICE_AIVA_V2_ENABLED:false}
+  aiva-v2-enabled: ${VOICE_AIVA_V2_ENABLED:true}
   default-language: ${AIVA_DEFAULT_LANGUAGE:hi-IN}
   response-language: ${AIVA_RESPONSE_LANGUAGE:hi-IN}
   sarvam:
@@ -296,6 +298,9 @@ voice:
     stale-after-ms: ${VOICE_LIVE_STALE_AFTER_MS:45000}
     max-session-duration-seconds: ${VOICE_LIVE_MAX_SESSION_DURATION_SECONDS:900}
     max-idle-seconds: ${VOICE_LIVE_MAX_IDLE_SECONDS:120}
+    idle-reminder-seconds: ${VOICE_LIVE_IDLE_REMINDER_SECONDS:25}
+    idle-close-seconds: ${VOICE_LIVE_IDLE_CLOSE_SECONDS:60}
+    terminal-close-seconds: ${VOICE_LIVE_TERMINAL_CLOSE_SECONDS:20}
     max-turns-per-session: ${VOICE_LIVE_MAX_TURNS_PER_SESSION:20}
     max-audio-bytes-per-turn: ${VOICE_LIVE_MAX_AUDIO_BYTES_PER_TURN:10485760}
     frontend-auto-resume-delay-ms: ${VOICE_LIVE_FRONTEND_AUTO_RESUME_DELAY_MS:500}

@@ -10,7 +10,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class HindiLanguageAdapter extends EnglishLanguageAdapter {
     private static final Pattern HINDI_SIGNAL = Pattern.compile(
-            "(?:mujhe|meri|mere|ke\\s+saath|karni\\s+hai|wali|wala|theek|hai|haan|nahi|nahin|subah|dopahar|shaam|raat|baje|dikhao|aur|dusri|agali|pehla|पहला|हाँ|हां|नहीं|नही|सुबह|दोपहर|शाम|रात|बजे|दिखाओ|और|दूसरी|अगली|स्लॉट)",
+            "(?:mujhe|meri|mere|ke\\s+saath|karni\\s+hai|wali|wala|theek|hai|haan|nahi|nahin|namaste|subah|dopahar|shaam|raat|baje|dikhao|aur|dusri|agali|pehla|पहला|हाँ|हां|नहीं|नही|नमस्ते|सुबह|दोपहर|शाम|रात|बजे|दिखाओ|और|दूसरी|अगली|स्लॉट)",
             Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
     private static final Pattern HINGLISH_DOCTOR = Pattern.compile(
             "(?i)((?:doctor|dr\\.?|doc)\\s+[\\p{L}][\\p{L}\\p{N}'-]*(?:\\s+(?!ke\\b|के(?=\\s)|sath\\b|साथ(?=\\s)|with\\b|appointment\\b)[\\p{L}][\\p{L}\\p{N}'-]*){0,3})"
@@ -79,9 +79,12 @@ public class HindiLanguageAdapter extends EnglishLanguageAdapter {
                 .replaceAll("(?i)(?<![\\p{L}\\p{N}])(?:raat|रात)\\s+([01]?\\d|2[0-3])", "$1 pm")
                 .replaceAll("(?i)(?<![\\p{L}\\p{N}])(?:aath|आठ)(?=\\s*(?:baje|बजे))", "8")
                 .replaceAll("(?i)(?<![\\p{L}\\p{N}])(?:baje|बजे|wali|वाली|wala|वाला)(?![\\p{L}\\p{N}])", " ")
+                .replaceAll("(?i)(?<![\\p{L}\\p{N}])(?:paanch|पाँच|पांच)(?![\\p{L}\\p{N}])", " 5 ")
                 .replaceAll("(?i)(?:theek\\s+hai|theek|ठीक\\s+है|ठीक)", " works ")
                 .replaceAll("(?i)(?<![\\p{L}\\p{N}])(?:pehla|पहला|पहली)(?![\\p{L}\\p{N}])", " first ")
-                .replaceAll("(?<![\\p{L}\\p{N}])(?:dusra|दूसरा|दूसरी)(?![\\p{L}\\p{N}])", " second ")
+                .replaceAll("(?i)(?<![\\p{L}\\p{N}])(?:dusra|doosra|दूसरा|dusri|doosri|दूसरी)(?![\\p{L}\\p{N}])", " second ")
+                .replaceAll("(?i)(?<![\\p{L}\\p{N}])(?:teesra|teesri|तीसरा|तीसरी)(?![\\p{L}\\p{N}])", " third ")
+                .replaceAll("(?i)(?<![\\p{L}\\p{N}])(?:last|aakhiri|आखिरी)(?![\\p{L}\\p{N}])", " last ")
                 .replaceAll("(?<![\\p{L}\\p{N}])(?:subah|सुबह|dopahar|दोपहर|shaam|शाम|raat|रात)(?![\\p{L}\\p{N}])", " ");
         String selection = normalizeSelection(selectionInput.toLowerCase(Locale.ROOT)
                 .replaceAll("[?.!,;\\u0964\\u0965]+$", "").trim());

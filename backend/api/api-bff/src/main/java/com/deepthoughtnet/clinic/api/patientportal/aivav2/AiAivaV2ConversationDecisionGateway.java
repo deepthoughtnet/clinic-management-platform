@@ -95,14 +95,25 @@ class AiAivaV2ConversationDecisionGateway implements AivaV2ConversationDecisionG
     private static final Pattern DAYPART_CONTROL = Pattern.compile(
             "\\b(morning|afternoon|evening)\\b", Pattern.CASE_INSENSITIVE);
     private static final Pattern PROVIDER_ORDINAL = Pattern.compile(
-            "^(?:the\\s+)?(first|second|third|fourth|[1-9])(?:\\s+(?:one|doctor|provider))?(?:\\s*\\..*)?$",
+            "^(?:the\\s+)?(first|second|third|fourth|one|two|three|[1-9])(?:\\s+(?:one|doctor|provider))?(?:\\s*\\..*)?$",
             Pattern.CASE_INSENSITIVE);
+    private static final Pattern PROVIDER_ORDINAL_TOKEN = Pattern.compile(
+            "(?i)(?<![\\p{L}\\p{N}])(first|second|third|fourth|one|two|three|[1-9](?:st|nd|rd|th)?)(?![\\p{L}\\p{N}])");
+    private static final Pattern TITLED_PROVIDER_FOLLOW_UP = Pattern.compile(
+            "(?iu)^(?:please\\s+)?((?:doctor|dr\\.?|doc)\\s+[\\p{L}][\\p{L}\\p{M}'-]*"
+                    + "(?:\\s+[\\p{L}][\\p{L}\\p{M}'-]*){0,3})[.!?]*$");
+    private static final Pattern TALK_PROVIDER_FOLLOW_UP = Pattern.compile(
+            "(?iu)^(?:please\\s+)?talk(?:\\s+to)?\\s+([\\p{L}][\\p{L}\\p{M}'-]*"
+                    + "(?:\\s+[\\p{L}][\\p{L}\\p{M}'-]*){1,3})[.!?]*$");
 
     private final AiOrchestrationService orchestrationService;
     private final ObjectMapper objectMapper;
     private final ClinicTimeZoneResolver clinicTimeZoneResolver;
     private final Clock clock;
     private final LanguageAdapterRegistry languageAdapterRegistry;
+    private final AivaV2BookingTools bookingTools;
+    private final AivaV2DisplayedSlotSelectionResolver displayedSlotSelectionResolver =
+            new AivaV2DisplayedSlotSelectionResolver();
 
     @Override
     public NormalizedUserTurn presentationTurn(String text, String language) {
@@ -117,23 +128,32 @@ class AiAivaV2ConversationDecisionGateway implements AivaV2ConversationDecisionG
     @Autowired
     AiAivaV2ConversationDecisionGateway(AiOrchestrationService orchestrationService, ObjectMapper objectMapper,
                                         ClinicTimeZoneResolver clinicTimeZoneResolver,
-                                        LanguageAdapterRegistry languageAdapterRegistry) {
-        this(orchestrationService, objectMapper, clinicTimeZoneResolver, Clock.systemUTC(), languageAdapterRegistry);
+                                        LanguageAdapterRegistry languageAdapterRegistry,
+                                        AivaV2BookingTools bookingTools) {
+        this(orchestrationService, objectMapper, clinicTimeZoneResolver, Clock.systemUTC(), languageAdapterRegistry, bookingTools);
     }
 
     AiAivaV2ConversationDecisionGateway(AiOrchestrationService orchestrationService, ObjectMapper objectMapper,
                                         ClinicTimeZoneResolver clinicTimeZoneResolver, Clock clock) {
-        this(orchestrationService, objectMapper, clinicTimeZoneResolver, clock, LanguageAdapterRegistry.defaults());
+        this(orchestrationService, objectMapper, clinicTimeZoneResolver, clock, LanguageAdapterRegistry.defaults(), null);
     }
 
     AiAivaV2ConversationDecisionGateway(AiOrchestrationService orchestrationService, ObjectMapper objectMapper,
                                         ClinicTimeZoneResolver clinicTimeZoneResolver, Clock clock,
                                         LanguageAdapterRegistry languageAdapterRegistry) {
+        this(orchestrationService, objectMapper, clinicTimeZoneResolver, clock, languageAdapterRegistry, null);
+    }
+
+    AiAivaV2ConversationDecisionGateway(AiOrchestrationService orchestrationService, ObjectMapper objectMapper,
+                                        ClinicTimeZoneResolver clinicTimeZoneResolver, Clock clock,
+                                        LanguageAdapterRegistry languageAdapterRegistry,
+                                        AivaV2BookingTools bookingTools) {
         this.orchestrationService = orchestrationService;
         this.objectMapper = objectMapper;
         this.clinicTimeZoneResolver = clinicTimeZoneResolver;
         this.clock = clock;
         this.languageAdapterRegistry = languageAdapterRegistry;
+        this.bookingTools = bookingTools;
     }
 
     @Override
@@ -366,6 +386,40 @@ class AiAivaV2ConversationDecisionGateway implements AivaV2ConversationDecisionG
         boolean confirmationPending = context != null
                 && (context.pendingConfirmation() != null || context.pendingCancellation() != null
                 || context.pendingRescheduleConfirmation() != null);
+        if (turn.controls().contains(DeterministicControl.HUMAN_ASSISTANCE)) {
+            return decision(DialogAct.ASK_QUESTION, Operation.REQUEST_HUMAN_ASSISTANCE, null, null,
+                    ConfirmationPolarity.NONE, language, started);
+        }
+        if (turn.controls().contains(DeterministicControl.ABANDON_WORKFLOW)) {
+            return decision(DialogAct.ABANDON, Operation.ABANDON_BOOKING, null, null,
+                    ConfirmationPolarity.NONE, language, started);
+        }
+        if (turn.controls().contains(DeterministicControl.PRESENCE_CHECK)) {
+            return decision(DialogAct.ASK_QUESTION, Operation.PRESENCE_CHECK, null, null,
+                    ConfirmationPolarity.NONE, language, started);
+        }
+        if (turn.controls().contains(DeterministicControl.REPEAT_LAST_RESPONSE)) {
+            return decision(DialogAct.ASK_QUESTION, Operation.REPEAT_LAST_RESPONSE, null, null,
+                    ConfirmationPolarity.NONE, language, started);
+        }
+        if (turn.controls().contains(DeterministicControl.HOLD)) {
+            return decision(DialogAct.ASK_QUESTION, Operation.HOLD, null, null,
+                    ConfirmationPolarity.NONE, language, started);
+        }
+        if (turn.controls().contains(DeterministicControl.CONTINUE)) {
+            return decision(DialogAct.ASK_QUESTION, Operation.CONTINUE_CONVERSATION, null, null,
+                    ConfirmationPolarity.NONE, language, started);
+        }
+        if (turn.controls().contains(DeterministicControl.HELP)) {
+            return decision(DialogAct.ASK_QUESTION, Operation.INTRO, null, null,
+                    ConfirmationPolarity.NONE, language, started);
+        }
+        if (turn.controls().contains(DeterministicControl.GREETING)) {
+            Operation greeting = context != null && hasActiveConversationContext(context)
+                    ? Operation.PRESENCE_CHECK : Operation.INTRO;
+            return decision(DialogAct.ASK_QUESTION, greeting, null, null,
+                    ConfirmationPolarity.NONE, language, started);
+        }
         if (confirmationPending && turn.confirmation() != NormalizedUserTurn.Confirmation.NONE
                 && turn.pagination() == NormalizedUserTurn.Pagination.SHOW_MORE
                 && turn.confirmation() == NormalizedUserTurn.Confirmation.NEGATIVE) {
@@ -382,6 +436,29 @@ class AiAivaV2ConversationDecisionGateway implements AivaV2ConversationDecisionG
             Operation operation = context.pendingRescheduleConfirmation() != null ? Operation.CONFIRM_RESCHEDULE
                     : context.pendingCancellation() != null ? Operation.CANCEL_APPOINTMENT : Operation.UPDATE_BOOKING;
             return decision(DialogAct.REJECT, operation, null, null, ConfirmationPolarity.NEGATIVE, language, started);
+        }
+        ConversationDecision displayedSlotSelection = displayedSlotSelectionFastPath(
+                turn, context, language, started);
+        if (displayedSlotSelection != null) return displayedSlotSelection;
+        ConversationDecision displayedProviderSelection = displayedProviderSelectionFastPath(
+                turn, context, language, started);
+        if (displayedProviderSelection != null) return displayedProviderSelection;
+        ConversationDecision specialty = deterministicSpecialtyFastPath(turn, context, language, started);
+        if (specialty != null) return specialty;
+        // An explicit booking request has precedence over stale provider-search
+        // state, but never over a confirmation-protected transaction.
+        if (!confirmationPending && context != null && hasActiveConversationContext(context)
+                && isBookingIntent(normalized)
+                && (turn.intent() == NormalizedUserTurn.Intent.BOOKING
+                || turn.intent() == NormalizedUserTurn.Intent.UNKNOWN)) {
+            return decision(DialogAct.START_REQUEST, Operation.START_BOOKING, null, null,
+                    ConfirmationPolarity.NONE, language, started);
+        }
+        if (context != null && context.activeDraft() != null
+                && context.activeDraft().selectedProvider() != null
+                && isProviderContextQuestion(normalized)) {
+            return decision(DialogAct.ASK_QUESTION, Operation.ANSWER_PROVIDER_CONTEXT, null, null,
+                    ConfirmationPolarity.NONE, language, started);
         }
         ConversationDecision farewell = farewellFastPath(turn, language, started);
         if (farewell != null) return farewell;
@@ -473,6 +550,8 @@ class AiAivaV2ConversationDecisionGateway implements AivaV2ConversationDecisionG
         }
         ConversationDecision providerSelection = providerCandidateFastPath(turn, context, language, started);
         if (providerSelection != null) return providerSelection;
+        ConversationDecision pendingProvider = pendingProviderFollowUpFastPath(turn, context, language, started);
+        if (pendingProvider != null) return pendingProvider;
         ConversationDecision timeConstraint = timeConstraintFastPath(normalized + " " + turn.rawText(), language, started, context);
         if (timeConstraint != null && context != null && context.pendingReschedule() != null) {
             return decision(DialogAct.PROVIDE_INFORMATION, Operation.GET_RESCHEDULE_AVAILABILITY,
@@ -499,16 +578,24 @@ class AiAivaV2ConversationDecisionGateway implements AivaV2ConversationDecisionG
         }
         var time = CLOCK_TIME.matcher(selectionText);
         if (time.matches() && context != null && currentAvailability(context) != null) {
-            String exact = normalizeTime(time.group(1), time.group(2), time.group(3));
-            return decision(DialogAct.SELECT_OPTION, Operation.SELECT_SLOT, null,
-                    new Selection(null, null, null, exact), ConfirmationPolarity.NONE, language, started);
+            try {
+                String exact = normalizeTime(time.group(1), time.group(2), time.group(3));
+                return decision(DialogAct.SELECT_OPTION, Operation.SELECT_SLOT, null,
+                        new Selection(null, null, null, exact), ConfirmationPolarity.NONE, language, started);
+            } catch (IllegalArgumentException ignored) {
+                // Keep the current displayed-slot state for invalid input.
+            }
         }
         var acceptedTime = TIME_ACCEPTANCE.matcher(selectionText);
         if (acceptedTime.matches() && context != null && hasAvailability(context)) {
-            String exact = normalizeTime(acceptedTime.group(1), acceptedTime.group(2), acceptedTime.group(3));
-            if (matchesTime(context, exact)) {
-                return decision(DialogAct.SELECT_OPTION, Operation.SELECT_SLOT, null,
-                        new Selection(null, null, null, exact), ConfirmationPolarity.NONE, language, started);
+            try {
+                String exact = normalizeTime(acceptedTime.group(1), acceptedTime.group(2), acceptedTime.group(3));
+                if (matchesTime(context, exact)) {
+                    return decision(DialogAct.SELECT_OPTION, Operation.SELECT_SLOT, null,
+                            new Selection(null, null, null, exact), ConfirmationPolarity.NONE, language, started);
+                }
+            } catch (IllegalArgumentException ignored) {
+                // Keep the current displayed-slot state for invalid input.
             }
         }
         Matcher daypart = DAYPART_CONTROL.matcher(normalized);
@@ -526,6 +613,200 @@ class AiAivaV2ConversationDecisionGateway implements AivaV2ConversationDecisionG
                     ConfirmationPolarity.NONE, language, started);
         }
         return null;
+    }
+
+    private ConversationDecision deterministicSpecialtyFastPath(NormalizedUserTurn turn,
+                                                                  SessionProjection context,
+                                                                  String language, long started) {
+        if (bookingTools == null || !"PROVIDER_OR_SPECIALTY".equals(pendingField(context))) return null;
+        if (turn.doctorEntity() != null || turn.temporal().status() == NormalizedUserTurn.TemporalStatus.RESOLVED
+                || turn.exactTime() != null || turn.daypart() != null || turn.ordinal() != null) return null;
+        String raw = turn.rawText() == null ? "" : turn.rawText().trim();
+        if (!StringUtils.hasText(raw) || raw.length() > 80 || raw.split("\\s+").length > 8) return null;
+        try {
+            AivaV2BookingTools.SpecialtyMatch match = bookingTools.resolveSpecialty(raw);
+            if (match == null || !"RESOLVED".equals(match.status()) || !StringUtils.hasText(match.canonical())) {
+                return null;
+            }
+            BookingPatch patch = new BookingPatch(null, ValuePatch.set(match.canonical()), null, null, null);
+            return decision(DialogAct.PROVIDE_INFORMATION, Operation.RESOLVE_PROVIDER, patch, null,
+                    ConfirmationPolarity.NONE, language, started);
+        } catch (RuntimeException ignored) {
+            return null;
+        }
+    }
+
+    private boolean isProviderContextQuestion(String text) {
+        String value = text == null ? "" : text.toLowerCase(Locale.ROOT).trim();
+        return value.matches(".*\\b(which|what|who)\\s+(doctor|provider)\\b.*")
+                || value.matches(".*\\b(?:doctor|provider)\\s+(is|for)\\b.*")
+                || value.contains("कौन से डॉक्टर") || value.contains("कौन-से डॉक्टर")
+                || value.contains("किस डॉक्टर") || value.contains("किस डॉक्टर के लिए")
+                || value.matches(".*\\b(?:kaun se doctor|kis doctor|which doctor)\\b.*");
+    }
+
+    private boolean hasActiveConversationContext(SessionProjection context) {
+        return context.activeDraft() != null || context.pendingConfirmation() != null
+                || context.pendingCancellation() != null || context.pendingCancellationResolution() != null
+                || context.pendingReschedule() != null || context.pendingRescheduleConfirmation() != null
+                || context.latestAvailabilityResult() != null || context.latestProviderResult() != null;
+    }
+
+    private ConversationDecision displayedSlotSelectionFastPath(NormalizedUserTurn turn,
+                                                                  SessionProjection context,
+                                                                  String language, long started) {
+        if (turn.intent() == NormalizedUserTurn.Intent.LOOKUP
+                || turn.intent() == NormalizedUserTurn.Intent.CANCELLATION
+                || turn.intent() == NormalizedUserTurn.Intent.RESCHEDULE) return null;
+        var availability = currentAvailability(context);
+        var resolution = displayedSlotSelectionResolver.resolve(turn, availability);
+        if (isCurrentDisplayedSlotState(context, availability)) {
+            String matchedSlot = resolution.selection() == null ? null
+                    : resolution.selection().exactTime() != null ? resolution.selection().exactTime()
+                    : resolution.selection().ordinal() == null ? null
+                    : String.valueOf(resolution.selection().ordinal());
+            log.info("AIVA_V2_DISPLAYED_CHOICE_TRACE choiceType=SLOT pendingField={} displayedCount={} "
+                            + "ordinalPresent={} exactTimePresent={} candidateTextPresent={} matchedIndex={} "
+                            + "matchedProvider={} matchedSlot={} selectionResolved={} operationBefore={} operationAfter={}",
+                    pendingField(context), displayedSlotCount(availability), turn.ordinal() != null,
+                    turn.exactTime() != null, StringUtils.hasText(turn.selectionText()),
+                    resolution.selection() == null ? null : resolution.selection().ordinal(),
+                    context.activeDraft().selectedProvider() == null ? null
+                            : context.activeDraft().selectedProvider().displayName(), matchedSlot,
+                    resolution.recognized(), turn.intent(),
+                    resolution.recognized() ? Operation.SELECT_SLOT : "UNRESOLVED");
+        }
+        if (!resolution.recognized()) {
+            if (isInvalidExplicitClock(turn)) {
+                return decision(DialogAct.SELECT_OPTION, Operation.SELECT_SLOT, null, null,
+                        ConfirmationPolarity.NONE, language, started);
+            }
+            return null;
+        }
+        return decision(DialogAct.SELECT_OPTION, Operation.SELECT_SLOT, null, resolution.selection(),
+                ConfirmationPolarity.NONE, language, started);
+    }
+
+    private boolean isInvalidExplicitClock(NormalizedUserTurn turn) {
+        if (turn == null || turn.exactTime() != null) return false;
+        String text = ((turn.rawText() == null ? "" : turn.rawText()) + " "
+                + (turn.selectionText() == null ? "" : turn.selectionText()))
+                .replaceAll("(?i)p\\.?\\s*m\\.?", "pm")
+                .replaceAll("(?i)a\\.?\\s*m\\.?", "am");
+        if (text.matches("(?is).*\\b(?:between|from|to|after|before|earlier|later|not|no|nahi|nahin|से|बाद|पहले|के बीच|तक)\\b.*")) {
+            return false;
+        }
+        return text.matches("(?is).*\\b(?:[0-9]{1,2}\\s*(?:am|pm)|[0-9]{1,2}:[0-9]{2})\\b.*");
+    }
+
+    /**
+     * Resolves a short selection against the provider list most recently shown
+     * by the server.  This deliberately runs before booking/start-intent
+     * routing so words such as "book" cannot discard an authoritative list.
+     */
+    private ConversationDecision displayedProviderSelectionFastPath(NormalizedUserTurn turn,
+                                                                       SessionProjection context,
+                                                                       String language, long started) {
+        if (!hasDisplayedProviderChoices(context)
+                || turn.intent() == NormalizedUserTurn.Intent.LOOKUP
+                || turn.intent() == NormalizedUserTurn.Intent.CANCELLATION
+                || turn.intent() == NormalizedUserTurn.Intent.RESCHEDULE) return null;
+        ProviderSearchResult result = context.latestProviderResult();
+        String raw = turn.rawText() == null ? "" : turn.rawText();
+        Matcher ordinalMatcher = PROVIDER_ORDINAL_TOKEN.matcher(raw);
+        int ordinal = 0;
+        int ordinalCount = 0;
+        String firstOrdinalToken = null;
+        String secondOrdinalToken = null;
+        while (ordinalMatcher.find()) {
+            if (firstOrdinalToken == null) firstOrdinalToken = ordinalMatcher.group(1);
+            else if (secondOrdinalToken == null) secondOrdinalToken = ordinalMatcher.group(1);
+            ordinal = ordinalValue(ordinalMatcher.group(1));
+            ordinalCount++;
+        }
+        // "first one"/"second one" contains two lexical tokens but one
+        // bounded list choice.  Do not confuse that wrapper with "1 or 2".
+        if (ordinalCount == 2 && "one".equalsIgnoreCase(secondOrdinalToken)
+                && firstOrdinalToken != null
+                && !"one".equalsIgnoreCase(firstOrdinalToken)) {
+            ordinalCount = 1;
+            ordinal = ordinalValue(firstOrdinalToken);
+        }
+        boolean ambiguous = ordinalCount > 1 && raw.matches("(?is).*\\b(?:or|and)\\b.*");
+        var candidate = !ambiguous && ordinalCount == 1
+                ? AivaV2ProviderCandidateResolver.byOrdinal(result, ordinal) : java.util.Optional.<AivaV2Models.ProviderCandidate>empty();
+        if (candidate.isEmpty() && !ambiguous) {
+            String query = StringUtils.hasText(turn.explicitDoctorReference())
+                    ? turn.explicitDoctorReference()
+                    : turn.doctorEntity() != null ? turn.doctorEntity().canonicalQuery() : raw;
+            candidate = AivaV2ProviderCandidateResolver.byDisplayedText(result, query);
+        }
+        boolean selectionRequested = ordinalCount > 0
+                || StringUtils.hasText(turn.explicitDoctorReference())
+                || turn.doctorEntity() != null
+                || raw.matches("(?is).*\\b(?:doctor|dr\\.?|doc)\\b.*");
+        if (!selectionRequested) return null;
+        boolean resolved = candidate.isPresent();
+        log.info("AIVA_V2_DISPLAYED_CHOICE_TRACE choiceType=PROVIDER pendingField={} displayedCount={} "
+                        + "ordinalPresent={} exactTimePresent={} candidateTextPresent={} matchedIndex={} "
+                        + "matchedProvider={} matchedSlot={} selectionResolved={} operationBefore={} operationAfter={}",
+                pendingField(context), result.candidates().size(), ordinalCount > 0, turn.exactTime() != null,
+                StringUtils.hasText(turn.explicitDoctorReference()) || StringUtils.hasText(raw),
+                resolved && ordinalCount == 1 ? ordinal : null,
+                candidate.map(AivaV2Models.ProviderCandidate::displayName).orElse(null), null, resolved,
+                turn.intent(), resolved ? Operation.RESOLVE_PROVIDER : Operation.RESOLVE_PROVIDER);
+        if (resolved) {
+            return decision(DialogAct.SELECT_OPTION, Operation.RESOLVE_PROVIDER, null,
+                    new Selection(candidate.get().candidateHandle(), null, null, null),
+                    ConfirmationPolarity.NONE, language, started);
+        }
+        // Keep the displayed list authoritative for an invalid/noisy turn;
+        // do not let generic START_BOOKING reset the draft or list.
+        return decision(DialogAct.SELECT_OPTION, Operation.RESOLVE_PROVIDER, null, null,
+                ConfirmationPolarity.NONE, language, started);
+    }
+
+    private boolean hasDisplayedProviderChoices(SessionProjection context) {
+        if (context == null || context.latestProviderResult() == null) return false;
+        ProviderSearchResult result = context.latestProviderResult();
+        return !result.candidates().isEmpty()
+                && (result.status() == AivaV2Models.ResolutionStatus.AMBIGUOUS
+                || result.status() == AivaV2Models.ResolutionStatus.SUGGESTION
+                || result.status() == AivaV2Models.ResolutionStatus.RESOLVED)
+                && (context.activeDraft() == null || context.activeDraft().selectedProvider() == null);
+    }
+
+    private boolean isCurrentDisplayedSlotState(SessionProjection context,
+                                                  AivaV2Models.AvailabilityResult availability) {
+        return context != null && context.activeDraft() != null
+                && context.activeDraft().selectedProvider() != null
+                && context.activeDraft().preferredDate() != null
+                && availability != null && !availability.slots().isEmpty();
+    }
+
+    private int displayedSlotCount(AivaV2Models.AvailabilityResult availability) {
+        if (availability == null || availability.slots() == null) return 0;
+        int start = Math.min(availability.displayOffset(), availability.slots().size());
+        int end = Math.min(availability.slots().size(), start + availability.pageSize());
+        return Math.max(0, end - start);
+    }
+
+    private ConversationDecision pendingProviderFollowUpFastPath(NormalizedUserTurn turn,
+                                                                  SessionProjection context,
+                                                                  String language, long started) {
+        if (!"PROVIDER_OR_SPECIALTY".equals(pendingField(context))) return null;
+        String providerText = turn.doctorEntity() == null ? null : turn.doctorEntity().canonicalQuery();
+        if (!StringUtils.hasText(providerText)) {
+            String raw = turn.rawText() == null ? "" : turn.rawText().trim();
+            Matcher titled = TITLED_PROVIDER_FOLLOW_UP.matcher(raw);
+            Matcher talk = TALK_PROVIDER_FOLLOW_UP.matcher(raw);
+            if (titled.matches()) providerText = titled.group(1).trim();
+            else if (talk.matches()) providerText = talk.group(1).trim();
+        }
+        if (!StringUtils.hasText(providerText)) return null;
+        BookingPatch patch = new BookingPatch(ValuePatch.set(providerText), null, null, null, null);
+        return decision(DialogAct.PROVIDE_INFORMATION, Operation.UPDATE_BOOKING, patch, null,
+                ConfirmationPolarity.NONE, language, started);
     }
 
     private ConversationDecision nextAppointmentFastPath(NormalizedUserTurn turn, String language, long started) {
@@ -558,6 +839,12 @@ class AiAivaV2ConversationDecisionGateway implements AivaV2ConversationDecisionG
         String normalized = turn.normalizedText();
         String temporalText = normalized + " " + (turn.rawText() == null ? "" : turn.rawText());
         boolean exhausted = context.latestAvailabilityResult().slots().isEmpty();
+        if (exhausted && turn.temporal().status() == NormalizedUserTurn.TemporalStatus.RESOLVED
+                && turn.temporal().rawSpan() != null && temporalText.contains(turn.temporal().rawSpan())) {
+            return decision(DialogAct.CHANGE_INFORMATION, Operation.UPDATE_BOOKING,
+                    new BookingPatch(null, null, ValuePatch.set(turn.temporal().localDate().toString()), null, null),
+                    null, ConfirmationPolarity.NONE, language, started);
+        }
         boolean affirmative = turn.confirmation() == NormalizedUserTurn.Confirmation.POSITIVE
                 || normalized.matches(".*\\b(?:yes|haan|ha|ji|theek hai|go ahead|please check|aage|आगे देखो)\\b.*");
         boolean nextAvailability = temporalText.matches(".*\\b(?:next|earliest|available|availability)\\b.*\\b(?:slot|appointment|date|available)\\b.*")
@@ -693,14 +980,29 @@ class AiAivaV2ConversationDecisionGateway implements AivaV2ConversationDecisionG
     private ConversationDecision providerCandidateFastPath(NormalizedUserTurn turn, SessionProjection context,
                                                             String language, long started) {
         ProviderSearchResult result = context == null ? null : context.latestProviderResult();
-        if (result == null || result.candidates().isEmpty() || result.status() != AivaV2Models.ResolutionStatus.AMBIGUOUS) {
+        if (result == null || result.candidates().isEmpty()
+                || (result.status() != AivaV2Models.ResolutionStatus.AMBIGUOUS
+                && result.status() != AivaV2Models.ResolutionStatus.RESOLVED)) {
             return null;
         }
         String selectionText = turn.selectionText();
+        Matcher multiple = Pattern.compile("(?i)(?:^|[^\\p{L}\\p{N}])(first|second|third|fourth|one|two|three|[1-9])(?:st|nd|rd|th)?(?=[^\\p{L}\\p{N}]|$)")
+                .matcher(turn.rawText() == null ? "" : turn.rawText());
+        int choices = 0;
+        while (multiple.find()) choices++;
+        if (choices > 1 && turn.rawText() != null && turn.rawText().matches("(?is).*\\b(?:or|and)\\b.*")) {
+            return decision(DialogAct.SELECT_OPTION, Operation.RESOLVE_PROVIDER, null, null,
+                    ConfirmationPolarity.NONE, language, started);
+        }
         Matcher ordinal = PROVIDER_ORDINAL.matcher(selectionText);
         if (ordinal.matches()) {
             int value = ordinalValue(ordinal.group(1));
             return providerSelectionDecision(result, value, language, started);
+        }
+        Matcher wrappedOrdinal = Pattern.compile("(?i).*\\b(?:number\\s+)?(first|second|third|fourth|one|two|three|[1-9])(?:st|nd|rd|th)?\\b.*")
+                .matcher(selectionText);
+        if (wrappedOrdinal.matches()) {
+            return providerSelectionDecision(result, ordinalValue(wrappedOrdinal.group(1)), language, started);
         }
         String query = StringUtils.hasText(turn.explicitDoctorReference())
                 ? turn.explicitDoctorReference() : selectionText;
@@ -793,6 +1095,7 @@ class AiAivaV2ConversationDecisionGateway implements AivaV2ConversationDecisionG
         if (context != null && (context.pendingConfirmation() != null || context.pendingCancellation() != null)) {
             return "BOOKING_OR_CANCELLATION";
         }
+        if (context != null && context.activeDraft() != null) return "BOOKING";
         return "NONE";
     }
 
@@ -1180,15 +1483,28 @@ class AiAivaV2ConversationDecisionGateway implements AivaV2ConversationDecisionG
 
     private Map<String, Object> safeContext(SessionProjection context) {
         Map<String, Object> safe = new LinkedHashMap<>();
+        safe.put("activeWorkflow", activeWorkflow(context));
+        safe.put("pendingField", pendingField(context));
         safe.put("status", context == null || context.activeDraft() == null ? "NONE" : context.activeDraft().status());
         if (context != null && context.activeDraft() != null) {
             var draft = context.activeDraft();
+            Map<String, Object> bookingDraft = new LinkedHashMap<>();
+            bookingDraft.put("providerName", draft.selectedProvider() == null ? null : draft.selectedProvider().displayName());
+            bookingDraft.put("specialty", draft.specialtyFilter());
+            bookingDraft.put("date", draft.preferredDate() == null ? null : draft.preferredDate().toString());
+            bookingDraft.put("timeWindow", draft.preferredTimeWindow());
+            bookingDraft.put("exactTime", draft.exactTime() == null ? null : draft.exactTime().toString());
+            safe.put("bookingDraft", bookingDraft);
             safe.put("providerSelected", draft.selectedProvider() != null);
             safe.put("specialtyPresent", StringUtils.hasText(draft.specialtyFilter()));
             safe.put("datePresent", draft.preferredDate() != null);
             safe.put("timeWindowPresent", StringUtils.hasText(draft.preferredTimeWindow()));
             safe.put("exactTimePresent", draft.exactTime() != null);
-            safe.put("slotCount", context.latestAvailabilityResult() == null ? 0 : context.latestAvailabilityResult().slots().size());
+            Map<String, Object> state = new LinkedHashMap<>();
+            state.put("providerResolved", draft.selectedProvider() != null);
+            state.put("specialtyPresent", StringUtils.hasText(draft.specialtyFilter()));
+            state.put("slotCount", context.latestAvailabilityResult() == null ? 0 : context.latestAvailabilityResult().slots().size());
+            safe.put("state", state);
         }
         safe.put("confirmationPending", context != null && context.pendingConfirmation() != null);
         safe.put("reschedulePending", context != null && context.pendingReschedule() != null);
@@ -1202,6 +1518,30 @@ class AiAivaV2ConversationDecisionGateway implements AivaV2ConversationDecisionG
         return safe;
     }
 
+    private String pendingField(SessionProjection context) {
+        if (context == null) return "NONE";
+        if (context.pendingConfirmation() != null || context.pendingRescheduleConfirmation() != null) {
+            return "CONFIRMATION";
+        }
+        if (context.pendingReschedule() != null) return "RESCHEDULE";
+        if (hasDisplayedProviderChoices(context)) return "PROVIDER_SELECTION";
+        var draft = context.activeDraft();
+        if (draft == null) return "NONE";
+        if (draft.selectedProvider() == null && !StringUtils.hasText(draft.specialtyFilter())) {
+            return "PROVIDER_OR_SPECIALTY";
+        }
+        if (draft.preferredDate() == null) return "DATE";
+        if (draft.selectedSlotReference() == null && context.latestAvailabilityResult() != null
+                && !context.latestAvailabilityResult().slots().isEmpty()) {
+            return "SLOT";
+        }
+        if (draft.exactTime() == null && !StringUtils.hasText(draft.preferredTimeWindow())
+                && draft.availabilityTimeConstraint() == null) {
+            return "TIME_CONSTRAINT";
+        }
+        return "NONE";
+    }
+
     private String schemaInstructions() {
         return """
                 Interpret exactly one booking conversation turn. Return JSON only.
@@ -1210,7 +1550,7 @@ class AiAivaV2ConversationDecisionGateway implements AivaV2ConversationDecisionG
                 CHANGE_INFORMATION, SELECT_OPTION, REQUEST_ALTERNATIVE, CONFIRM, REJECT,
                 ASK_QUESTION, ABANDON, UNKNOWN. operation: START_BOOKING, UPDATE_BOOKING,
                 RESOLVE_PROVIDER, GET_AVAILABILITY, FIND_NEXT_AVAILABLE_SLOT, SELECT_SLOT, SHOW_MORE_SLOTS,
-                PREPARE_BOOKING, CONFIRM_BOOKING, ANSWER_CONTEXT, SUSPEND_BOOKING,
+                PREPARE_BOOKING, CONFIRM_BOOKING, ANSWER_CONTEXT, INTRO, SUSPEND_BOOKING,
                 RESUME_BOOKING, ABANDON_BOOKING, LOOKUP_APPOINTMENTS, CANCEL_APPOINTMENT,
                 PREPARE_CANCELLATION, CONFIRM_CANCELLATION, RESCHEDULE_APPOINTMENT,
                 UPDATE_RESCHEDULE, GET_RESCHEDULE_AVAILABILITY, SELECT_RESCHEDULE_SLOT,
@@ -1243,6 +1583,14 @@ class AiAivaV2ConversationDecisionGateway implements AivaV2ConversationDecisionG
                 using bookingPatch and GET_RESCHEDULE_AVAILABILITY retrieves slots for the same bound doctor
                 and owning clinic. SELECT_RESCHEDULE_SLOT selects only from that current result, and
                 CONFIRM_RESCHEDULE confirms only a server-held reschedule capability. Never return IDs.
+                When bookingContext.activeWorkflow is BOOKING, use bookingContext.pendingField to interpret
+                the current turn in that existing workflow. In particular, when pendingField is
+                PROVIDER_OR_SPECIALTY, a doctor/provider or specialty phrase is the answer to the pending
+                booking requirement: return RESOLVE_PROVIDER or UPDATE_BOOKING with the corresponding
+                bookingPatch field set. A short noun phrase such as a specialty name is a specialty
+                candidate even without the words "specialty" or "doctor"; preserve it in specialtyText
+                for authoritative catalog resolution. The bookingDraft values are authoritative context only; do not
+                invent provider validity, identifiers, availability, or booking truth.
                 Context questions use ANSWER_CONTEXT. Requests to continue the current availability
                 result use SHOW_MORE_SLOTS, including "Do you have more slots?", "Show me more",
                 "Any other slots?", and "Show next slots". A request that adds or changes a date,
@@ -1288,6 +1636,7 @@ class AiAivaV2ConversationDecisionGateway implements AivaV2ConversationDecisionG
         String[] parts = normalized.split(":");
         int hour = Integer.parseInt(parts[0].trim());
         int minute = parts.length == 1 ? 0 : Integer.parseInt(parts[1].trim());
+        if ((am || pm) && (hour < 1 || hour > 12)) return null;
         if (am && hour == 12) hour = 0;
         if (pm && hour < 12) hour += 12;
         return LocalTime.of(hour, minute);
@@ -1370,9 +1719,9 @@ class AiAivaV2ConversationDecisionGateway implements AivaV2ConversationDecisionG
     private int ordinalValue(String value) {
         String normalized = value.toLowerCase(Locale.ROOT);
         return switch (normalized) {
-            case "first", "1" -> 1;
-            case "second", "2" -> 2;
-            case "third", "3" -> 3;
+            case "first", "one", "1" -> 1;
+            case "second", "two", "2" -> 2;
+            case "third", "three", "3" -> 3;
             case "fourth", "4" -> 4;
             case "last" -> -1;
             default -> Integer.parseInt(normalized.replaceFirst("(?:st|nd|rd|th)$", ""));
@@ -1381,6 +1730,9 @@ class AiAivaV2ConversationDecisionGateway implements AivaV2ConversationDecisionG
     private String normalizeTime(String hourValue, String minuteValue, String meridiem) {
         int hour = Integer.parseInt(hourValue);
         int minute = minuteValue == null ? 0 : Integer.parseInt(minuteValue);
+        if (meridiem != null && (hour < 1 || hour > 12)) {
+            throw new IllegalArgumentException("Meridiem time must use a 1-12 hour");
+        }
         if ("pm".equalsIgnoreCase(meridiem) && hour < 12) hour += 12;
         if ("am".equalsIgnoreCase(meridiem) && hour == 12) hour = 0;
         return "%02d:%02d".formatted(hour, minute);
