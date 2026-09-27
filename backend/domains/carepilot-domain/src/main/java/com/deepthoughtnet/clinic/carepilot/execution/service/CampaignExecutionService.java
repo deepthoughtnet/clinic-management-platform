@@ -11,6 +11,8 @@ import com.deepthoughtnet.clinic.carepilot.execution.service.model.CampaignExecu
 import com.deepthoughtnet.clinic.carepilot.messaging.exception.MessageDispatchException;
 import com.deepthoughtnet.clinic.carepilot.messaging.service.CarePilotTemplateRenderer;
 import com.deepthoughtnet.clinic.carepilot.messaging.service.MessageOrchestratorService;
+import com.deepthoughtnet.clinic.carepilot.messaging.service.ReminderCommunicationRequest;
+import com.deepthoughtnet.clinic.carepilot.messaging.service.VoiceReminderSender;
 import com.deepthoughtnet.clinic.carepilot.shared.util.CarePilotValidators;
 import com.deepthoughtnet.clinic.carepilot.template.db.CampaignTemplateEntity;
 import com.deepthoughtnet.clinic.carepilot.template.db.CampaignTemplateRepository;
@@ -42,6 +44,8 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 
 /** Service that manages execution rows, retries, and delivery-attempt history. */
 @Service
@@ -57,7 +61,10 @@ public class CampaignExecutionService {
     private final PrescriptionService prescriptionService;
     private final VaccinationService vaccinationService;
     private final ClinicProfileService clinicProfileService;
+    private final VoiceReminderSender voiceReminderSender;
+    private final boolean voiceRemindersEnabled;
 
+    /** Backward-compatible constructor used by existing domain tests and callers. */
     public CampaignExecutionService(
             CampaignExecutionRepository repository,
             CampaignDeliveryAttemptRepository attemptRepository,
@@ -71,6 +78,27 @@ public class CampaignExecutionService {
             VaccinationService vaccinationService,
             ClinicProfileService clinicProfileService
     ) {
+        this(repository, attemptRepository, messageOrchestratorService, templateRepository, patientRepository,
+                templateRenderer, retryPolicy, billingService, prescriptionService, vaccinationService,
+                clinicProfileService, null, false);
+    }
+
+    @Autowired
+    public CampaignExecutionService(
+            CampaignExecutionRepository repository,
+            CampaignDeliveryAttemptRepository attemptRepository,
+            MessageOrchestratorService messageOrchestratorService,
+            CampaignTemplateRepository templateRepository,
+            PatientRepository patientRepository,
+            CarePilotTemplateRenderer templateRenderer,
+            CarePilotRetryPolicy retryPolicy,
+            BillingService billingService,
+            PrescriptionService prescriptionService,
+            VaccinationService vaccinationService,
+            ClinicProfileService clinicProfileService,
+            VoiceReminderSender voiceReminderSender,
+            @Value("${engage.voice-reminders.enabled:false}") boolean voiceRemindersEnabled
+    ) {
         this.repository = repository;
         this.attemptRepository = attemptRepository;
         this.messageOrchestratorService = messageOrchestratorService;
@@ -82,6 +110,8 @@ public class CampaignExecutionService {
         this.prescriptionService = prescriptionService;
         this.vaccinationService = vaccinationService;
         this.clinicProfileService = clinicProfileService;
+        this.voiceReminderSender = voiceReminderSender;
+        this.voiceRemindersEnabled = voiceRemindersEnabled;
     }
 
     @Transactional
@@ -253,7 +283,9 @@ public class CampaignExecutionService {
         execution.markProcessing();
         MessageResult messageResult;
         try {
-            messageResult = messageOrchestratorService.send(toMessageRequest(execution));
+            messageResult = execution.getChannelType() == com.deepthoughtnet.clinic.carepilot.messaging.model.ChannelType.VOICE
+                    ? dispatchVoice(execution)
+                    : messageOrchestratorService.send(toMessageRequest(execution));
         } catch (MessageDispatchException ex) {
             messageResult = new MessageResult(
                     false,
@@ -295,6 +327,23 @@ public class CampaignExecutionService {
 
         repository.save(execution);
         return 1;
+    }
+
+    private MessageResult dispatchVoice(CampaignExecutionEntity execution) {
+        if (!voiceRemindersEnabled) {
+            return new MessageResult(false, MessageDeliveryStatus.SKIPPED, "engage-voice-reminders", null,
+                    "FEATURE_DISABLED", "Engage voice reminders are disabled", null);
+        }
+        if (voiceReminderSender == null) {
+            return new MessageResult(false, MessageDeliveryStatus.NOT_CONFIGURED, "engage-voice-reminders", null,
+                    "VOICE_SENDER_NOT_CONFIGURED", "Voice reminder sender is not configured", null);
+        }
+        try {
+            return voiceReminderSender.send(toReminderCommunicationRequest(execution));
+        } catch (RuntimeException ex) {
+            return new MessageResult(false, MessageDeliveryStatus.FAILED, "engage-voice-reminders", null,
+                    "VOICE_DISPATCH_FAILED", "Voice reminder dispatch failed", null);
+        }
     }
 
     private void ensureMutableReminderState(CampaignExecutionEntity entity, String action) {
@@ -352,6 +401,40 @@ public class CampaignExecutionService {
                 execution.getId(),
                 Map.of("campaignId", execution.getCampaignId().toString())
         );
+    }
+
+    private ReminderCommunicationRequest toReminderCommunicationRequest(CampaignExecutionEntity execution) {
+        PatientEntity patient = execution.getRecipientPatientId() == null
+                ? null
+                : patientRepository.findByTenantIdAndId(execution.getTenantId(), execution.getRecipientPatientId()).orElse(null);
+        String destination = resolveVoiceRecipient(execution, patient);
+        CampaignTemplateEntity template = execution.getTemplateId() == null
+                ? null
+                : templateRepository.findByTenantIdAndId(execution.getTenantId(), execution.getTemplateId()).orElse(null);
+        String message = "CarePilot reminder";
+        if (template != null) {
+            CarePilotTemplateRenderer.RenderedTemplate rendered = templateRenderer.render(
+                    execution.getCampaignId(), template, patient,
+                    execution.getReferenceDateTime() == null ? execution.getScheduledAt() : execution.getReferenceDateTime(),
+                    buildTemplateValues(execution, patient));
+            if (StringUtils.hasText(rendered.body())) {
+                message = rendered.body();
+            }
+        }
+        Map<String, String> metadata = new LinkedHashMap<>();
+        metadata.put("campaignId", execution.getCampaignId().toString());
+        if (execution.getSourceType() != null) metadata.put("sourceType", execution.getSourceType());
+        if (execution.getReminderWindow() != null) metadata.put("reminderWindow", execution.getReminderWindow());
+        return new ReminderCommunicationRequest(
+                execution.getTenantId(), execution.getCampaignId(), execution.getId(), destination,
+                "en-IN", execution.getSourceType(), message, execution.getScheduledAt(), metadata);
+    }
+
+    private String resolveVoiceRecipient(CampaignExecutionEntity execution, PatientEntity patient) {
+        if (patient != null && StringUtils.hasText(patient.getMobile())) {
+            return patient.getMobile().trim();
+        }
+        throw new MessageDispatchException("RECIPIENT_MOBILE_MISSING");
     }
 
     /**
@@ -509,6 +592,7 @@ public class CampaignExecutionService {
             case EMAIL -> MessageChannel.EMAIL;
             case SMS -> MessageChannel.SMS;
             case WHATSAPP -> MessageChannel.WHATSAPP;
+            case VOICE -> throw new IllegalArgumentException("VOICE is dispatched through the voice reminder port");
             case IN_APP, APP_NOTIFICATION -> MessageChannel.IN_APP;
         };
     }

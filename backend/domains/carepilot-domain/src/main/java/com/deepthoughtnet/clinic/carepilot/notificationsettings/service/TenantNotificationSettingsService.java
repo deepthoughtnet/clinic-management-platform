@@ -232,6 +232,7 @@ public class TenantNotificationSettingsService {
             case EMAIL -> settings.emailEnabled();
             case SMS -> settings.smsEnabled();
             case WHATSAPP -> settings.whatsappEnabled();
+            case VOICE -> false;
             case IN_APP, APP_NOTIFICATION -> settings.inAppEnabled();
         };
     }
@@ -347,6 +348,7 @@ public class TenantNotificationSettingsService {
             case EMAIL -> settings.emailEnabled() && emailReady;
             case SMS -> settings.smsEnabled() && smsReady;
             case WHATSAPP -> settings.whatsappEnabled() && whatsappReady;
+            case VOICE -> false;
             case IN_APP, APP_NOTIFICATION -> settings.inAppEnabled();
         };
     }

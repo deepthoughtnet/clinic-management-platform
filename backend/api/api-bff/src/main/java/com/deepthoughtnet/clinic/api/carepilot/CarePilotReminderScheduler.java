@@ -14,7 +14,7 @@ import org.springframework.beans.factory.annotation.Value;
  * Scheduler that materializes due operational reminder executions for CarePilot campaigns.
  */
 @Component
-@ConditionalOnProperty(prefix = "carepilot.reminders", name = "enabled", havingValue = "true")
+@ConditionalOnProperty(prefix = "clinic.carepilot.reminders", name = "enabled", havingValue = "true")
 public class CarePilotReminderScheduler {
     private static final Logger log = LoggerFactory.getLogger(CarePilotReminderScheduler.class);
     private static final String LOCK_KEY = "scheduler:carepilot-reminder";
@@ -36,7 +36,7 @@ public class CarePilotReminderScheduler {
         this.lockWaitTimeout = lockWaitTimeout;
     }
 
-    @Scheduled(fixedDelayString = "${carepilot.reminders.fixed-delay:PT15M}")
+    @Scheduled(fixedDelayString = "${clinic.carepilot.reminders.fixed-delay:PT15M}")
     public void queueDueReminders() {
         boolean ran = lockService.executeWithLock(LOCK_KEY, lockWaitTimeout, () -> {
             schedulerLockMonitor.markAcquired("carepilot-reminder-scheduler");

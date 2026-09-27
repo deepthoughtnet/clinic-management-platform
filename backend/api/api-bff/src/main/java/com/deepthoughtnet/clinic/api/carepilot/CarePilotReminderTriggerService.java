@@ -131,9 +131,9 @@ public class CarePilotReminderTriggerService {
             WebinarRepository webinarRepository,
             WebinarRegistrationRepository webinarRegistrationRepository,
             ObjectMapper objectMapper,
-            @Value("${carepilot.reminders.refill-estimated-days:30}") int refillEstimatedDays,
-            @Value("${carepilot.reminders.billing-overdue-days:3}") int billingOverdueDays,
-            @Value("${carepilot.reminders.batch-size:100}") int batchSize
+            @Value("${clinic.carepilot.reminders.refill-estimated-days:30}") int refillEstimatedDays,
+            @Value("${clinic.carepilot.reminders.billing-overdue-days:3}") int billingOverdueDays,
+            @Value("${clinic.carepilot.reminders.batch-size:100}") int batchSize
     ) {
         this.tenantManagementService = tenantManagementService;
         this.runtimeSchedulerMonitor = runtimeSchedulerMonitor;

@@ -60,6 +60,37 @@ class DefaultMessageProviderResolverTest {
     }
 
     @Test
+    void resolvesExplicitMsg91EmailProviderWithoutChangingOtherChannels() {
+        NoOpMessageProvider noOp = new NoOpMessageProvider();
+        MessageProvider carePilotEmail = provider("carepilot-email-smtp", MessageChannel.EMAIL);
+        MessageProvider msg91Email = provider("msg91-email-smtp", MessageChannel.EMAIL);
+        MessageProvider smsProvider = provider("sms-provider", MessageChannel.SMS);
+
+        MessagingProviderRegistry resolver = new MessagingProviderRegistry(
+                List.of(noOp, carePilotEmail, msg91Email, smsProvider),
+                noOp,
+                "msg91-email-smtp"
+        );
+
+        assertThat(resolver.resolve(MessageChannel.EMAIL).providerName()).isEqualTo("msg91-email-smtp");
+        assertThat(resolver.resolve(MessageChannel.SMS).providerName()).isEqualTo("sms-provider");
+    }
+
+    @Test
+    void explicitUnavailableEmailProviderDoesNotSilentlyFallbackToAnotherProvider() {
+        NoOpMessageProvider noOp = new NoOpMessageProvider();
+        MessageProvider carePilotEmail = provider("carepilot-email-smtp", MessageChannel.EMAIL);
+
+        MessagingProviderRegistry resolver = new MessagingProviderRegistry(
+                List.of(noOp, carePilotEmail),
+                noOp,
+                "msg91-email-smtp"
+        );
+
+        assertThat(resolver.resolve(MessageChannel.EMAIL).providerName()).isEqualTo("carepilot-noop");
+    }
+
+    @Test
     void fallsBackToNoOpProviderWhenNoConcreteProviderSupportsChannel() {
         NoOpMessageProvider noOp = new NoOpMessageProvider();
         MessagingProviderRegistry resolver = new MessagingProviderRegistry(List.of(noOp), noOp);

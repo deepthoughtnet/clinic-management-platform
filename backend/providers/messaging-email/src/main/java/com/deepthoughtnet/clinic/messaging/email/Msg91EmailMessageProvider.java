@@ -13,13 +13,13 @@ import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.util.StringUtils;
 
-/** Opt-in MSG91 SMTP adapter used by the Platform Communication Test console.
+/** Opt-in MSG91 SMTP adapter used by Platform Communication Test and Engage.
  *
- * It intentionally is not registered in the CarePilot channel registry: that
- * registry is the production single-provider path and must continue resolving
- * the existing CarePilot provider unless a future, explicit cutover is made.
+ * Engage selects this provider only when the explicit email-provider setting is
+ * {@code msg91-email-smtp}; otherwise the existing CarePilot provider remains
+ * the registry default.
  */
-public class Msg91EmailMessageProvider {
+public class Msg91EmailMessageProvider implements com.deepthoughtnet.clinic.messaging.spi.MessageProvider {
     private final Msg91EmailMessagingProperties properties;
     private final JavaMailSender mailSender;
 
@@ -28,7 +28,10 @@ public class Msg91EmailMessageProvider {
         this.mailSender = mailSender;
     }
 
+    @Override
     public boolean supports(MessageChannel channel) { return channel == MessageChannel.EMAIL; }
+
+    @Override
     public String providerName() { return "msg91-email-smtp"; }
 
     public boolean isConfigured() {
@@ -47,6 +50,7 @@ public class Msg91EmailMessageProvider {
     public boolean passwordConfigured() { return StringUtils.hasText(properties.getPassword()); }
     public boolean fromConfigured() { return validEmail(properties.getFrom()); }
 
+    @Override
     public MessageResult send(MessageRequest request) {
         if (!isConfigured()) return MessageResult.notConfigured(providerName(), "MSG91 SMTP configuration is incomplete");
         if (request.recipient() == null || !validEmail(request.recipient().address())) return failed("RECIPIENT_INVALID", "Recipient email address is invalid");

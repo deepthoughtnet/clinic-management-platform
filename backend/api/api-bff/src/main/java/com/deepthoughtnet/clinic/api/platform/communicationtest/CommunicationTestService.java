@@ -80,6 +80,7 @@ public class CommunicationTestService {
     public HealthResponse health(String correlationId) {
         List<ChannelHealth> channels = messagingStatusService.providerStatuses().stream()
                 .filter(row -> row.channel() == MessageChannel.EMAIL || row.channel() == MessageChannel.WHATSAPP)
+                .filter(row -> !"msg91-email-smtp".equalsIgnoreCase(row.providerName()))
                 .map(this::mapHealth)
                 .toList();
         channels = new java.util.ArrayList<>(channels);
@@ -272,6 +273,9 @@ public class CommunicationTestService {
     private MessageProvider operationalMessageProvider(MessageChannel channel) {
         return messageProviders.stream()
                 .filter(provider -> provider.supports(channel))
+                // MSG91 is selected explicitly by the Communication Test request; keep it out
+                // of the legacy implicit test-provider path.
+                .filter(provider -> !"msg91-email-smtp".equalsIgnoreCase(provider.providerName()))
                 .filter(provider -> isOperationalProvider(provider.providerName()))
                 .findFirst()
                 .orElse(null);

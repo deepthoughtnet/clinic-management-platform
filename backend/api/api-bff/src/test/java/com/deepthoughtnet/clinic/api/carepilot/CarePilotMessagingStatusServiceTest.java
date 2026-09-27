@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 import com.deepthoughtnet.clinic.api.carepilot.dto.MessagingDtos.ProviderReadinessStatus;
 import com.deepthoughtnet.clinic.carepilot.messaging.resolver.MessagingProviderRegistry;
 import com.deepthoughtnet.clinic.messaging.email.CarePilotEmailMessagingProperties;
+import com.deepthoughtnet.clinic.messaging.email.Msg91EmailMessageProvider;
 import com.deepthoughtnet.clinic.messaging.sms.CarePilotSmsMessagingProperties;
 import com.deepthoughtnet.clinic.messaging.spi.MessageChannel;
 import com.deepthoughtnet.clinic.messaging.spi.MessageProvider;
@@ -51,6 +52,29 @@ class CarePilotMessagingStatusServiceTest {
         assertThat(statuses.get(0).status()).isEqualTo(ProviderReadinessStatus.READY);
         assertThat(statuses.get(1).status()).isEqualTo(ProviderReadinessStatus.DISABLED);
         assertThat(statuses.get(2).status()).isEqualTo(ProviderReadinessStatus.DISABLED);
+    }
+
+    @Test
+    void reportsSelectedMsg91ProviderReadiness() {
+        MessagingProviderRegistry registry = mock(MessagingProviderRegistry.class);
+        when(registry.resolve(MessageChannel.EMAIL)).thenReturn(provider("msg91-email-smtp", MessageChannel.EMAIL));
+        when(registry.resolve(MessageChannel.SMS)).thenReturn(provider("carepilot-sms", MessageChannel.SMS));
+        when(registry.resolve(MessageChannel.WHATSAPP)).thenReturn(provider("carepilot-whatsapp", MessageChannel.WHATSAPP));
+
+        CarePilotEmailMessagingProperties email = new CarePilotEmailMessagingProperties();
+        CarePilotSmsMessagingProperties sms = new CarePilotSmsMessagingProperties();
+        CarePilotWhatsAppMessagingProperties whatsApp = new CarePilotWhatsAppMessagingProperties();
+        Msg91EmailMessageProvider msg91 = mock(Msg91EmailMessageProvider.class);
+        when(msg91.isConfigured()).thenReturn(true);
+        when(msg91.fromConfigured()).thenReturn(true);
+
+        CarePilotMessagingStatusService service = new CarePilotMessagingStatusService(
+                registry, email, sms, whatsApp, msg91, "logging", false, ""
+        );
+
+        var emailStatus = service.providerStatuses().get(0);
+        assertThat(emailStatus.providerName()).isEqualTo("msg91-email-smtp");
+        assertThat(emailStatus.status()).isEqualTo(ProviderReadinessStatus.READY);
     }
 
     @Test

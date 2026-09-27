@@ -33,11 +33,8 @@ import com.deepthoughtnet.clinic.billing.events.PaymentReceivedEvent;
 import com.deepthoughtnet.clinic.consultation.events.FollowUpDueEvent;
 import com.deepthoughtnet.clinic.vaccination.events.VaccinationDueEvent;
 import com.deepthoughtnet.clinic.vaccination.service.VaccinationService;
-import java.time.Duration;
 import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
-import java.time.ZoneId;
 import java.util.List;
 import java.util.UUID;
 import org.slf4j.Logger;
@@ -398,18 +395,6 @@ public class NotificationActionService {
         return notification;
     }
 
-    public ReminderQueueSummary queueAppointmentReminders(UUID tenantId, LocalDate appointmentDate, UUID actorAppUserId) {
-        LocalDate windowDate = appointmentDate;
-        OffsetDateTime now = OffsetDateTime.now();
-        return appointmentService.search(tenantId, new com.deepthoughtnet.clinic.appointment.service.model.AppointmentSearchCriteria(null, null, windowDate, null, null))
-                .stream()
-                .filter(appointment -> appointment.status() == com.deepthoughtnet.clinic.appointment.service.model.AppointmentStatus.BOOKED)
-                .filter(appointment -> appointment.appointmentTime() != null)
-                .filter(appointment -> shouldSendReminder(now, appointment.appointmentDate(), appointment.appointmentTime()))
-                .map(appointment -> queueAppointmentReminder(tenantId, appointment.id(), actorAppUserId))
-                .reduce(ReminderQueueSummary.empty(), ReminderQueueSummary::add);
-    }
-
     public ReminderQueueSummary queueFollowUpReminders(UUID tenantId, LocalDate dueDate, UUID actorAppUserId) {
         return consultationService.list(tenantId).stream()
                 .filter(record -> record.followUpDate() != null && !record.followUpDate().isAfter(dueDate))
@@ -440,34 +425,6 @@ public class NotificationActionService {
                         || appointment.status() == com.deepthoughtnet.clinic.appointment.service.model.AppointmentStatus.WAITING)
                 .map(appointment -> queueMissedAppointmentReminder(tenantId, appointment.id(), actorAppUserId))
                 .reduce(ReminderQueueSummary.empty(), ReminderQueueSummary::add);
-    }
-
-    private ReminderQueueSummary queueAppointmentReminder(UUID tenantId, UUID appointmentId, UUID actorAppUserId) {
-        var appointment = appointmentService.findById(tenantId, appointmentId);
-        PatientEntity patient = patient(tenantId, appointment.patientId());
-        String channel = normalizeChannel("email");
-        String recipient = resolveRecipient(patient, channel);
-        return queueReminder(() -> notificationHistoryService.queueDetailed(
-                tenantId,
-                patient.getId(),
-                "APPOINTMENT_REMINDER",
-                channel,
-                recipient,
-                "Appointment reminder",
-                "Appointment scheduled for " + appointment.appointmentDate() + (appointment.appointmentTime() == null ? "" : " at " + appointment.appointmentTime()),
-                "APPOINTMENT",
-                appointment.id(),
-                actorAppUserId
-        ));
-    }
-
-    private boolean shouldSendReminder(OffsetDateTime now, LocalDate appointmentDate, java.time.LocalTime appointmentTime) {
-        LocalDateTime appointmentDateTime = LocalDateTime.of(appointmentDate, appointmentTime);
-        OffsetDateTime target = appointmentDateTime.atZone(ZoneId.systemDefault()).toOffsetDateTime();
-        Duration diff = Duration.between(now, target);
-        Duration targetWindow = Duration.ofHours(2);
-        Duration slack = Duration.ofMinutes(15);
-        return !diff.isNegative() && diff.minus(targetWindow).abs().compareTo(slack) <= 0;
     }
 
     private ReminderQueueSummary publishFollowUpReminder(UUID tenantId, ConsultationRecord consultation, UUID actorAppUserId) {

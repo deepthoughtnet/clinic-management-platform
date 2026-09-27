@@ -4,6 +4,7 @@ import com.deepthoughtnet.clinic.api.carepilot.dto.MessagingDtos.ProviderReadine
 import com.deepthoughtnet.clinic.api.carepilot.dto.MessagingDtos.ProviderStatusResponse;
 import com.deepthoughtnet.clinic.carepilot.messaging.resolver.MessagingProviderRegistry;
 import com.deepthoughtnet.clinic.messaging.email.CarePilotEmailMessagingProperties;
+import com.deepthoughtnet.clinic.messaging.email.Msg91EmailMessageProvider;
 import com.deepthoughtnet.clinic.messaging.sms.CarePilotSmsMessagingProperties;
 import com.deepthoughtnet.clinic.messaging.spi.MessageChannel;
 import com.deepthoughtnet.clinic.messaging.spi.MessageProvider;
@@ -22,6 +23,7 @@ import org.springframework.util.StringUtils;
 public class CarePilotMessagingStatusService {
     private final MessagingProviderRegistry providerRegistry;
     private final CarePilotEmailMessagingProperties emailProperties;
+    private final Msg91EmailMessageProvider msg91EmailProvider;
     private final CarePilotSmsMessagingProperties smsProperties;
     private final CarePilotWhatsAppMessagingProperties whatsAppProperties;
     private final String mailProvider;
@@ -37,8 +39,23 @@ public class CarePilotMessagingStatusService {
             @Value("${clinic.mail.enabled:false}") boolean mailEnabled,
             @Value("${clinic.mail.host:${spring.mail.host:}}") String smtpHost
     ) {
+        this(providerRegistry, emailProperties, smsProperties, whatsAppProperties, null, mailProvider, mailEnabled, smtpHost);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public CarePilotMessagingStatusService(
+            MessagingProviderRegistry providerRegistry,
+            CarePilotEmailMessagingProperties emailProperties,
+            CarePilotSmsMessagingProperties smsProperties,
+            CarePilotWhatsAppMessagingProperties whatsAppProperties,
+            Msg91EmailMessageProvider msg91EmailProvider,
+            @Value("${clinic.mail.provider:logging}") String mailProvider,
+            @Value("${clinic.mail.enabled:false}") boolean mailEnabled,
+            @Value("${clinic.mail.host:${spring.mail.host:}}") String smtpHost
+    ) {
         this.providerRegistry = providerRegistry;
         this.emailProperties = emailProperties;
+        this.msg91EmailProvider = msg91EmailProvider;
         this.smsProperties = smsProperties;
         this.whatsAppProperties = whatsAppProperties;
         this.mailProvider = mailProvider;
@@ -61,27 +78,32 @@ public class CarePilotMessagingStatusService {
     private ProviderStatusResponse emailStatus(OffsetDateTime checkedAt) {
         MessageProvider provider = providerRegistry.resolve(MessageChannel.EMAIL);
         boolean available = isConcreteProvider(provider);
-        boolean enabled = emailProperties.isEnabled();
+        boolean msg91Selected = provider != null && "msg91-email-smtp".equals(provider.providerName());
+        boolean enabled = msg91Selected ? msg91EmailProvider != null && msg91EmailProvider.isConfigured() : emailProperties.isEnabled();
         String emailProvider = normalized(emailProperties.getProvider());
         boolean mockProvider = isMockProvider(emailProvider);
         boolean smtpHostConfigured = StringUtils.hasText(smtpHost);
         boolean providerConfigured = mockProvider
                 || ("smtp".equalsIgnoreCase(emailProvider) && mailEnabled && "smtp".equalsIgnoreCase(mailProvider));
         boolean fromAddressConfigured = StringUtils.hasText(emailProperties.getFromAddress());
-        boolean configured = providerConfigured && fromAddressConfigured && (mockProvider || smtpHostConfigured);
+        boolean configured = msg91Selected
+                ? msg91EmailProvider != null && msg91EmailProvider.isConfigured()
+                : providerConfigured && fromAddressConfigured && (mockProvider || smtpHostConfigured);
 
         List<String> missing = new ArrayList<>();
-        if (!providerConfigured) {
+        if (msg91Selected && (msg91EmailProvider == null || !msg91EmailProvider.isConfigured())) {
+            missing.add("clinic.carepilot.messaging.email.providers.msg91");
+        } else if (!providerConfigured) {
             if (!StringUtils.hasText(emailProvider) || "disabled".equalsIgnoreCase(emailProvider)) {
                 missing.add("clinic.carepilot.messaging.email.provider");
             } else {
                 missing.add("clinic.mail.provider=smtp + clinic.mail.enabled=true");
             }
         }
-        if (!mockProvider && !smtpHostConfigured) {
+        if (!msg91Selected && !mockProvider && !smtpHostConfigured) {
             missing.add("clinic.mail.host or spring.mail.host");
         }
-        if (!fromAddressConfigured) {
+        if (!msg91Selected && !fromAddressConfigured) {
             missing.add("clinic.carepilot.messaging.email.from-address");
         }
 
@@ -115,8 +137,8 @@ public class CarePilotMessagingStatusService {
                 message,
                 true,
                 checkedAt,
-                providerConfigured,
-                fromAddressConfigured,
+                msg91Selected ? configured : providerConfigured,
+                msg91Selected ? (msg91EmailProvider != null && msg91EmailProvider.fromConfigured()) : fromAddressConfigured,
                 false,
                 smtpHostConfigured
         );

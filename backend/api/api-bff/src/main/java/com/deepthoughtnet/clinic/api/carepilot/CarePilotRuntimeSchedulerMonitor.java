@@ -16,7 +16,7 @@ public class CarePilotRuntimeSchedulerMonitor {
     private volatile OffsetDateTime lastGlobalReminderScanAt;
     private final boolean reminderSchedulerEnabled;
 
-    public CarePilotRuntimeSchedulerMonitor(@Value("${carepilot.reminders.enabled:false}") boolean reminderSchedulerEnabled) {
+    public CarePilotRuntimeSchedulerMonitor(@Value("${clinic.carepilot.reminders.enabled:false}") boolean reminderSchedulerEnabled) {
         this.reminderSchedulerEnabled = reminderSchedulerEnabled;
     }
 

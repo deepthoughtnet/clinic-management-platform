@@ -172,13 +172,12 @@ public class CarePilotCampaignTriggerService {
             List<String> manualBlockingReasons
     ) {
         NotificationSettingsRecord settings = notificationSettingsService.findByTenantId(tenantId).orElse(null);
+        ChannelType channelType = template == null ? inferChannelForCampaign(campaign) : template.getChannelType();
         var providerStatuses = messagingStatusService.providerStatuses();
-        var providerStatus = providerStatuses.stream()
-                .filter(row -> row.channel() == toMessageChannel(template == null ? inferChannelForCampaign(campaign) : template.getChannelType()))
+        var providerStatus = channelType == ChannelType.VOICE ? null : providerStatuses.stream()
+                .filter(row -> row.channel() == toMessageChannel(channelType))
                 .findFirst()
                 .orElse(null);
-
-        ChannelType channelType = template == null ? inferChannelForCampaign(campaign) : template.getChannelType();
         List<PatientEntity> audience = resolveAudience(tenantId, campaign.getAudienceType());
         int missingEmailOrPhone = 0;
         int invalidDestination = 0;
@@ -336,7 +335,7 @@ public class CarePilotCampaignTriggerService {
         }
         return switch (channelType) {
             case EMAIL -> StringUtils.hasText(patient.getEmail());
-            case SMS, WHATSAPP -> StringUtils.hasText(patient.getMobile());
+            case SMS, WHATSAPP, VOICE -> StringUtils.hasText(patient.getMobile());
             case IN_APP, APP_NOTIFICATION -> true;
         };
     }
@@ -344,7 +343,7 @@ public class CarePilotCampaignTriggerService {
     private String destinationFor(PatientEntity patient, ChannelType channelType) {
         return switch (channelType) {
             case EMAIL -> patient.getEmail();
-            case SMS, WHATSAPP -> patient.getMobile();
+            case SMS, WHATSAPP, VOICE -> patient.getMobile();
             case IN_APP, APP_NOTIFICATION -> patient.getPatientNumber();
         };
     }
@@ -355,7 +354,7 @@ public class CarePilotCampaignTriggerService {
         }
         return switch (channelType) {
             case EMAIL -> EMAIL_PATTERN.matcher(destination.trim()).matches();
-            case SMS, WHATSAPP -> PHONE_PATTERN.matcher(destination.trim()).matches();
+            case SMS, WHATSAPP, VOICE -> PHONE_PATTERN.matcher(destination.trim()).matches();
             case IN_APP, APP_NOTIFICATION -> true;
         };
     }
@@ -382,6 +381,7 @@ public class CarePilotCampaignTriggerService {
             case EMAIL -> MessageChannel.EMAIL;
             case SMS -> MessageChannel.SMS;
             case WHATSAPP -> MessageChannel.WHATSAPP;
+            case VOICE -> throw new IllegalArgumentException("VOICE is dispatched by the voice reminder adapter");
             case IN_APP, APP_NOTIFICATION -> MessageChannel.EMAIL;
         };
     }

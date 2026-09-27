@@ -390,6 +390,7 @@ public class CarePilotAnalyticsService {
             case EMAIL -> "Email";
             case SMS -> "SMS";
             case WHATSAPP -> "WhatsApp";
+            case VOICE -> "Voice";
             default -> "Delivery";
         };
         String outcome = switch (deliveryStatus) {

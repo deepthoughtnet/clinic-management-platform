@@ -243,6 +243,10 @@ clinic:
       session-ttl: ${CLINIC_DISCOVER_VERIFICATION_SESSION_TTL:PT12H}
       expose-development-code: ${CLINIC_DISCOVER_VERIFICATION_EXPOSE_DEVELOPMENT_CODE:false}
 
+engage:
+  voice-reminders:
+    enabled: ${ENGAGE_VOICE_REMINDERS_ENABLED:false}
+
 aiva:
   v2:
     enabled: ${AIVA_V2_ENABLED:true}

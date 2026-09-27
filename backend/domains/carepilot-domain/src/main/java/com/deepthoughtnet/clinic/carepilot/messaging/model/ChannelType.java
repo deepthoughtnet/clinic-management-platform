@@ -10,6 +10,7 @@ public enum ChannelType {
     EMAIL,
     SMS,
     WHATSAPP,
+    VOICE,
     IN_APP,
     APP_NOTIFICATION
 }

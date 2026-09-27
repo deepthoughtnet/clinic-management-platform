@@ -15,6 +15,7 @@ import com.deepthoughtnet.clinic.carepilot.execution.service.model.CampaignExecu
 import com.deepthoughtnet.clinic.carepilot.messaging.model.ChannelType;
 import com.deepthoughtnet.clinic.carepilot.messaging.service.CarePilotTemplateRenderer;
 import com.deepthoughtnet.clinic.carepilot.messaging.service.MessageOrchestratorService;
+import com.deepthoughtnet.clinic.carepilot.messaging.service.VoiceReminderSender;
 import com.deepthoughtnet.clinic.carepilot.template.db.CampaignTemplateEntity;
 import com.deepthoughtnet.clinic.carepilot.template.db.CampaignTemplateRepository;
 import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
@@ -46,6 +47,7 @@ class CampaignExecutionServiceTest {
     private PrescriptionService prescriptionService;
     private VaccinationService vaccinationService;
     private ClinicProfileService clinicProfileService;
+    private VoiceReminderSender voiceReminderSender;
     private CampaignExecutionService service;
 
     @BeforeEach
@@ -60,6 +62,7 @@ class CampaignExecutionServiceTest {
         prescriptionService = mock(PrescriptionService.class);
         vaccinationService = mock(VaccinationService.class);
         clinicProfileService = mock(ClinicProfileService.class);
+        voiceReminderSender = mock(VoiceReminderSender.class);
         CarePilotRetryPolicy retryPolicy = new CarePilotRetryPolicy(3, 60, 900, "FAILED,PROVIDER_NOT_AVAILABLE,NOT_CONFIGURED");
         service = new CampaignExecutionService(
                 repository,
@@ -77,6 +80,45 @@ class CampaignExecutionServiceTest {
         when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(attemptRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(templateRenderer.render(any(), any(), any(), any(), any())).thenReturn(new CarePilotTemplateRenderer.RenderedTemplate("Subject", "Body"));
+    }
+
+    @Test
+    void disabledVoiceExecutionIsRecordedWithoutInvokingProvider() {
+        CampaignExecutionEntity due = CampaignExecutionEntity.create(
+                tenantId, UUID.randomUUID(), null, ChannelType.VOICE, null,
+                OffsetDateTime.now().minusMinutes(1), "APPOINTMENT_REMINDER", null, "24H", null);
+        when(repository.findTop100ByStatusInAndScheduledAtLessThanEqualOrderByScheduledAtAsc(any(), any()))
+                .thenReturn(List.of(due));
+
+        assertThat(service.processDueExecutions(10)).isEqualTo(1);
+        verify(voiceReminderSender, org.mockito.Mockito.never()).send(any());
+        verify(messageOrchestratorService, org.mockito.Mockito.never()).send(any());
+        assertThat(due.getDeliveryStatus()).isEqualTo(MessageDeliveryStatus.SKIPPED);
+        assertThat(due.getFailureReason()).isEqualTo("FEATURE_DISABLED");
+    }
+
+    @Test
+    void enabledVoiceExecutionUsesReminderPortOnce() {
+        UUID patientId = UUID.randomUUID();
+        CampaignExecutionEntity due = CampaignExecutionEntity.create(
+                tenantId, UUID.randomUUID(), null, ChannelType.VOICE, patientId,
+                OffsetDateTime.now().minusMinutes(1), "APPOINTMENT_REMINDER", null, "24H", null);
+        when(repository.findTop100ByStatusInAndScheduledAtLessThanEqualOrderByScheduledAtAsc(any(), any()))
+                .thenReturn(List.of(due));
+        PatientEntity patient = mock(PatientEntity.class);
+        when(patient.getMobile()).thenReturn("+919999999999");
+        when(patientRepository.findByTenantIdAndId(tenantId, patientId)).thenReturn(Optional.of(patient));
+        when(voiceReminderSender.send(any())).thenReturn(new MessageResult(
+                true, MessageDeliveryStatus.SENT, "dotvoice", "call-1", null, null, OffsetDateTime.now()));
+        CampaignExecutionService enabled = new CampaignExecutionService(
+                repository, attemptRepository, messageOrchestratorService, templateRepository, patientRepository,
+                templateRenderer, new CarePilotRetryPolicy(3, 60, 900, "FAILED,PROVIDER_NOT_AVAILABLE,NOT_CONFIGURED"),
+                billingService, prescriptionService, vaccinationService, clinicProfileService, voiceReminderSender, true);
+
+        assertThat(enabled.processDueExecutions(10)).isEqualTo(1);
+        verify(voiceReminderSender).send(any());
+        verify(messageOrchestratorService, org.mockito.Mockito.never()).send(any());
+        assertThat(due.getStatus()).isEqualTo(ExecutionStatus.SUCCEEDED);
     }
 
     @Test
