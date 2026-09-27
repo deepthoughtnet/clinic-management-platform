@@ -148,6 +148,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { key: "platform-provider-connections", label: "Provider Connections", path: "/platform/provider-connections", platformOnly: true },
       { key: "platform-provider-access-requests", label: "Provider Access Requests", path: "/platform/provider-access-requests", platformOnly: true },
       { key: "integrations", label: "Integrations", path: "/platform/integrations", platformOnly: true },
+      { key: "platform-communication-test", label: "Communication Test", path: "/platform/communication-test", platformOnly: true },
     ],
   },
   {

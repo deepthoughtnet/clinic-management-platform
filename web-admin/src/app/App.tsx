@@ -62,6 +62,7 @@ import ProductImplementationPage from "../pages/platform/ProductImplementationPa
 import CareAccessRequestsPage from "../pages/platform/CareAccessRequestsPage";
 import ProviderAccessRequestsPage from "../pages/platform/ProviderAccessRequestsPage";
 import ProviderConnectionsPage from "../pages/platform/ProviderConnectionsPage";
+import CommunicationTestPage from "../pages/platform/CommunicationTestPage";
 import CommercialCatalogPage from "../pages/platform/CommercialCatalogPage";
 import CommercialPlatformPage from "../pages/platform/CommercialPlatformPage";
 import CommercialEffectiveEntitlementsPage from "../pages/platform/CommercialEffectiveEntitlementsPage";
@@ -539,6 +540,7 @@ function AuthedApp() {
         <Route path="/platform/care-access-requests" element={<PathnameKeyedRoute><PlatformAdminGate><CareAccessRequestsPage /></PlatformAdminGate></PathnameKeyedRoute>} />
         <Route path="/platform/provider-access-requests" element={<PathnameKeyedRoute><PlatformAdminGate><ProviderAccessRequestsPage /></PlatformAdminGate></PathnameKeyedRoute>} />
         <Route path="/platform/provider-connections/*" element={<PathnameKeyedRoute><PlatformAdminGate><ProviderConnectionsPage /></PlatformAdminGate></PathnameKeyedRoute>} />
+        <Route path="/platform/communication-test" element={<PathnameKeyedRoute><PlatformAdminGate><CommunicationTestPage /></PlatformAdminGate></PathnameKeyedRoute>} />
         <Route path="/platform/commercial" element={<PathnameKeyedRoute><PlatformAdminGate><CommercialPlatformPage /></PlatformAdminGate></PathnameKeyedRoute>} />
         <Route path="/platform/commercial/catalog" element={<PathnameKeyedRoute><PlatformAdminGate><CommercialCatalogPage /></PlatformAdminGate></PathnameKeyedRoute>} />
         <Route path="/platform/commercial/plans" element={<PathnameKeyedRoute><PlatformAdminGate><CommercialPlansPage /></PlatformAdminGate></PathnameKeyedRoute>} />
@@ -739,6 +741,7 @@ function formatPageTitle(pathname: string): string {
   if (pathname === "/platform/operations" || pathname === "/platform/platform-ops") return "Platform Ops";
   if (pathname === "/platform/realtime-ai") return "Realtime AI";
   if (pathname === "/platform/voice-test") return "Voice Test";
+  if (pathname === "/platform/communication-test") return "Communication Test";
   if (pathname === "/notification-center") return "My Notifications";
   if (pathname === "/carepilot/ai-operations") return "AI Operations";
   if (pathname.startsWith("/platform/product-implementation")) return "Product Implementation";

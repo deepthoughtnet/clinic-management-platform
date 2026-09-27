@@ -91,6 +91,7 @@ function formatPathLabel(pathname: string): string {
   if (pathname === "/platform/operations" || pathname === "/platform/platform-ops") return "Platform Ops";
   if (pathname === "/platform/realtime-ai") return "Realtime AI";
   if (pathname === "/platform/voice-test") return "Voice Test";
+  if (pathname === "/platform/communication-test") return "Communication Test";
   if (pathname === "/carepilot/ai-operations") return "AI Operations";
   if (pathname.startsWith("/platform/tenants")) return "Platform Tenants";
   if (pathname.startsWith("/platform/commercial/subscriptions")) return "Subscriptions";

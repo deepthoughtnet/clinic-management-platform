@@ -156,6 +156,20 @@ clinic:
       enabled: ${CLINIC_NOTIFICATIONS_SCHEDULER_ENABLED:true}
       fixedDelay: ${CLINIC_NOTIFICATIONS_SCHEDULER_FIXED_DELAY:PT5M}
   carepilot:
+    voice:
+      dotvoice:
+        enabled: ${DOTVOICE_ENABLED:false}
+        api-key: ${DOTVOICE_API_KEY:}
+        base-url: ${DOTVOICE_BASE_URL:}
+        calls-path: ${DOTVOICE_CALLS_PATH:/v1/calls}
+        from-number: ${DOTVOICE_FROM_NUMBER:${DOTVOICE_DID:}}
+        trunk: ${DOTVOICE_TRUNK:}
+        callback-base-url: ${DOTVOICE_CALLBACK_BASE_URL:}
+        timeout-ms: ${DOTVOICE_TIMEOUT_MS:10000}
+        stream-enabled: ${DOTVOICE_STREAM_ENABLED:false}
+        stream-url: ${DOTVOICE_STREAM_URL:ws://rec.mindserv.co:8000/vendor/stream}
+        stream-timeout-ms: ${DOTVOICE_STREAM_TIMEOUT_MS:30000}
+        media-frame-duration-ms: ${DOTVOICE_MEDIA_FRAME_DURATION_MS:20}
     reminders:
       enabled: ${CLINIC_CAREPILOT_REMINDERS_ENABLED:false}
       fixed-delay: ${CLINIC_CAREPILOT_REMINDERS_FIXED_DELAY:PT15M}
@@ -176,6 +190,14 @@ clinic:
         enabled: ${CLINIC_CAREPILOT_MESSAGING_EMAIL_ENABLED:false}
         provider: ${CLINIC_CAREPILOT_MESSAGING_EMAIL_PROVIDER:disabled}
         from-address: ${CLINIC_CAREPILOT_MESSAGING_EMAIL_FROM_ADDRESS:}
+        providers:
+          msg91:
+            enabled: ${MSG91_EMAIL_ENABLED:false}
+            host: ${MSG91_EMAIL_HOST:smtp.mailer91.com}
+            port: ${MSG91_EMAIL_PORT:587}
+            username: ${MSG91_EMAIL_USERNAME:}
+            password: ${MSG91_EMAIL_PASSWORD:}
+            from: ${MSG91_EMAIL_FROM:}
       sms:
         enabled: ${CLINIC_CAREPILOT_MESSAGING_SMS_ENABLED:false}
         provider: ${CLINIC_CAREPILOT_MESSAGING_SMS_PROVIDER:disabled}

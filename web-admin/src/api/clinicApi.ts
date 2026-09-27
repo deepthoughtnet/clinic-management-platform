@@ -2,6 +2,26 @@ import { fetchAuthenticatedBlob, httpDelete, httpGet, httpGetText, httpPatch, ht
 import { buildHelpRequestOptions } from "./helpClient";
 
 export type PatientGender = "MALE" | "FEMALE" | "OTHER" | "UNKNOWN";
+
+export type CommunicationTestChannel = "EMAIL" | "VOICE" | "WHATSAPP";
+export type CommunicationTestMode = "PROVIDER_ONLY" | "REMINDER_SIMULATION";
+export type CommunicationTestScenario = "APPOINTMENT_REMINDER" | "FOLLOW_UP_CONSULTATION" | "MEDICATION_REFILL_REVIEW" | "LAB_REMINDER" | "LAB_REPORT_READY";
+export type CommunicationTestHealth = {
+  channel: string; provider: string; status: string; message: string; configured: boolean;
+  providerAvailable: boolean; supportsTest: boolean; senderIdentity: string | null;
+  missingConfigurationKeys: string[]; checkedAt: string;
+};
+export type CommunicationTestCapabilityHealth = { capability: string; provider: string | null; status: string; message: string };
+export type CommunicationTestHealthResponse = { channels: CommunicationTestHealth[]; correlationId: string; capabilities: CommunicationTestCapabilityHealth[] };
+export type CommunicationTestRequest = {
+  recipient: string; subject?: string; message: string; language?: string;
+  mode?: CommunicationTestMode; scenario?: CommunicationTestScenario; provider?: string;
+};
+export type CommunicationTestResult = {
+  requestId: string; correlationId: string; channel: string; provider: string;
+  providerRequestId: string | null; status: string; success: boolean;
+  startedAt: string; completedAt: string; failureCategory: string | null; failureMessage: string | null;
+};
 export type AppointmentStatus = "BOOKED" | "WAITING" | "IN_CONSULTATION" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
 export type AppointmentType = "WALK_IN" | "SCHEDULED" | "FOLLOW_UP" | "VACCINATION";
 export type AppointmentPriority = "URGENT" | "MANUAL_PRIORITY" | "FOLLOW_UP" | "CHILD" | "ELDERLY" | "NORMAL";
@@ -11263,4 +11283,12 @@ export async function resumeProviderConnectionLink(token: string, linkId: string
 
 export async function reconcileProviderConnection(token: string, body: ProviderConnectionsReconcileRequest) {
   return httpPost<unknown>("/api/platform/provider-connections/reconcile", body, { token, platformOperation: true });
+}
+
+export function getCommunicationTestHealth(token: string) {
+  return httpGet<CommunicationTestHealthResponse>("/api/platform/communication-test/health", { token, platformOperation: true });
+}
+
+export function runCommunicationTest(token: string, channel: CommunicationTestChannel, body: CommunicationTestRequest) {
+  return httpPost<CommunicationTestResult>(`/api/platform/communication-test/${channel.toLowerCase()}`, body, { token, platformOperation: true });
 }

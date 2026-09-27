@@ -15,7 +15,8 @@ public record VoiceCallRequest(
         Map<String, String> metadata
 ) {
     public VoiceCallRequest {
-        if (tenantId == null) {
+        metadata = metadata == null ? Map.of() : Map.copyOf(metadata);
+        if (tenantId == null && !isPlatformCommunicationTest(metadata)) {
             throw new IllegalArgumentException("tenantId is required");
         }
         if (executionId == null) {
@@ -24,6 +25,9 @@ public record VoiceCallRequest(
         if (phoneNumber == null || phoneNumber.isBlank()) {
             throw new IllegalArgumentException("phoneNumber is required");
         }
-        metadata = metadata == null ? Map.of() : Map.copyOf(metadata);
+    }
+
+    private static boolean isPlatformCommunicationTest(Map<String, String> metadata) {
+        return "true".equalsIgnoreCase(metadata.get("communicationTest"));
     }
 }

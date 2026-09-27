@@ -21,6 +21,7 @@ import org.springframework.web.client.RestClientResponseException;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.UriComponentsBuilder;
 
 @Component
 public class ElevenLabsTextToSpeechProvider implements TextToSpeechProvider {
@@ -68,15 +69,24 @@ public class ElevenLabsTextToSpeechProvider implements TextToSpeechProvider {
             HttpHeaders headers = new HttpHeaders();
             headers.set("xi-api-key", properties.getTts().getElevenlabs().getApiKey().trim());
             headers.setContentType(MediaType.APPLICATION_JSON);
-            headers.setAccept(java.util.List.of(MediaType.parseMediaType("audio/mpeg")));
+            String outputFormat = StringUtils.hasText(request.outputFormat()) ? request.outputFormat().trim() : OUTPUT_FORMAT;
+            String responseType = outputFormat.startsWith("pcm_") ? "audio/pcm"
+                    : outputFormat.startsWith("ulaw_") ? "audio/basic" : "audio/mpeg";
+            headers.setAccept(java.util.List.of(MediaType.parseMediaType(responseType)));
 
             String url = properties.getTts().getElevenlabs().getBaseUrl().replaceAll("/+$", "")
                     + "/" + properties.getTts().getElevenlabs().getVoiceId().trim();
-            Map<String, Object> payload = Map.of(
-                    "text", request.text(),
-                    "model_id", properties.getTts().getElevenlabs().getModel(),
-                    "output_format", OUTPUT_FORMAT
-            );
+            Map<String, Object> payload;
+            if (OUTPUT_FORMAT.equals(outputFormat)) {
+                // Preserve the certified AIVA request contract.
+                payload = Map.of("text", request.text(), "model_id", properties.getTts().getElevenlabs().getModel(),
+                        "output_format", outputFormat);
+            } else {
+                // ElevenLabs documents output_format as a query parameter. Keep this
+                // request-scoped so AIVA's existing MP3 behavior is untouched.
+                url = UriComponentsBuilder.fromUriString(url).queryParam("output_format", outputFormat).build().toUriString();
+                payload = Map.of("text", request.text(), "model_id", properties.getTts().getElevenlabs().getModel());
+            }
             ResponseEntity<byte[]> response = restTemplate.exchange(
                     url,
                     HttpMethod.POST,

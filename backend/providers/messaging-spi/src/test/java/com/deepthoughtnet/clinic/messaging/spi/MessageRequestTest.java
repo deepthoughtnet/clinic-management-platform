@@ -43,4 +43,27 @@ class MessageRequestTest {
         assertThat(request.metadata()).isEmpty();
         assertThatThrownBy(() -> request.metadata().put("x", "y")).isInstanceOf(UnsupportedOperationException.class);
     }
+
+    @Test
+    void permitsNullTenantOnlyForPlatformCommunicationTests() {
+        MessageRequest request = new MessageRequest(
+                null,
+                MessageChannel.EMAIL,
+                new MessageRecipient("a@b.com", null),
+                "s",
+                "b",
+                null,
+                null,
+                null,
+                null,
+                Map.of("communicationTest", "true")
+        );
+
+        assertThat(request.tenantId()).isNull();
+        assertThatThrownBy(() -> new MessageRequest(
+                null, MessageChannel.EMAIL, new MessageRecipient("a@b.com", null), null, "body",
+                null, null, null, null, Map.of("communicationTest", "false")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("tenantId");
+    }
 }

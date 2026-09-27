@@ -19,7 +19,8 @@ public record MessageRequest(
         Map<String, String> metadata
 ) {
     public MessageRequest {
-        if (tenantId == null) {
+        metadata = metadata == null ? Map.of() : Map.copyOf(metadata);
+        if (tenantId == null && !isPlatformCommunicationTest(metadata)) {
             throw new IllegalArgumentException("tenantId is required");
         }
         if (channel == null) {
@@ -31,6 +32,9 @@ public record MessageRequest(
         if (body == null || body.isBlank()) {
             throw new IllegalArgumentException("body is required");
         }
-        metadata = metadata == null ? Map.of() : Map.copyOf(metadata);
+    }
+
+    private static boolean isPlatformCommunicationTest(Map<String, String> metadata) {
+        return "true".equalsIgnoreCase(metadata.get("communicationTest"));
     }
 }

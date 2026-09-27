@@ -70,6 +70,25 @@ class ElevenLabsTextToSpeechProviderTest {
     }
 
     @Test
+    void reminderMayRequestPcmWithoutChangingAivaDefault() {
+        ElevenLabsTextToSpeechProvider provider = provider();
+        RestTemplate restTemplate = restTemplate(provider);
+        MockRestServiceServer server = MockRestServiceServer.createServer(restTemplate);
+        server.expect(once(), requestTo("http://elevenlabs.test/v1/text-to-speech/voice-id?output_format=pcm_16000"))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(content().json("""
+                        {"text":"Reminder","model_id":"eleven_multilingual_v2"}
+                        """))
+                .andRespond(withSuccess(new byte[]{1, 2, 3, 4}, MediaType.parseMediaType("audio/pcm")));
+
+        var result = provider.synthesize(new VoiceSynthesisRequest(null, "Reminder", "en-IN", "pcm_16000"));
+
+        assertThat(result.contentType()).isEqualTo("audio/pcm");
+        assertThat(result.audioBytes()).hasSize(4);
+        server.verify();
+    }
+
+    @Test
     void synthesizeRejectsBlankTextBeforeNetworkCall() {
         ElevenLabsTextToSpeechProvider provider = provider();
 
