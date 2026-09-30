@@ -15,7 +15,7 @@ public class VoiceCallProviderRegistry {
 
     public VoiceCallProviderRegistry(
             List<VoiceCallProvider> providers,
-            @Value("${carepilot.ai-calls.provider.primary:mock}") String primaryProvider,
+            @Value("${carepilot.ai-calls.provider.primary:dotvoice}") String primaryProvider,
             @Value("${carepilot.ai-calls.provider.fallback:none}") String fallbackProvider,
             @Value("${carepilot.ai-calls.provider.failover-enabled:false}") boolean failoverEnabled
     ) {

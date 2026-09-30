@@ -616,11 +616,11 @@ class LabServiceValidationTest {
         ));
         when(labOrderResultRepository.findByTenantIdAndLabOrderItemId(TENANT_ID, cbc.getId())).thenReturn(List.of());
         when(labOrderResultRepository.findByTenantIdAndLabOrderItemId(TENANT_ID, hba1c.getId())).thenReturn(List.of());
-        when(labOrderSampleRepository.findByTenantIdAndLabOrderIdOrderByCollectedAtAscCreatedAtAsc(TENANT_ID, ORDER_ID)).thenReturn(List.of(sample));
 
         var rejected = service.rejectSample(TENANT_ID, sample.getId(), new LabSampleRejectCommand("Hemolysed sample", true, "Recollect"), ACTOR_ID);
 
-        assertThat(rejected.status()).isEqualTo(com.deepthoughtnet.clinic.api.lab.service.model.LabSampleStatusRecord.RECOLLECTION_REQUIRED);
+        assertThat(rejected.status()).isEqualTo(com.deepthoughtnet.clinic.api.lab.service.model.LabSampleStatusRecord.REJECTED);
+        assertThat(rejected.recollectionRequired()).isTrue();
         verify(laboratoryWorkflowService).rejectSpecimenForTests(
                 org.mockito.ArgumentMatchers.eq(TENANT_ID),
                 org.mockito.ArgumentMatchers.eq(ORDER_ID),
@@ -892,13 +892,86 @@ class LabServiceValidationTest {
         setOrderId(order, ORDER_ID);
         when(labOrderSampleRepository.findByTenantIdAndId(TENANT_ID, sample.getId())).thenReturn(Optional.of(sample));
         when(labOrderRepository.findByTenantIdAndId(TENANT_ID, ORDER_ID)).thenReturn(Optional.of(order));
-        when(labOrderSampleRepository.findByTenantIdAndLabOrderIdOrderByCollectedAtAscCreatedAtAsc(TENANT_ID, ORDER_ID)).thenReturn(List.of(sample));
         when(labOrderResultRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAscCreatedAtAsc(TENANT_ID, ORDER_ID)).thenReturn(List.of());
 
         var rejected = service.rejectSample(TENANT_ID, sample.getId(), new LabSampleRejectCommand("Hemolysed sample", true, "Recollect"), ACTOR_ID);
 
         assertThat(rejected.recollectionRequired()).isTrue();
-        assertThat(rejected.status()).isEqualTo(com.deepthoughtnet.clinic.api.lab.service.model.LabSampleStatusRecord.RECOLLECTION_REQUIRED);
+        assertThat(rejected.status()).isEqualTo(com.deepthoughtnet.clinic.api.lab.service.model.LabSampleStatusRecord.REJECTED);
+        assertThat(order.getStatus()).isEqualTo(LabOrderStatus.READY_FOR_COLLECTION);
+        verify(labOrderRepository).save(order);
+    }
+
+    @Test
+    void recollectionCreatesNewSpecimenAndPreservesRejectedHistory() {
+        LabOrderSampleEntity original = collectedOnlySample();
+        var order = sampleOrder(LabOrderStatus.SAMPLE_COLLECTED);
+        setOrderId(order, ORDER_ID);
+        when(labOrderSampleRepository.findByTenantIdAndId(TENANT_ID, original.getId())).thenReturn(Optional.of(original));
+        when(labOrderRepository.findByTenantIdAndId(TENANT_ID, ORDER_ID)).thenReturn(Optional.of(order));
+        when(labOrderResultRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAscCreatedAtAsc(TENANT_ID, ORDER_ID)).thenReturn(List.of());
+        when(laboratoryWorkflowService.listOrderTests(TENANT_ID, ORDER_ID)).thenReturn(List.of());
+
+        service.rejectSample(TENANT_ID, original.getId(), new LabSampleRejectCommand("Insufficient sample quantity", true, "Recollect"), ACTOR_ID);
+
+        assertThat(original.getStatus()).isEqualTo(com.deepthoughtnet.clinic.api.lab.db.LabSampleStatus.REJECTED);
+        assertThat(original.isRecollectionRequired()).isTrue();
+        assertThat(original.getRejectionReason()).isEqualTo("Insufficient sample quantity");
+        assertThat(order.getStatus()).isEqualTo(LabOrderStatus.READY_FOR_COLLECTION);
+
+        when(labOrderSampleRepository.findFirstByTenantIdAndAccessionNumberStartingWithOrderByAccessionNumberDesc(TENANT_ID, "LAB-" + java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.BASIC_ISO_DATE) + "-"))
+                .thenReturn(Optional.of(original));
+        var replacement = service.collectSamples(TENANT_ID, ORDER_ID, List.of(new com.deepthoughtnet.clinic.api.lab.service.model.LabSampleCollectionCommand(
+                null, "Blood", "EDTA", OffsetDateTime.now(), "Replacement specimen"
+        )), ACTOR_ID);
+
+        assertThat(replacement).hasSize(1);
+        assertThat(replacement.getFirst().id()).isNotEqualTo(original.getId());
+        assertThat(replacement.getFirst().accessionNumber()).isNotEqualTo(original.getAccessionNumber());
+        assertThat(replacement.getFirst().status()).isEqualTo(com.deepthoughtnet.clinic.api.lab.service.model.LabSampleStatusRecord.COLLECTED);
+        assertThat(original.getStatus()).isEqualTo(com.deepthoughtnet.clinic.api.lab.db.LabSampleStatus.REJECTED);
+        assertThat(original.getRejectionReason()).isEqualTo("Insufficient sample quantity");
+    }
+
+    @Test
+    void orderSummaryAndActiveLinksUseReplacementSpecimenOnly() {
+        var order = sampleOrder(LabOrderStatus.SAMPLE_COLLECTED);
+        setOrderId(order, ORDER_ID);
+        LabOrderItemEntity item = sampleOrderItem(TEST_ID, "CBC", "Complete Blood Count", 1);
+        LabOrderSampleEntity rejected = sampleWithAccession(TENANT_ID, "LAB-20260929-0001");
+        rejected.markRejected("Insufficient sample quantity", true, "Recollect", ACTOR_ID);
+        LabOrderSampleEntity replacement = sampleWithAccession(TENANT_ID, "LAB-20260929-0002");
+        when(labOrderRepository.findByTenantIdAndId(TENANT_ID, ORDER_ID)).thenReturn(Optional.of(order));
+        when(labOrderItemRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAsc(TENANT_ID, ORDER_ID)).thenReturn(List.of(item));
+        when(labOrderSampleRepository.findByTenantIdAndLabOrderIdOrderByCollectedAtAscCreatedAtAsc(TENANT_ID, ORDER_ID)).thenReturn(List.of(rejected, replacement));
+        when(laboratoryWorkflowService.listOrderTests(TENANT_ID, ORDER_ID)).thenReturn(List.of(new LaboratoryOrderedTestView(
+                item.getId(),
+                "SAMPLE_COLLECTED",
+                0,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                List.of(),
+                null,
+                null,
+                null,
+                List.of(
+                        new LaboratorySpecimenLinkView(rejected.getId(), rejected.getAccessionNumber(), rejected.getBarcodeValue(), "Blood", "EDTA", "REJECTED", false, rejected.getCollectedAt(), null, rejected.getUpdatedAt(), rejected.getUpdatedAt()),
+                        new LaboratorySpecimenLinkView(replacement.getId(), replacement.getAccessionNumber(), replacement.getBarcodeValue(), "Blood", "EDTA", "COLLECTED", true, replacement.getCollectedAt(), null, replacement.getCreatedAt(), null)
+                )
+        )));
+
+        var record = service.findOrder(TENANT_ID, ORDER_ID).orElseThrow();
+
+        assertThat(record.sampleAccessionNumber()).isEqualTo("LAB-20260929-0002");
+        assertThat(record.sampleSummaryStatus()).isEqualTo(com.deepthoughtnet.clinic.api.lab.service.model.LabSampleStatusRecord.COLLECTED);
+        assertThat(record.samples()).filteredOn(sample -> sample.id().equals(rejected.getId())).singleElement()
+                .satisfies(sample -> assertThat(sample.linkedLabOrderItemIds()).isEmpty());
+        assertThat(record.samples()).filteredOn(sample -> sample.id().equals(replacement.getId())).singleElement()
+                .satisfies(sample -> assertThat(sample.linkedLabOrderItemIds()).containsExactly(TEST_ID));
     }
 
     @Test
@@ -1061,12 +1134,14 @@ class LabServiceValidationTest {
             String text = new PDFTextStripper().getText(document);
             assertThat(document.getNumberOfPages()).isEqualTo(1);
             assertThat(text).contains("LABORATORY REPORT");
+            assertThat(text.split("LABORATORY REPORT", -1)).hasSize(2);
             assertThat(text).contains("Jeevanam Diagnostics");
             assertThat(text).contains("Generated by Jeevanam Healthcare | Powered by AIVA");
             assertThat(text).contains("Patient & Report Details");
             assertThat(text).contains("Approved By");
             assertThat(text).contains("Approved At");
-            assertThat(text).contains("Verification Reference");
+            assertThat(text).contains("Report Verification");
+            assertThat(text).contains("Verification ID:");
             assertThat(text).contains("Authorized Signatory");
             assertThat(text).contains("Interpretation");
             assertThat(text).contains("Normal");
@@ -1151,7 +1226,10 @@ class LabServiceValidationTest {
         try (PDDocument document = Loader.loadPDF(pdf.content())) {
             String text = new PDFTextStripper().getText(document);
             assertThat(document.getNumberOfPages()).isEqualTo(1);
-            assertThat(text).contains("GROUPED LABORATORY REPORT");
+            assertThat(text).contains("LABORATORY REPORT");
+            assertThat(text.split("LABORATORY REPORT", -1)).hasSize(2);
+            assertThat(text).doesNotContain("GROUPED LABORATORY REPORT");
+            assertThat(text).doesNotContain("FINAL LABORATORY REPORT");
             assertThat(text).contains("Results");
             assertThat(text).contains("Complete Blood Count");
             assertThat(text).contains("HbA1c");
@@ -1368,7 +1446,8 @@ class LabServiceValidationTest {
             }
             String text = new PDFTextStripper().getText(document);
             assertThat(text.split("Parameter / Component", -1).length - 1).isGreaterThan(1);
-            assertThat(text).contains("Verification Reference");
+            assertThat(text).contains("Report Verification");
+            assertThat(text).contains("Verification ID:");
             assertThat(qrImageCount).isGreaterThanOrEqualTo(1);
         }
     }
@@ -2354,7 +2433,11 @@ class LabServiceValidationTest {
         LabOrderResultPdf pdf = service.renderReportPdf(TENANT_ID, ORDER_ID);
         try (PDDocument document = Loader.loadPDF(pdf.content())) {
             String text = new PDFTextStripper().getText(document);
-            assertThat(text).contains("https://reports.example.com/api/public/lab/reports/");
+            assertThat(text).contains("Report Verification");
+            assertThat(text).contains("Verification ID: LAB-");
+            assertThat(text).doesNotContain("Verify online:");
+            assertThat(text).doesNotContain("/api/public/lab/reports/");
+            assertThat(document.getPage(0).getResources().getXObjectNames()).isNotEmpty();
             assertThat(text).contains("IST");
         }
     }

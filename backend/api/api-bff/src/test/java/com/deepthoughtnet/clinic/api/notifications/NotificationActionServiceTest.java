@@ -2,7 +2,6 @@ package com.deepthoughtnet.clinic.api.notifications;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -10,14 +9,12 @@ import static org.mockito.Mockito.when;
 import com.deepthoughtnet.clinic.appointment.service.AppointmentService;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentPriority;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentRecord;
-import com.deepthoughtnet.clinic.appointment.service.model.AppointmentSearchCriteria;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentStatus;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentType;
 import com.deepthoughtnet.clinic.billing.service.BillingService;
 import com.deepthoughtnet.clinic.billing.service.model.BillPdf;
 import com.deepthoughtnet.clinic.billing.service.model.BillRecord;
 import com.deepthoughtnet.clinic.billing.service.model.BillStatus;
-import com.deepthoughtnet.clinic.billing.service.model.BillingSearchCriteria;
 import com.deepthoughtnet.clinic.billing.service.model.DiscountType;
 import com.deepthoughtnet.clinic.billing.service.model.PaymentMode;
 import com.deepthoughtnet.clinic.consultation.service.ConsultationService;
@@ -29,11 +26,9 @@ import com.deepthoughtnet.clinic.notify.NotificationDeliveryException;
 import com.deepthoughtnet.clinic.notify.NotificationProvider;
 import com.deepthoughtnet.clinic.patient.db.PatientEntity;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
-import com.deepthoughtnet.clinic.billing.events.PaymentReminderEvent;
 import com.deepthoughtnet.clinic.platform.modulith.events.ModuleBusinessEventPublisher;
 import com.deepthoughtnet.clinic.prescription.service.PrescriptionService;
 import com.deepthoughtnet.clinic.api.prescriptiontemplate.service.PrescriptionBrandingDocumentResolver;
-import com.deepthoughtnet.clinic.vaccination.service.VaccinationService;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -72,7 +67,6 @@ class NotificationActionServiceTest {
                 billingService,
                 appointmentService,
                 mock(ConsultationService.class),
-                mock(VaccinationService.class),
                 mock(PlatformTenantManagementService.class),
                 patientRepository,
                 notificationProvider,
@@ -93,136 +87,6 @@ class NotificationActionServiceTest {
         when(patient.getEmail()).thenReturn("asha@example.com");
         when(patient.getMobile()).thenReturn("9999999999");
         when(patientRepository.findByTenantIdAndId(eq(tenantId), eq(patientId))).thenReturn(Optional.of(patient));
-    }
-
-    @Test
-    void queuePaymentRemindersQueuesOutstandingBills() {
-        when(moduleBusinessEventPublisher.publish(any())).thenReturn(UUID.randomUUID());
-        when(billingService.list(eq(tenantId), any(BillingSearchCriteria.class))).thenReturn(List.of(
-                new BillRecord(
-                        UUID.randomUUID(),
-                        tenantId,
-                        "BILL-1",
-                        patientId,
-                        "PAT-1",
-                        "Asha Rao",
-                        null,
-                        null,
-                        LocalDate.now(),
-                        BillStatus.PARTIALLY_PAID,
-                        new BigDecimal("100.00"),
-                        DiscountType.NONE,
-                        BigDecimal.ZERO,
-                        BigDecimal.ZERO,
-                        null,
-                        null,
-                        BigDecimal.ZERO,
-                        new BigDecimal("100.00"),
-                        new BigDecimal("25.00"),
-                        BigDecimal.ZERO,
-                        new BigDecimal("25.00"),
-                        new BigDecimal("75.00"),
-                        null,
-                        null,
-                        OffsetDateTime.now(),
-                        OffsetDateTime.now(),
-                        List.of()
-                )
-        ));
-
-        NotificationActionService.ReminderQueueSummary queued = service.queuePaymentReminders(tenantId, actorId);
-
-        assertThat(queued.queuedCount()).isEqualTo(1);
-        org.mockito.ArgumentCaptor<PaymentReminderEvent> eventCaptor = org.mockito.ArgumentCaptor.forClass(PaymentReminderEvent.class);
-        Mockito.verify(moduleBusinessEventPublisher).publish(eventCaptor.capture());
-        assertThat(eventCaptor.getValue().eventType()).isEqualTo("PAYMENT_REMINDER");
-        assertThat(eventCaptor.getValue().payload().billNumber()).isEqualTo("BILL-1");
-        assertThat(eventCaptor.getValue().payload().outstandingAmount()).isEqualByComparingTo("75.00");
-        assertThat(eventCaptor.getValue().payload().billStatus()).isEqualTo(BillStatus.PARTIALLY_PAID.name());
-    }
-
-    @Test
-    void queuePaymentRemindersSkipsFullyPaidBills() {
-        when(billingService.list(eq(tenantId), any(BillingSearchCriteria.class))).thenReturn(List.of(
-                new BillRecord(
-                        UUID.randomUUID(),
-                        tenantId,
-                        "BILL-2",
-                        patientId,
-                        "PAT-1",
-                        "Asha Rao",
-                        null,
-                        null,
-                        LocalDate.now(),
-                        BillStatus.PAID,
-                        new BigDecimal("100.00"),
-                        DiscountType.NONE,
-                        BigDecimal.ZERO,
-                        BigDecimal.ZERO,
-                        null,
-                        null,
-                        BigDecimal.ZERO,
-                        new BigDecimal("100.00"),
-                        new BigDecimal("100.00"),
-                        BigDecimal.ZERO,
-                        new BigDecimal("100.00"),
-                        BigDecimal.ZERO,
-                        null,
-                        null,
-                        OffsetDateTime.now(),
-                        OffsetDateTime.now(),
-                        List.of()
-                )
-        ));
-
-        NotificationActionService.ReminderQueueSummary queued = service.queuePaymentReminders(tenantId, actorId);
-
-        assertThat(queued.queuedCount()).isZero();
-        assertThat(queued.failedCount()).isZero();
-        assertThat(queued.skippedDuplicateCount()).isZero();
-        Mockito.verifyNoInteractions(moduleBusinessEventPublisher);
-    }
-
-    @Test
-    void queueMissedAppointmentRemindersQueuesPastUnresolvedAppointments() {
-        AppointmentRecord appointment = new AppointmentRecord(
-                UUID.randomUUID(),
-                tenantId,
-                patientId,
-                "PAT-1",
-                "Asha Rao",
-                "9999999999",
-                UUID.randomUUID(),
-                "Dr. Clinic",
-                null,
-                LocalDate.now().minusDays(1),
-                LocalTime.of(9, 0),
-                1,
-                "Follow up",
-                AppointmentType.FOLLOW_UP,
-                AppointmentPriority.FOLLOW_UP,
-                AppointmentStatus.BOOKED,
-                OffsetDateTime.now(),
-                OffsetDateTime.now()
-        );
-        when(appointmentService.search(eq(tenantId), any(AppointmentSearchCriteria.class))).thenReturn(List.of(appointment));
-        when(appointmentService.findById(eq(tenantId), eq(appointment.id()))).thenReturn(appointment);
-
-        NotificationActionService.ReminderQueueSummary queued = service.queueMissedAppointmentReminders(tenantId, LocalDate.now(), actorId);
-
-        assertThat(queued.queuedCount()).isEqualTo(1);
-        Mockito.verify(notificationHistoryService).queueDetailed(
-                eq(tenantId),
-                eq(patientId),
-                eq("MISSED_APPOINTMENT_REMINDER"),
-                eq("email"),
-                eq("asha@example.com"),
-                eq("Missed appointment reminder"),
-                contains("reschedule"),
-                eq("APPOINTMENT"),
-                any(),
-                eq(actorId)
-        );
     }
 
     @Test

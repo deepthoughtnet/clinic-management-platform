@@ -121,11 +121,12 @@ const AUDIENCE_TYPES: CarePilotAudienceType[] = [
   "REFILL_RISK_PATIENTS",
   "FOLLOW_UP_OVERDUE_PATIENTS",
 ];
-const CHANNEL_TYPES: CarePilotChannelType[] = ["EMAIL", "SMS", "WHATSAPP", "IN_APP", "APP_NOTIFICATION"];
+const CHANNEL_TYPES: CarePilotChannelType[] = ["EMAIL", "SMS", "WHATSAPP", "VOICE", "IN_APP", "APP_NOTIFICATION"];
 const EXECUTION_STATUSES: CarePilotExecutionStatus[] = ["QUEUED", "PROCESSING", "SUCCEEDED", "FAILED", "DEAD_LETTER", "RETRY_SCHEDULED", "CANCELLED"];
 
 function channelOptionLabel(channel: CarePilotChannelType, providerStatusByChannel: Partial<Record<"SMS" | "WHATSAPP", CarePilotMessagingProviderStatus>>): string {
   const label = channelTypeLabel(channel);
+  if (channel === "VOICE") return `${label} - Execution disabled globally`;
   if (channel === "SMS" && providerStatusByChannel.SMS?.status !== "READY") return `${label} - Provider not ready`;
   if (channel === "WHATSAPP" && providerStatusByChannel.WHATSAPP?.status !== "READY") return `${label} - Provider not ready`;
   return label;
@@ -307,6 +308,7 @@ function previewTemplate(body: string): string {
     .replaceAll("{{amountDue}}", "₹ 1,250")
     .replaceAll("{{medicineName}}", "Atorvastatin 10mg")
     .replaceAll("{{refillDueDate}}", "2026-06-01")
+    .replaceAll("{{refillActionUrl}}", "/patient/refills")
     .replaceAll("{{vaccineName}}", "Flu Vaccine")
     .replaceAll("{{vaccinationDueDate}}", "2026-06-10")
     .replaceAll("{{clinicPhone}}", "+1 555 0100");

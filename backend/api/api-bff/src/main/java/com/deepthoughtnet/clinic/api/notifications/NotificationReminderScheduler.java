@@ -31,12 +31,8 @@ public class NotificationReminderScheduler {
             return;
         }
         NotificationActionService.ReminderQueueSummary totals = NotificationActionService.ReminderQueueSummary.empty();
-        LocalDate today = LocalDate.now();
         for (var tenant : tenantManagementService.list()) {
-            totals = totals.add(notificationActionService.queueMissedAppointmentReminders(tenant.id(), today, null));
-            totals = totals.add(notificationActionService.queueFollowUpReminders(tenant.id(), today, null));
-            totals = totals.add(notificationActionService.queueVaccinationReminders(tenant.id(), null));
-            totals = totals.add(notificationActionService.queuePaymentReminders(tenant.id(), null));
+            totals = totals.add(notificationActionService.queueFollowUpReminders(tenant.id(), LocalDate.now(), null));
         }
         if (totals.queuedCount() > 0 || totals.skippedDuplicateCount() > 0 || totals.failedCount() > 0) {
             log.info(

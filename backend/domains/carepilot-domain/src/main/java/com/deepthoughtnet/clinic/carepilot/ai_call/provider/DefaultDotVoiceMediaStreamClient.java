@@ -73,7 +73,11 @@ public class DefaultDotVoiceMediaStreamClient implements DotVoiceMediaStreamClie
             prepared.set(new PreparedStream(socket, active));
             return true;
         } catch (Exception ex) {
-            log.warn("DOTVOICE_STREAM_READY_FAILED reason={}", ex.getClass().getSimpleName());
+            Throwable cause = ex instanceof java.util.concurrent.ExecutionException && ex.getCause() != null
+                    ? ex.getCause() : ex;
+            String category = cause instanceof StreamReadinessException readiness
+                    ? readiness.category() : "STREAM_READY_TIMEOUT";
+            log.warn("DOTVOICE_STREAM_READY_FAILED category={} reason={}", category, sanitize(cause.getMessage()));
             return false;
         }
     }
@@ -123,6 +127,7 @@ public class DefaultDotVoiceMediaStreamClient implements DotVoiceMediaStreamClie
                 try {
                     textBuffer.append(data);
                     if (!last) return WebSocket.Listener.super.onText(socket, data, last);
+                    int payloadLength = textBuffer.length();
                     JsonNode node = objectMapper.readTree(textBuffer.toString());
                     textBuffer.setLength(0);
                     String event = resolveEvent(node);
@@ -130,6 +135,9 @@ public class DefaultDotVoiceMediaStreamClient implements DotVoiceMediaStreamClie
                     log.info("DOTVOICE_STREAM_EVENT event={} callId={} keys={}", event, callId, safeKeys(node));
                     if ("ready".equalsIgnoreCase(event)) {
                         ready.complete(true);
+                    } else if ("error".equalsIgnoreCase(event)) {
+                        logProviderError(node, callId);
+                        ready.completeExceptionally(new StreamReadinessException("STREAM_PROVIDER_REJECTED"));
                     } else if ("stream_start".equalsIgnoreCase(event)) {
                         PlaybackContext context = active.get();
                         if (context == null) {
@@ -145,6 +153,8 @@ public class DefaultDotVoiceMediaStreamClient implements DotVoiceMediaStreamClie
                             && active.get().callId.equals(callId)) {
                         PlaybackContext context = active.get();
                         context.completion.complete(new PlaybackResult(true, "PLAYBACK_COMPLETED", null, context.sent.get(), text(node, "cause")));
+                    } else if (!isKnownEvent(event)) {
+                        logUnknownEvent(node, event, callId, payloadLength);
                     }
                 } catch (Exception ex) {
                     PlaybackContext context = active.get();
@@ -152,6 +162,33 @@ public class DefaultDotVoiceMediaStreamClient implements DotVoiceMediaStreamClie
                 }
                 socket.request(1);
                 return WebSocket.Listener.super.onText(socket, data, last);
+            }
+
+            @Override public CompletionStage<?> onBinary(WebSocket socket, java.nio.ByteBuffer data, boolean last) {
+                log.info("DOTVOICE_STREAM_FRAME type=BINARY bytes={} last={}", data == null ? 0 : data.remaining(), last);
+                socket.request(1);
+                return WebSocket.Listener.super.onBinary(socket, data, last);
+            }
+
+            @Override public CompletionStage<?> onPing(WebSocket socket, java.nio.ByteBuffer message) {
+                log.info("DOTVOICE_STREAM_FRAME type=PING bytes={}", message == null ? 0 : message.remaining());
+                socket.request(1);
+                return WebSocket.Listener.super.onPing(socket, message);
+            }
+
+            @Override public CompletionStage<?> onPong(WebSocket socket, java.nio.ByteBuffer message) {
+                log.info("DOTVOICE_STREAM_FRAME type=PONG bytes={}", message == null ? 0 : message.remaining());
+                socket.request(1);
+                return WebSocket.Listener.super.onPong(socket, message);
+            }
+
+            @Override public CompletionStage<?> onClose(WebSocket socket, int statusCode, String reason) {
+                log.info("DOTVOICE_STREAM_FRAME type=CLOSE statusCode={} reasonPresent={}", statusCode,
+                        StringUtils.hasText(reason));
+                if (!ready.isDone()) {
+                    ready.completeExceptionally(new StreamReadinessException("STREAM_CLOSED_BEFORE_READY"));
+                }
+                return WebSocket.Listener.super.onClose(socket, statusCode, reason);
             }
 
             @Override public void onError(WebSocket socket, Throwable error) {
@@ -211,6 +248,38 @@ public class DefaultDotVoiceMediaStreamClient implements DotVoiceMediaStreamClie
         return List.copyOf(keys);
     }
 
+    private void logUnknownEvent(JsonNode node, String event, String callId, int payloadLength) {
+        log.info("DOTVOICE_STREAM_UNKNOWN_EVENT event={} keys={} callId={} digit={} key={} duration={} sequence={} "
+                        + "timestamp={} payloadLength={}",
+                event, safeKeys(node), callId, scalar(node, "digit"), scalar(node, "key"), scalar(node, "duration"),
+                scalar(node, "sequence", "sequence_number"), scalar(node, "timestamp", "event_time"), payloadLength);
+    }
+
+    private void logProviderError(JsonNode node, String callId) {
+        log.warn("DOTVOICE_STREAM_PROVIDER_ERROR event={} code={} message={} reason={} callId={} keys={}",
+                "error", sanitize(scalar(node, "code")), sanitize(scalar(node, "message")), sanitize(scalar(node, "reason")),
+                sanitize(callId), safeKeys(node));
+    }
+
+    private String sanitize(String value) {
+        if (!StringUtils.hasText(value)) return null;
+        String sanitized = value.replaceAll("(?i)https?://\\S+|wss?://\\S+", "[redacted-url]")
+                .replaceAll("(?i)(api[_-]?key|token|secret|authorization)\\s*[:=]\\s*\\S+", "$1=[redacted]")
+                .replaceAll("[\\r\\n\\t]", " ").trim();
+        return sanitized.length() <= 160 ? sanitized : sanitized.substring(0, 160);
+    }
+
+    private String scalar(JsonNode node, String... names) {
+        for (String name : names) {
+            JsonNode value = node == null ? null : node.get(name);
+            if (value != null && value.isValueNode()) {
+                String text = value.asText();
+                if (StringUtils.hasText(text) && text.length() <= 80) return text;
+            }
+        }
+        return null;
+    }
+
     private String text(JsonNode node, String... names) {
         for (String name : names) {
             JsonNode value = node == null ? null : node.get(name);
@@ -245,5 +314,14 @@ public class DefaultDotVoiceMediaStreamClient implements DotVoiceMediaStreamClie
         private PlaybackContext(String callId, List<byte[]> frames, CompletableFuture<PlaybackResult> completion) {
             this.callId = callId; this.frames = frames; this.completion = completion;
         }
+    }
+
+    private static final class StreamReadinessException extends RuntimeException {
+        private final String category;
+        private StreamReadinessException(String category) {
+            super(category);
+            this.category = category;
+        }
+        private String category() { return category; }
     }
 }

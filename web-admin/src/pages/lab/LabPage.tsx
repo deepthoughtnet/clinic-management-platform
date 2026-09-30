@@ -762,6 +762,13 @@ function actionableSample(order: LabOrder) {
   return [...order.samples].reverse().find((sample) => sample.status === "COLLECTED" || sample.status === "RECEIVED") || null;
 }
 
+function hasPendingRecollection(order: LabOrder) {
+  if (order.orderedTests?.length) {
+    return order.orderedTests.some((orderedTest) => orderedTest.state === "RECOLLECTION_REQUIRED");
+  }
+  return order.samples.some((sample) => sample.recollectionRequired || sample.status === "RECOLLECTION_REQUIRED");
+}
+
 function sampleLinkedTestsLabel(sample: LabSample) {
   return sample.linkedTestNames?.length ? sample.linkedTestNames.join(", ") : sample.labOrderItemId || "-";
 }
@@ -1106,6 +1113,7 @@ export default function LabPage() {
   const [resultDraftLoaded, setResultDraftLoaded] = React.useState(false);
   const [resultSavingDraft, setResultSavingDraft] = React.useState(false);
   const [resultSaveMessage, setResultSaveMessage] = React.useState<string | null>(null);
+  const [resultError, setResultError] = React.useState<string | null>(null);
   const [resultAttachmentPreview, setResultAttachmentPreview] = React.useState<{
     attachment: LabOrder["attachments"][number];
     blobUrl: string;
@@ -1127,6 +1135,7 @@ export default function LabPage() {
   const [importResult, setImportResult] = React.useState<LabTestCsvImportResult | null>(null);
   const [requestOpen, setRequestOpen] = React.useState(false);
   const [requestForm, setRequestForm] = React.useState<LabRequestForm>(emptyLabRequestForm());
+  const [priceInput, setPriceInput] = React.useState("");
   const [quickRegisterOpen, setQuickRegisterOpen] = React.useState(false);
   const [patientQuery, setPatientQuery] = React.useState("");
   const [patientOptions, setPatientOptions] = React.useState<Patient[]>([]);
@@ -1253,6 +1262,12 @@ export default function LabPage() {
   }, [receiptPrintAutoPrint, receiptPrintData, receiptPrintLoading]);
 
   React.useEffect(() => {
+    const active = receiptPrintOpen || receiptPrintLoading;
+    document.body.classList.toggle("lab-receipt-printing", active);
+    return () => document.body.classList.remove("lab-receipt-printing");
+  }, [receiptPrintOpen, receiptPrintLoading]);
+
+  React.useEffect(() => {
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
       if (!saving) return;
       event.preventDefault();
@@ -1368,7 +1383,7 @@ export default function LabPage() {
       return ageHours > maxTurnaroundHours;
     }).length;
     const sampleRejectedCount = orders.filter((row) => row.samples.some((sample) => sample.status === "REJECTED")).length;
-    const recollectionRequiredCount = orders.filter((row) => row.samples.some((sample) => sample.status === "RECOLLECTION_REQUIRED" || sample.recollectionRequired)).length;
+    const recollectionRequiredCount = orders.filter(hasPendingRecollection).length;
     const resultsPendingEntryCount = pendingResultsOrders.length;
 
     const workToday: LabDashboardData["myWorkToday"] = [];
@@ -1430,7 +1445,7 @@ export default function LabPage() {
       {
         key: "recollection-required" as const,
         label: "Recollection Required",
-        value: orders.filter((row) => row.samples.some((sample) => sample.status === "RECOLLECTION_REQUIRED" || sample.recollectionRequired)).length,
+        value: orders.filter(hasPendingRecollection).length,
         helper: "Return to collection",
         tone: "warning" as const,
       },
@@ -1469,7 +1484,9 @@ export default function LabPage() {
     setSampleTarget(row);
     setCollectedSamples([]);
     setSampleSuccessMessage(null);
-    setSampleRows((row.samples.length ? row.samples : row.items).map((item) => ({
+    const recollectionSamples = row.samples.filter((sample) => sample.status === "RECOLLECTION_REQUIRED" || sample.recollectionRequired);
+    const sourceRows = recollectionSamples.length ? recollectionSamples : (row.samples.length ? row.samples : row.items);
+    setSampleRows(sourceRows.map((item) => ({
       labOrderItemId: "labOrderItemId" in item ? item.labOrderItemId : item.id,
       testName: "testName" in item
         ? item.testName
@@ -1504,11 +1521,13 @@ export default function LabPage() {
   const openCreate = () => {
     setEditing(null);
     setForm(emptyTestForm);
+    setPriceInput("");
     setEditorOpen(true);
   };
 
   const openEdit = (row: LabTest) => {
     setEditing(row);
+    setPriceInput(String(row.price));
     setForm({
       testCode: row.testCode,
       testName: row.testName,
@@ -1533,7 +1552,13 @@ export default function LabPage() {
 
   const saveTest = async () => {
     if (!auth.accessToken || !auth.tenantId) return;
-    const parsed = labTestMasterSchema.safeParse(form);
+    const trimmedPrice = priceInput.trim();
+    const parsedPrice = trimmedPrice === "" ? Number.NaN : Number(trimmedPrice);
+    if (!Number.isFinite(parsedPrice)) {
+      setError("Price is required");
+      return;
+    }
+    const parsed = labTestMasterSchema.safeParse({ ...form, price: parsedPrice });
     if (!parsed.success) {
       setError(firstZodError(parsed.error));
       return;
@@ -1568,6 +1593,7 @@ export default function LabPage() {
       setEditorOpen(false);
       setEditing(null);
       setForm(emptyTestForm);
+      setPriceInput("");
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save lab test");
@@ -1921,6 +1947,7 @@ export default function LabPage() {
       ? row.items.filter((item) => scopeItemIds.has(item.id))
       : row.items;
     setResultTarget(row);
+    setResultError(null);
     setResultScopeSampleId(scopeSampleId);
     const draft = readResultDraft(row.id, scopeSampleId) || (!scopeSampleId ? readResultDraft(row.id) : null);
     if (draft) {
@@ -1946,6 +1973,7 @@ export default function LabPage() {
 
   const saveResults = async () => {
     if (!auth.accessToken || !auth.tenantId || !resultTarget) return;
+    setResultError(null);
     const editableOrderedTestIds = resultEditableOrderedTests.map((orderedTest) => orderedTest.labOrderItemId);
     const parsed = labResultEntrySchema.safeParse({
       comments: resultComments.trim() || undefined,
@@ -1964,7 +1992,7 @@ export default function LabPage() {
       })),
     });
     if (!parsed.success) {
-      setError(firstZodError(parsed.error));
+      setResultError(firstZodError(parsed.error));
       return;
     }
     setSaving(true);
@@ -1989,6 +2017,7 @@ export default function LabPage() {
         })),
       });
       clearResultDraft(resultTarget.id, resultScopeSampleId);
+      setResultError(null);
       setResultTarget(null);
       setResultScopeSampleId(null);
       setResultComments("");
@@ -1998,7 +2027,7 @@ export default function LabPage() {
       setTab(3);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save results");
+      setResultError(err instanceof Error ? err.message : "Failed to save results");
     } finally {
       setSaving(false);
     }
@@ -2486,7 +2515,7 @@ export default function LabPage() {
 
       <input ref={fileInputRef} type="file" accept=".csv,text/csv" hidden onChange={handleImportCsv} />
 
-      {error ? <Alert severity="error">{error}</Alert> : null}
+      {!editorOpen && !requestOpen && !quickRegisterOpen && !resultTarget && error ? <Alert severity="error">{error}</Alert> : null}
       {sampleSuccessMessage ? <Alert severity="success">{sampleSuccessMessage}</Alert> : null}
       {resultSaveMessage && !resultTarget ? <Alert severity="success">{resultSaveMessage}</Alert> : null}
 
@@ -2917,6 +2946,7 @@ export default function LabPage() {
       <Dialog open={editorOpen} onClose={() => setEditorOpen(false)} fullWidth maxWidth="md">
         <DialogTitle>{editing ? "Edit Lab Test" : "New Lab Test"}</DialogTitle>
         <DialogContent dividers>
+          {error ? <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert> : null}
           <Grid container spacing={2} sx={{ pt: 0.5 }}>
             <Grid size={{ xs: 12, md: 3 }}>
               <TextField
@@ -2942,7 +2972,30 @@ export default function LabPage() {
             <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth label="Unit" value={form.unit || ""} onChange={(e) => setForm((current) => ({ ...current, unit: e.target.value }))} /></Grid>
             <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth label="Reference Range" value={form.referenceRange || ""} onChange={(e) => setForm((current) => ({ ...current, referenceRange: e.target.value }))} /></Grid>
             <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth label="Turnaround Time (Hours)" value={form.turnaroundTime || ""} onChange={(e) => setForm((current) => ({ ...current, turnaroundTime: e.target.value }))} inputProps={{ inputMode: "numeric", pattern: "[0-9]*", min: 0, max: 999 }} /></Grid>
-            <Grid size={{ xs: 12, md: 2 }}><TextField fullWidth type="number" label={<RequiredLabel text="Price" required />} value={form.price} onChange={(e) => setForm((current) => ({ ...current, price: Number(e.target.value) }))} /></Grid>
+            <Grid size={{ xs: 12, md: 2 }}>
+              <TextField
+                fullWidth
+                type="text"
+                inputMode="decimal"
+                label={<RequiredLabel text="Price" required />}
+                value={priceInput}
+                onChange={(event) => {
+                  const raw = event.target.value.replace(/[^0-9.]/g, "");
+                  const [whole = "", ...decimalParts] = raw.split(".");
+                  const decimal = decimalParts.join("").slice(0, 2);
+                  const normalized = decimalParts.length ? `${whole || "0"}.${decimal}` : whole;
+                  setPriceInput(normalized);
+                  if (normalized === "" || normalized === "0.") {
+                    setForm((current) => ({ ...current, price: 0 }));
+                    return;
+                  }
+                  const numeric = Number(normalized);
+                  if (Number.isFinite(numeric)) {
+                    setForm((current) => ({ ...current, price: numeric }));
+                  }
+                }}
+              />
+            </Grid>
             <Grid size={{ xs: 12, md: 2 }}><TextField fullWidth label="Status" value={form.active ? "Active" : "Inactive"} disabled /></Grid>
           </Grid>
           <Stack spacing={1.5} sx={{ mt: 3 }}>
@@ -3314,6 +3367,7 @@ export default function LabPage() {
         onClose={() => {
           setResultTarget(null);
           setResultScopeSampleId(null);
+          setResultError(null);
           setResultComments("");
           setResultItems([]);
           setResultDraftLoaded(false);
@@ -3343,6 +3397,7 @@ export default function LabPage() {
               </Alert>
             ) : null}
             {resultSaveMessage ? <Alert severity="success">{resultSaveMessage}</Alert> : null}
+            {resultError ? <Alert severity="error">{resultError}</Alert> : null}
             {resultDraftLoaded ? <Alert severity="info">Draft restored from your last save.</Alert> : null}
             <TextField label="Comments" value={resultComments} onChange={(e) => setResultComments(e.target.value)} multiline minRows={2} />
             <Stack spacing={1.5}>
@@ -3403,7 +3458,7 @@ export default function LabPage() {
                                 <TextField
                                   fullWidth
                                   size="small"
-                                  label="Result Value"
+                                  label={<RequiredLabel text="Result Value" required />}
                                   value={component.resultValue}
                                   onChange={(e) => setResultItems((current) => current.map((row, rowIndex) => rowIndex === index ? ({
                                     ...row,
@@ -3441,7 +3496,7 @@ export default function LabPage() {
                             <TextField
                               fullWidth
                               size="small"
-                              label="Result Value"
+                              label={<RequiredLabel text="Result Value" required />}
                               value={item.resultValue}
                               onChange={(e) => setResultItems((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, resultValue: e.target.value } : row))}
                               disabled={readOnly}
@@ -3509,6 +3564,7 @@ export default function LabPage() {
         <DialogActions>
           <Button onClick={() => {
             setResultTarget(null);
+            setResultError(null);
             setResultComments("");
             setResultItems([]);
             setResultDraftLoaded(false);
@@ -3971,6 +4027,7 @@ export default function LabPage() {
         <DialogTitle>New Laboratory Order</DialogTitle>
         <DialogContent dividers>
           <Stack spacing={2} sx={{ pt: 0.5 }}>
+            {error ? <Alert severity="error">{error}</Alert> : null}
             <Alert severity="info">
               {consultationEnabled
                 ? "Create a walk-in or doctor referral laboratory registration directly from the laboratory desk."
@@ -4021,7 +4078,12 @@ export default function LabPage() {
                 labelId="lab-registration-origin-label"
                 label="Requested By"
                 value={requestForm.orderOrigin}
-                onChange={(e) => setRequestForm((current) => ({ ...current, orderOrigin: e.target.value as LabOrderOrigin }))}
+                onChange={(e) => setRequestForm((current) => {
+                  const orderOrigin = e.target.value as LabOrderOrigin;
+                  return orderOrigin === "DOCTOR_REFERRAL"
+                    ? { ...current, orderOrigin }
+                    : { ...current, orderOrigin, externalDoctorName: "", externalDoctorMobile: "", externalClinicName: "", referralSource: "" };
+                })}
               >
                 {(consultationEnabled ? DIRECT_ORDER_ORIGIN_OPTIONS : ["WALK_IN"]).map((origin) => (
                   <MenuItem key={origin} value={origin}>{formatOrderOrigin(origin)}</MenuItem>
@@ -4043,13 +4105,13 @@ export default function LabPage() {
                 />
               )}
             />
-            <Card variant="outlined" sx={{ boxShadow: "none" }}>
+            {requestForm.orderOrigin === "DOCTOR_REFERRAL" ? <Card variant="outlined" sx={{ boxShadow: "none" }}>
               <CardContent sx={{ py: 1.5 }}>
                 <Stack spacing={1.5}>
                   <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Referral details</Typography>
                   <Grid container spacing={1.5}>
                     <Grid size={{ xs: 12, md: 6 }}>
-                      <TextField fullWidth label="External Doctor Name" value={requestForm.externalDoctorName} onChange={(e) => setRequestForm((current) => ({ ...current, externalDoctorName: e.target.value.slice(0, 256) }))} inputProps={{ maxLength: 256 }} />
+                      <TextField fullWidth label={<RequiredLabel text="External Doctor Name" required />} value={requestForm.externalDoctorName} onChange={(e) => setRequestForm((current) => ({ ...current, externalDoctorName: e.target.value.slice(0, 256) }))} inputProps={{ maxLength: 256 }} />
                     </Grid>
                     <Grid size={{ xs: 12, md: 6 }}>
                       <TextField fullWidth label="External Doctor Mobile" value={requestForm.externalDoctorMobile} onChange={(e) => setRequestForm((current) => ({ ...current, externalDoctorMobile: e.target.value.slice(0, 32) }))} inputProps={{ maxLength: 32 }} />
@@ -4063,7 +4125,7 @@ export default function LabPage() {
                   </Grid>
                 </Stack>
               </CardContent>
-            </Card>
+            </Card> : null}
             <TextField
               label="Notes"
               value={requestForm.notes}

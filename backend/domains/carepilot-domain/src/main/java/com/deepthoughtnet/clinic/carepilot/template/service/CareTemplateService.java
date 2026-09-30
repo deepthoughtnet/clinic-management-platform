@@ -190,7 +190,7 @@ public class CareTemplateService {
         }
         List<CareTemplateEntity> defaults = List.of(
                 defaultTemplate(tenantId, "Appointment Reminder", TemplateType.REMINDER, TemplateChannel.EMAIL, TemplateCategory.APPOINTMENT_REMINDER, "Appointment reminder for {{patientName}}", "Hello {{patientName}}, this is a reminder for your appointment on {{appointmentDate}} at {{appointmentTime}}."),
-                defaultTemplate(tenantId, "Refill Reminder", TemplateType.REMINDER, TemplateChannel.SMS, TemplateCategory.REFILL_REMINDER, null, "Hi {{patientName}}, your medicine refill for {{medicineName}} is due on {{refillDueDate}}."),
+                defaultTemplate(tenantId, "Refill Reminder", TemplateType.REMINDER, TemplateChannel.SMS, TemplateCategory.REFILL_REMINDER, null, "Hi {{patientName}}, your medicine refill for {{medicineName}} is due on {{refillDueDate}}. Request securely at {{refillActionUrl}}."),
                 defaultTemplate(tenantId, "Vaccination Reminder", TemplateType.REMINDER, TemplateChannel.WHATSAPP, TemplateCategory.VACCINATION, null, "Dear {{patientName}}, {{vaccineName}} is due on {{vaccinationDueDate}}."),
                 defaultTemplate(tenantId, "Webinar Reminder", TemplateType.WEBINAR, TemplateChannel.EMAIL, TemplateCategory.WEBINAR, "Webinar reminder", "Hello {{patientName}}, join our webinar here: {{webinarLink}}"),
                 defaultTemplate(tenantId, "Billing Receipt", TemplateType.BILLING, TemplateChannel.EMAIL, TemplateCategory.BILLING, "Payment confirmation for {{billNumber}}", "Hi {{patientName}}, we received {{billAmount}} for bill {{billNumber}}."),

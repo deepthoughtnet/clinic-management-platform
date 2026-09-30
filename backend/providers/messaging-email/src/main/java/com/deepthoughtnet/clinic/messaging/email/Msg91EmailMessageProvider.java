@@ -16,8 +16,8 @@ import org.springframework.util.StringUtils;
 /** Opt-in MSG91 SMTP adapter used by Platform Communication Test and Engage.
  *
  * Engage selects this provider only when the explicit email-provider setting is
- * {@code msg91-email-smtp}; otherwise the existing CarePilot provider remains
- * the registry default.
+ * {@code msg91-email-smtp}. The selector is a registry provider ID, not the
+ * generic transport value {@code smtp}.
  */
 public class Msg91EmailMessageProvider implements com.deepthoughtnet.clinic.messaging.spi.MessageProvider {
     private final Msg91EmailMessagingProperties properties;

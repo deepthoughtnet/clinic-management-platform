@@ -19,6 +19,7 @@ public final class AdminNotificationSettingsDtos {
             boolean emailEnabled,
             boolean smsEnabled,
             boolean whatsappEnabled,
+            boolean voiceEnabled,
             boolean inAppEnabled,
             boolean appointmentRemindersEnabled,
             boolean appointmentReminder24hEnabled,
@@ -51,6 +52,9 @@ public final class AdminNotificationSettingsDtos {
             boolean emailReady,
             boolean smsReady,
             boolean whatsappReady,
+            boolean voiceReady,
+            String voiceProvider,
+            boolean voiceExecutionEnabled,
             List<String> warnings
     ) {
     }
@@ -59,6 +63,7 @@ public final class AdminNotificationSettingsDtos {
             boolean emailEnabled,
             boolean smsEnabled,
             boolean whatsappEnabled,
+            boolean voiceEnabled,
             boolean inAppEnabled,
             boolean appointmentRemindersEnabled,
             boolean appointmentReminder24hEnabled,
@@ -82,5 +87,25 @@ public final class AdminNotificationSettingsDtos {
             int maxMessagesPerPatientPerDay,
             String notificationPolicyJson
     ) {
-}
+        public UpdateNotificationSettingsRequest(
+                boolean emailEnabled, boolean smsEnabled, boolean whatsappEnabled, boolean inAppEnabled,
+                boolean appointmentRemindersEnabled, boolean appointmentReminder24hEnabled,
+                boolean appointmentReminder2hEnabled, boolean followUpRemindersEnabled,
+                boolean billingRemindersEnabled, boolean refillRemindersEnabled,
+                boolean vaccinationRemindersEnabled, boolean leadFollowUpRemindersEnabled,
+                boolean webinarRemindersEnabled, boolean birthdayWellnessEnabled, boolean quietHoursEnabled,
+                LocalTime quietHoursStart, LocalTime quietHoursEnd, String timezone,
+                NotificationChannelPreference defaultChannel, NotificationChannelPreference fallbackChannel,
+                boolean allowMarketingMessages, boolean requirePatientConsent, boolean unsubscribeFooterEnabled,
+                int maxMessagesPerPatientPerDay, String notificationPolicyJson
+        ) {
+            this(emailEnabled, smsEnabled, whatsappEnabled, false, inAppEnabled, appointmentRemindersEnabled,
+                    appointmentReminder24hEnabled, appointmentReminder2hEnabled, followUpRemindersEnabled,
+                    billingRemindersEnabled, refillRemindersEnabled, vaccinationRemindersEnabled,
+                    leadFollowUpRemindersEnabled, webinarRemindersEnabled, birthdayWellnessEnabled,
+                    quietHoursEnabled, quietHoursStart, quietHoursEnd, timezone, defaultChannel, fallbackChannel,
+                    allowMarketingMessages, requirePatientConsent, unsubscribeFooterEnabled,
+                    maxMessagesPerPatientPerDay, notificationPolicyJson);
+        }
+    }
 }

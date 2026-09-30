@@ -140,7 +140,10 @@ public class LabOrderSampleEntity {
     }
 
     public void markRejected(String rejectionReason, boolean recollectionRequired, String notes, UUID actorAppUserId) {
-        this.status = recollectionRequired ? LabSampleStatus.RECOLLECTION_REQUIRED : LabSampleStatus.REJECTED;
+        // Recollection is a follow-up action, not a mutation of the specimen's
+        // historical outcome. The rejected specimen remains REJECTED while the
+        // separate flag drives creation of a replacement specimen.
+        this.status = LabSampleStatus.REJECTED;
         this.rejectedAt = OffsetDateTime.now();
         this.rejectedBy = actorAppUserId;
         this.rejectionReason = rejectionReason;

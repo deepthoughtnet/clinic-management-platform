@@ -433,6 +433,7 @@ export function App() {
           />
           <Route path="/patient/appointments" element={<PatientAppointmentsPage session={session} onSignOut={clearPatientSessionAndContext} />} />
           <Route path="/patient/prescriptions" element={<PatientPrescriptionsPage session={session} onSignOut={clearPatientSessionAndContext} />} />
+          <Route path="/patient/refills" element={<PatientPrescriptionsPage session={session} onSignOut={clearPatientSessionAndContext} />} />
           <Route path="/patient/bills" element={<PatientBillsPage session={session} onSignOut={clearPatientSessionAndContext} />} />
           <Route path="/patient/notifications" element={<PatientNotificationsPage session={session} onSignOut={clearPatientSessionAndContext} />} />
           <Route path="/patient/records" element={<PatientRecordsPage session={session} onSignOut={clearPatientSessionAndContext} />} />

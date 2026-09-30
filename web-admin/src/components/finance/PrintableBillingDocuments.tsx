@@ -323,6 +323,14 @@ function PrintShell({
         styles={{
           "@media print": {
             "body": { backgroundColor: "#fff !important" },
+            "body.lab-receipt-printing #root > *": { visibility: "hidden !important" },
+            "body.lab-receipt-printing .print-document-sheet": {
+              visibility: "visible !important",
+              position: "absolute !important",
+              inset: "0 auto auto 0 !important",
+              width: "100% !important",
+              maxWidth: "none !important",
+            },
             ".no-print": { display: "none !important" },
             ".print-document-sheet": {
               boxShadow: "none !important",

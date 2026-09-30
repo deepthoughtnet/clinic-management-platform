@@ -156,6 +156,11 @@ clinic:
       enabled: ${CLINIC_NOTIFICATIONS_SCHEDULER_ENABLED:true}
       fixedDelay: ${CLINIC_NOTIFICATIONS_SCHEDULER_FIXED_DELAY:PT5M}
   carepilot:
+    ai-calls:
+      provider:
+        primary: ${CLINIC_CAREPILOT_VOICE_PROVIDER:dotvoice}
+        fallback: ${CLINIC_CAREPILOT_VOICE_PROVIDER_FALLBACK:none}
+        failover-enabled: ${CLINIC_CAREPILOT_VOICE_PROVIDER_FAILOVER_ENABLED:false}
     voice:
       dotvoice:
         enabled: ${DOTVOICE_ENABLED:false}
@@ -175,6 +180,7 @@ clinic:
       fixed-delay: ${CLINIC_CAREPILOT_REMINDERS_FIXED_DELAY:PT15M}
       batch-size: ${CLINIC_CAREPILOT_REMINDERS_BATCH_SIZE:100}
       refill-estimated-days: ${CLINIC_CAREPILOT_REFILL_ESTIMATED_DAYS:30}
+      refill-action-url: ${CLINIC_CAREPILOT_REFILL_ACTION_URL:/patient/refills}
       billing-overdue-days: ${CLINIC_CAREPILOT_BILLING_OVERDUE_DAYS:3}
     retry:
       max-retries: ${CLINIC_CAREPILOT_MAX_RETRIES:3}
@@ -188,6 +194,7 @@ clinic:
     messaging:
       email:
         enabled: ${CLINIC_CAREPILOT_MESSAGING_EMAIL_ENABLED:false}
+        # Registered MessageProvider ID, not a generic transport name (for example: msg91-email-smtp).
         provider: ${CLINIC_CAREPILOT_MESSAGING_EMAIL_PROVIDER:disabled}
         from-address: ${CLINIC_CAREPILOT_MESSAGING_EMAIL_FROM_ADDRESS:}
         providers:

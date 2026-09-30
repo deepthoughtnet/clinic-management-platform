@@ -8,6 +8,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Value;
 
 /**
  * Lightweight token replacement for CarePilot campaign templates.
@@ -17,6 +18,8 @@ import org.springframework.stereotype.Component;
  */
 @Component
 public class CarePilotTemplateRenderer {
+    @Value("${clinic.carepilot.reminders.refill-action-url:/patient/refills}")
+    private String refillActionUrl;
 
     /**
      * Renders subject and body using known placeholders and safe fallbacks.
@@ -49,9 +52,13 @@ public class CarePilotTemplateRenderer {
         values.put("clinicName", "Clinic");
         values.put("clinicPhone", "");
         values.put("clinicAddress", "");
+        values.put("refillActionUrl", "");
         values.put("campaignId", campaignId == null ? "" : campaignId.toString());
         if (additionalValues != null && !additionalValues.isEmpty()) {
             values.putAll(additionalValues);
+        }
+        if (values.get("refillActionUrl") == null || values.get("refillActionUrl").isBlank()) {
+            values.put("refillActionUrl", refillActionUrl == null ? "/patient/refills" : refillActionUrl);
         }
 
         String renderedSubject = replaceTokens(template.getSubjectLine(), values);

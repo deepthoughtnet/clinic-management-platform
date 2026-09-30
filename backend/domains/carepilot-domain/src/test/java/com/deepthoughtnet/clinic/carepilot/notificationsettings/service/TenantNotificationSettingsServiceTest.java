@@ -55,6 +55,24 @@ class TenantNotificationSettingsServiceTest {
     }
 
     @Test
+    void voiceTenantSettingDefaultsOffAndCanBeEnabled() {
+        when(repository.findByTenantId(tenantId)).thenReturn(Optional.empty());
+        var defaults = service.getOrCreate(tenantId);
+        assertThat(defaults.voiceEnabled()).isFalse();
+        assertThat(service.isChannelEnabled(defaults, ChannelType.VOICE)).isFalse();
+
+        var command = new NotificationSettingsUpdateCommand(
+                true, false, false, true, true,
+                true, true, true, true, true, true, true, true, true, true,
+                false, null, null, null,
+                NotificationChannelPreference.EMAIL, null,
+                false, true, true, 5, "{}");
+        var updated = service.update(tenantId, command, actorId, true, false, false);
+        assertThat(updated.voiceEnabled()).isTrue();
+        assertThat(service.isChannelEnabled(updated, ChannelType.VOICE)).isTrue();
+    }
+
+    @Test
     void readyEnabledDefaultChannelIsAccepted() {
         NotificationSettingsUpdateCommand command = command(
                 true, true, false, true,

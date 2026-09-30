@@ -7,7 +7,7 @@ import type {
   AdminTemplateType,
 } from "../../api/clinicApi";
 
-export const CHANNEL_ORDER: AdminNotificationChannel[] = ["IN_APP", "EMAIL", "SMS", "WHATSAPP"];
+export const CHANNEL_ORDER: AdminNotificationChannel[] = ["IN_APP", "EMAIL", "SMS", "WHATSAPP", "VOICE"];
 
 export type NotificationPolicyChannelMap = Record<AdminNotificationChannel, boolean>;
 
@@ -74,6 +74,7 @@ function channelMap(overrides: Partial<NotificationPolicyChannelMap>): Notificat
     EMAIL: overrides.EMAIL ?? true,
     SMS: overrides.SMS ?? false,
     WHATSAPP: overrides.WHATSAPP ?? false,
+    VOICE: overrides.VOICE ?? false,
   };
 }
 
@@ -303,6 +304,7 @@ function normalizeChannelMap(value: unknown, fallback: NotificationPolicyChannel
     EMAIL: Boolean(value.EMAIL ?? fallback.EMAIL),
     SMS: Boolean(value.SMS ?? fallback.SMS),
     WHATSAPP: Boolean(value.WHATSAPP ?? fallback.WHATSAPP),
+    VOICE: Boolean(value.VOICE ?? fallback.VOICE),
   };
 }
 

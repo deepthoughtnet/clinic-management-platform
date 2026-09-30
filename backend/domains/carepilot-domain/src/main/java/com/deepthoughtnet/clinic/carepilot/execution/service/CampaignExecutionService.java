@@ -456,6 +456,7 @@ public class CampaignExecutionService {
         values.put("medicineName", "");
         values.put("prescriptionDate", "");
         values.put("refillDueDate", "");
+        values.put("refillActionUrl", "/patient/refills");
         values.put("vaccineName", "");
         values.put("vaccinationDueDate", "");
         values.put("vaccinationStatus", "");

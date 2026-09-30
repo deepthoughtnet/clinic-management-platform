@@ -377,6 +377,7 @@ export default function OpsConsolePage() {
                     <MenuItem value="EMAIL">Email</MenuItem>
                     <MenuItem value="SMS">SMS</MenuItem>
                     <MenuItem value="WHATSAPP">WhatsApp</MenuItem>
+                    <MenuItem value="VOICE">Voice</MenuItem>
                     <MenuItem value="IN_APP">In-app</MenuItem>
                     <MenuItem value="APP_NOTIFICATION">App notification</MenuItem>
                   </Select>

@@ -18,7 +18,6 @@ import com.deepthoughtnet.clinic.appointment.service.model.AppointmentSearchCrit
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentStatus;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentType;
 import com.deepthoughtnet.clinic.billing.service.BillingService;
-import com.deepthoughtnet.clinic.api.notifications.NotificationActionService;
 import com.deepthoughtnet.clinic.billing.service.model.BillRecord;
 import com.deepthoughtnet.clinic.billing.service.model.BillStatus;
 import com.deepthoughtnet.clinic.billing.service.model.DiscountType;
@@ -79,7 +78,6 @@ class CarePilotReminderTriggerServiceTest {
     private LeadActivityService leadActivityService;
     private TenantNotificationSettingsService notificationSettingsService;
     private CarePilotMessagingStatusService messagingStatusService;
-    private NotificationActionService notificationActionService;
     private WebinarRepository webinarRepository;
     private WebinarRegistrationRepository webinarRegistrationRepository;
     private CarePilotReminderTriggerService service;
@@ -102,7 +100,6 @@ class CarePilotReminderTriggerServiceTest {
         leadActivityService = mock(LeadActivityService.class);
         notificationSettingsService = mock(TenantNotificationSettingsService.class);
         messagingStatusService = mock(CarePilotMessagingStatusService.class);
-        notificationActionService = mock(NotificationActionService.class);
         webinarRepository = mock(WebinarRepository.class);
         webinarRegistrationRepository = mock(WebinarRegistrationRepository.class);
 
@@ -123,7 +120,6 @@ class CarePilotReminderTriggerServiceTest {
                 leadActivityService,
                 notificationSettingsService,
                 messagingStatusService,
-                notificationActionService,
                 webinarRepository,
                 webinarRegistrationRepository,
                 new ObjectMapper(),

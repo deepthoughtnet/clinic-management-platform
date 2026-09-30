@@ -7840,7 +7840,7 @@ export type CarePilotAudienceType =
   | "INACTIVE_PATIENTS"
   | "REFILL_RISK_PATIENTS"
   | "FOLLOW_UP_OVERDUE_PATIENTS";
-export type CarePilotChannelType = "EMAIL" | "SMS" | "WHATSAPP" | "IN_APP" | "APP_NOTIFICATION";
+export type CarePilotChannelType = "EMAIL" | "SMS" | "WHATSAPP" | "VOICE" | "IN_APP" | "APP_NOTIFICATION";
 export type CarePilotExecutionStatus = "QUEUED" | "PROCESSING" | "SUCCEEDED" | "FAILED" | "DEAD_LETTER" | "RETRY_SCHEDULED" | "CANCELLED" | "SUPPRESSED";
 export type CarePilotDeliveryStatus =
   | "QUEUED"
@@ -8796,7 +8796,7 @@ export type AdminTemplateUpsertInput = {
   active: boolean;
 };
 
-export type AdminNotificationChannel = "EMAIL" | "SMS" | "WHATSAPP" | "IN_APP";
+export type AdminNotificationChannel = "EMAIL" | "SMS" | "WHATSAPP" | "VOICE" | "IN_APP";
 
 export type AdminNotificationSettings = {
   id: string;
@@ -8804,6 +8804,7 @@ export type AdminNotificationSettings = {
   emailEnabled: boolean;
   smsEnabled: boolean;
   whatsappEnabled: boolean;
+  voiceEnabled: boolean;
   inAppEnabled: boolean;
   appointmentRemindersEnabled: boolean;
   appointmentReminder24hEnabled: boolean;
@@ -8836,6 +8837,9 @@ export type AdminNotificationSettings = {
   emailReady: boolean;
   smsReady: boolean;
   whatsappReady: boolean;
+  voiceReady: boolean;
+  voiceProvider: string | null;
+  voiceExecutionEnabled: boolean;
   warnings: string[];
 };
 
@@ -8849,6 +8853,7 @@ export type AdminNotificationSettingsUpdateInput = {
   emailEnabled: boolean;
   smsEnabled: boolean;
   whatsappEnabled: boolean;
+  voiceEnabled: boolean;
   inAppEnabled: boolean;
   appointmentRemindersEnabled: boolean;
   appointmentReminder24hEnabled: boolean;

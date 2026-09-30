@@ -38,6 +38,9 @@ public class TenantNotificationSettingsEntity {
     @Column(name = "whatsapp_enabled", nullable = false)
     private boolean whatsappEnabled;
 
+    @Column(name = "voice_enabled", nullable = false)
+    private boolean voiceEnabled;
+
     @Column(name = "in_app_enabled", nullable = false)
     private boolean inAppEnabled;
 
@@ -129,6 +132,7 @@ public class TenantNotificationSettingsEntity {
         row.emailEnabled = true;
         row.smsEnabled = false;
         row.whatsappEnabled = false;
+        row.voiceEnabled = false;
         row.inAppEnabled = true;
         row.appointmentRemindersEnabled = true;
         row.appointmentReminder24hEnabled = true;
@@ -162,6 +166,7 @@ public class TenantNotificationSettingsEntity {
             boolean emailEnabled,
             boolean smsEnabled,
             boolean whatsappEnabled,
+            boolean voiceEnabled,
             boolean inAppEnabled,
             boolean appointmentRemindersEnabled,
             boolean appointmentReminder24hEnabled,
@@ -189,6 +194,7 @@ public class TenantNotificationSettingsEntity {
         this.emailEnabled = emailEnabled;
         this.smsEnabled = smsEnabled;
         this.whatsappEnabled = whatsappEnabled;
+        this.voiceEnabled = voiceEnabled;
         this.inAppEnabled = inAppEnabled;
         this.appointmentRemindersEnabled = appointmentRemindersEnabled;
         this.appointmentReminder24hEnabled = appointmentReminder24hEnabled;
@@ -215,11 +221,34 @@ public class TenantNotificationSettingsEntity {
         this.updatedBy = actorId;
     }
 
+    /** Compatibility overload for existing callers that do not configure Voice. */
+    public void updateFrom(
+            boolean emailEnabled, boolean smsEnabled, boolean whatsappEnabled, boolean inAppEnabled,
+            boolean appointmentRemindersEnabled, boolean appointmentReminder24hEnabled,
+            boolean appointmentReminder2hEnabled, boolean followUpRemindersEnabled,
+            boolean billingRemindersEnabled, boolean refillRemindersEnabled,
+            boolean vaccinationRemindersEnabled, boolean leadFollowUpRemindersEnabled,
+            boolean webinarRemindersEnabled, boolean birthdayWellnessEnabled, boolean quietHoursEnabled,
+            LocalTime quietHoursStart, LocalTime quietHoursEnd, String timezone,
+            NotificationChannelPreference defaultChannel, NotificationChannelPreference fallbackChannel,
+            boolean allowMarketingMessages, boolean requirePatientConsent, boolean unsubscribeFooterEnabled,
+            int maxMessagesPerPatientPerDay, String notificationPolicyJson, UUID actorId
+    ) {
+        updateFrom(emailEnabled, smsEnabled, whatsappEnabled, false, inAppEnabled,
+                appointmentRemindersEnabled, appointmentReminder24hEnabled, appointmentReminder2hEnabled,
+                followUpRemindersEnabled, billingRemindersEnabled, refillRemindersEnabled,
+                vaccinationRemindersEnabled, leadFollowUpRemindersEnabled, webinarRemindersEnabled,
+                birthdayWellnessEnabled, quietHoursEnabled, quietHoursStart, quietHoursEnd, timezone,
+                defaultChannel, fallbackChannel, allowMarketingMessages, requirePatientConsent,
+                unsubscribeFooterEnabled, maxMessagesPerPatientPerDay, notificationPolicyJson, actorId);
+    }
+
     public UUID getId() { return id; }
     public UUID getTenantId() { return tenantId; }
     public boolean isEmailEnabled() { return emailEnabled; }
     public boolean isSmsEnabled() { return smsEnabled; }
     public boolean isWhatsappEnabled() { return whatsappEnabled; }
+    public boolean isVoiceEnabled() { return voiceEnabled; }
     public boolean isInAppEnabled() { return inAppEnabled; }
     public boolean isAppointmentRemindersEnabled() { return appointmentRemindersEnabled; }
     public boolean isAppointmentReminder24hEnabled() { return appointmentReminder24hEnabled; }

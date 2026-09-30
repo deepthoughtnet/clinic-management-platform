@@ -8,6 +8,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -18,8 +19,11 @@ import com.deepthoughtnet.clinic.api.carepilot.dto.MessagingDtos.ProviderReadine
 import com.deepthoughtnet.clinic.api.carepilot.dto.MessagingDtos.ProviderStatusResponse;
 import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
 import com.deepthoughtnet.clinic.carepilot.notificationsettings.db.TenantNotificationSettingsRepository;
+import com.deepthoughtnet.clinic.carepilot.notificationsettings.db.TenantNotificationSettingsEntity;
 import com.deepthoughtnet.clinic.carepilot.notificationsettings.model.NotificationChannelPreference;
 import com.deepthoughtnet.clinic.carepilot.notificationsettings.service.TenantNotificationSettingsService;
+import com.deepthoughtnet.clinic.carepilot.ai_call.provider.VoiceCallProviderRegistry;
+import com.deepthoughtnet.clinic.voice.spi.VoiceCallProvider;
 import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
 import com.deepthoughtnet.clinic.platform.core.context.TenantId;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
@@ -44,6 +48,7 @@ class AdminNotificationSettingsControllerTest {
     private TenantNotificationSettingsService settingsService;
     private CarePilotMessagingStatusService messagingStatusService;
     private ClinicTimeZoneResolver clinicTimeZoneResolver;
+    private VoiceCallProviderRegistry voiceProviderRegistry;
     private MockMvc mockMvc;
 
     @BeforeEach
@@ -52,9 +57,10 @@ class AdminNotificationSettingsControllerTest {
         settingsService = new TenantNotificationSettingsService(repository, new ObjectMapper());
         messagingStatusService = mock(CarePilotMessagingStatusService.class);
         clinicTimeZoneResolver = mock(ClinicTimeZoneResolver.class);
+        voiceProviderRegistry = mock(VoiceCallProviderRegistry.class);
 
         mockMvc = MockMvcBuilders.standaloneSetup(
-                new AdminNotificationSettingsController(settingsService, messagingStatusService, clinicTimeZoneResolver)
+                new AdminNotificationSettingsController(settingsService, messagingStatusService, clinicTimeZoneResolver, voiceProviderRegistry)
         ).setControllerAdvice(new com.deepthoughtnet.clinic.api.errors.GlobalRestExceptionHandler()).build();
 
         when(clinicTimeZoneResolver.normalizeForPersistence(eq(tenantId), anyString())).thenReturn("UTC");
@@ -152,6 +158,23 @@ class AdminNotificationSettingsControllerTest {
                 .andExpect(jsonPath("$.message").value("Overall messages/day value cannot be negative."));
 
         verify(repository, never()).save(any());
+    }
+
+    @Test
+    void settingsReportsConfiguredDotVoiceReadinessSeparatelyFromGlobalExecution() throws Exception {
+        VoiceCallProvider dotVoice = mock(VoiceCallProvider.class);
+        when(dotVoice.providerName()).thenReturn("dotvoice");
+        when(dotVoice.isReady()).thenReturn(true);
+        when(voiceProviderRegistry.resolvePrimary()).thenReturn(dotVoice);
+        when(repository.findByTenantId(tenantId)).thenReturn(java.util.Optional.of(
+                TenantNotificationSettingsEntity.createDefault(tenantId, actorId)));
+        when(clinicTimeZoneResolver.resolve(eq(tenantId), anyString())).thenReturn(java.time.ZoneId.of("UTC"));
+
+        mockMvc.perform(get("/api/admin/notification-settings"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.voiceProvider").value("dotvoice"))
+                .andExpect(jsonPath("$.voiceReady").value(true))
+                .andExpect(jsonPath("$.voiceExecutionEnabled").value(false));
     }
 
     private String policyJsonWithRateLimitOverride(String fieldName, Object value) throws Exception {

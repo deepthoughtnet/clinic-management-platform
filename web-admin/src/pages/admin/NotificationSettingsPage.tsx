@@ -74,6 +74,7 @@ const CHANNEL_LABELS: Record<AdminNotificationChannel, string> = {
   EMAIL: "Email",
   SMS: "SMS",
   WHATSAPP: "WhatsApp",
+  VOICE: "Voice",
 };
 
 const SECTION_ICONS: Record<string, React.ReactNode> = {
@@ -99,6 +100,7 @@ function buildSnapshot(
     emailEnabled: row.emailEnabled,
     smsEnabled: row.smsEnabled,
     whatsappEnabled: row.whatsappEnabled,
+    voiceEnabled: row.voiceEnabled,
     inAppEnabled: row.inAppEnabled,
     defaultChannel: row.defaultChannel,
     fallbackChannel: row.fallbackChannel,
@@ -131,6 +133,8 @@ function channelEnabled(row: AdminNotificationSettings, channel: AdminNotificati
       return row.smsEnabled;
     case "WHATSAPP":
       return row.whatsappEnabled;
+    case "VOICE":
+      return row.voiceEnabled;
   }
 }
 
@@ -144,6 +148,8 @@ function channelReady(row: AdminNotificationSettings, channel: AdminNotification
       return row.smsReady;
     case "WHATSAPP":
       return row.whatsappReady;
+    case "VOICE":
+      return row.voiceReady;
   }
 }
 
@@ -320,6 +326,7 @@ export default function NotificationSettingsPage() {
         emailEnabled: row.emailEnabled,
         smsEnabled: row.smsEnabled,
         whatsappEnabled: row.whatsappEnabled,
+        voiceEnabled: row.voiceEnabled,
         inAppEnabled: row.inAppEnabled,
         appointmentRemindersEnabled: row.appointmentRemindersEnabled,
         appointmentReminder24hEnabled: row.appointmentReminder24hEnabled,
@@ -391,6 +398,7 @@ export default function NotificationSettingsPage() {
     { label: "Email", ready: row.emailReady, description: row.emailReady ? "SMTP and email provider are ready." : "Email notifications are not ready." },
     { label: "SMS", ready: row.smsReady, description: row.smsReady ? "SMS provider is ready." : "SMS notifications are not ready." },
     { label: "WhatsApp", ready: row.whatsappReady, description: row.whatsappReady ? "WhatsApp provider is ready." : "WhatsApp notifications are not ready." },
+    { label: "Voice", ready: row.voiceReady, description: `${row.voiceProvider ?? "DotVoice"} provider ${row.voiceReady ? "is ready" : "is not ready"}; Engage execution is globally disabled.` },
   ];
   const routingWarning = currentRoutingWarning(row);
   const combinedWarnings = Array.from(new Set([...row.warnings, ...(routingWarning ? [routingWarning] : [])]));
@@ -433,6 +441,16 @@ export default function NotificationSettingsPage() {
                     control={<Switch checked={row.inAppEnabled} onChange={(e) => setFlag("inAppEnabled", e.target.checked)} disabled={!canMutate} />}
                     label="In-App enabled"
                   />
+                </Grid>
+                <Grid size={{ xs: 12, sm: 6 }}>
+                  <Stack direction="row" spacing={1} alignItems="center">
+                    <FormControlLabel
+                      control={<Switch checked={row.voiceEnabled} onChange={(e) => setFlag("voiceEnabled", e.target.checked)} disabled={!canMutate || (!row.voiceReady && !row.voiceEnabled)} />}
+                      label="Voice enabled"
+                    />
+                    <Chip size="small" color={row.voiceReady ? "success" : "default"} variant="outlined" label={row.voiceReady ? "DotVoice Ready" : "Provider not ready"} />
+                  </Stack>
+                  <Typography variant="caption" color="text.secondary">Provider readiness does not enable Engage execution; global voice reminders remain disabled.</Typography>
                 </Grid>
                 <Grid size={{ xs: 12, sm: 6 }}>
                   <Stack direction="row" spacing={1} alignItems="center">

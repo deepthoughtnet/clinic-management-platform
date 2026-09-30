@@ -8,6 +8,7 @@ import com.deepthoughtnet.clinic.api.carepilot.dto.MessagingDtos.ProviderReadine
 import com.deepthoughtnet.clinic.carepilot.notificationsettings.service.TenantNotificationSettingsService;
 import com.deepthoughtnet.clinic.carepilot.notificationsettings.service.model.NotificationSettingsRecord;
 import com.deepthoughtnet.clinic.carepilot.notificationsettings.service.model.NotificationSettingsUpdateCommand;
+import com.deepthoughtnet.clinic.carepilot.ai_call.provider.VoiceCallProviderRegistry;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -17,6 +18,7 @@ import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -34,15 +36,28 @@ public class AdminNotificationSettingsController {
     private final TenantNotificationSettingsService settingsService;
     private final CarePilotMessagingStatusService messagingStatusService;
     private final ClinicTimeZoneResolver clinicTimeZoneResolver;
+    private final VoiceCallProviderRegistry voiceProviderRegistry;
 
+    @Autowired
+    public AdminNotificationSettingsController(
+            TenantNotificationSettingsService settingsService,
+            CarePilotMessagingStatusService messagingStatusService,
+            ClinicTimeZoneResolver clinicTimeZoneResolver,
+            VoiceCallProviderRegistry voiceProviderRegistry
+    ) {
+        this.settingsService = settingsService;
+        this.messagingStatusService = messagingStatusService;
+        this.clinicTimeZoneResolver = clinicTimeZoneResolver;
+        this.voiceProviderRegistry = voiceProviderRegistry;
+    }
+
+    /** Compatibility constructor for focused controller tests and older callers. */
     public AdminNotificationSettingsController(
             TenantNotificationSettingsService settingsService,
             CarePilotMessagingStatusService messagingStatusService,
             ClinicTimeZoneResolver clinicTimeZoneResolver
     ) {
-        this.settingsService = settingsService;
-        this.messagingStatusService = messagingStatusService;
-        this.clinicTimeZoneResolver = clinicTimeZoneResolver;
+        this(settingsService, messagingStatusService, clinicTimeZoneResolver, null);
     }
 
     @GetMapping
@@ -70,6 +85,7 @@ public class AdminNotificationSettingsController {
                 request.emailEnabled(),
                 request.smsEnabled(),
                 request.whatsappEnabled(),
+                request.voiceEnabled(),
                 request.inAppEnabled(),
                 request.appointmentRemindersEnabled(),
                 request.appointmentReminder24hEnabled(),
@@ -113,6 +129,8 @@ public class AdminNotificationSettingsController {
         boolean emailReady = readiness.emailReady();
         boolean smsReady = readiness.smsReady();
         boolean whatsappReady = readiness.whatsappReady();
+        var voiceProvider = voiceProviderRegistry == null ? null : voiceProviderRegistry.resolvePrimary();
+        boolean voiceReady = voiceProvider != null && voiceProvider.isReady();
         var warnings = settingsService.computeWarnings(record, emailReady, smsReady, whatsappReady);
         ZoneId effectiveZone = clinicTimeZoneResolver.resolve(record.tenantId(), record.timezone());
         String effectiveTimezone = effectiveZone.getId();
@@ -129,6 +147,7 @@ public class AdminNotificationSettingsController {
                 record.emailEnabled(),
                 record.smsEnabled(),
                 record.whatsappEnabled(),
+                record.voiceEnabled(),
                 record.inAppEnabled(),
                 record.appointmentRemindersEnabled(),
                 record.appointmentReminder24hEnabled(),
@@ -161,6 +180,9 @@ public class AdminNotificationSettingsController {
                 emailReady,
                 smsReady,
                 whatsappReady,
+                voiceReady,
+                voiceProvider == null ? "dotvoice" : voiceProvider.providerName(),
+                false,
                 warnings
         );
     }

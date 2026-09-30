@@ -18,6 +18,9 @@ test("messaging test-send keeps invalid submissions disabled and hides raw confi
   assert.ok(page.includes("If EMAIL is not READY, finish tenant messaging setup before testing."));
   assert.ok(page.includes("Use the provider status above to confirm whether SMS is READY."));
   assert.ok(page.includes("Use the provider status above to confirm whether WhatsApp is READY."));
+  assert.ok(page.includes("Sender Configured:"));
+  assert.ok(page.includes('provider.providerName !== "msg91-email-smtp"'));
+  assert.ok(page.includes('<Chip color={statusColor(provider.status)} label={provider.status}'));
   assert.ok(!page.includes("CLINIC_ENGAGE_MESSAGING_"));
   assert.ok(!page.includes("provider property"));
 });

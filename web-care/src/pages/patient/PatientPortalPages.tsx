@@ -63,6 +63,7 @@ import {
   type PatientPortalRegistrationSession,
   type PatientPortalOtpVerifyResponse,
   type PatientPortalPrescriptionResponse,
+  type PatientPortalRefillRequestResponse,
   type PatientPortalSession,
   buildPatientPortalVoiceWebSocketUrl,
   fetchPatientPortalJson,
@@ -80,6 +81,7 @@ import {
   postPatientPortalAccessRequest,
   postPatientPortalClinicSwitch,
   postPatientPortalSessionJson,
+  requestPatientRefill,
   postPatientPortalAivaV2Message,
   PatientPortalHttpError,
   putPatientPortalSessionJson,
@@ -5800,8 +5802,11 @@ export function PatientBookAppointmentPage({
 export function PatientPrescriptionsPage({ session, onSignOut }: { session: PatientPortalSession | null; onSignOut: () => void }) {
   const portalSession = isPatientPortalPatientSession(session) ? session : null;
   const prescriptions = usePatientPortalResource<PatientPortalPrescriptionResponse[]>(portalSession, "/api/patient-portal/prescriptions", []);
+  const refillRequests = usePatientPortalResource<PatientPortalRefillRequestResponse[]>(portalSession, "/api/patient-portal/refills", []);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [documentError, setDocumentError] = useState<string | null>(null);
+  const [refillBusy, setRefillBusy] = useState<string | null>(null);
+  const [refillMessage, setRefillMessage] = useState<string | null>(null);
 
   return (
     <PatientAccessBoundary
@@ -5883,6 +5888,9 @@ export function PatientPrescriptionsPage({ session, onSignOut }: { session: Pati
               <div className="record-card-meta">
                 <span>Follow-up: {formatDate(prescription.followUpDate)}</span>
                 <span>{prescription.clinicName ?? "Clinic"}</span>
+                {refillRequests.data.filter((request) => request.prescriptionNumber === prescription.prescriptionNumber).slice(0, 1).map((request) => (
+                  <span key={request.requestId}>Refill request: {formatStatusLabel(request.status)}</span>
+                ))}
               </div>
 
               {prescription.pdfAvailable ? (
@@ -5905,9 +5913,33 @@ export function PatientPrescriptionsPage({ session, onSignOut }: { session: Pati
                   </button>
                 </div>
               ) : null}
+              {isPatientPortalPatientSession(portalSession) && prescription.medicines.length ? (
+                <div className="patient-action-row">
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={refillBusy === prescription.prescriptionNumber}
+                    onClick={async () => {
+                      setRefillBusy(prescription.prescriptionNumber);
+                      setRefillMessage(null);
+                      try {
+                        const result: PatientPortalRefillRequestResponse = await requestPatientRefill(portalSession, prescription.prescriptionNumber);
+                        setRefillMessage(`Refill request ${result.status.toLowerCase()} for ${prescription.prescriptionNumber}.`);
+                      } catch (error) {
+                        setRefillMessage(error instanceof Error ? error.message : "Refill request could not be submitted.");
+                      } finally {
+                        setRefillBusy(null);
+                      }
+                    }}
+                  >
+                    {refillBusy === prescription.prescriptionNumber ? "Submitting..." : "Request refill"}
+                  </button>
+                </div>
+              ) : null}
             </article>
           ))}
         </div>
+        {refillMessage ? <div className="patient-inline-empty" role="status">{refillMessage}</div> : null}
       </PatientPortalApiState>
     </PatientAccessBoundary>
   );

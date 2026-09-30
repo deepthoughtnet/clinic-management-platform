@@ -304,6 +304,16 @@ export type PatientPortalPrescriptionResponse = {
   recommendedTests: PatientPortalPrescriptionTestResponse[];
 };
 
+export type PatientPortalRefillRequestResponse = {
+  requestId: string;
+  prescriptionNumber: string | null;
+  medicineSummary: string | null;
+  dueDate: string | null;
+  status: string;
+  source: string;
+  createdAt: string;
+};
+
 export type PatientPortalBillReceiptSummaryResponse = {
   receiptNumber: string;
   receiptDate: string | null;
@@ -581,6 +591,14 @@ export async function postPatientPortalSessionJson<T>(
     throw new Error(await parseError(response));
   }
   return response.json() as Promise<T>;
+}
+
+export async function requestPatientRefill(session: PatientPortalSession, prescriptionNumber: string) {
+  return postPatientPortalSessionJson<PatientPortalRefillRequestResponse>(
+    "/api/patient-portal/refills",
+    { prescriptionNumber },
+    session,
+  );
 }
 
 export async function postPatientPortalAivaV2Message(

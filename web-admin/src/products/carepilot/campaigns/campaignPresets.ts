@@ -111,8 +111,8 @@ export const CAMPAIGN_PRESETS: CampaignPreset[] = [
     defaultTriggerConfig: { estimatedRefillDays: 30 },
     defaultTemplateSubject: "Refill reminder for {{patientName}}",
     defaultTemplateBody:
-      "Dear {{patientName}},\nYour medication refill is due around {{refillDueDate}} for {{medicineName}}.\nPlease contact {{clinicName}} to continue treatment.",
-    supportedPlaceholders: ["{{patientName}}", "{{medicineName}}", "{{refillDueDate}}", "{{clinicName}}"],
+      "Dear {{patientName}},\nYour medication refill is due around {{refillDueDate}} for {{medicineName}}.\nRequest a refill securely: {{refillActionUrl}}\nRegards,\n{{clinicName}}",
+    supportedPlaceholders: ["{{patientName}}", "{{medicineName}}", "{{doctorName}}", "{{refillDueDate}}", "{{refillActionUrl}}", "{{clinicName}}"],
     implementationStatus: "READY",
   },
   {

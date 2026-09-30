@@ -22,6 +22,8 @@ import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalMeResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalProfileUpdateRequest;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalPrescriptionMedicineResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalPrescriptionResponse;
+import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalRefillRequest;
+import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalRefillResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalPrescriptionTestResponse;
 import com.deepthoughtnet.clinic.api.patientportal.auth.dto.PatientPortalAccessLoginResponse;
 import com.deepthoughtnet.clinic.api.patientportal.auth.PatientPortalSessionTokenService;
@@ -86,6 +88,8 @@ import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionStatus;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionPdf;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionMedicineRecord;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionRecord;
+import com.deepthoughtnet.clinic.inventory.service.RefillRequestService;
+import com.deepthoughtnet.clinic.inventory.service.model.RefillRequestRecord;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionTestRecord;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -106,11 +110,12 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.util.StringUtils;
 import org.springframework.web.server.ResponseStatusException;
 import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiAppointmentOption;
@@ -144,6 +149,9 @@ public class PatientPortalService {
     private final IdempotencyService idempotencyService;
     private final ObjectMapper objectMapper;
     private final HealthcareAvailabilityPort healthcareAvailabilityPort;
+    private final RefillRequestService refillRequestService;
+    @Value("${clinic.carepilot.reminders.refill-estimated-days:30}")
+    private int refillEstimatedDays = 30;
 
     @Autowired
     public PatientPortalService(
@@ -168,7 +176,8 @@ public class PatientPortalService {
             PrescriptionBrandingDocumentResolver brandingDocumentResolver,
             IdempotencyService idempotencyService,
             ObjectMapper objectMapper,
-            HealthcareAvailabilityPort healthcareAvailabilityPort
+            HealthcareAvailabilityPort healthcareAvailabilityPort,
+            RefillRequestService refillRequestService
     ) {
         this.appUserRepository = appUserRepository;
         this.tenantRepository = tenantRepository;
@@ -192,6 +201,26 @@ public class PatientPortalService {
         this.idempotencyService = idempotencyService;
         this.objectMapper = objectMapper;
         this.healthcareAvailabilityPort = healthcareAvailabilityPort;
+        this.refillRequestService = refillRequestService;
+    }
+
+    /** Compatibility constructor retained for focused portal tests. */
+    public PatientPortalService(
+            AppUserRepository appUserRepository, TenantRepository tenantRepository, PatientRepository patientRepository,
+            ClinicProfileService clinicProfileService, TenantUserManagementService tenantUserManagementService,
+            DoctorProfileService doctorProfileService, PatientService patientService,
+            PatientPortalAccessRequestService accessRequestService, AppUserProvisioner appUserProvisioner,
+            PatientPortalSessionTokenService sessionTokenService, ClinicTimeZoneResolver clinicTimeZoneResolver,
+            AppointmentService appointmentService, ConsultationService consultationService, PrescriptionService prescriptionService,
+            BillingService billingService, LabService labService, NotificationHistoryService notificationHistoryService,
+            NotificationActionService notificationActionService, PrescriptionBrandingDocumentResolver brandingDocumentResolver,
+            IdempotencyService idempotencyService, ObjectMapper objectMapper, HealthcareAvailabilityPort healthcareAvailabilityPort
+    ) {
+        this(appUserRepository, tenantRepository, patientRepository, clinicProfileService, tenantUserManagementService,
+                doctorProfileService, patientService, accessRequestService, appUserProvisioner, sessionTokenService,
+                clinicTimeZoneResolver, appointmentService, consultationService, prescriptionService, billingService, labService,
+                notificationHistoryService, notificationActionService, brandingDocumentResolver, idempotencyService,
+                objectMapper, healthcareAvailabilityPort, null);
     }
 
     public PatientPortalDashboardResponse dashboard() {
@@ -978,6 +1007,68 @@ public class PatientPortalService {
     public List<PatientPortalPrescriptionResponse> prescriptions() {
         PatientAccess access = requireCurrentPatientAccess();
         return prescriptionResponses(resolveAccessiblePatientAccesses(access));
+    }
+
+    public List<PatientPortalRefillResponse> refillRequests() {
+        PatientAccess access = requireCurrentPatientAccess();
+        Map<UUID, String> numbers = prescriptionService.listByPatient(access.tenantId(), access.patient().getId()).stream()
+                .collect(Collectors.toMap(PrescriptionRecord::id, PrescriptionRecord::prescriptionNumber, (left, right) -> left));
+        if (refillRequestService == null) {
+            return List.of();
+        }
+        return refillRequestService.list(access.tenantId(), access.patient().getId()).stream()
+                .map(request -> toRefillResponse(request, numbers.get(request.prescriptionId())))
+                .toList();
+    }
+
+    @Transactional
+    public PatientPortalRefillResponse requestRefill(PatientPortalRefillRequest request) {
+        PatientAccess access = requireCurrentPatientAccess();
+        String number = request == null || request.prescriptionNumber() == null ? "" : request.prescriptionNumber().trim();
+        PrescriptionRecord prescription = prescriptionService.listByPatient(access.tenantId(), access.patient().getId()).stream()
+                .filter(candidate -> number.equals(candidate.prescriptionNumber()))
+                .findFirst()
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Prescription not found"));
+        if (prescription.status() == null
+                || !(prescription.status() == PrescriptionStatus.FINALIZED
+                || prescription.status() == PrescriptionStatus.PRINTED
+                || prescription.status() == PrescriptionStatus.SENT)
+                || prescription.medicines() == null || prescription.medicines().isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "This prescription is not eligible for a refill request");
+        }
+        if (refillRequestService == null) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Refill requests are unavailable");
+        }
+        LocalDate dueDate = prescription.finalizedAt() == null ? null : prescription.finalizedAt().toLocalDate().plusDays(estimatedRefillDays(prescription));
+        String cycle = "PRESCRIPTION_" + (prescription.finalizedAt() == null ? prescription.id() : prescription.finalizedAt().toLocalDate());
+        RefillRequestRecord created = refillRequestService.request(access.tenantId(), access.patient().getId(), prescription.id(), cycle,
+                summarizePrescriptionMedicines(prescription), dueDate, "ENGAGE_REFILL_REMINDER");
+        return toRefillResponse(created, prescription.prescriptionNumber());
+    }
+
+    private PatientPortalRefillResponse toRefillResponse(RefillRequestRecord request, String prescriptionNumber) {
+        return new PatientPortalRefillResponse(request.id(), prescriptionNumber, request.medicineSummary(), request.dueDate(), request.status(), request.source(), request.createdAt());
+    }
+
+    private String summarizePrescriptionMedicines(PrescriptionRecord prescription) {
+        return prescription.medicines().stream().map(PrescriptionMedicineRecord::medicineName)
+                .filter(StringUtils::hasText).limit(3).collect(Collectors.joining(", "));
+    }
+
+    private int estimatedRefillDays(PrescriptionRecord prescription) {
+        if (prescription.medicines() != null) {
+            for (PrescriptionMedicineRecord medicine : prescription.medicines()) {
+                String duration = medicine == null ? null : medicine.duration();
+                if (duration != null) {
+                    java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("(\\d+)\\s*(day|days|week|weeks)", java.util.regex.Pattern.CASE_INSENSITIVE).matcher(duration);
+                    if (matcher.find()) {
+                        int value = Integer.parseInt(matcher.group(1));
+                        return matcher.group(2).toLowerCase().startsWith("week") ? value * 7 : value;
+                    }
+                }
+            }
+        }
+        return refillEstimatedDays > 0 ? refillEstimatedDays : 30;
     }
 
     public List<PatientPortalBillResponse> bills() {

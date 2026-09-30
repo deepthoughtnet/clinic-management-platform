@@ -1,53 +1,64 @@
-# CarePilot Email SMTP Setup
+# CarePilot Email Provider Setup
 
-This guide configures real SMTP delivery for CarePilot EMAIL channel.
+CarePilot/Engage email uses the `MessageProvider` registry. The configured
+value must be a registered provider ID, not a generic transport name.
 
-## CarePilot Provider Flags
+## Engage provider selection
 
-Set these values to enable CarePilot email dispatch:
+For the certified MSG91 SMTP adapter:
 
-- `CLINIC_CAREPILOT_MESSAGING_EMAIL_ENABLED=true`
-- `CLINIC_CAREPILOT_MESSAGING_EMAIL_FROM_ADDRESS=no-reply@clinic.local`
+```dotenv
+CLINIC_CAREPILOT_MESSAGING_EMAIL_ENABLED=true
+CLINIC_CAREPILOT_MESSAGING_EMAIL_PROVIDER=msg91-email-smtp
+CLINIC_CAREPILOT_MESSAGING_EMAIL_FROM_ADDRESS=reminders@notify.deepthoughtnet.com
 
-## SMTP Settings (Current Platform Path)
+MSG91_EMAIL_ENABLED=true
+MSG91_EMAIL_HOST=smtp.mailer91.com
+MSG91_EMAIL_PORT=587
+MSG91_EMAIL_USERNAME=<MSG91 SMTP username>
+MSG91_EMAIL_PASSWORD=<secret>
+MSG91_EMAIL_FROM=reminders@notify.deepthoughtnet.com
+```
 
-The current notification infrastructure uses `clinic.mail.*` keys.
+`msg91-email-smtp` is the provider ID. `smtp` is only a transport/provider
+value for the separate legacy notification mail family and must not be used as
+the Engage provider selector.
 
-- `CLINIC_MAIL_ENABLED=true`
-- `CLINIC_MAIL_PROVIDER=smtp`
-- `CLINIC_MAIL_HOST=smtp.example.com`
-- `CLINIC_MAIL_PORT=587`
-- `CLINIC_MAIL_USERNAME=...`
-- `CLINIC_MAIL_PASSWORD=...`
-- `CLINIC_MAIL_STARTTLS=true`
-- `CLINIC_MAIL_AUTH=true`
+For MSG91 Engage sends, `MSG91_EMAIL_FROM` is authoritative. The optional
+`CLINIC_CAREPILOT_MESSAGING_EMAIL_FROM_ADDRESS` value should be kept aligned
+for operator visibility and legacy compatibility; it does not override the
+MSG91 adapter's sender.
 
-## Spring Mail Compatibility Keys
+## General system mail
 
-For environments already standardized on Spring Mail variables, keep these aligned:
+The independent notification-domain/provider path uses `clinic.mail.*`:
 
-- `SPRING_MAIL_HOST=smtp.example.com`
-- `SPRING_MAIL_PORT=587`
-- `SPRING_MAIL_USERNAME=...`
-- `SPRING_MAIL_PASSWORD=...`
-- `SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH=true`
-- `SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE=true`
+```dotenv
+CLINIC_MAIL_ENABLED=true
+CLINIC_MAIL_PROVIDER=smtp
+CLINIC_MAIL_HOST=<SMTP host>
+CLINIC_MAIL_PORT=587
+CLINIC_MAIL_USERNAME=<SMTP username>
+CLINIC_MAIL_PASSWORD=<secret>
+CLINIC_MAIL_FROM_EMAIL=<from address>
+CLINIC_MAIL_FROM_NAME=Jeevanam Healthcare
+CLINIC_MAIL_STARTTLS=true
+CLINIC_MAIL_AUTH=true
+```
 
-CarePilot status checks `clinic.mail.host` first and falls back to `spring.mail.host` for readiness visibility.
+Keep this family when non-Engage transactional notifications (for example
+invoice/receipt or domain notification emails) still use it. It is not the
+Engage provider selector and should not be removed or merged without migrating
+those consumers.
 
-## Local Testing Options
+## Operational validation
 
-Safe local SMTP tools:
+1. Recreate the API container after changing environment variables.
+2. Open CarePilot → Messaging.
+3. Confirm `Provider: msg91-email-smtp` and `Status: READY`.
+4. Use the provider test send only with an approved test recipient.
 
-- MailHog
-- Mailpit
-- Gmail app password (local testing only)
+Readiness is configuration/bean readiness; it does not claim a live provider
+delivery unless a test send succeeds.
 
-Never commit real SMTP credentials to source control.
-
-## Operational Validation
-
-1. Open CarePilot -> Messaging.
-2. Confirm EMAIL status is `READY`.
-3. Send a test message from the Test Send modal.
-4. Validate campaign executions show `SENT` with provider metadata in runtime/ops views.
+Never commit SMTP credentials or expose them in status responses/logs.

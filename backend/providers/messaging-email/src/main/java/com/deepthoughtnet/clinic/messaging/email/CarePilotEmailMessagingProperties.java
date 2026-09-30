@@ -12,7 +12,9 @@ public class CarePilotEmailMessagingProperties {
      */
     private boolean enabled = false;
     /**
-     * Logical provider key (for example: disabled, smtp, mock).
+     * Registered MessageProvider ID (for example: disabled,
+     * carepilot-email-smtp, or msg91-email-smtp). A transport name such as
+     * "smtp" is not a valid explicit registry selection.
      */
     private String provider = "disabled";
     /**

@@ -772,13 +772,13 @@ public class LabService {
                         : List.of(sample.getLabOrderItemId()))
                 : summary.linkedLabOrderItemIds();
         laboratoryWorkflowService.rejectSpecimenForTests(tenantId, order.getId(), savedSample.getId(), affectedItemIds, actorAppUserId);
-        if (savedSample.getStatus() == LabSampleStatus.RECOLLECTION_REQUIRED) {
-            boolean allNeedRecollection = labOrderSampleRepository.findByTenantIdAndLabOrderIdOrderByCollectedAtAscCreatedAtAsc(tenantId, order.getId()).stream()
-                    .allMatch(existing -> existing.getStatus() == LabSampleStatus.RECOLLECTION_REQUIRED || existing.getStatus() == LabSampleStatus.REJECTED);
-            if (allNeedRecollection) {
-                order.markReadyForCollection();
-                labOrderRepository.save(order);
-            }
+        if (savedSample.isRecollectionRequired()) {
+            // A rejected specimen must reopen collection even when another specimen
+            // from the same order remains valid. The rejected row is retained and
+            // the next collection creates a new accession for only the affected
+            // specimen/test group.
+            order.markReadyForCollection();
+            labOrderRepository.save(order);
             auditSample(tenantId, savedSample, "lab_sample.recollection_required", actorAppUserId, "Marked sample for recollection");
         } else {
             auditSample(tenantId, savedSample, "lab_sample.rejected", actorAppUserId, "Rejected lab sample");
@@ -1435,8 +1435,11 @@ public class LabService {
         List<LabSampleRecord> samples = labOrderSampleRepository.findByTenantIdAndLabOrderIdOrderByCollectedAtAscCreatedAtAsc(tenantId, order.getId()).stream()
                 .map(sample -> toRecord(tenantId, sample, sampleLinkSummaries.get(sample.getId())))
                 .toList();
-        LabSampleRecord primarySample = samples.isEmpty() ? null : samples.getFirst();
-        LabSampleStatusRecord sampleSummaryStatus = summarizeSampleStatus(samples);
+        List<LabSampleRecord> currentSamples = currentSamples(samples, lifecycleViews);
+        LabSampleRecord primarySample = currentSamples.stream()
+                .max(Comparator.comparing(LabSampleRecord::createdAt, Comparator.nullsFirst(Comparator.naturalOrder())))
+                .orElse(null);
+        LabSampleStatusRecord sampleSummaryStatus = summarizeSampleStatus(currentSamples);
         List<LabOrderResultRecord> results = labOrderResultRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAscCreatedAtAsc(tenantId, order.getId()).stream()
                 .map(result -> new LabOrderResultRecord(
                         result.getId(),
@@ -1742,7 +1745,7 @@ public class LabService {
     }
 
     private void drawReportHeader(PdfReportLayout layout, String clinicName, String clinicAddress, String clinicContact, BufferedImage logo, String reportHeading, String reportStatus) throws IOException {
-        float headerHeight = 88f;
+        float headerHeight = 76f;
         layout.ensureSpace(headerHeight + 14f);
         float headerTop = layout.y;
         float leftWidth = layout.width * 0.64f;
@@ -1776,9 +1779,12 @@ public class LabService {
         }
 
         float rightX = layout.margin + leftWidth + 12f;
-        writeLine(layout.content, "LABORATORY REPORT", 16f, rightX, headerTop - 20f, boldFont);
-        writeLine(layout.content, safe(reportHeading), 11f, rightX, headerTop - 38f, boldFont);
-        writeLine(layout.content, safe(reportStatus), 9.2f, rightX, headerTop - 56f, regularFont);
+        // Keep a single, stable report title.  Mode/type are operational metadata,
+        // not a second title competing for the reader's attention.
+        writeLine(layout.content, "LABORATORY REPORT", 13f, rightX, headerTop - 22f, boldFont);
+        if (StringUtils.hasText(reportStatus)) {
+            writeLine(layout.content, "Status: " + reportStatus.trim(), 8.6f, rightX, headerTop - 40f, regularFont);
+        }
         float dividerY = headerTop - headerHeight - 8f;
         layout.content.moveTo(layout.margin, dividerY);
         layout.content.lineTo(layout.margin + layout.width, dividerY);
@@ -1895,41 +1901,46 @@ public class LabService {
     }
 
     private void drawVerificationBlock(PdfReportLayout layout, String verificationUrl, String token, BufferedImage verificationQr) throws IOException {
-        float blockHeight = 52f;
+        PDType1Font boldFont = new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD);
+        float qrColumnWidth = 72f;
+        float qrSize = 44f;
+        float blockHeight = 58f;
         layout.ensureSpace(blockHeight + 10f);
-        writeSectionHeader(layout.content, "Verification", layout.margin, layout.y, layout.width);
+        writeSectionHeader(layout.content, "Report Verification", layout.margin, layout.y, layout.width);
         layout.y -= 17f;
         float top = layout.y;
-        float qrColumnWidth = 68f;
-        float qrSize = 44f;
-        float textWidth = layout.width - qrColumnWidth - 24f;
         layout.content.addRect(layout.margin, top - blockHeight, layout.width, blockHeight);
         layout.content.stroke();
-        writeLine(layout.content, "Verification Reference", 8.6f, layout.margin + 12f, top - 15f, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
-        writeLine(layout.content, shortVerificationReference(token), 8.8f, layout.margin + 12f, top - 26f, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
-        writeLine(layout.content, "Verify online:", 8.6f, layout.margin + 12f, top - 39f, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
-        writeWrapped(layout.content, verificationUrl, 8.1f, layout.margin + 12f, top - 49f, textWidth, new PDType1Font(Standard14Fonts.FontName.HELVETICA), 8.8f);
+        writeLine(layout.content, "Verification ID: " + shortVerificationReference(token), 9f, layout.margin + 12f, top - 25f, boldFont);
         if (verificationQr != null) {
             PDImageXObject image = LosslessFactory.createFromImage(layout.document, verificationQr);
             float qrX = layout.margin + layout.width - qrColumnWidth + (qrColumnWidth - qrSize) / 2f;
             float qrY = top - qrSize - 6f;
             layout.content.drawImage(image, qrX, qrY, qrSize, qrSize);
-            float captionWidth = textWidth(new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD), 7.9f, "Scan to verify");
-            writeLine(layout.content, "Scan to verify", 7.9f, qrX + (qrSize - captionWidth) / 2f, qrY - 8f, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+            float captionWidth = textWidth(boldFont, 7.9f, "Scan to verify");
+            writeLine(layout.content, "Scan to verify", 7.9f, qrX + (qrSize - captionWidth) / 2f, qrY - 8f, boldFont);
         }
         layout.y = top - blockHeight - 8f;
     }
 
     private void drawSignatureBlock(UUID tenantId, PdfReportLayout layout, LabOrderRecord record) throws IOException {
-        float blockHeight = 34f;
+        PDType1Font boldFont = new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD);
+        PDType1Font regularFont = new PDType1Font(Standard14Fonts.FontName.HELVETICA);
+        String signer = safe(firstText(record.labVerifiedByName(), resolveUserDisplayName(tenantId, record.labVerifiedBy()).orElse(null)));
+        List<String> signerLines = wrap(signer, boldFont, 9.2f, layout.width - 24f);
+        float blockHeight = Math.max(34f, 14f + signerLines.size() * 10.5f + 12f);
         layout.ensureSpace(blockHeight + 8f);
         writeSectionHeader(layout.content, "Authorized Signatory", layout.margin, layout.y, layout.width);
         layout.y -= 16f;
         float top = layout.y;
         layout.content.addRect(layout.margin, top - blockHeight, layout.width, blockHeight);
         layout.content.stroke();
-        writeLine(layout.content, safe(firstText(record.labVerifiedByName(), resolveUserDisplayName(tenantId, record.labVerifiedBy()).orElse(null))), 9.2f, layout.margin + 12f, top - 13f, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
-        writeLine(layout.content, "Digitally verified", 8.7f, layout.margin + 12f, top - 25f, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+        float signerY = top - 13f;
+        for (String line : signerLines) {
+            writeLine(layout.content, line, 9.2f, layout.margin + 12f, signerY, boldFont);
+            signerY -= 10.5f;
+        }
+        writeLine(layout.content, "Digitally verified", 8.7f, layout.margin + 12f, top - blockHeight + 10f, regularFont);
         layout.y = top - blockHeight - 6f;
     }
 
@@ -1953,7 +1964,7 @@ public class LabService {
             layout.y -= 22f;
             return;
         }
-        float[] columns = new float[]{0.38f, 0.13f, 0.11f, 0.21f, 0.17f};
+        float[] columns = new float[]{0.40f, 0.12f, 0.12f, 0.22f, 0.14f};
         String[] headers = new String[]{"Parameter / Component", "Result", "Unit", "Reference Range", "Interpretation"};
         if (!orderedTests.isEmpty()) {
             for (LabOrderedTestRecord orderedTest : orderedTests) {
@@ -1970,7 +1981,10 @@ public class LabService {
     private void drawResultTestSection(PdfReportLayout layout, String testName, String testCode, List<LabOrderResultRecord> rows, String[] headers, float[] columns) throws IOException {
         String sectionTitle = StringUtils.hasText(testName) ? testName : firstText(testCode, "Test");
         List<LabOrderResultRecord> effectiveRows = rows == null ? List.of() : rows;
-        float required = 34f;
+        PDType1Font sectionFont = new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD);
+        List<String> sectionTitleLines = wrap(sectionTitle, sectionFont, 10f, layout.width - 16f);
+        float sectionHeaderHeight = Math.max(16f, sectionTitleLines.size() * 11f + 5f);
+        float required = sectionHeaderHeight + 18f;
         if (effectiveRows.isEmpty()) {
             required += 24f;
         } else {
@@ -1978,13 +1992,17 @@ public class LabService {
                 required += measureResultRowHeight(resultRowValues(sectionTitle, row), columns, layout.width) + 2f;
             }
         }
-        layout.ensureSpace(required + 18f);
+        layout.ensureSpace(required + 2f);
         layout.content.setNonStrokingColor(245 / 255f, 247 / 255f, 251 / 255f);
-        layout.content.addRect(layout.margin, layout.y - 16f, layout.width, 16f);
+        layout.content.addRect(layout.margin, layout.y - sectionHeaderHeight, layout.width, sectionHeaderHeight);
         layout.content.fill();
         layout.content.setNonStrokingColor(0f, 0f, 0f);
-        writeLine(layout.content, sectionTitle, 10f, layout.margin + 8f, layout.y - 11f, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
-        layout.y -= 18f;
+        float titleY = layout.y - 11f;
+        for (String titleLine : sectionTitleLines) {
+            writeLine(layout.content, titleLine, 10f, layout.margin + 8f, titleY, sectionFont);
+            titleY -= 11f;
+        }
+        layout.y -= sectionHeaderHeight + 2f;
         drawResultsHeader(layout, headers, columns);
         if (effectiveRows.isEmpty()) {
             float rowHeight = 24f;
@@ -2212,7 +2230,7 @@ public class LabService {
 
     private float measureMetaCellHeight(MetaPair pair, float width) throws IOException {
         List<String> lines = wrap(safe(pair.value()), new PDType1Font(Standard14Fonts.FontName.HELVETICA), 8.8f, width - 14f);
-        return Math.max(22f, 12f + Math.max(1, lines.size()) * 8.8f);
+        return Math.max(26f, 22f + Math.max(1, lines.size()) * 9.2f);
     }
 
     private List<String> clinicalNotes(LabOrderRecord record) {
@@ -2508,39 +2526,11 @@ public class LabService {
     }
 
     private String reportTitleLabel(LabOrderRecord record) {
-        return reportTitleLabel(record, null, null);
+        return "LABORATORY REPORT";
     }
 
     private String reportTitleLabel(LabOrderRecord record, String reportMode, String reportType) {
-        if (StringUtils.hasText(reportMode)) {
-            if (LaboratoryReportPublicationArtifactEntity.REPORT_MODE_CONSOLIDATED.equalsIgnoreCase(reportMode)
-                    && LaboratoryReportPublicationArtifactEntity.REPORT_TYPE_FINAL.equalsIgnoreCase(reportType)) {
-                return "FINAL LABORATORY REPORT";
-            }
-            if (LaboratoryReportPublicationArtifactEntity.REPORT_MODE_INDIVIDUAL.equalsIgnoreCase(reportMode)) {
-                return "INDIVIDUAL LABORATORY REPORT";
-            }
-            if (LaboratoryReportPublicationArtifactEntity.REPORT_MODE_GROUPED.equalsIgnoreCase(reportMode)) {
-                return "GROUPED LABORATORY REPORT";
-            }
-            if (LaboratoryReportPublicationArtifactEntity.REPORT_TYPE_FINAL.equalsIgnoreCase(reportType)) {
-                return "FINAL LABORATORY REPORT";
-            }
-        }
-        LabOrderRecord.LabReportArtifactRecord artifact = currentReportArtifact(record);
-        if (artifact == null) {
-            return "Interim Report";
-        }
-        if (LaboratoryReportPublicationArtifactEntity.REPORT_TYPE_FINAL.equalsIgnoreCase(artifact.reportType())) {
-            return "FINAL LABORATORY REPORT";
-        }
-        if (LaboratoryReportPublicationArtifactEntity.REPORT_MODE_INDIVIDUAL.equalsIgnoreCase(artifact.reportMode())) {
-            return "INDIVIDUAL LABORATORY REPORT";
-        }
-        if (LaboratoryReportPublicationArtifactEntity.REPORT_MODE_GROUPED.equalsIgnoreCase(artifact.reportMode())) {
-            return "GROUPED LABORATORY REPORT";
-        }
-        return "INTERIM LABORATORY REPORT";
+        return "LABORATORY REPORT";
     }
 
     private String reportTypeLabel(LabOrderRecord.LabReportArtifactRecord artifact) {
@@ -2648,6 +2638,29 @@ public class LabService {
         return samples.getFirst().status();
     }
 
+    private List<LabSampleRecord> currentSamples(List<LabSampleRecord> samples, List<LaboratoryOrderedTestView> lifecycleViews) {
+        if (samples == null || samples.isEmpty()) {
+            return List.of();
+        }
+        Set<UUID> activeSampleIds = lifecycleViews == null
+                ? Set.of()
+                : lifecycleViews.stream()
+                        .filter(Objects::nonNull)
+                        .flatMap(view -> view.specimenLinks() == null ? Stream.empty() : view.specimenLinks().stream())
+                        .filter(link -> link != null && link.active() && link.labOrderSampleId() != null)
+                        .map(com.deepthoughtnet.clinic.laboratory.service.model.LaboratorySpecimenLinkView::labOrderSampleId)
+                        .collect(Collectors.toCollection(LinkedHashSet::new));
+        if (!activeSampleIds.isEmpty()) {
+            return samples.stream().filter(sample -> activeSampleIds.contains(sample.id())).toList();
+        }
+        List<LabSampleRecord> nonRejected = samples.stream()
+                .filter(sample -> sample.status() != LabSampleStatusRecord.REJECTED
+                        && sample.status() != LabSampleStatusRecord.RECOLLECTION_REQUIRED
+                        && !sample.recollectionRequired())
+                .toList();
+        return nonRejected.isEmpty() ? samples : nonRejected;
+    }
+
     private void ensureUsableSampleForOrderItem(List<LabOrderSampleEntity> samples, Map<UUID, SampleLinkSummary> sampleLinkSummaries, UUID labOrderItemId) {
         if (samples == null || samples.isEmpty()) {
             return;
@@ -2707,7 +2720,7 @@ public class LabService {
                 continue;
             }
             for (com.deepthoughtnet.clinic.laboratory.service.model.LaboratorySpecimenLinkView link : orderedTest.specimenLinks()) {
-                if (link == null || link.labOrderSampleId() == null) {
+                if (link == null || !link.active() || link.labOrderSampleId() == null) {
                     continue;
                 }
                 linkedItemIdsBySample.computeIfAbsent(link.labOrderSampleId(), ignored -> new LinkedHashSet<>()).add(orderedTest.labOrderItemId());
@@ -2735,7 +2748,7 @@ public class LabService {
                     continue;
                 }
                 for (LabOrderedTestSpecimenRecord link : orderedTest.specimenLinks()) {
-                    if (link == null || link.labOrderSampleId() == null) {
+                    if (link == null || !link.active() || link.labOrderSampleId() == null) {
                         continue;
                     }
                     linkedItemIdsBySample.computeIfAbsent(link.labOrderSampleId(), ignored -> new LinkedHashSet<>()).add(orderedTest.labOrderItemId());

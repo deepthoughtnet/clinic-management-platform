@@ -95,6 +95,7 @@ public class TenantNotificationSettingsService {
                 command.emailEnabled(),
                 command.smsEnabled(),
                 command.whatsappEnabled(),
+                command.voiceEnabled(),
                 command.inAppEnabled(),
                 command.appointmentRemindersEnabled(),
                 command.appointmentReminder24hEnabled(),
@@ -232,7 +233,7 @@ public class TenantNotificationSettingsService {
             case EMAIL -> settings.emailEnabled();
             case SMS -> settings.smsEnabled();
             case WHATSAPP -> settings.whatsappEnabled();
-            case VOICE -> false;
+            case VOICE -> settings.voiceEnabled();
             case IN_APP, APP_NOTIFICATION -> settings.inAppEnabled();
         };
     }
@@ -348,7 +349,7 @@ public class TenantNotificationSettingsService {
             case EMAIL -> settings.emailEnabled() && emailReady;
             case SMS -> settings.smsEnabled() && smsReady;
             case WHATSAPP -> settings.whatsappEnabled() && whatsappReady;
-            case VOICE -> false;
+            case VOICE -> settings.voiceEnabled();
             case IN_APP, APP_NOTIFICATION -> settings.inAppEnabled();
         };
     }
@@ -538,6 +539,7 @@ public class TenantNotificationSettingsService {
                 row.isEmailEnabled(),
                 row.isSmsEnabled(),
                 row.isWhatsappEnabled(),
+                row.isVoiceEnabled(),
                 row.isInAppEnabled(),
                 row.isAppointmentRemindersEnabled(),
                 row.isAppointmentReminder24hEnabled(),

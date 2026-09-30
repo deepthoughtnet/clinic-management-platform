@@ -20,6 +20,8 @@ import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalNotification
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalMeResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalProfileUpdateRequest;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalPrescriptionResponse;
+import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalRefillRequest;
+import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalRefillResponse;
 import com.deepthoughtnet.clinic.api.patientportal.auth.dto.PatientPortalAccessLoginResponse;
 import java.time.LocalDate;
 import java.util.List;
@@ -137,6 +139,16 @@ public class PatientPortalController {
     @GetMapping("/prescriptions")
     public List<PatientPortalPrescriptionResponse> prescriptions() {
         return patientPortalService.prescriptions();
+    }
+
+    @GetMapping("/refills")
+    public List<PatientPortalRefillResponse> refills() {
+        return patientPortalService.refillRequests();
+    }
+
+    @PostMapping("/refills")
+    public PatientPortalRefillResponse requestRefill(@Valid @RequestBody PatientPortalRefillRequest request) {
+        return patientPortalService.requestRefill(request);
     }
 
     @GetMapping("/bills")

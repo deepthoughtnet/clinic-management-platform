@@ -78,6 +78,77 @@ class CarePilotMessagingStatusServiceTest {
     }
 
     @Test
+    void msg91ReadinessDoesNotReportLegacyClinicMailRequirements() {
+        MessagingProviderRegistry registry = mock(MessagingProviderRegistry.class);
+        when(registry.resolve(MessageChannel.EMAIL)).thenReturn(provider("msg91-email-smtp", MessageChannel.EMAIL));
+        when(registry.resolve(MessageChannel.SMS)).thenReturn(provider("SMS_NOT_CONFIGURED", MessageChannel.SMS));
+        when(registry.resolve(MessageChannel.WHATSAPP)).thenReturn(provider("WHATSAPP_NOT_CONFIGURED", MessageChannel.WHATSAPP));
+
+        CarePilotEmailMessagingProperties email = new CarePilotEmailMessagingProperties();
+        email.setEnabled(true);
+        email.setProvider("smtp");
+        email.setFromAddress("legacy@example.com");
+        Msg91EmailMessageProvider msg91 = mock(Msg91EmailMessageProvider.class);
+        when(msg91.isConfigured()).thenReturn(true);
+        when(msg91.fromConfigured()).thenReturn(true);
+
+        CarePilotMessagingStatusService service = new CarePilotMessagingStatusService(
+                registry, email, new CarePilotSmsMessagingProperties(), new CarePilotWhatsAppMessagingProperties(),
+                msg91, "logging", false, ""
+        );
+
+        var status = service.providerStatuses().get(0);
+        assertThat(status.status()).isEqualTo(ProviderReadinessStatus.READY);
+        assertThat(status.missingConfigurationKeys()).noneMatch(key -> key.startsWith("clinic.mail."));
+        assertThat(status.smtpHostConfigured()).isFalse();
+    }
+
+    @Test
+    void legacySmtpReadinessReportsLegacyClinicMailRequirements() {
+        MessagingProviderRegistry registry = mock(MessagingProviderRegistry.class);
+        when(registry.resolve(MessageChannel.EMAIL)).thenReturn(provider("carepilot-email-smtp", MessageChannel.EMAIL));
+        when(registry.resolve(MessageChannel.SMS)).thenReturn(provider("SMS_NOT_CONFIGURED", MessageChannel.SMS));
+        when(registry.resolve(MessageChannel.WHATSAPP)).thenReturn(provider("WHATSAPP_NOT_CONFIGURED", MessageChannel.WHATSAPP));
+
+        CarePilotEmailMessagingProperties email = new CarePilotEmailMessagingProperties();
+        email.setEnabled(true);
+        email.setProvider("smtp");
+        email.setFromAddress("");
+
+        CarePilotMessagingStatusService service = new CarePilotMessagingStatusService(
+                registry, email, new CarePilotSmsMessagingProperties(), new CarePilotWhatsAppMessagingProperties(),
+                "logging", false, ""
+        );
+
+        var status = service.providerStatuses().get(0);
+        assertThat(status.status()).isEqualTo(ProviderReadinessStatus.NOT_CONFIGURED);
+        assertThat(status.missingConfigurationKeys()).contains(
+                "clinic.mail.provider=smtp + clinic.mail.enabled=true",
+                "clinic.mail.host or spring.mail.host"
+        );
+    }
+
+    @Test
+    void noopProviderReportsProviderSelectionError() {
+        MessagingProviderRegistry registry = mock(MessagingProviderRegistry.class);
+        when(registry.resolve(MessageChannel.EMAIL)).thenReturn(provider("carepilot-noop", MessageChannel.EMAIL));
+        when(registry.resolve(MessageChannel.SMS)).thenReturn(provider("SMS_NOT_CONFIGURED", MessageChannel.SMS));
+        when(registry.resolve(MessageChannel.WHATSAPP)).thenReturn(provider("WHATSAPP_NOT_CONFIGURED", MessageChannel.WHATSAPP));
+
+        CarePilotEmailMessagingProperties email = new CarePilotEmailMessagingProperties();
+        email.setEnabled(true);
+        CarePilotMessagingStatusService service = new CarePilotMessagingStatusService(
+                registry, email, new CarePilotSmsMessagingProperties(),
+                new CarePilotWhatsAppMessagingProperties(), "logging", false, ""
+        );
+
+        var status = service.providerStatuses().get(0);
+        assertThat(status.status()).isEqualTo(ProviderReadinessStatus.ERROR);
+        assertThat(status.message()).contains("No concrete email provider");
+        assertThat(status.missingConfigurationKeys()).contains("clinic.carepilot.messaging.email.provider");
+    }
+
+    @Test
     void enabledButMissingSmsConfigReturnsNotConfigured() {
         MessagingProviderRegistry registry = mock(MessagingProviderRegistry.class);
         when(registry.resolve(MessageChannel.EMAIL)).thenReturn(provider("carepilot-email", MessageChannel.EMAIL));

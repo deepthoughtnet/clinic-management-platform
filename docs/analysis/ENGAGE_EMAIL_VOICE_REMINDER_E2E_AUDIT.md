@@ -1,6 +1,6 @@
 # Engage Email / Voice Reminder End-to-End Audit
 
-**Scope:** read-only source audit performed 2026-09-27. No application code, configuration, migration, or runtime data was changed by this audit.
+**Scope:** source/runtime audit and controlled Engage email provider cleanup completed 2026-09-28. No schema, scheduler, execution-ledger, Voice/DotVoice, AIVA, STT, or VAD behavior was changed.
 
 ## 1. Executive summary
 
@@ -13,7 +13,7 @@ They are not one interchangeable ledger. A booking can therefore create an immed
 
 The most mature automatic Engage scenario is **appointment reminders**: CarePilot scans today/tomorrow appointments every reminder cycle and creates H24/H2 execution rows, subject to tenant settings, an active typed campaign/template, contact checks, quiet hours, provider readiness, and duplicate guards. Follow-up, refill, vaccination, billing, birthday/wellness, webinar, missed-appointment, and lead paths exist in varying degrees. Some are real provider executions; some are event/outbox or operational timeline entries.
 
-Email is **not proven to use MSG91 in Engage**. Engage dispatch resolves the normal `MessageProvider` for `MessageChannel.EMAIL` through `MessagingProviderRegistry`; the certified `msg91-email-smtp` path is selected explicitly by the Platform Communication Test and is not registered as the Engage default in this code path. Engage Email is therefore another provider or configuration-dependent (currently the CarePilot SMTP/provider registry path).
+Engage Email now explicitly selects the certified `msg91-email-smtp` provider through `MessagingProviderRegistry`. The selector is a provider ID, not the generic transport value `smtp`. The independent `clinic.mail.*` family remains available for notification-domain/non-Engage transactional mail.
 
 VOICE is represented in the execution enum and the previously implemented disabled integration, but it is not consistently selectable/configurable through Engage. The scheduler’s notification preference model has no VOICE preference, its channel readiness resolver deliberately does not make VOICE usable, Campaigns and Reminders frontend channel unions omit VOICE, and `ENGAGE_VOICE_REMINDERS_ENABLED=false` prevents provider invocation even when a VOICE execution row exists.
 
@@ -89,8 +89,8 @@ Other scheduled classes (`CarePilotAiCallScheduler`, AI reconciliation, clinical
 | Appointment cancelled | `AppointmentService` publishes `AppointmentCancelledEvent`; notification listener queues cancellation | Immediate event/outbox. | **IMPLEMENTED**. Existing CarePilot appointment execution rows are not visibly cancelled by this path. |
 | Appointment H24/H2 reminder | `CarePilotReminderTriggerService.queueAppointmentReminders` | Periodic scan; `appointmentAt - 24h` and `appointmentAt - 2h`; catch-up at now+1m if within late window. Creates CarePilot execution. | **IMPLEMENTED**, subject to settings/campaign/contact/provider. |
 | Appointment due legacy reminder | *(removed from `NotificationReminderScheduler`)* | No scheduled appointment reminder scan remains in this scheduler. | **CONSOLIDATED TO ENGAGE**. |
-| Missed appointment follow-up | CarePilot trigger scans NO_SHOW; legacy scheduler/action also queues older appointment reminders; no-show reconciler marks status | CarePilot default delay PT2H from appointment time, configurable campaign notes; legacy path is periodic. | **PARTIALLY IMPLEMENTED**; two paths have different semantics. |
-| Consultation follow-up | CarePilot trigger scans prescriptions with `followUpDate`; legacy action scans completed/draft consultations and publishes `FollowUpDueEvent` | CarePilot offset default 24h before follow-up date; legacy event is periodic. | **PARTIALLY IMPLEMENTED**. |
+| Missed appointment follow-up | CarePilot trigger scans NO_SHOW; no-show reconciler marks status; legacy patient reminder scan removed | CarePilot default delay PT2H from appointment time, configurable campaign notes. | **IMPLEMENTED** in Engage for patient follow-up; reconciliation/staff alert remain operational paths. |
+| Consultation follow-up | CarePilot trigger scans prescriptions with `followUpDate`; legacy action scans completed/draft consultations and publishes `FollowUpDueEvent` | CarePilot offset default 24h before prescription follow-up date; consultation event remains periodic. | **PARTIAL**; prescription and consultation follow-up fields are separate concepts. |
 | Refill | CarePilot trigger scans finalized prescriptions and estimates due date from configured days/medicine data | Estimated refill date = finalized date + configured/derived refill days; default configured days 30, offset default 0. | **PARTIALLY IMPLEMENTED**; no confirmed pharmacy dispense/exhaustion event path in this audit. |
 | Vaccination | CarePilot scans vaccination due/overdue records; vaccination service also exposes manual queue path | Due/overdue window with default one-day offset; event/outbox path exists. | **IMPLEMENTED/PARTIAL** depending on plane; CarePilot execution requires settings/campaign/contact. |
 | Billing/payment | CarePilot scans bills over configured overdue threshold; legacy scheduler publishes PaymentReminderEvent | CarePilot reminderAt now after threshold; default overdue threshold 3 days. | **IMPLEMENTED** in both planes with differing ledgers. |
@@ -125,7 +125,7 @@ The trigger uses tenant settings `appointmentRemindersEnabled`, `appointmentRemi
 
 ### Legacy path
 
-`NotificationReminderScheduler` still runs its non-appointment families every 5m, but no longer calls `AppointmentReminderEventService` and no longer queues scheduled appointment reminders. The former `NotificationActionService.queueAppointmentReminders` two-hour helper was removed because it had no production caller. CarePilot H24/H2 materialization is now the sole scheduled appointment-reminder path. `AppointmentReminderProperties` remains only for the existing notification-operations configuration view and is not used to dispatch appointment reminders.
+`NotificationReminderScheduler` still runs its non-appointment families every 5m, but no longer calls `AppointmentReminderEventService`, queues scheduled appointment reminders, or queues the legacy patient-facing missed-appointment scan. The former `NotificationActionService.queueAppointmentReminders` and missed-appointment helpers were removed. CarePilot H24/H2 and NO_SHOW follow-up materialization are now the authoritative appointment reminder paths. `AppointmentReminderProperties` remains only for the existing notification-operations configuration view and is not used to dispatch appointment reminders.
 
 ## 6. Refill / medication audit
 
@@ -210,9 +210,25 @@ CarePilot execution due
  -> CampaignDeliveryAttemptEntity + execution status
 ```
 
-The Platform Communication Test’s `msg91-email-smtp` branch directly invokes `Msg91EmailMessageProvider` when explicitly requested. That does not prove Engage uses it. The inspected Engage orchestrator resolves its normal registry mapping for `MessageChannel.EMAIL`; the current CarePilot messaging status/readiness code reports the CarePilot email provider path, not an explicit MSG91 selection. **Conclusion: ENGAGE EMAIL PROVIDER SELECTION IS CONFIG-DEPENDENT / currently the existing CarePilot SMTP/provider registry path, not automatically MSG91.**
+The Engage path is:
 
-Minimum future work (not implemented here): register MSG91 as an eligible Engage email provider in the existing registry/config selection and expose an explicit, tenant-safe selection/readiness policy. Do not bypass `MessageOrchestratorService` from campaigns.
+```text
+CampaignExecutionService
+ -> MessageOrchestratorService
+ -> MessagingProviderRegistry.resolve(EMAIL)
+ -> msg91-email-smtp
+ -> Msg91EmailMessageProvider
+ -> MSG91 SMTP
+```
+
+The runtime selector is `CLINIC_CAREPILOT_MESSAGING_EMAIL_PROVIDER=msg91-email-smtp`.
+The previous value `smtp` did not match any registry provider and therefore
+resolved to `carepilot-noop`. The selector is now corrected in the local runtime
+environment and wired into the maintained UAT/production Compose templates.
+
+`MSG91_EMAIL_FROM` is authoritative for MSG91 sends. The CarePilot
+`from-address` value is kept aligned for operator visibility and legacy
+compatibility; it is not used to override the MSG91 adapter.
 
 ## 12. Voice / DotVoice trace
 
@@ -349,9 +365,103 @@ notification-center and may be published by other module integrations.
 Immediate appointment booked, rescheduled, and cancelled lifecycle
 notifications remain unchanged on their existing event listeners. CarePilot is
 now the authoritative owner for scheduled appointment H24/H2 materialization,
-execution, retry, and delivery history. Missed appointment, follow-up,
-vaccination, billing, and other legacy reminder families remain pending their
-own future consolidation phases.
+execution, retry, and delivery history. Missed-appointment patient follow-up
+is now CarePilot-owned while no-show reconciliation and staff/operational
+notifications remain in the notification domain. Consultation-sourced
+follow-up, vaccination, billing, and other legacy reminder families remain
+pending their own future consolidation phases.
+
+## Missed Appointment / Follow-Up Consolidation
+
+Missed appointments had three concerns: no-show reconciliation, immediate
+no-show/staff notifications, and a legacy periodic patient reminder scan. The
+scan inferred a missed appointment from an old `BOOKED`/`WAITING` appointment,
+while CarePilot materializes patient follow-up from authoritative `NO_SHOW`
+status with a campaign-configured delay. The legacy patient scan and its
+`NotificationActionService` helpers were removed. Status reconciliation,
+immediate no-show notification, and staff operational alerts remain.
+
+Follow-up has two independently stored sources: `PrescriptionRecord.followUpDate`
+and `ConsultationRecord.followUpDate`. CarePilot owns prescription follow-up
+campaign executions and no longer emits a second `FollowUpDueEvent` for the
+same prescription execution. The legacy consultation scan/event remains because
+it can represent a consultation follow-up without a matching prescription.
+Full follow-up consolidation remains pending a product decision on whether
+those clinical fields are one concept or two.
+
+## Vaccination Reminder Consolidation
+
+Vaccination has one automatic legacy path and one CarePilot path. The legacy
+`NotificationReminderScheduler` called `NotificationActionService` to scan
+`VaccinationService.listDue()` and publish `VaccinationDueEvent`, which created
+notification-domain patient delivery rows. CarePilot independently scans
+`listDue()` and `listOverdue()`, applies the campaign `reminderOffset`,
+`includeOverdue`, and `overdueGraceDays` settings, then creates a
+`CampaignExecutionEntity` with source type `VACCINATION` and a deterministic
+window/duplicate guard.
+
+The legacy automatic scheduler dispatch was removed. CarePilot is now the
+authoritative owner for scheduled due and overdue vaccination patient
+reminders. Vaccination clinical records, due/overdue calculation, and the
+notification-domain event/listener infrastructure remain intact.
+
+The vaccination page's explicit **Queue reminders** action is a manual
+operator workflow through `VaccinationReminderService`. It publishes a
+`VaccinationDueEvent` for the selected patient's due records and remains
+`KEEP_MANUAL`; it is not an automatic scheduler and was not silently changed
+to a campaign execution. This preserves the existing operator-visible
+notification history and manual resend semantics. A future batch can decide
+whether manual sends should become Engage executions, but that requires an
+explicit UI/status compatibility plan.
+
+No distinct vaccination staff-alert path was removed. The existing
+notification-center listener remains available for vaccination due events.
+The remaining ambiguity is whether manual resend history should eventually
+share the CarePilot execution ledger; it is intentionally outside this
+consolidation.
+
+## Billing / Payment Reminder Consolidation
+
+Billing has separate transactional and scheduled paths. Bill/invoice delivery,
+receipt delivery, payment collection, and payment-state transitions remain
+notification/billing operations. They are not scheduled payment reminders and
+were preserved.
+
+The duplicate scheduled path was:
+
+`NotificationReminderScheduler` → `NotificationActionService.queuePaymentReminders`
+→ scan bills with positive due amounts → `PaymentReminderEvent` →
+notification-domain/outbox.
+
+CarePilot already scans the same bill records and creates the authoritative
+`CampaignExecutionEntity` for `BILLING_REMINDER`. Its default behavior is:
+
+- eligible statuses: `UNPAID`, `ISSUED`, `PARTIALLY_PAID`;
+- positive `dueAmount` required;
+- `billDate` is the available schedule reference (there is no separate bill
+  due-date field in this path);
+- default overdue threshold: 3 days via
+  `clinic.carepilot.reminders.billing-overdue-days`;
+- optional campaign `overdueDays`, `reminderFrequencyDays`, and
+  `targetStatuses` override the defaults;
+- frequency `0` means one execution after the threshold;
+- paid, cancelled, and refunded bills are excluded;
+- execution-window and channel duplicate guards remain in Engage.
+
+The legacy automatic payment-reminder scheduler branch and its action-service
+helpers were removed. Payment reminder events, listeners, stale-state checks,
+notification history, and notification-center infrastructure remain for
+compatibility with other event publishers and existing operational views.
+
+The billing UI exposes manual invoice-email and receipt-email actions, not a
+manual scheduled-payment-reminder action. Those immediate transactional
+operations remain unchanged. No separate manual payment-reminder migration was
+needed.
+
+There is no distinct staff collection-alert scheduler in the removed branch;
+existing payment event/notification-center consumers remain intact. The
+remaining ambiguity is whether future collection outreach should be modeled as
+a separate operational campaign rather than a payment reminder.
 
 ## 20. Recommended smallest next implementation batch (not implemented)
 
@@ -372,3 +482,18 @@ own future consolidation phases.
 - Do not connect lab/pharmacy/lead categories merely because the UI exposes them; add only after an authoritative trigger exists.
 - Do not enable `ENGAGE_VOICE_REMINDERS_ENABLED` as part of this audit.
 - Do not change AIVA, STT, VAD, booking, Care entitlement, Provider/Discover, or certified DotVoice transport.
+## Refill reminder and patient action (current implementation)
+
+`CarePilotReminderTriggerService` remains the only refill reminder materializer;
+it uses finalized prescription dates and medicine-duration data when present,
+otherwise the configured estimated refill duration. No pharmacy dispense ledger
+currently exposes refill eligibility to this scheduler, so the result remains an
+explicit estimate rather than a clinical exhaustion claim.
+
+Patient-facing refill requests are now recorded by the inventory-owned
+`RefillRequestService` as `REQUESTED` intake records. The authenticated Care
+portal accepts a prescription number, verifies the logged-in tenant/patient and
+finalized prescription, and applies a unique tenant + patient + prescription +
+cycle guard. It does not create a pharmacy sale or dispense. The refill campaign
+renderer exposes `refillActionUrl` (default `/patient/refills`) without putting
+patient or prescription identifiers in the URL. Voice remains globally disabled.

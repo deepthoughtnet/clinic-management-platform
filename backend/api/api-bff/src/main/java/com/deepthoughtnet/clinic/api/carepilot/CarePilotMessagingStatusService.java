@@ -78,7 +78,10 @@ public class CarePilotMessagingStatusService {
     private ProviderStatusResponse emailStatus(OffsetDateTime checkedAt) {
         MessageProvider provider = providerRegistry.resolve(MessageChannel.EMAIL);
         boolean available = isConcreteProvider(provider);
-        boolean msg91Selected = provider != null && "msg91-email-smtp".equals(provider.providerName());
+        String resolvedProviderName = provider == null ? "" : normalized(provider.providerName());
+        boolean msg91Selected = "msg91-email-smtp".equalsIgnoreCase(resolvedProviderName);
+        boolean legacySmtpSelected = "carepilot-email-smtp".equalsIgnoreCase(resolvedProviderName);
+        boolean noopSelected = "carepilot-noop".equalsIgnoreCase(resolvedProviderName) || !available;
         boolean enabled = msg91Selected ? msg91EmailProvider != null && msg91EmailProvider.isConfigured() : emailProperties.isEnabled();
         String emailProvider = normalized(emailProperties.getProvider());
         boolean mockProvider = isMockProvider(emailProvider);
@@ -91,20 +94,26 @@ public class CarePilotMessagingStatusService {
                 : providerConfigured && fromAddressConfigured && (mockProvider || smtpHostConfigured);
 
         List<String> missing = new ArrayList<>();
-        if (msg91Selected && (msg91EmailProvider == null || !msg91EmailProvider.isConfigured())) {
-            missing.add("clinic.carepilot.messaging.email.providers.msg91");
-        } else if (!providerConfigured) {
-            if (!StringUtils.hasText(emailProvider) || "disabled".equalsIgnoreCase(emailProvider)) {
-                missing.add("clinic.carepilot.messaging.email.provider");
-            } else {
-                missing.add("clinic.mail.provider=smtp + clinic.mail.enabled=true");
+        if (msg91Selected) {
+            if (msg91EmailProvider == null || !msg91EmailProvider.isConfigured()) {
+                missing.add("clinic.carepilot.messaging.email.providers.msg91");
             }
-        }
-        if (!msg91Selected && !mockProvider && !smtpHostConfigured) {
-            missing.add("clinic.mail.host or spring.mail.host");
-        }
-        if (!msg91Selected && !fromAddressConfigured) {
-            missing.add("clinic.carepilot.messaging.email.from-address");
+        } else if (legacySmtpSelected || mockProvider) {
+            if (!providerConfigured) {
+                if (!StringUtils.hasText(emailProvider) || "disabled".equalsIgnoreCase(emailProvider)) {
+                    missing.add("clinic.carepilot.messaging.email.provider");
+                } else {
+                    missing.add("clinic.mail.provider=smtp + clinic.mail.enabled=true");
+                }
+            }
+            if (legacySmtpSelected && !smtpHostConfigured) {
+                missing.add("clinic.mail.host or spring.mail.host");
+            }
+            if (!fromAddressConfigured) {
+                missing.add("clinic.carepilot.messaging.email.from-address");
+            }
+        } else if (noopSelected) {
+            missing.add("clinic.carepilot.messaging.email.provider");
         }
 
         ProviderReadinessStatus status;
@@ -120,7 +129,9 @@ public class CarePilotMessagingStatusService {
             message = "Mock provider ready for local UAT.";
         } else if (!configured) {
             status = ProviderReadinessStatus.NOT_CONFIGURED;
-            message = "Email is enabled but SMTP host/from address is not configured.";
+            message = msg91Selected
+                    ? "MSG91 email provider is enabled but credentials or sender are not configured."
+                    : "Email is enabled but SMTP host/from address is not configured.";
         } else {
             status = ProviderReadinessStatus.READY;
             message = "Email provider is configured and ready.";
@@ -128,7 +139,7 @@ public class CarePilotMessagingStatusService {
 
         return new ProviderStatusResponse(
                 MessageChannel.EMAIL,
-                provider.providerName(),
+                resolvedProviderName,
                 enabled,
                 configured,
                 available,
@@ -140,7 +151,7 @@ public class CarePilotMessagingStatusService {
                 msg91Selected ? configured : providerConfigured,
                 msg91Selected ? (msg91EmailProvider != null && msg91EmailProvider.fromConfigured()) : fromAddressConfigured,
                 false,
-                smtpHostConfigured
+                legacySmtpSelected && smtpHostConfigured
         );
     }
 

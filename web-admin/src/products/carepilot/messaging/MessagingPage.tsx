@@ -196,7 +196,7 @@ export default function MessagingPage() {
                   <Typography variant="body2"><b>Provider:</b> {provider.providerName}</Typography>
                   <Typography variant="body2"><b>Enabled:</b> {provider.enabled ? "Yes" : "No"} • <b>Configured:</b> {provider.configured ? "Yes" : "No"} • <b>Available:</b> {provider.available ? "Yes" : "No"}</Typography>
                   {provider.channel === "EMAIL" ? (
-                    <Typography variant="body2"><b>SMTP Host Configured:</b> {provider.smtpHostConfigured ? "Yes" : "No"}</Typography>
+                    <Typography variant="body2"><b>Sender Configured:</b> {provider.fromAddressConfigured ? "Yes" : "No"}{provider.providerName !== "msg91-email-smtp" ? ` • SMTP Host Configured: ${provider.smtpHostConfigured ? "Yes" : "No"}` : ""}</Typography>
                   ) : null}
                   <Typography variant="body2"><b>Message:</b> {provider.message}</Typography>
                   {provider.channel !== "EMAIL" && provider.status !== "READY" ? (

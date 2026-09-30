@@ -91,6 +91,21 @@ class DefaultMessageProviderResolverTest {
     }
 
     @Test
+    void genericSmtpTransportNameDoesNotResolveAsAnEngageProviderId() {
+        NoOpMessageProvider noOp = new NoOpMessageProvider();
+        MessageProvider carePilotEmail = provider("carepilot-email-smtp", MessageChannel.EMAIL);
+        MessageProvider msg91Email = provider("msg91-email-smtp", MessageChannel.EMAIL);
+
+        MessagingProviderRegistry resolver = new MessagingProviderRegistry(
+                List.of(noOp, carePilotEmail, msg91Email),
+                noOp,
+                "smtp"
+        );
+
+        assertThat(resolver.resolve(MessageChannel.EMAIL).providerName()).isEqualTo("carepilot-noop");
+    }
+
+    @Test
     void fallsBackToNoOpProviderWhenNoConcreteProviderSupportsChannel() {
         NoOpMessageProvider noOp = new NoOpMessageProvider();
         MessagingProviderRegistry resolver = new MessagingProviderRegistry(List.of(noOp), noOp);

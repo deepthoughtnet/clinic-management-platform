@@ -42,6 +42,7 @@ const CHANNEL_TYPE_LABELS: Record<CarePilotChannelType, string> = {
   EMAIL: "Email",
   SMS: "SMS",
   WHATSAPP: "WhatsApp",
+  VOICE: "Voice",
   IN_APP: "In App",
   APP_NOTIFICATION: "App Notification",
 };
