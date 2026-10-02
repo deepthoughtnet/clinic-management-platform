@@ -599,11 +599,20 @@ public class LabService {
         }
         LabOrderEntity order = labOrderRepository.findByTenantIdAndId(tenantId, orderId)
                 .orElseThrow(() -> new IllegalArgumentException("Lab order not found"));
-        if (order.getStatus() != LabOrderStatus.READY_FOR_COLLECTION) {
-            throw new IllegalArgumentException("Lab order is not ready for sample collection");
-        }
         Map<UUID, LabOrderItemEntity> orderItems = labOrderItemRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAsc(tenantId, orderId).stream()
                 .collect(Collectors.toMap(LabOrderItemEntity::getId, Function.identity(), (left, right) -> left, LinkedHashMap::new));
+        Set<UUID> alreadyCollectedItemIds = activeCollectedOrderItemIds(tenantId, orderId, orderItems.keySet());
+        Set<UUID> collectionEligibleItemIds = new LinkedHashSet<>(orderItems.keySet());
+        collectionEligibleItemIds.removeAll(alreadyCollectedItemIds);
+        if (!orderItems.isEmpty() && collectionEligibleItemIds.isEmpty()) {
+            throw new IllegalArgumentException("No lab tests are awaiting sample collection");
+        }
+        // A partially collected order remains collectible. The aggregate order
+        // status is intentionally coarse; active specimen links determine
+        // which tests may be collected next.
+        if (!isCollectionAggregateStatusAllowed(order.getStatus())) {
+            throw new IllegalArgumentException("Lab order is not ready for sample collection");
+        }
         List<LabOrderSampleEntity> entities = new ArrayList<>();
         List<SampleCollectionGroup> groupedCommands = new ArrayList<>();
         HashSet<String> reservedAccessions = new HashSet<>();
@@ -616,6 +625,9 @@ public class LabService {
             LabOrderItemEntity orderItem = command.labOrderItemId() == null ? null : orderItems.get(command.labOrderItemId());
             if (command.labOrderItemId() != null && orderItem == null) {
                 throw new IllegalArgumentException("Unknown lab order item for sample collection");
+            }
+            if (command.labOrderItemId() != null && !collectionEligibleItemIds.contains(command.labOrderItemId())) {
+                throw new IllegalArgumentException("Lab test already has an active specimen and cannot be collected again");
             }
             String specimenType = normalize(command.specimenType());
             OffsetDateTime collectedAt = command.collectedAt() == null ? OffsetDateTime.now() : command.collectedAt();
@@ -647,10 +659,14 @@ public class LabService {
         Map<UUID, SampleLinkSummary> sampleLinkSummaries = new LinkedHashMap<>();
         for (SampleCollectionGroup group : groupedCommands) {
             List<UUID> linkedOrderItemIds = group.assignToAllOrderItems
-                    ? new ArrayList<>(orderItems.keySet())
+                    ? new ArrayList<>(collectionEligibleItemIds)
                     : new ArrayList<>(group.linkedOrderItemIds);
             if (linkedOrderItemIds.isEmpty()) {
-                linkedOrderItemIds = new ArrayList<>(orderItems.keySet());
+                linkedOrderItemIds = new ArrayList<>(collectionEligibleItemIds);
+            }
+            linkedOrderItemIds.removeIf(id -> !collectionEligibleItemIds.contains(id));
+            if (linkedOrderItemIds.isEmpty() && !orderItems.isEmpty()) {
+                throw new IllegalArgumentException("No selected lab tests are awaiting sample collection");
             }
             UUID primaryOrderItemId = linkedOrderItemIds.size() == 1 ? linkedOrderItemIds.getFirst() : null;
             LabOrderSampleEntity savedSample = null;
@@ -733,6 +749,44 @@ public class LabService {
                 .toList();
     }
 
+    private Set<UUID> activeCollectedOrderItemIds(UUID tenantId, UUID orderId, Set<UUID> orderItemIds) {
+        Set<UUID> collected = new LinkedHashSet<>();
+        for (LaboratoryOrderedTestView orderedTest : laboratoryWorkflowService.listOrderTests(tenantId, orderId)) {
+            if (orderedTest == null || orderedTest.labOrderItemId() == null || !orderItemIds.contains(orderedTest.labOrderItemId())) {
+                continue;
+            }
+            boolean activeCollected = orderedTest.specimenLinks() != null && orderedTest.specimenLinks().stream()
+                    .anyMatch(link -> link != null
+                            && link.active()
+                            && ("COLLECTED".equalsIgnoreCase(link.sampleStatus())
+                            || "RECEIVED".equalsIgnoreCase(link.sampleStatus())));
+            if (activeCollected) {
+                collected.add(orderedTest.labOrderItemId());
+            }
+        }
+        // Older orders may not yet have a lifecycle link projection. Preserve
+        // the single-item specimen relationship as a safe fallback; shared
+        // specimens continue to rely on the authoritative workflow links.
+        if (collected.isEmpty()) {
+            labOrderSampleRepository.findByTenantIdAndLabOrderIdOrderByCollectedAtAscCreatedAtAsc(tenantId, orderId).stream()
+                    .filter(sample -> sample.getStatus() == LabSampleStatus.COLLECTED || sample.getStatus() == LabSampleStatus.RECEIVED)
+                    .map(LabOrderSampleEntity::getLabOrderItemId)
+                    .filter(Objects::nonNull)
+                    .filter(orderItemIds::contains)
+                    .forEach(collected::add);
+        }
+        return collected;
+    }
+
+    private boolean isCollectionAggregateStatusAllowed(LabOrderStatus status) {
+        return status == LabOrderStatus.READY_FOR_COLLECTION
+                || status == LabOrderStatus.SAMPLE_COLLECTED
+                || status == LabOrderStatus.IN_PROGRESS
+                || status == LabOrderStatus.PAID
+                || status == LabOrderStatus.PARTIALLY_READY
+                || status == LabOrderStatus.PARTIALLY_PUBLISHED;
+    }
+
     @Transactional
     public LabSampleRecord receiveSample(UUID tenantId, UUID sampleId, LabSampleReceiveCommand command, UUID actorAppUserId) {
         requireTenant(tenantId);
@@ -742,8 +796,19 @@ public class LabService {
         if (sample.getStatus() != LabSampleStatus.COLLECTED) {
             throw new IllegalArgumentException("Lab sample is not ready to receive");
         }
-        UUID receivedBy = command == null || command.receivedBy() == null ? actorAppUserId : command.receivedBy();
-        sample.markReceived(command == null ? null : command.receivedAt(), receivedBy, actorAppUserId);
+        OffsetDateTime receivedAt = command == null || command.receivedAt() == null
+                ? OffsetDateTime.now()
+                : command.receivedAt();
+        if (receivedAt.isAfter(OffsetDateTime.now())) {
+            throw new IllegalArgumentException("Received date cannot be in the future");
+        }
+        if (sample.getCollectedAt() != null && receivedAt.isBefore(sample.getCollectedAt())) {
+            throw new IllegalArgumentException("Received date cannot be before collection date");
+        }
+        // Collector identity is always the authenticated actor. The request's
+        // receivedBy value is retained for wire compatibility but cannot spoof
+        // the audit identity.
+        sample.markReceived(receivedAt, actorAppUserId, actorAppUserId);
         LabOrderSampleEntity saved = labOrderSampleRepository.save(sample);
         auditSample(tenantId, saved, "lab_sample.received", actorAppUserId, "Received lab sample");
         return toRecord(tenantId, saved, buildSampleLinkSummaries(tenantId, saved.getLabOrderId()).get(saved.getId()));
@@ -800,10 +865,6 @@ public class LabService {
             throw new IllegalArgumentException("Results are verified and cannot be edited. Use amendment workflow in a future release.");
         }
         List<LabOrderSampleEntity> orderSamples = labOrderSampleRepository.findByTenantIdAndLabOrderIdOrderByCollectedAtAscCreatedAtAsc(tenantId, orderId);
-        boolean hasReceivedSample = orderSamples.stream().anyMatch(sample -> sample.getStatus() == LabSampleStatus.RECEIVED);
-        if (!hasReceivedSample) {
-            throw new IllegalArgumentException("A received sample is required before result entry");
-        }
         Map<UUID, LabOrderSampleEntity> samplesById = orderSamples.stream()
                 .collect(Collectors.toMap(LabOrderSampleEntity::getId, Function.identity(), (left, right) -> left, LinkedHashMap::new));
         Map<UUID, LabOrderItemEntity> orderItems = labOrderItemRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAsc(tenantId, orderId).stream()
@@ -850,6 +911,9 @@ public class LabService {
                     : validateSelectedTestsForResultEntry(selectedTestIds, lifecycleByItemId);
         }
         if (editableTestIds.isEmpty()) {
+            if (orderSamples.stream().noneMatch(sample -> sample.getStatus() == LabSampleStatus.RECEIVED)) {
+                throw new IllegalArgumentException("A received sample is required before result entry");
+            }
             throw new IllegalArgumentException("Lab order has no editable tests for result entry");
         }
         LabOrderStatus previousStatus = order.getStatus();
@@ -870,7 +934,7 @@ public class LabService {
             }
         }
         for (UUID selectedTestId : editableTestIds) {
-            ensureUsableSampleForOrderItem(orderSamples, sampleLinkSummaries, selectedTestId);
+            ensureReceivedActiveSpecimenForOrderItem(orderSamples, lifecycleViews, sampleLinkSummaries, orderItems, selectedTestId);
         }
         Map<UUID, List<LabTestParameterEntity>> parametersByTestId = orderItems.values().stream()
                 .filter(item -> item.getLabTestId() != null)
@@ -1384,6 +1448,9 @@ public class LabService {
                         resolveParameters(tenantId, item)
                 ))
                 .toList();
+        List<LabOrderSampleEntity> sampleEntities = labOrderSampleRepository.findByTenantIdAndLabOrderIdOrderByCollectedAtAscCreatedAtAsc(tenantId, order.getId());
+        Map<UUID, LabOrderSampleEntity> sampleById = sampleEntities.stream()
+                .collect(Collectors.toMap(LabOrderSampleEntity::getId, Function.identity(), (left, right) -> left));
         List<LaboratoryOrderedTestView> lifecycleViews = laboratoryWorkflowService.listOrderTests(tenantId, order.getId());
         List<LabOrderedTestRecord> orderedTests = lifecycleViews.stream()
                 .map(view -> {
@@ -1414,25 +1481,28 @@ public class LabService {
                             view.latestResultEnteredAt(),
                             view.latestResultEnteredBy(),
                             view.specimenLinks().stream()
-                                    .map(link -> new LabOrderedTestSpecimenRecord(
-                                            link.labOrderSampleId(),
-                                            link.accessionNumber(),
-                                            link.barcodeValue(),
-                                            link.specimenType(),
-                                            link.containerType(),
-                                            link.sampleStatus(),
-                                            link.active(),
-                                            link.collectedAt(),
-                                            link.receivedAt(),
-                                            link.linkedAt(),
-                                            link.unlinkedAt()
-                                    ))
+                                    .map(link -> {
+                                        LabOrderSampleEntity sample = sampleById.get(link.labOrderSampleId());
+                                        return new LabOrderedTestSpecimenRecord(
+                                                link.labOrderSampleId(),
+                                                sample == null ? link.accessionNumber() : sample.getAccessionNumber(),
+                                                sample == null ? link.barcodeValue() : sample.getBarcodeValue(),
+                                                sample == null ? link.specimenType() : sample.getSpecimenType(),
+                                                sample == null ? link.containerType() : sample.getContainerType(),
+                                                sample == null || sample.getStatus() == null ? link.sampleStatus() : sample.getStatus().name(),
+                                                link.active(),
+                                                sample == null ? link.collectedAt() : sample.getCollectedAt(),
+                                                sample == null ? link.receivedAt() : sample.getReceivedAt(),
+                                                link.linkedAt(),
+                                                link.unlinkedAt()
+                                        );
+                                    })
                                     .toList()
                     );
                 })
                 .toList();
         Map<UUID, SampleLinkSummary> sampleLinkSummaries = buildSampleLinkSummaries(tenantId, order.getId());
-        List<LabSampleRecord> samples = labOrderSampleRepository.findByTenantIdAndLabOrderIdOrderByCollectedAtAscCreatedAtAsc(tenantId, order.getId()).stream()
+        List<LabSampleRecord> samples = sampleEntities.stream()
                 .map(sample -> toRecord(tenantId, sample, sampleLinkSummaries.get(sample.getId())))
                 .toList();
         List<LabSampleRecord> currentSamples = currentSamples(samples, lifecycleViews);
@@ -1496,9 +1566,9 @@ public class LabService {
                 primarySample == null ? null : primarySample.barcodeValue(),
                 sampleSummaryStatus,
                 order.getSampleType(),
-                order.getSampleCollectedAt(),
-                order.getSampleCollectedByUserId(),
-                order.getSampleCollectedBy(),
+                primarySample == null ? order.getSampleCollectedAt() : primarySample.collectedAt(),
+                primarySample == null ? order.getSampleCollectedByUserId() : primarySample.collectedByUserId(),
+                primarySample == null ? order.getSampleCollectedBy() : primarySample.collectedBy(),
                 order.getSampleCollectionNotes(),
                 order.getProcessingStartedAt(),
                 order.getResultEnteredAt(),
@@ -1572,6 +1642,7 @@ public class LabService {
                 entity.getCollectedBy() == null
                         ? null
                         : resolveUserDisplayName(tenantId, entity.getCollectedBy()).orElse(entity.getCollectedBy().toString()),
+                entity.getCollectedBy(),
                 entity.getReceivedAt(),
                 entity.getReceivedBy(),
                 entity.getRejectionReason(),
@@ -1928,20 +1999,29 @@ public class LabService {
         PDType1Font regularFont = new PDType1Font(Standard14Fonts.FontName.HELVETICA);
         String signer = safe(firstText(record.labVerifiedByName(), resolveUserDisplayName(tenantId, record.labVerifiedBy()).orElse(null)));
         List<String> signerLines = wrap(signer, boldFont, 9.2f, layout.width - 24f);
-        float blockHeight = Math.max(34f, 14f + signerLines.size() * 10.5f + 12f);
-        layout.ensureSpace(blockHeight + 8f);
-        writeSectionHeader(layout.content, "Authorized Signatory", layout.margin, layout.y, layout.width);
-        layout.y -= 16f;
-        float top = layout.y;
+        float blockHeight = Math.max(30f, 10f + signerLines.size() * 9.5f + 8f);
+        float footerClearanceY = layout.margin + 44f;
+        float boxBottom = footerClearanceY + 10f;
+        float boxTop = boxBottom + blockHeight;
+        float sectionTop = boxTop + 16f;
+
+        // Keep the complete signatory block on the final page, above the
+        // footer's reserved area. If flowing content has entered that area,
+        // start a clean final page rather than splitting the block.
+        if (layout.y < sectionTop + 8f) {
+            layout.newPage();
+        }
+        writeSectionHeader(layout.content, "Authorized Signatory", layout.margin, sectionTop, layout.width);
+        float top = boxTop;
         layout.content.addRect(layout.margin, top - blockHeight, layout.width, blockHeight);
         layout.content.stroke();
-        float signerY = top - 13f;
+        float signerY = top - 10f;
         for (String line : signerLines) {
             writeLine(layout.content, line, 9.2f, layout.margin + 12f, signerY, boldFont);
-            signerY -= 10.5f;
+            signerY -= 9.5f;
         }
-        writeLine(layout.content, "Digitally verified", 8.7f, layout.margin + 12f, top - blockHeight + 10f, regularFont);
-        layout.y = top - blockHeight - 6f;
+        writeLine(layout.content, "Digitally verified", 8.7f, layout.margin + 12f, top - blockHeight + 8f, regularFont);
+        layout.y = boxBottom - 6f;
     }
 
     private void drawMetaCell(PDPageContentStream content, float x, float y, float width, float height, MetaPair pair) throws IOException {
@@ -2661,19 +2741,36 @@ public class LabService {
         return nonRejected.isEmpty() ? samples : nonRejected;
     }
 
-    private void ensureUsableSampleForOrderItem(List<LabOrderSampleEntity> samples, Map<UUID, SampleLinkSummary> sampleLinkSummaries, UUID labOrderItemId) {
-        if (samples == null || samples.isEmpty()) {
-            return;
-        }
-        List<LabOrderSampleEntity> relevantSamples = samples.stream()
-                .filter(sample -> sampleAppliesToOrderItem(sample, sampleLinkSummaries == null ? null : sampleLinkSummaries.get(sample.getId()), labOrderItemId))
-                .toList();
-        if (relevantSamples.isEmpty()) {
-            throw new IllegalArgumentException("A collected sample is required before result entry");
-        }
-        boolean hasUsable = relevantSamples.stream().anyMatch(sample -> sample.getStatus() == LabSampleStatus.COLLECTED || sample.getStatus() == LabSampleStatus.RECEIVED);
-        if (!hasUsable) {
-            throw new IllegalArgumentException("Result entry is blocked for a rejected or recollection-required sample");
+    private void ensureReceivedActiveSpecimenForOrderItem(
+            List<LabOrderSampleEntity> samples,
+            List<LaboratoryOrderedTestView> lifecycleViews,
+            Map<UUID, SampleLinkSummary> sampleLinkSummaries,
+            Map<UUID, LabOrderItemEntity> orderItems,
+            UUID labOrderItemId
+    ) {
+        Set<UUID> activeLinkedSampleIds = lifecycleViews == null ? Set.of() : lifecycleViews.stream()
+                .filter(view -> view != null && labOrderItemId.equals(view.labOrderItemId()))
+                .flatMap(view -> view.specimenLinks() == null ? Stream.empty() : view.specimenLinks().stream())
+                .filter(link -> link != null && link.active() && link.labOrderSampleId() != null)
+                .map(com.deepthoughtnet.clinic.laboratory.service.model.LaboratorySpecimenLinkView::labOrderSampleId)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        boolean received = samples != null && samples.stream()
+                .filter(sample -> activeLinkedSampleIds.isEmpty()
+                        ? sampleAppliesToOrderItem(sample, sampleLinkSummaries == null ? null : sampleLinkSummaries.get(sample.getId()), labOrderItemId)
+                        : activeLinkedSampleIds.contains(sample.getId()))
+                .anyMatch(sample -> sample.getStatus() == LabSampleStatus.RECEIVED);
+        if (!received) {
+            LabOrderItemEntity item = orderItems == null ? null : orderItems.get(labOrderItemId);
+            String label = item == null || !StringUtils.hasText(item.getTestName()) ? String.valueOf(labOrderItemId) : item.getTestName();
+            String accession = samples == null ? null : samples.stream()
+                    .filter(sample -> activeLinkedSampleIds.contains(sample.getId()))
+                    .map(LabOrderSampleEntity::getAccessionNumber)
+                    .filter(StringUtils::hasText)
+                    .findFirst()
+                    .orElse(null);
+            throw new IllegalArgumentException("Result entry requires a received active specimen for test " + label
+                    + (StringUtils.hasText(accession) ? " (" + accession + ")" : ""));
         }
     }
 
@@ -2948,6 +3045,14 @@ public class LabService {
             }
             if (!test.isEnabled()) {
                 throw new IllegalArgumentException("Lab test is disabled: " + test.getTestName());
+            }
+            // Legacy catalogue rows may predate the test-code requirement. Reject
+            // them before creating the order so the NOT NULL order-item constraint
+            // is never the first line of validation and never becomes a 500.
+            try {
+                LabValidationSupport.normalizeTestCode(test.getTestCode(), "testCode");
+            } catch (IllegalArgumentException ex) {
+                throw new IllegalArgumentException("Lab test cannot be ordered because test code is missing: " + test.getTestName());
             }
             if (!labCatalogueConfigService.isCategoryActive(tenantId, test.getCategory())) {
                 throw new IllegalArgumentException("Lab category is disabled for this tenant: " + test.getCategory());

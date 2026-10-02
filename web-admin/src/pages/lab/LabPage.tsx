@@ -174,14 +174,15 @@ const emptyLabRequestForm = (): LabRequestForm => ({
 
 type SampleCollectionFormRow = {
   labOrderItemId: string | null;
+  labOrderItemIds: string[];
   testName: string;
   specimenType: string;
   containerType: string;
+  collectedAt: string;
   notes: string;
   linkedTestNames: string[];
+  selected: boolean;
 };
-type SampleCollectionStatus = (typeof SAMPLE_COLLECTION_STATUS_OPTIONS)[number];
-
 const SAMPLE_REJECTION_REASON_OPTIONS = [
   { value: "SAMPLE_HEMOLYZED", label: "Sample hemolyzed" },
   { value: "INSUFFICIENT_SAMPLE", label: "Insufficient sample quantity" },
@@ -210,13 +211,6 @@ const SAMPLE_CONTAINER_TYPE_OPTIONS = [
   "Imaging",
   "Other",
 ] as const;
-const SAMPLE_COLLECTION_STATUS_OPTIONS = [
-  "Collected",
-  "Partial Collection",
-  "Sample Not Obtained",
-  "Patient Refused",
-] as const;
-
 const DIRECT_ORDER_ORIGIN_OPTIONS: LabOrderOrigin[] = ["WALK_IN", "DOCTOR_REFERRAL"];
 const APPROVED_REPORT_STATUSES = new Set<LabOrderStatus>(["DOCTOR_REVIEWED", "REPORT_GENERATED", "DELIVERED"]);
 const DELIVERY_CHANNEL_OPTIONS = [
@@ -790,6 +784,22 @@ function resultEntryItemIds(order: LabOrder | null | undefined, sampleId: string
   return linkedIds.size ? linkedIds : (sample.labOrderItemId ? new Set([sample.labOrderItemId]) : null);
 }
 
+function hasReceivedActiveSpecimenForTest(
+  order: LabOrder | null | undefined,
+  orderedTest: LabOrder["orderedTests"][number],
+  sampleId: string | null | undefined,
+) {
+  if (!order || !orderedTest) return false;
+  const links = orderedTest.specimenLinks || [];
+  if (links.length) {
+    return links.some((link) => link.active
+      && String(link.sampleStatus || "").toUpperCase() === "RECEIVED"
+      && (!sampleId || link.labOrderSampleId === sampleId));
+  }
+  const sample = resolveResultEntrySample(order, sampleId);
+  return sample?.status === "RECEIVED";
+}
+
 function reviewableOrderedTests(order: LabOrder | null | undefined) {
   return order?.orderedTests.filter((orderedTest) => orderedTest.state === "RESULT_ENTERED") || [];
 }
@@ -811,8 +821,9 @@ function editableResultOrderedTests(order: LabOrder | null | undefined, sampleId
   const scopedTests = itemIds
     ? (order?.orderedTests || []).filter((orderedTest) => itemIds.has(orderedTest.labOrderItemId))
     : (order?.orderedTests || []);
-  const initial = scopedTests.filter((orderedTest) => orderedTest.state === "ORDERED" || orderedTest.state === "SAMPLE_COLLECTED" || orderedTest.state === "RESULT_DRAFT");
-  const continuation = scopedTests.filter((orderedTest) => orderedTest.state === "RESULT_ENTERED" || orderedTest.state === "PENDING_REVIEW" || orderedTest.state === "RESULT_SENT_BACK");
+  const receivedTests = scopedTests.filter((orderedTest) => hasReceivedActiveSpecimenForTest(order, orderedTest, sampleId));
+  const initial = receivedTests.filter((orderedTest) => orderedTest.state === "ORDERED" || orderedTest.state === "SAMPLE_COLLECTED" || orderedTest.state === "RESULT_DRAFT");
+  const continuation = receivedTests.filter((orderedTest) => orderedTest.state === "RESULT_ENTERED" || orderedTest.state === "PENDING_REVIEW" || orderedTest.state === "RESULT_SENT_BACK");
   return [...initial, ...continuation];
 }
 
@@ -828,8 +839,78 @@ function hasReceivedResultSample(order: LabOrder | null | undefined) {
   return Boolean(order?.samples.some((sample) => sample.status === "RECEIVED"));
 }
 
+function activeOrderSpecimens(order: LabOrder | null | undefined) {
+  if (!order) return [];
+  const activeIds = new Set((order.orderedTests || []).flatMap((orderedTest) =>
+    (orderedTest.specimenLinks || [])
+      .filter((link) => link.active && link.labOrderSampleId)
+      .map((link) => link.labOrderSampleId),
+  ));
+  if (activeIds.size) return order.samples.filter((sample) => activeIds.has(sample.id));
+  return order.samples.filter((sample) => sample.status !== "REJECTED" && sample.status !== "RECOLLECTION_REQUIRED" && !sample.recollectionRequired);
+}
+
+function activeSpecimenItemIds(order: LabOrder | null | undefined) {
+  const ids = new Set<string>();
+  for (const orderedTest of order?.orderedTests || []) {
+    for (const link of orderedTest.specimenLinks || []) {
+      if (link.active && link.labOrderSampleId) ids.add(orderedTest.labOrderItemId);
+    }
+  }
+  if (!ids.size) {
+    for (const sample of activeOrderSpecimens(order)) {
+      for (const itemId of sample.linkedLabOrderItemIds || []) ids.add(itemId);
+      if (sample.labOrderItemId) ids.add(sample.labOrderItemId);
+    }
+  }
+  return ids;
+}
+
+function hasPendingCollection(order: LabOrder | null | undefined) {
+  if (!order) return false;
+  if (hasPendingRecollection(order)) return true;
+  const collectedItemIds = activeSpecimenItemIds(order);
+  return order.items.some((item) => !collectedItemIds.has(item.id));
+}
+
+function receivableSpecimens(order: LabOrder | null | undefined) {
+  return activeOrderSpecimens(order).filter((sample) => sample.status === "COLLECTED");
+}
+
+function hasReceivableSpecimen(order: LabOrder | null | undefined) {
+  return receivableSpecimens(order).length > 0;
+}
+
+function specimenProgress(order: LabOrder | null | undefined) {
+  const specimens = activeOrderSpecimens(order);
+  const received = specimens.filter((sample) => sample.status === "RECEIVED").length;
+  const awaitingReceipt = specimens.filter((sample) => sample.status === "COLLECTED").length;
+  const requiredItemIds = new Set((order?.items || []).map((item) => item.id));
+  const collectedItemIds = activeSpecimenItemIds(order);
+  const awaitingCollection = [...requiredItemIds].filter((itemId) => !collectedItemIds.has(itemId)).length;
+  const total = specimens.length + awaitingCollection;
+  const resultEligibleTests = (order?.orderedTests || []).filter((orderedTest) => hasReceivedActiveSpecimenForTest(order, orderedTest, null));
+  const resultsEntered = resultEligibleTests.filter((orderedTest) => ["RESULT_ENTERED", "PENDING_REVIEW", "RESULT_SENT_BACK", "VERIFIED", "PUBLISHED"].includes(orderedTest.state)).length;
+  return { total, collected: specimens.length, received, awaitingReceipt, awaitingCollection, resultsEntered, testTotal: order?.items.length || 0 };
+}
+
+function SpecimenProgressSummary({ order }: { order: LabOrder }) {
+  const progress = specimenProgress(order);
+  if (progress.total <= 1) return null;
+  return (
+    <Stack spacing={0.15}>
+      <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700 }}>
+        {progress.total} specimens • {progress.collected}/{progress.total} collected • {progress.received} received
+      </Typography>
+      <Typography variant="caption" color="text.secondary">
+        {progress.awaitingCollection > 0 ? `${progress.awaitingCollection} awaiting collection • ` : ""}{progress.awaitingReceipt > 0 ? `${progress.awaitingReceipt} awaiting receipt` : "No specimens awaiting receipt"}{progress.testTotal > 0 ? ` • Results: ${progress.resultsEntered}/${progress.testTotal} entered` : ""}
+      </Typography>
+    </Stack>
+  );
+}
+
 function hasTechnicianWork(order: LabOrder | null | undefined) {
-  return hasReceivedResultSample(order) && (hasInitialResultEntryWork(order) || hasCorrectionWork(order));
+  return editableResultOrderedTests(order).length > 0;
 }
 
 function hasSentBackResultOrderedTests(order: LabOrder | null | undefined) {
@@ -1097,14 +1178,16 @@ export default function LabPage() {
   const [receiptPrintData, setReceiptPrintData] = React.useState<ReceiptPrintData | null>(null);
   const [clinicProfile, setClinicProfile] = React.useState<ClinicProfile | null>(null);
   const [deliveryIntegrationRows, setDeliveryIntegrationRows] = React.useState<AdminIntegrationStatusRow[]>([]);
-  const [sampleCollectedBy, setSampleCollectedBy] = React.useState("");
-  const [sampleCollectedAt, setSampleCollectedAt] = React.useState(toDatetimeLocal(new Date().toISOString()));
-  const [sampleCollectionStatus, setSampleCollectionStatus] = React.useState<SampleCollectionStatus>("Collected");
   const [sampleRows, setSampleRows] = React.useState<SampleCollectionFormRow[]>([]);
   const [collectedSamples, setCollectedSamples] = React.useState<LabSample[]>([]);
   const [sampleSuccessMessage, setSampleSuccessMessage] = React.useState<string | null>(null);
-  const [receiveTarget, setReceiveTarget] = React.useState<LabSample | null>(null);
+  const [sampleDialogError, setSampleDialogError] = React.useState<string | null>(null);
+  const [receiveDialog, setReceiveDialog] = React.useState<{ order: LabOrder; specimens: LabSample[] } | null>(null);
+  const [receiveSelectedIds, setReceiveSelectedIds] = React.useState<string[]>([]);
+  const [receiveAtById, setReceiveAtById] = React.useState<Record<string, string>>({});
+  const [receiveDialogError, setReceiveDialogError] = React.useState<string | null>(null);
   const [rejectTarget, setRejectTarget] = React.useState<LabSample | null>(null);
+  const [rejectDialogError, setRejectDialogError] = React.useState<string | null>(null);
   const [rejectReason, setRejectReason] = React.useState("");
   const [rejectNotes, setRejectNotes] = React.useState("");
   const [recollectionRequired, setRecollectionRequired] = React.useState(false);
@@ -1168,12 +1251,42 @@ export default function LabPage() {
     || auth.rolesUpper.includes("LAB_APPROVER")
     || (auth.rolesUpper.includes("PLATFORM_ADMIN") && Boolean(auth.tenantId));
   const canReviewReport = auth.hasPermission("lab.order.review");
+  const hasLabSpecificRole = auth.rolesUpper.some((role) => ["LAB_FRONT_DESK", "LAB_ASSISTANT", "LAB_TECHNICIAN", "LAB_APPROVER"].includes(role));
+  const isLabAdminRole = auth.rolesUpper.includes("CLINIC_ADMIN")
+    || auth.rolesUpper.includes("PLATFORM_ADMIN")
+    || (!hasLabSpecificRole && auth.rolesUpper.includes("LAB_MANAGER"));
+  const isLabFrontDeskRole = isLabAdminRole || auth.rolesUpper.includes("LAB_FRONT_DESK");
+  const isLabAssistantRole = isLabAdminRole || auth.rolesUpper.includes("LAB_ASSISTANT");
+  const isLabTechnicianRole = isLabAdminRole || auth.rolesUpper.includes("LAB_TECHNICIAN");
+  const isLabApproverRole = isLabAdminRole || auth.rolesUpper.includes("LAB_APPROVER");
+  const canManageLabConfiguration = canManageTests && isLabAdminRole;
+  const canCollectSampleAction = canCollectSample && isLabAssistantRole;
+  const canReceiveRejectSampleAction = canCollectSample && isLabTechnicianRole;
+  const canEnterResultsAction = canEnterResults && isLabTechnicianRole;
   const canCreateOrders = canUseLabReception || auth.hasPermission("lab.order.create");
   const canQuickRegisterPatient = canCreateOrders && auth.hasPermission("patient.create") && auth.hasPermission("patient.read");
   const enabledModules = React.useMemo(() => resolveEnabledTenantModules(auth), [auth]);
   const consultationEnabled = enabledModules.has("CONSULTATION");
   const laboratoryMode = consultationEnabled ? "INTEGRATED" : "STANDALONE";
   const primaryRegistrationLabel = "New Lab Order";
+  const visibleLabTabs = React.useMemo(() => {
+    const keys: Array<"catalog" | "collection" | "queue" | "review" | "orders" | "configuration"> = [];
+    if (isLabFrontDeskRole || isLabAssistantRole || isLabAdminRole) keys.push("catalog");
+    if (isLabAssistantRole) keys.push("collection");
+    if (isLabTechnicianRole) keys.push("queue");
+    if (isLabApproverRole) keys.push("review");
+    if (canViewOrders) keys.push("orders");
+    if (canManageLabConfiguration) keys.push("configuration");
+    return keys;
+  }, [canManageLabConfiguration, canViewOrders, isLabAdminRole, isLabApproverRole, isLabAssistantRole, isLabFrontDeskRole, isLabTechnicianRole]);
+  const activeLabTab = visibleLabTabs[tab] || visibleLabTabs[0] || "orders";
+  const navigateLabTab = React.useCallback((key: typeof visibleLabTabs[number]) => {
+    const index = visibleLabTabs.indexOf(key);
+    if (index >= 0) setTab(index);
+  }, [visibleLabTabs]);
+  React.useEffect(() => {
+    if (tab >= visibleLabTabs.length && visibleLabTabs.length) setTab(0);
+  }, [tab, visibleLabTabs.length]);
   const labBadgeLabel = consultationEnabled ? "Integrated Laboratory" : "Standalone Laboratory";
   const pageSubtitle = consultationEnabled
     ? "Manage consultation-linked and walk-in laboratory orders, billing, samples, results, and reports."
@@ -1187,8 +1300,8 @@ export default function LabPage() {
         getLabCategories(auth.accessToken, auth.tenantId),
         getLabTests(auth.accessToken, auth.tenantId, { active: null }),
         canViewOrders ? getLabOrders(auth.accessToken, auth.tenantId, {}) : Promise.resolve([] as LabOrder[]),
-        canManageTests ? getLabCategoryConfig(auth.accessToken, auth.tenantId) : Promise.resolve([] as LabCategoryConfig[]),
-        canManageTests ? getLabTestConfig(auth.accessToken, auth.tenantId) : Promise.resolve([] as LabTestCatalogueConfig[]),
+        canManageLabConfiguration ? getLabCategoryConfig(auth.accessToken, auth.tenantId) : Promise.resolve([] as LabCategoryConfig[]),
+        canManageLabConfiguration ? getLabTestConfig(auth.accessToken, auth.tenantId) : Promise.resolve([] as LabTestCatalogueConfig[]),
         getAdminIntegrationsStatus(auth.accessToken, auth.tenantId).catch(() => ({ rows: [] as AdminIntegrationStatusRow[] })),
       ]);
       setCategories(categoryRows);
@@ -1202,7 +1315,7 @@ export default function LabPage() {
     } finally {
       setLoading(false);
     }
-  }, [auth.accessToken, auth.tenantId, canManageTests, canViewOrders]);
+  }, [auth.accessToken, auth.tenantId, canManageLabConfiguration, canViewOrders]);
 
   React.useEffect(() => {
     void load();
@@ -1336,7 +1449,9 @@ export default function LabPage() {
     [activeCategoryCodes, tests],
   );
 
-  const pendingSampleOrders = React.useMemo(() => orders.filter((row) => row.status === "READY_FOR_COLLECTION"), [orders]);
+  const pendingSampleOrders = React.useMemo(() => orders.filter((row) => {
+    return hasPendingCollection(row);
+  }), [orders]);
   const pendingResultsOrders = React.useMemo(() => orders.filter((row) => hasTechnicianWork(row)), [orders]);
   const pendingReviewOrders = React.useMemo(() => orders.filter((row) => hasReviewableOrderedTests(row)), [orders]);
   const visibleStatusFilters = React.useMemo(() => {
@@ -1367,7 +1482,7 @@ export default function LabPage() {
       .filter((row) => isSameLocalDay(row.paymentCollectedAt, now))
       .reduce((sum, row) => sum + (row.billTotalAmount ?? 0), 0);
     const pendingPaymentCount = orders.filter((row) => row.status === "PAYMENT_PENDING").length;
-    const pendingCollectionCount = orders.filter((row) => row.status === "READY_FOR_COLLECTION").length;
+    const pendingCollectionCount = pendingSampleOrders.length;
     const workQueueCount = orders.filter((row) => hasTechnicianWork(row)).length;
     const pendingReviewCount = pendingReviewOrders.length;
     const readyToPublishCount = orders.filter((row) => hasPublishableOrderedTests(row)).length;
@@ -1384,7 +1499,7 @@ export default function LabPage() {
     }).length;
     const sampleRejectedCount = orders.filter((row) => row.samples.some((sample) => sample.status === "REJECTED")).length;
     const recollectionRequiredCount = orders.filter(hasPendingRecollection).length;
-    const resultsPendingEntryCount = pendingResultsOrders.length;
+    const resultsPendingEntryCount = orders.reduce((sum, row) => sum + editableResultOrderedTests(row).length, 0);
 
     const workToday: LabDashboardData["myWorkToday"] = [];
     const addWorkCard = (metric: LabDashboardData["myWorkToday"][number]) => {
@@ -1392,31 +1507,24 @@ export default function LabPage() {
       workToday.push(metric);
     };
 
-    if (canCreateOrders || canCollectPayment || canManageTests) {
+    if (isLabFrontDeskRole) {
       addWorkCard({ key: "work-pending-payment", label: "Pending Payment", value: pendingPaymentCount, helper: "Awaiting billing clearance", tone: "warning" });
       addWorkCard({ key: "work-walk-in-orders-today", label: "Walk-in Orders Today", value: walkInOrdersToday.length, helper: "Front-desk registrations", tone: "info" });
       addWorkCard({ key: "work-new-orders", label: "New Orders", value: todayOrders.length, helper: "Created since opening", tone: "info" });
     }
-    if (canCollectSample || canManageTests) {
+    if (isLabAssistantRole) {
       addWorkCard({ key: "work-pending-sample-collection", label: "Pending Sample Collection", value: pendingCollectionCount, helper: "Ready for collection", tone: "info" });
       addWorkCard({ key: "work-recollection-required", label: "Recollection Required", value: recollectionRequiredCount, helper: "Return to collection", tone: "warning" });
       addWorkCard({ key: "work-sample-rejected", label: "Sample Rejected", value: sampleRejectedCount, helper: "Requires follow-up", tone: "error" });
     }
-    if (canEnterResults || canManageTests) {
+    if (isLabTechnicianRole) {
       addWorkCard({ key: "work-work-queue", label: "Work Queue", value: workQueueCount, helper: "Active lab workflow", tone: "default" });
-      addWorkCard({ key: "work-samples-collected", label: "Samples Collected", value: todayCollections.length, helper: "Collected today", tone: "info" });
       addWorkCard({ key: "work-results-pending-entry", label: "Results Pending Entry", value: resultsPendingEntryCount, helper: "Awaiting result entry", tone: "warning" });
       addWorkCard({ key: "work-critical-results", label: "Critical Results", value: criticalResultsCount, helper: "Immediate attention", tone: "error" });
     }
-    if (canReviewReport || canGenerateReport || canManageTests) {
+    if (isLabApproverRole) {
       addWorkCard({ key: "work-pending-lab-review", label: "Pending Lab Review", value: pendingReviewCount, helper: "Awaiting verification", tone: "warning" });
       addWorkCard({ key: "work-ready-to-publish", label: "Ready to Publish", value: readyToPublishCount, helper: "Report actions pending", tone: "success" });
-      addWorkCard({ key: "work-published-today", label: "Published Today", value: todayReports.length, helper: "Delivered to patients", tone: "success" });
-      addWorkCard({ key: "work-tat-breached", label: "TAT Breached", value: tatBreachedCount, helper: "Needs escalation", tone: "warning" });
-    }
-    if (!workToday.length) {
-      addWorkCard({ key: "work-published-today", label: "Published Today", value: todayReports.length, helper: "Delivered to patients", tone: "success" });
-      addWorkCard({ key: "work-critical-results", label: "Critical Results", value: criticalResultsCount, helper: "Immediate attention", tone: "error" });
       addWorkCard({ key: "work-tat-breached", label: "TAT Breached", value: tatBreachedCount, helper: "Needs escalation", tone: "warning" });
     }
 
@@ -1478,16 +1586,41 @@ export default function LabPage() {
         ],
       },
     };
-  }, [orders, canCollectPayment, canCollectSample, canCreateOrders, canEnterResults, canGenerateReport, canManageTests, canReviewReport, pendingResultsOrders.length, pendingReviewOrders.length]);
+  }, [orders, isLabApproverRole, isLabAssistantRole, isLabFrontDeskRole, isLabTechnicianRole, pendingReviewOrders.length, pendingSampleOrders.length]);
 
   const openSampleDialog = React.useCallback((row: LabOrder) => {
     setSampleTarget(row);
     setCollectedSamples([]);
     setSampleSuccessMessage(null);
+    setSampleDialogError(null);
     const recollectionSamples = row.samples.filter((sample) => sample.status === "RECOLLECTION_REQUIRED" || sample.recollectionRequired);
-    const sourceRows = recollectionSamples.length ? recollectionSamples : (row.samples.length ? row.samples : row.items);
+    const activeLinkedItemIds = new Set(
+      row.samples
+        .filter((sample) => sample.status !== "REJECTED" && sample.status !== "RECOLLECTION_REQUIRED" && !sample.recollectionRequired)
+        .flatMap((sample) => sample.linkedLabOrderItemIds || (sample.labOrderItemId ? [sample.labOrderItemId] : [])),
+    );
+    const uncollectedItems = row.items.filter((item) => !activeLinkedItemIds.has(item.id));
+    const sourceRows = recollectionSamples.length
+      ? recollectionSamples
+      : uncollectedItems;
+    const recollectionItemIdsBySample = new Map<string, string[]>();
+    for (const orderedTest of row.orderedTests) {
+      for (const link of orderedTest.specimenLinks || []) {
+        if (!link.labOrderSampleId) continue;
+        const linked = recollectionItemIdsBySample.get(link.labOrderSampleId) || [];
+        if (!linked.includes(orderedTest.labOrderItemId)) linked.push(orderedTest.labOrderItemId);
+        recollectionItemIdsBySample.set(link.labOrderSampleId, linked);
+      }
+    }
     setSampleRows(sourceRows.map((item) => ({
       labOrderItemId: "labOrderItemId" in item ? item.labOrderItemId : item.id,
+      labOrderItemIds: "linkedLabOrderItemIds" in item && item.linkedLabOrderItemIds.length
+        ? item.linkedLabOrderItemIds
+        : "id" in item && recollectionItemIdsBySample.get(item.id)?.length
+          ? recollectionItemIdsBySample.get(item.id)!
+        : "labOrderItemId" in item && item.labOrderItemId
+          ? [item.labOrderItemId]
+          : [item.id],
       testName: "testName" in item
         ? item.testName
         : "linkedTestNames" in item && item.linkedTestNames.length
@@ -1495,23 +1628,22 @@ export default function LabPage() {
           : "Sample",
       specimenType: ("specimenType" in item ? item.specimenType : item.sampleType) || row.sampleType || "",
       containerType: "containerType" in item ? (item.containerType || "") : "",
+      collectedAt: "collectedAt" in item && item.collectedAt
+        ? toDatetimeLocal(item.collectedAt)
+        : toDatetimeLocal(new Date().toISOString()),
       notes: ("notes" in item ? item.notes : row.sampleCollectionNotes) || "",
       linkedTestNames: "linkedTestNames" in item && item.linkedTestNames.length
         ? item.linkedTestNames
         : ["testName" in item ? item.testName : row.sampleType || "Sample"],
+      selected: true,
     })));
-    setSampleCollectedBy(auth.username || auth.appUserId || "");
-    setSampleCollectedAt(toDatetimeLocal(new Date().toISOString()));
-    setSampleCollectionStatus("Collected");
-  }, [auth.appUserId, auth.username]);
+  }, []);
 
   const resetSampleDialogState = React.useCallback(() => {
     setSampleTarget(null);
     setCollectedSamples([]);
     setSampleRows([]);
-    setSampleCollectedBy("");
-    setSampleCollectedAt(toDatetimeLocal(new Date().toISOString()));
-    setSampleCollectionStatus("Collected");
+    setSampleDialogError(null);
   }, []);
 
   const closeSampleDialog = React.useCallback(() => {
@@ -1801,32 +1933,38 @@ export default function LabPage() {
     }
   };
 
-  const collectSample = async () => {
+  const collectSample = async (rowsToCollect?: SampleCollectionFormRow[]) => {
     if (!auth.accessToken || !auth.tenantId || !sampleTarget) return;
     if (sampleCollectingRef.current) return;
-    const collectedAt = toIsoFromDatetimeLocal(sampleCollectedAt);
-    if (!collectedAt) {
-      setError("Collection date/time is required.");
+    const rows = rowsToCollect || sampleRows.filter((row) => row.selected);
+    if (!rows.length) {
+      setSampleDialogError("Select at least one test/specimen to collect.");
       return;
     }
-    const invalidRow = sampleRows.find((row) => !row.specimenType.trim());
+    const invalidRow = rows.find((row) => !row.specimenType.trim());
     if (invalidRow) {
-      setError(`Specimen type is required for ${invalidRow.testName}.`);
+      setSampleDialogError(`Specimen type is required for ${invalidRow.testName}.`);
+      return;
+    }
+    const invalidTimestampRow = rows.find((row) => !toIsoFromDatetimeLocal(row.collectedAt));
+    if (invalidTimestampRow) {
+      setSampleDialogError(`Collection date/time is required for ${invalidTimestampRow.testName}.`);
       return;
     }
     sampleCollectingRef.current = true;
     setSaving(true);
     setError(null);
+    setSampleDialogError(null);
     setSampleSuccessMessage(null);
     try {
       const savedSamples = await collectLabOrderSamples(auth.accessToken, auth.tenantId, sampleTarget.id, {
-        samples: sampleRows.map((row) => ({
-          labOrderItemId: row.labOrderItemId,
+        samples: rows.flatMap((row) => (row.labOrderItemIds.length ? row.labOrderItemIds : [row.labOrderItemId]).map((labOrderItemId) => ({
+          labOrderItemId,
           specimenType: row.specimenType.trim(),
           containerType: row.containerType.trim() || null,
-          collectedAt,
+          collectedAt: toIsoFromDatetimeLocal(row.collectedAt),
           notes: row.notes.trim() || null,
-        })),
+        }))),
       });
       const accessionList = savedSamples.map((sample) => sample.accessionNumber).filter(Boolean).join(", ");
       resetSampleDialogState();
@@ -1837,26 +1975,73 @@ export default function LabPage() {
       );
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to collect sample");
+      setSampleDialogError(err instanceof Error ? err.message : "Failed to collect sample");
     } finally {
       setSaving(false);
       sampleCollectingRef.current = false;
     }
   };
 
-  const receiveSample = async () => {
-    if (!auth.accessToken || !auth.tenantId || !receiveTarget) return;
+  const openReceiveDialog = React.useCallback((order: LabOrder, requestedSample?: LabSample | null) => {
+    const eligible = activeOrderSpecimens(order).filter((sample) => sample.status === "COLLECTED");
+    const selected = requestedSample && eligible.some((sample) => sample.id === requestedSample.id)
+      ? [requestedSample.id]
+      : eligible.length === 1 ? [eligible[0].id] : [];
+    setReceiveDialog({ order, specimens: eligible });
+    setReceiveSelectedIds(selected);
+    setReceiveAtById(Object.fromEntries(eligible.map((sample) => [sample.id, toDatetimeLocal(new Date().toISOString())])));
+    setReceiveDialogError(null);
+  }, []);
+
+  const receiveSamples = async (requestedIds?: string[]) => {
+    if (!auth.accessToken || !auth.tenantId || !receiveDialog) return;
+    const selectedIds = requestedIds || receiveSelectedIds;
+    if (!selectedIds.length) {
+      setReceiveDialogError("Select at least one collected specimen to receive.");
+      return;
+    }
     setSaving(true);
     setError(null);
+    setReceiveDialogError(null);
+    const selected = receiveDialog.specimens.filter((sample) => selectedIds.includes(sample.id));
+    const failures: string[] = [];
+    const receivedIds: string[] = [];
+    const updatedById = new Map(receiveDialog.specimens.map((sample) => [sample.id, sample]));
     try {
-      await receiveLabSample(auth.accessToken, auth.tenantId, receiveTarget.id, {
-        receivedAt: new Date().toISOString(),
-        receivedBy: auth.appUserId || null,
-      });
-      setReceiveTarget(null);
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to receive sample");
+      for (const sample of selected) {
+        const receivedAt = toIsoFromDatetimeLocal(receiveAtById[sample.id]);
+        if (!receivedAt) {
+          failures.push(`${sample.accessionNumber}: received date/time is required.`);
+          continue;
+        }
+        const receivedMillis = Date.parse(receivedAt);
+        const collectedMillis = sample.collectedAt ? Date.parse(sample.collectedAt) : null;
+        if (receivedMillis > Date.now()) {
+          failures.push(`${sample.accessionNumber}: received date/time cannot be in the future.`);
+          continue;
+        }
+        if (collectedMillis != null && receivedMillis < collectedMillis) {
+          failures.push(`${sample.accessionNumber}: received date/time cannot be before collection.`);
+          continue;
+        }
+        try {
+          const received = await receiveLabSample(auth.accessToken, auth.tenantId, sample.id, {
+            receivedAt,
+            receivedBy: auth.appUserId || null,
+          });
+          updatedById.set(sample.id, received);
+          receivedIds.push(sample.id);
+        } catch (err) {
+          failures.push(`${sample.accessionNumber}: ${err instanceof Error ? err.message : "receive failed"}`);
+        }
+      }
+      setReceiveDialog((current) => current ? { ...current, specimens: [...updatedById.values()] } : current);
+      setReceiveSelectedIds((current) => current.filter((id) => !receivedIds.includes(id)));
+      if (receivedIds.length) await load();
+      if (failures.length) setReceiveDialogError(failures.join(" "));
+      if (!failures.length && ![...updatedById.values()].some((sample) => sample.status === "COLLECTED")) {
+        setReceiveDialog(null);
+      }
     } finally {
       setSaving(false);
     }
@@ -1865,11 +2050,12 @@ export default function LabPage() {
   const rejectSample = async () => {
     if (!auth.accessToken || !auth.tenantId || !rejectTarget) return;
     if (!rejectReason.trim()) {
-      setError("Rejection reason is required.");
+      setRejectDialogError("Rejection reason is required.");
       return;
     }
     setSaving(true);
     setError(null);
+    setRejectDialogError(null);
     try {
       await rejectLabSample(auth.accessToken, auth.tenantId, rejectTarget.id, {
         rejectionReason: rejectReason.trim(),
@@ -1882,7 +2068,7 @@ export default function LabPage() {
       setRecollectionRequired(false);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to reject sample");
+      setRejectDialogError(err instanceof Error ? err.message : "Failed to reject sample");
     } finally {
       setSaving(false);
     }
@@ -1943,16 +2129,20 @@ export default function LabPage() {
     const scopedSample = resolveResultEntrySample(row, sample?.id || null);
     const scopeSampleId = scopedSample?.id || null;
     const scopeItemIds = resultEntryItemIds(row, scopeSampleId);
-    const items = scopeItemIds
-      ? row.items.filter((item) => scopeItemIds.has(item.id))
-      : row.items;
+    const eligibleIds = new Set(editableResultOrderedTests(row, scopeSampleId).map((orderedTest) => orderedTest.labOrderItemId));
+    const items = row.items.filter((item) => (!scopeItemIds || scopeItemIds.has(item.id)) && eligibleIds.has(item.id));
+    if (!items.length) {
+      setError("No active received specimens are ready for result entry.");
+      return;
+    }
     setResultTarget(row);
     setResultError(null);
     setResultScopeSampleId(scopeSampleId);
     const draft = readResultDraft(row.id, scopeSampleId) || (!scopeSampleId ? readResultDraft(row.id) : null);
     if (draft) {
       setResultComments(draft.comments || "");
-      setResultItems(draft.items.length ? draft.items : items.map((item) => defaultResultsForItem(item, row.results)));
+      const eligibleDraftItems = draft.items.filter((item) => eligibleIds.has(item.labOrderItemId));
+      setResultItems(eligibleDraftItems.length ? eligibleDraftItems : items.map((item) => defaultResultsForItem(item, row.results)));
       setResultDraftLoaded(true);
       setResultSaveMessage(`Draft loaded for ${row.orderNumber}.`);
     } else {
@@ -2024,7 +2214,7 @@ export default function LabPage() {
       setResultItems([]);
       setResultDraftLoaded(false);
       setResultSaveMessage("Results saved. Order moved to Pending Lab Review.");
-      setTab(3);
+      navigateLabTab("review");
       await load();
     } catch (err) {
       setResultError(err instanceof Error ? err.message : "Failed to save results");
@@ -2385,23 +2575,23 @@ export default function LabPage() {
       return;
     }
     if (key === "quick-collect-payment" || paymentKeys.has(key)) {
-      setTab(4);
+      navigateLabTab("orders");
       return;
     }
     if (sampleKeys.has(key)) {
-      setTab(1);
+      navigateLabTab("collection");
       return;
     }
     if (queueKeys.has(key)) {
-      setTab(canEnterResults ? 2 : 3);
+      navigateLabTab("queue");
       return;
     }
     if (reviewKeys.has(key)) {
-      setTab(3);
+      navigateLabTab("review");
       return;
     }
     if (key === "quick-collect") {
-      setTab(1);
+      navigateLabTab("collection");
     }
   };
 
@@ -2427,8 +2617,8 @@ export default function LabPage() {
     }
   };
 
-  const readOnlyAnalyticsRole = !canCreateOrders && !canCollectPayment && !canCollectSample && !canEnterResults && !canReviewReport && !canGenerateReport && !canManageTests;
-  const analyticsExpandedByDefault = canManageTests || readOnlyAnalyticsRole;
+  const readOnlyAnalyticsRole = !canCreateOrders && !canCollectPayment && !canCollectSample && !canEnterResults && !canReviewReport && !canGenerateReport && !canManageLabConfiguration;
+  const analyticsExpandedByDefault = canManageLabConfiguration || readOnlyAnalyticsRole;
 
   const onQuickPatientCreated = (patient: Patient) => {
     setSelectedPatient(patient);
@@ -2506,9 +2696,9 @@ export default function LabPage() {
           <Typography variant="body2" color="text.secondary">{pageSubtitle}</Typography>
         </Box>
         <Stack direction="row" spacing={1} flexWrap="wrap">
-          {canManageTests ? <Button variant="outlined" onClick={() => void downloadImportTemplate()} disabled={saving}>Download CSV Template</Button> : null}
-          {canManageTests ? <Button variant="outlined" onClick={openImportFilePicker} disabled={saving}>Import CSV</Button> : null}
-          {canManageTests ? <Button variant="contained" startIcon={<AddRoundedIcon />} onClick={openCreate}>New Test</Button> : null}
+          {canManageLabConfiguration ? <Button variant="outlined" onClick={() => void downloadImportTemplate()} disabled={saving}>Download CSV Template</Button> : null}
+          {canManageLabConfiguration ? <Button variant="outlined" onClick={openImportFilePicker} disabled={saving}>Import CSV</Button> : null}
+          {canManageLabConfiguration ? <Button variant="contained" startIcon={<AddRoundedIcon />} onClick={openCreate}>New Test</Button> : null}
           {canCreateOrders ? <Button variant="outlined" onClick={openRequestDialog} startIcon={<ScienceRoundedIcon />}>{primaryRegistrationLabel}</Button> : null}
         </Stack>
       </Box>
@@ -2521,13 +2711,13 @@ export default function LabPage() {
 
       <LabDashboard
         permissions={{
-          canCreateOrders,
-          canCollectPayment,
-          canCollectSample,
-          canEnterResults,
-          canReviewReport,
-          canGenerateReport,
-          canManageTests,
+          canCreateOrders: canCreateOrders && isLabFrontDeskRole,
+          canCollectPayment: canCollectPayment && isLabFrontDeskRole,
+          canCollectSample: canCollectSampleAction,
+          canEnterResults: canEnterResultsAction,
+          canReviewReport: canReviewReport && isLabApproverRole,
+          canGenerateReport: canGenerateReport && isLabApproverRole,
+          canManageTests: canManageLabConfiguration,
         }}
         data={dashboardData}
         onAction={handleDashboardAction}
@@ -2536,19 +2726,26 @@ export default function LabPage() {
       <Card variant="outlined" sx={{ boxShadow: "none" }}>
         <CardContent sx={compactCardContentSx}>
           <Tabs value={tab} onChange={(_, value) => setTab(value)} sx={{ mb: 1 }}>
-            <Tab label="Catalog" />
-            <Tab label="Pending Sample Collection" />
-            <Tab label="Work Queue / Result Entry" />
-            <Tab label="Pending Lab Review" />
-            <Tab label="Orders" />
-            {canManageTests ? <Tab label="Lab Configuration" /> : null}
+            {visibleLabTabs.map((key) => (
+              <Tab
+                key={key}
+                label={{
+                  catalog: "Catalog",
+                  collection: "Pending Sample Collection",
+                  queue: "Work Queue / Result Entry",
+                  review: "Pending Lab Review",
+                  orders: "Orders",
+                  configuration: "Lab Configuration",
+                }[key]}
+              />
+            ))}
           </Tabs>
 
-          {tab === 0 ? (
+          {activeLabTab === "catalog" ? (
             <Stack spacing={2}>
               <Stack direction={{ xs: "column", md: "row" }} spacing={1} sx={{ alignItems: { xs: "stretch", md: "center" } }}>
                 <TextField fullWidth size="small" label="Search tests" value={search} onChange={(e) => setSearch(e.target.value.slice(0, 60))} inputProps={{ maxLength: 60 }} />
-                <Button variant="outlined" onClick={openCreate} disabled={!canManageTests} startIcon={<AddRoundedIcon />}>Add test</Button>
+                <Button variant="outlined" onClick={openCreate} disabled={!canManageLabConfiguration} startIcon={<AddRoundedIcon />}>Add test</Button>
               </Stack>
               <Typography variant="caption" color="text.secondary">
                 Showing first 50 tests. Use search to find more.
@@ -2557,7 +2754,7 @@ export default function LabPage() {
                 {categories.map((category) => <Chip key={category} size="small" label={category} variant="outlined" />)}
               </Box>
               {!filteredTests.length ? (
-                <CompactEmptyState title="No lab tests found" subtitle="Create the first lab test to start ordering." action={canManageTests ? <Button variant="contained" onClick={openCreate}>Create test</Button> : null} />
+                <CompactEmptyState title="No lab tests found" subtitle="Create the first lab test to start ordering." action={canManageLabConfiguration ? <Button variant="contained" onClick={openCreate}>Create test</Button> : null} />
               ) : (
                 <Box sx={{ maxHeight: 520, overflow: "auto" }}>
                   <Table size="small" stickyHeader sx={{ minWidth: 900 }}>
@@ -2588,8 +2785,8 @@ export default function LabPage() {
                           <TableCell><Chip size="small" label={row.active ? "Active" : "Inactive"} color={row.active ? "success" : "default"} variant="outlined" /></TableCell>
                           <TableCell align="right">
                             <Stack direction="row" spacing={1} justifyContent="flex-end">
-                              {canManageTests ? <Button size="small" variant="outlined" startIcon={<EditRoundedIcon />} onClick={() => openEdit(row)}>Edit</Button> : null}
-                              {canManageTests && row.active ? <Button size="small" variant="text" onClick={() => void deactivate(row)}>Deactivate</Button> : null}
+                              {canManageLabConfiguration ? <Button size="small" variant="outlined" startIcon={<EditRoundedIcon />} onClick={() => openEdit(row)}>Edit</Button> : null}
+                              {canManageLabConfiguration && row.active ? <Button size="small" variant="text" onClick={() => void deactivate(row)}>Deactivate</Button> : null}
                             </Stack>
                           </TableCell>
                         </TableRow>
@@ -2599,15 +2796,15 @@ export default function LabPage() {
                 </Box>
               )}
             </Stack>
-          ) : tab === 1 ? (
+          ) : activeLabTab === "collection" ? (
             <OrderQueue
               rows={pendingSampleOrders}
               emptySubtitle="Paid lab registrations ready for sample collection will appear here."
               actionDisabled={saving}
               canCollectPayment={canCollectPayment}
-              canCollectSample={canCollectSample}
-              canManageSamples={canCollectSample}
-              canEnterResults={canEnterResults}
+              canCollectSample={canCollectSampleAction}
+              canManageSamples={canReceiveRejectSampleAction}
+              canEnterResults={canEnterResultsAction}
               canGenerateReport={canGenerateReport}
               canReviewReport={canReviewReport}
               canAccessLabReceipts={canAccessLabReceipts}
@@ -2621,7 +2818,7 @@ export default function LabPage() {
                 setPaymentNotes("");
               }}
               onCollectSample={openSampleDialog}
-              onReceiveSample={setReceiveTarget}
+              onReceiveSample={openReceiveDialog}
               onRejectSample={(sample) => {
                 setRejectTarget(sample);
                 setRejectReason(sample.rejectionReason || "");
@@ -2639,15 +2836,15 @@ export default function LabPage() {
               onShareReportLink={shareReportLink}
               deliveryIntegrationRows={deliveryIntegrationRows}
             />
-          ) : tab === 2 ? (
+          ) : activeLabTab === "queue" ? (
             <OrderQueue
               rows={pendingResultsOrders}
-              emptySubtitle="Collected or received samples ready for technician result entry will appear here."
+              emptySubtitle="Received samples awaiting result entry will appear here."
               actionDisabled={saving}
               canCollectPayment={canCollectPayment}
-              canCollectSample={canCollectSample}
-              canManageSamples={canCollectSample}
-              canEnterResults={canEnterResults}
+              canCollectSample={canCollectSampleAction}
+              canManageSamples={canReceiveRejectSampleAction}
+              canEnterResults={canEnterResultsAction}
               canGenerateReport={canGenerateReport}
               canReviewReport={canReviewReport}
               canAccessLabReceipts={canAccessLabReceipts}
@@ -2661,7 +2858,7 @@ export default function LabPage() {
                 setPaymentNotes("");
               }}
               onCollectSample={openSampleDialog}
-              onReceiveSample={setReceiveTarget}
+              onReceiveSample={openReceiveDialog}
               onRejectSample={(sample) => {
                 setRejectTarget(sample);
                 setRejectReason(sample.rejectionReason || "");
@@ -2679,15 +2876,15 @@ export default function LabPage() {
               onShareReportLink={shareReportLink}
               deliveryIntegrationRows={deliveryIntegrationRows}
             />
-          ) : tab === 3 ? (
+          ) : activeLabTab === "review" ? (
             <OrderQueue
               rows={pendingReviewOrders}
               emptySubtitle="Entered results waiting for lab verification will appear here."
               actionDisabled={saving}
               canCollectPayment={canCollectPayment}
-              canCollectSample={canCollectSample}
-              canManageSamples={canCollectSample}
-              canEnterResults={canEnterResults}
+              canCollectSample={canCollectSampleAction}
+              canManageSamples={canReceiveRejectSampleAction}
+              canEnterResults={canEnterResultsAction}
               canGenerateReport={canGenerateReport}
               canReviewReport={canReviewReport}
               canAccessLabReceipts={canAccessLabReceipts}
@@ -2701,7 +2898,7 @@ export default function LabPage() {
                 setPaymentNotes("");
               }}
               onCollectSample={openSampleDialog}
-              onReceiveSample={setReceiveTarget}
+              onReceiveSample={openReceiveDialog}
               onRejectSample={(sample) => {
                 setRejectTarget(sample);
                 setRejectReason(sample.rejectionReason || "");
@@ -2719,7 +2916,7 @@ export default function LabPage() {
               onShareReportLink={shareReportLink}
               deliveryIntegrationRows={deliveryIntegrationRows}
             />
-          ) : tab === 4 ? (
+          ) : activeLabTab === "orders" ? (
             <Stack spacing={2}>
               <TextField
                 fullWidth
@@ -2803,6 +3000,7 @@ export default function LabPage() {
                           </TableCell>
                           <TableCell>
                             <Stack spacing={0.5}>
+                              <SpecimenProgressSummary order={row} />
                               <Chip size="small" label={sampleSummaryLabel(row)} color={sampleStatusTone(row.sampleSummaryStatus)} variant="outlined" />
                               <Typography variant="caption" color="text.secondary">{row.sampleAccessionNumber || "Accession pending"}</Typography>
                               {row.sampleBarcodeValue ? <Typography variant="caption" color="text.secondary">Barcode: {row.sampleBarcodeValue}</Typography> : null}
@@ -2870,17 +3068,17 @@ export default function LabPage() {
                                   Collect
                                 </Button>
                               ) : null}
-                              {canCollectSample && row.status === "READY_FOR_COLLECTION" ? (
+                              {canCollectSampleAction && hasPendingCollection(row) ? (
                                 <Button size="small" variant="outlined" startIcon={<ScienceRoundedIcon />} onClick={() => openSampleDialog(row)}>
                                   Collect sample
                                 </Button>
                               ) : null}
-                              {canCollectSample && sampleAction?.status === "COLLECTED" ? (
-                                <Button size="small" variant="outlined" onClick={() => setReceiveTarget(sampleAction)}>
+                              {canReceiveRejectSampleAction && hasReceivableSpecimen(row) ? (
+                                <Button size="small" variant="outlined" onClick={() => openReceiveDialog(row)}>
                                   Receive
                                 </Button>
                               ) : null}
-                              {canCollectSample && sampleAction ? (
+                              {canReceiveRejectSampleAction && row.samples.length <= 1 && sampleAction ? (
                                 <Button size="small" variant="outlined" color="error" onClick={() => {
                                   setRejectTarget(sampleAction);
                                   setRejectReason(sampleAction.rejectionReason || "");
@@ -2890,7 +3088,7 @@ export default function LabPage() {
                                   Reject
                                 </Button>
                               ) : null}
-                              {canEnterResults && hasTechnicianWork(row) ? (
+                              {canEnterResultsAction && hasTechnicianWork(row) ? (
                                 <Button size="small" variant="outlined" onClick={() => openResultsDialog(row)}>
                                   {hasSentBackResultOrderedTests(row) ? "Correct results" : "Enter results"}
                                 </Button>
@@ -2929,7 +3127,7 @@ export default function LabPage() {
                 </Box>
               )}
             </Stack>
-          ) : canManageTests && tab === 5 ? (
+          ) : canManageLabConfiguration && activeLabTab === "configuration" ? (
             <LabConfigurationPanel
               categories={categoryConfigs}
               tests={testConfigs}
@@ -3224,10 +3422,19 @@ export default function LabPage() {
         <DialogContent dividers>
           <Stack spacing={2} sx={{ pt: 0.5 }}>
             <Alert severity="info">{sampleTarget ? `${sampleTarget.orderNumber} • ${sampleTarget.patientName || "-"}` : ""}</Alert>
+            {sampleDialogError ? <Alert severity="error">{sampleDialogError}</Alert> : null}
             {sampleRows.map((row, index) => (
               <Card key={`${row.labOrderItemId || "sample"}-${index}`} variant="outlined">
                 <CardContent sx={{ display: "grid", gap: 1.25 }}>
-                  <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>{row.testName}</Typography>
+                  <FormControlLabel
+                    control={(
+                      <Checkbox
+                        checked={row.selected}
+                        onChange={(event) => setSampleRows((current) => current.map((sampleRow, rowIndex) => rowIndex === index ? { ...sampleRow, selected: event.target.checked } : sampleRow))}
+                      />
+                    )}
+                    label={<Typography variant="subtitle2" sx={{ fontWeight: 800 }}>{row.testName}</Typography>}
+                  />
                   {row.linkedTestNames.length > 1 ? (
                     <Typography variant="caption" color="text.secondary">
                       Linked tests: {row.linkedTestNames.join(", ")}
@@ -3264,38 +3471,38 @@ export default function LabPage() {
                         onChange={(e) => setSampleRows((current) => current.map((sampleRow, rowIndex) => rowIndex === index ? { ...sampleRow, notes: e.target.value.slice(0, 250) } : sampleRow))}
                       />
                     </Grid>
+                    <Grid size={{ xs: 12, md: 4 }}>
+                      <TextField
+                        fullWidth
+                        label="Collected By"
+                        value={auth.username || auth.appUserId || "Signed-in user"}
+                        InputProps={{ readOnly: true }}
+                        helperText="Recorded from the signed-in user by the server."
+                      />
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 4 }}>
+                      <TextField
+                        fullWidth
+                        label="Collected At"
+                        type="datetime-local"
+                        value={row.collectedAt}
+                        onChange={(e) => setSampleRows((current) => current.map((sampleRow, rowIndex) => rowIndex === index ? { ...sampleRow, collectedAt: e.target.value } : sampleRow))}
+                        InputLabelProps={{ shrink: true }}
+                      />
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 4 }}>
+                      <TextField
+                        fullWidth
+                        label="Collection Status"
+                        value="Collected"
+                        InputProps={{ readOnly: true }}
+                        helperText="A new specimen is created with this status."
+                      />
+                    </Grid>
                   </Grid>
                 </CardContent>
               </Card>
             ))}
-            <TextField
-              fullWidth
-              label="Collected By"
-              value={sampleCollectedBy}
-              InputProps={{ readOnly: true }}
-              helperText="Auto-populated from the signed-in user and sent by the server audit trail."
-            />
-            <TextField
-              fullWidth
-              label="Collected At"
-              type="datetime-local"
-              value={sampleCollectedAt}
-              onChange={(e) => setSampleCollectedAt(e.target.value)}
-              InputLabelProps={{ shrink: true }}
-            />
-            <FormControl fullWidth>
-              <InputLabel id="sample-collection-status-label">Collection Status</InputLabel>
-              <Select
-                labelId="sample-collection-status-label"
-                label="Collection Status"
-                value={sampleCollectionStatus}
-                onChange={(e) => setSampleCollectionStatus(String(e.target.value) as SampleCollectionStatus)}
-              >
-                {SAMPLE_COLLECTION_STATUS_OPTIONS.map((option) => (
-                  <MenuItem key={option} value={option}>{option}</MenuItem>
-                ))}
-              </Select>
-            </FormControl>
             {collectedSamples.length ? (
               <Alert severity="success">
                 {collectedSamples.map((sample) => `${sample.accessionNumber} • ${sample.barcodeValue}`).join(" | ")}
@@ -3305,29 +3512,96 @@ export default function LabPage() {
         </DialogContent>
         <DialogActions>
           <Button onClick={closeSampleDialog}>Close</Button>
-          <Button variant="contained" startIcon={<ScienceRoundedIcon />} onClick={() => void collectSample()} disabled={saving || sampleCollectingRef.current || !sampleTarget}>Collect Sample</Button>
+          <Button variant="outlined" onClick={() => void collectSample(sampleRows)} disabled={saving || sampleCollectingRef.current || !sampleTarget || !sampleRows.length}>Collect All</Button>
+          <Button variant="contained" startIcon={<ScienceRoundedIcon />} onClick={() => void collectSample()} disabled={saving || sampleCollectingRef.current || !sampleTarget || !sampleRows.some((row) => row.selected)}>Collect Selected</Button>
         </DialogActions>
       </Dialog>
 
-      <Dialog open={Boolean(receiveTarget)} onClose={() => setReceiveTarget(null)} fullWidth maxWidth="sm">
-        <DialogTitle>Receive Sample</DialogTitle>
+      <Dialog
+        open={Boolean(receiveDialog)}
+        onClose={() => { setReceiveDialogError(null); setReceiveDialog(null); setReceiveSelectedIds([]); }}
+        fullWidth
+        maxWidth="md"
+      >
+        <DialogTitle>Receive Samples</DialogTitle>
         <DialogContent dividers>
           <Stack spacing={2} sx={{ pt: 0.5 }}>
-            <Alert severity="info">{receiveTarget ? `${receiveTarget.accessionNumber} • ${receiveTarget.specimenType}` : ""}</Alert>
-            <Typography variant="body2" color="text.secondary">Barcode text only in Batch 2. Label printing remains pending.</Typography>
+            <Alert severity="info">{receiveDialog ? `${receiveDialog.order.orderNumber} • ${receiveDialog.order.patientName || "-"}` : ""}</Alert>
+            {receiveDialogError ? <Alert severity="error">{receiveDialogError}</Alert> : null}
+            <Typography variant="body2" color="text.secondary">
+              Select physical specimens to accept into laboratory processing. Shared specimens appear once with all linked tests.
+            </Typography>
+            <Stack spacing={1} sx={{ maxHeight: 500, overflowY: "auto" }}>
+              {receiveDialog?.specimens.map((sample) => {
+                const eligible = sample.status === "COLLECTED";
+                const selected = receiveSelectedIds.includes(sample.id);
+                return (
+                  <Card key={sample.id} variant="outlined">
+                    <CardContent sx={{ py: 1.25, "&:last-child": { pb: 1.25 } }}>
+                      <Stack direction="row" spacing={1} alignItems="flex-start">
+                        <Checkbox
+                          checked={selected}
+                          disabled={!eligible || saving}
+                          onChange={(event) => setReceiveSelectedIds((current) => event.target.checked
+                            ? [...current, sample.id]
+                            : current.filter((id) => id !== sample.id))}
+                          inputProps={{ "aria-label": `Select specimen ${sample.accessionNumber}` }}
+                        />
+                        <Stack spacing={0.5} sx={{ minWidth: 0, flex: 1 }}>
+                          <Stack direction="row" spacing={1} justifyContent="space-between" flexWrap="wrap">
+                            <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>
+                              {sample.linkedTestNames.length ? sample.linkedTestNames.join(", ") : "Unlinked specimen"}
+                            </Typography>
+                            <Chip size="small" label={sample.status.replaceAll("_", " ")} color={sampleStatusTone(sample.status)} variant="outlined" />
+                          </Stack>
+                          <Typography variant="caption" color="text.secondary">
+                            {sample.specimenType}{sample.containerType ? ` / ${sample.containerType}` : ""} • Accession {sample.accessionNumber} • Barcode {sample.barcodeValue}
+                          </Typography>
+                          <Grid container spacing={1}>
+                            <Grid size={{ xs: 12, md: 3 }}><Typography variant="caption" color="text.secondary">Collected By</Typography><Typography variant="body2">{sample.collectedBy || "—"}</Typography></Grid>
+                            <Grid size={{ xs: 12, md: 3 }}><Typography variant="caption" color="text.secondary">Collected At</Typography><Typography variant="body2">{formatDateTime(sample.collectedAt)}</Typography></Grid>
+                            <Grid size={{ xs: 12, md: 3 }}><Typography variant="caption" color="text.secondary">Received By</Typography><Typography variant="body2">{sample.receivedBy || (auth.username || auth.appUserId || "Signed-in technician")}</Typography></Grid>
+                            <Grid size={{ xs: 12, md: 3 }}>
+                              <TextField
+                                fullWidth
+                                size="small"
+                                label="Received At"
+                                type="datetime-local"
+                                value={receiveAtById[sample.id] || ""}
+                                disabled={!eligible || saving}
+                                onChange={(event) => setReceiveAtById((current) => ({ ...current, [sample.id]: event.target.value }))}
+                                InputLabelProps={{ shrink: true }}
+                              />
+                            </Grid>
+                          </Grid>
+                        </Stack>
+                      </Stack>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </Stack>
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setReceiveTarget(null)}>Cancel</Button>
-          <Button variant="contained" onClick={() => void receiveSample()} disabled={saving || !receiveTarget}>Mark Received</Button>
+          <Button onClick={() => { setReceiveDialogError(null); setReceiveDialog(null); setReceiveSelectedIds([]); }}>Cancel</Button>
+          <Button
+            variant="outlined"
+            onClick={() => void receiveSamples(receiveDialog?.specimens.filter((sample) => sample.status === "COLLECTED").map((sample) => sample.id))}
+            disabled={saving || !receiveDialog?.specimens.some((sample) => sample.status === "COLLECTED")}
+          >
+            Receive All
+          </Button>
+          <Button variant="contained" onClick={() => void receiveSamples()} disabled={saving || !receiveSelectedIds.length}>Receive Selected</Button>
         </DialogActions>
       </Dialog>
 
-      <Dialog open={Boolean(rejectTarget)} onClose={() => setRejectTarget(null)} fullWidth maxWidth="sm">
+      <Dialog open={Boolean(rejectTarget)} onClose={() => { setRejectDialogError(null); setRejectTarget(null); }} fullWidth maxWidth="sm">
         <DialogTitle>Reject Sample</DialogTitle>
         <DialogContent dividers>
           <Stack spacing={2} sx={{ pt: 0.5 }}>
             <Alert severity="warning">{rejectTarget ? `${rejectTarget.accessionNumber} • ${rejectTarget.specimenType}` : ""}</Alert>
+            {rejectDialogError ? <Alert severity="error">{rejectDialogError}</Alert> : null}
             <CommentSuggestions
               category="LAB_SPECIMEN_REJECTION"
               selectedReason={rejectReason}
@@ -3357,7 +3631,7 @@ export default function LabPage() {
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setRejectTarget(null)}>Cancel</Button>
+          <Button onClick={() => { setRejectDialogError(null); setRejectTarget(null); }}>Cancel</Button>
           <Button variant="contained" color="error" onClick={() => void rejectSample()} disabled={saving || !rejectTarget}>Reject Sample</Button>
         </DialogActions>
       </Dialog>
@@ -3992,7 +4266,7 @@ export default function LabPage() {
           ) : null}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => { setPublishSuccessTarget(null); setTab(4); }}>Back to Lab Orders</Button>
+          <Button onClick={() => { setPublishSuccessTarget(null); navigateLabTab("orders"); }}>Back to Lab Orders</Button>
         </DialogActions>
       </Dialog>
 
@@ -4193,7 +4467,7 @@ function OrderQueue(props: {
   onDownloadReceipt: (row: LabOrder) => void;
   onCollectPayment: (row: LabOrder) => void;
   onCollectSample: (row: LabOrder) => void;
-  onReceiveSample: (sample: LabSample) => void;
+  onReceiveSample: (row: LabOrder, sample?: LabSample | null) => void;
   onRejectSample: (sample: LabSample) => void;
   onEnterResults: (row: LabOrder, sample?: LabSample | null) => void;
   onReview: (row: LabOrder) => void;
@@ -4279,6 +4553,7 @@ function OrderQueue(props: {
               </TableCell>
               <TableCell>
                 <Stack spacing={0.75}>
+                  <SpecimenProgressSummary order={row} />
                   {row.samples.length > 1 ? (
                     row.samples.map((sample) => {
                       const canReceiveSample = sample.status === "COLLECTED";
@@ -4300,10 +4575,16 @@ function OrderQueue(props: {
                                 <Chip size="small" variant="outlined" label={`Time: ${formatTimeChip(sample.collectedAt)}`} />
                               </Stack>
                             ) : null}
+                            {(sample.receivedBy || sample.receivedAt) ? (
+                              <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                <Chip size="small" variant="outlined" label={`Received by: ${sample.receivedBy || "—"}`} />
+                                <Chip size="small" variant="outlined" label={`Received: ${formatDateTime(sample.receivedAt)}`} />
+                              </Stack>
+                            ) : null}
                             {canManageSamples ? (
                               <Stack direction="row" spacing={1} flexWrap="wrap">
                                 {canReceiveSample ? (
-                                  <Button size="small" variant="outlined" onClick={() => onReceiveSample(sample)}>Receive</Button>
+                                  <Button size="small" variant="outlined" onClick={() => onReceiveSample(row, sample)}>Receive</Button>
                                 ) : null}
                                 {canRejectSample ? (
                                   <Button size="small" variant="outlined" color="error" onClick={() => onRejectSample(sample)}>Reject</Button>
@@ -4325,6 +4606,7 @@ function OrderQueue(props: {
                     })
                   ) : (
                     <Stack spacing={0.5}>
+                      <SpecimenProgressSummary order={row} />
                       <Chip size="small" label={sampleSummaryLabel(row)} color={sampleStatusTone(row.sampleSummaryStatus)} variant="outlined" />
                       <Typography variant="caption" color="text.secondary">{row.sampleAccessionNumber || "Accession pending"}</Typography>
                       {row.samples.length === 1 && row.samples[0]?.linkedTestNames?.length ? (
@@ -4336,6 +4618,12 @@ function OrderQueue(props: {
                           <Chip size="small" variant="outlined" label={`Collected by: ${row.sampleCollectedBy || row.sampleCollectedByUserId || "—"}`} />
                           <Chip size="small" variant="outlined" label={`Date: ${formatDateChip(row.sampleCollectedAt)}`} />
                           <Chip size="small" variant="outlined" label={`Time: ${formatTimeChip(row.sampleCollectedAt)}`} />
+                        </Stack>
+                      ) : null}
+                      {row.samples.length === 1 && (row.samples[0]?.receivedBy || row.samples[0]?.receivedAt) ? (
+                        <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                          <Chip size="small" variant="outlined" label={`Received by: ${row.samples[0]?.receivedBy || "—"}`} />
+                          <Chip size="small" variant="outlined" label={`Received: ${formatDateTime(row.samples[0]?.receivedAt)}`} />
                         </Stack>
                       ) : null}
                     </Stack>
@@ -4395,19 +4683,19 @@ function OrderQueue(props: {
                       Collect
                     </Button>
                   ) : null}
-                  {canCollectSample && row.status === "READY_FOR_COLLECTION" ? (
+                  {canCollectSample && hasPendingCollection(row) ? (
                     <Button size="small" variant="outlined" startIcon={<ScienceRoundedIcon />} onClick={() => onCollectSample(row)}>
                       Collect sample
                     </Button>
                   ) : null}
-                  {canManageSamples && row.samples.length <= 1 && sampleAction?.status === "COLLECTED" ? (
-                    <Button size="small" variant="outlined" onClick={() => onReceiveSample(sampleAction)}>Receive</Button>
+                  {canManageSamples && hasReceivableSpecimen(row) ? (
+                    <Button size="small" variant="outlined" onClick={() => onReceiveSample(row)}>Receive</Button>
                   ) : null}
                   {canManageSamples && row.samples.length <= 1 && sampleAction ? (
                     <Button size="small" variant="outlined" color="error" onClick={() => onRejectSample(sampleAction)}>Reject</Button>
                   ) : null}
-                  {canEnterResults && hasTechnicianWork(row) && row.samples.length <= 1 ? (
-                    <Button size="small" variant="outlined" onClick={() => onEnterResults(row, row.samples[0] || null)}>
+                  {canEnterResults && hasTechnicianWork(row) ? (
+                    <Button size="small" variant="outlined" onClick={() => onEnterResults(row)}>
                       {hasSentBackResultOrderedTests(row) ? "Correct results" : "Enter results"}
                     </Button>
                   ) : null}

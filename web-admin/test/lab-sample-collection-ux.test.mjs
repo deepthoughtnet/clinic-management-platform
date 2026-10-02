@@ -11,10 +11,6 @@ function readSource(relPath) {
 test("lab sample collection auto-fills collected by and offers configured container and status selectors", () => {
   const source = readSource("pages/lab/LabPage.tsx");
   assert.ok(source.includes('const SAMPLE_CONTAINER_TYPE_OPTIONS = ['));
-  assert.ok(source.includes('const SAMPLE_COLLECTION_STATUS_OPTIONS = ['));
-  assert.ok(source.includes('const [sampleCollectionStatus, setSampleCollectionStatus] = React.useState<SampleCollectionStatus>("Collected");'));
-  assert.ok(source.includes('setSampleCollectedBy(auth.username || auth.appUserId || "");'));
-  assert.ok(source.includes('setSampleCollectionStatus("Collected");'));
   assert.ok(source.includes('const sampleCollectingRef = React.useRef(false);'));
   assert.ok(source.includes('const closeSampleDialog = React.useCallback(() => {'));
   assert.ok(source.includes('const resetSampleDialogState = React.useCallback(() => {'));
@@ -23,10 +19,21 @@ test("lab sample collection auto-fills collected by and offers configured contai
   assert.ok(source.includes('setSampleSuccessMessage('));
   assert.ok(source.includes('setSampleSuccessMessage(null);'));
   assert.ok(source.includes('InputProps={{ readOnly: true }}'));
-  assert.ok(source.includes('Auto-populated from the signed-in user and sent by the server audit trail.'));
+  assert.ok(source.includes('Recorded from the signed-in user by the server.'));
   assert.ok(source.includes('<MenuItem value="">Select container type</MenuItem>'));
   assert.ok(source.includes('label="Collection Status"'));
-  assert.ok(source.includes('disabled={saving || sampleCollectingRef.current || !sampleTarget}'));
+  assert.ok(source.includes('selected: boolean;'));
+  assert.ok(source.includes('Collect Selected'));
+  assert.ok(source.includes('Collect All'));
+  assert.ok(source.includes('sampleRows.filter((row) => row.selected)'));
+  assert.ok(source.includes('Select at least one test/specimen to collect.'));
+  assert.ok(source.includes('const activeLinkedItemIds = new Set('));
+  assert.ok(source.includes('const uncollectedItems = row.items.filter((item) => !activeLinkedItemIds.has(item.id));'));
+  assert.ok(source.includes('const sourceRows = recollectionSamples.length'));
+  assert.ok(source.includes('function activeSpecimenItemIds(order: LabOrder | null | undefined)'));
+  assert.ok(source.includes('const awaitingCollection = [...requiredItemIds].filter((itemId) => !collectedItemIds.has(itemId)).length;'));
+  assert.ok(source.includes('function hasPendingCollection(order: LabOrder | null | undefined)'));
+  assert.ok(!source.includes('if (row.status !== "READY_FOR_COLLECTION") return false;'));
 });
 
 test("lab order rows show compact sample audit chips", () => {
@@ -44,7 +51,7 @@ test("dashboard counters still route into the correct work queues", () => {
   assert.ok(source.includes('work-pending-sample-collection'));
   assert.ok(source.includes('work-results-pending-entry'));
   assert.ok(source.includes('work-pending-lab-review'));
-  assert.ok(source.includes('setTab(1);'));
-  assert.ok(source.includes('setTab(canEnterResults ? 2 : 3);'));
-  assert.ok(source.includes('setTab(3);'));
+  assert.ok(source.includes('navigateLabTab("collection")'));
+  assert.ok(source.includes('navigateLabTab("queue")'));
+  assert.ok(source.includes('navigateLabTab("review")'));
 });

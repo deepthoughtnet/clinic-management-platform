@@ -269,7 +269,7 @@ public class LabController {
     }
 
     @PostMapping("/orders/{id}/sample-collection")
-    @PreAuthorize("@permissionChecker.hasPermission('lab.order.collect_sample')")
+    @PreAuthorize("@permissionChecker.hasAnyRole('LAB_ASSISTANT', 'CLINIC_ADMIN', 'TENANT_ADMIN', 'PLATFORM_ADMIN', 'LAB_ADMIN', 'LAB_MANAGER')")
     public LabOrderResponse collectSample(@PathVariable UUID id, @Valid @RequestBody LabOrderSampleCollectionRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
@@ -288,7 +288,7 @@ public class LabController {
     }
 
     @PostMapping("/orders/{orderId}/samples/collect")
-    @PreAuthorize("@permissionChecker.hasPermission('lab.order.collect_sample')")
+    @PreAuthorize("@permissionChecker.hasAnyRole('LAB_ASSISTANT', 'CLINIC_ADMIN', 'TENANT_ADMIN', 'PLATFORM_ADMIN', 'LAB_ADMIN', 'LAB_MANAGER')")
     public List<LabSampleResponse> collectSamples(@PathVariable UUID orderId, @Valid @RequestBody LabOrderSamplesCollectRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
@@ -303,7 +303,7 @@ public class LabController {
     }
 
     @PostMapping("/samples/{sampleId}/receive")
-    @PreAuthorize("@permissionChecker.hasPermission('lab.order.collect_sample')")
+    @PreAuthorize("@permissionChecker.hasAnyRole('LAB_TECHNICIAN', 'CLINIC_ADMIN', 'TENANT_ADMIN', 'PLATFORM_ADMIN', 'LAB_ADMIN', 'LAB_MANAGER')")
     public LabSampleResponse receiveSample(@PathVariable UUID sampleId, @RequestBody(required = false) LabSampleReceiveRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
@@ -315,7 +315,7 @@ public class LabController {
     }
 
     @PostMapping("/samples/{sampleId}/reject")
-    @PreAuthorize("@permissionChecker.hasPermission('lab.order.collect_sample')")
+    @PreAuthorize("@permissionChecker.hasAnyRole('LAB_TECHNICIAN', 'CLINIC_ADMIN', 'TENANT_ADMIN', 'PLATFORM_ADMIN', 'LAB_ADMIN', 'LAB_MANAGER')")
     public LabSampleResponse rejectSample(@PathVariable UUID sampleId, @Valid @RequestBody LabSampleRejectRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
@@ -327,7 +327,7 @@ public class LabController {
     }
 
     @PostMapping("/orders/{id}/results")
-    @PreAuthorize("@permissionChecker.hasPermission('lab.order.result_entry')")
+    @PreAuthorize("@permissionChecker.hasAnyRole('LAB_TECHNICIAN', 'CLINIC_ADMIN', 'TENANT_ADMIN', 'PLATFORM_ADMIN', 'LAB_ADMIN', 'LAB_MANAGER')")
     public LabOrderResponse enterResults(@PathVariable UUID id, @Valid @RequestBody LabOrderResultRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();

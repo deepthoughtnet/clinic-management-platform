@@ -34,12 +34,30 @@ import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.hamcrest.Matchers;
 import org.mockito.ArgumentCaptor;
 
 class LabControllerRouteTest {
+
+    @Test
+    void specimenActionsDeclareRoleSpecificOwnership() throws Exception {
+        String collect = LabController.class.getDeclaredMethod("collectSamples", UUID.class, com.deepthoughtnet.clinic.api.lab.dto.LabOrderSamplesCollectRequest.class)
+                .getAnnotation(PreAuthorize.class).value();
+        String receive = LabController.class.getDeclaredMethod("receiveSample", UUID.class, com.deepthoughtnet.clinic.api.lab.dto.LabSampleReceiveRequest.class)
+                .getAnnotation(PreAuthorize.class).value();
+        String reject = LabController.class.getDeclaredMethod("rejectSample", UUID.class, com.deepthoughtnet.clinic.api.lab.dto.LabSampleRejectRequest.class)
+                .getAnnotation(PreAuthorize.class).value();
+        String results = LabController.class.getDeclaredMethod("enterResults", UUID.class, com.deepthoughtnet.clinic.api.lab.dto.LabOrderResultRequest.class)
+                .getAnnotation(PreAuthorize.class).value();
+
+        assertThat(collect).contains("LAB_ASSISTANT").doesNotContain("LAB_TECHNICIAN");
+        assertThat(receive).contains("LAB_TECHNICIAN").doesNotContain("LAB_ASSISTANT");
+        assertThat(reject).contains("LAB_TECHNICIAN").doesNotContain("LAB_ASSISTANT");
+        assertThat(results).contains("LAB_TECHNICIAN").doesNotContain("LAB_ASSISTANT");
+    }
 
     private LabController controller(LabService labService, LabCsvService labCsvService, LabCatalogueConfigService labCatalogueConfigService) {
         return new LabController(labService, labCsvService, labCatalogueConfigService, mock(com.deepthoughtnet.clinic.platform.audit.AuditEventQueryService.class));

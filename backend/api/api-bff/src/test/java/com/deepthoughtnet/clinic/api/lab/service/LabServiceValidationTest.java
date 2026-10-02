@@ -11,6 +11,7 @@ import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.when;
 
@@ -35,6 +36,7 @@ import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderResultEntryComman
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderResultItemCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderResultPdf;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderSampleCollectionCommand;
+import com.deepthoughtnet.clinic.api.lab.service.model.LabSampleCollectionCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderVerificationCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabSampleReceiveCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabSampleRejectCommand;
@@ -100,6 +102,7 @@ import org.apache.pdfbox.text.PDFTextStripper;
 class LabServiceValidationTest {
     private static final UUID TENANT_ID = UUID.fromString("11111111-1111-1111-1111-111111111111");
     private static final UUID ACTOR_ID = UUID.fromString("22222222-2222-2222-2222-222222222222");
+    private static final UUID SECOND_ACTOR_ID = UUID.fromString("77777777-7777-7777-7777-777777777777");
     private static final UUID CONSULTATION_ID = UUID.fromString("33333333-3333-3333-3333-333333333333");
     private static final UUID PATIENT_ID = UUID.fromString("44444444-4444-4444-4444-444444444444");
     private static final UUID TEST_ID = UUID.fromString("55555555-5555-5555-5555-555555555555");
@@ -589,6 +592,112 @@ class LabServiceValidationTest {
     }
 
     @Test
+    void collectSamplesSupportsSelectiveCollectionAcrossMultipleOperations() {
+        var order = sampleOrder(LabOrderStatus.READY_FOR_COLLECTION);
+        setOrderId(order, ORDER_ID);
+        LabOrderItemEntity esr = sampleOrderItem(UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"), "ESR", "ESR", 1);
+        LabOrderItemEntity cbc = sampleOrderItem(UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"), "CBC", "CBC", 2);
+        when(labOrderRepository.findByTenantIdAndId(TENANT_ID, ORDER_ID)).thenReturn(Optional.of(order));
+        when(labOrderItemRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAsc(TENANT_ID, ORDER_ID)).thenReturn(List.of(esr, cbc));
+
+        var first = service.collectSamples(TENANT_ID, ORDER_ID, List.of(new com.deepthoughtnet.clinic.api.lab.service.model.LabSampleCollectionCommand(
+                esr.getId(), "Blood", "EDTA", OffsetDateTime.now().minusMinutes(5), "ESR only"
+        )), ACTOR_ID);
+        assertThat(first).hasSize(1);
+        assertThat(first.getFirst().linkedLabOrderItemIds()).containsExactly(esr.getId());
+
+        when(laboratoryWorkflowService.listOrderTests(TENANT_ID, ORDER_ID)).thenReturn(List.of(
+                specimenView(esr.getId(), esr.getTestName(), first.getFirst().id(), esr.getTestCode())
+        ));
+        var second = service.collectSamples(TENANT_ID, ORDER_ID, List.of(new com.deepthoughtnet.clinic.api.lab.service.model.LabSampleCollectionCommand(
+                cbc.getId(), "Blood", "EDTA", OffsetDateTime.now(), "CBC later"
+        )), ACTOR_ID);
+
+        assertThat(second).hasSize(1);
+        assertThat(second.getFirst().linkedLabOrderItemIds()).containsExactly(cbc.getId());
+        assertThat(second.getFirst().linkedLabOrderItemIds()).doesNotContain(esr.getId());
+    }
+
+    @Test
+    void allowsRemainingCollectionForPartiallyPublishedOrder() {
+        var order = sampleOrder(LabOrderStatus.PARTIALLY_PUBLISHED);
+        setOrderId(order, ORDER_ID);
+        LabOrderItemEntity lipid = sampleOrderItem(UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"), "LIPID", "Lipid Profile", 1);
+        when(labOrderRepository.findByTenantIdAndId(TENANT_ID, ORDER_ID)).thenReturn(Optional.of(order));
+        when(labOrderItemRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAsc(TENANT_ID, ORDER_ID)).thenReturn(List.of(lipid));
+
+        var samples = service.collectSamples(TENANT_ID, ORDER_ID, List.of(new LabSampleCollectionCommand(
+                lipid.getId(), "Blood", "Plain Tube", OffsetDateTime.now().minusMinutes(2), "Remaining test"
+        )), ACTOR_ID);
+
+        assertThat(samples).hasSize(1);
+        assertThat(samples.getFirst().linkedLabOrderItemIds()).containsExactly(lipid.getId());
+    }
+
+    @Test
+    void allowsRemainingCollectionForPartiallyReadyOrder() {
+        var order = sampleOrder(LabOrderStatus.PARTIALLY_READY);
+        setOrderId(order, ORDER_ID);
+        LabOrderItemEntity lipid = sampleOrderItem(UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"), "LIPID", "Lipid Profile", 1);
+        when(labOrderRepository.findByTenantIdAndId(TENANT_ID, ORDER_ID)).thenReturn(Optional.of(order));
+        when(labOrderItemRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAsc(TENANT_ID, ORDER_ID)).thenReturn(List.of(lipid));
+
+        var samples = service.collectSamples(TENANT_ID, ORDER_ID, List.of(new LabSampleCollectionCommand(
+                lipid.getId(), "Blood", "Plain Tube", OffsetDateTime.now().minusMinutes(2), "Remaining test"
+        )), ACTOR_ID);
+
+        assertThat(samples).hasSize(1);
+        assertThat(samples.getFirst().linkedLabOrderItemIds()).containsExactly(lipid.getId());
+    }
+
+    @Test
+    void allowsCollectionForPaidOrderWhenReadyTransitionHasNotCompleted() {
+        var order = sampleOrder(LabOrderStatus.PAID);
+        setOrderId(order, ORDER_ID);
+        LabOrderItemEntity lipid = sampleOrderItem(UUID.fromString("cccccccc-cccc-4ccc-8ccc-cccccccccccc"), "LIPID", "Lipid Profile", 1);
+        when(labOrderRepository.findByTenantIdAndId(TENANT_ID, ORDER_ID)).thenReturn(Optional.of(order));
+        when(labOrderItemRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAsc(TENANT_ID, ORDER_ID)).thenReturn(List.of(lipid));
+
+        var samples = service.collectSamples(TENANT_ID, ORDER_ID, List.of(new LabSampleCollectionCommand(
+                lipid.getId(), "Blood", "Plain Tube", OffsetDateTime.now().minusMinutes(2), "Paid order"
+        )), ACTOR_ID);
+
+        assertThat(samples).hasSize(1);
+    }
+
+    @Test
+    void preservesPaymentAndTerminalCollectionGates() {
+        for (LabOrderStatus blockedStatus : List.of(LabOrderStatus.PAYMENT_PENDING, LabOrderStatus.CANCELLED)) {
+            var order = sampleOrder(blockedStatus);
+            setOrderId(order, ORDER_ID);
+            when(labOrderRepository.findByTenantIdAndId(TENANT_ID, ORDER_ID)).thenReturn(Optional.of(order));
+
+            assertThatThrownBy(() -> service.collectSamples(TENANT_ID, ORDER_ID, List.of(new LabSampleCollectionCommand(
+                    TEST_ID, "Blood", "EDTA", OffsetDateTime.now().minusMinutes(1), null
+            )), ACTOR_ID)).isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("ready for sample collection");
+        }
+    }
+
+    @Test
+    void blocksCollectionForAlreadyCollectedItemInPartiallyPublishedOrder() {
+        var order = sampleOrder(LabOrderStatus.PARTIALLY_PUBLISHED);
+        setOrderId(order, ORDER_ID);
+        LabOrderItemEntity lipid = sampleOrderItem(TEST_ID, "LIPID", "Lipid Profile", 1);
+        UUID existingSampleId = UUID.fromString("99999999-9999-4999-8999-999999999999");
+        when(labOrderRepository.findByTenantIdAndId(TENANT_ID, ORDER_ID)).thenReturn(Optional.of(order));
+        when(labOrderItemRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAsc(TENANT_ID, ORDER_ID)).thenReturn(List.of(lipid));
+        when(laboratoryWorkflowService.listOrderTests(TENANT_ID, ORDER_ID)).thenReturn(List.of(
+                specimenView(TEST_ID, lipid.getTestName(), existingSampleId, lipid.getTestCode())
+        ));
+
+        assertThatThrownBy(() -> service.collectSamples(TENANT_ID, ORDER_ID, List.of(new LabSampleCollectionCommand(
+                lipid.getId(), "Blood", "Plain Tube", OffsetDateTime.now().minusMinutes(1), null
+        )), ACTOR_ID)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("No lab tests are awaiting sample collection");
+    }
+
+    @Test
     void rejectSharedSpecimenMarksEveryLinkedTestForRecollection() {
         var order = sampleOrder(LabOrderStatus.SAMPLE_COLLECTED);
         setOrderId(order, ORDER_ID);
@@ -857,6 +966,7 @@ class LabServiceValidationTest {
 
         assertThat(samples).hasSize(1);
         assertThat(samples.getFirst().collectedBy()).isEqualTo("UAT Automation Lab Assistant");
+        assertThat(samples.getFirst().collectedByUserId()).isEqualTo(ACTOR_ID);
         assertThat(order.getSampleCollectedByUserId()).isEqualTo(ACTOR_ID);
     }
 
@@ -876,6 +986,48 @@ class LabServiceValidationTest {
         assertThatThrownBy(() -> service.receiveSample(TENANT_ID, rejectedState.getId(), new LabSampleReceiveCommand(OffsetDateTime.now(), ACTOR_ID), ACTOR_ID))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("ready to receive");
+    }
+
+    @Test
+    void receiveSampleRejectsFutureOrPreCollectionTimestampAndUsesAuthenticatedActor() {
+        LabOrderSampleEntity sample = collectedOnlySample();
+        when(labOrderSampleRepository.findByTenantIdAndId(TENANT_ID, sample.getId())).thenReturn(Optional.of(sample));
+
+        assertThatThrownBy(() -> service.receiveSample(
+                TENANT_ID,
+                sample.getId(),
+                new LabSampleReceiveCommand(OffsetDateTime.now().plusMinutes(1), UUID.randomUUID()),
+                ACTOR_ID))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("future");
+        assertThatThrownBy(() -> service.receiveSample(
+                TENANT_ID,
+                sample.getId(),
+                new LabSampleReceiveCommand(sample.getCollectedAt().minusSeconds(1), UUID.randomUUID()),
+                ACTOR_ID))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("before collection");
+        verify(labOrderSampleRepository, never()).save(sample);
+    }
+
+    @Test
+    void receiveSampleStoresIndependentCollectorAndTimestampPerSpecimen() {
+        LabOrderSampleEntity sampleA = collectedOnlySample();
+        LabOrderSampleEntity sampleB = collectedOnlySample();
+        OffsetDateTime receivedAtA = sampleA.getCollectedAt().plusMinutes(5);
+        OffsetDateTime receivedAtB = sampleB.getCollectedAt().plusMinutes(10);
+        when(labOrderSampleRepository.findByTenantIdAndId(TENANT_ID, sampleA.getId())).thenReturn(Optional.of(sampleA));
+        when(labOrderSampleRepository.findByTenantIdAndId(TENANT_ID, sampleB.getId())).thenReturn(Optional.of(sampleB));
+
+        service.receiveSample(TENANT_ID, sampleA.getId(), new LabSampleReceiveCommand(receivedAtA, UUID.randomUUID()), ACTOR_ID);
+        service.receiveSample(TENANT_ID, sampleB.getId(), new LabSampleReceiveCommand(receivedAtB, UUID.randomUUID()), SECOND_ACTOR_ID);
+
+        assertThat(sampleA.getReceivedBy()).isEqualTo(ACTOR_ID);
+        assertThat(sampleA.getReceivedAt()).isEqualTo(receivedAtA);
+        assertThat(sampleB.getReceivedBy()).isEqualTo(SECOND_ACTOR_ID);
+        assertThat(sampleB.getReceivedAt()).isEqualTo(receivedAtB);
+        assertThat(sampleA.getStatus()).isEqualTo(com.deepthoughtnet.clinic.api.lab.db.LabSampleStatus.RECEIVED);
+        assertThat(sampleB.getStatus()).isEqualTo(com.deepthoughtnet.clinic.api.lab.db.LabSampleStatus.RECEIVED);
     }
 
     @Test
@@ -923,12 +1075,13 @@ class LabServiceValidationTest {
                 .thenReturn(Optional.of(original));
         var replacement = service.collectSamples(TENANT_ID, ORDER_ID, List.of(new com.deepthoughtnet.clinic.api.lab.service.model.LabSampleCollectionCommand(
                 null, "Blood", "EDTA", OffsetDateTime.now(), "Replacement specimen"
-        )), ACTOR_ID);
+        )), SECOND_ACTOR_ID);
 
         assertThat(replacement).hasSize(1);
         assertThat(replacement.getFirst().id()).isNotEqualTo(original.getId());
         assertThat(replacement.getFirst().accessionNumber()).isNotEqualTo(original.getAccessionNumber());
         assertThat(replacement.getFirst().status()).isEqualTo(com.deepthoughtnet.clinic.api.lab.service.model.LabSampleStatusRecord.COLLECTED);
+        assertThat(replacement.getFirst().collectedByUserId()).isEqualTo(SECOND_ACTOR_ID);
         assertThat(original.getStatus()).isEqualTo(com.deepthoughtnet.clinic.api.lab.db.LabSampleStatus.REJECTED);
         assertThat(original.getRejectionReason()).isEqualTo("Insufficient sample quantity");
     }
@@ -972,6 +1125,36 @@ class LabServiceValidationTest {
                 .satisfies(sample -> assertThat(sample.linkedLabOrderItemIds()).isEmpty());
         assertThat(record.samples()).filteredOn(sample -> sample.id().equals(replacement.getId())).singleElement()
                 .satisfies(sample -> assertThat(sample.linkedLabOrderItemIds()).containsExactly(TEST_ID));
+    }
+
+    @Test
+    void orderSummaryOverlaysAuthoritativeSampleStatusOnStaleSpecimenLink() {
+        var order = sampleOrder(LabOrderStatus.SAMPLE_COLLECTED);
+        setOrderId(order, ORDER_ID);
+        LabOrderItemEntity item = sampleOrderItem(TEST_ID, "FBS", "Fasting Blood Sugar", 1);
+        LabOrderSampleEntity receivedSample = sampleWithAccession(TENANT_ID, "LAB-20260929-0003");
+        OffsetDateTime receivedAt = OffsetDateTime.now().minusMinutes(5);
+        receivedSample.markReceived(receivedAt, ACTOR_ID, ACTOR_ID);
+
+        when(labOrderRepository.findByTenantIdAndId(TENANT_ID, ORDER_ID)).thenReturn(Optional.of(order));
+        when(labOrderItemRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAsc(TENANT_ID, ORDER_ID)).thenReturn(List.of(item));
+        when(labOrderSampleRepository.findByTenantIdAndLabOrderIdOrderByCollectedAtAscCreatedAtAsc(TENANT_ID, ORDER_ID))
+                .thenReturn(List.of(receivedSample));
+        when(laboratoryWorkflowService.listOrderTests(TENANT_ID, ORDER_ID)).thenReturn(List.of(new LaboratoryOrderedTestView(
+                item.getId(), "SAMPLE_COLLECTED", 0, null, null, null, null, null, null,
+                List.of(), null, null, null, List.of(new LaboratorySpecimenLinkView(
+                        receivedSample.getId(), receivedSample.getAccessionNumber(), receivedSample.getBarcodeValue(),
+                        "Blood", "EDTA", "COLLECTED", true, receivedSample.getCollectedAt(), null,
+                        receivedSample.getCreatedAt(), null))
+        )));
+
+        var record = service.findOrder(TENANT_ID, ORDER_ID).orElseThrow();
+
+        assertThat(record.orderedTests()).singleElement().satisfies(orderedTest ->
+                assertThat(orderedTest.specimenLinks()).singleElement().satisfies(link -> {
+                    assertThat(link.sampleStatus()).isEqualTo("RECEIVED");
+                    assertThat(link.receivedAt()).isEqualTo(receivedAt);
+                }));
     }
 
     @Test
@@ -1449,6 +1632,10 @@ class LabServiceValidationTest {
             assertThat(text).contains("Report Verification");
             assertThat(text).contains("Verification ID:");
             assertThat(qrImageCount).isGreaterThanOrEqualTo(1);
+            PDFTextStripper finalPageStripper = new PDFTextStripper();
+            finalPageStripper.setStartPage(document.getNumberOfPages());
+            finalPageStripper.setEndPage(document.getNumberOfPages());
+            assertThat(finalPageStripper.getText(document)).contains("Authorized Signatory", "Digitally verified");
         }
     }
 
@@ -1663,6 +1850,39 @@ class LabServiceValidationTest {
                 ACTOR_ID
         )).isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("selected accession");
+    }
+
+    @Test
+    void enterResultsRejectsTestWhoseActiveSpecimenIsStillCollected() {
+        UUID receivedItemId = UUID.fromString("11111111-1111-4111-8111-111111111111");
+        UUID collectedItemId = UUID.fromString("22222222-2222-4222-8222-222222222222");
+        var order = sampleOrder(LabOrderStatus.SAMPLE_COLLECTED);
+        setOrderId(order, ORDER_ID);
+        LabOrderItemEntity receivedItem = sampleOrderItem(receivedItemId, "FBS", "Fasting Blood Sugar", 1);
+        LabOrderItemEntity collectedItem = sampleOrderItem(collectedItemId, "CBC", "Complete Blood Count", 2);
+        LabOrderSampleEntity receivedSample = sampleWithAccession(TENANT_ID, "LAB-20260929-0001");
+        receivedSample.markReceived(OffsetDateTime.now().minusMinutes(10), ACTOR_ID, ACTOR_ID);
+        LabOrderSampleEntity collectedSample = sampleWithAccession(TENANT_ID, "LAB-20260929-0002");
+        when(labOrderRepository.findByTenantIdAndId(TENANT_ID, ORDER_ID)).thenReturn(Optional.of(order));
+        when(labOrderItemRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAsc(TENANT_ID, ORDER_ID)).thenReturn(List.of(receivedItem, collectedItem));
+        when(labOrderSampleRepository.findByTenantIdAndLabOrderIdOrderByCollectedAtAscCreatedAtAsc(TENANT_ID, ORDER_ID)).thenReturn(List.of(receivedSample, collectedSample));
+        when(laboratoryWorkflowService.listOrderTests(TENANT_ID, ORDER_ID)).thenReturn(List.of(
+                specimenView(receivedItemId, receivedItem.getTestName(), receivedSample.getId(), receivedItem.getTestCode()),
+                specimenView(collectedItemId, collectedItem.getTestName(), collectedSample.getId(), collectedItem.getTestCode())
+        ));
+
+        assertThatThrownBy(() -> service.enterResults(
+                TENANT_ID,
+                ORDER_ID,
+                new LabOrderResultEntryCommand(
+                        collectedSample.getId(),
+                        List.of(new LabOrderResultItemCommand(collectedItemId, "14.2", "g/dL", "13.0-17.0", List.of())),
+                        null,
+                        List.of(collectedItemId)
+                ),
+                ACTOR_ID
+        )).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("received active specimen");
     }
 
     @Test
@@ -2509,6 +2729,22 @@ class LabServiceValidationTest {
         assertThat(result.patientNumber()).isEqualTo("P-001");
         assertThat(result.patientName()).isEqualTo("Test Patient");
         assertThat(result.orderOrigin()).isEqualTo(LabOrderOrigin.WALK_IN);
+    }
+
+    @Test
+    void blocksLegacyLabTestWithoutCodeBeforePersistingOrder() throws Exception {
+        setupPatientOnly();
+        LabTestMasterEntity invalid = LabTestMasterEntity.create(TENANT_ID, "TEMP", "Mandatory Code Test");
+        setEntityId(invalid, TEST_ID);
+        invalid.update(null, "Mandatory Code Test", "HEMATOLOGY", null, "Blood", null, null, null, BigDecimal.valueOf(100), true);
+        when(labTestMasterRepository.findAllById(anyList())).thenReturn(List.of(invalid));
+
+        assertThatThrownBy(() -> service.createOrder(TENANT_ID, new LabOrderDirectCreateCommand(
+                PATIENT_ID, LabOrderOrigin.WALK_IN, null, null, null, null, null, List.of(TEST_ID), null), ACTOR_ID))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("test code is missing");
+        verifyNoInteractions(billingService);
+        verify(labOrderRepository, never()).save(any());
     }
 
     @Test
