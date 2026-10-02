@@ -55,6 +55,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
@@ -680,13 +681,17 @@ public class AppointmentService {
     public AppointmentRecord createScheduled(UUID tenantId, AppointmentUpsertCommand command, UUID actorAppUserId, boolean allowOverbooking, ZoneId bookingZone) {
         requireTenant(tenantId);
         validateAppointment(command);
+        Optional<DoctorAvailabilityEntity> lockedAvailability = lockAvailabilityForSlot(tenantId, command, command.type() == AppointmentType.WALK_IN ? null : command.appointmentTime());
         List<DoctorAvailabilitySlotRecord> slots = listSlots(tenantId, command.doctorUserId(), command.appointmentDate(), bookingZone);
         DoctorAvailabilitySlotRecord matchingSlot = findMatchingSlot(slots, command.appointmentTime());
         validateNotPast(command.appointmentDate(), command.appointmentTime(), matchingSlot, bookingZone);
         ensurePatientInTenant(tenantId, command.patientId());
         ensureDoctorInTenant(tenantId, command.doctorUserId());
         ensureNoDuplicateActiveAppointment(tenantId, command.patientId(), command.doctorUserId(), command.appointmentDate(), command.appointmentTime());
-        ensureScheduledSlotAvailable(tenantId, command, allowOverbooking, slots, bookingZone);
+        Long authoritativeBookedCount = lockedAvailability.isPresent()
+                ? countActiveAtSlot(tenantId, command.doctorUserId(), command.appointmentDate(), command.appointmentTime(), null)
+                : null;
+        ensureScheduledSlotAvailable(tenantId, command, allowOverbooking, slots, bookingZone, authoritativeBookedCount);
 
         AppointmentEntity entity = AppointmentEntity.create(tenantId, command.patientId(), command.doctorUserId());
         AppointmentType type = command.type() == null ? AppointmentType.SCHEDULED : command.type();
@@ -939,12 +944,7 @@ public class AppointmentService {
         LocalDate previousDate = entity.getAppointmentDate();
         LocalTime previousTime = entity.getAppointmentTime();
         UUID targetDoctor = command.doctorUserId() == null ? entity.getDoctorUserId() : command.doctorUserId();
-        List<DoctorAvailabilitySlotRecord> slots = listSlots(tenantId, targetDoctor, command.appointmentDate(), bookingZone);
-        DoctorAvailabilitySlotRecord matchingSlot = findMatchingSlot(slots, command.appointmentTime());
-        validateNotPast(command.appointmentDate(), command.appointmentTime(), matchingSlot, bookingZone);
-        ensureDoctorInTenant(tenantId, targetDoctor);
-        ensureNoDuplicateActiveAppointment(tenantId, entity.getPatientId(), targetDoctor, command.appointmentDate(), command.appointmentTime());
-        ensureScheduledSlotAvailable(tenantId, new AppointmentUpsertCommand(
+        AppointmentUpsertCommand targetCommand = new AppointmentUpsertCommand(
                 entity.getPatientId(),
                 targetDoctor,
                 command.appointmentDate(),
@@ -954,7 +954,17 @@ public class AppointmentService {
                 entity.getStatus(),
                 entity.getPriority(),
                 false
-        ), allowOverbooking, slots, bookingZone);
+        );
+        Optional<DoctorAvailabilityEntity> lockedAvailability = lockAvailabilityForSlot(tenantId, targetCommand, command.appointmentTime());
+        List<DoctorAvailabilitySlotRecord> slots = listSlots(tenantId, targetDoctor, command.appointmentDate(), bookingZone);
+        DoctorAvailabilitySlotRecord matchingSlot = findMatchingSlot(slots, command.appointmentTime());
+        validateNotPast(command.appointmentDate(), command.appointmentTime(), matchingSlot, bookingZone);
+        ensureDoctorInTenant(tenantId, targetDoctor);
+        ensureNoDuplicateActiveAppointment(tenantId, entity.getPatientId(), targetDoctor, command.appointmentDate(), command.appointmentTime(), id);
+        Long authoritativeBookedCount = lockedAvailability.isPresent()
+                ? countActiveAtSlot(tenantId, targetDoctor, command.appointmentDate(), command.appointmentTime(), id)
+                : null;
+        ensureScheduledSlotAvailable(tenantId, targetCommand, allowOverbooking, slots, bookingZone, authoritativeBookedCount);
         Integer token = entity.getType() == AppointmentType.WALK_IN
                 ? nextToken(tenantId, targetDoctor, command.appointmentDate())
                 : entity.getTokenNumber();
@@ -1434,10 +1444,14 @@ public class AppointmentService {
 
     private void ensureScheduledSlotAvailable(UUID tenantId, AppointmentUpsertCommand command, boolean allowOverbooking, ZoneId bookingZone) {
         List<DoctorAvailabilitySlotRecord> slots = listSlots(tenantId, command.doctorUserId(), command.appointmentDate(), bookingZone);
-        ensureScheduledSlotAvailable(tenantId, command, allowOverbooking, slots, bookingZone);
+        ensureScheduledSlotAvailable(tenantId, command, allowOverbooking, slots, bookingZone, null);
     }
 
     private void ensureScheduledSlotAvailable(UUID tenantId, AppointmentUpsertCommand command, boolean allowOverbooking, List<DoctorAvailabilitySlotRecord> slots, ZoneId bookingZone) {
+        ensureScheduledSlotAvailable(tenantId, command, allowOverbooking, slots, bookingZone, null);
+    }
+
+    private void ensureScheduledSlotAvailable(UUID tenantId, AppointmentUpsertCommand command, boolean allowOverbooking, List<DoctorAvailabilitySlotRecord> slots, ZoneId bookingZone, Long authoritativeBookedCount) {
         if (command.type() == AppointmentType.WALK_IN) {
             return;
         }
@@ -1458,7 +1472,9 @@ public class AppointmentService {
             }
             throw new IllegalArgumentException("Selected time is outside configured doctor availability. Please choose an available slot.");
         }
-        if (slot.status() == DoctorAvailabilitySlotStatus.FULL) {
+        long bookedCount = authoritativeBookedCount == null ? slot.bookedCount() : authoritativeBookedCount;
+        boolean full = bookedCount >= slot.maxPatientsPerSlot();
+        if (full && !allowOverbooking) {
             throw new IllegalArgumentException("This slot is full.");
         }
         if (slot.status() == DoctorAvailabilitySlotStatus.UNAVAILABLE
@@ -1472,26 +1488,64 @@ public class AppointmentService {
         if (slot.past()) {
             throw new IllegalArgumentException(PAST_SLOT_MESSAGE);
         }
-        if (!slot.bookable() && !allowOverbooking) {
-            throw new IllegalArgumentException("This slot is full.");
-        }
-        if (!StringUtils.hasText(command.reason()) && allowOverbooking && slot.bookedCount() >= slot.maxPatientsPerSlot()) {
+        if (!StringUtils.hasText(command.reason()) && allowOverbooking && full) {
             throw new IllegalArgumentException("Reason is required when overbooking a slot");
         }
     }
 
     private void ensureNoDuplicateActiveAppointment(UUID tenantId, UUID patientId, UUID doctorUserId, LocalDate appointmentDate, LocalTime appointmentTime) {
-        boolean duplicate = appointmentRepository.existsByTenantIdAndDoctorUserIdAndPatientIdAndAppointmentDateAndAppointmentTimeAndStatusNotIn(
-                tenantId,
-                doctorUserId,
-                patientId,
-                appointmentDate,
-                appointmentTime,
-                List.of(AppointmentStatus.CANCELLED, AppointmentStatus.NO_SHOW)
-        );
+        ensureNoDuplicateActiveAppointment(tenantId, patientId, doctorUserId, appointmentDate, appointmentTime, null);
+    }
+
+    private void ensureNoDuplicateActiveAppointment(UUID tenantId, UUID patientId, UUID doctorUserId, LocalDate appointmentDate, LocalTime appointmentTime, UUID excludedAppointmentId) {
+        boolean duplicate;
+        if (excludedAppointmentId == null) {
+            duplicate = appointmentRepository.existsByTenantIdAndDoctorUserIdAndPatientIdAndAppointmentDateAndAppointmentTimeAndStatusNotIn(
+                    tenantId,
+                    doctorUserId,
+                    patientId,
+                    appointmentDate,
+                    appointmentTime,
+                    List.of(AppointmentStatus.CANCELLED, AppointmentStatus.NO_SHOW)
+            );
+        } else {
+            duplicate = appointmentRepository.countActivePatientAtSlot(
+                    tenantId,
+                    doctorUserId,
+                    patientId,
+                    appointmentDate,
+                    appointmentTime,
+                    List.of(AppointmentStatus.CANCELLED, AppointmentStatus.NO_SHOW),
+                    excludedAppointmentId
+            ) > 0;
+        }
         if (duplicate) {
             throw new IllegalArgumentException("An active appointment already exists for the same patient, doctor, date, and time");
         }
+    }
+
+    private long countActiveAtSlot(UUID tenantId, UUID doctorUserId, LocalDate appointmentDate, LocalTime appointmentTime, UUID excludedAppointmentId) {
+        return appointmentRepository.countActiveAtSlot(
+                tenantId,
+                doctorUserId,
+                appointmentDate,
+                appointmentTime,
+                List.of(AppointmentStatus.CANCELLED, AppointmentStatus.NO_SHOW),
+                excludedAppointmentId
+        );
+    }
+
+    private Optional<DoctorAvailabilityEntity> lockAvailabilityForSlot(UUID tenantId, AppointmentUpsertCommand command, LocalTime slotTime) {
+        if (slotTime == null || command.type() == AppointmentType.WALK_IN) {
+            return Optional.empty();
+        }
+        List<DoctorAvailabilityEntity> matches = doctorAvailabilityRepository.findLockedActiveContainingSlot(
+                tenantId,
+                command.doctorUserId(),
+                command.appointmentDate().getDayOfWeek(),
+                slotTime
+        );
+        return matches.stream().findFirst();
     }
 
     private void validateNotPast(LocalDate appointmentDate, LocalTime appointmentTime) {

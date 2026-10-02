@@ -3,6 +3,9 @@ package com.deepthoughtnet.clinic.appointment.db;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import jakarta.persistence.LockModeType;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface DoctorAvailabilityRepository extends JpaRepository<DoctorAvailabilityEntity, UUID> {
@@ -40,4 +43,23 @@ public interface DoctorAvailabilityRepository extends JpaRepository<DoctorAvaila
     );
 
     Optional<DoctorAvailabilityEntity> findByTenantIdAndId(UUID tenantId, UUID id);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+            select availability
+            from DoctorAvailabilityEntity availability
+            where availability.tenantId = :tenantId
+              and availability.doctorUserId = :doctorUserId
+              and availability.dayOfWeek = :dayOfWeek
+              and availability.active = true
+              and availability.startTime <= :slotTime
+              and availability.endTime > :slotTime
+            order by availability.startTime asc, availability.endTime asc
+            """)
+    List<DoctorAvailabilityEntity> findLockedActiveContainingSlot(
+            UUID tenantId,
+            UUID doctorUserId,
+            java.time.DayOfWeek dayOfWeek,
+            java.time.LocalTime slotTime
+    );
 }

@@ -47,6 +47,46 @@ public interface AppointmentRepository extends JpaRepository<AppointmentEntity, 
     );
 
     @Query("""
+            select count(a)
+            from AppointmentEntity a
+            where a.tenantId = :tenantId
+              and a.doctorUserId = :doctorUserId
+              and a.appointmentDate = :appointmentDate
+              and a.appointmentTime = :appointmentTime
+              and a.status not in :excludedStatuses
+              and (:excludedAppointmentId is null or a.id <> :excludedAppointmentId)
+            """)
+    long countActiveAtSlot(
+            UUID tenantId,
+            UUID doctorUserId,
+            LocalDate appointmentDate,
+            LocalTime appointmentTime,
+            List<com.deepthoughtnet.clinic.appointment.service.model.AppointmentStatus> excludedStatuses,
+            UUID excludedAppointmentId
+    );
+
+    @Query("""
+            select count(a)
+            from AppointmentEntity a
+            where a.tenantId = :tenantId
+              and a.doctorUserId = :doctorUserId
+              and a.patientId = :patientId
+              and a.appointmentDate = :appointmentDate
+              and a.appointmentTime = :appointmentTime
+              and a.status not in :excludedStatuses
+              and (:excludedAppointmentId is null or a.id <> :excludedAppointmentId)
+            """)
+    long countActivePatientAtSlot(
+            UUID tenantId,
+            UUID doctorUserId,
+            UUID patientId,
+            LocalDate appointmentDate,
+            LocalTime appointmentTime,
+            List<com.deepthoughtnet.clinic.appointment.service.model.AppointmentStatus> excludedStatuses,
+            UUID excludedAppointmentId
+    );
+
+    @Query("""
             select coalesce(max(a.tokenNumber), 0)
             from AppointmentEntity a
             where a.tenantId = :tenantId

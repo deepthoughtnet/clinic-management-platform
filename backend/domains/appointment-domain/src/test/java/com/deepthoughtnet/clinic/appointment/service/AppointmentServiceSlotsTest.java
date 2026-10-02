@@ -465,6 +465,49 @@ class AppointmentServiceSlotsTest {
     }
 
     @Test
+    void rescheduleToOwnCurrentSlotDoesNotCountTheAppointmentAsCapacity() {
+        DoctorAvailabilityEntity availability = availability();
+        AppointmentEntity source = appointment(LocalTime.of(10, 10), AppointmentStatus.BOOKED);
+        when(doctorAvailabilityRepository.findLockedActiveContainingSlot(
+                TENANT_ID,
+                DOCTOR_ID,
+                APPOINTMENT_DATE.getDayOfWeek(),
+                LocalTime.of(10, 10)
+        )).thenReturn(List.of(availability));
+        when(doctorAvailabilityRepository.findByTenantIdOrderByDoctorUserIdAscDayOfWeekAscStartTimeAsc(TENANT_ID))
+                .thenReturn(List.of(availability));
+        when(appointmentRepository.findByTenantIdAndId(TENANT_ID, source.getId())).thenReturn(Optional.of(source));
+        when(appointmentRepository.findByTenantIdAndDoctorUserIdAndAppointmentDateOrderByTokenNumberAscAppointmentTimeAscCreatedAtAsc(TENANT_ID, DOCTOR_ID, APPOINTMENT_DATE))
+                .thenReturn(List.of(source));
+        when(appointmentRepository.countActiveAtSlot(
+                eq(TENANT_ID),
+                eq(DOCTOR_ID),
+                eq(APPOINTMENT_DATE),
+                eq(LocalTime.of(10, 10)),
+                any(),
+                eq(source.getId())
+        )).thenReturn(0L);
+        when(appointmentRepository.countActivePatientAtSlot(
+                eq(TENANT_ID),
+                eq(DOCTOR_ID),
+                eq(source.getPatientId()),
+                eq(APPOINTMENT_DATE),
+                eq(LocalTime.of(10, 10)),
+                any(),
+                eq(source.getId())
+        )).thenReturn(0L);
+
+        assertThat(service.reschedule(
+                TENANT_ID,
+                source.getId(),
+                new AppointmentRescheduleCommand(DOCTOR_ID, APPOINTMENT_DATE, LocalTime.of(10, 10), "Keep slot"),
+                ACTOR_ID,
+                false
+        )).isNotNull();
+        verify(appointmentRepository).save(source);
+    }
+
+    @Test
     void waitlistCreateAndStatusUpdateWorks() {
         var created = service.createWaitlist(
                 TENANT_ID,
