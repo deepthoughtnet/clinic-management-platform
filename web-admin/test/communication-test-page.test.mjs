@@ -21,6 +21,13 @@ test("communication test is a platform-only provider console", () => {
   assert.ok(page.includes("No appointment, prescription, lab, pharmacy, campaign, or reminder state is changed."));
   assert.ok(api.includes("getCommunicationTestHealth"));
   assert.ok(api.includes("runCommunicationTest"));
+  assert.ok(api.includes("getCommunicationTestVoiceResult"));
+  assert.ok(page.includes("rawTranscript"));
+  assert.ok(page.includes("normalizedIntent"));
+  assert.ok(page.includes("Would execute"));
+  assert.ok(page.includes('value="INTERACTIVE_RESPONSE">Interactive response'));
+  assert.ok(page.includes('mode !== "INTERACTIVE_RESPONSE"'));
+  assert.ok(page.includes("YES_NO_CONFIRMATION"));
   assert.ok(page.includes('selectedHealth.status === "NOT_CONFIGURED"'));
   assert.ok(page.includes('selectedHealth.status === "ERROR"'));
   assert.ok(page.includes("emailRecipient"));

@@ -46,10 +46,16 @@ public class ClinicalDocumentTextExtractionService {
         }
         try {
             provider.validateReady();
+            var result = provider.extractText(new OcrDocument(filename, mediaType, bytes));
+            if (result == null) {
+                // A provider returning no result is a provider failure, not a
+                // successful document with no text.
+                return new ClinicalDocumentTextExtractionResult(provider.providerName(), "FAILED", "");
+            }
             return new ClinicalDocumentTextExtractionResult(
                     provider.providerName(),
                     "COMPLETED",
-                    normalizeWhitespace(provider.extractText(new OcrDocument(filename, mediaType, bytes)).text())
+                    normalizeWhitespace(result.text())
             );
         } catch (RuntimeException ex) {
             return new ClinicalDocumentTextExtractionResult(provider.providerName(), "FAILED", "");

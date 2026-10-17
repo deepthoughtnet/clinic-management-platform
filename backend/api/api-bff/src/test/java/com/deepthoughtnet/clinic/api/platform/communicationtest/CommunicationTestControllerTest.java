@@ -2,6 +2,7 @@ package com.deepthoughtnet.clinic.api.platform.communicationtest;
 
 import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
+import com.deepthoughtnet.clinic.api.voice.VoiceTestProperties;
 import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
@@ -16,6 +17,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.when;
 
 class CommunicationTestControllerTest {
@@ -65,5 +67,55 @@ class CommunicationTestControllerTest {
 
         assertEquals(expected, controller.health());
         verify(service).health("corr-platform");
+    }
+
+    @Test
+    void inboundMediaIsIsolatedByProviderCallIdAndConvertedBeforeCompletion() {
+        CommunicationTestService inboundService = mock(CommunicationTestService.class);
+        Result callA = new Result("test-a", "corr-platform", "VOICE", "dotvoice", "call-a",
+                "INITIATED", true, null, null, null, null);
+        when(inboundService.voiceResultByProviderCallId("call-a")).thenReturn(callA);
+        VoiceTestProperties properties = new VoiceTestProperties();
+        properties.getVad().setSilenceTimeoutMs(25);
+        CommunicationTestDotVoiceInboundHandler handler = new CommunicationTestDotVoiceInboundHandler(inboundService, properties);
+
+        handler.onStreamStart("call-a");
+        handler.onPlaybackComplete("call-a");
+        handler.onMedia("call-a", new byte[]{0, 0});
+        handler.onMedia("call-b", new byte[]{0});
+        try { Thread.sleep(250); } catch (InterruptedException ex) { Thread.currentThread().interrupt(); }
+
+        verify(inboundService).processLiveUtterance(
+                org.mockito.ArgumentMatchers.eq("call-a"),
+                org.mockito.ArgumentMatchers.argThat(wav -> wav != null
+                        && wav.length == 48
+                        && wav[0] == 'R' && wav[1] == 'I' && wav[2] == 'F' && wav[3] == 'F'));
+        verify(inboundService, org.mockito.Mockito.never()).processLiveUtterance(
+                org.mockito.ArgumentMatchers.eq("call-b"), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void threeSequentialInboundCallsCreateAndRemoveIndependentContexts() {
+        CommunicationTestService inboundService = mock(CommunicationTestService.class);
+        when(inboundService.inboundVoiceResult(org.mockito.ArgumentMatchers.anyString()))
+                .thenAnswer(invocation -> new CommunicationTestDtos.InboundVoiceResult(
+                        invocation.getArgument(0), "caller", "did", "INBOUND", "RINGING", "hi-IN", "Sarvam",
+                        null, null, null, null, null, null, "CONNECTED"));
+        CommunicationTestDotVoiceInboundHandler handler = new CommunicationTestDotVoiceInboundHandler(
+                inboundService, new VoiceTestProperties());
+
+        for (String callId : new String[]{"call-a", "call-b", "call-c"}) {
+            handler.onIncomingCall(callId, "caller-" + callId, "did");
+            handler.onStreamStart(callId);
+            handler.onPlaybackComplete(callId);
+            handler.onStreamStop(callId, "completed");
+        }
+
+        verify(inboundService, times(3)).registerInboundCall(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq("did"));
+        verify(inboundService, times(3)).markInboundAnswered(org.mockito.ArgumentMatchers.anyString());
+        verify(inboundService, times(3)).startInboundGreeting(org.mockito.ArgumentMatchers.anyString());
+        verify(inboundService, times(3)).markInboundListening(org.mockito.ArgumentMatchers.anyString());
+        verify(inboundService, times(3)).onInboundStreamStopped(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq("completed"));
     }
 }

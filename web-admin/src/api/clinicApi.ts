@@ -4,8 +4,8 @@ import { buildHelpRequestOptions } from "./helpClient";
 export type PatientGender = "MALE" | "FEMALE" | "OTHER" | "UNKNOWN";
 
 export type CommunicationTestChannel = "EMAIL" | "VOICE" | "WHATSAPP";
-export type CommunicationTestMode = "PROVIDER_ONLY" | "REMINDER_SIMULATION";
-export type CommunicationTestScenario = "APPOINTMENT_REMINDER" | "FOLLOW_UP_CONSULTATION" | "MEDICATION_REFILL_REVIEW" | "LAB_REMINDER" | "LAB_REPORT_READY";
+export type CommunicationTestMode = "PROVIDER_ONLY" | "REMINDER_SIMULATION" | "INTERACTIVE_RESPONSE";
+export type CommunicationTestScenario = "YES_NO_CONFIRMATION" | "APPOINTMENT_REMINDER" | "FOLLOW_UP_CONSULTATION" | "MEDICATION_REFILL_REVIEW" | "LAB_REMINDER" | "LAB_REPORT_READY";
 export type CommunicationTestHealth = {
   channel: string; provider: string; status: string; message: string; configured: boolean;
   providerAvailable: boolean; supportsTest: boolean; senderIdentity: string | null;
@@ -20,7 +20,16 @@ export type CommunicationTestRequest = {
 export type CommunicationTestResult = {
   requestId: string; correlationId: string; channel: string; provider: string;
   providerRequestId: string | null; status: string; success: boolean;
-  startedAt: string; completedAt: string; failureCategory: string | null; failureMessage: string | null;
+  startedAt: string; completedAt: string | null; failureCategory: string | null; failureMessage: string | null;
+  testExecutionId: string | null; sttProvider: string | null; rawTranscript: string | null;
+  detectedLanguage: string | null; sttConfidence: number | null; normalizedIntent: string | null;
+  attemptNumber: number | null; wouldExecuteAction: string | null; answeredAt: string | null; hangupCause: string | null;
+};
+export type CommunicationTestInboundVoiceResult = {
+  callId: string | null; callerPhoneNumber: string | null; didNumber: string | null; direction: string;
+  status: string; language: string; sttProvider: string | null; firstTranscript: string | null;
+  receivedAt: string | null; answeredAt: string | null; capturedAt: string | null; endedAt: string | null;
+  hangupCause: string | null; websocketStatus: string;
 };
 export type AppointmentStatus = "BOOKED" | "WAITING" | "IN_CONSULTATION" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
 export type AppointmentType = "WALK_IN" | "SCHEDULED" | "FOLLOW_UP" | "VACCINATION";
@@ -11296,4 +11305,12 @@ export function getCommunicationTestHealth(token: string) {
 
 export function runCommunicationTest(token: string, channel: CommunicationTestChannel, body: CommunicationTestRequest) {
   return httpPost<CommunicationTestResult>(`/api/platform/communication-test/${channel.toLowerCase()}`, body, { token, platformOperation: true });
+}
+
+export function getCommunicationTestVoiceResult(token: string, testExecutionId: string) {
+  return httpGet<CommunicationTestResult>(`/api/platform/communication-test/voice/${encodeURIComponent(testExecutionId)}`, { token, platformOperation: true });
+}
+
+export function getCommunicationTestInboundVoice(token: string) {
+  return httpGet<CommunicationTestInboundVoiceResult>("/api/platform/communication-test/inbound-voice", { token, platformOperation: true });
 }

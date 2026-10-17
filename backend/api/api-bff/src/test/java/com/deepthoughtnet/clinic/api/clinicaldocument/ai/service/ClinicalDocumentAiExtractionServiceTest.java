@@ -1248,6 +1248,66 @@ class ClinicalDocumentAiExtractionServiceTest {
     }
 
     @Test
+    void processMarksCompletedEmptyOcrAsNonRetryableFailureWithoutCallingAi() {
+        ClinicalAiJobRepository jobRepository = mock(ClinicalAiJobRepository.class);
+        ClinicalDocumentRepository documentRepository = mock(ClinicalDocumentRepository.class);
+        ClinicalDocumentService documentService = mock(ClinicalDocumentService.class);
+        PatientLongitudinalMemoryService longitudinalMemoryService = mock(PatientLongitudinalMemoryService.class);
+        AppUserRepository appUserRepository = mock(AppUserRepository.class);
+        ClinicalDocumentTextExtractionService textExtractionService = mock(ClinicalDocumentTextExtractionService.class);
+        AiDoctorCopilotService aiDoctorCopilotService = mock(AiDoctorCopilotService.class);
+        ObjectStorageService storageService = mock(ObjectStorageService.class);
+        AuditEventPublisher auditEventPublisher = mock(AuditEventPublisher.class);
+        AgentExecutionLogService agentExecutionLogService = mock(AgentExecutionLogService.class);
+        PatientService patientService = mock(PatientService.class);
+        TenantNotificationSettingsService notificationSettingsService = mock(TenantNotificationSettingsService.class);
+        ClinicalDocumentAiExtractionService service = new ClinicalDocumentAiExtractionService(
+                jobRepository,
+                documentRepository,
+                documentService,
+                longitudinalMemoryService,
+                appUserRepository,
+                textExtractionService,
+                aiDoctorCopilotService,
+                storageService,
+                auditEventPublisher,
+                agentExecutionLogService,
+                patientService,
+                notificationSettingsService,
+                new ObjectMapper(),
+                1000L,
+                3
+        );
+
+        ClinicalDocumentEntity document = documentWithNullPatient();
+        ClinicalAiJobEntity job = ClinicalAiJobEntity.queued(
+                TENANT_ID,
+                ClinicalAiJobType.DOCUMENT_EXTRACTION,
+                "PATIENT_CLINICAL_DOCUMENT",
+                DOCUMENT_ID,
+                DOCUMENT_ID,
+                null,
+                null,
+                REVIEWER_ID,
+                "{\"documentId\":\"doc\"}"
+        );
+        when(jobRepository.findById(eq(job.getId()))).thenReturn(Optional.of(job));
+        when(documentRepository.findByTenantIdAndId(eq(TENANT_ID), eq(DOCUMENT_ID))).thenReturn(Optional.of(document));
+        when(documentRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(jobRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(storageService.getObjectBytes(anyString())).thenReturn("fake-bytes".getBytes());
+        when(textExtractionService.extract(any(), any())).thenReturn(new ClinicalDocumentTextExtractionResult("TESSERACT", "COMPLETED", null));
+
+        service.process(job.getId());
+
+        assertThat(job.getStatus()).isEqualTo(ClinicalAiJobStatus.FAILED);
+        assertThat(job.getErrorMessage()).contains("no extractable text");
+        assertThat(document.getAiExtractionSummary()).isEqualTo("AI processing could not complete. Please retry.");
+        verify(aiDoctorCopilotService, never()).draft(any(), anyString(), anyString(), any(), any());
+        assertThat(RequestContextHolder.get()).isNull();
+    }
+
+    @Test
     void repairClinicalMemoryReusesStoredExtractionWithoutOCROrGemini() {
         ClinicalAiJobRepository jobRepository = mock(ClinicalAiJobRepository.class);
         ClinicalDocumentRepository documentRepository = mock(ClinicalDocumentRepository.class);

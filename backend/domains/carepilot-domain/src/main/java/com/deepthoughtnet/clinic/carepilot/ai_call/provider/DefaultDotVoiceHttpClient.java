@@ -47,4 +47,28 @@ public class DefaultDotVoiceHttpClient implements DotVoiceHttpClient {
             return new DotVoiceHttpResponse(599, null);
         }
     }
+
+    @Override
+    public DotVoiceHttpResponse hangupCall(DotVoiceProperties properties, String providerCallId) {
+        if (properties == null || providerCallId == null || providerCallId.isBlank()) {
+            return new DotVoiceHttpResponse(400, null);
+        }
+        try {
+            String base = properties.getBaseUrl().trim();
+            String path = properties.getCallsPath() == null ? "/v1/calls" : properties.getCallsPath().trim();
+            String endpoint = base.endsWith("/") ? base.substring(0, base.length() - 1) : base;
+            endpoint += path.startsWith("/") ? path : "/" + path;
+            endpoint += "/" + java.net.URLEncoder.encode(providerCallId, java.nio.charset.StandardCharsets.UTF_8);
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(endpoint))
+                    .timeout(Duration.ofMillis(properties.getTimeoutMs()))
+                    .header("X-API-Key", properties.getApiKey().trim())
+                    .DELETE()
+                    .build();
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            return new DotVoiceHttpResponse(response.statusCode(), response.body());
+        } catch (Exception ex) {
+            return new DotVoiceHttpResponse(599, null);
+        }
+    }
 }

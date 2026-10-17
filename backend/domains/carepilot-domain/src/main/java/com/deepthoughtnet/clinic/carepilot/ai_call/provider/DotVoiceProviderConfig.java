@@ -11,8 +11,12 @@ public class DotVoiceProviderConfig {
     public DotVoiceHttpClient dotVoiceHttpClient() { return new DefaultDotVoiceHttpClient(); }
 
     @Bean
-    public DotVoiceMediaStreamClient dotVoiceMediaStreamClient(DotVoiceProperties properties) {
-        return new DefaultDotVoiceMediaStreamClient(properties);
+    public DotVoiceMediaStreamClient dotVoiceMediaStreamClient(DotVoiceProperties properties,
+                                                               DotVoiceHttpClient httpClient,
+                                                               java.util.List<DotVoiceInboundMediaHandler> inboundHandlers) {
+        return new DefaultDotVoiceMediaStreamClient(properties, httpClient,
+                java.net.http.HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(5)).build(),
+                new com.fasterxml.jackson.databind.ObjectMapper(), inboundHandlers);
     }
 
     @Bean

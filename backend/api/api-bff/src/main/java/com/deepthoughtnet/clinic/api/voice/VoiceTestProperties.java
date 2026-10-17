@@ -463,6 +463,7 @@ public class VoiceTestProperties {
         private double speechEndThreshold = 0.015;
         private int minSpeechMs = 300;
         private int silenceTimeoutMs = 1500;
+        private int noResponseTimeoutMs = 8000;
         private int maxUtteranceMs = 30000;
 
         public boolean isEnabled() {
@@ -511,6 +512,14 @@ public class VoiceTestProperties {
 
         public void setSilenceTimeoutMs(int silenceTimeoutMs) {
             this.silenceTimeoutMs = silenceTimeoutMs;
+        }
+
+        public int getNoResponseTimeoutMs() {
+            return noResponseTimeoutMs;
+        }
+
+        public void setNoResponseTimeoutMs(int noResponseTimeoutMs) {
+            this.noResponseTimeoutMs = noResponseTimeoutMs;
         }
 
         public int getMaxUtteranceMs() {

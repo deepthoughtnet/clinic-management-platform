@@ -349,14 +349,21 @@ public class ClinicalDocumentAiExtractionService {
             log.info("Clinical document AI processing started. jobId={}, tenantId={}, documentId={}, patientId={}, correlationId={}, stage=AI_PROCESSING_STARTED",
                     job.getId(), job.getTenantId(), job.getDocumentId(), job.getPatientId(), context.correlationId());
             byte[] bytes = storageService.getObjectBytes(document.getStorageKey());
-            ClinicalDocumentTextExtractionResult textResult = textExtractionService.extract(document, bytes);
+            ClinicalDocumentTextExtractionResult textResult = normalizeTextExtractionResult(
+                    textExtractionService.extract(document, bytes));
             traceOcrExtraction(document, textResult);
-            if ("FAILED".equalsIgnoreCase(textResult.status())) {
+            if (!"COMPLETED".equalsIgnoreCase(textResult.status())) {
                 log.warn("Clinical document OCR failed. jobId={}, tenantId={}, documentId={}, patientId={}, correlationId={}, stage=OCR_FAILED, ocrProvider={}",
                         job.getId(), job.getTenantId(), job.getDocumentId(), job.getPatientId(), context.correlationId(), textResult.provider());
             } else {
                 log.info("Clinical document OCR completed. jobId={}, tenantId={}, documentId={}, patientId={}, correlationId={}, stage=OCR_COMPLETED, ocrStatus={}, ocrProvider={}",
                         job.getId(), job.getTenantId(), job.getDocumentId(), job.getPatientId(), context.correlationId(), textResult.status(), textResult.provider());
+            }
+            if (!"COMPLETED".equalsIgnoreCase(textResult.status())) {
+                throw new IllegalStateException("OCR extraction did not complete");
+            }
+            if ("COMPLETED".equalsIgnoreCase(textResult.status()) && !hasText(textResult.text())) {
+                throw new NoExtractableTextException();
             }
             Map<String, Object> input = new LinkedHashMap<>();
             input.put("documentId", document.getId().toString());
@@ -478,7 +485,8 @@ public class ClinicalDocumentAiExtractionService {
             log.info("Clinical document AI extraction completed. jobId={}, tenantId={}, documentId={}, patientId={}, correlationId={}, stage=AI_EXTRACTION_COMPLETED, reviewStatus={}",
                     job.getId(), job.getTenantId(), job.getDocumentId(), job.getPatientId(), context.correlationId(), reviewStatus);
         } catch (RuntimeException ex) {
-            boolean retryable = job.getAttemptCount() + 1 < maxAttempts;
+            boolean retryable = !(ex instanceof NoExtractableTextException)
+                    && job.getAttemptCount() + 1 < maxAttempts;
             String technicalMessage = ex.getMessage() == null || ex.getMessage().isBlank() ? ex.getClass().getSimpleName() : ex.getMessage();
             document.markAiExtractionFailed(job.getProvider(), job.getModel(), FRIENDLY_AI_FAILURE_MESSAGE);
             documentRepository.save(document);
@@ -1939,13 +1947,30 @@ public class ClinicalDocumentAiExtractionService {
         if (!log.isInfoEnabled() || document == null || textResult == null) {
             return;
         }
-        String ocrText = firstHasText(textResult.text(), "");
+        String ocrText = textResult.text() == null ? "" : textResult.text();
         log.info("[AI-DOC-PIPELINE-TRACE] documentId={} stage=OCR provider={} ocrChars={} sanitizedPreview={} labLines={}",
                 document.getId(),
                 textResult.provider(),
                 ocrText.length(),
                 sanitizePreview(ocrText),
                 extractDetectedLabLines(ocrText));
+    }
+
+    private ClinicalDocumentTextExtractionResult normalizeTextExtractionResult(ClinicalDocumentTextExtractionResult result) {
+        if (result == null) {
+            return new ClinicalDocumentTextExtractionResult("NONE", "FAILED", "");
+        }
+        return new ClinicalDocumentTextExtractionResult(
+                result.provider(),
+                result.status(),
+                result.text() == null ? "" : result.text()
+        );
+    }
+
+    private static final class NoExtractableTextException extends RuntimeException {
+        private NoExtractableTextException() {
+            super("OCR completed but produced no extractable text");
+        }
     }
 
     private void traceAiResponse(ClinicalDocumentEntity document, AiDraftResponse response) {

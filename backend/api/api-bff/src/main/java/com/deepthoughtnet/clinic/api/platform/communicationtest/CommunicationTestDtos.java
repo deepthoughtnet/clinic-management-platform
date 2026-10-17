@@ -11,9 +11,9 @@ import java.util.UUID;
 public final class CommunicationTestDtos {
     private CommunicationTestDtos() {}
 
-    public enum TestMode { PROVIDER_ONLY, REMINDER_SIMULATION }
+    public enum TestMode { PROVIDER_ONLY, REMINDER_SIMULATION, INTERACTIVE_RESPONSE }
 
-    public enum Scenario { APPOINTMENT_REMINDER, FOLLOW_UP_CONSULTATION, MEDICATION_REFILL_REVIEW, LAB_REMINDER, LAB_REPORT_READY }
+    public enum Scenario { YES_NO_CONFIRMATION, APPOINTMENT_REMINDER, FOLLOW_UP_CONSULTATION, MEDICATION_REFILL_REVIEW, LAB_REMINDER, LAB_REPORT_READY }
 
     public record TestRequest(
             @NotBlank String recipient,
@@ -61,6 +61,42 @@ public final class CommunicationTestDtos {
             OffsetDateTime startedAt,
             OffsetDateTime completedAt,
             String failureCategory,
-            String failureMessage
+            String failureMessage,
+            String testExecutionId,
+            String sttProvider,
+            String rawTranscript,
+            String detectedLanguage,
+            Double sttConfidence,
+            String normalizedIntent,
+            Integer attemptNumber,
+            String wouldExecuteAction,
+            OffsetDateTime answeredAt,
+            String hangupCause
+    ) {
+        public Result(String requestId, String correlationId, String channel, String provider,
+                      String providerRequestId, String status, boolean success,
+                      OffsetDateTime startedAt, OffsetDateTime completedAt,
+                      String failureCategory, String failureMessage) {
+            this(requestId, correlationId, channel, provider, providerRequestId, status, success,
+                    startedAt, completedAt, failureCategory, failureMessage, requestId, null, null,
+                    null, null, null, null, null, null, null);
+        }
+    }
+
+    public record InboundVoiceResult(
+            String callId,
+            String callerPhoneNumber,
+            String didNumber,
+            String direction,
+            String status,
+            String language,
+            String sttProvider,
+            String firstTranscript,
+            OffsetDateTime receivedAt,
+            OffsetDateTime answeredAt,
+            OffsetDateTime capturedAt,
+            OffsetDateTime endedAt,
+            String hangupCause,
+            String websocketStatus
     ) {}
 }

@@ -3,11 +3,13 @@ package com.deepthoughtnet.clinic.api.clinicaldocument.ai.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.any;
 
 import com.deepthoughtnet.clinic.api.clinicaldocument.db.ClinicalDocumentEntity;
 import com.deepthoughtnet.clinic.api.clinicaldocument.db.ClinicalDocumentType;
 import com.deepthoughtnet.clinic.api.clinicaldocument.ai.model.ClinicalDocumentTextExtractionResult;
 import com.deepthoughtnet.clinic.ocr.spi.OcrProvider;
+import com.deepthoughtnet.clinic.ocr.spi.OcrResult;
 import java.lang.reflect.Field;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -43,6 +45,54 @@ class ClinicalDocumentTextExtractionServiceTest {
         ClinicalDocumentTextExtractionResult result = service.extract(imageDocument(), "image-data".getBytes());
 
         assertThat(result.provider()).isEqualTo("TESSERACT");
+        assertThat(result.status()).isEqualTo("FAILED");
+        assertThat(result.text()).isEmpty();
+    }
+
+    @Test
+    void preservesNormalOcrText() {
+        OcrProvider provider = mock(OcrProvider.class);
+        @SuppressWarnings("unchecked")
+        ObjectProvider<OcrProvider> providerRef = mock(ObjectProvider.class);
+        when(providerRef.getIfAvailable()).thenReturn(provider);
+        when(provider.providerName()).thenReturn("TESSERACT");
+        when(provider.extractText(any())).thenReturn(new OcrResult("TESSERACT", "  HbA1c 8.4  "));
+        ClinicalDocumentTextExtractionService service = new ClinicalDocumentTextExtractionService(providerRef);
+
+        ClinicalDocumentTextExtractionResult result = service.extract(imageDocument(), "image-data".getBytes());
+
+        assertThat(result.status()).isEqualTo("COMPLETED");
+        assertThat(result.text()).isEqualTo("HbA1c 8.4");
+    }
+
+    @Test
+    void normalizesEmptyAndNullProviderTextToCompletedEmptyText() {
+        OcrProvider provider = mock(OcrProvider.class);
+        @SuppressWarnings("unchecked")
+        ObjectProvider<OcrProvider> providerRef = mock(ObjectProvider.class);
+        when(providerRef.getIfAvailable()).thenReturn(provider);
+        when(provider.providerName()).thenReturn("TESSERACT");
+        when(provider.extractText(any())).thenReturn(new OcrResult("TESSERACT", null));
+        ClinicalDocumentTextExtractionService service = new ClinicalDocumentTextExtractionService(providerRef);
+
+        ClinicalDocumentTextExtractionResult result = service.extract(imageDocument(), "image-data".getBytes());
+
+        assertThat(result.status()).isEqualTo("COMPLETED");
+        assertThat(result.text()).isEmpty();
+    }
+
+    @Test
+    void treatsNullProviderResultAsFailedExtraction() {
+        OcrProvider provider = mock(OcrProvider.class);
+        @SuppressWarnings("unchecked")
+        ObjectProvider<OcrProvider> providerRef = mock(ObjectProvider.class);
+        when(providerRef.getIfAvailable()).thenReturn(provider);
+        when(provider.providerName()).thenReturn("TESSERACT");
+        when(provider.extractText(any())).thenReturn(null);
+        ClinicalDocumentTextExtractionService service = new ClinicalDocumentTextExtractionService(providerRef);
+
+        ClinicalDocumentTextExtractionResult result = service.extract(imageDocument(), "image-data".getBytes());
+
         assertThat(result.status()).isEqualTo("FAILED");
         assertThat(result.text()).isEmpty();
     }

@@ -5,6 +5,7 @@ import jakarta.validation.Valid;
 import java.util.UUID;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -28,6 +29,24 @@ public class CommunicationTestController {
 
     @PostMapping("/voice")
     public Result voice(@Valid @RequestBody TestRequest request) { return service.voice(optionalTenantId(), request, correlationId()); }
+
+    @GetMapping("/voice/{testExecutionId}")
+    public Result voiceResult(@PathVariable String testExecutionId) {
+        Result result = service.voiceResult(testExecutionId);
+        if (result == null) throw new IllegalArgumentException("Voice test execution not found");
+        return result;
+    }
+
+    @GetMapping("/inbound-voice")
+    public InboundVoiceResult inboundVoice() {
+        InboundVoiceResult result = service.latestInboundVoiceResult();
+        return result == null
+                ? new InboundVoiceResult(null, null, null, "INBOUND", "WAITING_FOR_INCOMING_CALL", "hi-IN", "Sarvam", null,
+                        null, null, null, null, null, service.inboundVoiceWebsocketStatus())
+                : new InboundVoiceResult(result.callId(), result.callerPhoneNumber(), result.didNumber(), result.direction(), result.status(),
+                        result.language(), result.sttProvider(), result.firstTranscript(), result.receivedAt(), result.answeredAt(), result.capturedAt(),
+                        result.endedAt(), result.hangupCause(), service.inboundVoiceWebsocketStatus());
+    }
 
     @PostMapping("/whatsapp")
     public Result whatsapp(@Valid @RequestBody TestRequest request) { return service.whatsapp(optionalTenantId(), request, correlationId()); }

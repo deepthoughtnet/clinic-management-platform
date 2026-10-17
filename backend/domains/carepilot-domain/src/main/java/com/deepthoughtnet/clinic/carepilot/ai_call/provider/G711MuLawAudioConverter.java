@@ -103,4 +103,50 @@ public final class G711MuLawAudioConverter {
         int mantissa = (sample >> (exponent + 3)) & 0x0f;
         return (~(sign | (exponent << 4) | mantissa)) & 0xff;
     }
+
+    /** Wraps gateway G.711 μ-law bytes as a bounded 8 kHz mono PCM16 WAV for existing STT. */
+    public static byte[] muLawToPcmWav(byte[] muLaw) {
+        if (muLaw == null || muLaw.length == 0) throw new IllegalArgumentException("Empty μ-law audio");
+        byte[] pcm = new byte[muLaw.length * 2];
+        for (int i = 0; i < muLaw.length; i++) {
+            short sample = decodeMuLaw(muLaw[i]);
+            pcm[i * 2] = (byte) (sample & 0xff);
+            pcm[i * 2 + 1] = (byte) ((sample >>> 8) & 0xff);
+        }
+        ByteBuffer wav = ByteBuffer.allocate(44 + pcm.length).order(ByteOrder.LITTLE_ENDIAN);
+        wav.put("RIFF".getBytes(java.nio.charset.StandardCharsets.US_ASCII)).putInt(36 + pcm.length)
+                .put("WAVEfmt ".getBytes(java.nio.charset.StandardCharsets.US_ASCII)).putInt(16)
+                .putShort((short) 1).putShort((short) 1).putInt(TARGET_RATE).putInt(TARGET_RATE * 2)
+                .putShort((short) 2).putShort((short) 16)
+                .put("data".getBytes(java.nio.charset.StandardCharsets.US_ASCII)).putInt(pcm.length).put(pcm);
+        return wav.array();
+    }
+
+    /** Validates the exact PCM16 mono 8 kHz WAV contract produced for STT. */
+    public static boolean isPcm16Mono8kWav(byte[] wav) {
+        try {
+            if (wav == null || wav.length < 44
+                    || wav[0] != 'R' || wav[1] != 'I' || wav[2] != 'F' || wav[3] != 'F'
+                    || wav[8] != 'W' || wav[9] != 'A' || wav[10] != 'V' || wav[11] != 'E') return false;
+            int format = findFmtChunk(wav);
+            int dataOffset = findDataChunk(wav);
+            int dataLength = littleEndianInt(wav, dataOffset - 4);
+            return littleEndianShort(wav, format) == 1
+                    && littleEndianShort(wav, format + 2) == 1
+                    && littleEndianInt(wav, format + 4) == TARGET_RATE
+                    && littleEndianShort(wav, format + 14) == 16
+                    && dataLength >= 0
+                    && dataOffset + dataLength <= wav.length
+                    && (dataLength % 2 == 0);
+        } catch (RuntimeException ex) {
+            return false;
+        }
+    }
+
+    private static short decodeMuLaw(byte value) {
+        int encoded = (~value) & 0xff;
+        int sample = ((encoded & 0x0f) << 3) + 132;
+        sample <<= (encoded & 0x70) >> 4;
+        return (short) ((encoded & 0x80) != 0 ? 132 - sample : sample - 132);
+    }
 }

@@ -38,6 +38,18 @@ class G711MuLawAudioConverterTest {
         frames.forEach(frame -> assertEquals(160, frame.length));
     }
 
+    @Test
+    void wrapsInboundMuLawAsSarvamCompatiblePcmWav() {
+        byte[] wav = G711MuLawAudioConverter.muLawToPcmWav(new byte[160]);
+
+        assertEquals(364, wav.length);
+        assertEquals('R', wav[0]);
+        assertEquals('W', wav[8]);
+        assertEquals('d', wav[36]);
+        assertEquals(8000, ByteBuffer.wrap(wav, 24, 4).order(ByteOrder.LITTLE_ENDIAN).getInt());
+        org.junit.jupiter.api.Assertions.assertTrue(G711MuLawAudioConverter.isPcm16Mono8kWav(wav));
+    }
+
     private byte[] pcmWav(int sampleRate, int channels, int samples) {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         int dataSize = samples * channels * 2;

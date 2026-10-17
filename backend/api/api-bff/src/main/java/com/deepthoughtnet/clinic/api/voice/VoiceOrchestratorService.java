@@ -487,13 +487,24 @@ public class VoiceOrchestratorService {
                                                             String contentType,
                                                             String originalFilename,
                                                             String language) {
+        return transcribeBufferedAudio(RequestContextHolder.requireTenantId(), audioBytes, contentType, originalFilename, language);
+    }
+
+    /**
+     * Buffered STT entry point for asynchronous callers that cannot rely on the
+     * HTTP request context, such as provider WebSocket callbacks.
+     */
+    public VoiceTranscriptionResult transcribeBufferedAudio(UUID tenantId,
+                                                            byte[] audioBytes,
+                                                            String contentType,
+                                                            String originalFilename,
+                                                            String language) {
         if (!properties.isEnabled()) {
             throw new IllegalArgumentException("Voice test is disabled.");
         }
         if (audioBytes == null || audioBytes.length == 0) {
             throw new IllegalArgumentException("Audio file is required.");
         }
-        UUID tenantId = RequestContextHolder.requireTenantId();
         String normalizedLanguage = normalizeLanguageHint(language);
         validateAudio(originalFilename, contentType);
         return transcribe(
