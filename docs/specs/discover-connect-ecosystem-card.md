@@ -6,7 +6,7 @@ Approved for implementation.
 
 ## Scope
 
-Add a new homepage ecosystem card named `Jeevanam Connect` to the Discover home page.
+Expose the existing entry points for all four Jeevanam products from the Healthcare public ecosystem page.
 
 The homepage ecosystem strip must present the Jeevanam products in this order:
 
@@ -26,8 +26,8 @@ The homepage ecosystem strip must present the Jeevanam products in this order:
 
 - Homepage card copy and ordering.
 - Responsive layout for the ecosystem strip.
-- Existing provider entry route reuse for the Connect CTA.
-- Frontend tests covering card presence, order, and navigation label.
+- Existing product entry route/configuration reuse for all product CTAs.
+- Frontend tests covering card presence, order, and destination navigation.
 
 ## Out of Scope
 
@@ -40,5 +40,6 @@ The homepage ecosystem strip must present the Jeevanam products in this order:
 
 - Homepage renders the new Connect card in the correct order.
 - Connect CTA points to the existing provider journey route.
-- Discover, Care, and Healthcare cards remain unchanged aside from ordering.
+- Discover, Connect, Care, and Healthcare cards expose actionable entry CTAs.
+- Discover remains public; Care, Connect, and Healthcare preserve their existing authentication flows.
 - Responsive layout remains usable on desktop, tablet, and mobile.

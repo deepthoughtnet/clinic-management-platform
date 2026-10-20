@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Link, Navigate } from "react-router-dom";
+import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { alpha } from "@mui/material/styles";
 import {
   AdminPanelSettingsRounded,
@@ -30,6 +30,7 @@ import {
   Paper,
   Stack,
   Typography,
+  type ButtonProps,
 } from "@mui/material";
 
 import { useAuth } from "../../auth/useAuth";
@@ -48,8 +49,80 @@ type EcosystemCard = {
   title: string;
   description: string;
   icon: React.ReactNode;
-  cta?: React.ReactNode;
 };
+
+type LandingSectionId = "capabilities" | "clinics" | "hospitals" | "ecosystem";
+
+const landingSectionScrollSx = {
+  scrollMarginTop: { xs: 96, md: 112 },
+};
+
+function useLandingSectionNavigation() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const initialScrollRef = React.useRef(true);
+
+  const scrollToHash = React.useCallback((hash: string, behavior: ScrollBehavior) => {
+    const sectionId = hash.replace(/^#/, "");
+    if (!sectionId) {
+      return;
+    }
+    const section = document.getElementById(sectionId);
+    if (!section) {
+      return;
+    }
+    section.scrollIntoView({ behavior, block: "start" });
+  }, []);
+
+  React.useEffect(() => {
+    if (location.pathname !== "/") {
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      scrollToHash(location.hash, initialScrollRef.current ? "auto" : "smooth");
+      initialScrollRef.current = false;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [location.hash, location.pathname, scrollToHash]);
+
+  React.useEffect(() => {
+    const handleHashChange = () => scrollToHash(window.location.hash, "smooth");
+    window.addEventListener("hashchange", handleHashChange);
+    return () => window.removeEventListener("hashchange", handleHashChange);
+  }, [scrollToHash]);
+
+  return React.useCallback(
+    (sectionId: LandingSectionId) => {
+      navigate({ pathname: location.pathname, search: location.search, hash: `#${sectionId}` });
+    },
+    [location.pathname, location.search, navigate],
+  );
+}
+
+function LandingSectionButton({
+  sectionId,
+  onNavigate,
+  children,
+  ...buttonProps
+}: {
+  sectionId: LandingSectionId;
+  onNavigate: (sectionId: LandingSectionId) => void;
+  children: React.ReactNode;
+} & Omit<ButtonProps<"a">, "component" | "href" | "onClick" | "children" | "ref">) {
+  return (
+    <Button
+      {...buttonProps}
+      component="a"
+      href={`#${sectionId}`}
+      onClick={(event: React.MouseEvent<HTMLElement>) => {
+        event.preventDefault();
+        onNavigate(sectionId);
+      }}
+    >
+      {children}
+    </Button>
+  );
+}
 
 const operationsCards: FeatureCard[] = [
   {
@@ -122,7 +195,6 @@ const ecosystemCards: EcosystemCard[] = [
     title: "Jeevanam Connect",
     description: "Manage your provider profile, publish your presence, and connect with patients.",
     icon: <HubRounded fontSize="inherit" />,
-    cta: null,
   },
   {
     title: "Jeevanam Care",
@@ -206,7 +278,7 @@ function CapabilityCard({ title, description, icon }: FeatureCard) {
   );
 }
 
-function EcosystemCardView({ title, description, icon, cta }: EcosystemCard) {
+function EcosystemCardView({ title, description, icon, cta }: EcosystemCard & { cta: React.ReactNode }) {
   return (
     <Card
       elevation={0}
@@ -240,11 +312,7 @@ function EcosystemCardView({ title, description, icon, cta }: EcosystemCard) {
           {description}
         </Typography>
         <Box sx={{ pt: 0.5 }}>
-          {cta ?? (
-            <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700 }}>
-              Product surface
-            </Typography>
-          )}
+          {cta}
         </Box>
       </CardContent>
     </Card>
@@ -277,6 +345,7 @@ function WorkflowStep({ label, detail }: { label: string; detail: string }) {
 
 export default function HealthcareLandingPage() {
   const auth = useAuth();
+  const navigateToSection = useLandingSectionNavigation();
 
   React.useEffect(() => {
     document.title = productTitle();
@@ -287,10 +356,8 @@ export default function HealthcareLandingPage() {
   }
 
   const providerWorkspaceUrl = `${adminConfig.providerAppUrl.replace(/\/$/, "")}/provider/login`;
-
-  const scrollToCapabilities = () => {
-    document.getElementById("capabilities")?.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
+  const discoverUrl = `${adminConfig.discoverAppUrl.replace(/\/$/, "")}/`;
+  const careUrl = adminConfig.careAppUrl;
 
   return (
     <Box
@@ -319,18 +386,18 @@ export default function HealthcareLandingPage() {
           <Stack direction="row" alignItems="center" justifyContent="space-between" gap={2} flexWrap="wrap">
             <BrandMark title={branding.productName} subtitle={branding.tagline} />
             <Stack direction="row" spacing={1} flexWrap="wrap" justifyContent="flex-end" useFlexGap>
-              <Button component={Link} to="#capabilities" color="inherit" sx={{ fontWeight: 700 }}>
+              <LandingSectionButton sectionId="capabilities" onNavigate={navigateToSection} color="inherit" sx={{ fontWeight: 700 }}>
                 Capabilities
-              </Button>
-              <Button component={Link} to="#who-it-is-for" color="inherit" sx={{ fontWeight: 700 }}>
+              </LandingSectionButton>
+              <LandingSectionButton sectionId="clinics" onNavigate={navigateToSection} color="inherit" sx={{ fontWeight: 700 }}>
                 For Clinics
-              </Button>
-              <Button component={Link} to="#who-it-is-for" color="inherit" sx={{ fontWeight: 700 }}>
+              </LandingSectionButton>
+              <LandingSectionButton sectionId="hospitals" onNavigate={navigateToSection} color="inherit" sx={{ fontWeight: 700 }}>
                 For Hospitals
-              </Button>
-              <Button component={Link} to="#ecosystem" color="inherit" sx={{ fontWeight: 700 }}>
+              </LandingSectionButton>
+              <LandingSectionButton sectionId="ecosystem" onNavigate={navigateToSection} color="inherit" sx={{ fontWeight: 700 }}>
                 Jeevanam Ecosystem
-              </Button>
+              </LandingSectionButton>
               <Button component={Link} to="/login" variant="contained">
                 Sign in
               </Button>
@@ -382,9 +449,9 @@ export default function HealthcareLandingPage() {
                 <Button component={Link} to="/login" size="large" variant="contained" endIcon={<ArrowForwardRounded />}>
                   Sign in to Healthcare
                 </Button>
-                <Button size="large" variant="outlined" onClick={scrollToCapabilities}>
+                <LandingSectionButton sectionId="capabilities" onNavigate={navigateToSection} size="large" variant="outlined">
                   Explore capabilities
-                </Button>
+                </LandingSectionButton>
               </Stack>
             </Stack>
 
@@ -425,7 +492,7 @@ export default function HealthcareLandingPage() {
           </Box>
         </Container>
 
-        <Box id="who-it-is-for" sx={{ py: { xs: 4, md: 6 } }}>
+        <Box id="who-it-is-for" sx={{ ...landingSectionScrollSx, py: { xs: 4, md: 6 } }}>
           <Container maxWidth="xl">
             <SectionHeading
               eyebrow="Who it is for"
@@ -441,13 +508,19 @@ export default function HealthcareLandingPage() {
               }}
             >
               {audienceCards.map((card) => (
-                <CapabilityCard key={card.title} {...card} />
+                <Box
+                  key={card.title}
+                  id={card.title === "Clinics" ? "clinics" : card.title === "Hospitals" ? "hospitals" : undefined}
+                  sx={card.title === "Clinics" || card.title === "Hospitals" ? landingSectionScrollSx : undefined}
+                >
+                  <CapabilityCard {...card} />
+                </Box>
               ))}
             </Box>
           </Container>
         </Box>
 
-        <Box id="capabilities" sx={{ py: { xs: 4, md: 6 } }}>
+        <Box id="capabilities" sx={{ ...landingSectionScrollSx, py: { xs: 4, md: 6 } }}>
           <Container maxWidth="xl">
             <SectionHeading
               eyebrow="Core capabilities"
@@ -586,7 +659,7 @@ export default function HealthcareLandingPage() {
           </Container>
         </Box>
 
-        <Box id="ecosystem" sx={{ py: { xs: 4, md: 6 } }}>
+        <Box id="ecosystem" sx={{ ...landingSectionScrollSx, py: { xs: 4, md: 6 } }}>
           <Container maxWidth="xl">
             <SectionHeading
               eyebrow="Ecosystem"
@@ -606,20 +679,22 @@ export default function HealthcareLandingPage() {
                   key={card.title}
                   {...card}
                   cta={
-                    card.title === "Jeevanam Connect" ? (
-                      <Button
-                        component="a"
-                        href={providerWorkspaceUrl}
-                        variant="contained"
-                        size="small"
-                        endIcon={<ArrowForwardRounded />}
-                      >
+                    card.title === "Jeevanam Discover" ? (
+                      <Button component="a" href={discoverUrl} variant="contained" size="small" endIcon={<ArrowForwardRounded />}>
+                        Explore Discover
+                      </Button>
+                    ) : card.title === "Jeevanam Connect" ? (
+                      <Button component="a" href={providerWorkspaceUrl} variant="contained" size="small" endIcon={<ArrowForwardRounded />}>
                         Provider workspace
                       </Button>
+                    ) : card.title === "Jeevanam Care" ? (
+                      <Button component="a" href={careUrl} variant="contained" size="small" endIcon={<ArrowForwardRounded />}>
+                        Patient portal
+                      </Button>
                     ) : (
-                      <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700 }}>
-                        Product surface
-                      </Typography>
+                      <Button component={Link} to="/login" variant="contained" size="small" endIcon={<ArrowForwardRounded />}>
+                        Sign in to Healthcare
+                      </Button>
                     )
                   }
                 />
@@ -653,9 +728,9 @@ export default function HealthcareLandingPage() {
                   <Button component={Link} to="/login" size="large" variant="contained" endIcon={<ArrowForwardRounded />}>
                     Sign in to Healthcare
                   </Button>
-                  <Button component={Link} to="#capabilities" size="large" variant="outlined">
+                  <LandingSectionButton sectionId="capabilities" onNavigate={navigateToSection} size="large" variant="outlined">
                     Explore capabilities
-                  </Button>
+                  </LandingSectionButton>
                 </Stack>
               </Stack>
             </Paper>

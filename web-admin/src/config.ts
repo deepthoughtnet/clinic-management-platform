@@ -1,5 +1,7 @@
 export type AdminConfig = {
+  discoverAppUrl: string;
   providerAppUrl: string;
+  careAppUrl: string;
 };
 
 function trim(value: string | undefined): string {
@@ -20,6 +22,25 @@ function providerFallback(): string {
   return url.toString().replace(/\/$/, "");
 }
 
+function appFallback(app: "care"): string {
+  if (typeof window === "undefined") {
+    return "https://care.deepthoughtnet.com";
+  }
+  const url = new URL(window.location.origin);
+  if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
+    url.port = "5175";
+    url.pathname = "/patient/login";
+    return url.toString().replace(/\/$/, "");
+  }
+  url.hostname = "care.deepthoughtnet.com";
+  url.pathname = "/patient/login";
+  return url.toString().replace(/\/$/, "");
+}
+
+const discoverAppUrl = trim(import.meta.env.VITE_DISCOVER_APP_URL) || trim(import.meta.env.VITE_PROVIDER_APP_URL) || providerFallback();
+
 export const adminConfig: AdminConfig = {
-  providerAppUrl: trim(import.meta.env.VITE_PROVIDER_APP_URL) || providerFallback(),
+  discoverAppUrl,
+  providerAppUrl: discoverAppUrl,
+  careAppUrl: trim(import.meta.env.VITE_CARE_APP_URL) || appFallback("care"),
 };

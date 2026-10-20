@@ -52,6 +52,8 @@ async function buildLandingBundle() {
     define: {
       "import.meta.env": JSON.stringify({
         VITE_PROVIDER_APP_URL: "",
+        VITE_DISCOVER_APP_URL: "https://discover.example.test",
+        VITE_CARE_APP_URL: "https://care.example.test/patient/login",
         VITE_PRODUCT_NAME: "Jeevanam Healthcare",
         VITE_PRODUCT_TAGLINE: "Intelligent Healthcare Platform",
         VITE_COMPANY_NAME: "DeepThoughtNet",
@@ -123,7 +125,13 @@ test("landing page renders the healthcare homepage copy and ordered ecosystem ca
   assert.ok(ecosystemSection.indexOf("Jeevanam Connect") < ecosystemSection.indexOf("Jeevanam Care"));
   assert.ok(ecosystemSection.indexOf("Jeevanam Care") < ecosystemSection.indexOf("Jeevanam Healthcare"));
   assert.ok(markup.includes("Provider workspace"));
-  assert.ok(markup.includes("provider/login"));
+  assert.ok(markup.includes('href="https://discover.example.test/"'));
+  assert.ok(markup.includes("Explore Discover"));
+  assert.ok(markup.includes('href="https://discover.example.test/provider/login"'));
+  assert.ok(markup.includes('href="https://care.example.test/patient/login"'));
+  assert.ok(markup.includes("Patient portal"));
+  assert.ok(markup.includes("Sign in to Healthcare"));
+  assert.ok(!markup.includes("Product surface"));
 });
 
 test("authenticated users are redirected away from the public landing page", async () => {
@@ -179,6 +187,19 @@ test("app routing keeps public landing on / and login unchanged", () => {
   assert.ok(appSource.includes('return <Navigate to={resolveTenantLandingPage(auth)} replace />;'));
   assert.ok(appSource.includes('document.title = productTitle();'));
   assert.ok(appSource.includes('Sign in to {branding.productName} Admin Console'));
+  assert.ok(landingSource.includes("useLandingSectionNavigation"));
   assert.ok(landingSource.includes("scrollIntoView"));
-  assert.ok(landingSource.includes('behavior: "smooth"'));
+  assert.ok(landingSource.includes('behavior, block: "start"'));
+  assert.ok(landingSource.includes('"smooth"'));
+  assert.ok(landingSource.includes('window.addEventListener("hashchange"'));
+  assert.ok(landingSource.includes('sectionId="capabilities"'));
+  assert.ok(landingSource.includes('sectionId="clinics"'));
+  assert.ok(landingSource.includes('sectionId="hospitals"'));
+  assert.ok(landingSource.includes('sectionId="ecosystem"'));
+  assert.ok(landingSource.includes('card.title === "Clinics" ? "clinics"'));
+  assert.ok(landingSource.includes('card.title === "Hospitals" ? "hospitals"'));
+  assert.ok(landingSource.includes('id="capabilities"'));
+  assert.ok(landingSource.includes('id="ecosystem"'));
+  assert.ok(landingSource.includes("scrollMarginTop"));
+  assert.ok(landingSource.includes('to="/login"'));
 });
