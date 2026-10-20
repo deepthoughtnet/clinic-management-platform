@@ -24,6 +24,7 @@
     <module>domains/appointment-domain</module>
     <module>domains/billing-domain</module>
     <module>domains/clinic-domain</module>
+    <module>domains/communication-domain</module>
     <module>domains/consultation-domain</module>
     <module>domains/identity-domain</module>
     <module>domains/inventory-domain</module>

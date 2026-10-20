@@ -55,6 +55,11 @@ public class CommunicationTestDotVoiceInboundHandler implements DotVoiceInboundM
         ConversationRuntime inboundRuntime = inboundConversations.get(providerCallId);
         log.info("DOTVOICE_INBOUND_CONTEXT_LOOKUP callId={} found={}", providerCallId,
                 inboundResult != null && inboundRuntime != null);
+        if (inboundResult != null && !"RESOLVED".equals(inboundResult.routingStatus())) {
+            log.info("DOTVOICE_INBOUND_STREAM_IGNORED callId={} routingStatus={} reason={}", providerCallId,
+                    inboundResult.routingStatus(), inboundResult.routingFailureReason());
+            return;
+        }
         if (inboundResult != null && inboundRuntime != null) {
             service.markInboundAnswered(providerCallId);
             inboundRuntime.state = VoiceConversationState.PROMPTING;
@@ -90,20 +95,49 @@ public class CommunicationTestDotVoiceInboundHandler implements DotVoiceInboundM
             runtime = inboundConversations.get(providerCallId);
             inbound = runtime != null;
         }
-        if (runtime == null || muLawAudio == null || muLawAudio.length == 0 || runtime.botSpeaking.get()) return;
+        if (inbound) {
+            var inboundResult = service.inboundVoiceResult(providerCallId);
+            if (inboundResult == null || !"RESOLVED".equals(inboundResult.routingStatus())) return;
+        }
+        if (runtime == null || muLawAudio == null || muLawAudio.length == 0) return;
+        if (inbound) runtime.receivedChunkCount++;
+        if (inbound && (runtime.state != VoiceConversationState.LISTENING || runtime.botSpeaking.get())) {
+            if (runtime.receivedChunkCount == 1 || runtime.receivedChunkCount % 50 == 0) {
+                log.info("DOTVOICE_INBOUND_MEDIA_SKIPPED callId={} state={} botSpeaking={} reason=not_listening",
+                        providerCallId, runtime.state, runtime.botSpeaking.get());
+            }
+            return;
+        }
+        if (runtime.botSpeaking.get()) return;
         synchronized (runtime) {
             if (runtime.processing.get() || runtime.buffer.size() >= maxUtteranceBytes()) return;
             runtime.buffer.writeBytes(muLawAudio);
             runtime.lastMediaAt = System.currentTimeMillis();
             runtime.chunkCount++;
             runtime.cumulativeBytes += muLawAudio.length;
-            boolean speech = hasSpeechEnergy(muLawAudio);
+            AudioLevel level = audioLevel(muLawAudio);
+            if (runtime.inbound && (runtime.chunkCount == 1 || runtime.chunkCount % 50 == 0)) {
+                log.info("DOTVOICE_INBOUND_AUDIO_LEVEL callId={} frames={} pcmSamples={} peak={} rms={}",
+                        providerCallId, runtime.chunkCount, runtime.cumulativeBytes, level.peak(), level.rms());
+            }
+            boolean speech = level.rms() >= properties.getVad().getSpeechStartThreshold();
+            boolean speechStarted = false;
             if (speech && !runtime.speechDetected) {
                 runtime.speechDetected = true;
-                log.info(runtime.inbound ? "DOTVOICE_INBOUND_SPEECH_STARTED providerCallId={}" : "COMM_TEST_SPEECH_STARTED providerCallId={}", providerCallId);
+                speechStarted = true;
+                runtime.speechBytes = muLawAudio.length;
+                runtime.lastSpeechAt = runtime.lastMediaAt;
+                if (runtime.inbound) {
+                    log.info("DOTVOICE_INBOUND_SPEECH_STARTED callId={} bufferedBytes={}", providerCallId, runtime.buffer.size());
+                } else {
+                    log.info("COMM_TEST_SPEECH_STARTED providerCallId={}", providerCallId);
+                }
             }
             if (runtime.speechDetected) {
-                if (speech) runtime.lastSpeechAt = runtime.lastMediaAt;
+                if (level.rms() >= properties.getVad().getSpeechEndThreshold()) {
+                    runtime.lastSpeechAt = runtime.lastMediaAt;
+                    if (speech && !speechStarted) runtime.speechBytes += muLawAudio.length;
+                }
                 scheduleSilenceCheck(providerCallId, runtime);
             }
             if (runtime.chunkCount == 1 || runtime.chunkCount % 50 == 0) {
@@ -121,7 +155,17 @@ public class CommunicationTestDotVoiceInboundHandler implements DotVoiceInboundM
         if (runtime == null) return;
         runtime.botSpeaking.set(true);
         var result = service.voiceResultByProviderCallId(providerCallId);
-        if (!runtime.inbound && result != null && "REPROMPTING".equals(result.status())) {
+        var inboundResult = service.inboundVoiceResult(providerCallId);
+        if (runtime.inbound && inboundResult != null && !"CLOSING".equals(inboundResult.status())) {
+            synchronized (runtime) {
+                runtime.buffer.reset();
+                runtime.speechDetected = false;
+                runtime.speechBytes = 0;
+                runtime.lastSpeechAt = 0;
+                runtime.chunkCount = 0;
+                runtime.cumulativeBytes = 0;
+            }
+        } else if (!runtime.inbound && result != null && "REPROMPTING".equals(result.status())) {
             synchronized (runtime) {
                 runtime.buffer.reset();
                 runtime.speechDetected = false;
@@ -130,7 +174,6 @@ public class CommunicationTestDotVoiceInboundHandler implements DotVoiceInboundM
                 runtime.cumulativeBytes = 0;
             }
         }
-        var inboundResult = service.inboundVoiceResult(providerCallId);
         runtime.state = (runtime.inbound && inboundResult != null && "CLOSING".equals(inboundResult.status()))
                 || (!runtime.inbound && result != null && "CLOSING".equals(result.status()))
                 ? VoiceConversationState.CLOSING : VoiceConversationState.REPROMPTING;
@@ -143,10 +186,13 @@ public class CommunicationTestDotVoiceInboundHandler implements DotVoiceInboundM
         if (runtime == null) return;
         runtime.botSpeaking.set(false);
         if (runtime.inbound) {
+            var inboundResult = service.inboundVoiceResult(providerCallId);
+            if (inboundResult == null || !"RESOLVED".equals(inboundResult.routingStatus())) return;
             if (runtime.state == VoiceConversationState.CLOSING) {
                 service.onInboundClosingPlaybackComplete(providerCallId);
             } else {
                 runtime.state = VoiceConversationState.LISTENING;
+                log.info("DOTVOICE_INBOUND_LISTENING_STARTED callId={}", providerCallId);
                 service.markInboundListening(providerCallId);
             }
             return;
@@ -162,19 +208,28 @@ public class CommunicationTestDotVoiceInboundHandler implements DotVoiceInboundM
 
     @Override
     public void onStreamStop(String providerCallId, String cause) {
-        ConversationRuntime runtime = conversations.remove(providerCallId);
+        ConversationRuntime runtime = conversations.get(providerCallId);
         boolean inbound = false;
         if (runtime == null) {
-            runtime = inboundConversations.remove(providerCallId);
+            runtime = inboundConversations.get(providerCallId);
             inbound = runtime != null;
         }
         if (runtime == null) return;
-        cancel(runtime);
-        log.info("DOTVOICE_INBOUND_CONTEXT_REMOVED callId={}", providerCallId);
         byte[] audio;
-        synchronized (runtime) { audio = runtime.buffer.toByteArray(); }
+        synchronized (runtime) {
+            if (runtime.inbound && runtime.state == VoiceConversationState.LISTENING
+                    && runtime.speechDetected && runtime.speechBytes >= minSpeechBytes()
+                    && !runtime.processing.get()) {
+                finalizeUtterance(providerCallId, runtime, "stream_stop");
+            }
+            audio = runtime.buffer.toByteArray();
+        }
         log.info("DOTVOICE_STREAM_STOP_RECEIVED providerCallId={} cause={} bufferedBytes={} chunkCount={}",
                 providerCallId, cause, audio.length, runtime.chunkCount);
+        cancel(runtime);
+        if (conversations.remove(providerCallId, runtime)) inbound = false;
+        else if (inboundConversations.remove(providerCallId, runtime)) inbound = true;
+        log.info("DOTVOICE_INBOUND_CONTEXT_REMOVED callId={}", providerCallId);
         if (inbound) service.onInboundStreamStopped(providerCallId, cause);
         else service.onInteractiveStreamStopped(providerCallId, cause);
     }
@@ -213,27 +268,46 @@ public class CommunicationTestDotVoiceInboundHandler implements DotVoiceInboundM
     private void finalizeUtterance(String providerCallId, ConversationRuntime runtime, String reason) {
         if (!runtime.processing.compareAndSet(false, true)) return;
         byte[] audio = runtime.buffer.toByteArray();
-        log.info(runtime.inbound ? "DOTVOICE_INBOUND_SPEECH_ENDED providerCallId={} reason={} bufferedBytes={} chunkCount={}"
-                : "COMM_TEST_SPEECH_ENDED providerCallId={} reason={} bufferedBytes={} chunkCount={}",
-                providerCallId, reason, audio.length, runtime.chunkCount);
+        if (runtime.inbound) {
+            log.info("DOTVOICE_INBOUND_SPEECH_ENDED callId={} reason={} utteranceBytes={} speechMs={}",
+                    providerCallId, reason, audio.length, runtime.speechBytes / (BYTES_PER_MULAW_SECOND / 1_000L));
+        } else {
+            log.info("COMM_TEST_SPEECH_ENDED providerCallId={} reason={} bufferedBytes={} chunkCount={}",
+                    providerCallId, reason, audio.length, runtime.chunkCount);
+        }
         if (runtime.inbound) service.processInboundFirstUtterance(providerCallId, G711MuLawAudioConverter.muLawToPcmWav(audio));
         else service.processLiveUtterance(providerCallId, G711MuLawAudioConverter.muLawToPcmWav(audio));
         var result = service.voiceResultByProviderCallId(providerCallId);
-        if (!runtime.inbound && result != null && "REPROMPTING".equals(result.status())) runtime.processing.set(false);
+        if (runtime.inbound) {
+            var inboundResult = service.inboundVoiceResult(providerCallId);
+            if (inboundResult != null
+                    && !"CLOSING".equals(inboundResult.status())
+                    && !"HANGUP_REQUESTED".equals(inboundResult.status())) {
+                runtime.processing.set(false);
+            }
+        } else if (result != null && "REPROMPTING".equals(result.status())) {
+            runtime.processing.set(false);
+        }
     }
 
     private int maxUtteranceBytes() {
         return Math.max(BYTES_PER_MULAW_SECOND, properties.getVad().getMaxUtteranceMs() * BYTES_PER_MULAW_SECOND / 1_000);
     }
 
-    private boolean hasSpeechEnergy(byte[] muLaw) {
+    private int minSpeechBytes() {
+        return Math.max(160, properties.getVad().getMinSpeechMs() * BYTES_PER_MULAW_SECOND / 1_000);
+    }
+
+    private AudioLevel audioLevel(byte[] muLaw) {
         long sum = 0;
+        int peak = 0;
         for (byte value : muLaw) {
             int sample = decodeMuLaw(value);
+            peak = Math.max(peak, Math.abs(sample));
             sum += (long) sample * sample;
         }
         double rms = Math.sqrt(sum / (double) muLaw.length) / Short.MAX_VALUE;
-        return rms >= properties.getVad().getSpeechStartThreshold();
+        return new AudioLevel(peak, rms);
     }
 
     private short decodeMuLaw(byte value) {
@@ -260,8 +334,12 @@ public class CommunicationTestDotVoiceInboundHandler implements DotVoiceInboundM
         private volatile long lastSpeechAt;
         private volatile int chunkCount;
         private volatile int cumulativeBytes;
+        private volatile int receivedChunkCount;
+        private volatile int speechBytes;
         private volatile boolean speechDetected;
         private ConversationRuntime() { this(false); }
         private ConversationRuntime(boolean inbound) { this.inbound = inbound; }
     }
+
+    private record AudioLevel(int peak, double rms) {}
 }

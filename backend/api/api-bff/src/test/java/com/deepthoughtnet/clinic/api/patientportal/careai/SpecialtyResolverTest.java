@@ -25,7 +25,10 @@ class SpecialtyResolverTest {
                 "general medicine ka doctor",
                 "mujhe general physician chahiye",
                 "जनरल फिजिशियन",
-                "जनरल मेडिसिन"
+                "जनरल मेडिसिन",
+                "general position",
+                "general physican",
+                "general's physician"
         )) {
             SpecialtyResolver.SpecialtyResolution resolution = resolver.resolve(phrase, supported);
             assertThat(resolution.resolved())
@@ -35,6 +38,19 @@ class SpecialtyResolverTest {
                     .as("phrase=%s", phrase)
                     .isEqualTo("General Medicine");
         }
+    }
+
+    @Test
+    void resolvesPediatricsVoiceAliasesToCanonicalSpecialty() {
+        for (String phrase : List.of("बच्चों का डॉक्टर", "बच्चों के डॉक्टर", "बाल रोग विशेषज्ञ", "बाल रोग",
+                "पेडियाट्रिक्स", "पेडियाट्रिशियन", "पेडिट्रिशियन", "पीडियाट्रिशियन",
+                "pediatrician", "pediatrics")) {
+            assertThat(resolver.resolve(phrase, List.of("Pediatrics", "General Medicine")).canonicalSpecialty())
+                    .as("phrase=%s", phrase)
+                    .isEqualTo("Pediatrics");
+        }
+        assertThat(resolver.canonicalize("मुझे बच्चों के डॉक्टर चाहिए")).isEqualTo("Pediatrics");
+        assertThat(resolver.canonicalize("क्या बच्चों का डॉक्टर अवेलेबल है?")).isEqualTo("Pediatrics");
     }
 
     @Test

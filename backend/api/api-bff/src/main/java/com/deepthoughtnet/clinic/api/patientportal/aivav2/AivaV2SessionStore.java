@@ -174,6 +174,14 @@ class AivaV2SessionStore {
         return Optional.ofNullable(value);
     }
 
+    void remove(String key) {
+        if (key == null || key.isBlank()) return;
+        sessions.remove(key);
+        presentation.remove(key);
+        turnHistory.remove(key);
+        if (distributed) redis.delete(redisKey(key));
+    }
+
     /** Returns the authoritative accepted-turn sequence for a resumed voice conversation. */
     long lastAcceptedSequence(String key) {
         if (distributed) {

@@ -99,6 +99,19 @@ public class PatientService {
         return repository.findByTenantIdAndId(tenantId, id).map(this::toRecord);
     }
 
+    /** Read-only tenant-scoped lookup for inbound caller identification. */
+    @Transactional(readOnly = true)
+    public List<PatientRecord> findActiveByTenantAndMobile(UUID tenantId, String mobile) {
+        requireTenant(tenantId);
+        if (!StringUtils.hasText(mobile)) {
+            return List.of();
+        }
+        return repository.findByTenantIdAndMobileIgnoreCaseAndActiveTrue(tenantId, mobile.trim())
+                .stream()
+                .map(this::toRecord)
+                .toList();
+    }
+
     @Transactional
     public PatientRecord create(UUID tenantId, PatientUpsertCommand command, UUID actorAppUserId) {
         requireTenant(tenantId);

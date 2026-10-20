@@ -57,6 +57,7 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
         "com.deepthoughtnet.clinic.discover.provideraccess.db",
         "com.deepthoughtnet.clinic.platform.providerintegration.db",
         "com.deepthoughtnet.clinic.discover.landingpage.db",
+        "com.deepthoughtnet.clinic.communication.db",
         "com.deepthoughtnet.clinic.realtime.voice.db"
 })
 @EnableJpaRepositories(basePackages = {
@@ -106,6 +107,7 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
         "com.deepthoughtnet.clinic.discover.provideraccess.db",
         "com.deepthoughtnet.clinic.platform.providerintegration.db",
         "com.deepthoughtnet.clinic.discover.landingpage.db",
+        "com.deepthoughtnet.clinic.communication.db",
         "com.deepthoughtnet.clinic.realtime.voice.db"
 })
 public class PersistenceScanConfig {

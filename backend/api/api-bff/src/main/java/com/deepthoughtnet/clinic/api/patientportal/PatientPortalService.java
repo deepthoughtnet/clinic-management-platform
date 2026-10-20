@@ -547,7 +547,13 @@ public class PatientPortalService {
 
     public List<PatientPortalDoctorResponse> doctors() {
         PatientAccess access = requireCurrentPatientAccess();
-        return activeDoctorSnapshots(access.tenantId()).stream()
+        return doctorsForTenant(access.tenantId());
+    }
+
+    /** Trusted server-side read-only discovery entry point; it does not inspect portal/session state. */
+    public List<PatientPortalDoctorResponse> doctorsForTenant(UUID tenantId) {
+        if (tenantId == null) return List.of();
+        return activeDoctorSnapshots(tenantId).stream()
                 .map(snapshot -> new PatientPortalDoctorResponse(
                         snapshot.user().appUserId().toString(),
                         snapshot.user().displayName(),
@@ -556,6 +562,22 @@ public class PatientPortalService {
                         summarize(snapshot.profile().consultationRoom()),
                         snapshot.profile().yearsOfExperience()
                 ))
+                .toList();
+    }
+
+    /** Trusted server-side availability entry point for public voice discovery. */
+    public List<PatientPortalDoctorSlotResponse> doctorSlotsForTenant(UUID tenantId, String publicDoctorId,
+            LocalDate date) {
+        if (tenantId == null || publicDoctorId == null || date == null) return List.of();
+        DoctorSnapshot doctor = activeDoctorSnapshots(tenantId).stream()
+                .filter(snapshot -> publicDoctorId.equals(snapshot.user().appUserId().toString()))
+                .findFirst().orElse(null);
+        if (doctor == null) return List.of();
+        ZoneId tenantZone = resolveTenantZone(tenantId);
+        ZonedDateTime clinicNow = ZonedDateTime.now(tenantZone);
+        return appointmentService.listSlots(tenantId, doctor.user().appUserId(), date, tenantZone).stream()
+                .filter(slot -> AppointmentTimingRules.isSlotBookableForPatient(slot.appointmentDate(), slot.slotTime(), tenantZone, clinicNow))
+                .map(slot -> toDoctorSlotResponse(slot, tenantId, doctor.user().appUserId()))
                 .toList();
     }
 

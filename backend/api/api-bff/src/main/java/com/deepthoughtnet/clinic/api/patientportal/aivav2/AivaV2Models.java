@@ -511,7 +511,8 @@ public final class AivaV2Models {
             boolean closed,
             long version,
             Instant expiresAt,
-            AppointmentSummary activeAppointmentReferent
+            AppointmentSummary activeAppointmentReferent,
+            ProviderCandidate activeVoiceDoctor
     ) {
         public SessionProjection(String conversationId, UUID patientId, String tenantId,
                                  BookingDraft activeDraft, BookingDraft suspendedDraft,
@@ -521,7 +522,7 @@ public final class AivaV2Models {
                                  RescheduleConfirmation pendingRescheduleConfirmation, long version, Instant expiresAt) {
             this(conversationId, patientId, tenantId, activeDraft, suspendedDraft, latestProviderResult,
                     latestAvailabilityResult, pendingConfirmation, pendingCancellation, pendingCancellationResolution,
-                    pendingReschedule, pendingRescheduleConfirmation, null, false, version, expiresAt, null);
+                    pendingReschedule, pendingRescheduleConfirmation, null, false, version, expiresAt, null, null);
         }
 
         public SessionProjection(String conversationId, UUID patientId, String tenantId,
@@ -547,7 +548,22 @@ public final class AivaV2Models {
             this(conversationId, patientId, tenantId, activeDraft, suspendedDraft, latestProviderResult,
                     latestAvailabilityResult, pendingConfirmation, pendingCancellation, pendingCancellationResolution,
                     pendingReschedule, pendingRescheduleConfirmation, pendingTemporalClarification,
-                    closed, version, expiresAt, null);
+                    closed, version, expiresAt, null, null);
+        }
+
+        /** Backward-compatible constructor for existing V2 workflow/session projections. */
+        public SessionProjection(String conversationId, UUID patientId, String tenantId,
+                                 BookingDraft activeDraft, BookingDraft suspendedDraft,
+                                 ProviderSearchResult latestProviderResult, AvailabilityResult latestAvailabilityResult,
+                                 BookingConfirmation pendingConfirmation, CancellationConfirmation pendingCancellation,
+                                 CancellationResolution pendingCancellationResolution, RescheduleResolution pendingReschedule,
+                                 RescheduleConfirmation pendingRescheduleConfirmation,
+                                 TemporalClarification pendingTemporalClarification, boolean closed,
+                                 long version, Instant expiresAt, AppointmentSummary activeAppointmentReferent) {
+            this(conversationId, patientId, tenantId, activeDraft, suspendedDraft, latestProviderResult,
+                    latestAvailabilityResult, pendingConfirmation, pendingCancellation,
+                    pendingCancellationResolution, pendingReschedule, pendingRescheduleConfirmation,
+                    pendingTemporalClarification, closed, version, expiresAt, activeAppointmentReferent, null);
         }
 
         public SessionProjection(String conversationId, UUID patientId, String tenantId,
@@ -555,7 +571,7 @@ public final class AivaV2Models {
                                  ProviderSearchResult latestProviderResult, AvailabilityResult latestAvailabilityResult,
                                  BookingConfirmation pendingConfirmation, long version, Instant expiresAt) {
             this(conversationId, patientId, tenantId, activeDraft, suspendedDraft, latestProviderResult,
-                    latestAvailabilityResult, pendingConfirmation, null, null, null, null, null, false, version, expiresAt);
+                    latestAvailabilityResult, pendingConfirmation, null, null, null, null, null, false, version, expiresAt, null, null);
         }
 
         public SessionProjection(String conversationId, UUID patientId, String tenantId,
@@ -564,32 +580,58 @@ public final class AivaV2Models {
                                  BookingConfirmation pendingConfirmation, CancellationConfirmation pendingCancellation,
                                  long version, Instant expiresAt) {
             this(conversationId, patientId, tenantId, activeDraft, suspendedDraft, latestProviderResult,
-                    latestAvailabilityResult, pendingConfirmation, pendingCancellation, null, null, null, null, false, version, expiresAt);
+                    latestAvailabilityResult, pendingConfirmation, pendingCancellation, null, null, null, null, false, version, expiresAt, null, null);
         }
 
         public SessionProjection withTemporalClarification(TemporalClarification clarification) {
             return new SessionProjection(conversationId, patientId, tenantId, activeDraft, suspendedDraft,
                     latestProviderResult, latestAvailabilityResult, pendingConfirmation, pendingCancellation,
                     pendingCancellationResolution, pendingReschedule, pendingRescheduleConfirmation,
-                    clarification, closed, version, expiresAt);
+                    clarification, closed, version, expiresAt, activeAppointmentReferent, activeVoiceDoctor);
         }
 
         public SessionProjection withAppointmentReferent(AppointmentSummary referent) {
             return new SessionProjection(conversationId, patientId, tenantId, activeDraft, suspendedDraft,
                     latestProviderResult, latestAvailabilityResult, pendingConfirmation, pendingCancellation,
                     pendingCancellationResolution, pendingReschedule, pendingRescheduleConfirmation,
-                    pendingTemporalClarification, closed, version, expiresAt, referent);
+                    pendingTemporalClarification, closed, version, expiresAt, referent, activeVoiceDoctor);
+        }
+
+        /** Stores the latest read-only provider discovery result for a channel-neutral follow-up turn. */
+        public SessionProjection withVoiceProviderResult(ProviderSearchResult providerResult) {
+            return new SessionProjection(conversationId, patientId, tenantId, activeDraft, suspendedDraft,
+                    providerResult, latestAvailabilityResult, pendingConfirmation, pendingCancellation,
+                    pendingCancellationResolution, pendingReschedule, pendingRescheduleConfirmation,
+                    pendingTemporalClarification, closed, version + 1, expiresAt, activeAppointmentReferent,
+                    activeVoiceDoctor);
+        }
+
+        /** Retains only the latest read-only Voice slot page/context for daypart choice and pagination. */
+        public SessionProjection withVoiceAvailabilityResult(AvailabilityResult availabilityResult) {
+            return new SessionProjection(conversationId, patientId, tenantId, activeDraft, suspendedDraft,
+                    latestProviderResult, availabilityResult, pendingConfirmation, pendingCancellation,
+                    pendingCancellationResolution, pendingReschedule, pendingRescheduleConfirmation,
+                    pendingTemporalClarification, closed, version + 1, expiresAt, activeAppointmentReferent,
+                    activeVoiceDoctor);
+        }
+
+        /** Durable call-scoped provider identity, independent of transient availability/paging state. */
+        public SessionProjection withActiveVoiceDoctor(ProviderCandidate doctor) {
+            return new SessionProjection(conversationId, patientId, tenantId, activeDraft, suspendedDraft,
+                    latestProviderResult, latestAvailabilityResult, pendingConfirmation, pendingCancellation,
+                    pendingCancellationResolution, pendingReschedule, pendingRescheduleConfirmation,
+                    pendingTemporalClarification, closed, version + 1, expiresAt, activeAppointmentReferent, doctor);
         }
 
         public SessionProjection close() {
             return new SessionProjection(conversationId, patientId, tenantId, null, null, null, null,
-                    null, null, null, null, null, null, true, version + 1, expiresAt, null);
+                    null, null, null, null, null, null, true, version + 1, expiresAt, null, null);
         }
 
         /** Clears transient workflow state while preserving conversation lifecycle and identity. */
         public SessionProjection clearTransientWorkflow() {
             return new SessionProjection(conversationId, patientId, tenantId, null, null, null, null,
-                    null, null, null, null, null, null, closed, version + 1, expiresAt, null);
+                    null, null, null, null, null, null, closed, version + 1, expiresAt, null, null);
         }
     }
 

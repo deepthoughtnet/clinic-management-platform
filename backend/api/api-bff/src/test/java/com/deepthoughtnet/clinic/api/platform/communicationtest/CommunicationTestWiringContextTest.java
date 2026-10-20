@@ -3,6 +3,9 @@ package com.deepthoughtnet.clinic.api.platform.communicationtest;
 import com.deepthoughtnet.clinic.api.carepilot.CarePilotMessagingStatusService;
 import com.deepthoughtnet.clinic.api.voice.VoiceOrchestratorService;
 import com.deepthoughtnet.clinic.api.voice.VoiceTestProperties;
+import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
+import com.deepthoughtnet.clinic.api.patientportal.careai.HealthcareAiReadOnlyToolGateway;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2VoiceConversationAdapter;
 import com.deepthoughtnet.clinic.carepilot.ai_call.provider.DotVoiceMediaStreamClient;
 import com.deepthoughtnet.clinic.carepilot.ai_call.provider.DotVoiceProviderConfig;
 import com.deepthoughtnet.clinic.carepilot.ai_call.service.VoiceConversationContextRegistry;
@@ -14,6 +17,9 @@ import org.springframework.context.annotation.AnnotationConfigApplicationContext
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
+import com.deepthoughtnet.clinic.communication.service.CommunicationChannelResolver;
+import com.deepthoughtnet.clinic.communication.service.CommunicationInteractionService;
+import com.deepthoughtnet.clinic.patient.service.PatientService;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.Mockito.mock;
@@ -27,15 +33,25 @@ class CommunicationTestWiringContextTest {
             assertNotNull(context.getBean(DotVoiceMediaStreamClient.class));
             assertNotNull(context.getBean(DotVoiceInboundListenerLifecycle.class));
             assertNotNull(context.getBean(CommunicationTestService.class));
+            VoiceReadOnlyAivaService aiva = context.getBean(VoiceReadOnlyAivaService.class);
+            assertNotNull(aiva);
+            org.junit.jupiter.api.Assertions.assertTrue(
+                    context.getBean(CommunicationTestService.class).isVoiceReadOnlyAivaEnabled());
         }
     }
 
     @Configuration(proxyBeanMethods = false)
-    @Import({DotVoiceProviderConfig.class, CommunicationTestDotVoiceInboundHandler.class, DotVoiceInboundListenerLifecycle.class})
+    @Import({DotVoiceProviderConfig.class, CommunicationTestDotVoiceInboundHandler.class,
+            DotVoiceInboundListenerLifecycle.class, VoiceReadOnlyAivaService.class})
     static class WiringConfiguration {
         @Bean
         VoiceTestProperties voiceTestProperties() {
             return new VoiceTestProperties();
+        }
+
+        @Bean
+        ClinicTimeZoneResolver clinicTimeZoneResolver() {
+            return mock(ClinicTimeZoneResolver.class);
         }
 
         @Bean
@@ -74,6 +90,21 @@ class CommunicationTestWiringContextTest {
         }
 
         @Bean
+        HealthcareAiReadOnlyToolGateway healthcareAiReadOnlyToolGateway() {
+            return mock(HealthcareAiReadOnlyToolGateway.class);
+        }
+
+        @Bean
+        AivaV2VoiceConversationAdapter aivaV2VoiceConversationAdapter() {
+            return mock(AivaV2VoiceConversationAdapter.class);
+        }
+
+        @Bean
+        CommunicationChannelResolver communicationChannelResolver() {
+            return mock(CommunicationChannelResolver.class);
+        }
+
+        @Bean
         CommunicationTestService communicationTestService(
                 CarePilotMessagingStatusService messagingStatusService,
                 MessageOrchestratorService messageOrchestratorService,
@@ -82,7 +113,11 @@ class CommunicationTestWiringContextTest {
                 DotVoiceMediaStreamClient dotVoiceMediaStreamClient,
                 VoiceOrchestratorService voiceOrchestratorService,
                 VoiceConversationContextRegistry contextRegistry,
-                VoiceResponseInterpreter responseInterpreter) {
+                VoiceResponseInterpreter responseInterpreter,
+                CommunicationChannelResolver communicationChannelResolver,
+                PatientService patientService,
+                CommunicationInteractionService interactionService,
+                VoiceReadOnlyAivaService voiceReadOnlyAivaService) {
             return new CommunicationTestService(
                     messagingStatusService,
                     messageOrchestratorService,
@@ -93,7 +128,21 @@ class CommunicationTestWiringContextTest {
                     dotVoiceMediaStreamClient,
                     voiceOrchestratorService,
                     contextRegistry,
-                    responseInterpreter);
+                    responseInterpreter,
+                    communicationChannelResolver,
+                    patientService,
+                    interactionService,
+                    voiceReadOnlyAivaService);
+        }
+
+        @Bean
+        PatientService patientService() {
+            return mock(PatientService.class);
+        }
+
+        @Bean
+        CommunicationInteractionService communicationInteractionService() {
+            return mock(CommunicationInteractionService.class);
         }
     }
 }

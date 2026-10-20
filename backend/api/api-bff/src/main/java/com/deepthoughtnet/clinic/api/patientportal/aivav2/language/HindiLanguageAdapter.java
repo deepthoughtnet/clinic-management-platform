@@ -10,19 +10,31 @@ import org.springframework.stereotype.Component;
 @Component
 public class HindiLanguageAdapter extends EnglishLanguageAdapter {
     private static final Pattern HINDI_SIGNAL = Pattern.compile(
-            "(?:mujhe|meri|mere|ke\\s+saath|karni\\s+hai|wali|wala|theek|hai|haan|nahi|nahin|namaste|subah|dopahar|shaam|raat|baje|dikhao|aur|dusri|agali|pehla|पहला|हाँ|हां|नहीं|नही|नमस्ते|सुबह|दोपहर|शाम|रात|बजे|दिखाओ|और|दूसरी|अगली|स्लॉट)",
+            "(?:mujhe|meri|mere|ke\\s+saath|karni\\s+hai|wali|wala|theek|hai|haan|nahi|nahin|namaste|subah|dopahar|shaam|raat|baje|dikhao|aur|dusri|doosra|doosre|agali|pehla|पहला|हाँ|हां|नहीं|नही|नमस्ते|सुबह|दोपहर|शाम|रात|इवनिंग|मॉर्निंग|आफ्टरनून|बजे|दिखाओ|और|दूसरी|अगली|स्लॉट)",
             Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
     private static final Pattern HINGLISH_DOCTOR = Pattern.compile(
-            "(?i)((?:doctor|dr\\.?|doc)\\s+[\\p{L}][\\p{L}\\p{N}'-]*(?:\\s+(?!ke\\b|के(?=\\s)|sath\\b|साथ(?=\\s)|with\\b|appointment\\b)[\\p{L}][\\p{L}\\p{N}'-]*){0,3})"
-                    + "(?=\\s+(?:ke\\s+(?:saath|sath)|के\\s+साथ|से|with|appointment)(?:\\s|$)|[?.!,।]|$)");
+            "(?i)((?:doctor|dr\\.?|doc)\\s+[\\p{L}][\\p{L}\\p{N}'-]*(?:\\s+(?!ka\\b|ki\\b|ke\\b|के(?=\\s)|sath\\b|साथ(?=\\s)|with\\b|appointment\\b|consult|sitting|schedule|hours|time|evening|morning|afternoon)[\\p{L}][\\p{L}\\p{N}'-]*){0,3})"
+                    + "(?=(?:['’]s\\s+appointment)|\\s+(?:ke\\s+(?:saath|sath|sitting|time)|के\\s+(?:साथ|बैठने)|से|with|appointment|consult|consultation|sitting|schedule|hours|time|in|mein|में|evening|morning|afternoon)(?:\\s|$)|[?.!,।]|$)");
     private static final Pattern DEVANAGARI_DOCTOR = Pattern.compile(
             "((?:डॉ\\.?|डॉक्टर)\\s+(?!(?:के|साथ|से)(?=\\s|$))[\\p{IsDevanagari}\\p{M}]+"
                     + "(?:\\s+(?!(?:के|साथ|से)(?=\\s|$))[\\p{IsDevanagari}\\p{M}]+){0,3})"
-                    + "(?=\\s+(?:के\\s+साथ|से|की|का)(?:\\s|$)|[?.!,]|$)");
+                    + "(?=\\s+(?:के\\s+साथ|से|की|का|available|अवेलेबल|उपलब्ध|हैं|है|कब|किस\\s+समय|बैठते|बैठने|consult|consultation|sitting|schedule|hours|time|शाम|सुबह|दोपहर)(?:\\s|$)|[?.!,।]|$)");
+    private static final Pattern BARE_LATIN_DOCTOR = Pattern.compile(
+            "((?:[A-Z][\\p{L}][\\p{L}\\p{N}'-]*\\s+){1,2}[A-Z][\\p{L}\\p{N}'-]*)"
+                    + "(?=(?:['’]s)?\\s+(?:appointment|appointments|available|हैं|है|उपलब्ध|consult|consultation|sitting|schedule|hours|time|का|की|के|ka|ki|ke|kab|कब|today|tomorrow|tonight|kal|parso|parson|आज|कल|परसों|परसो|day\\s+after\\s+tomorrow|evening|morning|afternoon|शाम|सुबह|दोपहर|में|mein)(?:\\s|$)|[?.!,।]|$)");
+    private static final Pattern BARE_DEVANAGARI_DOCTOR = Pattern.compile(
+            "(?<![\\p{IsDevanagari}\\p{M}])((?!(?:कल|आज|परसों|परसो)\\s)"
+                    + "(?:[\\p{IsDevanagari}\\p{M}]+\\s+){1,3}[\\p{IsDevanagari}\\p{M}]+)"
+                    + "(?=\\s+(?:available|अवेलेबल|हैं|है|उपलब्ध|की|का|के|कब|किस\\s+समय|बैठते|बैठने|consult|consultation|sitting|schedule|hours|time|शाम|सुबह|दोपहर)(?:\\s|$)|[?.!,।]|$)");
     private static final Pattern HINDI_SPECIALTY = Pattern.compile(
             "(?:विशेषज्ञता|विशेषज्ञ|स्पेशलिटी)\\s+(?:में|की)?\\s*([\\p{IsDevanagari}\\p{M}][\\p{IsDevanagari}\\p{M} ]{1,50})");
 
     @Override public String languageCode() { return "hi"; }
+
+    boolean hasHindiUtteranceSignal(String rawText) {
+        return rawText != null && (rawText.codePoints().anyMatch(cp -> cp >= 0x0900 && cp <= 0x097F)
+                || HINDI_SIGNAL.matcher(rawText).find());
+    }
 
     @Override
     protected NormalizedUserTurn.Intent intent(String normalized) {
@@ -48,9 +60,9 @@ public class HindiLanguageAdapter extends EnglishLanguageAdapter {
     public NormalizedUserTurn normalize(String rawText, LocalDate referenceDate) {
         String original = rawText == null ? "" : rawText.trim();
         String normalized = original.toLowerCase(Locale.ROOT)
-                .replaceAll("(?<![\\p{L}\\p{N}])(?:subah|सुबह)(?![\\p{L}\\p{N}])", " morning ")
-                .replaceAll("(?<![\\p{L}\\p{N}])(?:dopahar|दोपहर)(?![\\p{L}\\p{N}])", " afternoon ")
-                .replaceAll("(?<![\\p{L}\\p{N}])(?:shaam|शाम|raat|रात)(?![\\p{L}\\p{N}])", " evening ")
+                .replaceAll("(?<![\\p{L}\\p{N}])(?:subah|सुबह|मॉर्निंग)(?![\\p{L}\\p{N}])", " morning ")
+                .replaceAll("(?<![\\p{L}\\p{N}])(?:dopahar|दोपहर|आफ्टरनून)(?![\\p{L}\\p{N}])", " afternoon ")
+                .replaceAll("(?<![\\p{L}\\p{N}])(?:shaam|शाम|इवनिंग|raat|रात)(?![\\p{L}\\p{N}])", " evening ")
                 .replaceAll("(?<![\\p{L}\\p{N}])(?:aur|और)(?![\\p{L}\\p{N}])", " more ")
                 .replaceAll("(?<![\\p{L}\\p{N}])(?:dusri|दूसरी|agali|अगली)(?![\\p{L}\\p{N}])", " next ")
                 .replaceAll("(?<![\\p{L}\\p{N}])(?:pehla|पहला|पहली)(?![\\p{L}\\p{N}])", " first ")
@@ -65,7 +77,7 @@ public class HindiLanguageAdapter extends EnglishLanguageAdapter {
                 .replaceAll("(?<![\\p{L}\\p{N}])(?:हैं|है)(?![\\p{L}\\p{N}])", " are ")
                 .replaceAll("(?<![\\p{L}\\p{N}])(?:बुक|बुकिंग)(?![\\p{L}\\p{N}])", " book ")
                 .replaceAll("(?<![\\p{L}\\p{N}])(?:करनी|करना|करनी है|करना है)(?![\\p{L}\\p{N}])", " ")
-                .replaceAll("(?<![\\p{L}\\p{N}])(?:रद्द|कैंसल|cancel)(?![\\p{L}\\p{N}])", " cancel ")
+                .replaceAll("(?<![\\p{L}\\p{N}])(?:रद्द|कैंसल|कैंसिल|cancel)(?![\\p{L}\\p{N}])", " cancel ")
                 .replaceAll("फिर\\s+से\\s+(?:तय|शेड्यूल)", " reschedule ")
                 .replaceAll("(?<![\\p{L}\\p{N}])(?:रीशेड्यूल|शेड्यूल|reschedule)(?![\\p{L}\\p{N}])", " reschedule ")
                 .replaceAll("(?<![\\p{L}\\p{N}])(?:मेरी|अपनी)(?![\\p{L}\\p{N}])", " my ")
@@ -155,14 +167,62 @@ public class HindiLanguageAdapter extends EnglishLanguageAdapter {
 
     private NormalizedUserTurn.EntityReference doctorEntity(String text) {
         Matcher latin = HINGLISH_DOCTOR.matcher(text);
-        if (latin.find()) return new NormalizedUserTurn.EntityReference(latin.group(1).trim(), latin.group(1).trim());
+        if (latin.find()) {
+            String name = trimAvailabilityTail(latin.group(1));
+            if (isGenericDoctorReference(name)) return null;
+            return new NormalizedUserTurn.EntityReference(name, name);
+        }
         Matcher devanagari = DEVANAGARI_DOCTOR.matcher(text);
-        if (!devanagari.find()) return null;
-        String span = devanagari.group(1).trim();
-        String name = span.replaceFirst("^(?:डॉक्टर|डॉ\\.?)\\s*", "");
-        String canonical = DevanagariNameTransliterator.titleCaseWords(
-                DevanagariNameTransliterator.transliterate(name));
-        return new NormalizedUserTurn.EntityReference(span, canonical.isBlank() ? span : "Dr " + canonical);
+        if (devanagari.find()) {
+            String span = devanagari.group(1).trim();
+            String name = span.replaceFirst("^(?:डॉक्टर|डॉ\\.?)\\s*", "");
+            name = trimAvailabilityTail(name);
+            if (name.isBlank()) return null;
+            if (isGenericDoctorReference(name)) return null;
+            String canonical = DoctorNameNormalizer.canonicalReference(name);
+            return new NormalizedUserTurn.EntityReference(span, canonical.isBlank() ? span : "Dr " + canonical);
+        }
+        Matcher latinName = BARE_LATIN_DOCTOR.matcher(text);
+        if (latinName.find()) {
+            String name = trimAvailabilityTail(latinName.group(1))
+                    .replaceFirst("(?iu)^(?:actually|kal|tomorrow|today|aaj)\\s+", "");
+            if (name.isBlank()) return null;
+            if (isGenericDoctorReference(name)) return null;
+            return new NormalizedUserTurn.EntityReference(name, name);
+        }
+        // A pronoun-led follow-up has no new provider name. Prevent the bare
+        // Devanagari matcher from treating transliterated schedule/question
+        // words (e.g. सिटिंग टाइम क्या) as a provider reference.
+        if (text.matches("(?is)^\\s*(?:उनका|उनकी|उनके|उनसे|unka|unki|unke)(?:\\s|$).*$")) return null;
+        Matcher devanagariName = BARE_DEVANAGARI_DOCTOR.matcher(text);
+        if (devanagariName.find()) {
+            String name = trimAvailabilityTail(devanagariName.group(1));
+            if (name.isBlank()) return null;
+            if (isGenericDoctorReference(name)) return null;
+            String canonical = DoctorNameNormalizer.canonicalReference(name);
+            return new NormalizedUserTurn.EntityReference(name, canonical.isBlank() ? name : "Dr " + canonical);
+        }
+        return null;
+    }
+
+    private boolean isGenericDoctorReference(String value) {
+        String normalized = value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
+        if (normalized.matches("(?:doctor|dr\\.?|doc)(?:\\s+(?:ka|ki|ke))?")) return true;
+        java.util.Set<String> nonName = java.util.Set.of("कल", "आज", "परसों", "परसो", "रवि", "रविवार",
+                "शाम", "सुबह", "दोपहर", "इवनिंग", "मॉर्निंग", "आफ्टरनून", "evening", "morning",
+                "afternoon", "kal", "aaj", "parso", "tomorrow", "today", "kya", "क्या", "है", "हैं",
+                "unka", "उनका", "उनकी", "उनके", "meri", "mera", "my", "मेरा", "मेरी", "मेरे",
+                "appointment", "अपॉइंटमेंट", "अपॉइंटमेंट्स", "booking", "book", "बुक", "cancel", "कैंसिल",
+                "कैंसल", "रद्द", "karna", "karni", "करना", "करनी", "है।");
+        String[] tokens = normalized.replaceAll("[^\\p{L}\\p{M}\\p{N}]+", " ").trim().split("\\s+");
+        if (tokens.length > 0 && java.util.Arrays.stream(tokens).allMatch(nonName::contains)) return true;
+        return normalized.matches(".*(?:available|अवेलेबल|उपलब्ध|है|हैं|कौन|कोई|डॉक्टर|which|what|बताइए|बताएं|चाहिए|चाहिये|need|want|\\bkya\\b|\\bkya\\b).*" );
+    }
+
+    private String trimAvailabilityTail(String value) {
+        return value == null ? "" : value.trim()
+                .replaceFirst("(?iu)(?:['’]s)?(?:\\s+(?:available|अवेलेबल|उपलब्ध|है|हैं|consult|consults|consultation|hours|schedule|sitting|time|में|mein|का|की|के|कब|बैठते|बैठने|evening|morning|afternoon))+$", "")
+                .trim();
     }
 
     private NormalizedUserTurn.EntityReference specialtyEntity(String text) {

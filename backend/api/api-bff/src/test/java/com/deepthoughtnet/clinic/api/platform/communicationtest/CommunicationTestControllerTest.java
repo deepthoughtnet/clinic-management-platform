@@ -3,6 +3,7 @@ package com.deepthoughtnet.clinic.api.platform.communicationtest;
 import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import com.deepthoughtnet.clinic.api.voice.VoiceTestProperties;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
@@ -100,7 +101,8 @@ class CommunicationTestControllerTest {
         when(inboundService.inboundVoiceResult(org.mockito.ArgumentMatchers.anyString()))
                 .thenAnswer(invocation -> new CommunicationTestDtos.InboundVoiceResult(
                         invocation.getArgument(0), "caller", "did", "INBOUND", "RINGING", "hi-IN", "Sarvam",
-                        null, null, null, null, null, null, "CONNECTED"));
+                        null, null, null, null, null, null, "CONNECTED", null, null, null, null, null, null,
+                        "RESOLVED", null));
         CommunicationTestDotVoiceInboundHandler handler = new CommunicationTestDotVoiceInboundHandler(
                 inboundService, new VoiceTestProperties());
 
@@ -117,5 +119,135 @@ class CommunicationTestControllerTest {
         verify(inboundService, times(3)).startInboundGreeting(org.mockito.ArgumentMatchers.anyString());
         verify(inboundService, times(3)).markInboundListening(org.mockito.ArgumentMatchers.anyString());
         verify(inboundService, times(3)).onInboundStreamStopped(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq("completed"));
+    }
+
+    @Test
+    void unknownDidDoesNotEnterGreetingOrTranscriptFlow() {
+        CommunicationTestService inboundService = mock(CommunicationTestService.class);
+        when(inboundService.inboundVoiceResult("unknown-call")).thenReturn(new CommunicationTestDtos.InboundVoiceResult(
+                "unknown-call", "caller", "+919999999999", "INBOUND", "ROUTING_FAILED", "hi-IN", "Sarvam",
+                null, null, null, null, null, null, "CONNECTED", null, null, null, null, null, null,
+                "ROUTING_FAILED", "UNKNOWN_DID"));
+        CommunicationTestDotVoiceInboundHandler handler = new CommunicationTestDotVoiceInboundHandler(
+                inboundService, new VoiceTestProperties());
+
+        handler.onIncomingCall("unknown-call", "caller", "+919999999999");
+        handler.onStreamStart("unknown-call");
+
+        verify(inboundService).registerInboundCall("unknown-call", "caller", "+919999999999");
+        verify(inboundService, org.mockito.Mockito.never()).markInboundAnswered("unknown-call");
+        verify(inboundService, org.mockito.Mockito.never()).startInboundGreeting("unknown-call");
+    }
+
+    @Test
+    void resolvedInboundSpeechIsObservedAfterGreetingAndDispatchedOnce() {
+        CommunicationTestService inboundService = mock(CommunicationTestService.class);
+        when(inboundService.inboundVoiceResult("speech-call")).thenReturn(new CommunicationTestDtos.InboundVoiceResult(
+                "speech-call", "caller", "did", "INBOUND", "RINGING", "hi-IN", "Sarvam",
+                null, null, null, null, null, null, "CONNECTED", null, null, null, null, null, null,
+                "RESOLVED", null));
+        VoiceTestProperties properties = new VoiceTestProperties();
+        properties.getVad().setMinSpeechMs(20);
+        properties.getVad().setSilenceTimeoutMs(25);
+        CommunicationTestDotVoiceInboundHandler handler = new CommunicationTestDotVoiceInboundHandler(inboundService, properties);
+
+        handler.onIncomingCall("speech-call", "caller", "did");
+        handler.onStreamStart("speech-call");
+        handler.onPlaybackComplete("speech-call");
+        handler.onMedia("speech-call", mulawFrame((byte) 0x00));
+        handler.onMedia("speech-call", mulawFrame((byte) 0x00));
+        handler.onMedia("speech-call", mulawFrame((byte) 0xff));
+
+        try { Thread.sleep(250); } catch (InterruptedException ex) { Thread.currentThread().interrupt(); }
+
+        verify(inboundService).markInboundListening("speech-call");
+        verify(inboundService, times(1)).processInboundFirstUtterance(
+                org.mockito.ArgumentMatchers.eq("speech-call"),
+                org.mockito.ArgumentMatchers.argThat(wav -> wav != null && wav.length == 44 + 960
+                        && wav[0] == 'R' && wav[1] == 'I' && wav[2] == 'F' && wav[3] == 'F'));
+    }
+
+    @Test
+    void inboundSilenceDoesNotDispatchSttAndGreetingMediaIsSkipped() {
+        CommunicationTestService inboundService = mock(CommunicationTestService.class);
+        when(inboundService.inboundVoiceResult("silence-call")).thenReturn(new CommunicationTestDtos.InboundVoiceResult(
+                "silence-call", "caller", "did", "INBOUND", "RINGING", "hi-IN", "Sarvam",
+                null, null, null, null, null, null, "CONNECTED", null, null, null, null, null, null,
+                "RESOLVED", null));
+        VoiceTestProperties properties = new VoiceTestProperties();
+        properties.getVad().setSilenceTimeoutMs(25);
+        CommunicationTestDotVoiceInboundHandler handler = new CommunicationTestDotVoiceInboundHandler(inboundService, properties);
+
+        handler.onIncomingCall("silence-call", "caller", "did");
+        handler.onStreamStart("silence-call");
+        handler.onMedia("silence-call", mulawFrame((byte) 0x00));
+        verify(inboundService, org.mockito.Mockito.never()).processInboundFirstUtterance(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any());
+        handler.onPlaybackComplete("silence-call");
+        handler.onMedia("silence-call", mulawFrame((byte) 0xff));
+
+        verify(inboundService, org.mockito.Mockito.never()).processInboundFirstUtterance(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void streamStopFlushesMinimumDurationActiveInboundSpeechBeforeCleanup() {
+        CommunicationTestService inboundService = mock(CommunicationTestService.class);
+        when(inboundService.inboundVoiceResult("stop-call")).thenReturn(new CommunicationTestDtos.InboundVoiceResult(
+                "stop-call", "caller", "did", "INBOUND", "RINGING", "hi-IN", "Sarvam",
+                null, null, null, null, null, null, "CONNECTED", null, null, null, null, null, null,
+                "RESOLVED", null));
+        VoiceTestProperties properties = new VoiceTestProperties();
+        properties.getVad().setMinSpeechMs(20);
+        CommunicationTestDotVoiceInboundHandler handler = new CommunicationTestDotVoiceInboundHandler(inboundService, properties);
+
+        handler.onIncomingCall("stop-call", "caller", "did");
+        handler.onStreamStart("stop-call");
+        handler.onPlaybackComplete("stop-call");
+        handler.onMedia("stop-call", mulawFrame((byte) 0x00));
+        handler.onMedia("stop-call", mulawFrame((byte) 0x00));
+        handler.onStreamStop("stop-call", "normal");
+
+        verify(inboundService, times(1)).processInboundFirstUtterance(
+                org.mockito.ArgumentMatchers.eq("stop-call"), org.mockito.ArgumentMatchers.any());
+        verify(inboundService).onInboundStreamStopped("stop-call", "normal");
+    }
+
+    private byte[] mulawFrame(byte value) {
+        byte[] frame = new byte[160];
+        java.util.Arrays.fill(frame, value);
+        return frame;
+    }
+
+    @Test
+    void inboundEndpointPreservesResolvedRoutingMetadataWhenAddingWebsocketStatus() {
+        UUID channelId = UUID.randomUUID();
+        UUID tenantId = UUID.randomUUID();
+        when(service.latestInboundVoiceResult()).thenReturn(new CommunicationTestDtos.InboundVoiceResult(
+                "call-1", "caller", "00919999000001", "INBOUND", "ENDED", "hi-IN", "Sarvam", "hello",
+                null, null, null, null, "completed", "DISCONNECTED", "+919999000001", channelId, tenantId,
+                null, null, "DOTVOICE", "RESOLVED", null));
+        when(service.inboundVoiceWebsocketStatus()).thenReturn("CONNECTED");
+
+        CommunicationTestDtos.InboundVoiceResult result = controller.inboundVoice();
+
+        assertEquals("CONNECTED", result.websocketStatus());
+        assertEquals("RESOLVED", result.routingStatus());
+        assertEquals("+919999000001", result.normalizedDid());
+        assertEquals(channelId, result.communicationChannelId());
+        assertEquals(tenantId, result.tenantId());
+    }
+
+    @Test
+    void inboundVoiceJsonExposesAivaV2RuntimeAfterAivaTurn() throws Exception {
+        CommunicationTestDtos.InboundVoiceResult result = new CommunicationTestDtos.InboundVoiceResult(
+                "call-a", "caller", "did", "INBOUND", "CAPTURED", "hi-IN", "Sarvam", null,
+                null, null, null, null, null, "CONNECTED", null, null, null, null, null, null, null, null)
+                .withAivaTurn("voice-call-a", 1, "FIND_DOCTOR", "FIND_DOCTOR", "response");
+
+        ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
+        var json = objectMapper.readTree(objectMapper.writeValueAsString(result));
+
+        assertEquals("AIVA_V2", json.get("aivaRuntime").asText());
     }
 }

@@ -30,6 +30,22 @@ export type CommunicationTestInboundVoiceResult = {
   status: string; language: string; sttProvider: string | null; firstTranscript: string | null;
   receivedAt: string | null; answeredAt: string | null; capturedAt: string | null; endedAt: string | null;
   hangupCause: string | null; websocketStatus: string;
+  normalizedDid: string | null; communicationChannelId: string | null; tenantId: string | null;
+  clinicId: string | null; locationId: string | null; provider: string | null;
+  routingStatus: string; routingFailureReason: string | null;
+  normalizedCallerPhone: string | null; patientIdentificationStatus: "NOT_CHECKED" | "NO_MATCH" | "SINGLE_MATCH" | "MULTIPLE_MATCHES" | "LOOKUP_FAILED" | string;
+  identifiedPatientId: string | null; identifiedPatientName: string | null; candidateCount: number; identificationSource: string;
+  interactionId: string | null; conversationPartyType: "IDENTIFIED_PATIENT" | "GUEST_CALLER" | "PATIENT_UNRESOLVED" | string;
+  aivaSessionId: string | null; aivaRuntime?: string | null; conversationMode: string | null; turnCount: number;
+  lastDetectedIntent: string | null; lastTool: string | null; lastAivaResponse: string | null;
+  conversationTurns: CommunicationTestInboundVoiceTurn[];
+};
+export type CommunicationTestInboundVoiceTurn = {
+  turnNumber: number; callerTranscript: string | null; sttProvider: string | null;
+  detectedIntent: string | null; selectedTool: string | null; toolExecutionStatus: string;
+  toolInputSpeciality: string | null; toolResultCount: number; toolResultSummary: string | null;
+  policyDecision: string; aivaResponseText: string | null; ttsText: string | null;
+  ttsProvider: string | null; startedAt: string | null; completedAt: string | null; closing: boolean;
 };
 export type AppointmentStatus = "BOOKED" | "WAITING" | "IN_CONSULTATION" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
 export type AppointmentType = "WALK_IN" | "SCHEDULED" | "FOLLOW_UP" | "VACCINATION";
@@ -6186,6 +6202,7 @@ export type PlatformPlan = {
 export type PlatformTenantDetail = {
   tenant: PlatformTenant;
   clinicProfile?: {
+    id: string;
     clinicName: string;
     displayName: string;
     city?: string | null;
@@ -6203,6 +6220,44 @@ export type PlatformTenantDetail = {
   modules: Record<string, boolean>;
   userCount: number;
   adminCount: number;
+};
+
+export type CommunicationChannel = {
+  id: string;
+  tenantId: string;
+  clinicId: string | null;
+  locationId: string | null;
+  channelType: "VOICE" | "EMAIL" | "SMS" | "WHATSAPP";
+  provider: string;
+  address: string;
+  normalizedAddress: string;
+  displayName: string | null;
+  trunk: string | null;
+  providerConfigRef: string | null;
+  enabled: boolean;
+  inboundEnabled: boolean;
+  outboundEnabled: boolean;
+  defaultOutbound: boolean;
+  priority: number | null;
+  status: "ACTIVE" | "DISABLED" | "PENDING" | "ERROR";
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CommunicationChannelInput = {
+  clinicId?: string | null;
+  locationId?: string | null;
+  channelType: CommunicationChannel["channelType"];
+  provider: string;
+  address: string;
+  displayName?: string | null;
+  trunk?: string | null;
+  providerConfigRef?: string | null;
+  enabled: boolean;
+  inboundEnabled: boolean;
+  outboundEnabled: boolean;
+  defaultOutbound: boolean;
+  priority?: number | null;
 };
 
 export async function getPlatformTenants(token: string) {
@@ -6263,6 +6318,22 @@ export async function createPlatformTenantAdminUser(token: string, tenantId: str
   tempPassword?: string | null;
 }) {
   return httpPost(`/api/platform/tenants/${tenantId}/admin-user`, body, { token, platformOperation: true });
+}
+
+export async function getPlatformCommunicationChannels(token: string, tenantId: string) {
+  return httpGet<CommunicationChannel[]>(`/api/platform/tenants/${tenantId}/communication-channels`, { token, platformOperation: true });
+}
+
+export async function createPlatformCommunicationChannel(token: string, tenantId: string, body: CommunicationChannelInput) {
+  return httpPost<CommunicationChannel>(`/api/platform/tenants/${tenantId}/communication-channels`, body, { token, platformOperation: true });
+}
+
+export async function updatePlatformCommunicationChannel(token: string, tenantId: string, channelId: string, body: CommunicationChannelInput) {
+  return httpPut<CommunicationChannel>(`/api/platform/tenants/${tenantId}/communication-channels/${channelId}`, body, { token, platformOperation: true });
+}
+
+export async function setPlatformCommunicationChannelEnabled(token: string, tenantId: string, channelId: string, enabled: boolean) {
+  return httpPatch<CommunicationChannel>(`/api/platform/tenants/${tenantId}/communication-channels/${channelId}/status`, { enabled }, { token, platformOperation: true });
 }
 
 export type CommercialCatalogStatus = "ACTIVE" | "INACTIVE" | "RETIRED";

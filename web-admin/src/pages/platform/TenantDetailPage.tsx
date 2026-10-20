@@ -17,6 +17,7 @@ import {
 } from "@mui/material";
 
 import { useAuth } from "../../auth/useAuth";
+import CommunicationChannelsPanel from "./CommunicationChannelsPanel";
 import {
   createPlatformTenantAdminUser,
   getPlatformPlans,
@@ -187,6 +188,10 @@ export default function TenantDetailPage() {
               ))}
             </Stack>
           </DetailCard>
+        </Grid>
+
+        <Grid size={{ xs: 12 }}>
+          <CommunicationChannelsPanel tenantId={tenant.tenant.id} />
         </Grid>
 
         <Grid size={{ xs: 12 }}>

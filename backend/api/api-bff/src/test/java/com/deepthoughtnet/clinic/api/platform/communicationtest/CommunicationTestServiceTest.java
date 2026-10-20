@@ -5,6 +5,11 @@ import com.deepthoughtnet.clinic.carepilot.messaging.service.MessageOrchestrator
 import com.deepthoughtnet.clinic.carepilot.ai_call.provider.DotVoiceMediaStreamClient;
 import com.deepthoughtnet.clinic.carepilot.ai_call.service.VoiceConversationContextRegistry;
 import com.deepthoughtnet.clinic.carepilot.ai_call.service.VoiceResponseInterpreter;
+import com.deepthoughtnet.clinic.communication.service.CommunicationChannelResolver;
+import com.deepthoughtnet.clinic.communication.service.CommunicationInteractionService;
+import com.deepthoughtnet.clinic.patient.service.PatientService;
+import com.deepthoughtnet.clinic.patient.service.model.PatientRecord;
+import com.deepthoughtnet.clinic.patient.service.model.PatientGender;
 import com.deepthoughtnet.clinic.tts.spi.SpeechSynthesisResult;
 import com.deepthoughtnet.clinic.messaging.email.Msg91EmailMessageProvider;
 import com.deepthoughtnet.clinic.messaging.spi.MessageDeliveryStatus;
@@ -20,6 +25,7 @@ import static com.deepthoughtnet.clinic.api.platform.communicationtest.Communica
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -32,6 +38,29 @@ class CommunicationTestServiceTest {
             List.of(),
             List.of()
     );
+
+    @Test
+    void voiceMutationFallbackUsesFemaleHindiWording() {
+        var gateway = mock(com.deepthoughtnet.clinic.api.patientportal.careai.HealthcareAiReadOnlyToolGateway.class);
+        var adapter = mock(com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2VoiceConversationAdapter.class);
+        when(adapter.continueTurn(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2VoiceConversationAdapter.TurnResult(
+                        "मैं अभी डॉक्टर और उपलब्ध समय बता सकती हूँ। अपॉइंटमेंट बुकिंग इस वॉइस चरण में अभी सक्षम नहीं है।",
+                        "BOOK_APPOINTMENT", "BOOK_APPOINTMENT", true, true, false, null, 0,
+                        "BLOCKED_READ_ONLY", false, null));
+        var voice = new VoiceReadOnlyAivaService(gateway, adapter);
+
+        var turn = voice.continueTurn(new VoiceReadOnlyAivaService.Context(
+                "female-wording-call", null, UUID.randomUUID(), null, null, null, "hi-IN",
+                "NO_MATCH", "GUEST_CALLER", null), "मेरी appointment book कर दीजिए");
+
+        assertTrue(turn.response().contains("सकती हूँ"));
+        assertFalse(turn.response().contains("सकता हूँ"));
+        assertFalse(turn.response().contains("Jeevanam appointment नहीं कर सकता"));
+        verify(adapter).continueTurn(org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.eq("मेरी appointment book कर दीजिए"), org.mockito.ArgumentMatchers.any());
+    }
 
     @Test
     void voiceWithoutAdapterIsNotReportedAsSuccess() {
@@ -462,11 +491,15 @@ class CommunicationTestServiceTest {
                 org.mockito.ArgumentMatchers.eq("audio/wav"), org.mockito.ArgumentMatchers.eq("dotvoice-inbound.wav"),
                 org.mockito.ArgumentMatchers.eq("hi-IN")))
                 .thenReturn(new com.deepthoughtnet.clinic.api.voice.spi.VoiceTranscriptionResult("Mujhe appointment book karna hai", "sarvam", null));
+        CommunicationChannelResolver resolver = mock(CommunicationChannelResolver.class);
+        when(resolver.resolveInboundVoiceByDidWithFallback("00919999000001")).thenReturn(java.util.Optional.of(
+                new com.deepthoughtnet.clinic.communication.service.CommunicationChannelModels.Resolution(
+                        UUID.randomUUID(), UUID.randomUUID(), null, null, "DOTVOICE", "+919999000001", null, null)));
         CommunicationTestService isolated = new CommunicationTestService(
                 mock(CarePilotMessagingStatusService.class), mock(MessageOrchestratorService.class), List.of(), List.of(),
-                null, renderer, stream, orchestrator, new VoiceConversationContextRegistry(), new VoiceResponseInterpreter());
+                null, renderer, stream, orchestrator, new VoiceConversationContextRegistry(), new VoiceResponseInterpreter(), resolver);
 
-        isolated.registerInboundCall("inbound-1", "0917XXXXXXXX", "00917969812868");
+        isolated.registerInboundCall("inbound-1", "0917XXXXXXXX", "00919999000001");
         assertEquals("RINGING", isolated.inboundVoiceResult("inbound-1").status());
         isolated.markInboundAnswered("inbound-1");
         isolated.processInboundFirstUtterance("inbound-1", testWav());
@@ -474,11 +507,248 @@ class CommunicationTestServiceTest {
 
         var result = isolated.inboundVoiceResult("inbound-1");
         assertEquals("0917XXXXXXXX", result.callerPhoneNumber());
-        assertEquals("00917969812868", result.didNumber());
+        assertEquals("00919999000001", result.didNumber());
         assertEquals("Mujhe appointment book karna hai", result.firstTranscript());
         verify(orchestrator).transcribeBufferedAudio(org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.any(byte[].class),
                 org.mockito.ArgumentMatchers.eq("audio/wav"), org.mockito.ArgumentMatchers.eq("dotvoice-inbound.wav"),
                 org.mockito.ArgumentMatchers.eq("hi-IN"));
+    }
+
+    @Test
+    void inboundMutationTurnUsesAivaContinuationAndDoesNotTakeLegacyClosingPath() {
+        ReminderVoiceRenderer renderer = testRenderer();
+        DotVoiceMediaStreamClient stream = mock(DotVoiceMediaStreamClient.class);
+        when(stream.startPlayback(org.mockito.ArgumentMatchers.eq("aiva-mutation-call"), org.mockito.ArgumentMatchers.anyList()))
+                .thenReturn(true);
+        var orchestrator = mock(com.deepthoughtnet.clinic.api.voice.VoiceOrchestratorService.class);
+        when(orchestrator.transcribeBufferedAudio(org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.any(byte[].class),
+                org.mockito.ArgumentMatchers.eq("audio/wav"), org.mockito.ArgumentMatchers.eq("dotvoice-inbound.wav"),
+                org.mockito.ArgumentMatchers.eq("hi-IN")))
+                .thenReturn(new com.deepthoughtnet.clinic.api.voice.spi.VoiceTranscriptionResult(
+                        "मुझे अपॉइंटमेंट बुक करनी है।", "sarvam", null));
+        var aiva = mock(VoiceReadOnlyAivaService.class);
+        when(aiva.continueTurn(org.mockito.ArgumentMatchers.any(VoiceReadOnlyAivaService.Context.class),
+                org.mockito.ArgumentMatchers.eq("मुझे अपॉइंटमेंट बुक करनी है।")))
+                .thenReturn(new VoiceReadOnlyAivaService.TurnResult(
+                        "मैं अभी उपलब्ध डॉक्टर और समय बता सकती हूँ। अपॉइंटमेंट बुकिंग अगले चरण में उपलब्ध होगी।",
+                        "BOOK_APPOINTMENT", "BOOK_APPOINTMENT", true, true, false));
+        CommunicationChannelResolver resolver = mock(CommunicationChannelResolver.class);
+        when(resolver.resolveInboundVoiceByDidWithFallback("00919999000001")).thenReturn(java.util.Optional.of(
+                new com.deepthoughtnet.clinic.communication.service.CommunicationChannelModels.Resolution(
+                        UUID.randomUUID(), UUID.randomUUID(), null, null, "DOTVOICE", "+919999000001", null, null)));
+        CommunicationTestService isolated = new CommunicationTestService(
+                mock(CarePilotMessagingStatusService.class), mock(MessageOrchestratorService.class), List.of(), List.of(),
+                null, renderer, stream, orchestrator, new VoiceConversationContextRegistry(), new VoiceResponseInterpreter(), resolver);
+        isolated.setVoiceReadOnlyAivaService(aiva);
+
+        isolated.registerInboundCall("aiva-mutation-call", "+919999000002", "00919999000001");
+        isolated.markInboundAnswered("aiva-mutation-call");
+        isolated.processInboundFirstUtterance("aiva-mutation-call", testWav());
+        isolated.processInboundFirstUtterance("aiva-mutation-call", testWav(160));
+
+        var result = isolated.inboundVoiceResult("aiva-mutation-call");
+        assertEquals("BOOK_APPOINTMENT", result.lastDetectedIntent());
+        assertEquals("BOOK_APPOINTMENT", result.lastTool());
+        assertEquals(2, result.turnCount());
+        assertEquals("CAPTURED", result.status());
+        assertEquals(2, result.conversationTurns().size());
+        var diagnostic = result.conversationTurns().get(0);
+        assertEquals("मुझे अपॉइंटमेंट बुक करनी है।", diagnostic.callerTranscript());
+        assertEquals("sarvam", diagnostic.sttProvider());
+        assertEquals("BOOK_APPOINTMENT", diagnostic.detectedIntent());
+        assertEquals("BOOK_APPOINTMENT", diagnostic.selectedTool());
+        assertEquals("BLOCKED_READ_ONLY", diagnostic.policyDecision());
+        assertEquals("BLOCKED", diagnostic.toolExecutionStatus());
+        assertEquals(result.lastAivaResponse(), diagnostic.aivaResponseText());
+        assertEquals(result.lastAivaResponse(), diagnostic.ttsText());
+        assertEquals("piper", diagnostic.ttsProvider());
+        verify(aiva, org.mockito.Mockito.times(2)).continueTurn(org.mockito.ArgumentMatchers.any(VoiceReadOnlyAivaService.Context.class),
+                org.mockito.ArgumentMatchers.eq("मुझे अपॉइंटमेंट बुक करनी है।"));
+        verify(stream, never()).hangup("aiva-mutation-call");
+    }
+
+    @Test
+    void inboundCallAttachesResolvedTenantRoutingBeforeConversationProcessing() {
+        CommunicationChannelResolver resolver = mock(CommunicationChannelResolver.class);
+        UUID channelId = UUID.randomUUID();
+        UUID tenantId = UUID.randomUUID();
+        when(resolver.resolveInboundVoiceByDidWithFallback("00919999000001")).thenReturn(java.util.Optional.of(
+                new com.deepthoughtnet.clinic.communication.service.CommunicationChannelModels.Resolution(
+                        channelId, tenantId, null, null, "DOTVOICE", "+919999000001", null, null)));
+        CommunicationTestService isolated = new CommunicationTestService(
+                mock(CarePilotMessagingStatusService.class), mock(MessageOrchestratorService.class), List.of(), List.of(),
+                null, null, null, null, null, null, resolver);
+
+        isolated.registerInboundCall("routed-call", "caller-test", "00919999000001");
+
+        var result = isolated.inboundVoiceResult("routed-call");
+        assertEquals("RESOLVED", result.routingStatus());
+        assertEquals("+919999000001", result.normalizedDid());
+        assertEquals(channelId, result.communicationChannelId());
+        assertEquals(tenantId, result.tenantId());
+        assertEquals("DOTVOICE", result.provider());
+    }
+
+    @Test
+    void inboundCallerUsesResolvedTenantForSinglePatientAndPersonalizesGreeting() {
+        CommunicationChannelResolver resolver = mock(CommunicationChannelResolver.class);
+        PatientService patients = mock(PatientService.class);
+        UUID tenantId = UUID.randomUUID();
+        UUID patientId = UUID.randomUUID();
+        when(resolver.resolveInboundVoiceByDidWithFallback("00919999000001")).thenReturn(java.util.Optional.of(
+                new com.deepthoughtnet.clinic.communication.service.CommunicationChannelModels.Resolution(
+                        UUID.randomUUID(), tenantId, null, null, "DOTVOICE", "+919999000001", null, null)));
+        PatientRecord patient = new PatientRecord(patientId, tenantId, "PAT-1", "Anita", "Sharma", PatientGender.UNKNOWN,
+                null, null, "9999000002", null, null, null, null, null, null, null, null, null, null, null, null, null,
+                null, null, true, null, null);
+        when(patients.findActiveByTenantAndMobile(tenantId, "9999000002")).thenReturn(List.of(patient));
+        ReminderVoiceRenderer renderer = testRenderer();
+        DotVoiceMediaStreamClient stream = mock(DotVoiceMediaStreamClient.class);
+        when(stream.startPlayback(org.mockito.ArgumentMatchers.eq("identified-call"), org.mockito.ArgumentMatchers.anyList())).thenReturn(true);
+        CommunicationTestService isolated = new CommunicationTestService(
+                mock(CarePilotMessagingStatusService.class), mock(MessageOrchestratorService.class), List.of(), List.of(),
+                null, renderer, stream, null, null, null, resolver, patients);
+
+        isolated.registerInboundCall("identified-call", "00919999000002", "00919999000001");
+        isolated.startInboundGreeting("identified-call");
+
+        var result = isolated.inboundVoiceResult("identified-call");
+        assertEquals("+919999000002", result.normalizedCallerPhone());
+        assertEquals("SINGLE_MATCH", result.patientIdentificationStatus());
+        assertEquals(patientId, result.identifiedPatientId());
+        assertEquals("Anita", result.identifiedPatientName());
+        assertEquals(1, result.candidateCount());
+        assertEquals("IDENTIFIED_PATIENT", result.conversationPartyType());
+        verify(patients).findActiveByTenantAndMobile(tenantId, "9999000002");
+        org.mockito.Mockito.verify(renderer).render(org.mockito.ArgumentMatchers.contains("Anita"), org.mockito.ArgumentMatchers.eq("hi-IN"));
+    }
+
+    @Test
+    void inboundMultiplePatientsRemainUnselectedAndUseGenericGreeting() {
+        CommunicationChannelResolver resolver = mock(CommunicationChannelResolver.class);
+        PatientService patients = mock(PatientService.class);
+        UUID tenantId = UUID.randomUUID();
+        when(resolver.resolveInboundVoiceByDidWithFallback("+919999000001")).thenReturn(java.util.Optional.of(
+                new com.deepthoughtnet.clinic.communication.service.CommunicationChannelModels.Resolution(
+                        UUID.randomUUID(), tenantId, null, null, "DOTVOICE", "+919999000001", null, null)));
+        when(patients.findActiveByTenantAndMobile(tenantId, "9999000002"))
+                .thenReturn(List.of(
+                        new PatientRecord(UUID.randomUUID(), tenantId, "PAT-1", "A", "", PatientGender.UNKNOWN,
+                                null, null, "9999000002", null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, true, null, null),
+                        new PatientRecord(UUID.randomUUID(), tenantId, "PAT-2", "B", "", PatientGender.UNKNOWN,
+                                null, null, "9999000002", null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, true, null, null)));
+        CommunicationTestService isolated = new CommunicationTestService(
+                mock(CarePilotMessagingStatusService.class), mock(MessageOrchestratorService.class), List.of(), List.of(),
+                null, null, null, null, null, null, resolver, patients);
+
+        isolated.registerInboundCall("multiple-call", "+919999000002", "+919999000001");
+
+        var result = isolated.inboundVoiceResult("multiple-call");
+        assertEquals("MULTIPLE_MATCHES", result.patientIdentificationStatus());
+        assertEquals(2, result.candidateCount());
+        org.junit.jupiter.api.Assertions.assertNull(result.identifiedPatientId());
+        org.junit.jupiter.api.Assertions.assertNull(result.identifiedPatientName());
+        assertEquals("PATIENT_UNRESOLVED", result.conversationPartyType());
+    }
+
+    @Test
+    void inboundNoMatchIsGuestAndUsesGenericGreeting() {
+        CommunicationChannelResolver resolver = mock(CommunicationChannelResolver.class);
+        PatientService patients = mock(PatientService.class);
+        UUID tenantId = UUID.randomUUID();
+        when(resolver.resolveInboundVoiceByDidWithFallback("+919999000001")).thenReturn(java.util.Optional.of(
+                new com.deepthoughtnet.clinic.communication.service.CommunicationChannelModels.Resolution(
+                        UUID.randomUUID(), tenantId, null, null, "DOTVOICE", "+919999000001", null, null)));
+        when(patients.findActiveByTenantAndMobile(tenantId, "9999000002")).thenReturn(List.of());
+        ReminderVoiceRenderer renderer = testRenderer();
+        DotVoiceMediaStreamClient stream = mock(DotVoiceMediaStreamClient.class);
+        when(stream.startPlayback(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyList())).thenReturn(true);
+        CommunicationTestService isolated = new CommunicationTestService(
+                mock(CarePilotMessagingStatusService.class), mock(MessageOrchestratorService.class), List.of(), List.of(),
+                null, renderer, stream, null, null, null, resolver, patients, mock(CommunicationInteractionService.class));
+
+        isolated.registerInboundCall("guest-call", "+919999000002", "+919999000001");
+        isolated.startInboundGreeting("guest-call");
+
+        var result = isolated.inboundVoiceResult("guest-call");
+        assertEquals("NO_MATCH", result.patientIdentificationStatus());
+        assertEquals("GUEST_CALLER", result.conversationPartyType());
+        assertEquals(0, result.candidateCount());
+        org.junit.jupiter.api.Assertions.assertNull(result.identifiedPatientId());
+        verify(renderer).render(org.mockito.ArgumentMatchers.contains("जीवनम हेल्थकेयर में आपका स्वागत है"), org.mockito.ArgumentMatchers.eq("hi-IN"));
+    }
+
+    @Test
+    void multipleMatchesUseDeterministicClarificationPrompt() {
+        CommunicationChannelResolver resolver = mock(CommunicationChannelResolver.class);
+        PatientService patients = mock(PatientService.class);
+        UUID tenantId = UUID.randomUUID();
+        when(resolver.resolveInboundVoiceByDidWithFallback("+919999000001")).thenReturn(java.util.Optional.of(
+                new com.deepthoughtnet.clinic.communication.service.CommunicationChannelModels.Resolution(
+                        UUID.randomUUID(), tenantId, null, null, "DOTVOICE", "+919999000001", null, null)));
+        when(patients.findActiveByTenantAndMobile(tenantId, "9999000002")).thenReturn(List.of(
+                patientRecord(tenantId, "PAT-1", "A"), patientRecord(tenantId, "PAT-2", "B")));
+        ReminderVoiceRenderer renderer = testRenderer();
+        DotVoiceMediaStreamClient stream = mock(DotVoiceMediaStreamClient.class);
+        when(stream.startPlayback(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyList())).thenReturn(true);
+        CommunicationTestService isolated = new CommunicationTestService(
+                mock(CarePilotMessagingStatusService.class), mock(MessageOrchestratorService.class), List.of(), List.of(),
+                null, renderer, stream, null, null, null, resolver, patients);
+
+        isolated.registerInboundCall("multiple-greeting-call", "+919999000002", "+919999000001");
+        isolated.startInboundGreeting("multiple-greeting-call");
+
+        verify(renderer).render(org.mockito.ArgumentMatchers.contains("एक से अधिक मरीज जुड़े हुए हैं"), org.mockito.ArgumentMatchers.eq("hi-IN"));
+    }
+
+    private PatientRecord patientRecord(UUID tenantId, String number, String firstName) {
+        return new PatientRecord(UUID.randomUUID(), tenantId, number, firstName, "", PatientGender.UNKNOWN,
+                null, null, "9999000002", null, null, null, null, null, null, null, null, null, null, null,
+                null, null, null, null, true, null, null);
+    }
+
+    @Test
+    void interactionIdIsAttachedWithoutAuthenticationState() {
+        CommunicationChannelResolver resolver = mock(CommunicationChannelResolver.class);
+        PatientService patients = mock(PatientService.class);
+        CommunicationInteractionService interactions = mock(CommunicationInteractionService.class);
+        UUID interactionId = UUID.randomUUID();
+        UUID tenantId = UUID.randomUUID();
+        when(resolver.resolveInboundVoiceByDidWithFallback("+919999000001")).thenReturn(java.util.Optional.of(
+                new com.deepthoughtnet.clinic.communication.service.CommunicationChannelModels.Resolution(
+                        UUID.randomUUID(), tenantId, null, null, "DOTVOICE", "+919999000001", null, null)));
+        when(patients.findActiveByTenantAndMobile(tenantId, "9999000002")).thenReturn(List.of());
+        when(interactions.startInbound(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(tenantId),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.eq("DOTVOICE"), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.eq("NO_MATCH"), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.eq(0), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(interactionId);
+        CommunicationTestService isolated = new CommunicationTestService(
+                mock(CarePilotMessagingStatusService.class), mock(MessageOrchestratorService.class), List.of(), List.of(),
+                null, null, null, null, null, null, resolver, patients, interactions);
+
+        isolated.registerInboundCall("audited-call", "+919999000002", "+919999000001");
+
+        assertEquals(interactionId, isolated.inboundVoiceResult("audited-call").interactionId());
+        assertEquals("GUEST_CALLER", isolated.inboundVoiceResult("audited-call").conversationPartyType());
+    }
+
+    @Test
+    void unknownInboundDidFailsRoutingWithoutTenantContext() {
+        CommunicationChannelResolver resolver = mock(CommunicationChannelResolver.class);
+        when(resolver.resolveInboundVoiceByDidWithFallback("+919999000001")).thenReturn(java.util.Optional.empty());
+        CommunicationTestService isolated = new CommunicationTestService(
+                mock(CarePilotMessagingStatusService.class), mock(MessageOrchestratorService.class), List.of(), List.of(),
+                null, null, null, null, null, null, resolver);
+
+        isolated.registerInboundCall("unknown-call", "caller", "+919999000001");
+
+        var result = isolated.inboundVoiceResult("unknown-call");
+        assertEquals("ROUTING_FAILED", result.routingStatus());
+        assertEquals("ROUTING_FAILED", result.status());
+        assertEquals("UNKNOWN_DID", result.routingFailureReason());
+        org.mockito.Mockito.verify(resolver).resolveInboundVoiceByDidWithFallback("+919999000001");
     }
 
     @Test
@@ -493,9 +763,13 @@ class CommunicationTestServiceTest {
                 .thenAnswer(invocation -> invocation.getArgument(1) != null
                         ? new com.deepthoughtnet.clinic.api.voice.spi.VoiceTranscriptionResult(
                         ((byte[]) invocation.getArgument(1)).length > 300 ? "caller one" : "caller two", "sarvam", null) : null);
+        CommunicationChannelResolver resolver = mock(CommunicationChannelResolver.class);
+        when(resolver.resolveInboundVoiceByDidWithFallback(org.mockito.ArgumentMatchers.anyString())).thenReturn(java.util.Optional.of(
+                new com.deepthoughtnet.clinic.communication.service.CommunicationChannelModels.Resolution(
+                        UUID.randomUUID(), UUID.randomUUID(), null, null, "DOTVOICE", "+919999000001", null, null)));
         CommunicationTestService isolated = new CommunicationTestService(
                 mock(CarePilotMessagingStatusService.class), mock(MessageOrchestratorService.class), List.of(), List.of(),
-                null, renderer, stream, orchestrator, new VoiceConversationContextRegistry(), new VoiceResponseInterpreter());
+                null, renderer, stream, orchestrator, new VoiceConversationContextRegistry(), new VoiceResponseInterpreter(), resolver);
 
         isolated.registerInboundCall("inbound-a", "caller-a", "did-a");
         isolated.registerInboundCall("inbound-b", "caller-b", "did-b");

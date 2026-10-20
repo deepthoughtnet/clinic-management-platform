@@ -30,8 +30,10 @@ public final class LocaleTemporalNormalizer {
             Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
     private static final Pattern HINDI_DAY_WORD = Pattern.compile(
             "(?iu)(?<![\\p{L}\\p{N}])(एक|दो|तीन|चार|पाँच|पांच|छह|छः|सात|आठ|नौ|दस|ग्यारह|बारह|तेरह|चौदह|पंद्रह|पन्द्रह|सोलह|सत्रह|अठारह|उन्नीस|बीस|इक्कीस|बाईस|तेईस|चौबीस|पच्चीस|छब्बीस|सत्ताईस|अट्ठाईस|अट्ठाइस|उनतीस|तीस|इकतीस)\\s*(?:तारीख|तारीख़)(?:\\s*को)?(?![\\p{L}\\p{N}])");
+    private static final Pattern HINDI_DAY_MONTH = Pattern.compile(
+            "(?iu)(?<![\\p{L}\\p{N}])(एक|दो|तीन|चार|पाँच|पांच|छह|छः|सात|आठ|नौ|दस|ग्यारह|बारह|तेरह|चौदह|पंद्रह|पन्द्रह|सोलह|सत्रह|अठारह|उन्नीस|बीस|इक्कीस|बाईस|तेईस|चौबीस|पच्चीस|छब्बीस|सत्ताईस|अट्ठाईस|अट्ठाइस|उनतीस|तीस|इकतीस)\\s+([\\p{L}\\p{M}.]+)(?:\\s+(\\d{4}))?(?![\\p{L}\\p{N}])");
     private static final Pattern RELATIVE = Pattern.compile(
-            "(?<![\\p{L}\\p{N}])(day after tomorrow|parson|परसों|tomorrow|kal|कल|today|aaj|आज)(?![\\p{L}\\p{N}])",
+            "(?<![\\p{L}\\p{N}])(day after tomorrow|parson|parso|परसों|परसो|tomorrow|kal|कल|today|aaj|आज)(?![\\p{L}\\p{N}])",
             Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
     private static final Pattern WEEKDAY = Pattern.compile(
             "(?iu)(?<![\\p{L}\\p{N}])(?:(next|this|अगले|इस|agale|is|आने\\s+वाला|aane\\s+wala)\\s+)?([\\p{L}\\p{M}]+)(?![\\p{L}\\p{N}])");
@@ -69,6 +71,17 @@ public final class LocaleTemporalNormalizer {
             return resolve(span, () -> LocalDate.of(year == null ? inferredYear(reference, month.getValue(), day) : year,
                     month, day), year == null, NormalizedUserTurn.RelativeKind.NONE);
         }
+        Matcher hindiDayMonth = HINDI_DAY_MONTH.matcher(raw);
+        while (hindiDayMonth.find()) {
+            Month month = MONTHS.get(key(hindiDayMonth.group(2)));
+            Integer day = hindiDayNumber(key(hindiDayMonth.group(1)));
+            if (month == null || day == null) continue;
+            String span = hindiDayMonth.group();
+            Integer year = hindiDayMonth.group(3) == null ? null : Integer.valueOf(hindiDayMonth.group(3));
+            return resolve(span, () -> LocalDate.of(year == null
+                    ? inferredYear(reference, month.getValue(), day) : year, month, day),
+                    year == null, NormalizedUserTurn.RelativeKind.NONE);
+        }
         Matcher dayOnly = DAY_ONLY.matcher(raw);
         if (dayOnly.find()) {
             String span = dayOnly.group();
@@ -95,7 +108,7 @@ public final class LocaleTemporalNormalizer {
             String token = key(relative.group(1));
             int days = switch (token) {
                 case "today", "aaj", "आज" -> 0;
-                case "day after tomorrow", "parson", "परसों" -> 2;
+                case "day after tomorrow", "parson", "parso", "परसों", "परसो" -> 2;
                 default -> 1;
             };
             var kind = days == 0 ? NormalizedUserTurn.RelativeKind.TODAY
@@ -179,6 +192,8 @@ public final class LocaleTemporalNormalizer {
         // Common Hindi month spelling variants; resolved to java.time.Month here, never in the kernel.
         values.put(key("फ़रवरी"), Month.FEBRUARY);
         values.put(key("फरवरी"), Month.FEBRUARY);
+        values.put(key("अक्टूबर"), Month.OCTOBER);
+        values.put(key("अक्तूबर"), Month.OCTOBER);
         values.put(key("सितम्बर"), Month.SEPTEMBER);
         values.put(key("सितंबर"), Month.SEPTEMBER);
         values.put(key("नवम्बर"), Month.NOVEMBER);

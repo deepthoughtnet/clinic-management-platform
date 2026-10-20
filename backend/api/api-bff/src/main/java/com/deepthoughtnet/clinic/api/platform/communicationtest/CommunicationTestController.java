@@ -43,9 +43,7 @@ public class CommunicationTestController {
         return result == null
                 ? new InboundVoiceResult(null, null, null, "INBOUND", "WAITING_FOR_INCOMING_CALL", "hi-IN", "Sarvam", null,
                         null, null, null, null, null, service.inboundVoiceWebsocketStatus())
-                : new InboundVoiceResult(result.callId(), result.callerPhoneNumber(), result.didNumber(), result.direction(), result.status(),
-                        result.language(), result.sttProvider(), result.firstTranscript(), result.receivedAt(), result.answeredAt(), result.capturedAt(),
-                        result.endedAt(), result.hangupCause(), service.inboundVoiceWebsocketStatus());
+                : result.withWebsocketStatus(service.inboundVoiceWebsocketStatus());
     }
 
     @PostMapping("/whatsapp")

@@ -11,6 +11,7 @@ public class VoiceTestProperties {
     private boolean aivaV2Enabled = true;
     private String defaultLanguage = "hi-IN";
     private String responseLanguage = "hi-IN";
+    private VoicePersona persona = VoicePersona.FEMALE;
     private final Stt stt = new Stt();
     private final Tts tts = new Tts();
     private final Sarvam sarvam = new Sarvam();
@@ -49,6 +50,14 @@ public class VoiceTestProperties {
 
     public void setResponseLanguage(String responseLanguage) {
         this.responseLanguage = responseLanguage;
+    }
+
+    public VoicePersona getPersona() {
+        return persona;
+    }
+
+    public void setPersona(VoicePersona persona) {
+        this.persona = persona == null ? VoicePersona.FEMALE : persona;
     }
 
     public Stt getStt() {

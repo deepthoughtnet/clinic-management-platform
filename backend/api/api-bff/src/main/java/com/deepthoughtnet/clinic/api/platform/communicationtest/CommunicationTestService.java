@@ -15,6 +15,13 @@ import com.deepthoughtnet.clinic.carepilot.ai_call.provider.G711MuLawAudioConver
 import com.deepthoughtnet.clinic.carepilot.ai_call.model.VoiceConversationState;
 import com.deepthoughtnet.clinic.carepilot.ai_call.service.VoiceConversationContextRegistry;
 import com.deepthoughtnet.clinic.carepilot.ai_call.service.VoiceResponseInterpreter;
+import com.deepthoughtnet.clinic.communication.service.CommunicationChannelResolver;
+import com.deepthoughtnet.clinic.communication.service.CommunicationChannelModels.Resolution;
+import com.deepthoughtnet.clinic.communication.service.PhoneAddressNormalizer;
+import com.deepthoughtnet.clinic.communication.service.CommunicationInteractionService;
+import com.deepthoughtnet.clinic.communication.model.ConversationPartyType;
+import com.deepthoughtnet.clinic.patient.service.PatientService;
+import com.deepthoughtnet.clinic.patient.service.model.PatientRecord;
 import com.deepthoughtnet.clinic.api.voice.VoiceOrchestratorService;
 import com.deepthoughtnet.clinic.api.voice.spi.VoiceTranscriptionResult;
 import com.deepthoughtnet.clinic.voice.spi.VoiceCallProvider;
@@ -50,9 +57,14 @@ public class CommunicationTestService {
     private final VoiceOrchestratorService voiceOrchestratorService;
     private final VoiceConversationContextRegistry contextRegistry;
     private final VoiceResponseInterpreter responseInterpreter;
+    private final CommunicationChannelResolver communicationChannelResolver;
+    private final PatientService patientService;
+    private final CommunicationInteractionService interactionService;
+    private VoiceReadOnlyAivaService voiceReadOnlyAivaService;
     private final ConcurrentHashMap<String, Result> voiceResults = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, InboundVoiceResult> inboundVoiceResults = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, AtomicBoolean> inboundCaptureStarted = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicInteger> inboundTurnCounts = new ConcurrentHashMap<>();
 
     public CommunicationTestService(
             CarePilotMessagingStatusService messagingStatusService,
@@ -60,7 +72,7 @@ public class CommunicationTestService {
             List<MessageProvider> messageProviders,
             List<VoiceCallProvider> voiceProviders
     ) {
-        this(messagingStatusService, messageOrchestratorService, messageProviders, voiceProviders, null, null, null, null, null, null);
+        this(messagingStatusService, messageOrchestratorService, messageProviders, voiceProviders, null, null, null, null, null, null, null);
     }
 
     public CommunicationTestService(
@@ -71,7 +83,7 @@ public class CommunicationTestService {
             Msg91EmailMessageProvider msg91EmailMessageProvider
     ) {
         this(messagingStatusService, messageOrchestratorService, messageProviders, voiceProviders,
-                msg91EmailMessageProvider, null, null, null, null, null);
+                msg91EmailMessageProvider, null, null, null, null, null, null);
     }
 
     public CommunicationTestService(
@@ -84,7 +96,83 @@ public class CommunicationTestService {
             DotVoiceMediaStreamClient dotVoiceMediaStreamClient
     ) {
         this(messagingStatusService, messageOrchestratorService, messageProviders, voiceProviders,
-                msg91EmailMessageProvider, reminderVoiceRenderer, dotVoiceMediaStreamClient, null, null, null);
+                msg91EmailMessageProvider, reminderVoiceRenderer, dotVoiceMediaStreamClient, null, null, null, null);
+    }
+
+    public CommunicationTestService(
+            CarePilotMessagingStatusService messagingStatusService,
+            MessageOrchestratorService messageOrchestratorService,
+            List<MessageProvider> messageProviders,
+            List<VoiceCallProvider> voiceProviders,
+            Msg91EmailMessageProvider msg91EmailMessageProvider,
+            ReminderVoiceRenderer reminderVoiceRenderer,
+            DotVoiceMediaStreamClient dotVoiceMediaStreamClient,
+            VoiceOrchestratorService voiceOrchestratorService,
+            VoiceConversationContextRegistry contextRegistry,
+            VoiceResponseInterpreter responseInterpreter
+    ) {
+        this(messagingStatusService, messageOrchestratorService, messageProviders, voiceProviders,
+                msg91EmailMessageProvider, reminderVoiceRenderer, dotVoiceMediaStreamClient,
+                voiceOrchestratorService, contextRegistry, responseInterpreter, null, null);
+    }
+
+    public CommunicationTestService(
+            CarePilotMessagingStatusService messagingStatusService,
+            MessageOrchestratorService messageOrchestratorService,
+            List<MessageProvider> messageProviders,
+            List<VoiceCallProvider> voiceProviders,
+            Msg91EmailMessageProvider msg91EmailMessageProvider,
+            ReminderVoiceRenderer reminderVoiceRenderer,
+            DotVoiceMediaStreamClient dotVoiceMediaStreamClient,
+            VoiceOrchestratorService voiceOrchestratorService,
+            VoiceConversationContextRegistry contextRegistry,
+            VoiceResponseInterpreter responseInterpreter,
+            CommunicationChannelResolver communicationChannelResolver
+    ) {
+        this(messagingStatusService, messageOrchestratorService, messageProviders, voiceProviders,
+                msg91EmailMessageProvider, reminderVoiceRenderer, dotVoiceMediaStreamClient,
+                voiceOrchestratorService, contextRegistry, responseInterpreter, communicationChannelResolver, null);
+    }
+
+    public CommunicationTestService(
+            CarePilotMessagingStatusService messagingStatusService,
+            MessageOrchestratorService messageOrchestratorService,
+            List<MessageProvider> messageProviders,
+            List<VoiceCallProvider> voiceProviders,
+            Msg91EmailMessageProvider msg91EmailMessageProvider,
+            ReminderVoiceRenderer reminderVoiceRenderer,
+            DotVoiceMediaStreamClient dotVoiceMediaStreamClient,
+            VoiceOrchestratorService voiceOrchestratorService,
+            VoiceConversationContextRegistry contextRegistry,
+            VoiceResponseInterpreter responseInterpreter,
+            CommunicationChannelResolver communicationChannelResolver,
+            PatientService patientService
+    ) {
+        this(messagingStatusService, messageOrchestratorService, messageProviders, voiceProviders,
+                msg91EmailMessageProvider, reminderVoiceRenderer, dotVoiceMediaStreamClient,
+                voiceOrchestratorService, contextRegistry, responseInterpreter, communicationChannelResolver,
+                patientService, null, null);
+    }
+
+    public CommunicationTestService(
+            CarePilotMessagingStatusService messagingStatusService,
+            MessageOrchestratorService messageOrchestratorService,
+            List<MessageProvider> messageProviders,
+            List<VoiceCallProvider> voiceProviders,
+            Msg91EmailMessageProvider msg91EmailMessageProvider,
+            ReminderVoiceRenderer reminderVoiceRenderer,
+            DotVoiceMediaStreamClient dotVoiceMediaStreamClient,
+            VoiceOrchestratorService voiceOrchestratorService,
+            VoiceConversationContextRegistry contextRegistry,
+            VoiceResponseInterpreter responseInterpreter,
+            CommunicationChannelResolver communicationChannelResolver,
+            PatientService patientService,
+            CommunicationInteractionService interactionService
+    ) {
+        this(messagingStatusService, messageOrchestratorService, messageProviders, voiceProviders,
+                msg91EmailMessageProvider, reminderVoiceRenderer, dotVoiceMediaStreamClient,
+                voiceOrchestratorService, contextRegistry, responseInterpreter, communicationChannelResolver,
+                patientService, interactionService, null);
     }
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -98,7 +186,11 @@ public class CommunicationTestService {
             DotVoiceMediaStreamClient dotVoiceMediaStreamClient,
             VoiceOrchestratorService voiceOrchestratorService,
             VoiceConversationContextRegistry contextRegistry,
-            VoiceResponseInterpreter responseInterpreter
+            VoiceResponseInterpreter responseInterpreter,
+            CommunicationChannelResolver communicationChannelResolver,
+            PatientService patientService,
+            CommunicationInteractionService interactionService,
+            VoiceReadOnlyAivaService voiceReadOnlyAivaService
     ) {
         this.messagingStatusService = messagingStatusService;
         this.messageOrchestratorService = messageOrchestratorService;
@@ -110,6 +202,21 @@ public class CommunicationTestService {
         this.voiceOrchestratorService = voiceOrchestratorService;
         this.contextRegistry = contextRegistry;
         this.responseInterpreter = responseInterpreter;
+        this.communicationChannelResolver = communicationChannelResolver;
+        this.patientService = patientService;
+        this.interactionService = interactionService;
+        this.voiceReadOnlyAivaService = voiceReadOnlyAivaService;
+        log.info("DOTVOICE_INBOUND_ROUTING_READY resolverPresent={} aivaReadOnlyPresent={}",
+                communicationChannelResolver != null, voiceReadOnlyAivaService != null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setVoiceReadOnlyAivaService(VoiceReadOnlyAivaService service) {
+        this.voiceReadOnlyAivaService = service;
+    }
+
+    boolean isVoiceReadOnlyAivaEnabled() {
+        return voiceReadOnlyAivaService != null;
     }
 
     public Result voiceResult(String testExecutionId) {
@@ -135,11 +242,38 @@ public class CommunicationTestService {
 
     public void registerInboundCall(String callId, String callerPhoneNumber, String didNumber) {
         if (!StringUtils.hasText(callId)) return;
-        InboundVoiceResult result = new InboundVoiceResult(callId, callerPhoneNumber, didNumber, "INBOUND", "RINGING",
-                "hi-IN", "Sarvam", null, OffsetDateTime.now(), null, null, null, null, inboundVoiceWebsocketStatus());
+        OffsetDateTime receivedAt = OffsetDateTime.now();
+        log.info("DOTVOICE_INBOUND_ROUTING_START callId={} did={}", callId, maskPhone(didNumber));
+        var routing = communicationChannelResolver == null
+                ? java.util.Optional.<Resolution>empty()
+                : communicationChannelResolver.resolveInboundVoiceByDidWithFallback(didNumber);
+        String normalizedDid = routing.map(Resolution::normalizedAddress).orElse(null);
+        String routingStatus = communicationChannelResolver == null ? "ROUTING_FAILED" : routing.isPresent() ? "RESOLVED" : "ROUTING_FAILED";
+        String routingFailureReason = communicationChannelResolver == null ? "ROUTING_RESOLVER_UNAVAILABLE" : routing.isPresent() ? null : "UNKNOWN_DID";
+        String status = "ROUTING_FAILED".equals(routingStatus) ? "ROUTING_FAILED" : "RINGING";
+        PatientIdentification identification = identifyInboundPatient(callId, callerPhoneNumber, routing);
+        InboundVoiceResult result = new InboundVoiceResult(callId, callerPhoneNumber, didNumber, "INBOUND", status,
+                "hi-IN", "Sarvam", null, receivedAt, null, null, null, null, inboundVoiceWebsocketStatus(),
+                normalizedDid, routing.map(Resolution::channelId).orElse(null),
+                routing.map(Resolution::tenantId).orElse(null),
+                routing.map(Resolution::clinicId).orElse(null),
+                routing.map(Resolution::locationId).orElse(null),
+                routing.map(Resolution::provider).orElse(null),
+                routingStatus, routingFailureReason, identification.normalizedCallerPhone(), identification.status(),
+                identification.patientId(), identification.patientName(), identification.candidateCount(), "CALLER_PHONE",
+                null, identification.party().name());
+        UUID interactionId = persistInboundInteraction(result);
+        result = result.withInteraction(interactionId);
         inboundVoiceResults.put(callId, result);
         inboundCaptureStarted.put(callId, new AtomicBoolean(false));
+        inboundTurnCounts.put(callId, new java.util.concurrent.atomic.AtomicInteger(0));
         log.info("DOTVOICE_INBOUND_CALL_RECEIVED callId={} from={} to={}", callId, maskPhone(callerPhoneNumber), maskPhone(didNumber));
+        if (routing.isPresent()) {
+            log.info("DOTVOICE_INBOUND_ROUTING_RESOLVED callId={} channelId={} tenantId={} clinicId={} locationId={} did={}",
+                    callId, result.communicationChannelId(), result.tenantId(), result.clinicId(), result.locationId(), maskPhone(normalizedDid));
+        } else {
+            log.info("DOTVOICE_INBOUND_ROUTING_FAILED callId={} did={} reason={}", callId, maskPhone(didNumber), routingFailureReason);
+        }
     }
 
     public InboundVoiceResult inboundVoiceResult(String callId) {
@@ -148,28 +282,111 @@ public class CommunicationTestService {
 
     public void markInboundAnswered(String callId) {
         log.info("DOTVOICE_INBOUND_CALL_ANSWERED callId={}", callId);
-        updateInbound(callId, result -> new InboundVoiceResult(result.callId(), result.callerPhoneNumber(), result.didNumber(),
-                result.direction(), "ANSWERED", result.language(), result.sttProvider(), result.firstTranscript(),
-                result.receivedAt(), OffsetDateTime.now(), result.capturedAt(), result.endedAt(), result.hangupCause(), result.websocketStatus()));
+        updateInbound(callId, result -> result.withLifecycle("ANSWERED", result.sttProvider(), result.firstTranscript(),
+                result.receivedAt(), OffsetDateTime.now(), result.capturedAt(), result.endedAt(), result.hangupCause()));
+        persistInteractionUpdate(callId, row -> row.markAnswered(OffsetDateTime.now()));
     }
 
     public void startInboundGreeting(String callId) {
-        playInboundAudio(callId, "नमस्ते। जीवनम हेल्थकेयर में आपका स्वागत है। कृपया बताइए, हम आपकी क्या सहायता कर सकते हैं?", false);
+        InboundVoiceResult result = inboundVoiceResult(callId);
+        String greeting = result == null ? genericInboundGreeting()
+                : "MULTIPLE_MATCHES".equals(result.patientIdentificationStatus())
+                ? multipleMatchGreeting()
+                : "SINGLE_MATCH".equals(result.patientIdentificationStatus()) && StringUtils.hasText(result.identifiedPatientName())
+                ? "नमस्ते " + result.identifiedPatientName().trim() + " जी। जीवनम हेल्थकेयर में आपका स्वागत है। कृपया बताइए, हम आपकी क्या सहायता कर सकते हैं?"
+                : genericInboundGreeting();
+        playInboundAudio(callId, greeting, false);
     }
 
+    private PatientIdentification identifyInboundPatient(String callId, String callerPhoneNumber,
+            java.util.Optional<Resolution> routing) {
+        if (routing.isEmpty() || routing.get().tenantId() == null) {
+            return new PatientIdentification(null, "NOT_CHECKED", null, null, 0, ConversationPartyType.GUEST_CALLER);
+        }
+        UUID tenantId = routing.get().tenantId();
+        log.info("VOICE_PATIENT_IDENTIFICATION_START callId={} tenantId={} caller={}", callId, tenantId, maskPhone(callerPhoneNumber));
+        try {
+            String normalized = normalizeCallerPhone(callerPhoneNumber, routing.get().normalizedAddress());
+            if (!StringUtils.hasText(normalized) || patientService == null) {
+                throw new IllegalStateException(patientService == null ? "PATIENT_SERVICE_UNAVAILABLE" : "CALLER_PHONE_INVALID");
+            }
+            String storedMobile = patientLookupMobile(normalized);
+            List<PatientRecord> matches = patientService.findActiveByTenantAndMobile(tenantId, storedMobile);
+            if (matches.isEmpty()) {
+                log.info("VOICE_PATIENT_IDENTIFICATION_NO_MATCH callId={} tenantId={}", callId, tenantId);
+                return new PatientIdentification(normalized, "NO_MATCH", null, null, 0, ConversationPartyType.GUEST_CALLER);
+            }
+            if (matches.size() > 1) {
+                log.info("VOICE_PATIENT_IDENTIFICATION_MULTIPLE_MATCHES callId={} tenantId={} candidateCount={}", callId, tenantId, matches.size());
+                return new PatientIdentification(normalized, "MULTIPLE_MATCHES", null, null, matches.size(), ConversationPartyType.PATIENT_UNRESOLVED);
+            }
+            PatientRecord patient = matches.get(0);
+            String name = StringUtils.hasText(patient.firstName()) ? patient.firstName().trim() : null;
+            log.info("VOICE_PATIENT_IDENTIFICATION_SINGLE_MATCH callId={} tenantId={} patientId={}", callId, tenantId, patient.id());
+            return new PatientIdentification(normalized, "SINGLE_MATCH", patient.id(), name, 1, ConversationPartyType.IDENTIFIED_PATIENT);
+        } catch (RuntimeException ex) {
+            log.warn("VOICE_PATIENT_IDENTIFICATION_FAILED callId={} tenantId={} reason={}", callId, tenantId, safeIdentificationFailureReason(ex));
+            return new PatientIdentification(safeNormalizeCallerPhone(callerPhoneNumber, routing.get().normalizedAddress()),
+                    "LOOKUP_FAILED", null, null, 0, ConversationPartyType.GUEST_CALLER);
+        }
+    }
+
+    private String normalizeCallerPhone(String callerPhoneNumber, String normalizedDid) {
+        if (!StringUtils.hasText(callerPhoneNumber)) throw new IllegalArgumentException("CALLER_PHONE_MISSING");
+        String compact = callerPhoneNumber.trim().replaceAll("[() .\\-]", "");
+        if (normalizedDid != null && normalizedDid.startsWith("+91")) {
+            if (compact.startsWith("0091")) compact = "+" + compact.substring(2);
+            if (compact.startsWith("+91")) return PhoneAddressNormalizer.normalize(compact);
+            if (compact.matches("0[0-9]{10}")) return "+91" + compact.substring(1);
+            if (compact.matches("[0-9]{10}")) return "+91" + compact;
+        }
+        return PhoneAddressNormalizer.normalize(compact);
+    }
+
+    private String safeNormalizeCallerPhone(String callerPhoneNumber, String normalizedDid) {
+        try { return normalizeCallerPhone(callerPhoneNumber, normalizedDid); }
+        catch (RuntimeException ignored) { return null; }
+    }
+
+    private String patientLookupMobile(String normalizedCallerPhone) {
+        if (normalizedCallerPhone != null && normalizedCallerPhone.startsWith("+91")
+                && normalizedCallerPhone.length() == 13) {
+            return normalizedCallerPhone.substring(3);
+        }
+        return normalizedCallerPhone;
+    }
+
+    private String safeIdentificationFailureReason(RuntimeException ex) {
+        String reason = ex.getMessage();
+        if ("CALLER_PHONE_INVALID".equals(reason) || "PATIENT_SERVICE_UNAVAILABLE".equals(reason)) {
+            return reason;
+        }
+        return ex.getClass().getSimpleName();
+    }
+
+    private String genericInboundGreeting() {
+        return "नमस्ते। जीवनम हेल्थकेयर में आपका स्वागत है। कृपया बताइए, हम आपकी क्या सहायता कर सकते हैं?";
+    }
+
+    private String multipleMatchGreeting() {
+        return "नमस्ते। इस मोबाइल नंबर से एक से अधिक मरीज जुड़े हुए हैं। कृपया बताइए, आप किसके लिए सहायता चाहते हैं?";
+    }
+
+    private record PatientIdentification(String normalizedCallerPhone, String status, UUID patientId,
+                                         String patientName, int candidateCount, ConversationPartyType party) {}
+
     public void markInboundListening(String callId) {
-        updateInbound(callId, result -> new InboundVoiceResult(result.callId(), result.callerPhoneNumber(), result.didNumber(),
-                result.direction(), "LISTENING", result.language(), result.sttProvider(), result.firstTranscript(),
-                result.receivedAt(), result.answeredAt(), result.capturedAt(), result.endedAt(), result.hangupCause(), result.websocketStatus()));
+        updateInbound(callId, result -> result.withLifecycle("LISTENING", result.sttProvider(), result.firstTranscript(),
+                result.receivedAt(), result.answeredAt(), result.capturedAt(), result.endedAt(), result.hangupCause()));
         log.info("DOTVOICE_INBOUND_GREETING_COMPLETE callId={}", callId);
     }
 
     public void processInboundFirstUtterance(String callId, byte[] wavAudio) {
         InboundVoiceResult current = inboundVoiceResult(callId);
-        if (current == null || "CAPTURED".equals(current.status()) || "CLOSING".equals(current.status())) return;
+        if (current == null || "CLOSING".equals(current.status()) || "HANGUP_REQUESTED".equals(current.status())) return;
         AtomicBoolean captureStarted = inboundCaptureStarted.computeIfAbsent(callId, ignored -> new AtomicBoolean(false));
         if (!captureStarted.compareAndSet(false, true)) return;
-        log.info("DOTVOICE_INBOUND_STT_DISPATCH callId={} bufferedBytes={} language={}", callId, wavAudio == null ? 0 : wavAudio.length, current.language());
+        log.info("DOTVOICE_INBOUND_STT_DISPATCH callId={} audioBytes={} language={}", callId, wavAudio == null ? 0 : wavAudio.length, current.language());
         if (wavAudio == null || wavAudio.length == 0) {
             captureStarted.set(false);
             return;
@@ -183,45 +400,99 @@ public class CommunicationTestService {
                 captureStarted.set(false);
                 return;
             }
-            updateInbound(callId, result -> new InboundVoiceResult(result.callId(), result.callerPhoneNumber(), result.didNumber(),
-                    result.direction(), "CAPTURED", result.language(), transcription == null ? null : transcription.providerName(),
-                    transcript, result.receivedAt(), result.answeredAt(), OffsetDateTime.now(), result.endedAt(), result.hangupCause(), result.websocketStatus()));
-            log.info("DOTVOICE_INBOUND_STT_RESULT callId={} sttProvider={} language={} transcriptPresent={} transcriptChars={}",
-                    callId, transcription == null ? null : transcription.providerName(), current.language(), StringUtils.hasText(transcript), transcript.length());
+            updateInbound(callId, result -> result.withLifecycle("CAPTURED", transcription == null ? null : transcription.providerName(),
+                    transcript, result.receivedAt(), result.answeredAt(), OffsetDateTime.now(), result.endedAt(), result.hangupCause()));
+            persistInteractionUpdate(callId, row -> row.markTranscriptPresent());
+            log.info("DOTVOICE_INBOUND_STT_RESULT callId={} provider={} success=true transcriptPresent={} language={}",
+                    callId, transcription == null ? null : transcription.providerName(), StringUtils.hasText(transcript), current.language());
             log.info("DOTVOICE_INBOUND_FIRST_UTTERANCE_CAPTURED callId={}", callId);
-            playInboundAudio(callId, "धन्यवाद। आपका संदेश प्राप्त हो गया है।", true);
+            log.info("DOTVOICE_INBOUND_AIVA_CONTINUATION_ENABLED callId={} enabled={}", callId, voiceReadOnlyAivaService != null);
+            if (voiceReadOnlyAivaService == null) {
+                log.warn("DOTVOICE_INBOUND_AIVA_CONTINUATION_DISABLED callId={} reason=AIVA_SERVICE_NOT_WIRED", callId);
+                playInboundAudio(callId, "धन्यवाद। आपका संदेश प्राप्त हो गया है।", true);
+            } else {
+                VoiceReadOnlyAivaService.Context context = new VoiceReadOnlyAivaService.Context(
+                        callId, current.interactionId(), current.tenantId(), current.communicationChannelId(),
+                        current.clinicId(), current.locationId(), current.language(), current.patientIdentificationStatus(), current.conversationPartyType(),
+                        current.identifiedPatientId());
+                VoiceReadOnlyAivaService.TurnResult turn = voiceReadOnlyAivaService.continueTurn(context, transcript);
+                int turnCount = inboundTurnCounts.computeIfAbsent(callId,
+                        ignored -> new java.util.concurrent.atomic.AtomicInteger(0)).incrementAndGet();
+                updateInbound(callId, result -> result.withAivaTurn("voice-" + callId, turnCount,
+                        turn.intent(), turn.tool(), turn.response(), transcript,
+                        transcription == null ? current.sttProvider() : transcription.providerName(),
+                        turn.policyDecision(), turn.toolExecutionStatus(), turn.toolInputSpeciality(),
+                        turn.toolResultCount(), turn.toolResultSummary()));
+                log.info("VOICE_AIVA_TURN_START callId={} turnNumber={}", callId, turnCount);
+                log.info("VOICE_AIVA_INTENT callId={} intent={} tool={}", callId, turn.intent(), turn.tool());
+                if (turn.mutationBlocked()) {
+                    log.info("VOICE_AIVA_MUTATION_BLOCKED callId={} tool={}", callId, turn.tool());
+                }
+                log.info("VOICE_AIVA_RESPONSE_READY callId={} turnNumber={}", callId, turnCount);
+                playInboundAudio(callId, turn.response(), turn.closing());
+            }
+            captureStarted.set(false);
         } catch (RuntimeException ex) {
             captureStarted.set(false);
+            log.info("DOTVOICE_INBOUND_STT_RESULT callId={} provider={} success=false transcriptPresent=false language={}",
+                    callId, current.sttProvider(), current.language());
             log.warn("DOTVOICE_INBOUND_STT_FAILED callId={} exception={} reason={}", callId, ex.getClass().getSimpleName(), safeSttFailureReason(ex));
+            persistInteractionUpdate(callId, row -> row.markEnded("FAILED", "STT_FAILED", null, OffsetDateTime.now()));
         }
     }
 
     public void onInboundClosingPlaybackComplete(String callId) {
         InboundVoiceResult result = inboundVoiceResult(callId);
         if (result == null) return;
-        updateInbound(callId, current -> new InboundVoiceResult(current.callId(), current.callerPhoneNumber(), current.didNumber(),
-                current.direction(), "HANGUP_REQUESTED", current.language(), current.sttProvider(), current.firstTranscript(),
-                current.receivedAt(), current.answeredAt(), current.capturedAt(), current.endedAt(), current.hangupCause(), current.websocketStatus()));
+        updateInbound(callId, current -> current.withLifecycle("HANGUP_REQUESTED", current.sttProvider(), current.firstTranscript(),
+                current.receivedAt(), current.answeredAt(), current.capturedAt(), current.endedAt(), current.hangupCause()));
         log.info("DOTVOICE_HANGUP_REQUESTED providerCallId={}", callId);
         dotVoiceMediaStreamClient.hangup(callId);
     }
 
     public void onInboundStreamStopped(String callId, String cause) {
-        updateInbound(callId, result -> new InboundVoiceResult(result.callId(), result.callerPhoneNumber(), result.didNumber(),
-                result.direction(), "ENDED", result.language(), result.sttProvider(), result.firstTranscript(),
-                result.receivedAt(), result.answeredAt(), result.capturedAt(), OffsetDateTime.now(), cause, result.websocketStatus()));
+        InboundVoiceResult before = inboundVoiceResult(callId);
+        String finalStatus = before != null && "ROUTING_FAILED".equals(before.routingStatus()) ? "ROUTING_FAILED" : "ENDED";
+        String outcome = before == null ? "UNKNOWN" : "ROUTING_FAILED".equals(before.routingStatus()) ? "ROUTING_FAILED"
+                : before.firstTranscript() != null ? "COMPLETED" : "NO_SPEECH";
+        updateInbound(callId, result -> result.withLifecycle(finalStatus, result.sttProvider(), result.firstTranscript(),
+                result.receivedAt(), result.answeredAt(), result.capturedAt(), OffsetDateTime.now(), cause));
+        persistInteractionUpdate(callId, row -> row.markEnded(finalStatus, outcome, cause, OffsetDateTime.now()));
+        if (voiceReadOnlyAivaService != null && before != null && before.tenantId() != null) {
+            voiceReadOnlyAivaService.endSession(before.tenantId(), callId);
+        }
+        inboundTurnCounts.remove(callId);
         log.info("COMM_TEST_CONTEXT_CLEANUP providerCallId={}", callId);
+    }
+
+    private UUID persistInboundInteraction(InboundVoiceResult result) {
+        if (interactionService == null) return null;
+        return interactionService.startInbound(result.callId(), result.tenantId(), result.communicationChannelId(),
+                result.clinicId(), result.locationId(), result.provider() == null ? "DOTVOICE" : result.provider(),
+                result.normalizedDid(), maskPhone(result.callerPhoneNumber()), result.patientIdentificationStatus(),
+                result.identifiedPatientId(), partyType(result.conversationPartyType()), result.candidateCount(),
+                result.status(), result.receivedAt());
+    }
+
+    private void persistInteractionUpdate(String callId, java.util.function.Consumer<com.deepthoughtnet.clinic.communication.db.CommunicationInteractionEntity> update) {
+        if (interactionService != null) interactionService.updateInbound(callId, update);
+    }
+
+    private ConversationPartyType partyType(String value) {
+        try { return ConversationPartyType.valueOf(value); }
+        catch (RuntimeException ignored) { return ConversationPartyType.GUEST_CALLER; }
     }
 
     private void playInboundAudio(String callId, String text, boolean closing) {
         InboundVoiceResult result = inboundVoiceResult(callId);
         if (result == null || reminderVoiceRenderer == null || dotVoiceMediaStreamClient == null) return;
+        updateInbound(callId, current -> current.withTtsDetails(text, null, closing));
         if (closing) {
-            updateInbound(callId, current -> new InboundVoiceResult(current.callId(), current.callerPhoneNumber(), current.didNumber(),
-                    current.direction(), "CLOSING", current.language(), current.sttProvider(), current.firstTranscript(),
-                    current.receivedAt(), current.answeredAt(), current.capturedAt(), current.endedAt(), current.hangupCause(), current.websocketStatus()));
+            updateInbound(callId, current -> current.withLifecycle("CLOSING", current.sttProvider(), current.firstTranscript(),
+                    current.receivedAt(), current.answeredAt(), current.capturedAt(), current.endedAt(), current.hangupCause()));
         }
         ReminderVoiceRenderer.RenderedReminder rendered = reminderVoiceRenderer.render(text, result.language());
+        updateInbound(callId, current -> current.withTtsDetails(text, rendered.provider(), closing));
         if (rendered.audio() == null) {
             if (closing) onInboundClosingPlaybackComplete(callId);
             return;

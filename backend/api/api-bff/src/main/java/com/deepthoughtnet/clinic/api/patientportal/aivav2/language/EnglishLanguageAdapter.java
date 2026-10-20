@@ -19,8 +19,14 @@ public class EnglishLanguageAdapter implements AivaLanguageAdapter {
     private static final Pattern TIME_BOUND_OR_RANGE = Pattern.compile(
             "(?i)\\b(?:after|before|between|from|later than|earlier than)\\b");
     private static final Pattern EXPLICIT_DOCTOR_REFERENCE = Pattern.compile(
-            "(?i)(?:with|from|by)\\s+((?:doctor|dr\\.?|doc)\\s+[\\p{L}][\\p{L}\\p{N}'-]*(?:\\s+(?!on\\b|at\\b|for\\b|in\\b|and\\b|appointment\\b|today\\b|tomorrow\\b|tonight\\b)[\\p{L}][\\p{L}\\p{N}'-]*){0,3})"
-                    + "(?=\\s+(?:on|at|for|in|and|appointment)\\b|[?.!,]|$)");
+            "(?i)(?:with|from|by)\\s+((?:doctor|dr\\.?|doc)\\s+[\\p{L}][\\p{L}\\p{N}'-]*(?:\\s+(?!on\\b|at\\b|for\\b|in\\b|and\\b|appointment\\b|today\\b|tomorrow\\b|tonight\\b|consult|consultation|sitting|schedule|hours|time)[\\p{L}][\\p{L}\\p{N}'-]*){0,3})"
+                    + "(?=\\s+(?:on|at|for|in|and|appointment|consult|consultation|sitting|schedule|hours|time)\\b|[?.!,]|$)");
+    private static final Pattern BARE_DOCTOR_REFERENCE = Pattern.compile(
+            "((?:Dr\\.?\\s+)?(?:[A-Z][\\p{L}][\\p{L}\\p{N}'-]*\\s+){1,2}[A-Z][\\p{L}\\p{N}'-]*)"
+                    + "(?=(?:['’]s)?\\s+(?:appointment|appointments|available|consult|consultation|sitting|schedule|hours|time|today|tomorrow|tonight|day\\s+after\\s+tomorrow|in\\s+the\\s+(?:morning|afternoon|evening)|morning|afternoon|evening)|[?.!,]|$)");
+    private static final Pattern ENGLISH_UTTERANCE_SIGNAL = Pattern.compile(
+            "(?iu)(?:\\b(?:is|are|what|when|which|show|tell|actually|the|my|i|want|please|tomorrow|today|cancel|reschedule|available|availability)\\b|"
+                    + "\\b(?:consultation\\s+hours|available\\s+slots|show\\s+me)\\b)");
     private static final Pattern SPECIALTY_REFERENCE = Pattern.compile(
             "(?i)(?:specialty|speciality|विशेषज्ञता|विशेषज्ञ)\\s+(?:of|में|की)?\\s*([\\p{L}][\\p{L}\\p{M} -]{1,50})");
     private static final Map<String, String> SPOKEN_CLOCK_NUMBERS = Map.ofEntries(
@@ -38,6 +44,11 @@ public class EnglishLanguageAdapter implements AivaLanguageAdapter {
         return requestedLanguage != null && requestedLanguage.toLowerCase(Locale.ROOT).startsWith("en");
     }
 
+    public boolean isClearlyEnglish(String rawText) {
+        if (rawText == null || rawText.codePoints().anyMatch(cp -> cp >= 0x0900 && cp <= 0x097F)) return false;
+        return ENGLISH_UTTERANCE_SIGNAL.matcher(rawText).find();
+    }
+
     @Override
     public NormalizedUserTurn normalize(String rawText) {
         return normalize(rawText, LocalDate.now());
@@ -46,11 +57,21 @@ public class EnglishLanguageAdapter implements AivaLanguageAdapter {
     @Override
     public NormalizedUserTurn normalize(String rawText, LocalDate referenceDate) {
         String original = rawText == null ? "" : rawText.trim();
+        String doctorSearchText = original.replaceFirst("(?iu)^\\s*(?:actually\\s*[,;:]?\\s*)?is\\s+", "");
         String normalized = original.toLowerCase(Locale.ROOT).replaceAll("\\s+", " ").trim();
         String selection = normalizeSelection(normalized);
-        Matcher doctorMatcher = EXPLICIT_DOCTOR_REFERENCE.matcher(original);
-        NormalizedUserTurn.EntityReference doctor = doctorMatcher.find()
-                ? new NormalizedUserTurn.EntityReference(doctorMatcher.group(1).trim(), doctorMatcher.group(1).trim()) : null;
+        Matcher doctorMatcher = EXPLICIT_DOCTOR_REFERENCE.matcher(doctorSearchText);
+        NormalizedUserTurn.EntityReference doctor = null;
+        if (doctorMatcher.find()) {
+            String reference = doctorMatcher.group(1).trim();
+            doctor = new NormalizedUserTurn.EntityReference(reference, reference);
+        } else {
+            Matcher bareDoctor = BARE_DOCTOR_REFERENCE.matcher(doctorSearchText);
+            if (bareDoctor.find()) {
+                String reference = bareDoctor.group(1).trim().replaceFirst("(?i)^Dr\\.?\\s+", "");
+                doctor = new NormalizedUserTurn.EntityReference(reference, reference);
+            }
+        }
         Matcher specialtyMatcher = SPECIALTY_REFERENCE.matcher(original);
         NormalizedUserTurn.EntityReference specialty = specialtyMatcher.find()
                 ? new NormalizedUserTurn.EntityReference(specialtyMatcher.group(1).trim(), specialtyMatcher.group(1).trim()) : null;

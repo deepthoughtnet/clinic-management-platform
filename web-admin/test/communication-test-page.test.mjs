@@ -24,6 +24,16 @@ test("communication test is a platform-only provider console", () => {
   assert.ok(api.includes("getCommunicationTestVoiceResult"));
   assert.ok(page.includes("rawTranscript"));
   assert.ok(page.includes("normalizedIntent"));
+  assert.ok(page.includes("Normalized DID"));
+  assert.ok(page.includes("Normalized caller phone"));
+  assert.ok(page.includes("Patient identification"));
+  assert.ok(page.includes("Conversation party"));
+  assert.ok(page.includes("Interaction ID"));
+  assert.ok(page.includes("Identified patient ID"));
+  assert.ok(page.includes("Candidate count"));
+  assert.ok(page.includes("Identification source"));
+  assert.ok(page.includes("Routing status"));
+  assert.ok(page.includes("Communication Channel ID"));
   assert.ok(page.includes("Would execute"));
   assert.ok(page.includes('value="INTERACTIVE_RESPONSE">Interactive response'));
   assert.ok(page.includes('mode !== "INTERACTIVE_RESPONSE"'));

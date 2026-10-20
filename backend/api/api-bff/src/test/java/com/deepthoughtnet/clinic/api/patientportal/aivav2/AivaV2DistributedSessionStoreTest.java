@@ -55,6 +55,25 @@ class AivaV2DistributedSessionStoreTest {
     }
 
     @Test
+    void activeVoiceDoctorSurvivesRedisSessionRoundTrip() {
+        try (RedisResources resources = resources()) {
+            AivaV2SessionStore instanceA = resources.store();
+            AivaV2SessionStore instanceB = resources.store();
+            String key = "VOICE|tenant-a|provider-call-a";
+            var doctor = new com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ProviderCandidate(
+                    "doctor-ravi", "doctor-ravi", "doctor-ravi", null, "tenant-a", null, null,
+                    "Ravi Mehta", "Pediatrics", null,
+                    com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ProviderSource.CARE_PRIVATE,
+                    new com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ProviderCapabilities(
+                            false, true, false, false, false, false, true));
+
+            instanceA.update(key, ignored -> session(1).withActiveVoiceDoctor(doctor));
+
+            assertThat(instanceB.find(key).orElseThrow().activeVoiceDoctor()).isEqualTo(doctor);
+        }
+    }
+
+    @Test
     void concurrentCrossInstanceTurnIsReservedOnlyOnce() throws Exception {
         try (RedisResources resources = resources()) {
             AivaV2SessionStore instanceA = resources.store();

@@ -27,7 +27,8 @@ public final class PatientPortalCareAiEntityRegistry {
         register(byType, PatientPortalCareAiEntityType.TIME_WINDOW, "Loose time window",
                 List.of("morning", "afternoon", "evening", "night"), Set.of("morning", "afternoon", "evening", "night"), 0.9);
         register(byType, PatientPortalCareAiEntityType.SPECIALITY, "Medical speciality or department",
-                List.of("General Medicine", "General Physician", "physician", "GP", "family physician", "cardiology", "dermatology"),
+                List.of("General Medicine", "General Physician", "physician", "GP", "family physician", "cardiology", "dermatology",
+                        "Pediatrics", "pediatrician", "children's doctor", "बाल रोग विशेषज्ञ", "बच्चों के डॉक्टर"),
                 Set.of(
                         "speciality",
                         "specialty",
@@ -40,6 +41,15 @@ public final class PatientPortalCareAiEntityRegistry {
                         "general practitioner",
                         "जनरल फिजिशियन",
                         "जनरल मेडिसिन"
+                        ,"pediatrics",
+                        "pediatrician",
+                        "paediatrician",
+                        "children's doctor",
+                        "child specialist",
+                        "बाल रोग विशेषज्ञ",
+                        "बाल रोग",
+                        "बच्चों के डॉक्टर",
+                        "पेडियाट्रिक्स"
                 ),
                 0.8);
         register(byType, PatientPortalCareAiEntityType.LOCATION, "Location or area reference",

@@ -34,6 +34,11 @@ public final class SpecialtyResolver {
             "consultation",
             "chahiye",
             "चाहिए",
+            "क्या",
+            "उपलब्ध",
+            "अवेलेबल",
+            "available",
+            "डॉक्टर",
             "dikh",
             "look",
             "visit"
@@ -41,12 +46,32 @@ public final class SpecialtyResolver {
     private static final Map<String, String> CANONICAL_ALIASES = Map.ofEntries(
             Map.entry("general medicine", "General Medicine"),
             Map.entry("general physician", "General Medicine"),
+            Map.entry("general's physician", "General Medicine"),
+            Map.entry("general s physician", "General Medicine"),
+            Map.entry("general physican", "General Medicine"),
+            Map.entry("general position", "General Medicine"),
             Map.entry("physician", "General Medicine"),
             Map.entry("gp", "General Medicine"),
             Map.entry("family physician", "General Medicine"),
             Map.entry("general practitioner", "General Medicine"),
             Map.entry("जनरल फिजिशियन", "General Medicine"),
-            Map.entry("जनरल मेडिसिन", "General Medicine")
+            Map.entry("जनरल मेडिसिन", "General Medicine"),
+            Map.entry("pediatrics", "Pediatrics"),
+            Map.entry("pediatrician", "Pediatrics"),
+            Map.entry("paediatrician", "Pediatrics"),
+            Map.entry("पेडियाट्रिशियन", "Pediatrics"),
+            Map.entry("पेडिट्रिशियन", "Pediatrics"),
+            Map.entry("पीडियाट्रिशियन", "Pediatrics"),
+            Map.entry("children's doctor", "Pediatrics"),
+            Map.entry("child specialist", "Pediatrics"),
+            Map.entry("kids ka doctor", "Pediatrics"),
+            Map.entry("kids doctor", "Pediatrics"),
+            Map.entry("kids s doctor", "Pediatrics"),
+            Map.entry("बाल रोग विशेषज्ञ", "Pediatrics"),
+            Map.entry("बाल रोग", "Pediatrics"),
+            Map.entry("बच्चों का डॉक्टर", "Pediatrics"),
+            Map.entry("बच्चों के डॉक्टर", "Pediatrics"),
+            Map.entry("पेडियाट्रिक्स", "Pediatrics")
     );
 
     private final PatientPortalCareAiEntityRegistry entityRegistry;
@@ -123,6 +148,17 @@ public final class SpecialtyResolver {
             }
         }
         return SpecialtyResolution.unresolved(rawText, normalizedRaw, null, List.of(), "no-match");
+    }
+
+    /** Returns a canonical alias when the utterance contains one, otherwise preserves the input. */
+    public String canonicalize(String rawText) {
+        String normalizedRaw = normalize(rawText);
+        if (!StringUtils.hasText(normalizedRaw)) return rawText;
+        for (String candidate : aliasCandidates(rawText, normalizedRaw)) {
+            String canonical = CANONICAL_ALIASES.get(normalize(candidate));
+            if (StringUtils.hasText(canonical)) return canonical;
+        }
+        return rawText;
     }
 
     Optional<String> extractCandidate(String rawText) {

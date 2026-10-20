@@ -68,6 +68,44 @@ class AivaLanguageAdapterTest {
     }
 
     @Test
+    void normalizesAllDaypartsAcrossHindiHinglishEnglishAndMixedSpeech() {
+        for (String[] sample : new String[][]{
+                {"hi", "सुबह के slots दिखाइए", "MORNING"},
+                {"hi", "subah ke slots dikhao", "MORNING"},
+                {"en", "show morning slots", "MORNING"},
+                {"hi", "दोपहर के slots", "AFTERNOON"},
+                {"hi", "dopahar ke slots", "AFTERNOON"},
+                {"en", "afternoon slots", "AFTERNOON"},
+                {"hi", "शाम के slots", "EVENING"},
+                {"hi", "shaam ke slots", "EVENING"},
+                {"en", "evening slots", "EVENING"},
+                {"hi", "Kal Ravi evening mein available hain?", "EVENING"}}) {
+            assertThat(normalize(sample[1], sample[0]).daypart()).as(sample[1])
+                    .isEqualTo(NormalizedUserTurn.Daypart.valueOf(sample[2]));
+        }
+        assertThat(normalize("इवनिंग का बताइए", "hi").daypart()).isEqualTo(NormalizedUserTurn.Daypart.EVENING);
+        assertThat(normalize("मॉर्निंग का बताइए", "hi").daypart()).isEqualTo(NormalizedUserTurn.Daypart.MORNING);
+        assertThat(normalize("आफ्टरनून का बताइए", "hi").daypart()).isEqualTo(NormalizedUserTurn.Daypart.AFTERNOON);
+    }
+
+    @Test
+    void extractsDoctorReferencesFromHindiHinglishAndEnglishScheduleQuestions() {
+        for (String[] sample : new String[][]{
+                {"hi", "रवि मेहता कब बैठते हैं?"},
+                {"hi", "Ravi Mehta ka sitting time kya hai?"},
+                {"en", "What are Ravi Mehta's consultation hours?"},
+                {"hi", "Ravi Mehta शाम में consult करते हैं?"}}) {
+            NormalizedUserTurn turn = normalize(sample[1], sample[0]);
+            assertThat(turn.doctorEntity()).as(sample[1]).isNotNull();
+            assertThat(turn.doctorEntity().canonicalQuery()).as(sample[1]).contains("Ravi Mehta");
+        }
+        assertThat(normalize("रवि मेहता कब बैठते हैं?", "hi").daypart()).isNull();
+        assertThat(normalize("Ravi Mehta शाम में consult करते हैं?", "hi").daypart())
+                .isEqualTo(NormalizedUserTurn.Daypart.EVENING);
+        assertThat(normalize("Doctor ka evening timing kya hai?", "hi").doctorEntity()).isNull();
+    }
+
+    @Test
     void appointmentOrdinalsAndDayOnlyRescheduleDatesNormalizeAcrossLanguages() {
         LocalDate reference = LocalDate.of(2026, 9, 20);
         for (String[] sample : new String[][]{
@@ -180,6 +218,11 @@ class AivaLanguageAdapterTest {
         assertThat(normalize("shaam ki slots dikhao", "hi").responseStyle())
                 .isEqualTo(com.deepthoughtnet.clinic.api.patientportal.aivav2.language.ResponseStyle.HINGLISH);
         assertThat(normalize("show evening slots", "en").responseLanguage()).isEqualTo("en");
+        var englishInHindiSession = registry.resolve("hi-IN", "What are Ravi Mehta's consultation hours?")
+                .normalize("What are Ravi Mehta's consultation hours?");
+        assertThat(englishInHindiSession.responseLanguage()).isEqualTo("en");
+        assertThat(englishInHindiSession.responseStyle()).isEqualTo(
+                com.deepthoughtnet.clinic.api.patientportal.aivav2.language.ResponseStyle.STANDARD);
     }
 
     @Test
@@ -206,6 +249,16 @@ class AivaLanguageAdapterTest {
             assertThat(turn.temporal().localDate()).as(sample[1]).isEqualTo(LocalDate.of(2026, 9, 24));
             assertThat(turn.temporal().yearInferred()).as(sample[1]).isTrue();
             assertThat(turn.temporal().rawSpan()).as(sample[1]).contains("24");
+        }
+    }
+
+    @Test
+    void parsesAbsoluteHindiWordAndOrdinalMonthDatesForVoiceContinuation() {
+        LocalDate reference = LocalDate.of(2026, 10, 1);
+        for (String phrase : new String[]{"बाईस अक्टूबर", "22 अक्टूबर 2026 का", "22nd October",
+                "October 22nd 2026"}) {
+            var turn = registry.resolve("hi-IN", phrase).normalize(phrase, reference);
+            assertThat(turn.temporal().localDate()).as(phrase).isEqualTo(LocalDate.of(2026, 10, 22));
         }
     }
 

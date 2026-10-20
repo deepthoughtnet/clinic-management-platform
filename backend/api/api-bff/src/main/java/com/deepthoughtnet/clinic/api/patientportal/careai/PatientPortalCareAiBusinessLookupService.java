@@ -9,10 +9,13 @@ import com.deepthoughtnet.clinic.api.publicsite.dto.PublicDoctorSummaryResponse;
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicPageResponse;
 import com.deepthoughtnet.clinic.discover.reference.DiscoverReferenceDataService;
 import com.deepthoughtnet.clinic.discover.reference.DiscoverReferenceOptionRecord;
+import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.language.DoctorNameNormalizer;
 import java.time.LocalDate;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.List;
+import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.util.StringUtils;
@@ -23,12 +26,14 @@ class PatientPortalCareAiBusinessLookupService {
     private final PatientPortalService patientPortalService;
     private final PublicCatalogFacade publicCatalogFacade;
     private final DiscoverReferenceDataService discoverReferenceDataService;
+    private final ClinicProfileService clinicProfileService;
+    private final SpecialtyResolver specialtyResolver = new SpecialtyResolver(new PatientPortalCareAiEntityRegistry());
 
     PatientPortalCareAiBusinessLookupService(
             PatientPortalService patientPortalService,
             PublicCatalogFacade publicCatalogFacade
     ) {
-        this(patientPortalService, publicCatalogFacade, null);
+        this(patientPortalService, publicCatalogFacade, null, null);
     }
 
     PatientPortalCareAiBusinessLookupService(
@@ -36,9 +41,19 @@ class PatientPortalCareAiBusinessLookupService {
             PublicCatalogFacade publicCatalogFacade,
             DiscoverReferenceDataService discoverReferenceDataService
     ) {
+        this(patientPortalService, publicCatalogFacade, discoverReferenceDataService, null);
+    }
+
+    PatientPortalCareAiBusinessLookupService(
+            PatientPortalService patientPortalService,
+            PublicCatalogFacade publicCatalogFacade,
+            DiscoverReferenceDataService discoverReferenceDataService,
+            ClinicProfileService clinicProfileService
+    ) {
         this.patientPortalService = patientPortalService;
         this.publicCatalogFacade = publicCatalogFacade;
         this.discoverReferenceDataService = discoverReferenceDataService;
+        this.clinicProfileService = clinicProfileService;
     }
 
     List<PublicDoctorSummaryResponse> findDoctors(String doctorQuery, String specialityQuery, String clinicSlug) {
@@ -82,6 +97,94 @@ class PatientPortalCareAiBusinessLookupService {
                         + " doctorIds=" + doctors.stream().map(PublicDoctorSummaryResponse::publicDoctorId).toList()
                         + " clinicSlugs=" + doctors.stream().map(PublicDoctorSummaryResponse::clinicSlug).toList());
         return doctors;
+    }
+
+    List<PublicDoctorSummaryResponse> findDoctors(HealthcareAiExecutionContext context,
+            String doctorQuery, String specialityQuery, String clinicSlug) {
+        return findDoctorsWithDiagnostics(context, doctorQuery, specialityQuery, clinicSlug).doctors();
+    }
+
+    DoctorLookup findDoctorsWithDiagnostics(HealthcareAiExecutionContext context,
+            String doctorQuery, String specialityQuery, String clinicSlug) {
+        if (context == null || context.tenantId() == null) return new DoctorLookup(List.of(), 0, specialtyResolver.canonicalize(specialityQuery));
+        List<PatientPortalDoctorResponse> source = patientPortalService.doctorsForTenant(context.tenantId());
+        String canonicalSpeciality = specialtyResolver.canonicalize(specialityQuery);
+        log.info("VOICE_FIND_DOCTOR_SOURCE tenantId={} sourceCount={}", context.tenantId(), source.size());
+        source.forEach(doctor -> logDoctorCandidate(context.tenantId(), doctor, doctorQuery, canonicalSpeciality));
+        List<PublicDoctorSummaryResponse> doctors = source.stream()
+                .filter(doctor -> !StringUtils.hasText(doctorQuery)
+                        || DoctorNameNormalizer.matches(doctor.doctorName(), doctorQuery))
+                .filter(doctor -> !StringUtils.hasText(canonicalSpeciality)
+                        || specialtyMatches(doctor.specialization(), canonicalSpeciality))
+                .map(this::toPublicDoctorSummary)
+                .toList();
+        trace("CAREAI_TRACE_VOICE_DOCTOR_LOOKUP", "tenantId=" + context.tenantId()
+                + " sourceCount=" + source.size() + " specialty=" + canonicalSpeciality
+                + " resultCount=" + doctors.size());
+        log.info("VOICE_FIND_DOCTOR_RESULT tenantId={} sourceCount={} resultCount={} results={}",
+                context.tenantId(), source.size(), doctors.size(),
+                doctors.stream().map(doctor -> doctor.doctorDisplayName() + " / " + doctor.speciality()).toList());
+        return new DoctorLookup(doctors, source.size(), canonicalSpeciality);
+    }
+
+    private void logDoctorCandidate(UUID tenantId, PatientPortalDoctorResponse doctor,
+                                    String doctorQuery, String canonicalSpeciality) {
+        boolean doctorQueryPresent = StringUtils.hasText(doctorQuery);
+        boolean doctorQueryPredicate = !doctorQueryPresent
+                || DoctorNameNormalizer.matches(doctor.doctorName(), doctorQuery);
+        boolean specialtyPredicate = !StringUtils.hasText(canonicalSpeciality)
+                || specialtyMatches(doctor.specialization(), canonicalSpeciality);
+        log.info("VOICE_FIND_DOCTOR_CANDIDATE tenantId={} doctorName=\"{}\" rawSpecialty=\"{}\" "
+                        + "normalizedSpecialty=\"{}\" requestedSpecialty=\"{}\" doctorQuery=\"{}\" "
+                        + "doctorQueryMatch={} specialtyMatch={} finalMatch={}",
+                tenantId, doctor.doctorName(), doctor.specialization(), normalizeQuery(doctor.specialization()),
+                normalizeQuery(canonicalSpeciality), doctorQuery, doctorQueryPredicate, specialtyPredicate,
+                doctorQueryPredicate && specialtyPredicate);
+    }
+
+    private boolean specialtyMatches(String stored, String requested) {
+        if (!StringUtils.hasText(stored) || !StringUtils.hasText(requested)) return false;
+        String canonicalStored = specialtyResolver.canonicalize(stored);
+        return containsNormalized(canonicalStored, requested);
+    }
+
+    record DoctorLookup(List<PublicDoctorSummaryResponse> doctors, int sourceCount, String canonicalSpeciality) {}
+
+    List<PatientPortalDoctorSlotResponse> findSlots(HealthcareAiExecutionContext context,
+            String publicDoctorId, LocalDate date) {
+        if (context == null) return List.of();
+        return patientPortalService.doctorSlotsForTenant(context.tenantId(), publicDoctorId, date);
+    }
+
+    PublicDoctorSummaryResponse findDoctorById(HealthcareAiExecutionContext context, String publicDoctorId) {
+        if (context == null || context.tenantId() == null || !StringUtils.hasText(publicDoctorId)) return null;
+        return patientPortalService.doctorsForTenant(context.tenantId()).stream()
+                .filter(doctor -> publicDoctorId.equals(doctor.publicDoctorId()))
+                .findFirst()
+                .map(this::toPublicDoctorSummary)
+                .orElse(null);
+    }
+
+    List<PublicClinicSummaryResponse> findClinics(HealthcareAiExecutionContext context, String clinicQuery) {
+        if (context == null || clinicProfileService == null) return List.of();
+        return clinicProfileService.findByTenantId(context.tenantId())
+                .filter(profile -> profile.active() && profile.publicListingEnabled())
+                .filter(profile -> !StringUtils.hasText(clinicQuery)
+                        || containsNormalized(firstText(profile.displayName(), profile.clinicName()), normalizeQuery(clinicQuery)))
+                .map(this::toPublicClinicSummary)
+                .map(List::of)
+                .orElseGet(List::of);
+    }
+
+    private PublicClinicSummaryResponse toPublicClinicSummary(com.deepthoughtnet.clinic.clinic.service.model.ClinicProfileRecord profile) {
+        return new PublicClinicSummaryResponse(profile.slug(), null,
+                firstText(profile.displayName(), profile.clinicName()), null, null, profile.phone(),
+                profile.addressLine1(), null, profile.city(), null, 0, 0, 0, 0,
+                false, List.of(), null, null, false, null);
+    }
+
+    private String firstText(String first, String second) {
+        return StringUtils.hasText(first) ? first : second;
     }
 
     List<PublicClinicSummaryResponse> findClinics(String clinicQuery) {

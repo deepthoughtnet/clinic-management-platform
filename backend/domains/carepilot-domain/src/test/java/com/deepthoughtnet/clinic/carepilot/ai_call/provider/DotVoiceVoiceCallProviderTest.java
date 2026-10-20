@@ -91,7 +91,7 @@ class DotVoiceVoiceCallProviderTest {
         properties.setEnabled(true);
         properties.setApiKey("test-key");
         properties.setBaseUrl("https://dotvoice.test");
-        properties.setFromNumber("+917969812868");
+        properties.setFromNumber("+919999000001");
         properties.setTrunk("trunk2");
         return properties;
     }
