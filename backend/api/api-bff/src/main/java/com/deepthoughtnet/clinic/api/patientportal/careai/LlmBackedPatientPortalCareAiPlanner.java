@@ -47,11 +47,22 @@ public class LlmBackedPatientPortalCareAiPlanner implements PatientPortalCareAiP
 
     @Override
     public PatientPortalCareAiPlannerDecision plan(PatientPortalCareAiPlanningContext context) {
+        return plan(context, null);
+    }
+
+    @Override
+    public PatientPortalCareAiPlannerDecision plan(
+            PatientPortalCareAiPlanningContext context,
+            AivaConversationContext conversationContext
+    ) {
         if (!aiExtractionEnabled || aiOrchestrationService == null || context == null || !StringUtils.hasText(context.latestMessage())) {
             return null;
         }
         try {
-            var requestContext = RequestContextHolder.require();
+            var requestContext = conversationContext == null ? RequestContextHolder.require() : null;
+            var tenantId = conversationContext == null
+                    ? RequestContextHolder.requireTenantId()
+                    : conversationContext.tenantId();
             Map<String, Object> inputVariables = new LinkedHashMap<>();
             inputVariables.put("message", context.latestMessage());
             inputVariables.put("language", safe(context.language()));
@@ -76,6 +87,10 @@ public class LlmBackedPatientPortalCareAiPlanner implements PatientPortalCareAiP
             inputVariables.put("recentMessages", context.recentMessages());
             inputVariables.put("lastQuestionKey", safe(context.lastQuestionKey()));
             inputVariables.put("repeatedQuestionCount", context.repeatedQuestionCount());
+            if (conversationContext != null) {
+                inputVariables.put("voicePersona", safe(conversationContext.attributes().get("voicePersona")));
+                inputVariables.put("voicePersonaInstruction", safe(conversationContext.attributes().get("voicePersonaInstruction")));
+            }
             inputVariables.put("today", LocalDate.now().toString());
             inputVariables.put("instructions", """
                     You are a planning assistant for a patient appointment workflow.
@@ -98,18 +113,19 @@ public class LlmBackedPatientPortalCareAiPlanner implements PatientPortalCareAiP
                     selectionTarget may be doctor, clinic, slot, appointment, or null.
                     Do not execute actions. Do not invent patient identity. Do not return medical advice, diagnosis, or irreversible actions.
                     If the user is answering a missing field from the current state, prefer filling that field over repeating the same question.
+                    If voicePersonaInstruction is present, follow it for any voice-facing wording.
                     """);
             AiOrchestrationResponse response = aiOrchestrationService.complete(new AiOrchestrationRequest(
                     AiProductCode.GENERIC,
-                    RequestContextHolder.requireTenantId(),
-                    requestContext.appUserId(),
+                    tenantId,
+                    requestContext == null ? null : requestContext.appUserId(),
                     AiTaskType.GENERIC_EXTRACTION,
                     AI_EXTRACTION_TEMPLATE_CODE,
                     inputVariables,
                     List.of(),
                     aiExtractionMaxTokens(),
                     AI_EXTRACTION_TEMPERATURE,
-                    requestContext.correlationId(),
+                    conversationContext == null ? requestContext.correlationId() : conversationContext.traceId(),
                     AI_EXTRACTION_USE_CASE
             ));
             return parseDecision(response);

@@ -339,6 +339,17 @@ public class PatientPortalCareAiService {
         );
     }
 
+    /** Builds the explicit healthcare context from the already authenticated portal request. */
+    public HealthcareAiExecutionContext currentHealthcareExecutionContext() {
+        return new HealthcareAiExecutionContext(
+                RequestContextHolder.requireTenantId(),
+                patientPortalService.currentPatientId(),
+                "SINGLE_MATCH",
+                HealthcareAiChannel.PATIENT_PORTAL,
+                null, null, null,
+                "en-IN");
+    }
+
     public PatientPortalCareAiMessageResponse messageFromVoice(PatientPortalCareAiMessageRequest request) {
         return messageInternal(
                 request,
